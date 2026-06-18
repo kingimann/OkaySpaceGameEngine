@@ -38,9 +38,8 @@ void Transform::SetPosition(const Vec3& worldPos) {
         parentScale.z != 0 ? rel.z / parentScale.z : rel.z};
 }
 
-void Transform::SetParent(Transform* parent) {
+void Transform::SetParent(Transform* parent, bool worldPositionStays) {
     if (parent == m_parent) return;
-    // Preserve world position across the reparent.
     Vec3 world = Position();
     if (m_parent) {
         auto& sib = m_parent->m_children;
@@ -48,7 +47,8 @@ void Transform::SetParent(Transform* parent) {
     }
     m_parent = parent;
     if (m_parent) m_parent->m_children.push_back(this);
-    SetPosition(world);
+    // Preserve the world position only when asked (Unity's worldPositionStays).
+    if (worldPositionStays) SetPosition(world);
 }
 
 } // namespace okay

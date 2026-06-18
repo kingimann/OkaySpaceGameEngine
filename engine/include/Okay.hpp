@@ -26,6 +26,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 
 // Built-in components
 #include "okay/Components/Camera.hpp"

@@ -35,7 +35,9 @@ public:
 
     // ---- Hierarchy -----------------------------------------------------
     Transform* Parent() const { return m_parent; }
-    void SetParent(Transform* parent);
+    /// Reparent this transform. When `worldPositionStays` is true (Unity's
+    /// default) the world pose is preserved; when false the local pose is kept.
+    void SetParent(Transform* parent, bool worldPositionStays = true);
     const std::vector<Transform*>& Children() const { return m_children; }
     int ChildCount() const { return static_cast<int>(m_children.size()); }
 

@@ -90,6 +90,10 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `set_color(r, g, b[, a])` | tint this object's Sprite/Text |
 | `set_texture(path)` | set this object's SpriteRenderer image |
 | `flip_x(bool)` / `flip_y(bool)` | mirror this object's sprite |
+| `velocity_x()` / `velocity_y()` | read this object's Rigidbody2D velocity |
+| `set_velocity(x, y)` / `set_vx(x)` / `set_vy(y)` | set its velocity (jump, dash, top-down move) |
+| `add_force(x, y)` / `add_impulse(x, y)` | apply a continuous force / instant momentum |
+| `set_image(path)` | set this object's UIImage texture (swap icons/states) |
 | `set_progress(v)` | set this object's UIProgressBar fill (0..1) |
 | `slider_value()` / `set_slider(v)` | read/set this object's UISlider value (fires on its own drag) |
 | `toggle_on()` / `set_toggle(b)` | read/set this object's UIToggle checkbox state |

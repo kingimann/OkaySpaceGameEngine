@@ -47,5 +47,49 @@ int main() {
         CHECK_NEAR(probe->transform->localPosition.y, 0.0f, 0.001f); // away -> miss
     }
 
+    // --- set_velocity / set_vx / set_vy / velocity_x|y on a sibling body ---
+    {
+        Scene scene("Vel");
+        GameObject* go = scene.CreateGameObject("Body");
+        auto* rb = go->AddComponent<Rigidbody2D>();
+        rb->bodyType = Rigidbody2D::BodyType::Kinematic; // moves by velocity only
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() { set_velocity(3, 4); }\n"
+            "function update(dt) {\n"
+            "  if (velocity_x() > 0) { set_vx(velocity_x() + 1); }\n"
+            "}\n"));
+        scene.Start();
+        CHECK_NEAR(rb->velocity.x, 3.0f, 0.001f);
+        CHECK_NEAR(rb->velocity.y, 4.0f, 0.001f);
+        scene.Update(0.016f);
+        CHECK_NEAR(rb->velocity.x, 4.0f, 0.001f); // update bumped vx by 1
+    }
+
+    // --- add_impulse changes velocity immediately (scaled by 1/mass) ---
+    {
+        Scene scene("Imp");
+        GameObject* go = scene.CreateGameObject("Jumper");
+        auto* rb = go->AddComponent<Rigidbody2D>();
+        rb->bodyType = Rigidbody2D::BodyType::Dynamic;
+        rb->mass = 2.0f;                                  // impulse halved
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function start() { add_impulse(0, 10); }"));
+        scene.Start();
+        CHECK_NEAR(rb->velocity.y, 5.0f, 0.001f);        // 10 * (1/2)
+    }
+
+    // --- set_image swaps a sibling UIImage's texture ---
+    {
+        Scene scene("Img");
+        GameObject* go = scene.CreateGameObject("Icon");
+        auto* im = go->AddComponent<UIImage>();
+        im->texture = "off.png";
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function start() { set_image(\"on.png\"); }"));
+        scene.Start();
+        CHECK(im->texture == "on.png");
+    }
+
     TEST_MAIN_RESULT();
 }

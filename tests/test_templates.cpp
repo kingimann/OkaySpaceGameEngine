@@ -118,5 +118,37 @@ int main() {
         std::remove("game.okayscene");
     }
 
+    // --- Snake: a full game in OkayScript on one Tilemap object ---
+    {
+        Scene scene("x");
+        Templates::Snake(scene);
+        GameObject* board = scene.Find("Board");
+        CHECK(board != nullptr);
+        auto* tm = board->GetComponent<Tilemap>();
+        CHECK(tm != nullptr);
+        CHECK(board->GetComponent<ScriptComponent>() != nullptr);
+
+        scene.Start();
+        CHECK(tm->Width() == 16 && tm->Height() == 16);
+        // Board is drawn: snake cells (id 1) and one food cell (id 2).
+        int snake = 0, food = 0;
+        for (int y = 0; y < tm->Height(); ++y)
+            for (int x = 0; x < tm->Width(); ++x) {
+                int t = tm->GetTile(x, y);
+                if (t == 1) ++snake; else if (t == 2) ++food;
+            }
+        CHECK(snake >= 1);   // snake body drawn
+        CHECK(food == 1);    // exactly one food
+
+        // Drive it: hold right and step past the move interval a few times.
+        for (int i = 0; i < 20; ++i) { Input::FeedKeys({'d'}); scene.Update(0.1f); }
+        // Still running: snake tiles are still on the board (didn't vanish/crash).
+        int snake2 = 0;
+        for (int y = 0; y < tm->Height(); ++y)
+            for (int x = 0; x < tm->Width(); ++x)
+                if (tm->GetTile(x, y) == 1) ++snake2;
+        CHECK(snake2 >= 1);
+    }
+
     TEST_MAIN_RESULT();
 }

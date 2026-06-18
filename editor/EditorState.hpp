@@ -40,6 +40,7 @@ public:
     void NewTopDown();
     void NewCoinCollector();
     void NewMainMenu();
+    void NewSnake();
 
     // ---- Files ---------------------------------------------------------
     bool Save(const std::string& path);

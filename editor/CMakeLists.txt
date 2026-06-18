@@ -25,12 +25,16 @@ else()
 endif()
 # Note: we use SDL_MAIN_HANDLED and our own main(), so SDL2main is not linked.
 
-# Use the docking branch so the editor gets Unity-style dockable panels.
-set(OKAY_IMGUI_TAG "docking" CACHE STRING "Dear ImGui git tag/branch to fetch")
+# Pin a specific Dear ImGui *docking-branch* commit so editor builds are
+# reproducible (the docking branch has DockBuilder + IMGUI_HAS_DOCK). Fetching a
+# bare branch name was non-deterministic across machines/CI, so we pin a SHA;
+# checking out a SHA needs the full history (no GIT_SHALLOW). Override with
+# -DOKAY_IMGUI_TAG=<ref> if you want a different revision.
+set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
+    CACHE STRING "Dear ImGui git commit/branch to fetch (must be the docking branch)")
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        ${OKAY_IMGUI_TAG}
-    GIT_SHALLOW    TRUE)
+    GIT_TAG        ${OKAY_IMGUI_TAG})
 FetchContent_MakeAvailable(imgui)
 
 # Dear ImGui ships no CMake; build the core + SDL2 backends ourselves.

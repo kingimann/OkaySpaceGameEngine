@@ -239,6 +239,13 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
 bool g_showSaveAs = false, g_showOpen = false;
 char g_pathBuf[256] = "scene.okayscene";
 
+// Extra panels / tools.
+bool  g_showStats = true;
+bool  g_showInstPrefab = false;
+char  g_prefabBuf[256] = "Prefab.okayprefab";
+bool  g_snap = false;
+float g_snapSize = 1.0f;
+
 // Per-object editor-only Euler-angle cache (degrees) for the inspector.
 std::unordered_map<GameObject*, Vec3> g_euler;
 
@@ -338,6 +345,7 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderDockWindow("Project", down);
     ImGui::DockBuilderDockWindow("Services", down);
     ImGui::DockBuilderDockWindow("Script Editor", down);
+    ImGui::DockBuilderDockWindow("Stats", right);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderFinish(dockId);
 }
@@ -376,6 +384,7 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
+        ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
@@ -403,6 +412,7 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         }
         if (created) ed.Achievement("FIRST_OBJECT");
         ImGui::Separator();
+        if (ImGui::MenuItem("Instantiate Prefab...")) g_showInstPrefab = true;
         if (ImGui::MenuItem("Duplicate Selected", "Ctrl+D", false, ed.selected() != nullptr)) {
             ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
         }
@@ -568,6 +578,23 @@ void DrawServices(EditorState& ed) {
     ImGui::End();
 }
 
+void DrawStats(EditorState& ed) {
+    if (!ImGui::Begin("Stats")) { ImGui::End(); return; }
+    ImGuiIO& io = ImGui::GetIO();
+    static float hist[120] = {0};
+    static int hi = 0;
+    hist[hi] = io.Framerate; hi = (hi + 1) % 120;
+    ImGui::Text("FPS: %.0f  (%.2f ms)", io.Framerate, io.Framerate > 0 ? 1000.0f / io.Framerate : 0.0f);
+    ImGui::PlotLines("##fps", hist, 120, hi, nullptr, 0.0f, 240.0f, ImVec2(-1, 60));
+    ImGui::Separator();
+    ImGui::Text("Mode: %s", ed.isPlaying() ? "PLAYING" : "EDIT");
+    ImGui::Text("GameObjects: %d", (int)ed.scene().Objects().size());
+    ImGui::Text("Sprites: %d", (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size());
+    ImGui::Text("Meshes: %d", (int)ed.scene().FindObjectsOfType<MeshRenderer>().size());
+    ImGui::Text("Colliders: %d", (int)ed.scene().FindObjectsOfType<Collider2D>().size());
+    ImGui::End();
+}
+
 // A dedicated code/graph editor panel (separate from the Inspector), with
 // external-IDE round-tripping.
 void DrawScriptEditor(EditorState& ed) {
@@ -724,6 +751,23 @@ void DrawFileDialogs(EditorState& ed) {
         if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+
+    if (g_showInstPrefab) { ImGui::OpenPopup("Instantiate Prefab"); g_showInstPrefab = false; }
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Instantiate Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputText("Prefab", g_prefabBuf, sizeof(g_prefabBuf));
+        if (ImGui::Button("Instantiate", ImVec2(120, 0))) {
+            ed.PushUndo();
+            std::string err;
+            GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), g_prefabBuf, &err);
+            if (r) { ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + std::string(g_prefabBuf)); }
+            else ConsoleLog("Prefab load failed: " + err);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 }
 
 void DrawNewProjectPopup(EditorState& ed) {
@@ -828,7 +872,15 @@ void DrawInspector(EditorState& ed) {
     nameBuf[sizeof(nameBuf) - 1] = '\0';
     ImGui::SetNextItemWidth(-1);
     if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
-    if (!go->tag.empty()) ImGui::TextDisabled("Tag: %s", go->tag.c_str());
+    char tagBuf[64];
+    std::strncpy(tagBuf, go->tag.c_str(), sizeof(tagBuf) - 1);
+    tagBuf[sizeof(tagBuf) - 1] = '\0';
+    if (ImGui::InputText("Tag", tagBuf, sizeof(tagBuf))) { go->tag = tagBuf; ed.dirty = true; }
+    if (ImGui::SmallButton("Save as Prefab")) {
+        std::string p = go->name + ".okayprefab";
+        if (SceneSerializer::SaveObjectToFile(*go, p)) ConsoleLog("Saved prefab " + p);
+        else ConsoleLog("Prefab save failed");
+    }
     ImGui::Spacing();
 
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
@@ -1081,8 +1133,13 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
     if (!ed.isPlaying() && ed.selected() && hovered &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        ed.selected()->transform->localPosition.x += io.MouseDelta.x / scale;
-        ed.selected()->transform->localPosition.y -= io.MouseDelta.y / scale;
+        Vec3& lp = ed.selected()->transform->localPosition;
+        lp.x += io.MouseDelta.x / scale;
+        lp.y -= io.MouseDelta.y / scale;
+        if (g_snap && g_snapSize > 0.0f) {
+            lp.x = Mathf::Round(lp.x / g_snapSize) * g_snapSize;
+            lp.y = Mathf::Round(lp.y / g_snapSize) * g_snapSize;
+        }
         ed.dirty = true;
     }
 }
@@ -1181,6 +1238,13 @@ void DrawViewport(EditorState& ed) {
         Vec3 p = ed.selected()->transform->Position();
         ed.camTarget = p;
         ed.cameraPos = {p.x, p.y};
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Snap", &g_snap);
+    if (g_snap) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::DragFloat("##snap", &g_snapSize, 0.05f, 0.05f, 10.0f);
     }
     ImGui::SameLine();
     ImGui::TextDisabled(ed.view3D ? "drag: orbit  wheel: zoom"
@@ -1312,6 +1376,7 @@ int main(int argc, char** argv) {
         if (g_showProject)   DrawProject(ed);
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);
+        if (g_showStats)     DrawStats(ed);
 
         ImGui::Render();
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);

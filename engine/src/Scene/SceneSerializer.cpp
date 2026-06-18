@@ -283,6 +283,23 @@ GameObject* SceneSerializer::Instantiate(Scene& scene, const GameObject& prefab)
     return root;
 }
 
+bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string& path) {
+    std::ofstream f(path);
+    if (!f) return false;
+    f << SerializeObject(root);
+    return static_cast<bool>(f);
+}
+
+GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string& path,
+                                                 std::string* error) {
+    std::ifstream f(path);
+    if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
+    std::stringstream ss; ss << f.rdbuf();
+    GameObject* root = nullptr;
+    if (!ParseInto(scene, ss.str(), /*clear=*/false, &root, error)) return nullptr;
+    return root;
+}
+
 bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::string* error) {
     std::ifstream f(path);
     if (!f) { if (error) *error = "cannot open " + path; return false; }

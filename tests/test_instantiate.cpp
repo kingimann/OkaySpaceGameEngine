@@ -64,5 +64,31 @@ int main() {
         }
     }
 
+    // --- Prefab files (save object, instantiate into another scene) ---
+    {
+        Scene a("A");
+        GameObject* p = a.CreateGameObject("Turret");
+        p->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+        p->AddComponent<Rigidbody2D>();
+        GameObject* barrel = a.CreateGameObject("Barrel");
+        barrel->transform->SetParent(p->transform);
+        barrel->transform->localPosition = {0, 1, 0};
+
+        std::string path = "/tmp/okay_turret.okayprefab";
+        CHECK(SceneSerializer::SaveObjectToFile(*p, path));
+
+        Scene b("B");
+        std::string err;
+        GameObject* inst = SceneSerializer::InstantiateFromFile(b, path, &err);
+        CHECK(inst != nullptr);
+        if (inst) {
+            CHECK(inst->name == "Turret");
+            CHECK(inst->GetComponent<MeshRenderer>() != nullptr);
+            CHECK(inst->GetComponent<Rigidbody2D>() != nullptr);
+            CHECK(inst->transform->ChildCount() == 1);
+        }
+        CHECK(b.Objects().size() == 2);
+    }
+
     TEST_MAIN_RESULT();
 }

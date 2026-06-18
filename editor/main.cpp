@@ -633,13 +633,77 @@ void DrawConsole() {
     ImGui::End();
 }
 
+// A short tag for a file, by extension, for the asset browser.
+static const char* AssetTag(const std::string& ext) {
+    if (ext == ".okayscene")  return "[Scene] ";
+    if (ext == ".okayprefab") return "[Prefab]";
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga")
+        return "[Image] ";
+    if (ext == ".wav")        return "[Sound] ";
+    if (ext == ".okay" || ext == ".lua" || ext == ".cs") return "[Script]";
+    return "[File]  ";
+}
+
 void DrawProject(EditorState& ed) {
+    namespace fs = std::filesystem;
+    static char dirBuf[512] = ".";
     if (ImGui::Begin("Project")) {
-        ImGui::TextDisabled("Assets");
+        ImGui::SetNextItemWidth(-70);
+        ImGui::InputText("##projdir", dirBuf, sizeof(dirBuf));
+        ImGui::SameLine();
+        if (ImGui::Button("Up")) {
+            std::error_code ec;
+            fs::path p = fs::absolute(dirBuf, ec).parent_path();
+            if (!ec) std::strncpy(dirBuf, p.string().c_str(), sizeof(dirBuf) - 1);
+        }
+        ImGui::TextDisabled("Scene: %s  |  %d objects",
+                            ed.path().empty() ? "(unsaved)" : ed.path().c_str(),
+                            (int)ed.scene().Objects().size());
         ImGui::Separator();
-        ImGui::BulletText("Scene: %s", ed.path().empty() ? "(unsaved)" : ed.path().c_str());
-        ImGui::BulletText("%d GameObjects", (int)ed.scene().Objects().size());
-        ImGui::TextWrapped("Scenes are saved as .okayscene text files via File > Save.");
+
+        ImGui::BeginChild("assets");
+        std::error_code ec;
+        fs::path dir(dirBuf);
+        std::vector<fs::directory_entry> dirs, files;
+        if (fs::is_directory(dir, ec)) {
+            for (auto& e : fs::directory_iterator(dir, ec)) {
+                if (e.is_directory(ec)) dirs.push_back(e);
+                else files.push_back(e);
+            }
+        }
+        auto byName = [](const fs::directory_entry& a, const fs::directory_entry& b) {
+            return a.path().filename().string() < b.path().filename().string();
+        };
+        std::sort(dirs.begin(), dirs.end(), byName);
+        std::sort(files.begin(), files.end(), byName);
+
+        for (auto& e : dirs) {
+            std::string name = e.path().filename().string();
+            if (ImGui::Selectable(("[Dir]    " + name).c_str()))
+                std::strncpy(dirBuf, e.path().string().c_str(), sizeof(dirBuf) - 1);
+        }
+        for (auto& e : files) {
+            std::string ext = e.path().extension().string();
+            for (auto& ch : ext) ch = (char)std::tolower((unsigned char)ch);
+            std::string label = std::string(AssetTag(ext)) + " " + e.path().filename().string();
+            if (ImGui::Selectable(label.c_str())) {
+                std::string full = e.path().string();
+                if (ext == ".okayscene") {
+                    std::string err;
+                    if (ed.Load(full, &err)) ConsoleLog("Opened " + full);
+                    else ConsoleLog("Open failed: " + err);
+                } else if (ext == ".okayprefab") {
+                    ed.PushUndo();
+                    std::string err;
+                    if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
+                        ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + full);
+                    } else ConsoleLog("Prefab load failed: " + err);
+                }
+            }
+        }
+        if (dirs.empty() && files.empty())
+            ImGui::TextDisabled("(empty or unreadable folder)");
+        ImGui::EndChild();
     }
     ImGui::End();
 }

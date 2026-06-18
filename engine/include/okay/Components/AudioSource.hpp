@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Audio/AudioClip.hpp"
+#include <string>
 
 namespace okay {
 
@@ -9,6 +10,9 @@ namespace okay {
 class AudioSource : public Behaviour {
 public:
     AudioClip clip;
+    /// Optional WAV file to load into `clip` (the windowed runtime loads it,
+    /// resampled to the output rate). Empty means use whatever `clip` holds.
+    std::string clipPath;
     float volume = 1.0f;
     bool  loop = false;
     bool  playOnAwake = false;

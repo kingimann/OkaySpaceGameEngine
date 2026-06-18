@@ -137,6 +137,15 @@ int main(int argc, char** argv) {
     }
     std::unordered_map<std::string, SDL_Texture*> textureCache;
 
+    // Load any WAV clips referenced by AudioSources, resampled to the mix rate.
+    for (const auto& up : scene.Objects()) {
+        auto* au = up->GetComponent<AudioSource>();
+        if (!au || au->clipPath.empty()) continue;
+        AudioClip wav;
+        if (wav.LoadWAV(au->clipPath) || wav.LoadWAV(baseDir + au->clipPath))
+            au->clip = wav.Resampled(44100);
+    }
+
     scene.Start();
 
     bool running = true;

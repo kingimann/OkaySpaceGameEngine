@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
+#include <string>
 #include <vector>
 
 namespace okay {
@@ -53,6 +54,15 @@ struct AudioClip {
         c.samples.assign(count, value);
         return c;
     }
+
+    /// Load a PCM/float WAV file as mono samples (multi-channel is downmixed).
+    /// Returns false (leaving the clip empty) on failure.
+    bool LoadWAV(const std::string& path, std::string* error = nullptr);
+    /// Save as a 16-bit mono PCM WAV. Returns false on failure.
+    bool SaveWAV(const std::string& path) const;
+
+    /// A copy of this clip resampled to `newRate` (linear interpolation).
+    AudioClip Resampled(int newRate) const;
 };
 
 } // namespace okay

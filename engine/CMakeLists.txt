@@ -25,6 +25,7 @@ add_library(okay_engine
     src/Components/PlayFabManager.cpp
     src/Physics/Physics2D.cpp
     src/Audio/AudioMixer.cpp
+    src/Audio/AudioClip.cpp
     src/AI/Pathfinding.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp

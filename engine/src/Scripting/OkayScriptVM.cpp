@@ -6,6 +6,7 @@
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Math/Vec2.hpp"
+#include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
@@ -839,6 +840,53 @@ struct OkayScriptVM::Impl {
             Vec3 ot = g->transform->Position();
             float dx = ot.x - me.x, dy = ot.y - me.y;
             return Value{Mathf::Sqrt(dx * dx + dy * dy)};
+        };
+        // Rotate this object (about Z) to face a named object — turrets, enemies
+        // aiming at the player, signposts.
+        b["look_at"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            if (a.empty()) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{};
+            Vec3 me = rt.host->gameObject->transform->Position();
+            Vec3 ot = g->transform->Position();
+            float deg = std::atan2(ot.y - me.y, ot.x - me.x) * 57.2957795f;
+            t->localRotation = Quat::Euler({0, 0, deg});
+            return Value{};
+        };
+        // Main-camera control from script (screen-follow, cutscenes, zoom).
+        b["cam_x"] = [sceneOf](std::vector<Value>&) -> Value {
+            if (Scene* s = sceneOf()) if (s->mainCamera) return Value{s->mainCamera->gameObject->transform->localPosition.x};
+            return Value{0.0f};
+        };
+        b["cam_y"] = [sceneOf](std::vector<Value>&) -> Value {
+            if (Scene* s = sceneOf()) if (s->mainCamera) return Value{s->mainCamera->gameObject->transform->localPosition.y};
+            return Value{0.0f};
+        };
+        b["set_cam"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera) {
+                Transform* ct = s->mainCamera->gameObject->transform;
+                ct->localPosition.x = a.size() > 0 ? a[0].AsFloat() : ct->localPosition.x;
+                ct->localPosition.y = a.size() > 1 ? a[1].AsFloat() : ct->localPosition.y;
+            }
+            return Value{};
+        };
+        b["move_cam"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera) {
+                Transform* ct = s->mainCamera->gameObject->transform;
+                ct->localPosition.x += a.size() > 0 ? a[0].AsFloat() : 0.0f;
+                ct->localPosition.y += a.size() > 1 ? a[1].AsFloat() : 0.0f;
+            }
+            return Value{};
+        };
+        b["cam_zoom"] = [sceneOf](std::vector<Value>&) -> Value {
+            if (Scene* s = sceneOf()) if (s->mainCamera) return Value{s->mainCamera->orthographicSize};
+            return Value{0.0f};
+        };
+        b["set_cam_zoom"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera && !a.empty())
+                s->mainCamera->orthographicSize = Mathf::Max(0.01f, a[0].AsFloat());
+            return Value{};
         };
         // Drive sibling components on this GameObject.
         auto go = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };

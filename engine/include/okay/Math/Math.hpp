@@ -6,3 +6,5 @@
 #include "okay/Math/Vec4.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
+#include "okay/Math/Rect.hpp"
+#include "okay/Math/Bounds.hpp"

@@ -11,6 +11,9 @@
 // Core
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Core/Random.hpp"
+#include "okay/Core/EventBus.hpp"
+#include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Application.hpp"
 
 // Input
@@ -31,6 +34,11 @@
 // Built-in components
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
+
+// 2D physics
+#include "okay/Physics/Rigidbody2D.hpp"
+#include "okay/Physics/Collider2D.hpp"
+#include "okay/Physics/Physics2D.hpp"
 
 // Multiplayer networking
 #include "okay/Net/Packet.hpp"

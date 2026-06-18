@@ -1,11 +1,13 @@
 #pragma once
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Core/Scheduler.hpp"
+#include "okay/Physics/Physics2D.hpp"
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace okay {
 
-class GameObject;
 class Component;
 class Camera;
 class IRenderer;
@@ -37,8 +39,33 @@ public:
     GameObject* FindWithTag(const std::string& tag) const;
     const std::vector<std::unique_ptr<GameObject>>& Objects() const { return m_objects; }
 
+    /// Collect every component of type T across all GameObjects in the scene.
+    template <typename T>
+    std::vector<T*> FindObjectsOfType() const {
+        std::vector<T*> out;
+        for (const auto& go : m_objects)
+            for (T* c : go->GetComponents<T>()) out.push_back(c);
+        return out;
+    }
+    /// The first component of type T found in the scene, or nullptr.
+    template <typename T>
+    T* FindObjectOfType() const {
+        for (const auto& go : m_objects)
+            if (T* c = go->GetComponent<T>()) return c;
+        return nullptr;
+    }
+
     /// The camera used for rendering. Set automatically by Camera::Awake.
     Camera* mainCamera = nullptr;
+
+    /// Time-based callbacks (Invoke / InvokeRepeating / Tween), ticked each
+    /// frame during Update.
+    Scheduler& scheduler() { return m_scheduler; }
+
+    /// The 2D physics world, stepped each frame during Update.
+    Physics2D& physics() { return m_physics; }
+    /// Set false to skip the physics step (e.g. for pure-UI scenes).
+    bool physicsEnabled = true;
 
     // ---- Lifecycle (driven by the Application) ------------------------
     /// Run Awake/Start on all components created so far.
@@ -54,6 +81,8 @@ private:
     void FlushPending();
 
     std::string m_name;
+    Scheduler   m_scheduler;
+    Physics2D   m_physics;
     std::vector<std::unique_ptr<GameObject>> m_objects;
     std::vector<Component*>  m_pending;   // awaiting Awake/Start
     std::vector<Component*>  m_active;    // receive Update each frame

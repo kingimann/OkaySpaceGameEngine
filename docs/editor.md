@@ -1,8 +1,8 @@
 # OkaySpace Editor
 
 A Unity-style desktop editor built with **Dear ImGui (docking) + SDL2**. It opens
-a real window with **docked** panels (Hierarchy / Scene / Inspector / Console /
-Project), a Play·Stop·Step toolbar, and a dark theme, and edits live
+a real window with **docked** panels (Hierarchy / Scene / **Game** / Inspector /
+Console / Project), a Play·Stop·Step toolbar, and a dark theme, and edits live
 `okay::Scene`s. The UI renders through SDL's 2D renderer (Direct3D on Windows,
 Metal on macOS), so no OpenGL driver is required.
 
@@ -116,7 +116,17 @@ uses, built right into the engine app.
   window size) or world space to anchor it to the GameObject. Toggle *Shadow*
   for a drop shadow (color + offset) that keeps text legible over busy
   backgrounds. Renders in the built game.
-- **GameObject menu** — create Empty / Sprite / Camera objects.
+- **Game view** — a separate *Game* panel renders the scene through its **main
+  camera** with no editor chrome (grid, gizmos, selection) — what the built game
+  shows. 2D or 3D follows the camera's projection; press **Play** to make it live.
+- **GameObject menu** — create Empty / Sprite / Camera / 3D primitives, and a
+  **UI** submenu that adds each UI element (Button, Panel, Image, Text, Progress
+  Bar, Slider, Toggle) as its own GameObject.
+- **Add Component** is grouped into sections (Rendering, Physics, Camera,
+  Scripting, Audio, Gameplay, UI); the search box filters across all of them.
+- **3D meshes render solid** (flat-shaded, depth-sorted) by default in both the
+  Scene/Game views and the built game; tick a Mesh Renderer's *Wireframe* for an
+  edges-only view.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
   (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a
   standalone, double-clickable game.

@@ -239,6 +239,7 @@ bool g_showNewProject = true;   // show the project chooser on launch
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProject = true, g_showServices = true, g_showScriptEditor = true;
+bool g_showGame = true;   // Unity-style Game view (main-camera render)
 
 // File dialogs.
 bool g_showSaveAs = false, g_showOpen = false;
@@ -499,6 +500,7 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
     }
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Hierarchy", nullptr, &g_showHierarchy);
+        ImGui::MenuItem("Game", nullptr, &g_showGame);
         ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
         ImGui::MenuItem("Console", nullptr, &g_showConsole);
         ImGui::MenuItem("Project", nullptr, &g_showProject);
@@ -532,6 +534,17 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
             for (int x = 0; x < 12; ++x) tm->SetTile(x, 0, 1); // a ground row
             ConsoleLog("Created Tilemap");
             created = true;
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("UI")) {   // each UI element is its own GameObject
+            if (ImGui::MenuItem("Button"))       { ed.Select(ed.CreateEmpty("Button"));   ed.selected()->AddComponent<UIButton>();      ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Panel"))        { ed.Select(ed.CreateEmpty("Panel"));    ed.selected()->AddComponent<UIPanel>();       ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Image"))        { ed.Select(ed.CreateEmpty("Image"));    ed.selected()->AddComponent<UIImage>();       ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Text"))         { ed.Select(ed.CreateEmpty("Text"));     auto* t = ed.selected()->AddComponent<TextRenderer>(); t->screenSpace = true; ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Progress Bar")) { ed.Select(ed.CreateEmpty("ProgressBar")); ed.selected()->AddComponent<UIProgressBar>(); ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Slider"))       { ed.Select(ed.CreateEmpty("Slider"));   ed.selected()->AddComponent<UISlider>();      ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Toggle"))       { ed.Select(ed.CreateEmpty("Toggle"));   ed.selected()->AddComponent<UIToggle>();      ed.dirty = true; created = true; }
+            ImGui::EndMenu();
         }
         if (created) ed.Achievement("FIRST_OBJECT");
         ImGui::Separator();
@@ -1630,39 +1643,58 @@ void DrawInspector(EditorState& ed) {
             for (auto& ch : b) ch = (char)std::tolower((unsigned char)ch);
             return a.find(b) != std::string::npos;
         };
+        // Category headers — shown when not searching, so the filtered list
+        // stays a clean flat match.
+        auto Hdr = [&](const char* s) { if (!acFilter[0]) { ImGui::Spacing(); ImGui::TextDisabled("%s", s); ImGui::Separator(); } };
+
+        Hdr("Rendering");
         if (!go->GetComponent<SpriteRenderer>() && F("Sprite Renderer") && ImGui::Selectable("Sprite Renderer"))
             { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
-        if (!go->GetComponent<MeshRenderer>() && F("Mesh Renderer (Cube)") && ImGui::Selectable("Mesh Renderer (Cube)"))
+        if (!go->GetComponent<MeshRenderer>() && F("Mesh Renderer (3D)") && ImGui::Selectable("Mesh Renderer (3D)"))
             { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
-        if (!go->GetComponent<Camera>() && F("Camera") && ImGui::Selectable("Camera"))
-            { go->AddComponent<Camera>(); ed.dirty = true; }
+        if (!go->GetComponent<TextRenderer>() && F("Text") && ImGui::Selectable("Text"))
+            { go->AddComponent<TextRenderer>(); ed.dirty = true; }
+        if (!go->GetComponent<SpriteAnimator>() && F("Sprite Animator") && ImGui::Selectable("Sprite Animator"))
+            { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
+        if (!go->GetComponent<ParticleSystem>() && F("Particle System") && ImGui::Selectable("Particle System"))
+            { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
+
+        Hdr("Physics");
         if (!go->GetComponent<Rigidbody2D>() && F("Rigidbody2D") && ImGui::Selectable("Rigidbody2D"))
             { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
         if (!go->GetComponent<BoxCollider2D>() && F("Box Collider 2D") && ImGui::Selectable("Box Collider 2D"))
             { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
         if (!go->GetComponent<CircleCollider2D>() && F("Circle Collider 2D") && ImGui::Selectable("Circle Collider 2D"))
             { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
+        if (go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>() &&
+            F("Tilemap Collider 2D") && ImGui::Selectable("Tilemap Collider 2D"))
+            { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+
+        Hdr("Camera");
+        if (!go->GetComponent<Camera>() && F("Camera") && ImGui::Selectable("Camera"))
+            { go->AddComponent<Camera>(); ed.dirty = true; }
+        if (!go->GetComponent<CameraFollow>() && F("Camera Follow") && ImGui::Selectable("Camera Follow"))
+            { go->AddComponent<CameraFollow>(); ed.dirty = true; }
+
+        Hdr("Scripting");
         if (!go->GetComponent<ScriptComponent>() && F("Script (OkayScript)") && ImGui::Selectable("Script (OkayScript)"))
             { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
         if (!go->GetComponent<VisualScriptComponent>() && F("Visual Script") && ImGui::Selectable("Visual Script"))
             { go->AddComponent<VisualScriptComponent>(); ed.dirty = true; }
+
+        Hdr("Audio");
         if (!go->GetComponent<AudioSource>() && F("Audio Source") && ImGui::Selectable("Audio Source"))
             { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
-        if (!go->GetComponent<TextRenderer>() && F("Text") && ImGui::Selectable("Text"))
-            { go->AddComponent<TextRenderer>(); ed.dirty = true; }
-        if (!go->GetComponent<SpriteAnimator>() && F("Sprite Animator") && ImGui::Selectable("Sprite Animator"))
-            { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
+
+        Hdr("Gameplay");
         if (!go->GetComponent<Mover>() && F("Mover") && ImGui::Selectable("Mover"))
             { go->AddComponent<Mover>(); ed.dirty = true; }
         if (!go->GetComponent<Spinner>() && F("Spinner") && ImGui::Selectable("Spinner"))
             { go->AddComponent<Spinner>(); ed.dirty = true; }
         if (!go->GetComponent<Lifetime>() && F("Lifetime") && ImGui::Selectable("Lifetime"))
             { go->AddComponent<Lifetime>(); ed.dirty = true; }
-        if (!go->GetComponent<CameraFollow>() && F("Camera Follow") && ImGui::Selectable("Camera Follow"))
-            { go->AddComponent<CameraFollow>(); ed.dirty = true; }
-        if (go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>() &&
-            F("Tilemap Collider 2D") && ImGui::Selectable("Tilemap Collider 2D"))
-            { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+
+        Hdr("UI");
         if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
             { go->AddComponent<UIButton>(); ed.dirty = true; }
         if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))
@@ -1701,35 +1733,46 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
 }
 
 void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
-                 ImVec2 canvasEnd, bool hovered, ImGuiIO& io) {
+                 ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
-    float scale = canvasSize.y / ed.cameraZoom;
+    // The Game view frames through the scene's main camera (position + ortho
+    // size); the Scene view uses the editor's free camera.
+    Vec2  camPos = ed.cameraPos;
+    float zoom   = ed.cameraZoom;
+    if (gameView) {
+        if (Camera* mc = ed.scene().mainCamera) {
+            Vec3 cp = mc->gameObject->transform->Position();
+            camPos = {cp.x, cp.y};
+            zoom = mc->orthographicSize * 2.0f;        // viewport world-height
+        }
+    }
+    float scale = canvasSize.y / zoom;
     auto worldToScreen = [&](const Vec3& w) {
-        return ImVec2(center.x + (w.x - ed.cameraPos.x) * scale,
-                      center.y - (w.y - ed.cameraPos.y) * scale);
+        return ImVec2(center.x + (w.x - camPos.x) * scale,
+                      center.y - (w.y - camPos.y) * scale);
     };
     auto screenToWorld = [&](const ImVec2& s) {
-        return Vec2((s.x - center.x) / scale + ed.cameraPos.x,
-                    -(s.y - center.y) / scale + ed.cameraPos.y);
+        return Vec2((s.x - center.x) / scale + camPos.x,
+                    -(s.y - center.y) / scale + camPos.y);
     };
 
-    if (hovered && io.MouseWheel != 0.0f)
+    if (!gameView && hovered && io.MouseWheel != 0.0f)
         ed.cameraZoom = Mathf::Clamp(ed.cameraZoom * (1.0f - io.MouseWheel * 0.1f), 2.0f, 200.0f);
-    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+    if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
         ed.cameraPos.x -= io.MouseDelta.x / scale;
         ed.cameraPos.y += io.MouseDelta.y / scale;
     }
 
     dl->PushClipRect(canvasPos, canvasEnd, true);
 
-    // Faint unit grid across the visible area.
-    {
-        float halfH = ed.cameraZoom * 0.5f;
+    // Faint unit grid + world axes — Scene view only (the Game view is clean).
+    if (!gameView) {
+        float halfH = zoom * 0.5f;
         float halfW = halfH * (canvasSize.x / canvasSize.y);
-        int x0 = (int)Mathf::Floor(ed.cameraPos.x - halfW);
-        int x1 = (int)Mathf::Ceil(ed.cameraPos.x + halfW);
-        int y0 = (int)Mathf::Floor(ed.cameraPos.y - halfH);
-        int y1 = (int)Mathf::Ceil(ed.cameraPos.y + halfH);
+        int x0 = (int)Mathf::Floor(camPos.x - halfW);
+        int x1 = (int)Mathf::Ceil(camPos.x + halfW);
+        int y0 = (int)Mathf::Floor(camPos.y - halfH);
+        int y1 = (int)Mathf::Ceil(camPos.y + halfH);
         ImU32 grid = IM_COL32(40, 40, 52, 255);
         if (x1 - x0 < 200) // avoid drawing thousands of lines when zoomed way out
             for (int x = x0; x <= x1; ++x)
@@ -1739,9 +1782,9 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (int y = y0; y <= y1; ++y)
                 dl->AddLine(worldToScreen({(float)x0, (float)y, 0}),
                             worldToScreen({(float)x1, (float)y, 0}), grid);
+        dl->AddLine(worldToScreen({-1000, 0, 0}), worldToScreen({1000, 0, 0}), IM_COL32(120, 60, 60, 255));
+        dl->AddLine(worldToScreen({0, -1000, 0}), worldToScreen({0, 1000, 0}), IM_COL32(60, 120, 60, 255));
     }
-    dl->AddLine(worldToScreen({-1000, 0, 0}), worldToScreen({1000, 0, 0}), IM_COL32(120, 60, 60, 255));
-    dl->AddLine(worldToScreen({0, -1000, 0}), worldToScreen({0, 1000, 0}), IM_COL32(60, 120, 60, 255));
 
     const auto& objs = ed.scene().Objects();
     for (const auto& up : objs) {
@@ -1755,7 +1798,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImVec2 c = worldToScreen(wp);
         ImVec2 a(c.x - hx, c.y - hy), b(c.x + hx, c.y + hy);
         dl->AddRectFilled(a, b, ToColor(sr->color));
-        if (go == ed.selected())
+        if (!gameView && go == ed.selected())
             dl->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2),
                         IM_COL32(255, 200, 0, 255), 0, 0, 2.0f);
     }
@@ -1890,11 +1933,13 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         DrawBitmapText(dl, btn->label, a.x + (btn->size.x - tw) * 0.5f,
                        a.y + (btn->size.y - Font8x8::Height * px) * 0.5f, px,
                        ToColor(btn->textColor));
-        if (up.get() == ed.selected())
+        if (!gameView && up.get() == ed.selected())
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
                         IM_COL32(255, 200, 0, 255), 4.0f, 0, 2.0f);
     }
     dl->PopClipRect();
+
+    if (gameView) return;   // the Game view is non-interactive
 
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         Vec2 world = screenToWorld(io.MousePos);
@@ -1926,17 +1971,17 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 }
 
 void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
-                 ImVec2 canvasEnd, bool hovered, ImGuiIO& io) {
+                 ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
 
-    // Orbit controls.
-    if (hovered && io.MouseWheel != 0.0f)
+    // Orbit controls (Scene view only).
+    if (!gameView && hovered && io.MouseWheel != 0.0f)
         ed.camDist = Mathf::Clamp(ed.camDist * (1.0f - io.MouseWheel * 0.1f), 2.0f, 400.0f);
-    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ed.selected()) {
+    if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ed.selected()) {
         ed.camYaw   -= io.MouseDelta.x * 0.4f;
         ed.camPitch = Mathf::Clamp(ed.camPitch + io.MouseDelta.y * 0.4f, -85.0f, 85.0f);
     }
-    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+    if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
         ed.camYaw   -= io.MouseDelta.x * 0.4f;
         ed.camPitch = Mathf::Clamp(ed.camPitch + io.MouseDelta.y * 0.4f, -85.0f, 85.0f);
     }
@@ -1947,6 +1992,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     Vec3 eye = ed.camTarget + dir * ed.camDist;
     Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
     Mat4 proj = Mat4::Perspective(50.0f, canvasSize.x / canvasSize.y, 0.1f, 2000.0f);
+    // The Game view renders through the scene's main camera instead.
+    if (gameView) {
+        if (Camera* mc = ed.scene().mainCamera) {
+            eye = mc->gameObject->transform->Position();
+            view = mc->ViewMatrix();
+            proj = mc->ProjectionMatrix(canvasSize.x / canvasSize.y);
+        }
+    }
     Mat4 vp = proj * view;
 
     auto toScreen = [&](const Vec4& c, ImVec2& out) -> bool {
@@ -1958,7 +2011,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     dl->PushClipRect(canvasPos, canvasEnd, true);
 
-    // Ground grid on the XZ plane.
+    // Ground grid on the XZ plane (Scene view only; the Game view is clean).
+    if (!gameView)
     for (int i = -10; i <= 10; ++i) {
         ImVec2 a, b;
         if (toScreen(vp * Vec4{Vec3{(float)i, 0, -10}, 1}, a) &&
@@ -2030,6 +2084,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
     dl->PopClipRect();
 
+    if (gameView) return;   // the Game view is non-interactive
+
     // Click to select the nearest object center on screen.
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = nullptr;
@@ -2094,6 +2150,46 @@ void DrawViewport(EditorState& ed) {
                   ed.selected() ? ed.selected()->name.c_str() : "");
     dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(200, 200, 210, 255), overlay);
 
+    ImGui::End();
+}
+
+// Unity-style "Game" view: renders the scene through its main camera with no
+// editor chrome (grid, gizmos, selection) — what the built game shows. 2D or 3D
+// follows the camera's projection. Read-only; press Play to make it live.
+void DrawGameView(EditorState& ed) {
+    if (!ImGui::Begin("Game")) { ImGui::End(); return; }
+
+    Camera* mc = ed.scene().mainCamera;
+    bool persp = mc && mc->projection == Camera::Projection::Perspective;
+
+    ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
+    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+    if (canvasSize.x < 50) canvasSize.x = 50;
+    if (canvasSize.y < 50) canvasSize.y = 50;
+    ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    Color bg = mc ? mc->backgroundColor : Color::Black;
+    dl->AddRectFilled(canvasPos, canvasEnd,
+                      IM_COL32((int)(bg.r * 255), (int)(bg.g * 255), (int)(bg.b * 255), 255));
+
+    ImGui::InvisibleButton("gamecanvas", canvasSize);
+    ImGuiIO& io = ImGui::GetIO();
+    // Publish the canvas size so anchored UI resolves to this view.
+    UICanvas::Set(canvasSize.x, canvasSize.y);
+
+    if (!mc) {
+        dl->AddText(ImVec2(canvasPos.x + 10, canvasPos.y + 10),
+                    IM_COL32(200, 120, 120, 255), "No main Camera in the scene.");
+    } else if (persp) {
+        DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
+    } else {
+        DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
+    }
+
+    const char* tag = ed.isPlaying() ? "PLAYING" : "Game (press Play)";
+    dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6),
+                ed.isPlaying() ? IM_COL32(120, 230, 140, 255) : IM_COL32(180, 180, 190, 255), tag);
     ImGui::End();
 }
 
@@ -2191,6 +2287,7 @@ int main(int argc, char** argv) {
         DrawAboutPopup();
         if (g_showHierarchy) DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel (always shown)
+        if (g_showGame)      DrawGameView(ed);
         if (g_showInspector) DrawInspector(ed);
         if (g_showConsole)   DrawConsole();
         if (g_showProject)   DrawProject(ed);

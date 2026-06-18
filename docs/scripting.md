@@ -106,7 +106,11 @@ rand(lo, hi) dist(x1, y1, x2, y2) pi() deg2rad(d) rad2deg(r)`
 
 ### Strings
 `str_len(s) upper(s) lower(s) substr(s, start, n) char_at(s, i) str_find(s, sub)
-to_num(s) to_str(x)` — plus `+` concatenation.
+to_num(s) to_str(x) split(s, sep) join(arr, sep)` — plus `+` concatenation.
+
+### Maps / dictionaries (string keys)
+`map() map_set(m, k, v) map_get(m, k[, default]) map_has(m, k) map_remove(m, k)
+map_keys(m) map_count(m)` — shared by reference, like arrays.
 
 ## Other backends
 

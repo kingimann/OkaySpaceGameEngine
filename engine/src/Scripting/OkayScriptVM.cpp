@@ -926,6 +926,63 @@ struct OkayScriptVM::Impl {
             try { return Value{std::stof(a[0].AsString())}; } catch (...) { return Value{0.0f}; }
         };
         b["to_str"] = [](std::vector<Value>& a) { return Value{a.empty() ? std::string{} : a[0].AsString()}; };
+        b["split"] = [](std::vector<Value>& a) {
+            Value out = Value::MakeArray();
+            if (a.empty()) return out;
+            std::string s = a[0].AsString();
+            std::string sep = a.size() > 1 ? a[1].AsString() : " ";
+            auto arr = out.AsArray();
+            if (sep.empty()) { for (char c : s) arr->push_back(std::string(1, c)); return out; }
+            std::size_t pos = 0, next;
+            while ((next = s.find(sep, pos)) != std::string::npos) {
+                arr->push_back(s.substr(pos, next - pos));
+                pos = next + sep.size();
+            }
+            arr->push_back(s.substr(pos));
+            return out;
+        };
+        b["join"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            auto arr = a[0].AsArray();
+            std::string sep = a.size() > 1 ? a[1].AsString() : "";
+            if (!arr) return Value{std::string{}};
+            std::string s;
+            for (std::size_t i = 0; i < arr->size(); ++i) { if (i) s += sep; s += (*arr)[i].AsString(); }
+            return Value{s};
+        };
+        // Maps / dictionaries (string keys).
+        b["map"] = [](std::vector<Value>&) { return Value::MakeMap(); };
+        b["map_set"] = [](std::vector<Value>& a) {
+            if (a.size() >= 3) if (auto m = a[0].AsMap()) (*m)[a[1].AsString()] = a[2];
+            return a.empty() ? Value{} : a[0];
+        };
+        b["map_get"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto m = a[0].AsMap()) {
+                auto it = m->find(a[1].AsString());
+                if (it != m->end()) return it->second;
+            }
+            return a.size() > 2 ? a[2] : Value{};
+        };
+        b["map_has"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto m = a[0].AsMap()) return Value{m->count(a[1].AsString()) != 0};
+            return Value{false};
+        };
+        b["map_remove"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto m = a[0].AsMap()) m->erase(a[1].AsString());
+            return a.empty() ? Value{} : a[0];
+        };
+        b["map_keys"] = [](std::vector<Value>& a) {
+            Value out = Value::MakeArray();
+            if (!a.empty()) if (auto m = a[0].AsMap()) {
+                auto arr = out.AsArray();
+                for (auto& kv : *m) arr->push_back(kv.first);
+            }
+            return out;
+        };
+        b["map_count"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto m = a[0].AsMap()) return Value{(float)m->size()};
+            return Value{0.0f};
+        };
         b["pi"]    = [](std::vector<Value>&) { return Value{Mathf::PI}; };
         b["deg2rad"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Deg2Rad}; };
         b["rad2deg"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Rad2Deg}; };

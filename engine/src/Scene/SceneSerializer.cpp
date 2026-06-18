@@ -179,7 +179,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << btn->color.r << " " << btn->color.g << " " << btn->color.b << " " << btn->color.a << " "
             << btn->hoverColor.r << " " << btn->hoverColor.g << " " << btn->hoverColor.b << " " << btn->hoverColor.a << " "
             << btn->textColor.r << " " << btn->textColor.g << " " << btn->textColor.b << " " << btn->textColor.a
-            << " " << (int)btn->anchor << "\n";
+            << " " << (int)btn->anchor << " "
+            << btn->pressedColor.r << " " << btn->pressedColor.g << " " << btn->pressedColor.b << " " << btn->pressedColor.a << " "
+            << btn->disabledColor.r << " " << btn->disabledColor.g << " " << btn->disabledColor.b << " " << btn->disabledColor.a << " "
+            << (btn->interactable ? 1 : 0) << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -436,6 +439,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> t.r >> t.g >> t.b >> t.a;
                     btn->color = c; btn->hoverColor = h; btn->textColor = t;
                     ReadAnchor(in, btn->anchor);
+                    // Optional trailing block (pressed/disabled colors + interactable).
+                    in >> std::ws;
+                    int pk = in.peek();
+                    if (pk >= '0' && pk <= '9') {
+                        Color pc, dc; int inter = 1;
+                        in >> pc.r >> pc.g >> pc.b >> pc.a
+                           >> dc.r >> dc.g >> dc.b >> dc.a >> inter;
+                        btn->pressedColor = pc; btn->disabledColor = dc;
+                        btn->interactable = (inter != 0);
+                    }
                 } else if (field == "uipanel") {
                     auto* pn = go->AddComponent<UIPanel>();
                     Color c;

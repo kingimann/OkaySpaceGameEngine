@@ -479,7 +479,7 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {
             auto* btn = up->GetComponent<UIButton>();
             if (!btn || !up->active) continue;
-            const Color& bg = btn->IsHovered() ? btn->hoverColor : btn->color;
+            Color bg = btn->CurrentColor();
             Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, (float)w, (float)h);
             SDL_Rect r{(int)o.x, (int)o.y, (int)btn->size.x, (int)btn->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),

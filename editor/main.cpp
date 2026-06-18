@@ -1464,7 +1464,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Color##uib", c)) { btn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             float hc[4] = {btn->hoverColor.r, btn->hoverColor.g, btn->hoverColor.b, btn->hoverColor.a};
             if (ImGui::ColorEdit4("Hover##uib", hc)) { btn->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
-            ImGui::TextDisabled("calls the script's on_click() in the built game");
+            float prc[4] = {btn->pressedColor.r, btn->pressedColor.g, btn->pressedColor.b, btn->pressedColor.a};
+            if (ImGui::ColorEdit4("Pressed##uib", prc)) { btn->pressedColor = {prc[0], prc[1], prc[2], prc[3]}; ed.dirty = true; }
+            float dc[4] = {btn->disabledColor.r, btn->disabledColor.g, btn->disabledColor.b, btn->disabledColor.a};
+            if (ImGui::ColorEdit4("Disabled##uib", dc)) { btn->disabledColor = {dc[0], dc[1], dc[2], dc[3]}; ed.dirty = true; }
+            if (ImGui::Checkbox("Interactable##uib", &btn->interactable)) ed.dirty = true;
+            ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
@@ -1846,7 +1851,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, canvasSize.x, canvasSize.y);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + btn->size.x, a.y + btn->size.y);
-        dl->AddRectFilled(a, b, ToColor(btn->color), 4.0f);
+        dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), 4.0f);
         float px = 2.0f;
         float tw = btn->label.size() * (Font8x8::Width + 1) * px;
         DrawBitmapText(dl, btn->label, a.x + (btn->size.x - tw) * 0.5f,

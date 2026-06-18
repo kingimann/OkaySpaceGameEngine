@@ -1476,6 +1476,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
         }
     }
+    if (auto* im = go->GetComponent<UIImage>()) {
+        if (ImGui::CollapsingHeader("UI Image", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float pos[2] = {im->position.x, im->position.y};
+            if (ImGui::DragFloat2("Pos (px)##uim", pos, 1.0f)) { im->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {im->size.x, im->size.y};
+            if (ImGui::DragFloat2("Size (px)##uim", sz, 1.0f, 1.0f, 8000.0f)) { im->size = {sz[0], sz[1]}; ed.dirty = true; }
+            char tx[256];
+            std::strncpy(tx, im->texture.c_str(), sizeof(tx) - 1);
+            tx[sizeof(tx) - 1] = '\0';
+            if (ImGui::InputText("Texture##uim", tx, sizeof(tx))) { im->texture = tx; ed.dirty = true; }
+            float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
+            if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("image path (PNG/JPG); empty = colored rect");
+            if (ImGui::SmallButton("Remove##uim")) toRemove = im;
+        }
+    }
     if (auto* sl = go->GetComponent<UISlider>()) {
         if (ImGui::CollapsingHeader("UI Slider", ImGuiTreeNodeFlags_DefaultOpen)) {
             float pos[2] = {sl->position.x, sl->position.y};
@@ -1598,6 +1614,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<UIButton>(); ed.dirty = true; }
         if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))
             { go->AddComponent<UIPanel>(); ed.dirty = true; }
+        if (!go->GetComponent<UIImage>() && F("UI Image") && ImGui::Selectable("UI Image"))
+            { go->AddComponent<UIImage>(); ed.dirty = true; }
         if (!go->GetComponent<UIProgressBar>() && F("UI Progress Bar") && ImGui::Selectable("UI Progress Bar"))
             { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
         if (!go->GetComponent<UISlider>() && F("UI Slider") && ImGui::Selectable("UI Slider"))
@@ -1729,6 +1747,18 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ImVec2 o = worldToScreen(up->transform->Position());
             DrawBitmapText(dl, tr->text, o.x, o.y, tr->pixelSize * scale, col);
         }
+    }
+
+    // UI images (logos/icons): preview as a tinted rect with the path centered.
+    for (const auto& up : objs) {
+        auto* im = up->GetComponent<UIImage>();
+        if (!im || !up->active) continue;
+        ImVec2 a(canvasPos.x + im->position.x, canvasPos.y + im->position.y);
+        ImVec2 b(a.x + im->size.x, a.y + im->size.y);
+        dl->AddRectFilled(a, b, ToColor(im->color), 3.0f);
+        dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), 3.0f);
+        if (!im->texture.empty())
+            DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
     }
 
     // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.

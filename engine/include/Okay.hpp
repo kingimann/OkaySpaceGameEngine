@@ -61,6 +61,7 @@
 
 // In-game UI
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"

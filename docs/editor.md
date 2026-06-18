@@ -84,7 +84,8 @@ uses, built right into the engine app.
   `Mesh::Transformed(scale, offset)` and `Mesh::Combine`/`Combined`, and export
   any mesh with `Mesh::SaveOBJ`.
 - **UI widgets** — build menus and HUDs from screen-space components: *UI Panel*
-  (background/overlay), *UI Button* (calls the script's `on_click()`), *UI
+  (background/overlay), *UI Image* (logos/icons/title art from a PNG/JPG, tinted;
+  a colored rect when no texture), *UI Button* (calls the script's `on_click()`), *UI
   Progress Bar* (`set_progress(0..1)`), *UI Slider* (drag to pick a value in a
   min/max range; calls `on_change()`, read with `slider_value()` / set with
   `set_slider(v)`), and *UI Toggle* (a labelled checkbox; calls `on_toggle()`,

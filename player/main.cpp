@@ -390,6 +390,22 @@ int main(int argc, char** argv) {
 
         // In-game UI (screen space), drawn on top of everything.
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        for (const auto& up : scene.Objects()) {           // images (logos/icons) first
+            auto* im = up->GetComponent<UIImage>();
+            if (!im || !up->active) continue;
+            SDL_Rect r{(int)im->position.x, (int)im->position.y, (int)im->size.x, (int)im->size.y};
+            SDL_Texture* tex = GetTexture(renderer, im->texture, baseDir, textureCache);
+            if (tex) {
+                SDL_SetTextureColorMod(tex, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
+                                       (Uint8)(im->color.b * 255));
+                SDL_SetTextureAlphaMod(tex, (Uint8)(im->color.a * 255));
+                SDL_RenderCopy(renderer, tex, nullptr, &r);
+            } else {                                        // no image -> colored fill
+                SDL_SetRenderDrawColor(renderer, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
+                                       (Uint8)(im->color.b * 255), (Uint8)(im->color.a * 255));
+                SDL_RenderFillRect(renderer, &r);
+            }
+        }
         for (const auto& up : scene.Objects()) {           // panels (backgrounds) first
             auto* pn = up->GetComponent<UIPanel>();
             if (!pn || !up->active) continue;

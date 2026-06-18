@@ -51,6 +51,11 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
 
+// Audio
+#include "okay/Audio/AudioClip.hpp"
+#include "okay/Components/AudioSource.hpp"
+#include "okay/Audio/AudioMixer.hpp"
+
 // Multiplayer networking
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/UdpSocket.hpp"

@@ -1186,6 +1186,30 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
     }
+    if (auto* an = go->GetComponent<SpriteAnimator>()) {
+        if (ImGui::CollapsingHeader("Sprite Animator", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Loop##anim", &an->loop)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Playing##anim", &an->playing)) ed.dirty = true;
+            ImGui::TextDisabled("Frames (image paths):");
+            int removeAt = -1;
+            for (std::size_t i = 0; i < an->frames.size(); ++i) {
+                char fb[256];
+                std::strncpy(fb, an->frames[i].c_str(), sizeof(fb) - 1);
+                fb[sizeof(fb) - 1] = '\0';
+                ImGui::PushID((int)i);
+                if (ImGui::InputText("##frame", fb, sizeof(fb))) { an->frames[i] = fb; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) removeAt = (int)i;
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { an->frames.erase(an->frames.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::SmallButton("Add Frame")) { an->frames.push_back("frame.png"); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove##anim")) toRemove = an;
+        }
+    }
 
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
@@ -1214,6 +1238,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
         if (!go->GetComponent<TextRenderer>() && ImGui::Selectable("Text"))
             { go->AddComponent<TextRenderer>(); ed.dirty = true; }
+        if (!go->GetComponent<SpriteAnimator>() && ImGui::Selectable("Sprite Animator"))
+            { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
         ImGui::Separator();
         if (!go->GetComponent<Mover>() && ImGui::Selectable("Mover"))
             { go->AddComponent<Mover>(); ed.dirty = true; }

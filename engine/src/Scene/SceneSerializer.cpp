@@ -14,6 +14,7 @@
 #include "okay/Components/Lifetime.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/SpriteAnimator.hpp"
 
 #include <cctype>
 #include <functional>
@@ -127,6 +128,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tr->color.r << " " << tr->color.g << " " << tr->color.b << " " << tr->color.a << " "
             << tr->pixelSize << " " << (tr->screenSpace ? 1 : 0) << " "
             << tr->screenPos.x << " " << tr->screenPos.y << "\n";
+    }
+    if (auto* an = go->GetComponent<SpriteAnimator>()) {
+        out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
+            << (an->playing ? 1 : 0) << " " << an->frames.size();
+        for (const auto& f : an->frames) out << " " << Quote(f);
+        out << "\n";
     }
 }
 } // namespace
@@ -275,6 +282,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* tr = go->AddComponent<TextRenderer>();
                     tr->text = str; tr->color = c; tr->pixelSize = px;
                     tr->screenSpace = (ss != 0); tr->screenPos = sp;
+                } else if (field == "spriteanim") {
+                    float fps = 8.0f; int loop = 1, playing = 1, count = 0;
+                    in >> fps >> loop >> playing >> count;
+                    auto* an = go->AddComponent<SpriteAnimator>();
+                    an->fps = fps; an->loop = (loop != 0); an->playing = (playing != 0);
+                    for (int k = 0; k < count; ++k) an->frames.push_back(ReadQuoted(in));
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;

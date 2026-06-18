@@ -62,6 +62,10 @@ add_executable(test_text test_text.cpp)
 target_link_libraries(test_text PRIVATE okay::engine)
 add_test(NAME text COMMAND test_text)
 
+add_executable(test_spriteanim test_spriteanim.cpp)
+target_link_libraries(test_spriteanim PRIVATE okay::engine)
+add_test(NAME spriteanim COMMAND test_spriteanim)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

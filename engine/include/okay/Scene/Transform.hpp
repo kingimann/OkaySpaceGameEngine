@@ -30,6 +30,14 @@ public:
     Vec3 Up() const      { return Rotation() * Vec3::Up; }
     Vec3 Right() const   { return Rotation() * Vec3::Right; }
 
+    // ---- Local <-> world conversions ----------------------------------
+    Vec3 TransformPoint(const Vec3& local) const { return LocalToWorldMatrix().MultiplyPoint(local); }
+    Vec3 InverseTransformPoint(const Vec3& world) const {
+        return LocalToWorldMatrix().Inverse().MultiplyPoint(world);
+    }
+    Vec3 TransformDirection(const Vec3& dir) const { return Rotation() * dir; }
+    Vec3 InverseTransformDirection(const Vec3& dir) const { return Rotation().Conjugate() * dir; }
+
     // ---- Matrices ------------------------------------------------------
     Mat4 LocalToWorldMatrix() const;
 

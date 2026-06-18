@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 0.17.0
+    VERSION 0.18.0
     DESCRIPTION "A Unity-inspired C++ game engine"
     LANGUAGES CXX)
 
@@ -20,6 +20,7 @@ option(OKAY_BUILD_SANDBOX  "Build the sandbox demo game"       ON)
 option(OKAY_BUILD_TESTS    "Build the unit tests"              ON)
 option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
+option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 
 if(MSVC)
     add_compile_options(/W4 /permissive-)
@@ -53,6 +54,12 @@ endif()
 # ---- Desktop GUI editor ----------------------------------------------
 if(OKAY_BUILD_EDITOR)
     add_subdirectory(editor)
+endif()
+
+# ---- Standalone game player ------------------------------------------
+# The editor's "Build Game" ships this runtime, so build it alongside the editor.
+if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)
+    add_subdirectory(player)
 endif()
 
 # ---- Tests ------------------------------------------------------------

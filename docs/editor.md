@@ -71,10 +71,32 @@ uses, built right into the engine app.
   left-drag to move, right-drag to pan, mouse-wheel to zoom.
 - **GameObject menu** — create Empty / Sprite / Camera objects.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
-  (`.okayscene` text files).
+  (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a
+  standalone, double-clickable game.
 - **Toolbar** — **Play** runs the scene's real lifecycle (Awake/Start/Update +
   scripts, physics, etc.); **Stop** restores the exact pre-play edit state;
   **Step** advances a single frame.
+
+### Building a standalone game
+
+**File → Build Game…** (Ctrl+B) exports the current scene as a self-contained
+game you can ship. Give it a name and an output folder and it will:
+
+1. Serialize the open scene to `game.okayscene` in that folder, and
+2. Copy the **player runtime** (`OkaySpacePlayer.exe`, which ships next to the
+   editor) into the folder, renamed to `<GameName>.exe`.
+
+The result is a folder containing `<GameName>.exe` + `game.okayscene`.
+Double-clicking the exe runs the scene through the same engine lifecycle the
+editor's **Play** uses — sprites in 2D (orthographic camera), wireframe meshes
+in 3D (perspective camera), keyboard input fed into `Input`, and audio mixed
+through `AudioMixer`. Press **Esc** to quit.
+
+The player (`player/`) is a tiny SDL2-only program (no editor/ImGui). Build it
+on its own with `-DOKAY_BUILD_PLAYER=ON`; it is also built automatically with
+the editor so Build Game always has a runtime to copy. Pass a scene path as the
+first argument (`OkaySpacePlayer.exe my.okayscene`) or it loads `game.okayscene`
+from beside the executable.
 
 ## Notes
 

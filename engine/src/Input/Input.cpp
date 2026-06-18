@@ -70,6 +70,13 @@ void Input::Poll() {
 #endif
 }
 
+void Input::FeedKeys(const std::vector<char>& downKeys) {
+    s_previous = s_current;
+    s_current.clear();
+    for (char k : downKeys)
+        s_current[static_cast<char>(std::tolower(static_cast<unsigned char>(k)))] = true;
+}
+
 bool Input::GetKey(char key) {
     key = static_cast<char>(std::tolower(static_cast<unsigned char>(key)));
     auto it = s_current.find(key);

@@ -4,6 +4,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Core/Random.hpp"
 
 #include <cctype>
 #include <functional>
@@ -519,6 +520,21 @@ struct OkayScriptVM::Impl {
             if (a.empty()) return Value{false};
             std::string s = a[0].AsString();
             return Value{!s.empty() && Input::GetKey(s[0])};
+        };
+        b["key_down"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{false};
+            std::string s = a[0].AsString();
+            return Value{!s.empty() && Input::GetKeyDown(s[0])};
+        };
+        b["rand"] = [](std::vector<Value>& a) {
+            float lo = a.size() > 0 ? a[0].AsFloat() : 0.0f;
+            float hi = a.size() > 1 ? a[1].AsFloat() : 1.0f;
+            return Value{Random::Shared().Range(lo, hi)};
+        };
+        b["dist"] = [](std::vector<Value>& a) {
+            if (a.size() < 4) return Value{0.0f};
+            float dx = a[2].AsFloat() - a[0].AsFloat(), dy = a[3].AsFloat() - a[1].AsFloat();
+            return Value{Mathf::Sqrt(dx * dx + dy * dy)};
         };
         b["get"] = [this](std::vector<Value>& a) {
             if (a.empty() || !rt.host) return Value{};

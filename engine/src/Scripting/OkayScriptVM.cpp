@@ -792,6 +792,15 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
     }
 }
 
+void OkayScriptVM::CallEvent(const std::string& function) {
+    if (!m_impl->loaded) return;
+    if (m_impl->rt.functions.count(function)) {
+        std::vector<Value> none;
+        try { m_impl->rt.Call(function, none); }
+        catch (const std::exception& e) { Log::Error("OkayScript ", function.c_str(), "(): ", e.what()); }
+    }
+}
+
 vs::VsValue OkayScriptVM::GetGlobal(const std::string& name) const {
     auto& g = m_impl->rt.Global().vars;
     auto it = g.find(name);

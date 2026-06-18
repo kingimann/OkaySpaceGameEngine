@@ -21,6 +21,23 @@ static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int 
                      (int)(h * 0.5f - (p.y - camPos.y) * scale)};
 }
 
+// A stable, distinct color for each non-zero tile id (no palette is stored).
+static SDL_Color TileColor(int id) {
+    unsigned h = (unsigned)id * 2654435761u;
+    return SDL_Color{(Uint8)(80 + (h & 0x7F)), (Uint8)(80 + ((h >> 8) & 0x7F)),
+                     (Uint8)(80 + ((h >> 16) & 0x7F)), 255};
+}
+
+// Draw a world-space axis-aligned quad (used for tiles and particles).
+static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, float hWorld,
+                          const Vec3& camPos, float scale, int w, int h, SDL_Color col) {
+    SDL_Point c = W2S(center, camPos, scale, w, h);
+    int hw = (int)(wWorld * 0.5f * scale), hh = (int)(hWorld * 0.5f * scale);
+    SDL_Rect rect{c.x - hw, c.y - hh, hw * 2 > 0 ? hw * 2 : 1, hh * 2 > 0 ? hh * 2 : 1};
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    SDL_RenderFillRect(r, &rect);
+}
+
 int main(int argc, char** argv) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0) {
@@ -166,6 +183,33 @@ int main(int argc, char** argv) {
                 }
                 const int idx[6] = {0, 1, 2, 0, 2, 3};
                 SDL_RenderGeometry(renderer, nullptr, vtx, 4, idx, 6);
+            }
+
+            // Tilemaps: draw each non-empty cell as a colored quad.
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            for (const auto& up : scene.Objects()) {
+                auto* tm = up->GetComponent<Tilemap>();
+                if (!tm || !up->active) continue;
+                for (int y = 0; y < tm->Height(); ++y)
+                    for (int x = 0; x < tm->Width(); ++x) {
+                        int id = tm->GetTile(x, y);
+                        if (id == 0) continue;
+                        FillWorldQuad(renderer, tm->CellToWorld(x, y), tm->tileSize,
+                                      tm->tileSize, camPos, scale, w, h, TileColor(id));
+                    }
+            }
+
+            // Particle systems: draw each live particle as a small fading quad.
+            for (const auto& up : scene.Objects()) {
+                auto* ps = up->GetComponent<ParticleSystem>();
+                if (!ps || !up->active) continue;
+                for (const auto& p : ps->Particles()) {
+                    if (!p.alive) continue;
+                    SDL_Color col{(Uint8)(p.color.r * 255), (Uint8)(p.color.g * 255),
+                                  (Uint8)(p.color.b * 255), (Uint8)(p.color.a * 255)};
+                    FillWorldQuad(renderer, p.position, p.size, p.size,
+                                  camPos, scale, w, h, col);
+                }
             }
         }
         SDL_RenderPresent(renderer);

@@ -932,6 +932,27 @@ struct OkayScriptVM::Impl {
         // Transform helpers
         b["set_x"] = [tf](std::vector<Value>& a) { if (Transform* t = tf()) t->localPosition.x = a.empty() ? 0 : a[0].AsFloat(); return Value{}; };
         b["set_y"] = [tf](std::vector<Value>& a) { if (Transform* t = tf()) t->localPosition.y = a.empty() ? 0 : a[0].AsFloat(); return Value{}; };
+        b["set_z"] = [tf](std::vector<Value>& a) { if (Transform* t = tf()) t->localPosition.z = a.empty() ? 0 : a[0].AsFloat(); return Value{}; };
+        b["pos_z"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.z : 0.0f}; };
+        // 3D movement / placement / rotation.
+        b["move3"] = [tf](std::vector<Value>& a) {
+            if (Transform* t = tf())
+                t->Translate({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                              a.size() > 2 ? a[2].AsFloat() : 0.0f});
+            return Value{};
+        };
+        b["set_pos3"] = [tf](std::vector<Value>& a) {
+            if (Transform* t = tf())
+                t->localPosition = {a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                    a.size() > 2 ? a[2].AsFloat() : 0.0f};
+            return Value{};
+        };
+        b["rotate3"] = [tf](std::vector<Value>& a) {
+            if (Transform* t = tf())
+                t->Rotate({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                           a.size() > 2 ? a[2].AsFloat() : 0.0f});
+            return Value{};
+        };
     }
 };
 

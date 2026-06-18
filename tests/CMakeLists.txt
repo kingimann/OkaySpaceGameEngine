@@ -126,6 +126,10 @@ add_executable(test_ui test_ui.cpp)
 target_link_libraries(test_ui PRIVATE okay::engine)
 add_test(NAME ui COMMAND test_ui)
 
+add_executable(test_mesh3d test_mesh3d.cpp)
+target_link_libraries(test_mesh3d PRIVATE okay::engine)
+add_test(NAME mesh3d COMMAND test_mesh3d)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -61,12 +62,71 @@ struct Mesh {
         return m;
     }
 
-    static Mesh Plane(float size = 10.0f) { Mesh m = Quad(size); m.name = "Quad"; return m; }
+    /// A flat horizontal ground plane in the XZ plane (good for 3D floors).
+    static Mesh Plane(float size = 10.0f) {
+        float h = size * 0.5f;
+        Mesh m;
+        m.name = "Plane";
+        m.vertices = {{-h, 0, -h}, {h, 0, -h}, {h, 0, h}, {-h, 0, h}};
+        m.triangles = {0, 2, 1, 0, 3, 2};
+        return m;
+    }
 
-    /// Recreate a primitive mesh from its name ("Cube"/"Pyramid"/"Quad").
+    /// A UV sphere of the given radius.
+    static Mesh Sphere(float radius = 0.5f, int rings = 8, int sectors = 12) {
+        Mesh m;
+        m.name = "Sphere";
+        const float kPi = 3.14159265358979323846f;
+        for (int r = 0; r <= rings; ++r) {
+            float phi = kPi * (float)r / rings;            // 0..pi (top to bottom)
+            for (int s = 0; s <= sectors; ++s) {
+                float theta = 2.0f * kPi * (float)s / sectors;
+                m.vertices.push_back({radius * std::sin(phi) * std::cos(theta),
+                                      radius * std::cos(phi),
+                                      radius * std::sin(phi) * std::sin(theta)});
+            }
+        }
+        int stride = sectors + 1;
+        for (int r = 0; r < rings; ++r)
+            for (int s = 0; s < sectors; ++s) {
+                int a = r * stride + s, b = a + stride;
+                m.triangles.insert(m.triangles.end(), {a, b, a + 1, a + 1, b, b + 1});
+            }
+        return m;
+    }
+
+    /// A capped cylinder along Y.
+    static Mesh Cylinder(float radius = 0.5f, float height = 1.0f, int sectors = 12) {
+        Mesh m;
+        m.name = "Cylinder";
+        const float kPi = 3.14159265358979323846f;
+        float h = height * 0.5f;
+        for (int s = 0; s <= sectors; ++s) {            // interleaved top/bottom ring
+            float th = 2.0f * kPi * (float)s / sectors;
+            float x = radius * std::cos(th), z = radius * std::sin(th);
+            m.vertices.push_back({x, h, z});
+            m.vertices.push_back({x, -h, z});
+        }
+        for (int s = 0; s < sectors; ++s) {             // side quads
+            int t0 = s * 2, b0 = s * 2 + 1, t1 = (s + 1) * 2, b1 = (s + 1) * 2 + 1;
+            m.triangles.insert(m.triangles.end(), {t0, b0, t1, t1, b0, b1});
+        }
+        int topC = (int)m.vertices.size(); m.vertices.push_back({0, h, 0});
+        int botC = (int)m.vertices.size(); m.vertices.push_back({0, -h, 0});
+        for (int s = 0; s < sectors; ++s) {             // caps
+            m.triangles.insert(m.triangles.end(), {topC, s * 2, (s + 1) * 2});
+            m.triangles.insert(m.triangles.end(), {botC, (s + 1) * 2 + 1, s * 2 + 1});
+        }
+        return m;
+    }
+
+    /// Recreate a primitive mesh from its name.
     static Mesh FromName(const std::string& n) {
-        if (n == "Pyramid") return Pyramid();
-        if (n == "Quad")    return Quad();
+        if (n == "Pyramid")  return Pyramid();
+        if (n == "Quad")     return Quad();
+        if (n == "Plane")    return Plane();
+        if (n == "Sphere")   return Sphere();
+        if (n == "Cylinder") return Cylinder();
         return Cube();
     }
 };

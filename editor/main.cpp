@@ -513,8 +513,11 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
         if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
         ImGui::Separator();
-        if (ImGui::MenuItem("Create Cube (3D)"))    { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
-        if (ImGui::MenuItem("Create Pyramid (3D)")) { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
+        if (ImGui::MenuItem("Create Cube (3D)"))     { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
+        if (ImGui::MenuItem("Create Pyramid (3D)"))  { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
+        if (ImGui::MenuItem("Create Sphere (3D)"))   { ed.CreateMesh("Sphere");   ConsoleLog("Created Sphere"); created = true; }
+        if (ImGui::MenuItem("Create Cylinder (3D)")) { ed.CreateMesh("Cylinder"); ConsoleLog("Created Cylinder"); created = true; }
+        if (ImGui::MenuItem("Create Plane (3D)"))    { ed.CreateMesh("Plane");    ConsoleLog("Created Plane"); created = true; }
         ImGui::Separator();
         if (ImGui::MenuItem("Create Particle System")) {
             GameObject* go = ed.CreateEmpty("Particles");

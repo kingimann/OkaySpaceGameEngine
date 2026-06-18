@@ -24,6 +24,9 @@ public:
     GameObject* CreateCamera(const std::string& name = "Camera");
     GameObject* CreateCube(const std::string& name = "Cube");
     GameObject* CreatePyramid(const std::string& name = "Pyramid");
+    /// Create a GameObject with a MeshRenderer for any named primitive
+    /// ("Cube"/"Pyramid"/"Plane"/"Sphere"/"Cylinder").
+    GameObject* CreateMesh(const std::string& meshName);
     void DeleteSelected();
     /// Clone the selected object (and its children); selects the clone.
     GameObject* DuplicateSelected();

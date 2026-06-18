@@ -5,6 +5,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/Light.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -113,6 +114,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
             << Quote(mr->meshPath) << " " << (mr->doubleSided ? 1 : 0) << "\n";
+    }
+    if (auto* li = go->GetComponent<Light>()) {
+        out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
+            << li->color.a << " " << li->ambient << " " << li->intensity << "\n";
     }
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -359,6 +364,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     in >> std::ws; // optional double-sided flag
                     if (std::isdigit(in.peek())) { int ds = 0; in >> ds; mr->doubleSided = (ds != 0); }
+                } else if (field == "light") {
+                    auto* li = go->AddComponent<Light>();
+                    Color c;
+                    in >> c.r >> c.g >> c.b >> c.a >> li->ambient >> li->intensity;
+                    li->color = c;
                 } else if (field == "rigidbody2d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;
                     in >> bt >> gs >> mass >> drag >> bounce;

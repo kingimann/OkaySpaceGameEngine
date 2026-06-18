@@ -206,6 +206,11 @@ void EditorState::NewScene3D() {
     cube->transform->localPosition = {0, 0, 0};
     cube->GetComponent<MeshRenderer>()->color = Color::Cyan;
 
+    // An angled directional light so the cube is shaded out of the box.
+    GameObject* light = CreateEmpty("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
     // Frame the editor orbit camera on the cube.
     camTarget = {0, 0, 0};
     camDist = 6.0f;

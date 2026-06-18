@@ -275,6 +275,7 @@ int main(int argc, char** argv) {
             if (w > 0 && h > 0) {
                 mesh3D.Resize(w, h);
                 mesh3D.Clear(0u);                       // transparent
+                ApplySceneLight(scene);                 // a Light object aims the shading
                 RenderMeshes(mesh3D, scene, vp, camPos);
                 if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
                     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);

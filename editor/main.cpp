@@ -140,6 +140,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     h = h < 1 ? 1 : (h > 4096 ? 4096 : h);
     g_view3DRaster.Resize(w, h);
     g_view3DRaster.Clear(0u);                    // transparent
+    ApplySceneLight(scene);                      // a Light object aims the shading
     RenderMeshes(g_view3DRaster, scene, vp, eye);
     if (!g_view3DTex || g_view3DW != w || g_view3DH != h) {
         if (g_view3DTex) SDL_DestroyTexture(g_view3DTex);
@@ -480,6 +481,12 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         if (ImGui::MenuItem("Create Sphere (3D)"))   { ed.CreateMesh("Sphere");   ConsoleLog("Created Sphere"); created = true; }
         if (ImGui::MenuItem("Create Cylinder (3D)")) { ed.CreateMesh("Cylinder"); ConsoleLog("Created Cylinder"); created = true; }
         if (ImGui::MenuItem("Create Plane (3D)"))    { ed.CreateMesh("Plane");    ConsoleLog("Created Plane"); created = true; }
+        if (ImGui::MenuItem("Create Directional Light")) {
+            GameObject* go = ed.CreateEmpty("Directional Light");
+            go->AddComponent<Light>();
+            go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
+            ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Create Particle System")) {
             GameObject* go = ed.CreateEmpty("Particles");
@@ -1262,11 +1269,15 @@ void DrawInspector(EditorState& ed) {
             t->localRotation = Quat::Euler(e); ed.dirty = true;
         }
         if (ImGui::IsItemActivated()) ed.PushUndo();
+        // Cameras aren't scalable (scaling warps the view); show it read-only.
+        bool isCam = go->GetComponent<Camera>() != nullptr;
         float scl[3] = {t->localScale.x, t->localScale.y, t->localScale.z};
+        if (isCam) ImGui::BeginDisabled();
         if (ImGui::DragFloat3("Scale", scl, 0.05f)) {
             t->localScale = {scl[0], scl[1], scl[2]}; ed.dirty = true;
         }
         if (ImGui::IsItemActivated()) ed.PushUndo();
+        if (isCam) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
     }
 
     if (auto* sr = go->GetComponent<SpriteRenderer>()) {
@@ -1344,6 +1355,15 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Fit 1u##mesh")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
+        }
+    }
+    if (auto* li = go->GetComponent<Light>()) {
+        if (ImGui::CollapsingHeader("Light (Directional)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float c[4] = {li->color.r, li->color.g, li->color.b, li->color.a};
+            if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            if (ImGui::SliderFloat("Ambient##light", &li->ambient, 0.0f, 1.0f)) ed.dirty = true;
+            ImGui::TextDisabled("Rotate this object to aim the light (its +Z is the direction).");
+            if (ImGui::SmallButton("Remove##light")) toRemove = li;
         }
     }
     if (auto* cam = go->GetComponent<Camera>()) {
@@ -1682,6 +1702,10 @@ void DrawInspector(EditorState& ed) {
         if (go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>() &&
             F("Tilemap Collider 2D") && ImGui::Selectable("Tilemap Collider 2D"))
             { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+
+        Hdr("Lighting");
+        if (!go->GetComponent<Light>() && F("Directional Light") && ImGui::Selectable("Directional Light"))
+            { go->AddComponent<Light>(); ed.dirty = true; }
 
         Hdr("Camera");
         if (!go->GetComponent<Camera>() && F("Camera") && ImGui::Selectable("Camera"))
@@ -2131,6 +2155,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     bool grabbedThisClick = false;
     if (sel && !ed.isPlaying()) {
         Transform* t = sel->transform;
+        // Cameras may be moved/rotated but not scaled (scaling a camera warps the
+        // view and flickers the scene), so the Scale tool falls back to Move.
+        bool noScale = sel->GetComponent<Camera>() != nullptr;
+        Tool tool = (noScale && g_tool == Tool::Scale) ? Tool::Move : g_tool;
         Vec3 o = t->Position();
         float L = ed.camDist * 0.18f;                 // arm length, screen-stable
         Vec3 axis[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
@@ -2145,7 +2173,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (!tipOk[i]) continue;
                 ImU32 c = (g_gizmoGrab && g_gizmoAxis == i) ? IM_COL32(255, 230, 90, 255) : col[i];
                 dl->AddLine(so, tip[i], c, 3.0f);
-                if (g_tool == Tool::Scale)
+                if (tool == Tool::Scale)
                     dl->AddRectFilled(ImVec2(tip[i].x - 5, tip[i].y - 5),
                                       ImVec2(tip[i].x + 5, tip[i].y + 5), c);   // scale cube
                 else
@@ -2172,14 +2200,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (slen > 1e-3f) {
                 float along = (io.MouseDelta.x * sdir.x + io.MouseDelta.y * sdir.y) / slen;
                 float amt = along * (L / slen);       // screen px -> world units along axis
-                if (g_tool == Tool::Move) {
+                if (tool == Tool::Move) {
                     t->localPosition += axis[i] * amt;
                     if (g_snap && g_snapSize > 0.0f) {
                         t->localPosition.x = Mathf::Round(t->localPosition.x / g_snapSize) * g_snapSize;
                         t->localPosition.y = Mathf::Round(t->localPosition.y / g_snapSize) * g_snapSize;
                         t->localPosition.z = Mathf::Round(t->localPosition.z / g_snapSize) * g_snapSize;
                     }
-                } else if (g_tool == Tool::Rotate) {
+                } else if (tool == Tool::Rotate) {
                     t->Rotate(axis[i] * (along * 0.6f));        // degrees about the axis
                 } else { // Scale
                     Vec3 sc = t->localScale;

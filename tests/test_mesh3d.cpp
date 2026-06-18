@@ -428,6 +428,29 @@ int main() {
         CHECK_NEAR(rb->velocity.y, 8.0f, 0.01f);
     }
 
+    // --- Light: serializes and aims the global SceneLight via its forward ---
+    {
+        SceneLight::Reset();
+        Scene scene("Lit");
+        GameObject* go = scene.CreateGameObject("Sun");
+        auto* l = go->AddComponent<Light>();
+        l->ambient = 0.5f;
+        go->transform->localRotation = Quat::Euler({90, 0, 0}); // forward +Z -> down -Y
+        ApplySceneLight(scene);
+        CHECK_NEAR(SceneLight::Ambient(), 0.5f, 0.001f);
+        Vec3 d = SceneLight::Direction();
+        CHECK_NEAR(d.y, -1.0f, 0.02f);          // light shines downward
+
+        // Round-trips through serialization.
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("Sun")->GetComponent<Light>();
+        CHECK(r != nullptr);
+        CHECK_NEAR(r->ambient, 0.5f, 0.001f);
+        SceneLight::Reset();
+    }
+
     // --- MeshRenderer.doubleSided round-trips through serialization ---
     {
         Scene scene("DS");

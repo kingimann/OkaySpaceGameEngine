@@ -32,7 +32,7 @@ using Value = vs::VsValue;
 // ===================== Lexer =====================
 enum class Tok {
     End, Number, String, Ident,
-    Var, If, Else, While, For, Function, Return, True, False,
+    Var, If, Else, While, For, Function, Return, True, False, Break, Continue,
     Plus, Minus, Star, Slash, Percent,
     Assign, PlusEq, MinusEq, StarEq, SlashEq,
     Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
@@ -119,7 +119,8 @@ private:
             {"var", Tok::Var}, {"if", Tok::If}, {"else", Tok::Else},
             {"while", Tok::While}, {"for", Tok::For},
             {"function", Tok::Function}, {"return", Tok::Return},
-            {"true", Tok::True}, {"false", Tok::False}};
+            {"true", Tok::True}, {"false", Tok::False},
+            {"break", Tok::Break}, {"continue", Tok::Continue}};
         auto it = kw.find(s);
         return {it != kw.end() ? it->second : Tok::Ident, s, 0, m_line};
     }
@@ -165,6 +166,8 @@ using ExprPtr = std::unique_ptr<Expr>;
 using StmtPtr = std::unique_ptr<Stmt>;
 
 struct ReturnSignal { Value value; };
+struct BreakSignal {};
+struct ContinueSignal {};
 
 // ===================== Environment / Runtime =====================
 struct Environment {
@@ -322,6 +325,8 @@ struct VarDeclStmt : Stmt {
     void Exec(Runtime& r) override { r.Define(n, init ? init->Eval(r) : Value{}); }
 };
 struct ReturnStmt : Stmt { ExprPtr e; explicit ReturnStmt(ExprPtr x) : e(std::move(x)) {} void Exec(Runtime& r) override { throw ReturnSignal{e ? e->Eval(r) : Value{}}; } };
+struct BreakStmt : Stmt { void Exec(Runtime&) override { throw BreakSignal{}; } };
+struct ContinueStmt : Stmt { void Exec(Runtime&) override { throw ContinueSignal{}; } };
 struct BlockStmt : Stmt {
     std::vector<StmtPtr> body;
     void Exec(Runtime& r) override { for (auto& s : body) s->Exec(r); }
@@ -338,7 +343,9 @@ struct WhileStmt : Stmt {
     void Exec(Runtime& r) override {
         int guard = 0;
         while (cond->Eval(r).AsBool()) {
-            for (auto& s : body) s->Exec(r);
+            try { for (auto& s : body) s->Exec(r); }
+            catch (ContinueSignal&) {}
+            catch (BreakSignal&) { break; }
             if (++guard > 1000000) throw ScriptError("while loop exceeded iteration limit");
         }
     }
@@ -351,7 +358,9 @@ struct ForStmt : Stmt {
         if (init) init->Exec(r);
         int guard = 0;
         while (!cond || cond->Eval(r).AsBool()) {
-            for (auto& s : body) s->Exec(r);
+            try { for (auto& s : body) s->Exec(r); }
+            catch (ContinueSignal&) {}        // fall through to the step
+            catch (BreakSignal&) { break; }
             if (step) step->Eval(r);
             if (++guard > 1000000) throw ScriptError("for loop exceeded iteration limit");
         }
@@ -379,6 +388,8 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
         for (auto& s : fn.body) s->Exec(*this);
     } catch (ReturnSignal& rs) {
         ret = rs.value;
+    } catch (BreakSignal&) {       // stray break/continue (no enclosing loop):
+    } catch (ContinueSignal&) {    // end the function rather than escaping it.
     }
     scopes.pop_back();
     return ret;
@@ -492,6 +503,8 @@ private:
             Match(Tok::Semicolon);
             return std::make_unique<ReturnStmt>(std::move(e));
         }
+        if (Match(Tok::Break))    { Match(Tok::Semicolon); return std::make_unique<BreakStmt>(); }
+        if (Match(Tok::Continue)) { Match(Tok::Semicolon); return std::make_unique<ContinueStmt>(); }
         auto e = ParseExpression();
         Match(Tok::Semicolon);
         return std::make_unique<ExprStmt>(std::move(e));
@@ -852,6 +865,67 @@ struct OkayScriptVM::Impl {
                 if (!arr->empty()) { Value last = arr->back(); arr->pop_back(); return last; }
             return Value{};
         };
+        b["contains"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                std::string n = a[1].AsString();
+                for (auto& e : *arr) if (e.AsString() == n) return Value{true};
+            }
+            return Value{false};
+        };
+        b["index_of"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                std::string n = a[1].AsString();
+                for (std::size_t i = 0; i < arr->size(); ++i)
+                    if ((*arr)[i].AsString() == n) return Value{(float)i};
+            }
+            return Value{-1.0f};
+        };
+        b["remove_at"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                int i = (int)a[1].AsFloat();
+                if (i >= 0 && i < (int)arr->size()) arr->erase(arr->begin() + i);
+            }
+            return a.empty() ? Value{} : a[0];
+        };
+        // String helpers.
+        b["str_len"] = [](std::vector<Value>& a) { return Value{a.empty() ? 0.0f : (float)a[0].AsString().size()}; };
+        b["upper"] = [](std::vector<Value>& a) {
+            std::string s = a.empty() ? "" : a[0].AsString();
+            for (auto& c : s) c = (char)std::toupper((unsigned char)c);
+            return Value{s};
+        };
+        b["lower"] = [](std::vector<Value>& a) {
+            std::string s = a.empty() ? "" : a[0].AsString();
+            for (auto& c : s) c = (char)std::tolower((unsigned char)c);
+            return Value{s};
+        };
+        b["substr"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString();
+            int start = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            int n = a.size() > 2 ? (int)a[2].AsFloat() : (int)s.size();
+            if (start < 0) start = 0;
+            if (start > (int)s.size()) return Value{std::string{}};
+            if (n < 0) n = 0;
+            return Value{s.substr(start, n)};
+        };
+        b["char_at"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString();
+            int i = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            if (i < 0 || i >= (int)s.size()) return Value{std::string{}};
+            return Value{std::string(1, s[i])};
+        };
+        b["str_find"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{-1.0f};
+            auto pos = a[0].AsString().find(a[1].AsString());
+            return Value{pos == std::string::npos ? -1.0f : (float)pos};
+        };
+        b["to_num"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            try { return Value{std::stof(a[0].AsString())}; } catch (...) { return Value{0.0f}; }
+        };
+        b["to_str"] = [](std::vector<Value>& a) { return Value{a.empty() ? std::string{} : a[0].AsString()}; };
         b["pi"]    = [](std::vector<Value>&) { return Value{Mathf::PI}; };
         b["deg2rad"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Deg2Rad}; };
         b["rad2deg"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Rad2Deg}; };
@@ -878,6 +952,10 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         return true;
     } catch (const ReturnSignal&) {
         return true; // a bare top-level return is harmless
+    } catch (const BreakSignal&) {
+        m_impl->loaded = true; return true; // stray break/continue: harmless
+    } catch (const ContinueSignal&) {
+        m_impl->loaded = true; return true;
     } catch (const std::exception& e) {
         if (error) *error = e.what();
         Log::Error("OkayScript: ", e.what());

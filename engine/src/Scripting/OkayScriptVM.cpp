@@ -9,6 +9,7 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/Tilemap.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
@@ -854,6 +855,27 @@ struct OkayScriptVM::Impl {
                     pb->SetValue(a.empty() ? 0.0f : a[0].AsFloat());
             return Value{};
         };
+        // Tilemap editing on a sibling Tilemap (procedural levels).
+        b["tile_resize"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* tm = g->GetComponent<Tilemap>())
+                    tm->Resize(a.size() > 0 ? (int)a[0].AsFloat() : 0, a.size() > 1 ? (int)a[1].AsFloat() : 0);
+            return Value{};
+        };
+        b["set_tile"] = [go](std::vector<Value>& a) {
+            if (a.size() >= 3) if (GameObject* g = go())
+                if (auto* tm = g->GetComponent<Tilemap>())
+                    tm->SetTile((int)a[0].AsFloat(), (int)a[1].AsFloat(), (int)a[2].AsFloat());
+            return Value{};
+        };
+        b["get_tile"] = [go](std::vector<Value>& a) {
+            if (a.size() >= 2) if (GameObject* g = go())
+                if (auto* tm = g->GetComponent<Tilemap>())
+                    return Value{(float)tm->GetTile((int)a[0].AsFloat(), (int)a[1].AsFloat())};
+            return Value{0.0f};
+        };
+        b["tile_w"] = [go](std::vector<Value>&) { GameObject* g = go(); auto* tm = g ? g->GetComponent<Tilemap>() : nullptr; return Value{tm ? (float)tm->Width() : 0.0f}; };
+        b["tile_h"] = [go](std::vector<Value>&) { GameObject* g = go(); auto* tm = g ? g->GetComponent<Tilemap>() : nullptr; return Value{tm ? (float)tm->Height() : 0.0f}; };
         // Global audio settings (for options menus).
         b["set_volume"] = [](std::vector<Value>& a) { AudioMixer::masterVolume = a.empty() ? 1.0f : a[0].AsFloat(); return Value{}; };
         b["volume"]     = [](std::vector<Value>&) { return Value{AudioMixer::masterVolume}; };

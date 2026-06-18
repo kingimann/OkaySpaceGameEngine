@@ -162,7 +162,14 @@ int main(int argc, char** argv) {
         std::vector<char> down;
         for (char c = 'a'; c <= 'z'; ++c)
             if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
+        for (char c = '0'; c <= '9'; ++c)
+            if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
         if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+        // Map arrow keys onto WASD so arrow-key movement just works.
+        if (ks[SDL_SCANCODE_UP])    down.push_back('w');
+        if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
+        if (ks[SDL_SCANCODE_DOWN])  down.push_back('s');
+        if (ks[SDL_SCANCODE_RIGHT]) down.push_back('d');
         Input::FeedKeys(down);
 
         // Feed the mouse (position in pixels + left/right/middle button state).

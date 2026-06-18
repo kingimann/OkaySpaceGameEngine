@@ -29,6 +29,14 @@ int main() {
         CHECK(cyl.name == "Cylinder");
         CHECK(cyl.TriangleCount() == 12 * 2 /*sides*/ + 12 * 2 /*caps*/);
 
+        Mesh tube = Mesh::Tube(0.5f, 0.3f, 2.0f, 24);
+        CHECK(tube.name == "Tube");
+        CHECK(tube.vertices.size() == 24u * 4u);
+        CHECK(tube.TriangleCount() == 24 * 8);        // outer+inner walls + 2 rings
+        CHECK_NEAR(tube.Size().y, 2.0f, 0.001f);      // height
+        CHECK_NEAR(tube.Size().x, 1.0f, 0.01f);       // outer diameter
+        CHECK(Mesh::FromName("Tube").name == "Tube");
+
         Mesh wedge = Mesh::Wedge(2.0f);
         CHECK(wedge.name == "Wedge");
         CHECK(wedge.vertices.size() == 6u);
@@ -160,6 +168,64 @@ int main() {
         CHECK_NEAR(s.x, 2.0f, 0.001f);
         CHECK_NEAR(s.y, 2.0f, 0.001f);
         CHECK_NEAR(s.z, 2.0f, 0.001f);
+    }
+
+    // --- Extrude: a 2D outline becomes a prism (2n verts, caps + walls) ---
+    {
+        std::vector<Vec2> square = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};  // n = 4
+        Mesh m = Mesh::Extrude(square, 2.0f);
+        CHECK(m.vertices.size() == 8u);                     // 2 * n
+        CHECK(m.TriangleCount() == 2 * (4 - 2) + 2 * 4);    // caps(4) + walls(8) = 12
+        CHECK_NEAR(m.Size().x, 2.0f, 0.001f);
+        CHECK_NEAR(m.Size().z, 2.0f, 0.001f);               // depth along Z
+        // Too-small outlines yield an empty mesh.
+        std::vector<Vec2> line = {{0, 0}, {1, 0}};
+        CHECK(Mesh::Extrude(line, 1.0f).vertices.empty());
+    }
+
+    // --- Lathe: revolve a profile into a surface of revolution ---
+    {
+        // A 3-point profile revolved in 12 segments.
+        std::vector<Vec2> profile = {{0.0f, -1.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}};
+        Mesh m = Mesh::Lathe(profile, 12);
+        CHECK(m.vertices.size() == 12u * 3u);
+        CHECK(m.TriangleCount() == 12 * (3 - 1) * 2);
+        // Widest ring (radius 1) reaches x = +/-1; height spans -1..1.
+        CHECK_NEAR(m.Size().y, 2.0f, 0.001f);
+        CHECK_NEAR(m.Size().x, 2.0f, 0.01f);
+        CHECK(Mesh::Lathe(profile, 2).vertices.empty());    // needs >= 3 segments
+    }
+
+    // --- Rotated bakes an Euler rotation into the vertices ---
+    {
+        // A point on +X, rotated 90deg about Y (Quat::Euler applies Z,X,Y), lands
+        // on the Z axis; magnitude is preserved and it's no longer a named prim.
+        Mesh m;
+        m.vertices = {{1, 0, 0}};
+        m.name = "Custom";
+        Mesh r = m.Rotated({0, 90, 0});
+        CHECK(r.name.empty());
+        CHECK_NEAR(r.vertices[0].Magnitude(), 1.0f, 0.001f);
+        CHECK_NEAR(r.vertices[0].x, 0.0f, 0.01f);          // left +X
+        CHECK_NEAR(std::fabs(r.vertices[0].z), 1.0f, 0.01f);
+        // Rotating a cube by 0 leaves it unchanged in size.
+        Mesh c = Mesh::Cube().Rotated({0, 0, 0});
+        CHECK_NEAR(c.Size().x, 1.0f, 0.001f);
+    }
+
+    // --- FlipWinding reverses each triangle's orientation ---
+    {
+        Mesh m;
+        m.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+        m.triangles = {0, 1, 2};
+        m.FlipWinding();
+        CHECK(m.triangles[0] == 0);
+        CHECK(m.triangles[1] == 2);   // 2nd and 3rd swapped
+        CHECK(m.triangles[2] == 1);
+        // Flipping twice restores the original winding.
+        m.FlipWinding();
+        CHECK(m.triangles[1] == 1);
+        CHECK(m.triangles[2] == 2);
     }
 
     // --- Bounds / Center / Size of the AABB ---

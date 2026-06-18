@@ -74,8 +74,11 @@ uses, built right into the engine app.
   the sprite color; the editor viewport still shows the colored quad. Keep the
   image next to the built `.exe` (relative paths resolve there).
 - **Mesh Renderer (3D)** — pick a built-in primitive (Cube, Pyramid, Quad,
-  Wedge, Plane, Sphere, Cylinder, Cone, Torus, Capsule, Icosphere, Grid) from
-  the *Primitive* dropdown. *Subdivide* splits every triangle into four (more
+  Wedge, Plane, Sphere, Cylinder, Cone, Tube, Torus, Capsule, Icosphere, Grid)
+  from the *Primitive* dropdown. (More procedural shapes are available in C++:
+  `Mesh::Extrude` a 2D outline into a prism, `Mesh::Lathe` a profile into a
+  vase/column, `Mesh::Rotated` to orient a part before `Combine`, and
+  `Mesh::FlipWinding` to fix inside-out imports.) *Subdivide* splits every triangle into four (more
   detail), *Smooth* subdivides then re-projects onto a sphere, *Weld* merges
   coincident vertices, and *Recenter* / *Fit 1u* normalize an imported model's
   position and scale; or type an *OBJ File*

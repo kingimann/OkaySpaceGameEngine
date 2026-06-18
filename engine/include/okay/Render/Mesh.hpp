@@ -1,5 +1,7 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include "okay/Math/Vec2.hpp"
+#include "okay/Math/Quat.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -211,6 +213,35 @@ struct Mesh {
         return m;
     }
 
+    /// A hollow tube / pipe / ring along Y: an outer and inner wall joined by top
+    /// and bottom annulus caps. `inner` < `outer`. Good for rings, portals, pipes.
+    static Mesh Tube(float outer = 0.5f, float inner = 0.3f, float height = 1.0f, int sectors = 24) {
+        Mesh m;
+        m.name = "Tube";
+        if (inner < 0.0f) inner = 0.0f;
+        if (inner > outer) inner = outer;
+        const float kPi = 3.14159265358979323846f;
+        float h = height * 0.5f;
+        for (int s = 0; s < sectors; ++s) {
+            float th = 2.0f * kPi * (float)s / sectors;
+            float c = std::cos(th), sn = std::sin(th);
+            m.vertices.push_back({outer * c,  h, outer * sn});  // base+0 outer-top
+            m.vertices.push_back({outer * c, -h, outer * sn});  // base+1 outer-bot
+            m.vertices.push_back({inner * c,  h, inner * sn});  // base+2 inner-top
+            m.vertices.push_back({inner * c, -h, inner * sn});  // base+3 inner-bot
+        }
+        for (int s = 0; s < sectors; ++s) {
+            int b = s * 4, b2 = ((s + 1) % sectors) * 4;
+            int ot = b, ob = b + 1, it = b + 2, ib = b + 3;
+            int ot2 = b2, ob2 = b2 + 1, it2 = b2 + 2, ib2 = b2 + 3;
+            m.triangles.insert(m.triangles.end(), {ot, ob, ob2,  ot, ob2, ot2});   // outer wall
+            m.triangles.insert(m.triangles.end(), {it, it2, ib2,  it, ib2, ib});   // inner wall
+            m.triangles.insert(m.triangles.end(), {ot, ot2, it2,  ot, it2, it});   // top ring
+            m.triangles.insert(m.triangles.end(), {ob, ib, ib2,  ob, ib2, ob2});   // bottom ring
+        }
+        return m;
+    }
+
     /// A geodesic sphere: an icosahedron subdivided `subdivisions` times and
     /// projected to the radius. Triangles are near-uniform (no pinching at the
     /// poles like the UV Sphere), so it shades and tessellates evenly.
@@ -248,6 +279,7 @@ struct Mesh {
         if (n == "Icosphere") return Icosphere();
         if (n == "Grid")      return Grid();
         if (n == "Wedge")     return Wedge();
+        if (n == "Tube")      return Tube();
         return Cube();
     }
 
@@ -342,6 +374,23 @@ struct Mesh {
         return m;
     }
 
+    /// Bake an Euler rotation (degrees) into the vertices — orient a part (a cone
+    /// roof, an arm) before Combine. Returns a rotated copy; RotateVerts does it
+    /// in place.
+    void RotateVerts(const Vec3& eulerDegrees) {
+        Quat q = Quat::Euler(eulerDegrees);
+        for (Vec3& v : vertices) v = q * v;
+        name = "";
+    }
+    Mesh Rotated(const Vec3& eulerDegrees) const { Mesh m = *this; m.RotateVerts(eulerDegrees); return m; }
+
+    /// Reverse triangle winding so faces point the other way — fix an
+    /// inside-out imported mesh, or make an inward-facing skybox shell.
+    void FlipWinding() {
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3)
+            std::swap(triangles[i + 1], triangles[i + 2]);
+    }
+
     /// Append another mesh into this one (re-indexing its triangles) — build a
     /// compound model (e.g. a snowman) from primitive parts.
     void Combine(const Mesh& other) {
@@ -351,6 +400,53 @@ struct Mesh {
         for (int t : other.triangles) triangles.push_back(t + base);
     }
     static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
+
+    /// Extrude a 2D outline (XY, convex, counter-clockwise) into a 3D prism of
+    /// the given depth along Z — custom signs, logos, blocky props. Builds a
+    /// front and back cap (fan-triangulated) plus side walls.
+    static Mesh Extrude(const std::vector<Vec2>& outline, float depth = 1.0f) {
+        Mesh m;
+        const int n = (int)outline.size();
+        if (n < 3) return m;
+        float hz = depth * 0.5f;
+        for (const Vec2& p : outline) m.vertices.push_back({p.x, p.y, -hz}); // back ring  [0..n)
+        for (const Vec2& p : outline) m.vertices.push_back({p.x, p.y,  hz}); // front ring [n..2n)
+        for (int i = 1; i + 1 < n; ++i) {
+            m.triangles.insert(m.triangles.end(), {0, i + 1, i});             // back cap (-Z)
+            m.triangles.insert(m.triangles.end(), {n, n + i, n + i + 1});     // front cap (+Z)
+        }
+        for (int i = 0; i < n; ++i) {                                        // side walls
+            int j = (i + 1) % n;
+            m.triangles.insert(m.triangles.end(), {i, j, n + j});
+            m.triangles.insert(m.triangles.end(), {i, n + j, n + i});
+        }
+        return m;
+    }
+
+    /// Revolve a 2D profile around the Y axis to make a surface of revolution —
+    /// vases, bottles, goblets, columns. Each profile point is (radius, height);
+    /// `segments` sets the angular resolution.
+    static Mesh Lathe(const std::vector<Vec2>& profile, int segments = 16) {
+        Mesh m;
+        const int rows = (int)profile.size();
+        if (rows < 2 || segments < 3) return m;
+        const float kPi = 3.14159265358979323846f;
+        for (int s = 0; s < segments; ++s) {
+            float th = 2.0f * kPi * (float)s / segments;
+            float c = std::cos(th), sn = std::sin(th);
+            for (const Vec2& p : profile)
+                m.vertices.push_back({p.x * c, p.y, p.x * sn});  // x = radius, y = height
+        }
+        for (int s = 0; s < segments; ++s) {
+            int s1 = (s + 1) % segments;
+            for (int r = 0; r + 1 < rows; ++r) {
+                int a = s * rows + r,  b = s * rows + r + 1;
+                int c = s1 * rows + r, d = s1 * rows + r + 1;
+                m.triangles.insert(m.triangles.end(), {a, c, b, b, c, d});
+            }
+        }
+        return m;
+    }
 
     /// Merge vertices closer than `epsilon` into one and re-index triangles,
     /// then drop any triangle that collapsed to a line/point. Cleans up imported

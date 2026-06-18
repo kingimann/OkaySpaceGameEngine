@@ -811,6 +811,33 @@ struct OkayScriptVM::Impl {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) return Value{g->active};
             return Value{false};
         };
+        // Read another object's world position by name (enemy AI chasing the
+        // player, doors tracking a key, cameras following a target…).
+        b["obj_x"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                return Value{g->transform->Position().x};
+            return Value{0.0f};
+        };
+        b["obj_y"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                return Value{g->transform->Position().y};
+            return Value{0.0f};
+        };
+        b["obj_z"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                return Value{g->transform->Position().z};
+            return Value{0.0f};
+        };
+        // Distance from this object to a named object (0 if missing).
+        b["dist_to"] = [this, sceneOf](std::vector<Value>& a) -> Value {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
+            Scene* s = sceneOf(); if (!s) return Value{0.0f};
+            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{0.0f};
+            Vec3 me = rt.host->gameObject->transform->Position();
+            Vec3 ot = g->transform->Position();
+            float dx = ot.x - me.x, dy = ot.y - me.y;
+            return Value{Mathf::Sqrt(dx * dx + dy * dy)};
+        };
         // Drive sibling components on this GameObject.
         auto go = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
         b["set_text"] = [go](std::vector<Value>& a) {
@@ -979,6 +1006,47 @@ struct OkayScriptVM::Impl {
             return Value{Mathf::Lerp(x, y, t)};
         };
         b["len"]   = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
+        b["hypot"] = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
+        b["atan"]  = [](std::vector<Value>& a) { return Value{std::atan(a.empty() ? 0 : a[0].AsFloat())}; };
+        b["asin"]  = [](std::vector<Value>& a) { return Value{std::asin(a.empty() ? 0 : a[0].AsFloat())}; };
+        b["acos"]  = [](std::vector<Value>& a) { return Value{std::acos(a.empty() ? 0 : a[0].AsFloat())}; };
+        b["log"]   = [](std::vector<Value>& a) { return Value{std::log(a.empty() ? 1 : a[0].AsFloat())}; };
+        b["exp"]   = [](std::vector<Value>& a) { return Value{std::exp(a.empty() ? 0 : a[0].AsFloat())}; };
+        // Wrap a value into [lo, hi) — angles, looping indices, scrolling.
+        b["wrap"]  = [](std::vector<Value>& a) {
+            float v = a.size() > 0 ? a[0].AsFloat() : 0, lo = a.size() > 1 ? a[1].AsFloat() : 0, hi = a.size() > 2 ? a[2].AsFloat() : 1;
+            float span = hi - lo;
+            if (span <= 0.0f) return Value{lo};
+            float r = std::fmod(v - lo, span);
+            if (r < 0) r += span;
+            return Value{lo + r};
+        };
+        // Triangle wave 0..len..0 — patrols, breathing scale, bobbing.
+        b["ping_pong"] = [](std::vector<Value>& a) {
+            float t = a.size() > 0 ? a[0].AsFloat() : 0, len = a.size() > 1 ? a[1].AsFloat() : 1;
+            if (len <= 0.0f) return Value{0.0f};
+            float m = std::fmod(t, 2.0f * len);
+            if (m < 0) m += 2.0f * len;
+            return Value{m <= len ? m : 2.0f * len - m};
+        };
+        // Smooth (ease in/out) interpolation between a and b.
+        b["smoothstep"] = [](std::vector<Value>& a) {
+            float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 1, t = a.size() > 2 ? a[2].AsFloat() : 0;
+            t = Mathf::Clamp01(t);
+            t = t * t * (3.0f - 2.0f * t);
+            return Value{Mathf::Lerp(x, y, t)};
+        };
+        // Angle in degrees from (x1,y1) toward (x2,y2).
+        b["angle_to"] = [](std::vector<Value>& a) {
+            if (a.size() < 4) return Value{0.0f};
+            float dx = a[2].AsFloat() - a[0].AsFloat(), dy = a[3].AsFloat() - a[1].AsFloat();
+            return Value{std::atan2(dy, dx) * 57.2957795f};
+        };
+        // True with probability p (0..1) — random events, drops, spawns.
+        b["chance"] = [](std::vector<Value>& a) {
+            float p = a.empty() ? 0.5f : a[0].AsFloat();
+            return Value{Random::Shared().Range(0.0f, 1.0f) < p};
+        };
         // Arrays/lists.
         b["array"] = [](std::vector<Value>& a) {
             Value v = Value::MakeArray();
@@ -1108,6 +1176,49 @@ struct OkayScriptVM::Impl {
             if (a.size() < 2) return Value{-1.0f};
             auto pos = a[0].AsString().find(a[1].AsString());
             return Value{pos == std::string::npos ? -1.0f : (float)pos};
+        };
+        b["str_contains"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{false};
+            return Value{a[0].AsString().find(a[1].AsString()) != std::string::npos};
+        };
+        b["starts_with"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{false};
+            const std::string s = a[0].AsString(), p = a[1].AsString();
+            return Value{s.size() >= p.size() && s.compare(0, p.size(), p) == 0};
+        };
+        b["ends_with"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{false};
+            const std::string s = a[0].AsString(), p = a[1].AsString();
+            return Value{s.size() >= p.size() && s.compare(s.size() - p.size(), p.size(), p) == 0};
+        };
+        // Replace every occurrence of `find` with `repl`.
+        b["replace"] = [](std::vector<Value>& a) {
+            if (a.size() < 3) return Value{a.empty() ? std::string{} : a[0].AsString()};
+            std::string s = a[0].AsString(), find = a[1].AsString(), repl = a[2].AsString();
+            if (find.empty()) return Value{s};
+            std::size_t pos = 0;
+            while ((pos = s.find(find, pos)) != std::string::npos) {
+                s.replace(pos, find.size(), repl);
+                pos += repl.size();
+            }
+            return Value{s};
+        };
+        // Trim leading/trailing ASCII whitespace.
+        b["trim"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString();
+            auto notspace = [](unsigned char c) { return !std::isspace(c); };
+            s.erase(s.begin(), std::find_if(s.begin(), s.end(), notspace));
+            s.erase(std::find_if(s.rbegin(), s.rend(), notspace).base(), s.end());
+            return Value{s};
+        };
+        // Repeat a string n times ("=" * 10 style separators/bars).
+        b["repeat"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString(), out;
+            int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            for (int i = 0; i < n; ++i) out += s;
+            return Value{out};
         };
         b["to_num"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{0.0f};

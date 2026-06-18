@@ -85,6 +85,10 @@ uses, built right into the engine app.
   active perspective camera. You can also build compound models in C++ with
   `Mesh::Transformed(scale, offset)` and `Mesh::Combine`/`Combined`, and export
   any mesh with `Mesh::SaveOBJ`.
+- **UI anchors** — every UI widget has an *Anchor* (Top-Left … Center …
+  Bottom-Right). The position becomes an offset from that screen point, so a
+  Bottom-Right pause button or a Centered menu stays put at any window size or
+  resolution. Hit-testing and the built game honor the anchor.
 - **UI widgets** — build menus and HUDs from screen-space components: *UI Panel*
   (background/overlay), *UI Image* (logos/icons/title art from a PNG/JPG, tinted;
   a colored rect when no texture), *UI Button* (calls the script's `on_click()`), *UI

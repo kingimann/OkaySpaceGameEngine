@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include <string>
@@ -16,6 +17,7 @@ public:
     Vec2 size{128.0f, 128.0f};
     std::string texture;                 // image path (PNG/JPG/BMP); empty = colored rect
     Color color = Color::White;          // tint (or fill color when no texture)
+    UIAnchor anchor = UIAnchor::TopLeft;
 };
 
 } // namespace okay

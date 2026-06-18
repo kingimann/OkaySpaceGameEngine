@@ -255,5 +255,63 @@ int main() {
         CHECK(found);
     }
 
+    // --- ResolveAnchor maps offsets to screen corners/center ---
+    {
+        // 800x600 canvas, a 100x40 element.
+        Vec2 sz{100, 40};
+        Vec2 tl = ResolveAnchor(UIAnchor::TopLeft, {10, 10}, sz, 800, 600);
+        CHECK_NEAR(tl.x, 10.0f, 0.001f);
+        CHECK_NEAR(tl.y, 10.0f, 0.001f);
+
+        Vec2 tr = ResolveAnchor(UIAnchor::TopRight, {-10, 10}, sz, 800, 600);
+        CHECK_NEAR(tr.x, 800.0f - 100.0f - 10.0f, 0.001f); // 690
+        CHECK_NEAR(tr.y, 10.0f, 0.001f);
+
+        Vec2 c = ResolveAnchor(UIAnchor::Center, {0, 0}, sz, 800, 600);
+        CHECK_NEAR(c.x, (800.0f - 100.0f) * 0.5f, 0.001f); // 350
+        CHECK_NEAR(c.y, (600.0f - 40.0f) * 0.5f, 0.001f);  // 280
+
+        Vec2 br = ResolveAnchor(UIAnchor::BottomRight, {0, 0}, sz, 800, 600);
+        CHECK_NEAR(br.x, 700.0f, 0.001f);
+        CHECK_NEAR(br.y, 560.0f, 0.001f);
+    }
+
+    // --- An anchored button hit-tests against the live canvas size ---
+    {
+        UICanvas::Set(800, 600);
+        Scene scene("Anchor");
+        GameObject* go = scene.CreateGameObject("Quit");
+        auto* b = go->AddComponent<UIButton>();
+        b->anchor = UIAnchor::BottomRight;
+        b->position = {-110, -50};           // offset in from the bottom-right
+        b->size = {100, 40};
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function on_click() { set_x(9); }"));
+        scene.Start();
+
+        // Resolved rect sits at (800-100-110, 600-40-50) = (590, 510)..(690,550).
+        CHECK(b->Contains({640, 530}));
+        CHECK(!b->Contains({100, 100}));     // top-left of screen misses
+        Input::FeedMouse({640, 530}, 0);
+        Input::FeedMouse({640, 530}, 1u << 0);
+        scene.Update(0.016f);
+        CHECK(b->WasClicked());
+        CHECK_NEAR(go->transform->localPosition.x, 9.0f, 0.001f);
+    }
+
+    // --- Anchor round-trips through serialization ---
+    {
+        Scene scene("AnchorSer");
+        GameObject* go = scene.CreateGameObject("HUD");
+        go->AddComponent<UIPanel>()->anchor = UIAnchor::BottomCenter;
+        go->AddComponent<UIProgressBar>()->anchor = UIAnchor::TopRight;
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        CHECK(loaded.Find("HUD")->GetComponent<UIPanel>()->anchor == UIAnchor::BottomCenter);
+        CHECK(loaded.Find("HUD")->GetComponent<UIProgressBar>()->anchor == UIAnchor::TopRight);
+    }
+
     TEST_MAIN_RESULT();
 }

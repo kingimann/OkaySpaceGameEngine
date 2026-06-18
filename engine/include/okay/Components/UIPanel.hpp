@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 
@@ -13,6 +14,7 @@ public:
     Vec2 position{0.0f, 0.0f};
     Vec2 size{200.0f, 120.0f};
     Color color = Color::FromBytes(20, 24, 34, 200);
+    UIAnchor anchor = UIAnchor::TopLeft;
 };
 
 } // namespace okay

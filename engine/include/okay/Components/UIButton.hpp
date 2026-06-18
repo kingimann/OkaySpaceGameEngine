@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
@@ -21,14 +22,16 @@ public:
     Color color = Color::FromBytes(60, 90, 150);
     Color hoverColor = Color::FromBytes(80, 120, 200);
     Color textColor = Color::White;
+    UIAnchor anchor = UIAnchor::TopLeft;
 
     bool IsHovered() const { return m_hover; }
     /// True only on the frame the button was clicked.
     bool WasClicked() const { return m_clicked; }
 
     bool Contains(const Vec2& p) const {
-        return p.x >= position.x && p.y >= position.y &&
-               p.x <= position.x + size.x && p.y <= position.y + size.y;
+        Vec2 o = ResolveAnchor(anchor, position, size);
+        return p.x >= o.x && p.y >= o.y &&
+               p.x <= o.x + size.x && p.y <= o.y + size.y;
     }
 
     void Update(float) override {

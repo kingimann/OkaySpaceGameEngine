@@ -26,7 +26,8 @@ int AudioMixer::Render(Scene& scene, float* out, int frames) {
         }
     }
 
-    for (int i = 0; i < frames; ++i) out[i] = Mathf::Clamp(out[i], -1.0f, 1.0f);
+    float gain = muted ? 0.0f : masterVolume;
+    for (int i = 0; i < frames; ++i) out[i] = Mathf::Clamp(out[i] * gain, -1.0f, 1.0f);
     return mixed;
 }
 

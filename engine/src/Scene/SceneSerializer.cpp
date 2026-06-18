@@ -13,6 +13,7 @@
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/TextRenderer.hpp"
 
 #include <cctype>
 #include <functional>
@@ -120,6 +121,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  camerafollow " << Quote(cf->targetName) << " "
             << cf->offset.x << " " << cf->offset.y << " " << cf->offset.z << " "
             << cf->smoothing << "\n";
+    }
+    if (auto* tr = go->GetComponent<TextRenderer>()) {
+        out << "  text " << Quote(tr->text) << " "
+            << tr->color.r << " " << tr->color.g << " " << tr->color.b << " " << tr->color.a << " "
+            << tr->pixelSize << " " << (tr->screenSpace ? 1 : 0) << " "
+            << tr->screenPos.x << " " << tr->screenPos.y << "\n";
     }
 }
 } // namespace
@@ -261,6 +268,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> off.x >> off.y >> off.z >> sm;
                     auto* cf = go->AddComponent<CameraFollow>();
                     cf->targetName = tgt; cf->offset = off; cf->smoothing = sm;
+                } else if (field == "text") {
+                    std::string str = ReadQuoted(in);
+                    Color c; float px = 0.1f; int ss = 0; Vec2 sp;
+                    in >> c.r >> c.g >> c.b >> c.a >> px >> ss >> sp.x >> sp.y;
+                    auto* tr = go->AddComponent<TextRenderer>();
+                    tr->text = str; tr->color = c; tr->pixelSize = px;
+                    tr->screenSpace = (ss != 0); tr->screenPos = sp;
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;

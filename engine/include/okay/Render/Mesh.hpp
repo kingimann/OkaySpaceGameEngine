@@ -1,6 +1,9 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -129,6 +132,67 @@ struct Mesh {
         if (n == "Cylinder") return Cylinder();
         return Cube();
     }
+
+    // ---- Modeling: import/export and mesh operations -------------------
+
+    /// Load a Wavefront .OBJ (v positions + f faces; polygons are fan-triangulated,
+    /// v/vt/vn and negative indices handled). Returns an empty mesh on failure;
+    /// `ok` (if given) reports success.
+    static Mesh LoadOBJ(const std::string& path, bool* ok = nullptr) {
+        Mesh m;
+        std::ifstream f(path);
+        if (!f) { if (ok) *ok = false; return m; }
+        std::string line;
+        while (std::getline(f, line)) {
+            std::istringstream ss(line);
+            std::string tag; ss >> tag;
+            if (tag == "v") {
+                Vec3 v; ss >> v.x >> v.y >> v.z; m.vertices.push_back(v);
+            } else if (tag == "f") {
+                std::vector<int> idx; std::string tok;
+                while (ss >> tok) {
+                    int vi = std::atoi(tok.c_str());      // stops at '/'
+                    if (vi < 0) vi = (int)m.vertices.size() + vi + 1; // relative
+                    idx.push_back(vi - 1);                 // 1-based -> 0-based
+                }
+                for (std::size_t i = 2; i < idx.size(); ++i)
+                    m.triangles.insert(m.triangles.end(), {idx[0], idx[i - 1], idx[i]});
+            }
+        }
+        if (ok) *ok = true;
+        return m;
+    }
+
+    /// Write this mesh to a Wavefront .OBJ. Returns false on I/O error.
+    bool SaveOBJ(const std::string& path) const {
+        std::ofstream f(path);
+        if (!f) return false;
+        f << "# OkaySpace mesh\n";
+        for (const Vec3& v : vertices) f << "v " << v.x << " " << v.y << " " << v.z << "\n";
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3)
+            f << "f " << triangles[i] + 1 << " " << triangles[i + 1] + 1 << " "
+              << triangles[i + 2] + 1 << "\n";
+        return static_cast<bool>(f);
+    }
+
+    /// A copy with each vertex scaled (per-axis) then offset — the basic modeling
+    /// transform for placing/sizing a part before combining.
+    Mesh Transformed(const Vec3& scale, const Vec3& offset) const {
+        Mesh m = *this; m.name = "";
+        for (Vec3& v : m.vertices)
+            v = {v.x * scale.x + offset.x, v.y * scale.y + offset.y, v.z * scale.z + offset.z};
+        return m;
+    }
+
+    /// Append another mesh into this one (re-indexing its triangles) — build a
+    /// compound model (e.g. a snowman) from primitive parts.
+    void Combine(const Mesh& other) {
+        int base = (int)vertices.size();
+        name = "";
+        vertices.insert(vertices.end(), other.vertices.begin(), other.vertices.end());
+        for (int t : other.triangles) triangles.push_back(t + base);
+    }
+    static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
 };
 
 } // namespace okay

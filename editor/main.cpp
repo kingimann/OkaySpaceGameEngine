@@ -1265,14 +1265,29 @@ void DrawInspector(EditorState& ed) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
-            const char* shapes[] = {"Cube", "Pyramid", "Quad"};
-            static int shapeIdx = 0;
-            if (ImGui::Combo("Mesh", &shapeIdx, shapes, 3)) {
-                mr->mesh = shapeIdx == 0 ? Mesh::Cube()
-                         : shapeIdx == 1 ? Mesh::Pyramid() : Mesh::Quad();
+            const char* shapes[] = {"Cube", "Pyramid", "Quad", "Plane", "Sphere", "Cylinder"};
+            int shapeIdx = -1;
+            for (int i = 0; i < 6; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
+            if (ImGui::Combo("Primitive", &shapeIdx, shapes, 6)) {
+                mr->mesh = Mesh::FromName(shapes[shapeIdx]);
+                mr->meshPath.clear();
                 ed.dirty = true;
             }
-            ImGui::TextDisabled("%d triangles", mr->mesh.TriangleCount());
+            // Import a 3D model from an .OBJ file.
+            char mp[256];
+            std::strncpy(mp, mr->meshPath.c_str(), sizeof(mp) - 1);
+            mp[sizeof(mp) - 1] = '\0';
+            if (ImGui::InputText("OBJ File##mesh", mp, sizeof(mp))) { mr->meshPath = mp; ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Load##obj") && mr->meshPath[0]) {
+                bool ok = false;
+                Mesh m = Mesh::LoadOBJ(mr->meshPath, &ok);
+                if (ok && !m.vertices.empty()) { mr->mesh = m; ConsoleLog("Loaded " + mr->meshPath); }
+                else ConsoleLog("OBJ load failed: " + mr->meshPath);
+                ed.dirty = true;
+            }
+            ImGui::TextDisabled("%d verts, %d triangles",
+                                (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
             if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
         }
     }

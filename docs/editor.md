@@ -73,6 +73,16 @@ uses, built right into the engine app.
   (loaded via `okay::Image`/stb_image). The built game draws the image, tinted by
   the sprite color; the editor viewport still shows the colored quad. Keep the
   image next to the built `.exe` (relative paths resolve there).
+- **Mesh Renderer (3D)** — pick a built-in primitive (Cube, Pyramid, Quad,
+  Plane, Sphere, Cylinder) from the *Primitive* dropdown, or type an *OBJ File*
+  path and click *Load* to import a Wavefront `.obj` model (positions + faces,
+  polygons fan-triangulated, `v/vt/vn` and negative indices handled). The
+  inspector shows the live vertex/triangle count. Imported `.obj` files are
+  remembered on the component and bundled next to the built `.exe` by Build Game,
+  so the player reloads them at runtime. Meshes draw as wireframes through the
+  active perspective camera. You can also build compound models in C++ with
+  `Mesh::Transformed(scale, offset)` and `Mesh::Combine`/`Combined`, and export
+  any mesh with `Mesh::SaveOBJ`.
 - **Text** — add a *Text* component for score counters, labels, and HUD using
   the built-in 8x8 font (no font file needed). Use *Screen Space* for a fixed
   HUD or world space to anchor it to the GameObject. Renders in the built game.

@@ -16,4 +16,20 @@ inline float LambertShade(const Vec3& normal, const Vec3& lightDir, float ambien
 /// The engine's default key light direction (points down-forward-left).
 inline Vec3 DefaultLightDir() { return Vec3{-0.4f, -1.0f, -0.6f}.Normalized(); }
 
+/// The active directional light for 3D shading — a single global the player and
+/// editor both read, and scripts can change (set_light / set_ambient) for
+/// day-night cycles, mood lighting, or flash effects. Direction points *from*
+/// the light; `ambient` is the unlit floor brightness in [0, 1].
+struct SceneLight {
+    static Vec3& Direction() { static Vec3 d = DefaultLightDir(); return d; }
+    static float& Ambient()  { static float a = 0.25f; return a; }
+    static void SetDirection(const Vec3& d) {
+        Direction() = (d.SqrMagnitude() > 1e-12f) ? d.Normalized() : DefaultLightDir();
+    }
+    static void SetAmbient(float a) { Ambient() = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a); }
+    static void Reset() { Direction() = DefaultLightDir(); Ambient() = 0.25f; }
+    /// Shade a normal with the current global light + ambient.
+    static float Shade(const Vec3& normal) { return LambertShade(normal, Direction(), Ambient()); }
+};
+
 } // namespace okay

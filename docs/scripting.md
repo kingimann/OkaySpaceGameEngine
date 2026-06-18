@@ -95,6 +95,8 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `nearest_tag(tag)` | name of the nearest tagged object to this one ("" if none) — targeting |
 | `screen_w()` / `screen_h()` | render-target size in pixels |
 | `set_bg(r, g, b[, a])` | set the main camera's background/clear color (flash, fades) |
+| `set_light(x, y, z)` | set the 3D directional light direction (day-night, mood) |
+| `set_ambient(a)` / `ambient()` | set/read the 3D ambient (unlit floor) brightness 0..1 |
 | `look_at(name)` | rotate (about Z) so local +X faces a named object (turrets, aiming) |
 | `cam_x()` / `cam_y()` / `set_cam(x, y)` / `move_cam(dx, dy)` | read/move the main camera (follow, cutscenes) |
 | `cam_zoom()` / `set_cam_zoom(z)` | read/set the main camera's orthographic size |

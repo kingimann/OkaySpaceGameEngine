@@ -7,6 +7,7 @@
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Render/Lighting.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -959,6 +960,19 @@ struct OkayScriptVM::Impl {
                                                   a.size() > 3 ? a[3].AsFloat() : 1.0f};
             return Value{};
         };
+        // 3D directional light: set its direction or ambient floor (day-night,
+        // mood, hit flashes) — applies to the player and editor shading alike.
+        b["set_light"] = [](std::vector<Value>& a) {
+            SceneLight::SetDirection({a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                                      a.size() > 1 ? a[1].AsFloat() : -1.0f,
+                                      a.size() > 2 ? a[2].AsFloat() : 0.0f});
+            return Value{};
+        };
+        b["set_ambient"] = [](std::vector<Value>& a) {
+            SceneLight::SetAmbient(a.empty() ? 0.25f : a[0].AsFloat());
+            return Value{};
+        };
+        b["ambient"] = [](std::vector<Value>&) { return Value{SceneLight::Ambient()}; };
         // Screen size in pixels (HUD layout, clamping, spawn-at-edge).
         b["screen_w"] = [](std::vector<Value>&) { return Value{UICanvas::Width()}; };
         b["screen_h"] = [](std::vector<Value>&) { return Value{UICanvas::Height()}; };

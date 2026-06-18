@@ -263,7 +263,7 @@ int main(int argc, char** argv) {
             // Filled, flat-shaded, back-face-culled, painter-sorted triangles.
             Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
             Mat4 vp = cam->ProjectionMatrix(h > 0 ? (float)w / h : 1.0f) * cam->ViewMatrix();
-            Vec3 lightDir = DefaultLightDir(); // fixed key light (shared with editor)
+            // Directional key light (shared with the editor; scripts can change it).
 
             struct Tri { float depth; SDL_Vertex v[3]; };
             std::vector<Tri> tris;
@@ -290,7 +290,7 @@ int main(int argc, char** argv) {
                         wsum += c.w;
                     }
                     if (!ok) continue;
-                    float shade = LambertShade(normal, lightDir);
+                    float shade = SceneLight::Shade(normal);
                     SDL_Color col{(Uint8)(mr->color.r * 255 * shade),
                                   (Uint8)(mr->color.g * 255 * shade),
                                   (Uint8)(mr->color.b * 255 * shade), 255};

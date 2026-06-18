@@ -1971,8 +1971,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Solid meshes (wireframe == false): flat-shaded, back-face-culled, and
     // depth-sorted across all objects (painter's algorithm) so they occlude
-    // correctly — mirrors the player's 3D renderer. The fixed key light matches.
-    Vec3 lightDir = DefaultLightDir();
+    // correctly — mirrors the player's 3D renderer, including the global light.
     struct EdTri { float depth; ImVec2 p[3]; ImU32 col; };
     std::vector<EdTri> solid;
     for (const auto& up : objs) {
@@ -1992,7 +1991,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (int k = 0; k < 3; ++k)
                 if (!toScreen(vp * Vec4{wp[k], 1}, tri.p[k])) { ok = false; break; }
             if (!ok) continue;
-            float shade = LambertShade(normal, lightDir);
+            float shade = SceneLight::Shade(normal);
             Color c = mr->color;
             tri.col = (go == ed.selected())
                 ? IM_COL32((int)(255 * shade), (int)(200 * shade), 0, 255)

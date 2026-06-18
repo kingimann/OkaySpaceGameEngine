@@ -8,6 +8,8 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/ParticleSystem.hpp"
+#include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
@@ -1040,6 +1042,33 @@ struct OkayScriptVM::Impl {
         b["set_interactable"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go()) if (auto* bt = g->GetComponent<UIButton>())
                 bt->interactable = a.empty() || a[0].AsBool();
+            return Value{};
+        };
+        // Particle FX on a sibling ParticleSystem (explosions, dust, pickups).
+        b["emit"] = [go](std::vector<Value>& a) {       // one-off burst of N
+            if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>())
+                ps->Emit(a.empty() ? 1 : (int)a[0].AsFloat());
+            return Value{};
+        };
+        b["particles_on"] = [go](std::vector<Value>& a) {  // start/stop continuous emission
+            if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>())
+                ps->playing = a.empty() || a[0].AsBool();
+            return Value{};
+        };
+        b["particles_alive"] = [go](std::vector<Value>&) -> Value {
+            if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>())
+                return Value{(float)ps->AliveCount()};
+            return Value{0.0f};
+        };
+        // Sprite animation control on a sibling SpriteAnimator.
+        b["play_anim"] = [go](std::vector<Value>&) {    // restart from frame 0
+            if (GameObject* g = go()) if (auto* an = g->GetComponent<SpriteAnimator>())
+                an->Restart();
+            return Value{};
+        };
+        b["stop_anim"] = [go](std::vector<Value>&) {
+            if (GameObject* g = go()) if (auto* an = g->GetComponent<SpriteAnimator>())
+                an->playing = false;
             return Value{};
         };
         // Tilemap editing on a sibling Tilemap (procedural levels).

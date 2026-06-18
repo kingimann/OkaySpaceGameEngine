@@ -1532,6 +1532,11 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
             if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             ImGui::TextDisabled("image path (PNG/JPG); empty = colored rect");
+            if (ImGui::Checkbox("Nine-slice##uim", &im->nineSlice)) ed.dirty = true;
+            if (im->nineSlice) {
+                if (ImGui::DragFloat("Border (px)##uim", &im->border, 0.5f, 0.0f, 512.0f)) ed.dirty = true;
+                ImGui::TextDisabled("corners stay fixed; edges/center stretch to size");
+            }
             AnchorCombo("Anchor##uim", im->anchor, ed);
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }

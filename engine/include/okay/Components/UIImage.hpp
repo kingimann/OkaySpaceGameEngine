@@ -18,6 +18,11 @@ public:
     std::string texture;                 // image path (PNG/JPG/BMP); empty = colored rect
     Color color = Color::White;          // tint (or fill color when no texture)
     UIAnchor anchor = UIAnchor::TopLeft;
+    /// Nine-slice scaling: keep a `border`-pixel frame from the source texture
+    /// undistorted while the edges and center stretch to fill `size`. Ideal for
+    /// resizable panels, frames, and buttons from one small bordered image.
+    bool  nineSlice = false;
+    float border = 16.0f;                // source-pixel inset for the 9 regions
 };
 
 } // namespace okay

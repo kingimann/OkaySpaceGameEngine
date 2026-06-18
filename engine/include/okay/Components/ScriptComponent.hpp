@@ -25,6 +25,14 @@ public:
     void SetLanguage(const std::string& lang) { m_language = lang; }
     /// The last source compiled (retained for editing and serialization).
     const std::string& Source() const { return m_source; }
+    /// Optional path to an external script file (edit in your IDE; Reload picks
+    /// up changes). Empty for inline scripts.
+    const std::string& Path() const { return m_path; }
+    void SetPath(const std::string& path) { m_path = path; }
+    /// Re-read and recompile from the external file (no-op without a path).
+    bool Reload(std::string* error = nullptr) {
+        return m_path.empty() ? false : LoadFile(m_path, error);
+    }
     IScriptVM* VM() const { return m_vm.get(); }
     ScriptHost& Host() { return m_host; }
 
@@ -34,6 +42,7 @@ public:
 private:
     std::string m_language;
     std::string m_source;
+    std::string m_path;
     std::unique_ptr<IScriptVM> m_vm;
     ScriptHost m_host;
 };

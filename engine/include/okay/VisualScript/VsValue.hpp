@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include <map>
 #include <memory>
 #include <string>
 #include <variant>
@@ -8,12 +9,14 @@
 namespace okay::vs {
 
 /// A dynamically-typed value flowing between graph nodes (the data carried on
-/// the wires of a visual script). Can also hold a shared, mutable array of
-/// VsValues (used by OkayScript lists).
+/// the wires of a visual script). Can also hold a shared, mutable array or map
+/// of VsValues (used by OkayScript lists and dictionaries).
 class VsValue {
 public:
     using Array = std::vector<VsValue>;
     using ArrayRef = std::shared_ptr<Array>;
+    using Map = std::map<std::string, VsValue>;
+    using MapRef = std::shared_ptr<Map>;
 
     VsValue() : m_data(0.0f) {}
     VsValue(float v) : m_data(v) {}
@@ -24,6 +27,7 @@ public:
     VsValue(std::string v) : m_data(std::move(v)) {}
     VsValue(const char* v) : m_data(std::string(v)) {}
     VsValue(ArrayRef a) : m_data(std::move(a)) {}
+    VsValue(MapRef m) : m_data(std::move(m)) {}
 
     /// Make a new (empty) array value.
     static VsValue MakeArray() { return VsValue(std::make_shared<Array>()); }
@@ -31,6 +35,14 @@ public:
     /// The shared array, or nullptr if this isn't an array.
     ArrayRef AsArray() const {
         if (auto* a = std::get_if<ArrayRef>(&m_data)) return *a;
+        return nullptr;
+    }
+    /// Make a new (empty) map value.
+    static VsValue MakeMap() { return VsValue(std::make_shared<Map>()); }
+    bool IsMap() const { return std::holds_alternative<MapRef>(m_data); }
+    /// The shared map, or nullptr if this isn't a map.
+    MapRef AsMap() const {
+        if (auto* m = std::get_if<MapRef>(&m_data)) return *m;
         return nullptr;
     }
 
@@ -46,6 +58,7 @@ public:
         if (auto* f = std::get_if<float>(&m_data)) return *f != 0.0f;
         if (auto* s = std::get_if<std::string>(&m_data)) return !s->empty();
         if (auto* a = std::get_if<ArrayRef>(&m_data)) return *a && !(*a)->empty();
+        if (auto* m = std::get_if<MapRef>(&m_data)) return *m && !(*m)->empty();
         return false;
     }
     Vec3 AsVec3() const {
@@ -70,6 +83,17 @@ public:
             }
             return s + "]";
         }
+        if (auto* m = std::get_if<MapRef>(&m_data)) {
+            if (!*m) return "{}";
+            std::string s = "{";
+            bool first = true;
+            for (auto& kv : **m) {
+                if (!first) s += ", ";
+                first = false;
+                s += kv.first + ": " + kv.second.AsString();
+            }
+            return s + "}";
+        }
         return {};
     }
 
@@ -89,7 +113,7 @@ public:
     }
 
 private:
-    std::variant<float, bool, Vec3, std::string, ArrayRef> m_data;
+    std::variant<float, bool, Vec3, std::string, ArrayRef, MapRef> m_data;
 };
 
 } // namespace okay::vs

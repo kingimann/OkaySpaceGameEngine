@@ -30,3 +30,19 @@
 // Built-in components
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
+
+// Multiplayer networking
+#include "okay/Net/Packet.hpp"
+#include "okay/Net/UdpSocket.hpp"
+#include "okay/Net/NetworkManager.hpp"
+
+// Visual scripting (node graphs)
+#include "okay/VisualScript/VsValue.hpp"
+#include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/Nodes.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"
+
+// Text scripting (OkayScript built-in; Lua / C# optional)
+#include "okay/Scripting/ScriptVM.hpp"
+#include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Components/ScriptComponent.hpp"

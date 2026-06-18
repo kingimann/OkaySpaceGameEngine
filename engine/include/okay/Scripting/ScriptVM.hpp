@@ -1,0 +1,53 @@
+#pragma once
+#include "okay/VisualScript/VsValue.hpp"
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace okay {
+
+class Transform;
+class GameObject;
+
+/// The engine-side context a script can see and manipulate. Every script VM
+/// (built-in, Lua, C#) binds against this same surface, so a game can swap
+/// languages without changing the engine integration.
+struct ScriptHost {
+    Transform*  transform  = nullptr;
+    GameObject* gameObject = nullptr;
+    float       deltaTime  = 0.0f;
+    /// A shared blackboard scripts can read/write (also visible to gameplay code).
+    std::unordered_map<std::string, vs::VsValue> globals;
+};
+
+/// Abstract scripting backend. Load source once, then drive Start/Update.
+class IScriptVM {
+public:
+    virtual ~IScriptVM() = default;
+
+    /// The language this backend implements ("okayscript", "lua", "csharp").
+    virtual const char* Language() const = 0;
+
+    /// Compile/parse the given source. Returns false and fills `error` on failure.
+    virtual bool Load(const std::string& source, std::string* error = nullptr) = 0;
+
+    /// Bind the host context the script operates on (called before Start/Update).
+    virtual void Bind(ScriptHost* host) = 0;
+
+    /// Invoke the script's start()/update(dt) entry points if present.
+    virtual void CallStart() = 0;
+    virtual void CallUpdate(float deltaTime) = 0;
+
+    /// Read back a global the script defined (for tests and gameplay glue).
+    virtual vs::VsValue GetGlobal(const std::string& name) const = 0;
+};
+
+/// Names of the script backends compiled into this build (always includes
+/// "okayscript"; "lua"/"csharp" appear when their CMake options are enabled).
+std::vector<std::string> AvailableScriptLanguages();
+
+/// Create a VM for the given language, or nullptr if unsupported in this build.
+std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
+
+} // namespace okay

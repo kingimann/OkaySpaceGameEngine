@@ -112,7 +112,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  mesh " << Quote(mr->mesh.name.empty() ? "Cube" : mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
-            << Quote(mr->meshPath) << "\n";
+            << Quote(mr->meshPath) << " " << (mr->doubleSided ? 1 : 0) << "\n";
     }
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -357,6 +357,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (ok && !loaded.vertices.empty()) mr->mesh = loaded;
                         }
                     }
+                    in >> std::ws; // optional double-sided flag
+                    if (std::isdigit(in.peek())) { int ds = 0; in >> ds; mr->doubleSided = (ds != 0); }
                 } else if (field == "rigidbody2d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;
                     in >> bt >> gs >> mass >> drag >> bounce;

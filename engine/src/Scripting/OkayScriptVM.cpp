@@ -832,6 +832,19 @@ struct OkayScriptVM::Impl {
                                                  a.size() > 2 ? a[2].AsFloat() : 0.0f, 0.0f};
             return Value{true};
         };
+        // spawn3(prefab, x, y, z): like spawn but places the new object in 3D.
+        b["spawn3"] = [this](std::vector<Value>& a) {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{false};
+            Scene* sc = rt.host->gameObject->scene();
+            if (!sc) return Value{false};
+            GameObject* go = SceneSerializer::InstantiateFromFile(*sc, a[0].AsString(), nullptr);
+            if (!go) return Value{false};
+            if (go->transform)
+                go->transform->localPosition = {a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                                 a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                                                 a.size() > 3 ? a[3].AsFloat() : 0.0f};
+            return Value{true};
+        };
         // Destroy this script's own GameObject (deferred to end of frame).
         b["destroy"] = [this](std::vector<Value>&) {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
@@ -1574,6 +1587,36 @@ struct OkayScriptVM::Impl {
             GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{0.0f};
             Vec3 d = g->transform->Position() - rt.host->gameObject->transform->Position();
             return Value{d.Magnitude()};
+        };
+        // Move toward a named object in 3D by speed*dt, without overshooting
+        // (3D chase / homing). Returns the remaining distance.
+        b["move_toward3"] = [this, tf, sceneOf](std::vector<Value>& a) -> Value {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{0.0f};
+            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{0.0f};
+            Vec3 me = rt.host->gameObject->transform->Position();
+            Vec3 to = g->transform->Position() - me;
+            float d = to.Magnitude();
+            float step = (a.size() > 1 ? a[1].AsFloat() : 1.0f) * rt.host->deltaTime;
+            if (d <= step || d < 1e-6f) t->localPosition += to;             // arrive
+            else t->localPosition += to * (step / d);
+            return Value{d};
+        };
+        // Rotate this object so its forward (+Z) faces a named object in 3D
+        // (turrets/cameras tracking a target in a 3D scene).
+        b["look_at3"] = [this, tf, sceneOf](std::vector<Value>& a) {
+            if (a.empty()) return Value{};
+            Transform* t = tf(); Scene* s = sceneOf();
+            if (!t || !s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{};
+            Vec3 dir = g->transform->Position() - rt.host->gameObject->transform->Position();
+            float len = dir.Magnitude();
+            if (len < 1e-6f) return Value{};
+            float yaw = std::atan2(dir.x, dir.z) * 57.2957795f;
+            float pitch = -std::asin(dir.y / len) * 57.2957795f;
+            t->localRotation = Quat::Euler(pitch, yaw, 0.0f);
+            return Value{};
         };
         // Swap a sibling MeshRenderer's primitive at runtime (morph, LOD, states).
         b["set_mesh"] = [this](std::vector<Value>& a) {

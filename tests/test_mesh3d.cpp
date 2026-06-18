@@ -401,6 +401,54 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.z, 9.0f, 0.001f); // 3 + 5 + 1
     }
 
+    // --- MeshRenderer.doubleSided round-trips through serialization ---
+    {
+        Scene scene("DS");
+        GameObject* go = scene.CreateGameObject("Flag");
+        auto* mr = go->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Quad();
+        mr->doubleSided = true;
+        mr->wireframe = false;
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("Flag")->GetComponent<MeshRenderer>();
+        CHECK(r != nullptr);
+        CHECK(r->doubleSided == true);
+        CHECK(r->wireframe == false);
+    }
+
+    // --- move_toward3 closes 3D distance without overshooting ---
+    {
+        Scene scene("Chase");
+        GameObject* target = scene.CreateGameObject("Prey");
+        target->transform->localPosition = {0, 0, 10};
+        GameObject* go = scene.CreateGameObject("Hunter");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        // speed 100 with dt 0.016 -> 1.6 per frame.
+        CHECK(sc->LoadSource("function update(dt) { move_toward3(\"Prey\", 100); }"));
+        scene.Start();
+        scene.Update(0.016f);
+        CHECK_NEAR(go->transform->localPosition.z, 1.6f, 0.01f);   // stepped toward +Z
+        for (int i = 0; i < 600; ++i) scene.Update(0.016f);        // plenty of time
+        CHECK_NEAR(go->transform->localPosition.z, 10.0f, 0.01f);  // arrived, no overshoot
+    }
+
+    // --- look_at3 turns Forward() toward a named target (+X) ---
+    {
+        Scene scene("Aim3");
+        GameObject* target = scene.CreateGameObject("T");
+        target->transform->localPosition = {10, 0, 0};            // straight along +X
+        GameObject* go = scene.CreateGameObject("Turret");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function start() { look_at3(\"T\"); }"));
+        scene.Start();
+        Vec3 fwd = go->transform->Forward();
+        CHECK_NEAR(fwd.x, 1.0f, 0.01f);
+        CHECK_NEAR(fwd.y, 0.0f, 0.01f);
+    }
+
     // --- 3D scale / dist3_to / set_mesh script builtins ---
     {
         Scene scene("3DX");

@@ -87,6 +87,9 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `obj_x(name)` / `obj_y(name)` / `obj_z(name)` | read another object's world position |
 | `dist_to(name)` | 2D distance from this object to a named object (enemy AI, doors) |
 | `dist3_to(name)` | full 3D distance to a named object |
+| `move_toward3(name, speed)` | move toward a named object in 3D by speed*dt (chase/homing) |
+| `look_at3(name)` | rotate forward (+Z) to face a named object in 3D |
+| `spawn3(prefab, x, y, z)` | instantiate a prefab at a 3D position |
 | `set_scale3(x, y, z)` / `set_scale(s)` | set per-axis or uniform scale |
 | `scale_x()` / `scale_y()` / `scale_z()` | read this object's scale |
 | `set_rot3(x, y, z)` | set absolute 3D euler rotation (degrees) |

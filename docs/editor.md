@@ -128,7 +128,8 @@ uses, built right into the engine app.
   Scripting, Audio, Gameplay, UI); the search box filters across all of them.
 - **3D meshes render solid** (flat-shaded, depth-sorted) by default in both the
   Scene/Game views and the built game; tick a Mesh Renderer's *Wireframe* for an
-  edges-only view.
+  edges-only view, or *Double-sided* to render both faces (planes, flags,
+  foliage, tube interiors).
 - **Projects** — **File → New Project** creates a `<Location>/<Name>` folder with
   an `Assets/` subfolder and saves the starting scene into it. The **Project**
   panel is an asset browser rooted at the project's `Assets/`: navigate folders,

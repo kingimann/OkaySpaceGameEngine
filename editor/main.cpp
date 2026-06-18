@@ -1324,6 +1324,8 @@ void DrawInspector(EditorState& ed) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Double-sided", &mr->doubleSided)) ed.dirty = true;
             const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
                                     "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid"};
             const int kShapeCount = 13;
@@ -2107,7 +2109,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[t[i + k]]);
             Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
             Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
-            if (Vec3::Dot(normal, eye - centroid) < 0.0f) continue;     // back-face cull
+            float facing = Vec3::Dot(normal, eye - centroid);
+            if (!mr->doubleSided && facing < 0.0f) continue;            // back-face cull
+            if (facing < 0.0f) normal = normal * -1.0f;
             EdTri tri; bool ok = true;
             for (int k = 0; k < 3; ++k)
                 if (!toScreen(vp * Vec4{wp[k], 1}, tri.p[k])) { ok = false; break; }

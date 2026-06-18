@@ -14,6 +14,9 @@ public:
     Mesh  mesh;
     Color color = Color::White;
     bool  wireframe = false;   // solid by default (Unity-like); true = edges only
+    /// Render both faces of each triangle (no back-face culling) — for planes,
+    /// flags, foliage cards, and the insides of open meshes like Tube.
+    bool  doubleSided = false;
     /// Optional .OBJ model file. When set, the scene loader replaces `mesh` with
     /// the loaded geometry (and Build Game bundles the file alongside the exe).
     std::string meshPath;

@@ -29,6 +29,7 @@ function update(dt) {
   - `if (cond) { ... } else { ... }`
   - `while (cond) { ... }`
   - `for (var i = 0; i < 10; i += 1) { ... }`
+  - `break` and `continue` inside loops
 - **Functions:** `function name(a, b) { return a + b; }`
 - **Arrays:** `var a = [1, 2, 3];` — index with `a[0]`, assign `a[1] = 9`,
   append with `a[count(a)] = x` or `push(a, x)`, remove with `pop(a)`, length
@@ -97,6 +98,14 @@ exit, so values set with `prefs_set` persist between play sessions.
 ### Math
 `abs sin cos tan sqrt pow floor ceil round sign min max clamp lerp atan2 len
 rand(lo, hi) dist(x1, y1, x2, y2) pi() deg2rad(d) rad2deg(r)`
+
+### Arrays
+`array() count(a) push(a, v) pop(a) contains(a, v) index_of(a, v) remove_at(a, i)`
+— plus literals `[...]`, indexing `a[i]`, and `a[i] = v`.
+
+### Strings
+`str_len(s) upper(s) lower(s) substr(s, start, n) char_at(s, i) str_find(s, sub)
+to_num(s) to_str(x)` — plus `+` concatenation.
 
 ## Other backends
 

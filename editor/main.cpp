@@ -233,6 +233,7 @@ std::string CheckAndUpdate() {
 
 std::string g_updateStatus;
 bool g_openUpdatePopup = false;
+bool g_openAbout = false;
 bool g_showNewProject = true;   // show the project chooser on launch
 
 // Panel visibility (View menu).
@@ -376,22 +377,54 @@ void ConsoleLog(const std::string& msg) {
 void ApplyTheme() {
     ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding = 4.0f; s.FrameRounding = 3.0f; s.GrabRounding = 3.0f;
-    s.TabRounding = 3.0f;   s.ScrollbarRounding = 3.0f;
-    s.WindowPadding = ImVec2(8, 8); s.FramePadding = ImVec2(6, 4);
-    s.ItemSpacing = ImVec2(8, 6);
+    // Rounding & spacing for a soft, modern look.
+    s.WindowRounding    = 6.0f;  s.ChildRounding    = 6.0f;
+    s.FrameRounding     = 5.0f;  s.GrabRounding     = 5.0f;
+    s.PopupRounding     = 6.0f;  s.TabRounding      = 5.0f;
+    s.ScrollbarRounding = 9.0f;
+    s.WindowPadding   = ImVec2(10, 10); s.FramePadding = ImVec2(8, 5);
+    s.ItemSpacing     = ImVec2(8, 7);   s.ItemInnerSpacing = ImVec2(6, 5);
+    s.ScrollbarSize   = 13.0f;          s.GrabMinSize = 11.0f;
+    s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 0.0f;
+    s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
+    s.WindowMenuButtonPosition = ImGuiDir_None;
+
+    // A cohesive dark palette with a warm blue accent.
+    const ImVec4 accent      = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
+    const ImVec4 accentDim   = ImVec4(0.26f, 0.59f, 0.98f, 0.55f);
+    const ImVec4 accentHover = ImVec4(0.34f, 0.66f, 1.00f, 1.00f);
     ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]      = ImVec4(0.16f, 0.16f, 0.18f, 1.0f);
-    c[ImGuiCol_Header]        = ImVec4(0.20f, 0.42f, 0.74f, 0.55f);
-    c[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.52f, 0.88f, 0.80f);
-    c[ImGuiCol_HeaderActive]  = ImVec4(0.20f, 0.42f, 0.74f, 1.00f);
-    c[ImGuiCol_Button]        = ImVec4(0.24f, 0.24f, 0.28f, 1.00f);
-    c[ImGuiCol_ButtonHovered] = ImVec4(0.30f, 0.50f, 0.85f, 1.00f);
-    c[ImGuiCol_ButtonActive]  = ImVec4(0.22f, 0.40f, 0.72f, 1.00f);
-    c[ImGuiCol_TitleBgActive] = ImVec4(0.13f, 0.26f, 0.42f, 1.00f);
-    c[ImGuiCol_Tab]           = ImVec4(0.18f, 0.22f, 0.30f, 1.00f);
-    c[ImGuiCol_TabActive]     = ImVec4(0.22f, 0.42f, 0.70f, 1.00f);
-    c[ImGuiCol_TabHovered]    = ImVec4(0.28f, 0.52f, 0.85f, 1.00f);
+    c[ImGuiCol_WindowBg]         = ImVec4(0.115f, 0.123f, 0.145f, 1.00f);
+    c[ImGuiCol_ChildBg]          = ImVec4(0.135f, 0.143f, 0.168f, 0.40f);
+    c[ImGuiCol_PopupBg]          = ImVec4(0.10f, 0.107f, 0.128f, 0.98f);
+    c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.35f);
+    c[ImGuiCol_FrameBg]          = ImVec4(0.20f, 0.21f, 0.245f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.26f, 0.28f, 0.32f, 1.00f);
+    c[ImGuiCol_FrameBgActive]    = ImVec4(0.30f, 0.33f, 0.38f, 1.00f);
+    c[ImGuiCol_TitleBg]          = ImVec4(0.09f, 0.095f, 0.115f, 1.00f);
+    c[ImGuiCol_TitleBgActive]    = ImVec4(0.13f, 0.20f, 0.31f, 1.00f);
+    c[ImGuiCol_MenuBarBg]        = ImVec4(0.135f, 0.143f, 0.168f, 1.00f);
+    c[ImGuiCol_Header]           = accentDim;
+    c[ImGuiCol_HeaderHovered]    = accentHover;
+    c[ImGuiCol_HeaderActive]     = accent;
+    c[ImGuiCol_Button]           = ImVec4(0.22f, 0.24f, 0.29f, 1.00f);
+    c[ImGuiCol_ButtonHovered]    = accentHover;
+    c[ImGuiCol_ButtonActive]     = accent;
+    c[ImGuiCol_CheckMark]        = accent;
+    c[ImGuiCol_SliderGrab]       = accent;
+    c[ImGuiCol_SliderGrabActive] = accentHover;
+    c[ImGuiCol_Separator]        = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
+    c[ImGuiCol_SeparatorHovered] = accentDim;
+    c[ImGuiCol_ResizeGrip]       = accentDim;
+    c[ImGuiCol_ResizeGripHovered]= accentHover;
+    c[ImGuiCol_Tab]              = ImVec4(0.155f, 0.165f, 0.195f, 1.00f);
+    c[ImGuiCol_TabHovered]       = accentHover;
+    c[ImGuiCol_TabActive]        = ImVec4(0.20f, 0.32f, 0.50f, 1.00f);
+    c[ImGuiCol_TabUnfocused]     = ImVec4(0.135f, 0.143f, 0.168f, 1.00f);
+    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.17f, 0.22f, 0.30f, 1.00f);
+    c[ImGuiCol_DockingPreview]   = accentDim;
+    c[ImGuiCol_TextSelectedBg]   = accentDim;
+    c[ImGuiCol_NavHighlight]     = accent;
 }
 
 // Build the default Unity-style dock layout once.
@@ -490,11 +523,16 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Engine")) {
+        if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
         if (ImGui::MenuItem("Check for Updates")) {
             g_updateStatus = updater::CheckAndUpdate();
             g_openUpdatePopup = true;
             ConsoleLog("Update check: " + g_updateStatus);
         }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("About OkaySpace")) g_openAbout = true;
         ImGui::EndMenu();
     }
 
@@ -514,6 +552,11 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
     }
     ImGui::SameLine();
     if (ImGui::Button("Step", ImVec2(50, 0))) ed.Tick(1.0f / 60.0f);
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.34f, 0.62f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.52f, 0.42f, 0.75f, 1.0f));
+    if (ImGui::Button("Build", ImVec2(54, 0))) g_showBuildGame = true;
+    ImGui::PopStyleColor(2);
 
     // Right-aligned status.
     char status[96];
@@ -551,13 +594,40 @@ void DrawDockSpace(EditorState& ed, bool& running) {
 }
 
 void DrawConsole() {
+    static char filter[96] = "";
+    static bool autoScroll = true;
     if (ImGui::Begin("Console")) {
         if (ImGui::Button("Clear")) g_console.clear();
-        ImGui::SameLine(); ImGui::TextDisabled("%zu messages", g_console.size());
+        ImGui::SameLine();
+        ImGui::Checkbox("Auto-scroll", &autoScroll);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(180);
+        ImGui::InputTextWithHint("##cfilter", "filter", filter, sizeof(filter));
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu", g_console.size());
         ImGui::Separator();
         ImGui::BeginChild("log");
-        for (const auto& line : g_console) ImGui::TextUnformatted(line.c_str());
-        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+        std::string needle = filter;
+        for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
+        for (const auto& line : g_console) {
+            if (!needle.empty()) {
+                std::string low = line;
+                for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
+                if (low.find(needle) == std::string::npos) continue;
+            }
+            // Tint by severity heuristics so problems stand out.
+            ImVec4 col(0.82f, 0.84f, 0.88f, 1.0f);
+            if (line.find("fail") != std::string::npos || line.find("error") != std::string::npos ||
+                line.find("Error") != std::string::npos)
+                col = ImVec4(0.96f, 0.45f, 0.42f, 1.0f);
+            else if (line.find("Saved") != std::string::npos || line.find("Built") != std::string::npos ||
+                     line.find("Updated") != std::string::npos)
+                col = ImVec4(0.55f, 0.86f, 0.55f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImGui::TextUnformatted(line.c_str());
+            ImGui::PopStyleColor();
+        }
+        if (autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
         ImGui::EndChild();
     }
     ImGui::End();
@@ -902,6 +972,26 @@ void DrawNewProjectPopup(EditorState& ed) {
     }
 }
 
+void DrawAboutPopup() {
+    if (g_openAbout) { ImGui::OpenPopup("About OkaySpace"); g_openAbout = false; }
+    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("About OkaySpace", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.34f, 0.66f, 1.0f, 1.0f));
+        ImGui::TextUnformatted("OkaySpace Game Engine");
+        ImGui::PopStyleColor();
+        ImGui::Text("Version %s", OKAY_ENGINE_VERSION);
+        ImGui::Separator();
+        ImGui::TextWrapped("A Unity-inspired C++ game engine. Build 2D/3D scenes, "
+                           "script them, and export a standalone game with File > Build Game.");
+        ImGui::Spacing();
+        ImGui::TextDisabled("github.com/kingimann/OkaySpaceGameEngine");
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
 void DrawUpdatePopup() {
     if (g_openUpdatePopup) { ImGui::OpenPopup("Engine Update"); g_openUpdatePopup = false; }
     if (ImGui::BeginPopupModal("Engine Update", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -912,10 +1002,46 @@ void DrawUpdatePopup() {
     }
 }
 
+// A short type tag for a GameObject, based on its most distinctive component.
+static const char* ObjectKind(GameObject* go) {
+    if (go->GetComponent<Camera>())         return "[Cam] ";
+    if (go->GetComponent<MeshRenderer>())   return "[3D] ";
+    if (go->GetComponent<TextRenderer>())   return "[Txt] ";
+    if (go->GetComponent<ParticleSystem>()) return "[FX] ";
+    if (go->GetComponent<Tilemap>())        return "[Tile] ";
+    if (go->GetComponent<SpriteRenderer>()) return "[Spr] ";
+    if (go->GetComponent<AudioSource>())    return "[Snd] ";
+    return "";
+}
+
+static char g_hierFilter[96] = "";
+
 void DrawHierarchy(EditorState& ed) {
     ImGui::Begin("Hierarchy");
     ImGui::TextDisabled("Scene: %s%s", ed.scene().Name().c_str(), ed.dirty ? " *" : "");
+    ImGui::SameLine(ImGui::GetWindowWidth() - 70);
+    ImGui::TextDisabled("%d obj", (int)ed.scene().Objects().size());
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##hfilter", "search objects...", g_hierFilter, sizeof(g_hierFilter));
     ImGui::Separator();
+
+    // When searching, show a flat list of every matching object.
+    if (g_hierFilter[0] != '\0') {
+        std::string needle = g_hierFilter;
+        for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
+        for (const auto& up : ed.scene().Objects()) {
+            GameObject* go = up.get();
+            std::string low = go->name;
+            for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
+            if (low.find(needle) == std::string::npos) continue;
+            bool sel = (go == ed.selected());
+            if (ImGui::Selectable((std::string(ObjectKind(go)) + go->name).c_str(), sel))
+                ed.Select(go);
+        }
+        ImGui::End();
+        return;
+    }
+
     const auto& objs = ed.scene().Objects();
     for (const auto& up : objs) {
         GameObject* go = up.get();
@@ -927,8 +1053,8 @@ void DrawHierarchy(EditorState& ed) {
                                        ImGuiTreeNodeFlags_SpanAvailWidth;
             if (node == ed.selected()) flags |= ImGuiTreeNodeFlags_Selected;
             if (node->transform->ChildCount() == 0) flags |= ImGuiTreeNodeFlags_Leaf;
-            bool open = ImGui::TreeNodeEx(node, flags, "%s%s", node->name.c_str(),
-                                          node->active ? "" : "  (off)");
+            bool open = ImGui::TreeNodeEx(node, flags, "%s%s%s", ObjectKind(node),
+                                          node->name.c_str(), node->active ? "" : "  (off)");
             if (ImGui::IsItemClicked()) ed.Select(node);
             // Right-click context menu per item.
             if (ImGui::BeginPopupContextItem()) {
@@ -1220,38 +1346,49 @@ void DrawInspector(EditorState& ed) {
 
     ImGui::Spacing();
     ImGui::Separator();
-    if (ImGui::Button("Add Component", ImVec2(-1, 0))) ImGui::OpenPopup("AddComponent");
+    static char acFilter[64] = "";
+    if (ImGui::Button("Add Component", ImVec2(-1, 0))) { acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent"); }
     if (ImGui::BeginPopup("AddComponent")) {
-        if (!go->GetComponent<SpriteRenderer>() && ImGui::Selectable("Sprite Renderer"))
-            { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
-        if (!go->GetComponent<MeshRenderer>() && ImGui::Selectable("Mesh Renderer (Cube)"))
-            { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
-        if (!go->GetComponent<Camera>() && ImGui::Selectable("Camera"))
-            { go->AddComponent<Camera>(); ed.dirty = true; }
-        if (!go->GetComponent<Rigidbody2D>() && ImGui::Selectable("Rigidbody2D"))
-            { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
-        if (!go->GetComponent<BoxCollider2D>() && ImGui::Selectable("Box Collider 2D"))
-            { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
-        if (!go->GetComponent<CircleCollider2D>() && ImGui::Selectable("Circle Collider 2D"))
-            { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
-        if (!go->GetComponent<ScriptComponent>() && ImGui::Selectable("Script (OkayScript)"))
-            { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
-        if (!go->GetComponent<VisualScriptComponent>() && ImGui::Selectable("Visual Script"))
-            { go->AddComponent<VisualScriptComponent>(); ed.dirty = true; }
-        if (!go->GetComponent<AudioSource>() && ImGui::Selectable("Audio Source"))
-            { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
-        if (!go->GetComponent<TextRenderer>() && ImGui::Selectable("Text"))
-            { go->AddComponent<TextRenderer>(); ed.dirty = true; }
-        if (!go->GetComponent<SpriteAnimator>() && ImGui::Selectable("Sprite Animator"))
-            { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputTextWithHint("##acfilter", "search components...", acFilter, sizeof(acFilter));
         ImGui::Separator();
-        if (!go->GetComponent<Mover>() && ImGui::Selectable("Mover"))
+        // Case-insensitive substring match against the search box.
+        auto F = [&](const char* name) {
+            if (!acFilter[0]) return true;
+            std::string a = name, b = acFilter;
+            for (auto& ch : a) ch = (char)std::tolower((unsigned char)ch);
+            for (auto& ch : b) ch = (char)std::tolower((unsigned char)ch);
+            return a.find(b) != std::string::npos;
+        };
+        if (!go->GetComponent<SpriteRenderer>() && F("Sprite Renderer") && ImGui::Selectable("Sprite Renderer"))
+            { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
+        if (!go->GetComponent<MeshRenderer>() && F("Mesh Renderer (Cube)") && ImGui::Selectable("Mesh Renderer (Cube)"))
+            { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+        if (!go->GetComponent<Camera>() && F("Camera") && ImGui::Selectable("Camera"))
+            { go->AddComponent<Camera>(); ed.dirty = true; }
+        if (!go->GetComponent<Rigidbody2D>() && F("Rigidbody2D") && ImGui::Selectable("Rigidbody2D"))
+            { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+        if (!go->GetComponent<BoxCollider2D>() && F("Box Collider 2D") && ImGui::Selectable("Box Collider 2D"))
+            { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
+        if (!go->GetComponent<CircleCollider2D>() && F("Circle Collider 2D") && ImGui::Selectable("Circle Collider 2D"))
+            { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
+        if (!go->GetComponent<ScriptComponent>() && F("Script (OkayScript)") && ImGui::Selectable("Script (OkayScript)"))
+            { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
+        if (!go->GetComponent<VisualScriptComponent>() && F("Visual Script") && ImGui::Selectable("Visual Script"))
+            { go->AddComponent<VisualScriptComponent>(); ed.dirty = true; }
+        if (!go->GetComponent<AudioSource>() && F("Audio Source") && ImGui::Selectable("Audio Source"))
+            { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+        if (!go->GetComponent<TextRenderer>() && F("Text") && ImGui::Selectable("Text"))
+            { go->AddComponent<TextRenderer>(); ed.dirty = true; }
+        if (!go->GetComponent<SpriteAnimator>() && F("Sprite Animator") && ImGui::Selectable("Sprite Animator"))
+            { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
+        if (!go->GetComponent<Mover>() && F("Mover") && ImGui::Selectable("Mover"))
             { go->AddComponent<Mover>(); ed.dirty = true; }
-        if (!go->GetComponent<Spinner>() && ImGui::Selectable("Spinner"))
+        if (!go->GetComponent<Spinner>() && F("Spinner") && ImGui::Selectable("Spinner"))
             { go->AddComponent<Spinner>(); ed.dirty = true; }
-        if (!go->GetComponent<Lifetime>() && ImGui::Selectable("Lifetime"))
+        if (!go->GetComponent<Lifetime>() && F("Lifetime") && ImGui::Selectable("Lifetime"))
             { go->AddComponent<Lifetime>(); ed.dirty = true; }
-        if (!go->GetComponent<CameraFollow>() && ImGui::Selectable("Camera Follow"))
+        if (!go->GetComponent<CameraFollow>() && F("Camera Follow") && ImGui::Selectable("Camera Follow"))
             { go->AddComponent<CameraFollow>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
@@ -1604,6 +1741,7 @@ int main(int argc, char** argv) {
         DrawNewProjectPopup(ed);
         DrawFileDialogs(ed);
         DrawUpdatePopup();
+        DrawAboutPopup();
         if (g_showHierarchy) DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel (always shown)
         if (g_showInspector) DrawInspector(ed);

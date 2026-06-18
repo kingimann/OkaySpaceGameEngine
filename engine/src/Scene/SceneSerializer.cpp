@@ -77,7 +77,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << Quote(sr->texture)
             << " " << sr->uvMin.x << " " << sr->uvMin.y
             << " " << sr->uvMax.x << " " << sr->uvMax.y
-            << " " << sr->sortOrder << "\n";
+            << " " << sr->sortOrder
+            << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0) << "\n";
     }
     if (auto* cam = go->GetComponent<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
@@ -228,7 +229,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> sr->uvMin.x >> sr->uvMin.y >> sr->uvMax.x >> sr->uvMax.y;
                         in >> std::ws; // optional sortOrder follows uv
                         int pk2 = in.peek();
-                        if (pk2 == '-' || std::isdigit(pk2)) in >> sr->sortOrder;
+                        if (pk2 == '-' || std::isdigit(pk2)) {
+                            in >> sr->sortOrder;
+                            in >> std::ws; // optional flipX/flipY follow sortOrder
+                            if (std::isdigit(in.peek())) {
+                                int fx = 0, fy = 0; in >> fx >> fy;
+                                sr->flipX = (fx != 0); sr->flipY = (fy != 0);
+                            }
+                        }
                     }
                 } else if (field == "camera") {
                     Color c; int proj = 0; float ortho = 5.0f, fov = 60.0f; int main = 1;

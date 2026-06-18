@@ -68,6 +68,7 @@ int main() {
         sr->texture = "player.png";
         sr->color = Color::Red;
         sr->sortOrder = 7;
+        sr->flipX = true;
 
         std::string text = SceneSerializer::Serialize(scene);
         Scene loaded("L");
@@ -77,6 +78,8 @@ int main() {
         CHECK(r != nullptr);
         CHECK(r->texture == "player.png");
         CHECK(r->sortOrder == 7);
+        CHECK(r->flipX);
+        CHECK(!r->flipY);
     }
 
     TEST_MAIN_RESULT();

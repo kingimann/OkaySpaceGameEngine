@@ -269,6 +269,8 @@ int main(int argc, char** argv) {
                 // sprite's uv sub-region so sprite sheets / atlases work.
                 SDL_Texture* tex = GetTexture(renderer, sr->texture, baseDir, textureCache);
                 float u0 = sr->uvMin.x, v0 = sr->uvMin.y, u1 = sr->uvMax.x, v1 = sr->uvMax.y;
+                if (sr->flipX) std::swap(u0, u1);
+                if (sr->flipY) std::swap(v0, v1);
                 const SDL_FPoint uv[4] = {{u0, v1}, {u1, v1}, {u1, v0}, {u0, v0}};
                 SDL_Vertex vtx[4];
                 for (int k = 0; k < 4; ++k) {

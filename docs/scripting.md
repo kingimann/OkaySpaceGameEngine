@@ -72,6 +72,7 @@ overlaps or contacts another (pickups, damage).
 | `set_text(string)` | set this object's TextRenderer text |
 | `set_color(r, g, b[, a])` | tint this object's Sprite/Text |
 | `set_texture(path)` | set this object's SpriteRenderer image |
+| `flip_x(bool)` / `flip_y(bool)` | mirror this object's sprite |
 | `play_sound()` | play this object's AudioSource |
 | `print(...)` | log values to the console |
 

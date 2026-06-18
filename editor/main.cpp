@@ -1223,6 +1223,9 @@ void DrawInspector(EditorState& ed) {
             tex[sizeof(tex) - 1] = '\0';
             if (ImGui::InputText("Texture##sprite", tex, sizeof(tex))) { sr->texture = tex; ed.dirty = true; }
             if (ImGui::DragInt("Sort Order##sprite", &sr->sortOrder, 0.1f, -1000, 1000)) ed.dirty = true;
+            if (ImGui::Checkbox("Flip X##sprite", &sr->flipX)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Flip Y##sprite", &sr->flipY)) ed.dirty = true;
             ImGui::TextDisabled("image file (PNG/JPG); higher Sort Order draws on top");
             if (ImGui::SmallButton("Remove##sprite")) toRemove = sr;
         }

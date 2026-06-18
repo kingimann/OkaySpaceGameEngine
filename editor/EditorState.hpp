@@ -32,6 +32,9 @@ public:
     /// (perspective camera + ground + cube).
     void NewScene2D();
     void NewScene3D();
+    /// Starter templates that build a small playable scene to learn from.
+    void NewPlatformer();
+    void NewTopDown();
 
     // ---- Files ---------------------------------------------------------
     bool Save(const std::string& path);

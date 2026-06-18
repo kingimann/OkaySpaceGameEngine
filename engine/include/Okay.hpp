@@ -61,6 +61,9 @@
 // AI
 #include "okay/AI/Pathfinding.hpp"
 
+// Starter scene templates
+#include "okay/Scene/SceneTemplates.hpp"
+
 // Audio
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Components/AudioSource.hpp"

@@ -202,6 +202,26 @@ void EditorState::NewScene3D() {
     dirty = false;
 }
 
+void EditorState::NewPlatformer() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Platformer(m_scene);
+    m_suppressUndo = false;
+    view3D = false;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
+void EditorState::NewTopDown() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::TopDown(m_scene);
+    m_suppressUndo = false;
+    view3D = false;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
 bool EditorState::Save(const std::string& path) {
     if (!SceneSerializer::SaveToFile(m_scene, path)) return false;
     m_path = path;

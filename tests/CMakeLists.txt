@@ -50,6 +50,10 @@ add_executable(test_easing test_easing.cpp)
 target_link_libraries(test_easing PRIVATE okay::engine)
 add_test(NAME easing COMMAND test_easing)
 
+add_executable(test_templates test_templates.cpp)
+target_link_libraries(test_templates PRIVATE okay::engine)
+add_test(NAME templates COMMAND test_templates)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

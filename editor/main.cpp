@@ -886,6 +886,15 @@ void DrawNewProjectPopup(EditorState& ed) {
             ed.NewScene3D(); ConsoleLog("New 3D project"); ImGui::CloseCurrentPopup();
         }
         ImGui::Spacing();
+        ImGui::TextDisabled("Or start from a playable template:");
+        if (ImGui::Button("Platformer", ImVec2(160, 50))) {
+            ed.NewPlatformer(); ConsoleLog("New platformer template"); ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Top-Down", ImVec2(160, 50))) {
+            ed.NewTopDown(); ConsoleLog("New top-down template"); ImGui::CloseCurrentPopup();
+        }
+        ImGui::Spacing();
         if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) {
             ed.NewScene(); ConsoleLog("New empty scene"); ImGui::CloseCurrentPopup();
         }

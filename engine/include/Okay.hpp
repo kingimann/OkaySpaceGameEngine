@@ -1,0 +1,56 @@
+#pragma once
+/// OkaySpaceGameEngine — single public header.
+/// Include this to pull in the whole engine API.
+///
+///     #include <Okay.hpp>
+///     using namespace okay;
+
+// Math
+#include "okay/Math/Math.hpp"
+
+// Core
+#include "okay/Core/Log.hpp"
+#include "okay/Core/Time.hpp"
+#include "okay/Core/Application.hpp"
+
+// Input
+#include "okay/Input/Input.hpp"
+
+// Rendering
+#include "okay/Render/Color.hpp"
+#include "okay/Render/Renderer.hpp"
+#include "okay/Render/ConsoleRenderer.hpp"
+
+// Scene graph
+#include "okay/Scene/Component.hpp"
+#include "okay/Scene/Transform.hpp"
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Scene.hpp"
+
+// Built-in components
+#include "okay/Components/Camera.hpp"
+#include "okay/Components/SpriteRenderer.hpp"
+
+// Multiplayer networking
+#include "okay/Net/Packet.hpp"
+#include "okay/Net/UdpSocket.hpp"
+#include "okay/Net/NetworkManager.hpp"
+
+// Visual scripting (node graphs)
+#include "okay/VisualScript/VsValue.hpp"
+#include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/Nodes.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"
+
+// Text scripting (OkayScript built-in; Lua / C# optional)
+#include "okay/Scripting/ScriptVM.hpp"
+#include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Components/ScriptComponent.hpp"
+
+// Steam platform integration (simulation backend by default)
+#include "okay/Platform/Steam/SteamService.hpp"
+#include "okay/Components/SteamManager.hpp"
+
+// PlayFab LiveOps integration (simulation backend by default)
+#include "okay/Platform/PlayFab/PlayFabService.hpp"
+#include "okay/Components/PlayFabManager.hpp"

@@ -22,6 +22,10 @@ add_executable(test_audio test_audio.cpp)
 target_link_libraries(test_audio PRIVATE okay::engine)
 add_test(NAME audio COMMAND test_audio)
 
+add_executable(test_layers test_layers.cpp)
+target_link_libraries(test_layers PRIVATE okay::engine)
+add_test(NAME physics_layers COMMAND test_layers)
+
 add_executable(test_core_features test_core_features.cpp)
 target_link_libraries(test_core_features PRIVATE okay::engine)
 add_test(NAME core_features COMMAND test_core_features)

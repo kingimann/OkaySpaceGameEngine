@@ -227,5 +227,33 @@ int main() {
         CHECK_NEAR(r->position.y, 50.0f, 0.001f);
     }
 
+    // --- UIImage serializes (texture + tint + rect) and is an asset ---
+    {
+        Scene scene("Img");
+        GameObject* go = scene.CreateGameObject("Logo");
+        auto* im = go->AddComponent<UIImage>();
+        im->texture = "ui/logo.png";
+        im->position = {64, 32};
+        im->size = {256, 128};
+        im->color = Color(1.0f, 0.5f, 0.25f, 0.9f);
+
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("Logo")->GetComponent<UIImage>();
+        CHECK(r != nullptr);
+        CHECK(r->texture == "ui/logo.png");
+        CHECK_NEAR(r->size.x, 256.0f, 0.001f);
+        CHECK_NEAR(r->color.g, 0.5f, 0.01f);
+        CHECK_NEAR(r->color.a, 0.9f, 0.01f);
+
+        // The image path is collected so Build Game bundles it.
+        auto assets = SceneSerializer::CollectAssetPaths(scene);
+        bool found = false;
+        for (const auto& a : assets) if (a == "ui/logo.png") found = true;
+        CHECK(found);
+    }
+
     TEST_MAIN_RESULT();
 }

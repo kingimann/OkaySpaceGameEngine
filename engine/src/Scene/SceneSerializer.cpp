@@ -21,6 +21,7 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
+#include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
@@ -177,6 +178,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pb->size.x << " " << pb->size.y << " " << pb->value << " "
             << pb->background.r << " " << pb->background.g << " " << pb->background.b << " " << pb->background.a << " "
             << pb->fill.r << " " << pb->fill.g << " " << pb->fill.b << " " << pb->fill.a << "\n";
+    }
+    if (auto* im = go->GetComponent<UIImage>()) {
+        out << "  uiimage " << im->position.x << " " << im->position.y << " "
+            << im->size.x << " " << im->size.y << " "
+            << im->color.r << " " << im->color.g << " " << im->color.b << " " << im->color.a << " "
+            << Quote(im->texture) << "\n";
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
         out << "  uislider " << sl->position.x << " " << sl->position.y << " "
@@ -423,6 +430,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> pb->position.x >> pb->position.y >> pb->size.x >> pb->size.y >> pb->value
                        >> bg.r >> bg.g >> bg.b >> bg.a >> fl.r >> fl.g >> fl.b >> fl.a;
                     pb->background = bg; pb->fill = fl;
+                } else if (field == "uiimage") {
+                    auto* im = go->AddComponent<UIImage>();
+                    Color c;
+                    in >> im->position.x >> im->position.y >> im->size.x >> im->size.y
+                       >> c.r >> c.g >> c.b >> c.a;
+                    im->color = c;
+                    im->texture = ReadQuoted(in);
                 } else if (field == "uislider") {
                     auto* sl = go->AddComponent<UISlider>();
                     Color bg, fl, kn;
@@ -545,6 +559,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
         if (auto* mr = go->GetComponent<MeshRenderer>())   add(mr->meshPath);
+        if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
         if (auto* an = go->GetComponent<SpriteAnimator>())
             for (const auto& f : an->frames) add(f);
     }

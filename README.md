@@ -59,6 +59,11 @@ planet, `A` player ship.)*
   callbacks, stepped automatically by the scene.
 - **Scheduler** — `Invoke`, `InvokeRepeating`, and value `Tween`s per scene
   (Unity-style timed callbacks).
+- **Sprites, textures & text** — `SpriteRenderer` with optional **image
+  textures** (`okay::Image`, PNG/JPG/BMP via stb_image), `SpriteAnimator`
+  flip-book frame animation, and a `TextRenderer` using a built-in **8×8 bitmap
+  font** (no font file) for HUDs and labels. The player draws shaded 3D meshes,
+  rotated/textured sprites, tilemaps, particles, and text.
 - **Gameplay components (no scripting needed)** — `Mover` (constant velocity),
   `Spinner` (constant rotation), `Lifetime` (auto-destroy), and `CameraFollow`
   (smooth chase camera). All serialized and editable in the Inspector.
@@ -114,7 +119,9 @@ engine/
   include/okay/Components/    # Camera, SpriteRenderer
   include/okay/Render/        # IRenderer, ConsoleRenderer, Color
   include/okay/Input/         # Input
+  include/okay/Graphics/      # Image (stb), Font (8x8 bitmap)
   include/okay/AI/            # Pathfinding (A*)
+  third_party/                # vendored single-header libs (stb, font8x8)
   src/                        # implementations
 editor/                       # Dear ImGui + SDL2 desktop editor (the engine app)
 player/                       # standalone SDL2 runtime that runs a built game
@@ -235,7 +242,7 @@ int main() {
 The renderer is the obvious next layer: implement `okay::IRenderer`'s five
 methods against OpenGL/SDL and hand it to `Application::SetRenderer(...)` — the
 scene, components, and scripts need no changes. Other natural additions:
-an asset/resource system, texture/sprite-sheet loading, and a UI/text layer.
+an asset/resource manager, sprite-sheet atlases, and an audio effects graph.
 
 ## License
 

@@ -27,6 +27,12 @@ public:
     static std::string SerializeObject(const GameObject& root);
     /// Clone `prefab` (and its descendants) into `scene`; returns the new root.
     static GameObject* Instantiate(Scene& scene, const GameObject& prefab);
+
+    /// Save a GameObject (and descendants) to a .okayprefab file.
+    static bool SaveObjectToFile(const GameObject& root, const std::string& path);
+    /// Instantiate a prefab file into `scene`; returns the new root (or nullptr).
+    static GameObject* InstantiateFromFile(Scene& scene, const std::string& path,
+                                           std::string* error = nullptr);
 };
 
 } // namespace okay

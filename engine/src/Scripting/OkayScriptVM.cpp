@@ -666,6 +666,12 @@ struct OkayScriptVM::Impl {
                 if (auto* au = g->GetComponent<AudioSource>()) au->Play();
             return Value{};
         };
+        // Load another scene at end of frame (level transitions, restart).
+        b["load_scene"] = [this](std::vector<Value>& a) {
+            if (!a.empty() && rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                rt.host->gameObject->scene()->RequestLoad(a[0].AsString());
+            return Value{};
+        };
         // Persistent prefs (high scores, settings) — survive across runs.
         b["prefs_set"] = [](std::vector<Value>& a) {
             if (a.size() >= 2) {

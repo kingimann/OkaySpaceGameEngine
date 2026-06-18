@@ -112,6 +112,17 @@ void Scene::Update(float deltaTime) {
         }
         m_destroyQueue.clear();
     }
+
+    // A deferred scene load (requested via RequestLoad) happens here, after all
+    // iteration is done, so it's safe to replace the whole scene.
+    if (m_hasPendingLoad) {
+        std::string path = m_pendingLoad;
+        m_hasPendingLoad = false;
+        m_pendingLoad.clear();
+        if (SceneSerializer::LoadFromFile(*this, path)) {
+            Start(); // run Awake/Start for the freshly loaded objects
+        }
+    }
 }
 
 void Scene::Render(IRenderer& renderer) {

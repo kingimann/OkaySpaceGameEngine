@@ -42,6 +42,10 @@ add_executable(test_prefs test_prefs.cpp)
 target_link_libraries(test_prefs PRIVATE okay::engine)
 add_test(NAME prefs COMMAND test_prefs)
 
+add_executable(test_pathfinding test_pathfinding.cpp)
+target_link_libraries(test_pathfinding PRIVATE okay::engine)
+add_test(NAME pathfinding COMMAND test_pathfinding)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

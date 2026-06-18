@@ -9,6 +9,8 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UISlider.hpp"
+#include "okay/Components/UIToggle.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
@@ -853,6 +855,28 @@ struct OkayScriptVM::Impl {
             if (GameObject* g = go())
                 if (auto* pb = g->GetComponent<UIProgressBar>())
                     pb->SetValue(a.empty() ? 0.0f : a[0].AsFloat());
+            return Value{};
+        };
+        // UI slider/toggle on this object (settings menus react via on_change/on_toggle).
+        b["slider_value"] = [go](std::vector<Value>&) -> Value {
+            if (GameObject* g = go())
+                if (auto* sl = g->GetComponent<UISlider>()) return Value{sl->value};
+            return Value{0.0f};
+        };
+        b["set_slider"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sl = g->GetComponent<UISlider>())
+                    sl->SetValue(a.empty() ? 0.0f : a[0].AsFloat());
+            return Value{};
+        };
+        b["toggle_on"] = [go](std::vector<Value>&) -> Value {
+            if (GameObject* g = go())
+                if (auto* tg = g->GetComponent<UIToggle>()) return Value{tg->on};
+            return Value{false};
+        };
+        b["set_toggle"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* tg = g->GetComponent<UIToggle>()) tg->on = !a.empty() && a[0].AsBool();
             return Value{};
         };
         // Tilemap editing on a sibling Tilemap (procedural levels).

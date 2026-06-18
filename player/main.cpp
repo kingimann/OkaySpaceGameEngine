@@ -411,6 +411,46 @@ int main(int argc, char** argv) {
                                    (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255));
             SDL_RenderFillRect(renderer, &fl);
         }
+        for (const auto& up : scene.Objects()) {           // sliders
+            auto* sl = up->GetComponent<UISlider>();
+            if (!sl || !up->active) continue;
+            SDL_Rect bg{(int)sl->position.x, (int)sl->position.y, (int)sl->size.x, (int)sl->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(sl->background.r * 255), (Uint8)(sl->background.g * 255),
+                                   (Uint8)(sl->background.b * 255), (Uint8)(sl->background.a * 255));
+            SDL_RenderFillRect(renderer, &bg);
+            SDL_Rect fl{(int)sl->position.x, (int)sl->position.y,
+                        (int)(sl->size.x * sl->Fraction()), (int)sl->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(sl->fill.r * 255), (Uint8)(sl->fill.g * 255),
+                                   (Uint8)(sl->fill.b * 255), (Uint8)(sl->fill.a * 255));
+            SDL_RenderFillRect(renderer, &fl);
+            int kw = (int)(sl->size.y * 0.6f);
+            SDL_Rect kn{(int)(sl->position.x + sl->size.x * sl->Fraction()) - kw / 2,
+                        (int)sl->position.y - 2, kw, (int)sl->size.y + 4};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(sl->knob.r * 255), (Uint8)(sl->knob.g * 255),
+                                   (Uint8)(sl->knob.b * 255), (Uint8)(sl->knob.a * 255));
+            SDL_RenderFillRect(renderer, &kn);
+        }
+        for (const auto& up : scene.Objects()) {           // toggles (checkboxes)
+            auto* tg = up->GetComponent<UIToggle>();
+            if (!tg || !up->active) continue;
+            SDL_Rect box{(int)tg->position.x, (int)tg->position.y, (int)tg->size.x, (int)tg->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(tg->boxColor.r * 255), (Uint8)(tg->boxColor.g * 255),
+                                   (Uint8)(tg->boxColor.b * 255), (Uint8)(tg->boxColor.a * 255));
+            SDL_RenderFillRect(renderer, &box);
+            if (tg->on) {                                  // inset check fill
+                int pad = (int)(tg->size.x * 0.22f);
+                SDL_Rect chk{box.x + pad, box.y + pad, box.w - 2 * pad, box.h - 2 * pad};
+                SDL_SetRenderDrawColor(renderer, (Uint8)(tg->checkColor.r * 255), (Uint8)(tg->checkColor.g * 255),
+                                       (Uint8)(tg->checkColor.b * 255), (Uint8)(tg->checkColor.a * 255));
+                SDL_RenderFillRect(renderer, &chk);
+            }
+            float px = 2.0f;
+            float tx = tg->position.x + tg->size.x + 8.0f;
+            float ty = tg->position.y + (tg->size.y - Font8x8::Height * px) * 0.5f;
+            SDL_Color tc{(Uint8)(tg->textColor.r * 255), (Uint8)(tg->textColor.g * 255),
+                         (Uint8)(tg->textColor.b * 255), (Uint8)(tg->textColor.a * 255)};
+            DrawText(renderer, tg->label, tx, ty, px, tc);
+        }
         for (const auto& up : scene.Objects()) {
             auto* btn = up->GetComponent<UIButton>();
             if (!btn || !up->active) continue;

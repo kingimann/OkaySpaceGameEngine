@@ -1474,6 +1474,40 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
         }
     }
+    if (auto* sl = go->GetComponent<UISlider>()) {
+        if (ImGui::CollapsingHeader("UI Slider", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float pos[2] = {sl->position.x, sl->position.y};
+            if (ImGui::DragFloat2("Pos (px)##usl", pos, 1.0f)) { sl->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {sl->size.x, sl->size.y};
+            if (ImGui::DragFloat2("Size (px)##usl", sz, 1.0f, 1.0f, 8000.0f)) { sl->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Min##usl", &sl->minValue, 0.1f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max##usl", &sl->maxValue, 0.1f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Value##usl", &sl->value, sl->minValue, sl->maxValue)) ed.dirty = true;
+            float fc[4] = {sl->fill.r, sl->fill.g, sl->fill.b, sl->fill.a};
+            if (ImGui::ColorEdit4("Fill##usl", fc)) { sl->fill = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
+            float kc[4] = {sl->knob.r, sl->knob.g, sl->knob.b, sl->knob.a};
+            if (ImGui::ColorEdit4("Knob##usl", kc)) { sl->knob = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("drag in the built game; calls script on_change()");
+            if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
+        }
+    }
+    if (auto* tg = go->GetComponent<UIToggle>()) {
+        if (ImGui::CollapsingHeader("UI Toggle", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char lb[128];
+            std::strncpy(lb, tg->label.c_str(), sizeof(lb) - 1);
+            lb[sizeof(lb) - 1] = '\0';
+            if (ImGui::InputText("Label##utg", lb, sizeof(lb))) { tg->label = lb; ed.dirty = true; }
+            if (ImGui::Checkbox("On##utg", &tg->on)) ed.dirty = true;
+            float pos[2] = {tg->position.x, tg->position.y};
+            if (ImGui::DragFloat2("Pos (px)##utg", pos, 1.0f)) { tg->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {tg->size.x, tg->size.y};
+            if (ImGui::DragFloat2("Size (px)##utg", sz, 1.0f, 1.0f, 4000.0f)) { tg->size = {sz[0], sz[1]}; ed.dirty = true; }
+            float cc[4] = {tg->checkColor.r, tg->checkColor.g, tg->checkColor.b, tg->checkColor.a};
+            if (ImGui::ColorEdit4("Check##utg", cc)) { tg->checkColor = {cc[0], cc[1], cc[2], cc[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("click in the built game; calls script on_toggle()");
+            if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
+        }
+    }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         if (ImGui::CollapsingHeader("Sprite Animator", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
@@ -1564,6 +1598,10 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<UIPanel>(); ed.dirty = true; }
         if (!go->GetComponent<UIProgressBar>() && F("UI Progress Bar") && ImGui::Selectable("UI Progress Bar"))
             { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
+        if (!go->GetComponent<UISlider>() && F("UI Slider") && ImGui::Selectable("UI Slider"))
+            { go->AddComponent<UISlider>(); ed.dirty = true; }
+        if (!go->GetComponent<UIToggle>() && F("UI Toggle") && ImGui::Selectable("UI Toggle"))
+            { go->AddComponent<UIToggle>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
@@ -1705,6 +1743,35 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         dl->AddRectFilled(a, ImVec2(a.x + pb->size.x, a.y + pb->size.y), ToColor(pb->background), 3.0f);
         dl->AddRectFilled(a, ImVec2(a.x + pb->size.x * pb->Fraction(), a.y + pb->size.y),
                           ToColor(pb->fill), 3.0f);
+    }
+
+    // UI sliders: track + fill + knob.
+    for (const auto& up : objs) {
+        auto* sl = up->GetComponent<UISlider>();
+        if (!sl || !up->active) continue;
+        ImVec2 a(canvasPos.x + sl->position.x, canvasPos.y + sl->position.y);
+        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x, a.y + sl->size.y), ToColor(sl->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x * sl->Fraction(), a.y + sl->size.y),
+                          ToColor(sl->fill), 3.0f);
+        float kx = a.x + sl->size.x * sl->Fraction(), kw = sl->size.y * 0.6f;
+        dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sl->size.y + 2),
+                          ToColor(sl->knob), 2.0f);
+    }
+    // UI toggles: box (+ inset check when on) and a label.
+    for (const auto& up : objs) {
+        auto* tg = up->GetComponent<UIToggle>();
+        if (!tg || !up->active) continue;
+        ImVec2 a(canvasPos.x + tg->position.x, canvasPos.y + tg->position.y);
+        ImVec2 b(a.x + tg->size.x, a.y + tg->size.y);
+        dl->AddRectFilled(a, b, ToColor(tg->boxColor), 3.0f);
+        if (tg->on) {
+            float pad = tg->size.x * 0.22f;
+            dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
+                              ToColor(tg->checkColor), 2.0f);
+        }
+        float px = 2.0f;
+        DrawBitmapText(dl, tg->label, b.x + 8.0f,
+                       a.y + (tg->size.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
     }
 
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).

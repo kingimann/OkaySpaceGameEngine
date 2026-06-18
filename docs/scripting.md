@@ -70,6 +70,7 @@ overlaps or contacts another (pickups, damage).
 | `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `raycast_hit(ox, oy, dx, dy[, dist])` | true if a ray hits a collider |
 | `overlap(x, y)` | true if a collider contains the point |
+| `set_gravity(x, y)` | set the scene's 2D gravity (0,0 for top-down) |
 | `set_text(string)` | set this object's TextRenderer text |
 | `set_color(r, g, b[, a])` | tint this object's Sprite/Text |
 | `set_texture(path)` | set this object's SpriteRenderer image |

@@ -73,6 +73,7 @@ public:
 
     /// The 2D physics world, stepped each frame during Update.
     Physics2D& physics() { return m_physics; }
+    const Physics2D& physics() const { return m_physics; }
     /// Set false to skip the physics step (e.g. for pure-UI scenes).
     bool physicsEnabled = true;
 

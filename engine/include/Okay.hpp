@@ -47,6 +47,10 @@
 #include "okay/Animation/AnimationClip.hpp"
 #include "okay/Components/Animator.hpp"
 
+// More components
+#include "okay/Components/ParticleSystem.hpp"
+#include "okay/Components/Tilemap.hpp"
+
 // Multiplayer networking
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/UdpSocket.hpp"

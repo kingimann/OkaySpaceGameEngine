@@ -283,6 +283,21 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::Separator();
         if (ImGui::MenuItem("Create Cube (3D)"))    { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
         if (ImGui::MenuItem("Create Pyramid (3D)")) { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Create Particle System")) {
+            GameObject* go = ed.CreateEmpty("Particles");
+            go->AddComponent<ParticleSystem>();
+            ConsoleLog("Created Particle System (press Play to see it)");
+            created = true;
+        }
+        if (ImGui::MenuItem("Create Tilemap")) {
+            GameObject* go = ed.CreateEmpty("Tilemap");
+            auto* tm = go->AddComponent<Tilemap>();
+            tm->Resize(12, 8);
+            for (int x = 0; x < 12; ++x) tm->SetTile(x, 0, 1); // a ground row
+            ConsoleLog("Created Tilemap");
+            created = true;
+        }
         if (created) ed.Achievement("FIRST_OBJECT");
         ImGui::EndMenu();
     }
@@ -652,6 +667,34 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (go == ed.selected())
             dl->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2),
                         IM_COL32(255, 200, 0, 255), 0, 0, 2.0f);
+    }
+
+    // Tilemaps: filled cells, color keyed by tile id.
+    for (const auto& up : objs) {
+        auto* tm = up->GetComponent<Tilemap>();
+        if (!tm || !up->active) continue;
+        float half = tm->tileSize * 0.5f * scale;
+        for (int y = 0; y < tm->Height(); ++y)
+            for (int x = 0; x < tm->Width(); ++x) {
+                int id = tm->GetTile(x, y);
+                if (id == 0) continue;
+                ImVec2 cc = worldToScreen(tm->CellToWorld(x, y));
+                ImU32 col = IM_COL32(60 + (id * 70) % 196, 60 + (id * 130) % 196,
+                                     80 + (id * 50) % 176, 255);
+                dl->AddRectFilled(ImVec2(cc.x - half, cc.y - half),
+                                  ImVec2(cc.x + half, cc.y + half), col);
+            }
+    }
+
+    // Particles: filled circles (move during Play).
+    for (const auto& up : objs) {
+        auto* ps = up->GetComponent<ParticleSystem>();
+        if (!ps || !up->active) continue;
+        for (const auto& p : ps->Particles()) {
+            if (!p.alive) continue;
+            ImVec2 sp = worldToScreen(p.position);
+            dl->AddCircleFilled(sp, Mathf::Max(1.0f, p.size * scale * 0.5f), ToColor(p.color));
+        }
     }
     dl->PopClipRect();
 

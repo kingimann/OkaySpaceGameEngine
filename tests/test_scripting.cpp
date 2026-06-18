@@ -70,5 +70,82 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.x, 2.0f, 0.01f);
     }
 
+    // --- for loop: sum 0..9 = 45 ---
+    {
+        const char* src = R"SCRIPT(
+            var sum = 0;
+            for (var i = 0; i < 10; i = i + 1) { sum = sum + i; }
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        CHECK_NEAR(vm->GetGlobal("sum").AsFloat(), 45.0f, 0.001f);
+    }
+
+    // --- compound assignment operators ---
+    {
+        const char* src = R"SCRIPT(
+            var x = 10;
+            x += 5;   // 15
+            x -= 3;   // 12
+            x *= 2;   // 24
+            x /= 4;   // 6
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        CHECK_NEAR(vm->GetGlobal("x").AsFloat(), 6.0f, 0.001f);
+    }
+
+    // --- string concatenation and string equality ---
+    {
+        const char* src = R"SCRIPT(
+            var greeting = "hello" + " " + "world";
+            var same = ("ab" == "ab");
+            var diff = ("ab" != "cd");
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        CHECK(vm->GetGlobal("greeting").AsString() == "hello world");
+        CHECK(vm->GetGlobal("same").AsBool());
+        CHECK(vm->GetGlobal("diff").AsBool());
+    }
+
+    // --- new math builtins: clamp, lerp, pow, sign, round ---
+    {
+        const char* src = R"SCRIPT(
+            var a = clamp(15, 0, 10);   // 10
+            var b = lerp(0, 10, 0.5);   // 5
+            var c = pow(2, 8);          // 256
+            var d = sign(-3) + round(2.6);  // -1 + 3 = 2
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        CHECK_NEAR(vm->GetGlobal("a").AsFloat(), 10.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("b").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("c").AsFloat(), 256.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("d").AsFloat(), 2.0f, 0.001f);
+    }
+
+    // --- for loop driving a Transform via set_x ---
+    {
+        Scene scene("ForDrive");
+        GameObject* go = scene.CreateGameObject("Mover");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        const char* src = R"SCRIPT(
+            function start() {
+                var total = 0;
+                for (var i = 1; i <= 4; i += 1) { total += i; }  // 10
+                set_x(total);
+            }
+        )SCRIPT";
+        std::string err;
+        CHECK(sc->LoadSource(src, &err));
+        scene.Start();
+        CHECK_NEAR(go->transform->localPosition.x, 10.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

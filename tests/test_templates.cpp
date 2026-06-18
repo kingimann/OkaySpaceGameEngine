@@ -59,5 +59,36 @@ int main() {
         CHECK(player->transform->localPosition.x > before.x);
     }
 
+    // --- Coin Collector: a full playable loop (move onto coin -> score++) ---
+    {
+        Scene scene("x");
+        Templates::CoinCollector(scene);
+        CHECK(scene.Find("Player") != nullptr);
+        CHECK(scene.Find("HUD") != nullptr);
+
+        int coins = 0;
+        for (const auto& up : scene.Objects()) if (up->name == "Coin") ++coins;
+        CHECK(coins == 3);
+
+        scene.Start();                 // player start() resets score to 0
+        CHECK(Prefs::GetInt("score") == 0);
+
+        // Move the player onto the first coin's position, then step physics.
+        GameObject* coin = scene.Find("Coin");
+        Vec3 cp = coin->transform->Position();
+        scene.Find("Player")->transform->localPosition = cp;
+        scene.Update(0.016f);          // trigger fires -> coin scores + destroys
+
+        CHECK(Prefs::GetInt("score") == 1);
+        // One coin consumed; two remain.
+        int left = 0;
+        for (const auto& up : scene.Objects()) if (up->name == "Coin") ++left;
+        CHECK(left == 2);
+
+        // The HUD script reflects the score in its text.
+        scene.Update(0.016f);
+        CHECK(scene.Find("HUD")->GetComponent<TextRenderer>()->text == "Score: 1");
+    }
+
     TEST_MAIN_RESULT();
 }

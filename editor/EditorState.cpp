@@ -222,6 +222,16 @@ void EditorState::NewTopDown() {
     dirty = false;
 }
 
+void EditorState::NewCoinCollector() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::CoinCollector(m_scene);
+    m_suppressUndo = false;
+    view3D = false;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
 bool EditorState::Save(const std::string& path) {
     if (!SceneSerializer::SaveToFile(m_scene, path)) return false;
     m_path = path;

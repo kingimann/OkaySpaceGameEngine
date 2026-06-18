@@ -1028,6 +1028,9 @@ void DrawNewProjectPopup(EditorState& ed) {
         if (ImGui::Button("Top-Down", ImVec2(160, 50))) {
             ed.NewTopDown(); ConsoleLog("New top-down template"); ImGui::CloseCurrentPopup();
         }
+        if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 40))) {
+            ed.NewCoinCollector(); ConsoleLog("New coin-collector game"); ImGui::CloseCurrentPopup();
+        }
         ImGui::Spacing();
         if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) {
             ed.NewScene(); ConsoleLog("New empty scene"); ImGui::CloseCurrentPopup();

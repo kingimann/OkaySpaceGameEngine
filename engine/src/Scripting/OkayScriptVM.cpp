@@ -17,6 +17,7 @@
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <functional>
@@ -945,6 +946,60 @@ struct OkayScriptVM::Impl {
                 if (i >= 0 && i < (int)arr->size()) arr->erase(arr->begin() + i);
             }
             return a.empty() ? Value{} : a[0];
+        };
+        b["sum"] = [](std::vector<Value>& a) {
+            float s = 0;
+            if (!a.empty()) if (auto arr = a[0].AsArray()) for (auto& e : *arr) s += e.AsFloat();
+            return Value{s};
+        };
+        b["min_of"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray()) if (!arr->empty()) {
+                float m = (*arr)[0].AsFloat();
+                for (auto& e : *arr) m = Mathf::Min(m, e.AsFloat());
+                return Value{m};
+            }
+            return Value{0.0f};
+        };
+        b["max_of"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray()) if (!arr->empty()) {
+                float m = (*arr)[0].AsFloat();
+                for (auto& e : *arr) m = Mathf::Max(m, e.AsFloat());
+                return Value{m};
+            }
+            return Value{0.0f};
+        };
+        b["reverse"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray()) std::reverse(arr->begin(), arr->end());
+            return a.empty() ? Value{} : a[0];
+        };
+        b["sort_num"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray())
+                std::sort(arr->begin(), arr->end(),
+                          [](const Value& x, const Value& y) { return x.AsFloat() < y.AsFloat(); });
+            return a.empty() ? Value{} : a[0];
+        };
+        b["choose"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray()) if (!arr->empty())
+                return (*arr)[(std::size_t)Random::Shared().Range(0, (int)arr->size() - 1)];
+            return Value{};
+        };
+        b["shuffle"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray())
+                for (int i = (int)arr->size() - 1; i > 0; --i)
+                    std::swap((*arr)[i], (*arr)[Random::Shared().Range(0, i)]);
+            return a.empty() ? Value{} : a[0];
+        };
+        b["randi"] = [](std::vector<Value>& a) {
+            int lo = a.size() > 0 ? (int)a[0].AsFloat() : 0;
+            int hi = a.size() > 1 ? (int)a[1].AsFloat() : 1;
+            if (hi < lo) std::swap(lo, hi);
+            return Value{(float)Random::Shared().Range(lo, hi)};
+        };
+        b["move_toward"] = [](std::vector<Value>& a) {
+            float cur = a.size() > 0 ? a[0].AsFloat() : 0, tgt = a.size() > 1 ? a[1].AsFloat() : 0;
+            float maxD = a.size() > 2 ? Mathf::Abs(a[2].AsFloat()) : 0;
+            if (Mathf::Abs(tgt - cur) <= maxD) return Value{tgt};
+            return Value{cur + (tgt > cur ? maxD : -maxD)};
         };
         // String helpers.
         b["str_len"] = [](std::vector<Value>& a) { return Value{a.empty() ? 0.0f : (float)a[0].AsString().size()}; };

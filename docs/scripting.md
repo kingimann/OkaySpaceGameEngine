@@ -100,10 +100,12 @@ exit, so values set with `prefs_set` persist between play sessions.
 
 ### Math
 `abs sin cos tan sqrt pow floor ceil round sign min max clamp lerp atan2 len
-rand(lo, hi) dist(x1, y1, x2, y2) pi() deg2rad(d) rad2deg(r)`
+rand(lo, hi) randi(lo, hi) move_toward(cur, target, maxStep)
+dist(x1, y1, x2, y2) pi() deg2rad(d) rad2deg(r)`
 
 ### Arrays
-`array() count(a) push(a, v) pop(a) contains(a, v) index_of(a, v) remove_at(a, i)`
+`array() count(a) push(a, v) pop(a) contains(a, v) index_of(a, v) remove_at(a, i)
+sum(a) min_of(a) max_of(a) reverse(a) sort_num(a) choose(a) shuffle(a)`
 — plus literals `[...]`, indexing `a[i]`, and `a[i] = v`.
 
 ### Strings

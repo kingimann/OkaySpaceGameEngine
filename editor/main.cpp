@@ -1056,6 +1056,9 @@ void DrawNewProjectPopup(EditorState& ed) {
         if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 40))) {
             ed.NewMainMenu(); ConsoleLog("New main-menu scene"); ImGui::CloseCurrentPopup();
         }
+        if (ImGui::Button("Snake (full game)", ImVec2(-1, 40))) {
+            ed.NewSnake(); ConsoleLog("New Snake game"); ImGui::CloseCurrentPopup();
+        }
         ImGui::Spacing();
         if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) {
             ed.NewScene(); ConsoleLog("New empty scene"); ImGui::CloseCurrentPopup();

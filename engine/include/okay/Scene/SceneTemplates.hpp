@@ -12,6 +12,7 @@
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
+#include "okay/Components/Tilemap.hpp"
 
 namespace okay {
 
@@ -185,6 +186,94 @@ inline void MainMenu(Scene& scene) {
     b->size = {300, 60};
     start->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function on_click() { load_scene(\"game.okayscene\"); }\n");
+}
+
+/// A complete, playable game of Snake — written entirely in OkayScript on a
+/// single Tilemap object (snake body via an array, board via tile editing,
+/// food via randi, score via prefs). Steer with WASD/arrows. A compact showcase
+/// of arrays + tilemap scripting + input.
+inline void Snake(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Snake");
+
+    const int W = 16, H = 16;
+    GameObject* camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->orthographicSize = H * 0.5f + 1.0f;
+    cam->main = true;
+    cam->backgroundColor = Color::FromBytes(15, 18, 24);
+    camObj->transform->localPosition = {W * 0.5f, H * 0.5f, 0};
+
+    GameObject* board = scene.CreateGameObject("Board");
+    board->AddComponent<Tilemap>();
+    board->AddComponent<ScriptComponent>("okayscript")->LoadSource(R"OKAY(
+var W = 16; var H = 16;
+var bx = []; var by = [];      # snake body cells (index 0 = tail, last = head)
+var dx = 1; var dy = 0;
+var fx = 0; var fy = 0;
+var timer = 0; var step = 0.14;
+
+function place_food() { fx = randi(0, W - 1); fy = randi(0, H - 1); }
+
+function reset_game() {
+    bx = []; by = [];
+    push(bx, 7); push(by, 8);
+    push(bx, 8); push(by, 8);   # head at (8,8) moving right
+    dx = 1; dy = 0;
+    prefs_set("score", 0);
+    place_food();
+}
+
+function redraw() {
+    for (var y = 0; y < H; y = y + 1) {
+        for (var x = 0; x < W; x = x + 1) { set_tile(x, y, 0); }
+    }
+    for (var i = 0; i < count(bx); i = i + 1) { set_tile(bx[i], by[i], 1); }
+    set_tile(fx, fy, 2);
+}
+
+function set_dir(nx, ny) {
+    if (nx == 0 - dx && ny == 0 - dy) { return; }   # no instant reverse
+    dx = nx; dy = ny;
+}
+
+function start() { tile_resize(W, H); reset_game(); redraw(); }
+
+function update(d) {
+    if (key("w")) { set_dir(0, 1); }
+    if (key("s")) { set_dir(0, 0 - 1); }
+    if (key("a")) { set_dir(0 - 1, 0); }
+    if (key("d")) { set_dir(1, 0); }
+
+    timer = timer + d;
+    if (timer < step) { return; }
+    timer = 0;
+
+    var n = count(bx);
+    var hx = bx[n - 1] + dx;
+    var hy = by[n - 1] + dy;
+    if (hx < 0 || hy < 0 || hx >= W || hy >= H) { reset_game(); redraw(); return; }
+    for (var i = 0; i < count(bx); i = i + 1) {
+        if (bx[i] == hx && by[i] == hy) { reset_game(); redraw(); return; }
+    }
+    push(bx, hx); push(by, hy);
+    if (hx == fx && hy == fy) {
+        prefs_set("score", prefs_get("score") + 1);
+        place_food();
+    } else {
+        remove_at(bx, 0); remove_at(by, 0);
+    }
+    redraw();
+}
+)OKAY");
+
+    GameObject* hud = scene.CreateGameObject("HUD");
+    auto* tr = hud->AddComponent<TextRenderer>();
+    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 3.0f;
+    tr->text = "Score: 0";
+    hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
 }
 
 } // namespace Templates

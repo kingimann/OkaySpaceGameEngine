@@ -1,10 +1,13 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace okay {
@@ -176,6 +179,7 @@ struct Mesh {
         if (n == "Cylinder") return Cylinder();
         if (n == "Cone")     return Cone();
         if (n == "Torus")    return Torus();
+        if (n == "Capsule")  return Capsule();
         return Cube();
     }
 
@@ -261,6 +265,87 @@ struct Mesh {
         for (int t : other.triangles) triangles.push_back(t + base);
     }
     static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
+
+    /// Subdivide every triangle into 4 by splitting each edge at its midpoint —
+    /// adds detail (and, after re-projecting, smooths primitives). Midpoints are
+    /// shared between adjacent triangles so the mesh stays welded.
+    void Subdivide() {
+        std::vector<int> out;
+        std::map<std::pair<int, int>, int> mids;     // edge -> new midpoint index
+        auto midpoint = [&](int a, int b) {
+            auto key = std::minmax(a, b);
+            auto it = mids.find({key.first, key.second});
+            if (it != mids.end()) return it->second;
+            Vec3 m = (vertices[a] + vertices[b]) * 0.5f;
+            int idx = (int)vertices.size();
+            vertices.push_back(m);
+            mids[{key.first, key.second}] = idx;
+            return idx;
+        };
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
+            int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            int ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a);
+            out.insert(out.end(), {a, ab, ca,  ab, b, bc,  ca, bc, c,  ab, bc, ca});
+        }
+        triangles = std::move(out);
+        name = "";
+    }
+
+    /// Push every vertex onto a sphere of the given radius about the origin —
+    /// pair with Subdivide() to turn a cube/icosphere into a smooth ball.
+    void ProjectToSphere(float radius = 0.5f) {
+        for (Vec3& v : vertices) {
+            float m = v.Magnitude();
+            if (m > 1e-6f) v = v * (radius / m);
+        }
+        name = "";
+    }
+
+    /// Per-vertex normals, area-weighted from the adjacent faces (for lighting /
+    /// export). Size matches `vertices`; degenerate meshes give zero vectors.
+    std::vector<Vec3> Normals() const {
+        std::vector<Vec3> n(vertices.size(), Vec3{0, 0, 0});
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
+            int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            Vec3 face = Vec3::Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]);
+            n[a] += face; n[b] += face; n[c] += face;   // area-weighted accumulation
+        }
+        for (Vec3& v : n) if (v.SqrMagnitude() > 1e-12f) v = v.Normalized();
+        return n;
+    }
+
+    /// A capsule (cylinder body with hemispherical caps) along Y.
+    static Mesh Capsule(float radius = 0.5f, float height = 1.0f, int sectors = 12, int rings = 6) {
+        Mesh m;
+        m.name = "Capsule";
+        const float kPi = 3.14159265358979323846f;
+        float cyl = std::fmax(0.0f, height - 2.0f * radius) * 0.5f; // half cylinder length
+        // Build latitude rings: top hemisphere, then bottom hemisphere, offset in Y.
+        int half = rings;
+        for (int r = 0; r <= half; ++r) {                 // top cap (0..pi/2)
+            float phi = (kPi * 0.5f) * (float)r / half;
+            float y = cyl + radius * std::cos(phi), rr = radius * std::sin(phi);
+            for (int s = 0; s <= sectors; ++s) {
+                float th = 2.0f * kPi * (float)s / sectors;
+                m.vertices.push_back({rr * std::cos(th), y, rr * std::sin(th)});
+            }
+        }
+        for (int r = 0; r <= half; ++r) {                 // bottom cap (pi/2..pi)
+            float phi = (kPi * 0.5f) * (1.0f + (float)r / half);
+            float y = -cyl + radius * std::cos(phi), rr = radius * std::sin(phi);
+            for (int s = 0; s <= sectors; ++s) {
+                float th = 2.0f * kPi * (float)s / sectors;
+                m.vertices.push_back({rr * std::cos(th), y, rr * std::sin(th)});
+            }
+        }
+        int stride = sectors + 1, totalRings = 2 * (half + 1);
+        for (int r = 0; r < totalRings - 1; ++r)
+            for (int s = 0; s < sectors; ++s) {
+                int a = r * stride + s, b = a + stride;
+                m.triangles.insert(m.triangles.end(), {a, b, a + 1, a + 1, b, b + 1});
+            }
+        return m;
+    }
 };
 
 } // namespace okay

@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
@@ -153,11 +154,18 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     return g_view3DTex;
 }
 
-// ---- Executable path helper (used by Build Game to find the player) -------
+// ---- Self-updater + runtime fetcher -----------------------------------
+// The editor can pull newer published builds from GitHub and, when exporting a
+// game, fetch the player runtime if it isn't sitting beside the editor — so a
+// fresh editor "generates everything it needs" without a manual file shuffle.
 namespace updater {
 namespace fs = std::filesystem;
 
-bool pendingQuit = false; // reserved (self-update was removed)
+// Raw GitHub URL of the published dist/ folder.
+const char* kRawBase =
+    "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/main/dist/";
+
+bool pendingQuit = false; // set true after a successful self-update relaunch
 
 // Absolute path of the running executable.
 std::string SelfPath() {
@@ -173,10 +181,130 @@ std::string SelfPath() {
 #endif
 }
 
+// Download a URL to a file using whatever HTTP client is on the system. Tries
+// curl first (ships on Win10+/macOS/Linux), then a platform fallback. -f makes
+// curl fail (non-zero) on a 404 so we don't cache an error page as a binary.
+bool Download(const std::string& url, const std::string& outPath) {
+    std::error_code ec; fs::remove(outPath, ec);
+#if defined(_WIN32)
+    std::string c1 = "curl -L -s -f -o \"" + outPath + "\" \"" + url + "\"";
+    if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
+    std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
+                     "-UseBasicParsing -Uri '" + url + "' -OutFile '" + outPath +
+                     "' } catch { exit 1 }\"";
+    return std::system(c2.c_str()) == 0 && fs::exists(outPath);
+#else
+    std::string c1 = "curl -L -s -f -o \"" + outPath + "\" \"" + url + "\" 2>/dev/null";
+    if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
+    std::string c2 = "wget -q -O \"" + outPath + "\" \"" + url + "\" 2>/dev/null";
+    return std::system(c2.c_str()) == 0 && fs::exists(outPath);
+#endif
+}
+
+// Compare dotted versions ("1.4.0"); returns -1 / 0 / 1 for a<b / a==b / a>b.
+int CompareVersions(const std::string& a, const std::string& b) {
+    auto parse = [](const std::string& s) {
+        std::vector<int> v; std::stringstream ss(s); std::string tok;
+        while (std::getline(ss, tok, '.')) {
+            int n = 0; try { n = std::stoi(tok); } catch (...) { n = 0; }
+            v.push_back(n);
+        }
+        return v;
+    };
+    std::vector<int> va = parse(a), vb = parse(b);
+    std::size_t n = std::max(va.size(), vb.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        int x = i < va.size() ? va[i] : 0;
+        int y = i < vb.size() ? vb[i] : 0;
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return 0;
+}
+
+// Result of an update check: the running version, the published version, the
+// release notes (if any) and whether an upgrade is actually available.
+struct UpdateInfo {
+    bool checked = false;
+    bool available = false;
+    std::string current, latest, notes, error;
+};
+
+// Query GitHub for the published version + release notes. No files are swapped;
+// this only reports what's available (the install step is explicit).
+UpdateInfo CheckLatest() {
+    UpdateInfo info;
+    info.current = OKAY_ENGINE_VERSION;
+    info.checked = true;
+    std::error_code ec;
+    fs::path tmp = fs::temp_directory_path(ec);
+    fs::path vf = tmp / "okayspace_version.txt";
+    if (!Download(std::string(kRawBase) + "VERSION.txt", vf.string())) {
+        info.error = "Couldn't reach GitHub (no internet, or curl/PowerShell missing).";
+        return info;
+    }
+    { std::ifstream f(vf); std::getline(f, info.latest); }
+    while (!info.latest.empty() &&
+           (info.latest.back() == '\r' || info.latest.back() == '\n' || info.latest.back() == ' '))
+        info.latest.pop_back();
+    fs::remove(vf, ec);
+
+    // Optional human-readable release notes.
+    fs::path cf = tmp / "okayspace_changelog.txt";
+    if (Download(std::string(kRawBase) + "CHANGELOG.txt", cf.string())) {
+        std::ifstream f(cf);
+        std::stringstream ss; ss << f.rdbuf();
+        info.notes = ss.str();
+        fs::remove(cf, ec);
+    }
+    info.available = !info.latest.empty() && CompareVersions(info.current, info.latest) < 0;
+    return info;
+}
+
+// Launch a (new) executable detached from this process.
+void Relaunch(const std::string& path) {
+#if defined(_WIN32)
+    int rc = std::system(("start \"\" \"" + path + "\"").c_str());
+#else
+    int rc = std::system(("\"" + path + "\" >/dev/null 2>&1 &").c_str());
+#endif
+    (void)rc;
+}
+
+// Download the published editor and swap it in for the running .exe, then
+// relaunch. Returns a human-readable status. Only call when an update is known
+// to be available (so this never loops on an already-current build).
+std::string InstallUpdate(const std::string& latest) {
+    std::error_code ec;
+    fs::path self = SelfPath();
+    if (self.empty()) return "Couldn't locate the running executable.";
+    fs::path newFile = self; newFile += ".new";
+    if (!Download(std::string(kRawBase) + "OkaySpaceEngine.exe", newFile.string()))
+        return "Download of v" + latest + " failed.";
+    if (fs::file_size(newFile, ec) < 100000) {
+        fs::remove(newFile, ec);
+        return "Downloaded file looked invalid; update aborted.";
+    }
+    fs::path backup = self; backup += ".old";
+    fs::remove(backup, ec);
+    fs::rename(self, backup, ec);
+    if (ec) { fs::remove(newFile, ec); return "Couldn't replace the app: " + ec.message(); }
+    fs::rename(newFile, self, ec);
+    if (ec) { fs::rename(backup, self, ec); return "Couldn't install the update: " + ec.message(); }
+#if !defined(_WIN32)
+    fs::permissions(self, fs::perms::owner_exec | fs::perms::group_exec |
+                    fs::perms::others_exec, fs::perm_options::add, ec);
+#endif
+    Relaunch(self.string());
+    pendingQuit = true;
+    return "Updated to v" + latest + "! Reopening...";
+}
+
 } // namespace updater
 
 std::string g_updateStatus;
 bool g_openUpdatePopup = false;
+updater::UpdateInfo g_update;     // last update check result
+bool g_installingUpdate = false;  // set while InstallUpdate runs
 bool g_openAbout = false;
 bool g_showNewProject = true;   // show the project chooser on launch
 
@@ -205,6 +333,13 @@ enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
 int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+
+// First connected game controller (opened in main); fed into Input during Play.
+SDL_GameController* g_pad = nullptr;
+// Top-left of the canvas the running game is previewed in (Game view if shown,
+// otherwise the Scene viewport). Mouse input is fed relative to this so UI
+// buttons hit-test correctly while playing.
+ImVec2 g_playCanvasPos = ImVec2(0, 0);
 
 // Shortest distance (pixels) from point p to the segment a-b, for handle picking.
 static float SegDistPx(ImVec2 p, ImVec2 a, ImVec2 b) {
@@ -276,7 +411,15 @@ std::string ExtFor(const std::string& lang) {
 namespace builder {
 namespace fs = std::filesystem;
 
-// Locate the player runtime that ships next to the editor executable.
+#if defined(_WIN32)
+const char* kPlayerExe = "OkaySpacePlayer.exe";
+#else
+const char* kPlayerExe = "okay-player";
+#endif
+
+// Locate the player runtime. Searches next to the editor, then a few sibling
+// locations (a launcher layout, a build tree), so it works whether the editor
+// was launched from the dist folder or via the launcher.
 std::string FindPlayer() {
     fs::path self = updater::SelfPath();
     if (self.empty()) return {};
@@ -286,11 +429,41 @@ std::string FindPlayer() {
 #else
     const char* names[] = {"okay-player", "OkaySpacePlayer"};
 #endif
-    for (const char* n : names) {
-        std::error_code ec;
-        if (fs::exists(dir / n, ec)) return (dir / n).string();
-    }
+    std::vector<fs::path> roots = {dir, dir / "bin", dir.parent_path(),
+                                   dir / "runtime"};
+    for (const fs::path& root : roots)
+        for (const char* n : names) {
+            std::error_code ec;
+            if (fs::exists(root / n, ec)) return (root / n).string();
+        }
     return {};
+}
+
+// Ensure the player runtime is available, downloading it next to the editor
+// from GitHub if it isn't found locally. Returns its path, or "" on failure.
+// This is what lets a freshly-downloaded editor build a runnable game with no
+// manual setup ("when building, generate everything it needs").
+std::string EnsurePlayer(std::string* note) {
+    std::string p = FindPlayer();
+    if (!p.empty()) return p;
+    fs::path self = updater::SelfPath();
+    if (self.empty()) return {};
+    fs::path dest = self.parent_path() / kPlayerExe;
+    if (note) *note = "Fetching the player runtime from GitHub...";
+    if (!updater::Download(std::string(updater::kRawBase) + "OkaySpacePlayer.exe",
+                           dest.string()))
+        return {};
+    std::error_code ec;
+    if (!fs::exists(dest, ec) || fs::file_size(dest, ec) < 100000) {
+        fs::remove(dest, ec);
+        return {};
+    }
+#if !defined(_WIN32)
+    fs::permissions(dest, fs::perms::owner_exec | fs::perms::group_exec |
+                    fs::perms::others_exec, fs::perm_options::add, ec);
+#endif
+    if (note) *note = "Downloaded the player runtime to " + dest.string() + ".";
+    return dest.string();
 }
 
 // Build the game into outDir. Returns a human-readable status string.
@@ -305,8 +478,10 @@ std::string Build(EditorState& ed, const std::string& outDir,
     if (!SceneSerializer::SaveToFile(ed.scene(), (dir / "game.okayscene").string()))
         return "Failed to write game.okayscene.";
 
-    // 2) Copy the player runtime, renamed to <Game>.exe.
-    std::string player = FindPlayer();
+    // 2) Copy the player runtime, renamed to <Game>.exe. If it isn't beside the
+    // editor, fetch it from GitHub so the build is self-contained.
+    std::string fetchNote;
+    std::string player = EnsurePlayer(&fetchNote);
 #if defined(_WIN32)
     std::string exeName = gameName + ".exe";
 #else
@@ -314,8 +489,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
 #endif
     if (player.empty()) {
         return "Wrote game.okayscene to " + dir.string() +
-               ", but couldn't find the player runtime to copy. Place "
-               "OkaySpacePlayer next to the editor and rebuild.";
+               ", but couldn't find or download the player runtime. Check your "
+               "internet connection, or place OkaySpacePlayer next to the editor.";
     }
     fs::copy_file(player, dir / exeName, fs::copy_options::overwrite_existing, ec);
     if (ec) return "Wrote scene but couldn't copy the player: " + ec.message();
@@ -339,6 +514,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
 
     std::string msg = "Built '" + gameName + "' to " + dir.string() +
                       " — run " + exeName + " to play.";
+    if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0)
+        msg += "  (runtime fetched from GitHub)";
     if (copied)  msg += "  (" + std::to_string(copied) + " asset(s) copied)";
     if (missing) msg += "  WARNING: " + std::to_string(missing) +
                         " referenced asset(s) not found and not copied.";
@@ -526,6 +703,15 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
     }
     if (ImGui::BeginMenu("Engine")) {
         if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
+        ImGui::Separator();
+        if (ImGui::MenuItem("Check for Updates...")) {
+            g_update = updater::CheckLatest();
+            g_openUpdatePopup = true;
+            ConsoleLog(g_update.error.empty()
+                ? (g_update.available ? "Update available: v" + g_update.latest
+                                      : "Up to date (v" + g_update.current + ").")
+                : "Update check failed: " + g_update.error);
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
@@ -1098,10 +1284,47 @@ void DrawAboutPopup() {
 
 void DrawUpdatePopup() {
     if (g_openUpdatePopup) { ImGui::OpenPopup("Engine Update"); g_openUpdatePopup = false; }
+    ImGui::SetNextWindowSizeConstraints(ImVec2(420, 0), ImVec2(560, 520));
     if (ImGui::BeginPopupModal("Engine Update", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted(g_updateStatus.c_str());
-        ImGui::Separator();
-        if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        const updater::UpdateInfo& u = g_update;
+        if (!u.error.empty()) {
+            ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.5f, 1), "Update check failed");
+            ImGui::TextWrapped("%s", u.error.c_str());
+        } else if (u.available) {
+            ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "Update available!");
+            ImGui::Text("Installed: v%s", u.current.c_str());
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.4f, 1), "  ->  v%s", u.latest.c_str());
+            if (!u.notes.empty()) {
+                ImGui::Separator();
+                ImGui::TextDisabled("Release notes");
+                ImGui::BeginChild("notes", ImVec2(0, 200), true);
+                ImGui::TextWrapped("%s", u.notes.c_str());
+                ImGui::EndChild();
+            }
+            ImGui::Separator();
+            if (!g_updateStatus.empty())
+                ImGui::TextWrapped("%s", g_updateStatus.c_str());
+            ImGui::BeginDisabled(g_installingUpdate);
+            if (ImGui::Button(g_installingUpdate ? "Installing..." : "Download & Install",
+                              ImVec2(180, 0))) {
+                g_installingUpdate = true;
+                g_updateStatus = "Downloading v" + u.latest + "...";
+                // Synchronous: the editor briefly blocks while the new build is
+                // fetched and swapped in, then relaunches.
+                g_updateStatus = updater::InstallUpdate(u.latest);
+                ConsoleLog(g_updateStatus);
+                g_installingUpdate = false;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Later", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1), "You're up to date.");
+            ImGui::Text("Installed version: v%s", u.current.c_str());
+            ImGui::Separator();
+            if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 }
@@ -1224,32 +1447,47 @@ void DrawInspector(EditorState& ed) {
         return;
     }
 
-    // Header (Unity-style): an active toggle + the object name on a tinted bar,
-    // then Tag, then a divider before the component list.
+    // Header (Unity-style): an active toggle + a type chip + the object name on
+    // a tinted bar, then a Tag field + Save-as-Prefab, then a divider. The child
+    // auto-sizes to its contents so there's no empty gap at the top.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
-    ImGui::BeginChild("##objheader", ImVec2(0, 58), true);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
+    ImGui::BeginChild("##objheader", ImVec2(0, 0),
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+
+    // Row 1: active toggle · type chip · editable name (fills the rest).
     ImGui::Checkbox("##active", &go->active);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active in scene");
     ImGui::SameLine();
-    ImGui::TextUnformatted(ObjectKind(go));   // [Spr]/[Mesh]/... type chip
-    ImGui::SameLine();
+    const char* kind = ObjectKind(go);
+    if (kind && *kind) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "%s", kind);
+        ImGui::SameLine();
+    }
     char nameBuf[128];
     std::strncpy(nameBuf, go->name.c_str(), sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
     ImGui::SetNextItemWidth(-1);
     if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
+
+    // Row 2: Tag field + Save-as-Prefab, right-aligned.
     char tagBuf[64];
     std::strncpy(tagBuf, go->tag.c_str(), sizeof(tagBuf) - 1);
     tagBuf[sizeof(tagBuf) - 1] = '\0';
     ImGui::SetNextItemWidth(150);
     if (ImGui::InputText("Tag", tagBuf, sizeof(tagBuf))) { go->tag = tagBuf; ed.dirty = true; }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Save as Prefab")) {
+    float btnW = ImGui::CalcTextSize("Save as Prefab").x + ImGui::GetStyle().FramePadding.x * 2;
+    float avail = ImGui::GetContentRegionAvail().x;
+    if (avail > btnW) ImGui::SameLine(ImGui::GetCursorPosX() + (avail - btnW));
+    if (ImGui::Button("Save as Prefab")) {
         std::string p = go->name + ".okayprefab";
         if (SceneSerializer::SaveObjectToFile(*go, p)) ConsoleLog("Saved prefab " + p);
         else ConsoleLog("Prefab save failed");
     }
     ImGui::EndChild();
+    ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     ImGui::Spacing();
 
@@ -1779,6 +2017,114 @@ static Camera* SceneCamera(Scene& s) {
     return nullptr;
 }
 
+// Screen-space UI overlay (text, images, panels, bars, sliders, toggles,
+// buttons). UI objects anchor to the canvas via UICanvas, so this is identical
+// in the 2D Scene view, the 3D Scene view and the Game view — calling it from
+// all three is what makes created UI actually appear (it used to draw only in
+// the 2D scene, so UI added to a 3D project was invisible).
+void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
+                   ImVec2 canvasSize, bool gameView) {
+    const auto& objs = ed.scene().Objects();
+
+    // Publish the canvas size so anchored widgets resolve and (in Play) hit-test
+    // against the same dimensions the preview uses.
+    UICanvas::Set(canvasSize.x, canvasSize.y);
+
+    // Screen-space text (world-anchored text stays with the 2D scene draw).
+    for (const auto& up : objs) {
+        auto* tr = up->GetComponent<TextRenderer>();
+        if (!tr || !up->active || !tr->screenSpace) continue;
+        ImU32 col = ToColor(tr->color);
+        ImU32 sh = ToColor(tr->shadowColor);
+        Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y);
+        float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
+        if (tr->shadow)
+            DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * tr->pixelSize,
+                           by + tr->shadowOffset.y * tr->pixelSize, tr->pixelSize, sh);
+        DrawBitmapText(dl, tr->text, bx, by, tr->pixelSize, col);
+    }
+
+    // UI images (logos/icons): preview as a tinted rect with the path centered.
+    for (const auto& up : objs) {
+        auto* im = up->GetComponent<UIImage>();
+        if (!im || !up->active) continue;
+        Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 b(a.x + im->size.x, a.y + im->size.y);
+        dl->AddRectFilled(a, b, ToColor(im->color), 3.0f);
+        dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), 3.0f);
+        if (!im->texture.empty())
+            DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
+    }
+
+    // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.
+    for (const auto& up : objs) {
+        auto* pn = up->GetComponent<UIPanel>();
+        if (!pn || !up->active) continue;
+        Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        dl->AddRectFilled(a, ImVec2(a.x + pn->size.x, a.y + pn->size.y), ToColor(pn->color), 4.0f);
+    }
+    for (const auto& up : objs) {
+        auto* pb = up->GetComponent<UIProgressBar>();
+        if (!pb || !up->active) continue;
+        Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x, a.y + pb->size.y), ToColor(pb->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x * pb->Fraction(), a.y + pb->size.y),
+                          ToColor(pb->fill), 3.0f);
+    }
+
+    // UI sliders: track + fill + knob.
+    for (const auto& up : objs) {
+        auto* sl = up->GetComponent<UISlider>();
+        if (!sl || !up->active) continue;
+        Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x, a.y + sl->size.y), ToColor(sl->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x * sl->Fraction(), a.y + sl->size.y),
+                          ToColor(sl->fill), 3.0f);
+        float kx = a.x + sl->size.x * sl->Fraction(), kw = sl->size.y * 0.6f;
+        dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sl->size.y + 2),
+                          ToColor(sl->knob), 2.0f);
+    }
+    // UI toggles: box (+ inset check when on) and a label.
+    for (const auto& up : objs) {
+        auto* tg = up->GetComponent<UIToggle>();
+        if (!tg || !up->active) continue;
+        Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 b(a.x + tg->size.x, a.y + tg->size.y);
+        dl->AddRectFilled(a, b, ToColor(tg->boxColor), 3.0f);
+        if (tg->on) {
+            float pad = tg->size.x * 0.22f;
+            dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
+                              ToColor(tg->checkColor), 2.0f);
+        }
+        float px = 2.0f;
+        DrawBitmapText(dl, tg->label, b.x + 8.0f,
+                       a.y + (tg->size.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
+    }
+
+    // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
+    for (const auto& up : objs) {
+        auto* btn = up->GetComponent<UIButton>();
+        if (!btn || !up->active) continue;
+        Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 b(a.x + btn->size.x, a.y + btn->size.y);
+        dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), 4.0f);
+        float px = 2.0f;
+        float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+        DrawBitmapText(dl, btn->label, a.x + (btn->size.x - tw) * 0.5f,
+                       a.y + (btn->size.y - Font8x8::Height * px) * 0.5f, px,
+                       ToColor(btn->textColor));
+        if (!gameView && up.get() == ed.selected())
+            dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
+                        IM_COL32(255, 200, 0, 255), 4.0f, 0, 2.0f);
+    }
+}
+
 void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
@@ -1878,112 +2224,23 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
-    // Text: world-space anchored to the object, screen-space pinned to the canvas.
+    // World-anchored text (screen-space text is drawn by the shared UI overlay).
     for (const auto& up : objs) {
         auto* tr = up->GetComponent<TextRenderer>();
-        if (!tr || !up->active) continue;
+        if (!tr || !up->active || tr->screenSpace) continue;
         ImU32 col = ToColor(tr->color);
         ImU32 sh = ToColor(tr->shadowColor);
-        if (tr->screenSpace) {
-            Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y);
-            float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
-            if (tr->shadow)
-                DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * tr->pixelSize,
-                               by + tr->shadowOffset.y * tr->pixelSize, tr->pixelSize, sh);
-            DrawBitmapText(dl, tr->text, bx, by, tr->pixelSize, col);
-        } else {
-            ImVec2 o = worldToScreen(up->transform->Position());
-            float px = tr->pixelSize * scale;
-            if (tr->shadow)
-                DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
-                               o.y + tr->shadowOffset.y * px, px, sh);
-            DrawBitmapText(dl, tr->text, o.x, o.y, px, col);
-        }
+        ImVec2 o = worldToScreen(up->transform->Position());
+        float px = tr->pixelSize * scale;
+        if (tr->shadow)
+            DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
+                           o.y + tr->shadowOffset.y * px, px, sh);
+        DrawBitmapText(dl, tr->text, o.x, o.y, px, col);
     }
 
-    // Publish the canvas size so anchored widgets resolve and (in Play) hit-test
-    // against the same dimensions the preview uses.
-    UICanvas::Set(canvasSize.x, canvasSize.y);
+    // Screen-space UI (text, images, panels, bars, sliders, toggles, buttons).
+    DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
-    // UI images (logos/icons): preview as a tinted rect with the path centered.
-    for (const auto& up : objs) {
-        auto* im = up->GetComponent<UIImage>();
-        if (!im || !up->active) continue;
-        Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, canvasSize.x, canvasSize.y);
-        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        ImVec2 b(a.x + im->size.x, a.y + im->size.y);
-        dl->AddRectFilled(a, b, ToColor(im->color), 3.0f);
-        dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), 3.0f);
-        if (!im->texture.empty())
-            DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
-    }
-
-    // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.
-    for (const auto& up : objs) {
-        auto* pn = up->GetComponent<UIPanel>();
-        if (!pn || !up->active) continue;
-        Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, canvasSize.x, canvasSize.y);
-        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + pn->size.x, a.y + pn->size.y), ToColor(pn->color), 4.0f);
-    }
-    for (const auto& up : objs) {
-        auto* pb = up->GetComponent<UIProgressBar>();
-        if (!pb || !up->active) continue;
-        Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, canvasSize.x, canvasSize.y);
-        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x, a.y + pb->size.y), ToColor(pb->background), 3.0f);
-        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x * pb->Fraction(), a.y + pb->size.y),
-                          ToColor(pb->fill), 3.0f);
-    }
-
-    // UI sliders: track + fill + knob.
-    for (const auto& up : objs) {
-        auto* sl = up->GetComponent<UISlider>();
-        if (!sl || !up->active) continue;
-        Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, canvasSize.x, canvasSize.y);
-        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x, a.y + sl->size.y), ToColor(sl->background), 3.0f);
-        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x * sl->Fraction(), a.y + sl->size.y),
-                          ToColor(sl->fill), 3.0f);
-        float kx = a.x + sl->size.x * sl->Fraction(), kw = sl->size.y * 0.6f;
-        dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sl->size.y + 2),
-                          ToColor(sl->knob), 2.0f);
-    }
-    // UI toggles: box (+ inset check when on) and a label.
-    for (const auto& up : objs) {
-        auto* tg = up->GetComponent<UIToggle>();
-        if (!tg || !up->active) continue;
-        Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, canvasSize.x, canvasSize.y);
-        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        ImVec2 b(a.x + tg->size.x, a.y + tg->size.y);
-        dl->AddRectFilled(a, b, ToColor(tg->boxColor), 3.0f);
-        if (tg->on) {
-            float pad = tg->size.x * 0.22f;
-            dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
-                              ToColor(tg->checkColor), 2.0f);
-        }
-        float px = 2.0f;
-        DrawBitmapText(dl, tg->label, b.x + 8.0f,
-                       a.y + (tg->size.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
-    }
-
-    // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
-    for (const auto& up : objs) {
-        auto* btn = up->GetComponent<UIButton>();
-        if (!btn || !up->active) continue;
-        Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, canvasSize.x, canvasSize.y);
-        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        ImVec2 b(a.x + btn->size.x, a.y + btn->size.y);
-        dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), 4.0f);
-        float px = 2.0f;
-        float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-        DrawBitmapText(dl, btn->label, a.x + (btn->size.x - tw) * 0.5f,
-                       a.y + (btn->size.y - Font8x8::Height * px) * 0.5f, px,
-                       ToColor(btn->textColor));
-        if (!gameView && up.get() == ed.selected())
-            dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
-                        IM_COL32(255, 200, 0, 255), 4.0f, 0, 2.0f);
-    }
     // Transform gizmo at the selection, reflecting the active tool (Move/Rotate/Scale).
     if (!gameView && ed.selected()) {
         ImVec2 g = worldToScreen(ed.selected()->transform->Position());
@@ -2144,6 +2401,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
         }
     }
+
+    // Screen-space UI draws on top of the 3D view too, so UI added to a 3D
+    // project (HUD, menus, buttons) is visible here and in the Game view.
+    DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+
     dl->PopClipRect();
 
     if (gameView) return;   // the Game view is non-interactive
@@ -2353,6 +2615,10 @@ void DrawGameView(EditorState& ed) {
     }
     ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
 
+    // The Game view is the surface the running game is shown on, so feed mouse
+    // input relative to it (see the main loop).
+    g_playCanvasPos = canvasPos;
+
     ImDrawList* dl = ImGui::GetWindowDrawList();
     // Dark letterbox bars over the whole region, then the camera background.
     dl->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), IM_COL32(8, 8, 10, 255));
@@ -2387,10 +2653,16 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
 
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO |
+                 SDL_INIT_GAMECONTROLLER) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
         return 1;
     }
+
+    // Open the first connected game controller (optional) so the playable
+    // templates can be driven with a gamepad inside the editor's Play mode.
+    for (int i = 0; i < SDL_NumJoysticks(); ++i)
+        if (SDL_IsGameController(i)) { g_pad = SDL_GameControllerOpen(i); if (g_pad) break; }
 
     // Open a mono float audio device (queue mode); audio is optional.
     SDL_AudioSpec want{}, have{};
@@ -2440,6 +2712,59 @@ int main(int argc, char** argv) {
         Uint64 now = SDL_GetPerformanceCounter();
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
+
+        // While Play is active, feed real keyboard/mouse/gamepad into the engine
+        // Input so scripts and the playable templates respond exactly like they do
+        // in the standalone player ("can't move" was because the editor never fed
+        // input during Play). Gated on !WantTextInput so typing in a field (script
+        // editor, name box) doesn't also drive the game.
+        if (ed.isPlaying() && !io.WantTextInput) {
+            const Uint8* ks = SDL_GetKeyboardState(nullptr);
+            std::vector<char> down;
+            for (char c = 'a'; c <= 'z'; ++c)
+                if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
+            for (char c = '0'; c <= '9'; ++c)
+                if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
+            if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+            if (ks[SDL_SCANCODE_UP])    down.push_back('w'); // arrows -> WASD
+            if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
+            if (ks[SDL_SCANCODE_DOWN])  down.push_back('s');
+            if (ks[SDL_SCANCODE_RIGHT]) down.push_back('d');
+
+            Vec2 padAxis; unsigned padMask = 0;
+            if (g_pad) {
+                float lx = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
+                float ly = -SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
+                if (lx > -0.18f && lx < 0.18f) lx = 0.0f;
+                if (ly > -0.18f && ly < 0.18f) ly = 0.0f;
+                padAxis = {lx, ly};
+                auto bit = [&](SDL_GameControllerButton b, int id) {
+                    if (SDL_GameControllerGetButton(g_pad, b)) padMask |= 1u << id;
+                };
+                bit(SDL_CONTROLLER_BUTTON_A, 0); bit(SDL_CONTROLLER_BUTTON_B, 1);
+                bit(SDL_CONTROLLER_BUTTON_X, 2); bit(SDL_CONTROLLER_BUTTON_Y, 3);
+                if (lx > 0.4f) down.push_back('d');
+                if (lx < -0.4f) down.push_back('a');
+                if (ly > 0.4f) down.push_back('w');
+                if (ly < -0.4f) down.push_back('s');
+                if (padMask & 1u) down.push_back(' ');
+            }
+            Input::FeedKeys(down);
+            Input::FeedGamepad(padAxis, padMask);
+
+            // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
+            // against the same coordinates the preview draws with.
+            ImVec2 mp = ImGui::GetMousePos();
+            float rx = mp.x - g_playCanvasPos.x, ry = mp.y - g_playCanvasPos.y;
+            unsigned mask = 0;
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left))   mask |= 1u << 0;
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Right))  mask |= 1u << 1;
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) mask |= 1u << 2;
+            Input::FeedMouse(Vec2{rx, ry}, mask);
+        } else if (!ed.isPlaying()) {
+            Input::FeedKeys({}); // release everything in edit mode
+        }
+
         ed.Tick(dt);
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
@@ -2496,6 +2821,7 @@ int main(int argc, char** argv) {
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
+    if (g_pad) SDL_GameControllerClose(g_pad);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

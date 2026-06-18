@@ -1,0 +1,22 @@
+OkaySpace Game Engine — Changelog
+
+v1.5.0
+  - Play mode now feeds real keyboard / mouse / gamepad into the engine, so the
+    playable templates (Platformer, Top-Down, Coin Collector, Snake) and your
+    own movement scripts respond inside the editor — you can actually move now.
+  - UI objects (buttons, panels, sliders, toggles, progress bars, images, text)
+    now render in the 3D Scene view and the Game view, not just 2D — created UI
+    is visible immediately in any project.
+  - Build Game is self-contained: if the player runtime isn't sitting next to
+    the editor, it's downloaded from GitHub automatically so the exported game
+    runs without any manual file copying.
+  - The self-updater is back, smarter: Engine > Check for Updates compares your
+    version against the published one, shows the release notes, and only offers
+    "Download & Install" when a newer build actually exists (no more nagging).
+  - Cleaner Inspector header: auto-sized tinted bar with the active toggle, a
+    colored type chip, the editable name, Tag field and Save-as-Prefab.
+
+v1.4.0
+  - Lighting (Light component + scene shading) and z-buffered solid 3D rendering.
+  - Camera scaling locked (move/rotate only) to stop the select-camera flicker.
+  - FiveM-style launcher (Create / Play / Marketplace).

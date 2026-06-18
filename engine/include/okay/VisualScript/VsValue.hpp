@@ -39,11 +39,26 @@ public:
     std::string AsString() const {
         if (auto* s = std::get_if<std::string>(&m_data)) return *s;
         if (auto* b = std::get_if<bool>(&m_data)) return *b ? "true" : "false";
-        if (auto* f = std::get_if<float>(&m_data)) return std::to_string(*f);
+        if (auto* f = std::get_if<float>(&m_data)) return FormatNumber(*f);
         if (auto* v = std::get_if<Vec3>(&m_data))
-            return "(" + std::to_string(v->x) + ", " + std::to_string(v->y) +
-                   ", " + std::to_string(v->z) + ")";
+            return "(" + FormatNumber(v->x) + ", " + FormatNumber(v->y) +
+                   ", " + FormatNumber(v->z) + ")";
         return {};
+    }
+
+    /// Format a float without trailing-zero noise: whole numbers print as
+    /// integers ("3"), fractions trim trailing zeros ("1.5"). Keeps script
+    /// string concatenation (e.g. score counters) clean.
+    static std::string FormatNumber(float f) {
+        if (f == static_cast<float>(static_cast<long long>(f)))
+            return std::to_string(static_cast<long long>(f));
+        std::string s = std::to_string(f);
+        std::size_t dot = s.find('.');
+        if (dot != std::string::npos) {
+            std::size_t last = s.find_last_not_of('0');
+            if (last > dot) s.erase(last + 1); else s.erase(dot);
+        }
+        return s;
     }
 
 private:

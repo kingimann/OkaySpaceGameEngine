@@ -3,6 +3,9 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/AudioSource.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
@@ -633,6 +636,34 @@ struct OkayScriptVM::Impl {
         b["destroy"] = [this](std::vector<Value>&) {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 rt.host->gameObject->scene()->Destroy(rt.host->gameObject);
+            return Value{};
+        };
+        // Drive sibling components on this GameObject.
+        auto go = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
+        b["set_text"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* tr = g->GetComponent<TextRenderer>())
+                    tr->text = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["set_color"] = [go](std::vector<Value>& a) {
+            Color c{a.size() > 0 ? a[0].AsFloat() : 1.0f, a.size() > 1 ? a[1].AsFloat() : 1.0f,
+                    a.size() > 2 ? a[2].AsFloat() : 1.0f, a.size() > 3 ? a[3].AsFloat() : 1.0f};
+            if (GameObject* g = go()) {
+                if (auto* sr = g->GetComponent<SpriteRenderer>()) sr->color = c;
+                if (auto* tr = g->GetComponent<TextRenderer>()) tr->color = c;
+            }
+            return Value{};
+        };
+        b["set_texture"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sr = g->GetComponent<SpriteRenderer>())
+                    sr->texture = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["play_sound"] = [go](std::vector<Value>&) {
+            if (GameObject* g = go())
+                if (auto* au = g->GetComponent<AudioSource>()) au->Play();
             return Value{};
         };
         // Persistent prefs (high scores, settings) — survive across runs.

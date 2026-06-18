@@ -74,6 +74,10 @@ add_executable(test_script_spawn test_script_spawn.cpp)
 target_link_libraries(test_script_spawn PRIVATE okay::engine)
 add_test(NAME script_spawn COMMAND test_script_spawn)
 
+add_executable(test_script_components test_script_components.cpp)
+target_link_libraries(test_script_components PRIVATE okay::engine)
+add_test(NAME script_components COMMAND test_script_components)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

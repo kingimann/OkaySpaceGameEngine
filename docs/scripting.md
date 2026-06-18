@@ -64,6 +64,10 @@ runs when the scene starts and `update(dt)` runs every frame.
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
 | `destroy()` | destroy this script's own GameObject |
+| `set_text(string)` | set this object's TextRenderer text |
+| `set_color(r, g, b[, a])` | tint this object's Sprite/Text |
+| `set_texture(path)` | set this object's SpriteRenderer image |
+| `play_sound()` | play this object's AudioSource |
 | `print(...)` | log values to the console |
 
 ### Persistent prefs (high scores, settings)

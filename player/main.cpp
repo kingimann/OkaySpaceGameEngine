@@ -10,6 +10,7 @@
 
 #include <Okay.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -99,29 +100,50 @@ int main(int argc, char** argv) {
 
         bool perspective = cam && cam->projection == Camera::Projection::Perspective;
         if (perspective) {
+            // Filled, flat-shaded, back-face-culled, painter-sorted triangles.
+            Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
             Mat4 vp = cam->ProjectionMatrix(h > 0 ? (float)w / h : 1.0f) * cam->ViewMatrix();
+            Vec3 lightDir = Vec3{-0.4f, -1.0f, -0.6f}.Normalized(); // fixed key light
+
+            struct Tri { float depth; SDL_Vertex v[3]; };
+            std::vector<Tri> tris;
             for (const auto& up : scene.Objects()) {
                 auto* mr = up->GetComponent<MeshRenderer>();
                 if (!mr || !up->active) continue;
-                Mat4 m = vp * up->transform->LocalToWorldMatrix();
-                SDL_SetRenderDrawColor(renderer, (Uint8)(mr->color.r * 255),
-                                       (Uint8)(mr->color.g * 255), (Uint8)(mr->color.b * 255), 255);
+                Mat4 model = up->transform->LocalToWorldMatrix();
                 const auto& v = mr->mesh.vertices;
                 const auto& t = mr->mesh.triangles;
                 for (size_t i = 0; i + 2 < t.size(); i += 3) {
-                    SDL_Point p[3]; bool ok = true;
+                    Vec3 wp[3];
+                    for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[t[i + k]]);
+                    Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
+                    Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
+                    // Back-face cull: skip triangles facing away from the camera.
+                    if (Vec3::Dot(normal, camPos - centroid) < 0.0f) continue;
+
+                    SDL_FPoint sp[3]; float wsum = 0; bool ok = true;
                     for (int k = 0; k < 3; ++k) {
-                        Vec4 c = m * Vec4{v[t[i + k]], 1.0f};
+                        Vec4 c = vp * Vec4{wp[k], 1.0f};
                         if (c.w <= 0.05f) { ok = false; break; }
-                        p[k].x = (int)(w * 0.5f + (c.x / c.w) * w * 0.5f);
-                        p[k].y = (int)(h * 0.5f - (c.y / c.w) * h * 0.5f);
+                        sp[k].x = w * 0.5f + (c.x / c.w) * w * 0.5f;
+                        sp[k].y = h * 0.5f - (c.y / c.w) * h * 0.5f;
+                        wsum += c.w;
                     }
                     if (!ok) continue;
-                    SDL_RenderDrawLine(renderer, p[0].x, p[0].y, p[1].x, p[1].y);
-                    SDL_RenderDrawLine(renderer, p[1].x, p[1].y, p[2].x, p[2].y);
-                    SDL_RenderDrawLine(renderer, p[2].x, p[2].y, p[0].x, p[0].y);
+                    float lambert = Vec3::Dot(normal, lightDir * -1.0f);
+                    float shade = 0.25f + 0.75f * (lambert > 0 ? lambert : 0);
+                    SDL_Color col{(Uint8)(mr->color.r * 255 * shade),
+                                  (Uint8)(mr->color.g * 255 * shade),
+                                  (Uint8)(mr->color.b * 255 * shade), 255};
+                    Tri tri; tri.depth = wsum / 3.0f;
+                    for (int k = 0; k < 3; ++k) tri.v[k] = SDL_Vertex{sp[k], col, {0, 0}};
+                    tris.push_back(tri);
                 }
             }
+            std::sort(tris.begin(), tris.end(),
+                      [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+            for (const auto& tr : tris)
+                SDL_RenderGeometry(renderer, nullptr, tr.v, 3, nullptr, 0);
         } else {
             float ortho = cam ? cam->orthographicSize : 5.0f;
             Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
@@ -129,15 +151,21 @@ int main(int argc, char** argv) {
             for (const auto& up : scene.Objects()) {
                 auto* sr = up->GetComponent<SpriteRenderer>();
                 if (!sr || !up->active) continue;
-                Vec3 wp = up->transform->Position();
-                Vec3 ls = up->transform->LossyScale();
-                SDL_Point c = W2S(wp, camPos, scale, w, h);
-                int hw = (int)(sr->size.x * ls.x * 0.5f * scale);
-                int hh = (int)(sr->size.y * ls.y * 0.5f * scale);
-                SDL_Rect r{c.x - hw, c.y - hh, hw * 2, hh * 2};
-                SDL_SetRenderDrawColor(renderer, (Uint8)(sr->color.r * 255),
-                                       (Uint8)(sr->color.g * 255), (Uint8)(sr->color.b * 255), 255);
-                SDL_RenderFillRect(renderer, &r);
+                // Rotate/scale the sprite quad through the full transform so 2D
+                // games can spin and skew sprites, not just place axis-aligned ones.
+                Mat4 model = up->transform->LocalToWorldMatrix();
+                float hx = sr->size.x * 0.5f, hy = sr->size.y * 0.5f;
+                Vec3 corners[4] = {{-hx, -hy, 0}, {hx, -hy, 0}, {hx, hy, 0}, {-hx, hy, 0}};
+                SDL_Color col{(Uint8)(sr->color.r * 255), (Uint8)(sr->color.g * 255),
+                              (Uint8)(sr->color.b * 255), (Uint8)(sr->color.a * 255)};
+                SDL_Vertex vtx[4];
+                for (int k = 0; k < 4; ++k) {
+                    Vec3 wpos = model.MultiplyPoint(corners[k]);
+                    SDL_Point s = W2S(wpos, camPos, scale, w, h);
+                    vtx[k] = SDL_Vertex{{(float)s.x, (float)s.y}, col, {0, 0}};
+                }
+                const int idx[6] = {0, 1, 2, 0, 2, 3};
+                SDL_RenderGeometry(renderer, nullptr, vtx, 4, idx, 6);
             }
         }
         SDL_RenderPresent(renderer);

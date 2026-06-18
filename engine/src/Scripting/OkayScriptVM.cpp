@@ -663,6 +663,18 @@ struct OkayScriptVM::Impl {
                     sr->texture = a.empty() ? std::string{} : a[0].AsString();
             return Value{};
         };
+        b["flip_x"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sr = g->GetComponent<SpriteRenderer>())
+                    sr->flipX = a.empty() ? true : a[0].AsBool();
+            return Value{};
+        };
+        b["flip_y"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sr = g->GetComponent<SpriteRenderer>())
+                    sr->flipY = a.empty() ? true : a[0].AsBool();
+            return Value{};
+        };
         b["play_sound"] = [go](std::vector<Value>&) {
             if (GameObject* g = go())
                 if (auto* au = g->GetComponent<AudioSource>()) au->Play();

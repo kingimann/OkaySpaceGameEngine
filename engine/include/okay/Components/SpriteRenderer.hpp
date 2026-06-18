@@ -28,6 +28,10 @@ public:
     /// Draw order: lower values render first (further back), higher on top.
     /// Use it for parallax backgrounds, characters, foreground props, etc.
     int sortOrder = 0;
+    /// Mirror the sprite horizontally / vertically (e.g. flip a character to
+    /// face the way it's moving) without touching the Transform.
+    bool flipX = false;
+    bool flipY = false;
 
     void OnRender(IRenderer& renderer) override;
 };

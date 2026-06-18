@@ -93,7 +93,10 @@ game you can ship. Give it a name and an output folder and it will:
 2. Copy the **player runtime** (`OkaySpacePlayer.exe`, which ships next to the
    editor) into the folder, renamed to `<GameName>.exe`.
 
-The result is a folder containing `<GameName>.exe` + `game.okayscene`.
+3. Copy every **asset the scene references** (sprite textures, audio WAVs,
+   sprite-animator frames) into the folder, preserving relative paths.
+
+The result is a folder containing `<GameName>.exe` + `game.okayscene` + assets.
 Double-clicking the exe runs the scene through the same engine lifecycle the
 editor's **Play** uses — sprites in 2D (orthographic camera), wireframe meshes
 in 3D (perspective camera), keyboard input fed into `Input`, and audio mixed

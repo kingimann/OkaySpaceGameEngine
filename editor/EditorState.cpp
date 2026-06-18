@@ -53,7 +53,37 @@ void EditorState::Achievement(const std::string& id) {
     if (m_steam) m_steam->UnlockAchievement(id);
 }
 
+void EditorState::PushUndo() {
+    if (m_suppressUndo) return;
+    m_undo.push_back(SceneSerializer::Serialize(m_scene));
+    if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
+    m_redo.clear();
+}
+
+bool EditorState::Undo() {
+    if (m_undo.empty()) return false;
+    m_redo.push_back(SceneSerializer::Serialize(m_scene));
+    std::string s = m_undo.back(); m_undo.pop_back();
+    StopNetwork();
+    SceneSerializer::Deserialize(m_scene, s);
+    m_selected = nullptr;
+    dirty = true;
+    return true;
+}
+
+bool EditorState::Redo() {
+    if (m_redo.empty()) return false;
+    m_undo.push_back(SceneSerializer::Serialize(m_scene));
+    std::string s = m_redo.back(); m_redo.pop_back();
+    StopNetwork();
+    SceneSerializer::Deserialize(m_scene, s);
+    m_selected = nullptr;
+    dirty = true;
+    return true;
+}
+
 GameObject* EditorState::CreateEmpty(const std::string& name) {
+    PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
     m_selected = go;
     dirty = true;
@@ -61,6 +91,7 @@ GameObject* EditorState::CreateEmpty(const std::string& name) {
 }
 
 GameObject* EditorState::CreateSprite(const std::string& name) {
+    PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
     auto* sr = go->AddComponent<SpriteRenderer>();
     sr->glyph = '#';
@@ -71,6 +102,7 @@ GameObject* EditorState::CreateSprite(const std::string& name) {
 }
 
 GameObject* EditorState::CreateCamera(const std::string& name) {
+    PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
     go->AddComponent<Camera>();
     m_selected = go;
@@ -79,6 +111,7 @@ GameObject* EditorState::CreateCamera(const std::string& name) {
 }
 
 GameObject* EditorState::CreateCube(const std::string& name) {
+    PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Cube();
@@ -90,6 +123,7 @@ GameObject* EditorState::CreateCube(const std::string& name) {
 }
 
 GameObject* EditorState::CreatePyramid(const std::string& name) {
+    PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Pyramid();
@@ -101,6 +135,7 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
 }
 
 GameObject* EditorState::DuplicateSelected() {
+    PushUndo();
     if (!m_selected) return nullptr;
     GameObject* clone = m_scene.Instantiate(*m_selected);
     if (clone) {
@@ -112,6 +147,7 @@ GameObject* EditorState::DuplicateSelected() {
 }
 
 void EditorState::DeleteSelected() {
+    PushUndo();
     if (!m_selected) return;
     m_scene.Destroy(m_selected);
     m_scene.Update(0.0f); // flush the destroy queue immediately
@@ -120,6 +156,7 @@ void EditorState::DeleteSelected() {
 }
 
 void EditorState::NewScene() {
+    PushUndo();
     if (m_playing) Stop();
     StopNetwork();
     m_scene.Clear();
@@ -131,11 +168,13 @@ void EditorState::NewScene() {
 
 void EditorState::NewScene2D() {
     NewScene();
+    m_suppressUndo = true; // batch the template objects into one undo step
     m_scene.SetName("Untitled 2D");
     auto* cam = CreateCamera("MainCamera");
     cam->GetComponent<Camera>()->projection = Camera::Projection::Orthographic;
     GameObject* sp = CreateSprite("Sprite");
     sp->GetComponent<SpriteRenderer>()->color = Color::Green;
+    m_suppressUndo = false;
     view3D = false;
     m_selected = sp;
     dirty = false;
@@ -143,6 +182,7 @@ void EditorState::NewScene2D() {
 
 void EditorState::NewScene3D() {
     NewScene();
+    m_suppressUndo = true;
     m_scene.SetName("Untitled 3D");
     auto* camObj = CreateCamera("MainCamera");
     camObj->GetComponent<Camera>()->projection = Camera::Projection::Perspective;
@@ -156,6 +196,7 @@ void EditorState::NewScene3D() {
     cube->transform->localPosition = {0, 1, 0};
     cube->GetComponent<MeshRenderer>()->color = Color::Cyan;
 
+    m_suppressUndo = false;
     view3D = true;
     m_selected = cube;
     dirty = false;
@@ -170,6 +211,7 @@ bool EditorState::Save(const std::string& path) {
 
 bool EditorState::Load(const std::string& path, std::string* error) {
     if (m_playing) Stop();
+    PushUndo();
     StopNetwork();
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;
     m_path = path;

@@ -54,6 +54,14 @@ public:
     /// Unlock a Steam achievement (no-op if Steam is unavailable).
     void Achievement(const std::string& id);
 
+    // ---- Undo / Redo (snapshot based) ---------------------------------
+    /// Capture the current scene as an undo checkpoint (call before a change).
+    void PushUndo();
+    bool Undo();
+    bool Redo();
+    bool CanUndo() const { return !m_undo.empty(); }
+    bool CanRedo() const { return !m_redo.empty(); }
+
     // ---- Play mode -----------------------------------------------------
     bool isPlaying() const { return m_playing; }
     /// Snapshot the scene, then begin running its lifecycle.
@@ -86,6 +94,10 @@ private:
     std::unique_ptr<ISteamService>   m_steam;
     std::unique_ptr<IPlayFabService> m_playfab;
     NetworkManager* m_net = nullptr; // component on a scene GameObject
+
+    std::vector<std::string> m_undo, m_redo;
+    bool m_suppressUndo = false;
+    static constexpr std::size_t kMaxUndo = 100;
 };
 
 } // namespace okay::editor

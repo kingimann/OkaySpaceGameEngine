@@ -61,6 +61,18 @@ static int RunSelfTest() {
     ed.DeleteSelected();
     check(ed.scene().Find("Hero") == nullptr, "delete selected");
 
+    // Undo / redo around a creation.
+    EditorState ue;
+    std::size_t base = ue.scene().Objects().size();
+    ue.CreateSprite("Temp");
+    check(ue.scene().Objects().size() == base + 1, "created object");
+    check(ue.CanUndo(), "can undo");
+    ue.Undo();
+    check(ue.scene().Objects().size() == base, "undo removes object");
+    check(ue.CanRedo(), "can redo");
+    ue.Redo();
+    check(ue.scene().Objects().size() == base + 1, "redo restores object");
+
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
     return failures == 0 ? 0 : 1;
 }
@@ -275,6 +287,11 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         if (ImGui::MenuItem("Exit")) running = false;
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Edit")) {
+        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, ed.CanUndo())) { ed.Undo(); ConsoleLog("Undo"); }
+        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, ed.CanRedo())) { ed.Redo(); ConsoleLog("Redo"); }
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("GameObject")) {
         bool created = false;
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
@@ -470,6 +487,11 @@ void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput) return;
     bool ctrl = io.KeyCtrl;
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) { if (ed.Undo()) ConsoleLog("Undo"); }
+    if (ctrl && (ImGui::IsKeyPressed(ImGuiKey_Y, false) ||
+                 (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
+        if (ed.Redo()) ConsoleLog("Redo");
+    }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) g_showNewProject = true;
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
@@ -602,16 +624,19 @@ void DrawInspector(EditorState& ed) {
         if (ImGui::DragFloat3("Position", pos, 0.05f)) {
             t->localPosition = {pos[0], pos[1], pos[2]}; ed.dirty = true;
         }
+        if (ImGui::IsItemActivated()) ed.PushUndo();
         Vec3& e = g_euler[go];
         float rot[3] = {e.x, e.y, e.z};
         if (ImGui::DragFloat3("Rotation", rot, 1.0f)) {
             e = {rot[0], rot[1], rot[2]};
             t->localRotation = Quat::Euler(e); ed.dirty = true;
         }
+        if (ImGui::IsItemActivated()) ed.PushUndo();
         float scl[3] = {t->localScale.x, t->localScale.y, t->localScale.z};
         if (ImGui::DragFloat3("Scale", scl, 0.05f)) {
             t->localScale = {scl[0], scl[1], scl[2]}; ed.dirty = true;
         }
+        if (ImGui::IsItemActivated()) ed.PushUndo();
     }
 
     if (auto* sr = go->GetComponent<SpriteRenderer>()) {

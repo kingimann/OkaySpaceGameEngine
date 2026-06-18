@@ -1275,8 +1275,8 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
             const char* shapes[] = {"Cube", "Pyramid", "Quad", "Plane", "Sphere",
-                                    "Cylinder", "Cone", "Torus", "Capsule"};
-            const int kShapeCount = 9;
+                                    "Cylinder", "Cone", "Torus", "Capsule", "Icosphere"};
+            const int kShapeCount = 10;
             int shapeIdx = -1;
             for (int i = 0; i < kShapeCount; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
             if (ImGui::Combo("Primitive", &shapeIdx, shapes, kShapeCount)) {
@@ -1305,6 +1305,12 @@ void DrawInspector(EditorState& ed) {
                 Vec3 sz = mr->mesh.Size();
                 mr->mesh.Subdivide();
                 mr->mesh.ProjectToSphere(0.5f * std::fmax(sz.x, std::fmax(sz.y, sz.z)));
+                ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Weld##mesh")) {       // merge coincident verts
+                int n = mr->mesh.WeldVertices();
+                ConsoleLog("Welded " + std::to_string(n) + " duplicate verts");
                 ed.dirty = true;
             }
             ImGui::SameLine();

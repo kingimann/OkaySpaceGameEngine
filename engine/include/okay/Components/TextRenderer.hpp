@@ -26,6 +26,11 @@ public:
     /// centered title or a bottom-right score adapts to the window size. The
     /// text's own width/height is used so it stays inside the anchored corner.
     UIAnchor anchor = UIAnchor::TopLeft;
+    /// Drop shadow: a second copy drawn behind the text, offset by `shadowOffset`
+    /// font-pixels, in `shadowColor` — keeps HUD text legible over any backdrop.
+    bool  shadow = false;
+    Color shadowColor = Color::FromBytes(0, 0, 0, 200);
+    Vec2  shadowOffset{1.0f, 1.0f};
 
     /// Width/height of the current text at native font size (8 px per glyph).
     int PixelWidth() const { return Font8x8::MeasureWidth(text.c_str()); }

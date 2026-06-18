@@ -381,13 +381,21 @@ int main(int argc, char** argv) {
                 if (!tr || !up->active) continue;
                 SDL_Color col{(Uint8)(tr->color.r * 255), (Uint8)(tr->color.g * 255),
                               (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255)};
+                SDL_Color sh{(Uint8)(tr->shadowColor.r * 255), (Uint8)(tr->shadowColor.g * 255),
+                             (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255)};
                 if (tr->screenSpace) {
                     Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);
+                    if (tr->shadow)
+                        DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * tr->pixelSize,
+                                 o.y + tr->shadowOffset.y * tr->pixelSize, tr->pixelSize, sh);
                     DrawText(renderer, tr->text, o.x, o.y, tr->pixelSize, col);
                 } else {
                     SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
-                    DrawText(renderer, tr->text, (float)o.x, (float)o.y,
-                             tr->pixelSize * scale, col);
+                    float px = tr->pixelSize * scale;
+                    if (tr->shadow)
+                        DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
+                                 o.y + tr->shadowOffset.y * px, px, sh);
+                    DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col);
                 }
             }
         }

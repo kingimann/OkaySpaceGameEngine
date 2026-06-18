@@ -154,7 +154,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  text " << Quote(tr->text) << " "
             << tr->color.r << " " << tr->color.g << " " << tr->color.b << " " << tr->color.a << " "
             << tr->pixelSize << " " << (tr->screenSpace ? 1 : 0) << " "
-            << tr->screenPos.x << " " << tr->screenPos.y << " " << (int)tr->anchor << "\n";
+            << tr->screenPos.x << " " << tr->screenPos.y << " " << (int)tr->anchor << " "
+            << (tr->shadow ? 1 : 0) << " "
+            << tr->shadowColor.r << " " << tr->shadowColor.g << " " << tr->shadowColor.b << " " << tr->shadowColor.a << " "
+            << tr->shadowOffset.x << " " << tr->shadowOffset.y << "\n";
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -406,6 +409,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tr->text = str; tr->color = c; tr->pixelSize = px;
                     tr->screenSpace = (ss != 0); tr->screenPos = sp;
                     ReadAnchor(in, tr->anchor);   // optional trailing field
+                    // Optional shadow block (added later; absent in older files).
+                    in >> std::ws;
+                    int sk = in.peek();
+                    if (sk >= '0' && sk <= '9') {
+                        int sh = 0; Color sc; Vec2 so;
+                        in >> sh >> sc.r >> sc.g >> sc.b >> sc.a >> so.x >> so.y;
+                        tr->shadow = (sh != 0); tr->shadowColor = sc; tr->shadowOffset = so;
+                    }
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;

@@ -26,12 +26,21 @@ add_library(okay_engine
     src/Physics/Physics2D.cpp
     src/Audio/AudioMixer.cpp
     src/AI/Pathfinding.cpp
+    src/Graphics/Image.cpp
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
 target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
+
+# Vendored single-header libraries (stb_image / stb_image_write), used only by
+# the Image translation unit. Kept PRIVATE so it doesn't leak to consumers.
+target_include_directories(okay_engine PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+)
+# Silence warnings from the third-party stb implementation in Image.cpp.
+set_source_files_properties(src/Graphics/Image.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)
 

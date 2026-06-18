@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace okay;
@@ -36,6 +37,31 @@ static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, flo
     SDL_Rect rect{c.x - hw, c.y - hh, hw * 2 > 0 ? hw * 2 : 1, hh * 2 > 0 ? hh * 2 : 1};
     SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     SDL_RenderFillRect(r, &rect);
+}
+
+// Load (and cache) a sprite texture. Returns nullptr if the image can't be read,
+// in which case the caller falls back to a flat colored quad. A null cache entry
+// is stored for misses so we don't retry decoding a bad path every frame.
+static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
+                               const std::string& baseDir,
+                               std::unordered_map<std::string, SDL_Texture*>& cache) {
+    if (path.empty()) return nullptr;
+    auto it = cache.find(path);
+    if (it != cache.end()) return it->second;
+
+    Image img;
+    if (!img.Load(path) && !img.Load(baseDir + path)) {
+        cache[path] = nullptr; // remember the miss
+        return nullptr;
+    }
+    SDL_Texture* tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+                                         SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
+    if (tex) {
+        SDL_UpdateTexture(tex, nullptr, img.Data(), img.Width() * 4);
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    }
+    cache[path] = tex;
+    return tex;
 }
 
 int main(int argc, char** argv) {
@@ -81,6 +107,15 @@ int main(int argc, char** argv) {
     want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
     SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
     if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
+
+    // Resolve the directory the game files live in, for relative texture paths.
+    std::string baseDir;
+    {
+        char* base = SDL_GetBasePath();
+        baseDir = base ? std::string(base) : "";
+        if (base) SDL_free(base);
+    }
+    std::unordered_map<std::string, SDL_Texture*> textureCache;
 
     scene.Start();
 
@@ -192,14 +227,18 @@ int main(int argc, char** argv) {
                 Vec3 corners[4] = {{-hx, -hy, 0}, {hx, -hy, 0}, {hx, hy, 0}, {-hx, hy, 0}};
                 SDL_Color col{(Uint8)(sr->color.r * 255), (Uint8)(sr->color.g * 255),
                               (Uint8)(sr->color.b * 255), (Uint8)(sr->color.a * 255)};
+                // Texture coords map the image upright onto the quad corners
+                // (corner 3 = top-left in world = texture (0,0)).
+                SDL_Texture* tex = GetTexture(renderer, sr->texture, baseDir, textureCache);
+                const SDL_FPoint uv[4] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
                 SDL_Vertex vtx[4];
                 for (int k = 0; k < 4; ++k) {
                     Vec3 wpos = model.MultiplyPoint(corners[k]);
                     SDL_Point s = W2S(wpos, camPos, scale, w, h);
-                    vtx[k] = SDL_Vertex{{(float)s.x, (float)s.y}, col, {0, 0}};
+                    vtx[k] = SDL_Vertex{{(float)s.x, (float)s.y}, col, uv[k]};
                 }
                 const int idx[6] = {0, 1, 2, 0, 2, 3};
-                SDL_RenderGeometry(renderer, nullptr, vtx, 4, idx, 6);
+                SDL_RenderGeometry(renderer, tex, vtx, 4, idx, 6);
             }
 
             // Tilemaps: draw each non-empty cell as a colored quad.
@@ -234,6 +273,8 @@ int main(int argc, char** argv) {
 
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 
+    for (auto& kv : textureCache)
+        if (kv.second) SDL_DestroyTexture(kv.second);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

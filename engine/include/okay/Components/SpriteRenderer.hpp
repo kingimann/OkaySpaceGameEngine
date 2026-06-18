@@ -2,12 +2,14 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
+#include <string>
 
 namespace okay {
 
 /// Draws a colored quad at its GameObject's position, sized by the Transform's
-/// scale. Conceptually the same role as Unity's SpriteRenderer, simplified for
-/// the console backend (the glyph stands in for a texture).
+/// scale. Conceptually the same role as Unity's SpriteRenderer. With a `texture`
+/// path set, the windowed runtimes draw that image (tinted by `color`); the
+/// console backend always falls back to the `glyph`.
 class SpriteRenderer : public Component {
 public:
     /// Base size of the sprite in world units, before Transform scale.
@@ -15,6 +17,9 @@ public:
     Color color = Color::White;
     /// The character drawn by the console renderer.
     char  glyph = '#';
+    /// Optional image file drawn by the editor/player (PNG/JPG/BMP/...).
+    /// Empty means a flat colored quad.
+    std::string texture;
 
     void OnRender(IRenderer& renderer) override;
 };

@@ -23,6 +23,7 @@ add_library(okay_engine
     src/Platform/PlayFab/NullPlayFabService.cpp
     src/Components/PlayFabManager.cpp
     src/Physics/Physics2D.cpp
+    src/Audio/AudioMixer.cpp
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.

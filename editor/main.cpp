@@ -815,6 +815,21 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##vs")) toRemove = vsc;
         }
     }
+    if (auto* a = go->GetComponent<AudioSource>()) {
+        if (ImGui::CollapsingHeader("Audio Source", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f);
+            ImGui::Checkbox("Loop", &a->loop);
+            ImGui::SameLine();
+            ImGui::Checkbox("Play On Awake", &a->playOnAwake);
+            if (ImGui::Button("Beep"))  a->clip = AudioClip::Sine(440.0f, 0.3f);
+            ImGui::SameLine();
+            if (ImGui::Button("Noise")) a->clip = AudioClip::Noise(0.3f);
+            ImGui::SameLine();
+            if (ImGui::Button("Play"))  a->Play();
+            ImGui::TextDisabled("%.2fs clip (plays on Play)", a->clip.Duration());
+            if (ImGui::SmallButton("Remove##audio")) toRemove = a;
+        }
+    }
 
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
@@ -837,6 +852,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
         if (!go->GetComponent<VisualScriptComponent>() && ImGui::Selectable("Visual Script"))
             { go->AddComponent<VisualScriptComponent>(); ed.dirty = true; }
+        if (!go->GetComponent<AudioSource>() && ImGui::Selectable("Audio Source"))
+            { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
@@ -1092,10 +1109,16 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
 
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
         return 1;
     }
+
+    // Open a mono float audio device (queue mode); audio is optional.
+    SDL_AudioSpec want{}, have{};
+    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
+    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+    if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
 
     SDL_Window* window = SDL_CreateWindow(
         "OkaySpace Editor", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -1141,6 +1164,21 @@ int main(int argc, char** argv) {
         ed.Tick(dt);
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
+        // Pump audio while playing (mono float, queued).
+        if (audioDev) {
+            if (ed.isPlaying()) {
+                int n = (int)(dt * 44100.0f);
+                if (n > 8192) n = 8192;
+                if (n > 0) {
+                    std::vector<float> ab(n);
+                    AudioMixer::Render(ed.scene(), ab.data(), n);
+                    SDL_QueueAudio(audioDev, ab.data(), (Uint32)(n * sizeof(float)));
+                }
+            } else {
+                SDL_ClearQueuedAudio(audioDev);
+            }
+        }
+
         // Keep the window title in sync with the scene + dirty state.
         std::string title = "OkaySpace Editor  -  " + ed.scene().Name() +
                             (ed.dirty ? " *" : "") + "   [v" OKAY_ENGINE_VERSION "]";
@@ -1175,6 +1213,7 @@ int main(int argc, char** argv) {
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
+    if (audioDev) SDL_CloseAudioDevice(audioDev);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

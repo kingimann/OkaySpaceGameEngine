@@ -6,6 +6,10 @@ add_executable(test_scene test_scene.cpp)
 target_link_libraries(test_scene PRIVATE okay::engine)
 add_test(NAME scene COMMAND test_scene)
 
+add_executable(test_serialize test_serialize.cpp)
+target_link_libraries(test_serialize PRIVATE okay::engine)
+add_test(NAME serialize COMMAND test_serialize)
+
 add_executable(test_net test_net.cpp)
 target_link_libraries(test_net PRIVATE okay::engine)
 add_test(NAME net COMMAND test_net)

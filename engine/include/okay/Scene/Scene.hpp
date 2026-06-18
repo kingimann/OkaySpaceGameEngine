@@ -21,9 +21,13 @@ public:
     Scene& operator=(const Scene&) = delete;
 
     const std::string& Name() const { return m_name; }
+    void SetName(const std::string& name) { m_name = name; }
 
     /// Create an empty GameObject (with a Transform) owned by this scene.
     GameObject* CreateGameObject(const std::string& name = "GameObject");
+
+    /// Remove every GameObject immediately (used when loading a scene).
+    void Clear();
 
     /// Mark a GameObject for destruction; removed at the end of the frame.
     void Destroy(GameObject* go);

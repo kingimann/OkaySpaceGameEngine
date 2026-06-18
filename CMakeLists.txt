@@ -16,11 +16,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(OKAY_BUILD_SANDBOX  "Build the sandbox demo game"       ON)
 option(OKAY_BUILD_TESTS    "Build the unit tests"              ON)
 option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
+option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
 
 if(MSVC)
     add_compile_options(/W4 /permissive-)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# Enable testing up front so subdirectories (editor, tests) can register tests.
+if(OKAY_BUILD_TESTS)
+    enable_testing()
 endif()
 
 # ---- The engine library ----------------------------------------------
@@ -41,8 +47,12 @@ if(OKAY_BUILD_SANDBOX)
     add_subdirectory(examples)
 endif()
 
+# ---- Desktop GUI editor ----------------------------------------------
+if(OKAY_BUILD_EDITOR)
+    add_subdirectory(editor)
+endif()
+
 # ---- Tests ------------------------------------------------------------
 if(OKAY_BUILD_TESTS)
-    enable_testing()
     add_subdirectory(tests)
 endif()

@@ -1,8 +1,10 @@
 # Build output
 build/
+build-*/
 out/
 cmake-build-*/
 bin/
+_deps/
 *.o
 *.obj
 *.a

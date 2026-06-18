@@ -18,6 +18,14 @@ GameObject* Scene::CreateGameObject(const std::string& name) {
     return ptr;
 }
 
+void Scene::Clear() {
+    m_pending.clear();
+    m_active.clear();
+    m_destroyQueue.clear();
+    mainCamera = nullptr;
+    m_objects.clear();
+}
+
 void Scene::QueuePending(Component* component) {
     m_pending.push_back(component);
 }

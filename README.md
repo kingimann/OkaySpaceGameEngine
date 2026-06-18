@@ -61,8 +61,14 @@ planet, `A` player ship.)*
 - **Steam** and **PlayFab** integrations — full API surfaces with in-memory
   simulation backends by default; real Steamworks/REST backends behind flags.
 - **Self-updating launcher** that pulls the latest from GitHub, rebuilds, runs.
+- **Desktop GUI editor** (Dear ImGui + SDL2 + OpenGL) — Unity-style hierarchy,
+  inspector, scene viewport, and Play/Stop, with scene save/load. See
+  [`docs/editor.md`](docs/editor.md).
+- **Scene serialization** — save/load scenes (and the hierarchy) to readable
+  `.okayscene` text files via `SceneSerializer`.
 - **Core has no external dependencies** — just a C++17 compiler, CMake, threads.
-  Optional backends (Lua, C#/Mono, Steam, PlayFab/libcurl) are opt-in.
+  Optional backends (Lua, C#/Mono, Steam, PlayFab/libcurl) and the editor
+  (SDL2/OpenGL) are opt-in.
 
 ## Project layout
 
@@ -116,6 +122,19 @@ headless-friendly. Or use the helper script: `./scripts/build.sh`.
 
 Requirements: CMake ≥ 3.16 and a C++17 compiler (tested with GCC 13 and
 Clang 18). The core build needs nothing else.
+
+### The visual editor
+
+Want a Unity-style editor window (hierarchy, inspector, scene view, Play button)?
+
+```bash
+# Debian/Ubuntu: sudo apt-get install libsdl2-dev libgl1-mesa-dev
+cmake -S . -B build -DOKAY_BUILD_EDITOR=ON
+cmake --build build -j
+./build/bin/okay-editor
+```
+
+Full guide: [`docs/editor.md`](docs/editor.md).
 
 ### Optional backends
 

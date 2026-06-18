@@ -18,6 +18,7 @@
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/TilemapCollider2D.hpp"
+#include "okay/Components/ParticleSystem.hpp"
 
 #include <cctype>
 #include <functional>
@@ -152,6 +153,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     if (go->GetComponent<TilemapCollider2D>()) out << "  tilemapcollider\n";
+    if (auto* ps = go->GetComponent<ParticleSystem>()) {
+        out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
+            << (ps->playing ? 1 : 0) << " " << ps->startLifetime << " " << ps->startSize << " "
+            << ps->startColor.r << " " << ps->startColor.g << " " << ps->startColor.b << " "
+            << ps->startColor.a << " " << ps->startVelocity.x << " " << ps->startVelocity.y << " "
+            << ps->velocityRandom << " " << ps->gravity.x << " " << ps->gravity.y << " "
+            << (ps->fadeOverLife ? 1 : 0) << " " << ps->seed << "\n";
+    }
 }
 } // namespace
 
@@ -340,6 +349,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         for (int x = 0; x < tw; ++x) { int id = 0; in >> id; tm->SetTile(x, y, id); }
                 } else if (field == "tilemapcollider") {
                     go->AddComponent<TilemapCollider2D>();
+                } else if (field == "particles") {
+                    auto* ps = go->AddComponent<ParticleSystem>();
+                    int playing = 1, fade = 1;
+                    unsigned long long seed = 0;
+                    in >> ps->emissionRate >> ps->maxParticles >> playing
+                       >> ps->startLifetime >> ps->startSize
+                       >> ps->startColor.r >> ps->startColor.g >> ps->startColor.b >> ps->startColor.a
+                       >> ps->startVelocity.x >> ps->startVelocity.y >> ps->velocityRandom
+                       >> ps->gravity.x >> ps->gravity.y >> fade >> seed;
+                    ps->playing = (playing != 0);
+                    ps->fadeOverLife = (fade != 0);
+                    ps->seed = static_cast<std::uint64_t>(seed);
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;

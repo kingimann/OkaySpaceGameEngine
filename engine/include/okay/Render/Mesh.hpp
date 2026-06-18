@@ -68,6 +68,27 @@ struct Mesh {
         return m;
     }
 
+    /// A subdivided horizontal grid in the XZ plane: `cols`×`rows` cells over
+    /// `width`×`depth`, centered at the origin. The dense vertex grid is the
+    /// base for terrain/water (displace the Y of each vertex afterwards).
+    static Mesh Grid(float width = 10.0f, float depth = 10.0f, int cols = 10, int rows = 10) {
+        Mesh m;
+        m.name = "Grid";
+        if (cols < 1) cols = 1;
+        if (rows < 1) rows = 1;
+        for (int z = 0; z <= rows; ++z)
+            for (int x = 0; x <= cols; ++x)
+                m.vertices.push_back({-width * 0.5f + width * (float)x / cols, 0.0f,
+                                      -depth * 0.5f + depth * (float)z / rows});
+        int stride = cols + 1;
+        for (int z = 0; z < rows; ++z)
+            for (int x = 0; x < cols; ++x) {
+                int a = z * stride + x, b = a + 1, c = a + stride, d = c + 1;
+                m.triangles.insert(m.triangles.end(), {a, c, b, b, c, d});
+            }
+        return m;
+    }
+
     /// A flat horizontal ground plane in the XZ plane (good for 3D floors).
     static Mesh Plane(float size = 10.0f) {
         float h = size * 0.5f;
@@ -205,6 +226,7 @@ struct Mesh {
         if (n == "Torus")     return Torus();
         if (n == "Capsule")   return Capsule();
         if (n == "Icosphere") return Icosphere();
+        if (n == "Grid")      return Grid();
         return Cube();
     }
 
@@ -228,6 +250,24 @@ struct Mesh {
     Vec3 Size() const {
         Vec3 lo, hi; Bounds(lo, hi);
         return {hi.x - lo.x, hi.y - lo.y, hi.z - lo.z};
+    }
+
+    /// Translate so the bounding-box center sits at the origin — fixes imported
+    /// OBJs modeled off to one side so they rotate/scale about their middle.
+    void RecenterToOrigin() {
+        Vec3 c = Center();
+        for (Vec3& v : vertices) v -= c;
+    }
+
+    /// Uniformly scale (about the origin) so the largest bounding-box dimension
+    /// equals `maxExtent` — normalize wildly-sized imported models to a usable
+    /// scale. No-op on a flat/empty mesh.
+    void ScaleToFit(float maxExtent = 1.0f) {
+        Vec3 s = Size();
+        float biggest = std::fmax(s.x, std::fmax(s.y, s.z));
+        if (biggest <= 1e-6f) return;
+        float k = maxExtent / biggest;
+        for (Vec3& v : vertices) v = v * k;
     }
 
     // ---- Modeling: import/export and mesh operations -------------------

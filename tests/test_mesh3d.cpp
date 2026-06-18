@@ -120,6 +120,41 @@ int main() {
         CHECK(tri.TriangleCount() == 0);                    // collapsed -> removed
     }
 
+    // --- Grid: (cols+1)(rows+1) verts, cols*rows*2 tris, flat on XZ, centered ---
+    {
+        Mesh g = Mesh::Grid(10.0f, 6.0f, 5, 3);
+        CHECK(g.name == "Grid");
+        CHECK(g.vertices.size() == (5u + 1) * (3u + 1));
+        CHECK(g.TriangleCount() == 5 * 3 * 2);
+        for (auto& v : g.vertices) CHECK_NEAR(v.y, 0.0f, 0.0001f);   // flat
+        Vec3 s = g.Size();
+        CHECK_NEAR(s.x, 10.0f, 0.001f);
+        CHECK_NEAR(s.z, 6.0f, 0.001f);
+        Vec3 c = g.Center();
+        CHECK_NEAR(c.x, 0.0f, 0.001f);                              // centered at origin
+        CHECK_NEAR(c.z, 0.0f, 0.001f);
+        CHECK(Mesh::FromName("Grid").name == "Grid");
+    }
+
+    // --- RecenterToOrigin / ScaleToFit normalize imported geometry ---
+    {
+        // A unit cube shoved off to (10, 0, 0).
+        Mesh m = Mesh::Cube().Transformed({1, 1, 1}, {10, 0, 0});
+        CHECK_NEAR(m.Center().x, 10.0f, 0.001f);
+        m.RecenterToOrigin();
+        CHECK_NEAR(m.Center().x, 0.0f, 0.001f);
+        CHECK_NEAR(m.Center().y, 0.0f, 0.001f);
+        CHECK_NEAR(m.Size().x, 1.0f, 0.001f);                       // size unchanged
+
+        // A 4-unit cube scaled to fit 2 units.
+        Mesh big = Mesh::Cube(4.0f);
+        big.ScaleToFit(2.0f);
+        Vec3 s = big.Size();
+        CHECK_NEAR(s.x, 2.0f, 0.001f);
+        CHECK_NEAR(s.y, 2.0f, 0.001f);
+        CHECK_NEAR(s.z, 2.0f, 0.001f);
+    }
+
     // --- Bounds / Center / Size of the AABB ---
     {
         Mesh cube = Mesh::Cube(2.0f);                      // spans -1..1 on each axis

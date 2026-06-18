@@ -1324,8 +1324,6 @@ void DrawInspector(EditorState& ed) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
-            ImGui::SameLine();
-            if (ImGui::Checkbox("Double-sided", &mr->doubleSided)) ed.dirty = true;
             const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
                                     "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid"};
             const int kShapeCount = 13;
@@ -1366,6 +1364,8 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             if (ImGui::SmallButton("Recenter##mesh")) { mr->mesh.RecenterToOrigin(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Ground##mesh")) { mr->mesh.GroundPivot(); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("Fit 1u##mesh")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
             ImGui::SameLine();
@@ -1771,6 +1771,16 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
     }
 }
 
+// The camera to frame the Game view through: the scene's main camera if one is
+// active (set on Play), else the first Camera component found (edit mode).
+static Camera* SceneCamera(Scene& s) {
+    if (s.mainCamera) return s.mainCamera;
+    for (const auto& go : s.Objects())
+        if (go->active)
+            if (auto* c = go->GetComponent<Camera>()) return c;
+    return nullptr;
+}
+
 void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
@@ -1779,7 +1789,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     Vec2  camPos = ed.cameraPos;
     float zoom   = ed.cameraZoom;
     if (gameView) {
-        if (Camera* mc = ed.scene().mainCamera) {
+        if (Camera* mc = SceneCamera(ed.scene())) {
             Vec3 cp = mc->gameObject->transform->Position();
             camPos = {cp.x, cp.y};
             zoom = mc->orthographicSize * 2.0f;        // viewport world-height
@@ -2061,7 +2071,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     Mat4 proj = Mat4::Perspective(50.0f, canvasSize.x / canvasSize.y, 0.1f, 2000.0f);
     // The Game view renders through the scene's main camera instead.
     if (gameView) {
-        if (Camera* mc = ed.scene().mainCamera) {
+        if (Camera* mc = SceneCamera(ed.scene())) {
             eye = mc->gameObject->transform->Position();
             view = mc->ViewMatrix();
             proj = mc->ProjectionMatrix(canvasSize.x / canvasSize.y);
@@ -2109,8 +2119,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[t[i + k]]);
             Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
             Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
+            // Two-sided: draw every face, normal toward the eye (painter's sort
+            // keeps occlusion right), so meshes never show holes when orbiting.
             float facing = Vec3::Dot(normal, eye - centroid);
-            if (!mr->doubleSided && facing < 0.0f) continue;            // back-face cull
             if (facing < 0.0f) normal = normal * -1.0f;
             EdTri tri; bool ok = true;
             for (int k = 0; k < 3; ++k)
@@ -2155,18 +2166,33 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     if (gameView) return;   // the Game view is non-interactive
 
-    // Click to select the nearest object center on screen.
+    // Click to select: pick the nearest mesh whose projected bounding box
+    // contains the cursor (so clicking anywhere on a model selects it).
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = nullptr;
-        float best = 18.0f; // pixels
+        float bestDepth = 1e30f;
         for (const auto& up : objs) {
             GameObject* go = up.get();
-            if (!go->GetComponent<MeshRenderer>() || !go->active) continue;
-            ImVec2 sp;
-            if (!toScreen(vp * Vec4{go->transform->Position(), 1}, sp)) continue;
-            float d = Mathf::Sqrt((sp.x - io.MousePos.x) * (sp.x - io.MousePos.x) +
-                                  (sp.y - io.MousePos.y) * (sp.y - io.MousePos.y));
-            if (d < best) { best = d; hit = go; }
+            auto* mr = go->GetComponent<MeshRenderer>();
+            if (!mr || !go->active) continue;
+            Mat4 model = go->transform->LocalToWorldMatrix();
+            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            float minx = 1e30f, miny = 1e30f, maxx = -1e30f, maxy = -1e30f;
+            bool any = false;
+            for (int ci = 0; ci < 8; ++ci) {
+                Vec3 corner{(ci & 1) ? hi.x : lo.x, (ci & 2) ? hi.y : lo.y, (ci & 4) ? hi.z : lo.z};
+                ImVec2 sp;
+                if (!toScreen(vp * Vec4{model.MultiplyPoint(corner), 1}, sp)) continue;
+                any = true;
+                minx = Mathf::Min(minx, sp.x); maxx = Mathf::Max(maxx, sp.x);
+                miny = Mathf::Min(miny, sp.y); maxy = Mathf::Max(maxy, sp.y);
+            }
+            if (!any) continue;
+            if (io.MousePos.x >= minx && io.MousePos.x <= maxx &&
+                io.MousePos.y >= miny && io.MousePos.y <= maxy) {
+                float depth = (go->transform->Position() - eye).SqrMagnitude();
+                if (depth < bestDepth) { bestDepth = depth; hit = go; }
+            }
         }
         if (hit) ed.Select(hit);
     }
@@ -2262,7 +2288,7 @@ void DrawViewport(EditorState& ed) {
 void DrawGameView(EditorState& ed) {
     if (!ImGui::Begin("Game")) { ImGui::End(); return; }
 
-    Camera* mc = ed.scene().mainCamera;
+    Camera* mc = SceneCamera(ed.scene());
     bool persp = mc && mc->projection == Camera::Projection::Perspective;
 
     ImVec2 canvasPos  = ImGui::GetCursorScreenPos();

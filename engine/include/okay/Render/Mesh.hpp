@@ -312,6 +312,15 @@ struct Mesh {
         for (Vec3& v : vertices) v -= c;
     }
 
+    /// Move the pivot to the base: centered in X/Z with the lowest point at
+    /// Y = 0, so the model rests on the ground when placed at y = 0.
+    void GroundPivot() {
+        if (vertices.empty()) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        Vec3 c{(lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f};
+        for (Vec3& v : vertices) v -= c;
+    }
+
     /// Uniformly scale (about the origin) so the largest bounding-box dimension
     /// equals `maxExtent` — normalize wildly-sized imported models to a usable
     /// scale. No-op on a flat/empty mesh.

@@ -281,10 +281,10 @@ int main(int argc, char** argv) {
                     for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[t[i + k]]);
                     Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
                     Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
-                    // Back-face cull (unless double-sided); flip the normal toward
-                    // the camera so both faces of a double-sided tri shade correctly.
+                    // Render both faces (painter's sort keeps it correct) and flip
+                    // the normal toward the camera so the lit side always shades —
+                    // so models never show holes/vanish as you orbit around them.
                     float facing = Vec3::Dot(normal, camPos - centroid);
-                    if (!mr->doubleSided && facing < 0.0f) continue;
                     if (facing < 0.0f) normal = normal * -1.0f;
 
                     SDL_FPoint sp[3]; float wsum = 0; bool ok = true;

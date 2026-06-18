@@ -917,6 +917,21 @@ struct OkayScriptVM::Impl {
             float dx = ot.x - me.x, dy = ot.y - me.y;
             return Value{Mathf::Sqrt(dx * dx + dy * dy)};
         };
+        // Set this object's Rigidbody2D velocity to head toward a named object at
+        // `speed` (homing projectiles, flying/seeking enemies).
+        b["vel_toward"] = [this, sceneOf](std::vector<Value>& a) {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{};
+            Scene* s = sceneOf(); if (!s) return Value{};
+            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{};
+            auto* rb = rt.host->gameObject->GetComponent<Rigidbody2D>(); if (!rb) return Value{};
+            Vec3 me = rt.host->gameObject->transform->Position();
+            Vec3 ot = g->transform->Position();
+            float dx = ot.x - me.x, dy = ot.y - me.y;
+            float d = Mathf::Sqrt(dx * dx + dy * dy);
+            float speed = a.size() > 1 ? a[1].AsFloat() : 1.0f;
+            if (d > 1e-6f) rb->velocity = {dx / d * speed, dy / d * speed};
+            return Value{};
+        };
         // Rotate this object (about Z) to face a named object — turrets, enemies
         // aiming at the player, signposts.
         b["look_at"] = [this, tf, sceneOf](std::vector<Value>& a) {

@@ -401,6 +401,33 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.z, 9.0f, 0.001f); // 3 + 5 + 1
     }
 
+    // --- GroundPivot centers X/Z and drops the base to Y = 0 ---
+    {
+        Mesh cube = Mesh::Cube(2.0f).Transformed({1, 1, 1}, {5, 3, -4}); // off-center
+        cube.GroundPivot();
+        Vec3 lo, hi; cube.Bounds(lo, hi);
+        CHECK_NEAR(lo.y, 0.0f, 0.001f);                  // base sits on the ground
+        CHECK_NEAR((lo.x + hi.x) * 0.5f, 0.0f, 0.001f);  // centered in X
+        CHECK_NEAR((lo.z + hi.z) * 0.5f, 0.0f, 0.001f);  // centered in Z
+        CHECK_NEAR(hi.y, 2.0f, 0.001f);                  // height preserved
+    }
+
+    // --- vel_toward sets a sibling body's velocity at a named target ---
+    {
+        Scene scene("Homing");
+        GameObject* target = scene.CreateGameObject("Player");
+        target->transform->localPosition = {3, 4, 0};    // distance 5 (3-4-5)
+        GameObject* go = scene.CreateGameObject("Missile");
+        auto* rb = go->AddComponent<Rigidbody2D>();
+        rb->bodyType = Rigidbody2D::BodyType::Kinematic;
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function start() { vel_toward(\"Player\", 10); }"));
+        scene.Start();
+        // Unit dir (0.6, 0.8) * 10 = (6, 8).
+        CHECK_NEAR(rb->velocity.x, 6.0f, 0.01f);
+        CHECK_NEAR(rb->velocity.y, 8.0f, 0.01f);
+    }
+
     // --- MeshRenderer.doubleSided round-trips through serialization ---
     {
         Scene scene("DS");

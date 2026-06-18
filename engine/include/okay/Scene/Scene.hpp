@@ -82,6 +82,7 @@ public:
 private:
     friend class GameObject;
     void QueuePending(Component* component);
+    void NotifyComponentRemoved(Component* component);
     void FlushPending();
 
     std::string m_name;

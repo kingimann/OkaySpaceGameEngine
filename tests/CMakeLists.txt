@@ -14,6 +14,10 @@ add_executable(test_instantiate test_instantiate.cpp)
 target_link_libraries(test_instantiate PRIVATE okay::engine)
 add_test(NAME instantiate COMMAND test_instantiate)
 
+add_executable(test_remove test_remove.cpp)
+target_link_libraries(test_remove PRIVATE okay::engine)
+add_test(NAME remove_component COMMAND test_remove)
+
 add_executable(test_core_features test_core_features.cpp)
 target_link_libraries(test_core_features PRIVATE okay::engine)
 add_test(NAME core_features COMMAND test_core_features)

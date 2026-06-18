@@ -229,6 +229,14 @@ std::string g_updateStatus;
 bool g_openUpdatePopup = false;
 bool g_showNewProject = true;   // show the project chooser on launch
 
+// Panel visibility (View menu).
+bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
+     g_showProject = true, g_showServices = true;
+
+// File dialogs.
+bool g_showSaveAs = false, g_showOpen = false;
+char g_pathBuf[256] = "scene.okayscene";
+
 // Per-object editor-only Euler-angle cache (degrees) for the inspector.
 std::unordered_map<GameObject*, Vec3> g_euler;
 
@@ -300,15 +308,16 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         if (ImGui::MenuItem("New 2D Scene")) { ed.NewScene2D(); ConsoleLog("New 2D project"); }
         if (ImGui::MenuItem("New 3D Scene")) { ed.NewScene3D(); ConsoleLog("New 3D project"); }
         ImGui::Separator();
-        if (ImGui::MenuItem("Open...", "Ctrl+O")) {
-            std::string err;
-            if (ed.Load("scene.okayscene", &err)) ConsoleLog("Opened scene.okayscene");
-            else ConsoleLog("Open failed: " + err);
-        }
+        if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
         if (ImGui::MenuItem("Save", "Ctrl+S")) {
             std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
             if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE"); }
             else ConsoleLog("Save failed");
+        }
+        if (ImGui::MenuItem("Save As...")) {
+            std::strncpy(g_pathBuf, ed.path().empty() ? "scene.okayscene" : ed.path().c_str(),
+                         sizeof(g_pathBuf) - 1);
+            g_showSaveAs = true;
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) running = false;
@@ -317,6 +326,14 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
     if (ImGui::BeginMenu("Edit")) {
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, ed.CanUndo())) { ed.Undo(); ConsoleLog("Undo"); }
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, ed.CanRedo())) { ed.Redo(); ConsoleLog("Redo"); }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("View")) {
+        ImGui::MenuItem("Hierarchy", nullptr, &g_showHierarchy);
+        ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
+        ImGui::MenuItem("Console", nullptr, &g_showConsole);
+        ImGui::MenuItem("Project", nullptr, &g_showProject);
+        ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
@@ -520,6 +537,7 @@ void HandleShortcuts(EditorState& ed) {
         if (ed.Redo()) ConsoleLog("Redo");
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) g_showNewProject = true;
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) g_showOpen = true;
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
         if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE"); }
@@ -537,6 +555,39 @@ void HandleShortcuts(EditorState& ed) {
     if (ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) {
         Vec3 pp = ed.selected()->transform->Position();
         ed.camTarget = pp; ed.cameraPos = {pp.x, pp.y};
+    }
+}
+
+void DrawFileDialogs(EditorState& ed) {
+    if (g_showOpen)   { ImGui::OpenPopup("Open Scene");    g_showOpen = false; }
+    if (g_showSaveAs) { ImGui::OpenPopup("Save Scene As"); g_showSaveAs = false; }
+    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
+
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Open Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputText("Path", g_pathBuf, sizeof(g_pathBuf));
+        if (ImGui::Button("Open", ImVec2(120, 0))) {
+            std::string err;
+            if (ed.Load(g_pathBuf, &err)) ConsoleLog("Opened " + std::string(g_pathBuf));
+            else ConsoleLog("Open failed: " + err);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Save Scene As", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputText("Path", g_pathBuf, sizeof(g_pathBuf));
+        if (ImGui::Button("Save", ImVec2(120, 0))) {
+            if (ed.Save(g_pathBuf)) { ConsoleLog("Saved " + std::string(g_pathBuf)); ed.Achievement("FIRST_SAVE"); }
+            else ConsoleLog("Save failed");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
     }
 }
 
@@ -645,6 +696,8 @@ void DrawInspector(EditorState& ed) {
     if (!go->tag.empty()) ImGui::TextDisabled("Tag: %s", go->tag.c_str());
     ImGui::Spacing();
 
+    Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
+
     if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
         Transform* t = go->transform;
         float pos[3] = {t->localPosition.x, t->localPosition.y, t->localPosition.z};
@@ -676,6 +729,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Size", size, 0.05f, 0.0f, 1000.0f)) {
                 sr->size = {size[0], size[1]}; ed.dirty = true;
             }
+            if (ImGui::SmallButton("Remove##sprite")) toRemove = sr;
         }
     }
     if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -693,6 +747,7 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             ImGui::TextDisabled("%d triangles", mr->mesh.TriangleCount());
+            if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
         }
     }
     if (auto* cam = go->GetComponent<Camera>()) {
@@ -706,6 +761,7 @@ void DrawInspector(EditorState& ed) {
             else
                 ImGui::DragFloat("FOV", &cam->fieldOfView, 0.5f, 10.0f, 170.0f);
             ImGui::Checkbox("Main", &cam->main);
+            if (ImGui::SmallButton("Remove##cam")) toRemove = cam;
         }
     }
     if (go->GetComponent<Rigidbody2D>())
@@ -717,6 +773,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Gravity Scale", &rb->gravityScale, 0.05f);
             ImGui::DragFloat("Mass", &rb->mass, 0.05f, 0.01f, 1000.0f);
             ImGui::DragFloat("Bounciness", &rb->bounciness, 0.01f, 0.0f, 1.0f);
+            if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* sc = go->GetComponent<ScriptComponent>()) {
         if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -735,6 +792,7 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::SameLine();
             ImGui::TextDisabled("runs on Play (start/update)");
+            if (ImGui::SmallButton("Remove##script")) toRemove = sc;
         }
     }
     if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
@@ -754,8 +812,12 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::SameLine();
             ImGui::TextDisabled("OkayVS nodes (see docs)");
+            if (ImGui::SmallButton("Remove##vs")) toRemove = vsc;
         }
     }
+
+    // Apply a queued component removal (undoable).
+    if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -1091,13 +1153,14 @@ int main(int argc, char** argv) {
         HandleShortcuts(ed);
         DrawDockSpace(ed, running);
         DrawNewProjectPopup(ed);
+        DrawFileDialogs(ed);
         DrawUpdatePopup();
-        DrawHierarchy(ed);
-        DrawViewport(ed);   // the "Scene" panel
-        DrawInspector(ed);
-        DrawConsole();
-        DrawProject(ed);
-        DrawServices(ed);
+        if (g_showHierarchy) DrawHierarchy(ed);
+        DrawViewport(ed);   // the "Scene" panel (always shown)
+        if (g_showInspector) DrawInspector(ed);
+        if (g_showConsole)   DrawConsole();
+        if (g_showProject)   DrawProject(ed);
+        if (g_showServices)  DrawServices(ed);
 
         ImGui::Render();
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);

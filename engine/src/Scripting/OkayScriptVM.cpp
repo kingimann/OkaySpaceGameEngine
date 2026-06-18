@@ -3,6 +3,8 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Physics/Physics2D.hpp"
+#include "okay/Math/Vec2.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -665,6 +667,24 @@ struct OkayScriptVM::Impl {
             if (GameObject* g = go())
                 if (auto* au = g->GetComponent<AudioSource>()) au->Play();
             return Value{};
+        };
+        // Physics queries: raycast_hit(ox, oy, dx, dy [, maxDist]) returns 1 if
+        // the ray hits a collider, and overlap(x, y) returns 1 if a collider
+        // contains that point. Great for shooting, ground checks, line-of-sight.
+        b["raycast_hit"] = [this](std::vector<Value>& a) {
+            if (a.size() < 4 || !rt.host || !rt.host->gameObject) return Value{false};
+            Scene* sc = rt.host->gameObject->scene();
+            if (!sc) return Value{false};
+            Vec2 origin{a[0].AsFloat(), a[1].AsFloat()};
+            Vec2 dir{a[2].AsFloat(), a[3].AsFloat()};
+            float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
+            return Value{sc->physics().Raycast(*sc, origin, dir, maxDist).hit};
+        };
+        b["overlap"] = [this](std::vector<Value>& a) {
+            if (a.size() < 2 || !rt.host || !rt.host->gameObject) return Value{false};
+            Scene* sc = rt.host->gameObject->scene();
+            if (!sc) return Value{false};
+            return Value{sc->physics().OverlapPoint(*sc, Vec2{a[0].AsFloat(), a[1].AsFloat()}) != nullptr};
         };
         // Load another scene at end of frame (level transitions, restart).
         b["load_scene"] = [this](std::vector<Value>& a) {

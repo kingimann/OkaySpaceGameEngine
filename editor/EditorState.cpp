@@ -134,6 +134,18 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     return go;
 }
 
+GameObject* EditorState::CreateMesh(const std::string& meshName) {
+    PushUndo();
+    GameObject* go = m_scene.CreateGameObject(meshName);
+    auto* mr = go->AddComponent<MeshRenderer>();
+    mr->mesh = Mesh::FromName(meshName);
+    mr->color = Color::Cyan;
+    m_selected = go;
+    view3D = true;
+    dirty = true;
+    return go;
+}
+
 GameObject* EditorState::DuplicateSelected() {
     PushUndo();
     if (!m_selected) return nullptr;

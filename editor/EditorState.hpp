@@ -26,11 +26,31 @@ public:
     GameObject* CreatePyramid(const std::string& name = "Pyramid");
     void DeleteSelected();
     void NewScene();
+    /// New project templates: a 2D scene (ortho camera + sprite) or a 3D scene
+    /// (perspective camera + ground + cube).
+    void NewScene2D();
+    void NewScene3D();
 
     // ---- Files ---------------------------------------------------------
     bool Save(const std::string& path);
     bool Load(const std::string& path, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
+
+    // ---- Online services (built into the engine) ----------------------
+    ISteamService*   steam()   { return m_steam.get(); }
+    IPlayFabService* playfab() { return m_playfab.get(); }
+    NetworkManager*  net()     { return m_net; }
+
+    /// Host a multiplayer session on the given port (creates a NetworkManager).
+    bool StartHost(std::uint16_t port);
+    /// Join a multiplayer session.
+    bool StartJoin(const std::string& host, std::uint16_t port);
+    void StopNetwork();
+
+    /// Pump Steam callbacks and the network each editor frame.
+    void TickServices(float dt);
+    /// Unlock a Steam achievement (no-op if Steam is unavailable).
+    void Achievement(const std::string& id);
 
     // ---- Play mode -----------------------------------------------------
     bool isPlaying() const { return m_playing; }
@@ -60,6 +80,10 @@ private:
     std::string m_path;
     bool  m_playing = false;
     std::string m_snapshot;
+
+    std::unique_ptr<ISteamService>   m_steam;
+    std::unique_ptr<IPlayFabService> m_playfab;
+    NetworkManager* m_net = nullptr; // component on a scene GameObject
 };
 
 } // namespace okay::editor

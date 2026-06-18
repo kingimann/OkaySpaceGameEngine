@@ -29,7 +29,9 @@ function update(dt) {
   - `if (cond) { ... } else { ... }`
   - `while (cond) { ... }`
   - `for (var i = 0; i < 10; i += 1) { ... }`
+  - `for x in myArray { ... }` (foreach over an array)
   - `break` and `continue` inside loops
+- **Ternary:** `cond ? a : b`
 - **Functions:** `function name(a, b) { return a + b; }`
 - **Arrays:** `var a = [1, 2, 3];` — index with `a[0]`, assign `a[1] = 9`,
   append with `a[count(a)] = x` or `push(a, x)`, remove with `pop(a)`, length

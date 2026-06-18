@@ -8,3 +8,4 @@
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Rect.hpp"
 #include "okay/Math/Bounds.hpp"
+#include "okay/Math/Easing.hpp"

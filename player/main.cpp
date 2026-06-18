@@ -140,6 +140,11 @@ int main(int argc, char** argv) {
         if (base) SDL_free(base);
     }
     std::unordered_map<std::string, SDL_Texture*> textureCache;
+    // Z-buffered 3D: meshes are rasterized into this texture each frame so
+    // overlapping faces occlude correctly, then blitted under the 2D/UI layers.
+    Raster mesh3D;
+    SDL_Texture* mesh3DTex = nullptr;
+    int mesh3DW = 0, mesh3DH = 0;
 
     // Load any WAV clips referenced by AudioSources, resampled to the mix rate.
     for (const auto& up : scene.Objects()) {
@@ -263,52 +268,24 @@ int main(int argc, char** argv) {
 
         bool perspective = cam && cam->projection == Camera::Projection::Perspective;
         if (perspective) {
-            // Filled, flat-shaded, back-face-culled, painter-sorted triangles.
+            // Z-buffered software render so overlapping faces occlude correctly,
+            // then blit it under the 2D/UI layers (transparent where no geometry).
             Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
             Mat4 vp = cam->ProjectionMatrix(h > 0 ? (float)w / h : 1.0f) * cam->ViewMatrix();
-            // Directional key light (shared with the editor; scripts can change it).
-
-            struct Tri { float depth; SDL_Vertex v[3]; };
-            std::vector<Tri> tris;
-            for (const auto& up : scene.Objects()) {
-                auto* mr = up->GetComponent<MeshRenderer>();
-                if (!mr || !up->active) continue;
-                Mat4 model = up->transform->LocalToWorldMatrix();
-                const auto& v = mr->mesh.vertices;
-                const auto& t = mr->mesh.triangles;
-                for (size_t i = 0; i + 2 < t.size(); i += 3) {
-                    Vec3 wp[3];
-                    for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[t[i + k]]);
-                    Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
-                    Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
-                    // Render both faces (painter's sort keeps it correct) and flip
-                    // the normal toward the camera so the lit side always shades —
-                    // so models never show holes/vanish as you orbit around them.
-                    float facing = Vec3::Dot(normal, camPos - centroid);
-                    if (facing < 0.0f) normal = normal * -1.0f;
-
-                    SDL_FPoint sp[3]; float wsum = 0; bool ok = true;
-                    for (int k = 0; k < 3; ++k) {
-                        Vec4 c = vp * Vec4{wp[k], 1.0f};
-                        if (c.w <= 0.05f) { ok = false; break; }
-                        sp[k].x = w * 0.5f + (c.x / c.w) * w * 0.5f;
-                        sp[k].y = h * 0.5f - (c.y / c.w) * h * 0.5f;
-                        wsum += c.w;
-                    }
-                    if (!ok) continue;
-                    float shade = SceneLight::Shade(normal);
-                    SDL_Color col{(Uint8)(mr->color.r * 255 * shade),
-                                  (Uint8)(mr->color.g * 255 * shade),
-                                  (Uint8)(mr->color.b * 255 * shade), 255};
-                    Tri tri; tri.depth = wsum / 3.0f;
-                    for (int k = 0; k < 3; ++k) tri.v[k] = SDL_Vertex{sp[k], col, {0, 0}};
-                    tris.push_back(tri);
+            if (w > 0 && h > 0) {
+                mesh3D.Resize(w, h);
+                mesh3D.Clear(0u);                       // transparent
+                RenderMeshes(mesh3D, scene, vp, camPos);
+                if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
+                    if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
+                    mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+                                                  SDL_TEXTUREACCESS_STREAMING, w, h);
+                    SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
+                    mesh3DW = w; mesh3DH = h;
                 }
+                SDL_UpdateTexture(mesh3DTex, nullptr, mesh3D.color.data(), w * 4);
+                SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
             }
-            std::sort(tris.begin(), tris.end(),
-                      [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
-            for (const auto& tr : tris)
-                SDL_RenderGeometry(renderer, nullptr, tr.v, 3, nullptr, 0);
         } else {
             float ortho = cam ? cam->orthographicSize : 5.0f;
             Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
@@ -545,6 +522,7 @@ int main(int argc, char** argv) {
 
     for (auto& kv : textureCache)
         if (kv.second) SDL_DestroyTexture(kv.second);
+    if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

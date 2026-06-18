@@ -124,6 +124,34 @@ ImU32 ToColor(const Color& c) {
     return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(c.a * 255));
 }
 
+// ---- Z-buffered 3D: render meshes into an SDL texture we blit into the view,
+//      so overlapping faces occlude correctly (the ImGui draw list has no depth
+//      buffer). Set by main(); the texture is reused/resized across frames.
+SDL_Renderer* g_sdlRenderer = nullptr;
+SDL_Texture*  g_view3DTex = nullptr;
+int g_view3DW = 0, g_view3DH = 0;
+Raster g_view3DRaster;
+
+// Render the scene's solid meshes (z-buffered) at w*h into the shared texture;
+// transparent where nothing is drawn (so a grid/background shows through).
+SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye, int w, int h) {
+    if (!g_sdlRenderer) return nullptr;
+    w = w < 1 ? 1 : (w > 4096 ? 4096 : w);
+    h = h < 1 ? 1 : (h > 4096 ? 4096 : h);
+    g_view3DRaster.Resize(w, h);
+    g_view3DRaster.Clear(0u);                    // transparent
+    RenderMeshes(g_view3DRaster, scene, vp, eye);
+    if (!g_view3DTex || g_view3DW != w || g_view3DH != h) {
+        if (g_view3DTex) SDL_DestroyTexture(g_view3DTex);
+        g_view3DTex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                        SDL_TEXTUREACCESS_STREAMING, w, h);
+        SDL_SetTextureBlendMode(g_view3DTex, SDL_BLENDMODE_BLEND);
+        g_view3DW = w; g_view3DH = h;
+    }
+    SDL_UpdateTexture(g_view3DTex, nullptr, g_view3DRaster.color.data(), w * 4);
+    return g_view3DTex;
+}
+
 // ---- Executable path helper (used by Build Game to find the player) -------
 namespace updater {
 namespace fs = std::filesystem;
@@ -2047,45 +2075,29 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     const auto& objs = ed.scene().Objects();
 
-    // Solid meshes (wireframe == false): flat-shaded, back-face-culled, and
-    // depth-sorted across all objects (painter's algorithm) so they occlude
-    // correctly — mirrors the player's 3D renderer, including the global light.
-    struct EdTri { float depth; ImVec2 p[3]; ImU32 col; };
-    std::vector<EdTri> solid;
-    for (const auto& up : objs) {
-        GameObject* go = up.get();
-        auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || !go->active || mr->wireframe) continue;
-        Mat4 model = go->transform->LocalToWorldMatrix();
-        const auto& v = mr->mesh.vertices;
-        const auto& t = mr->mesh.triangles;
-        for (size_t i = 0; i + 2 < t.size(); i += 3) {
-            Vec3 wp[3];
-            for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[t[i + k]]);
-            Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
-            Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
-            // Two-sided: draw every face, normal toward the eye (painter's sort
-            // keeps occlusion right), so meshes never show holes when orbiting.
-            float facing = Vec3::Dot(normal, eye - centroid);
-            if (facing < 0.0f) normal = normal * -1.0f;
-            EdTri tri; bool ok = true;
-            for (int k = 0; k < 3; ++k)
-                if (!toScreen(vp * Vec4{wp[k], 1}, tri.p[k])) { ok = false; break; }
-            if (!ok) continue;
-            float shade = SceneLight::Shade(normal);
-            Color c = mr->color;
-            tri.col = (go == ed.selected())
-                ? IM_COL32((int)(255 * shade), (int)(200 * shade), 0, 255)
-                : IM_COL32((int)(c.r * 255 * shade), (int)(c.g * 255 * shade),
-                           (int)(c.b * 255 * shade), 255);
-            tri.depth = (centroid - eye).SqrMagnitude();
-            solid.push_back(tri);
+    // Solid meshes: render z-buffered into a texture (correct per-pixel
+    // occlusion) and blit it; transparent where empty so the grid shows through.
+    if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
+                                           (int)canvasSize.x, (int)canvasSize.y))
+        dl->AddImage((ImTextureID)tex, canvasPos, canvasEnd);
+
+    // Highlight the selection with a yellow wireframe over the solid render.
+    if (!gameView && ed.selected()) {
+        if (auto* mr = ed.selected()->GetComponent<MeshRenderer>()) {
+            Mat4 m = vp * ed.selected()->transform->LocalToWorldMatrix();
+            const auto& v = mr->mesh.vertices;
+            const auto& t = mr->mesh.triangles;
+            for (size_t i = 0; i + 2 < t.size(); i += 3) {
+                ImVec2 p0, p1, p2;
+                if (toScreen(m * Vec4{v[t[i]], 1}, p0) &&
+                    toScreen(m * Vec4{v[t[i + 1]], 1}, p1) &&
+                    toScreen(m * Vec4{v[t[i + 2]], 1}, p2)) {
+                    ImU32 y = IM_COL32(255, 200, 0, 160);
+                    dl->AddLine(p0, p1, y); dl->AddLine(p1, p2, y); dl->AddLine(p2, p0, y);
+                }
+            }
         }
     }
-    std::sort(solid.begin(), solid.end(),
-              [](const EdTri& a, const EdTri& b) { return a.depth > b.depth; });
-    for (const auto& tr : solid)
-        dl->AddTriangleFilled(tr.p[0], tr.p[1], tr.p[2], tr.col);
 
     // Wireframe meshes (wireframe == true): edges only, drawn over the solids.
     for (const auto& up : objs) {
@@ -2367,6 +2379,7 @@ int main(int argc, char** argv) {
         window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
+    g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();

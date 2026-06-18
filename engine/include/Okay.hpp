@@ -26,6 +26,7 @@
 #include "okay/Render/ConsoleRenderer.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Lighting.hpp"
+#include "okay/Render/SoftwareRenderer.hpp"
 
 // Scene graph
 #include "okay/Scene/Component.hpp"

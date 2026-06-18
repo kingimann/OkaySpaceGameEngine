@@ -130,6 +130,10 @@ add_executable(test_mesh3d test_mesh3d.cpp)
 target_link_libraries(test_mesh3d PRIVATE okay::engine)
 add_test(NAME mesh3d COMMAND test_mesh3d)
 
+add_executable(test_software_renderer test_software_renderer.cpp)
+target_link_libraries(test_software_renderer PRIVATE okay::engine)
+add_test(NAME software_renderer COMMAND test_software_renderer)
+
 add_executable(test_script_maps test_script_maps.cpp)
 target_link_libraries(test_script_maps PRIVATE okay::engine)
 add_test(NAME script_maps COMMAND test_script_maps)

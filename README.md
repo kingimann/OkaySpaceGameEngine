@@ -68,8 +68,10 @@ planet, `A` player ship.)*
 - **Steam** and **PlayFab** integrations — full API surfaces with in-memory
   simulation backends by default; real Steamworks/REST backends behind flags.
 - **Self-updating launcher** that pulls the latest from GitHub, rebuilds, runs.
-- **Desktop GUI editor** (Dear ImGui + SDL2 + OpenGL) — Unity-style hierarchy,
-  inspector, scene viewport, and Play/Stop, with scene save/load. See
+- **Desktop GUI editor** (Dear ImGui docking + SDL2) — Unity-style **docked**
+  Hierarchy / Scene / Inspector / Console panels, a Play·Stop·Step toolbar, a
+  dark theme, scene save/load, and an in-app self-updater. Ships as a single
+  self-contained `.exe` (`dist/OkaySpaceEngine.exe`). See
   [`docs/editor.md`](docs/editor.md).
 - **Scene serialization** — save/load scenes (and the hierarchy) to readable
   `.okayscene` text files via `SceneSerializer`.

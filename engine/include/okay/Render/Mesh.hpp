@@ -170,16 +170,41 @@ struct Mesh {
         return m;
     }
 
+    /// A geodesic sphere: an icosahedron subdivided `subdivisions` times and
+    /// projected to the radius. Triangles are near-uniform (no pinching at the
+    /// poles like the UV Sphere), so it shades and tessellates evenly.
+    static Mesh Icosphere(float radius = 0.5f, int subdivisions = 2) {
+        const float t = 1.61803398875f;          // golden ratio
+        Mesh m;
+        m.name = "Icosphere";
+        m.vertices = {
+            {-1,  t,  0}, { 1,  t,  0}, {-1, -t,  0}, { 1, -t,  0},
+            { 0, -1,  t}, { 0,  1,  t}, { 0, -1, -t}, { 0,  1, -t},
+            { t,  0, -1}, { t,  0,  1}, {-t,  0, -1}, {-t,  0,  1},
+        };
+        m.triangles = {
+            0,11,5, 0,5,1, 0,1,7, 0,7,10, 0,10,11,
+            1,5,9, 5,11,4, 11,10,2, 10,7,6, 7,1,8,
+            3,9,4, 3,4,2, 3,2,6, 3,6,8, 3,8,9,
+            4,9,5, 2,4,11, 6,2,10, 8,6,7, 9,8,1,
+        };
+        for (int i = 0; i < subdivisions; ++i) m.Subdivide();
+        m.ProjectToSphere(radius);
+        m.name = "Icosphere";                     // Subdivide clears the name
+        return m;
+    }
+
     /// Recreate a primitive mesh from its name.
     static Mesh FromName(const std::string& n) {
-        if (n == "Pyramid")  return Pyramid();
-        if (n == "Quad")     return Quad();
-        if (n == "Plane")    return Plane();
-        if (n == "Sphere")   return Sphere();
-        if (n == "Cylinder") return Cylinder();
-        if (n == "Cone")     return Cone();
-        if (n == "Torus")    return Torus();
-        if (n == "Capsule")  return Capsule();
+        if (n == "Pyramid")   return Pyramid();
+        if (n == "Quad")      return Quad();
+        if (n == "Plane")     return Plane();
+        if (n == "Sphere")    return Sphere();
+        if (n == "Cylinder")  return Cylinder();
+        if (n == "Cone")      return Cone();
+        if (n == "Torus")     return Torus();
+        if (n == "Capsule")   return Capsule();
+        if (n == "Icosphere") return Icosphere();
         return Cube();
     }
 
@@ -265,6 +290,32 @@ struct Mesh {
         for (int t : other.triangles) triangles.push_back(t + base);
     }
     static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
+
+    /// Merge vertices closer than `epsilon` into one and re-index triangles,
+    /// then drop any triangle that collapsed to a line/point. Cleans up imported
+    /// OBJs and Combine()d meshes so they're watertight. Returns vertices removed.
+    int WeldVertices(float epsilon = 1e-5f) {
+        std::vector<Vec3> unique;
+        std::vector<int>  remap(vertices.size());
+        float e2 = epsilon * epsilon;
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            int found = -1;
+            for (std::size_t j = 0; j < unique.size(); ++j)
+                if ((unique[j] - vertices[i]).SqrMagnitude() <= e2) { found = (int)j; break; }
+            if (found < 0) { found = (int)unique.size(); unique.push_back(vertices[i]); }
+            remap[i] = found;
+        }
+        int removed = (int)vertices.size() - (int)unique.size();
+        std::vector<int> tris;
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
+            int a = remap[triangles[i]], b = remap[triangles[i + 1]], c = remap[triangles[i + 2]];
+            if (a != b && b != c && a != c) tris.insert(tris.end(), {a, b, c}); // skip degenerate
+        }
+        vertices = std::move(unique);
+        triangles = std::move(tris);
+        if (removed > 0) name = "";
+        return removed;
+    }
 
     /// Subdivide every triangle into 4 by splitting each edge at its midpoint —
     /// adds detail (and, after re-projecting, smooths primitives). Midpoints are

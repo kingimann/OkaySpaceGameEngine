@@ -86,6 +86,40 @@ int main() {
         CHECK(checked > 0);
     }
 
+    // --- Icosphere: 20*4^n triangles, all verts on the radius ---
+    {
+        Mesh ico0 = Mesh::Icosphere(1.0f, 0);
+        CHECK(ico0.name == "Icosphere");
+        CHECK(ico0.vertices.size() == 12u);          // raw icosahedron
+        CHECK(ico0.TriangleCount() == 20);
+        for (auto& v : ico0.vertices) CHECK_NEAR(v.Magnitude(), 1.0f, 0.001f);
+
+        Mesh ico2 = Mesh::Icosphere(2.0f, 2);
+        CHECK(ico2.TriangleCount() == 20 * 4 * 4);   // two subdivisions
+        for (auto& v : ico2.vertices) CHECK_NEAR(v.Magnitude(), 2.0f, 0.001f);
+        CHECK(Mesh::FromName("Icosphere").name == "Icosphere");
+    }
+
+    // --- WeldVertices merges coincident verts and drops degenerate triangles ---
+    {
+        // Two cubes at the same spot: Combine duplicates all 8 verts; welding
+        // collapses them back to 8 (and identical triangles stay valid).
+        Mesh a = Mesh::Cube();
+        Mesh both = Mesh::Combined(a, a);
+        CHECK(both.vertices.size() == 16u);
+        int removed = both.WeldVertices();
+        CHECK(removed == 8);
+        CHECK(both.vertices.size() == 8u);
+
+        // A triangle whose two corners coincide is degenerate and dropped.
+        Mesh tri;
+        tri.vertices = {{0, 0, 0}, {0, 0, 0}, {1, 0, 0}};   // first two identical
+        tri.triangles = {0, 1, 2};
+        tri.WeldVertices();
+        CHECK(tri.vertices.size() == 2u);
+        CHECK(tri.TriangleCount() == 0);                    // collapsed -> removed
+    }
+
     // --- Bounds / Center / Size of the AABB ---
     {
         Mesh cube = Mesh::Cube(2.0f);                      // spans -1..1 on each axis

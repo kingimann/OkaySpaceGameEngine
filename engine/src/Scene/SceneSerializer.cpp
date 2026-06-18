@@ -76,7 +76,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sr->color.a << " " << sr->size.x << " " << sr->size.y << " "
             << Quote(sr->texture)
             << " " << sr->uvMin.x << " " << sr->uvMin.y
-            << " " << sr->uvMax.x << " " << sr->uvMax.y << "\n";
+            << " " << sr->uvMax.x << " " << sr->uvMax.y
+            << " " << sr->sortOrder << "\n";
     }
     if (auto* cam = go->GetComponent<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
@@ -223,8 +224,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // Optional uv sub-region (4 floats) for sprite sheets.
                     in >> std::ws;
                     int pk = in.peek();
-                    if (pk == '-' || pk == '.' || std::isdigit(pk))
+                    if (pk == '-' || pk == '.' || std::isdigit(pk)) {
                         in >> sr->uvMin.x >> sr->uvMin.y >> sr->uvMax.x >> sr->uvMax.y;
+                        in >> std::ws; // optional sortOrder follows uv
+                        int pk2 = in.peek();
+                        if (pk2 == '-' || std::isdigit(pk2)) in >> sr->sortOrder;
+                    }
                 } else if (field == "camera") {
                     Color c; int proj = 0; float ortho = 5.0f, fov = 60.0f; int main = 1;
                     in >> proj >> ortho >> fov >> c.r >> c.g >> c.b >> c.a >> main;

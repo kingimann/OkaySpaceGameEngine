@@ -1222,7 +1222,8 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(tex, sr->texture.c_str(), sizeof(tex) - 1);
             tex[sizeof(tex) - 1] = '\0';
             if (ImGui::InputText("Texture##sprite", tex, sizeof(tex))) { sr->texture = tex; ed.dirty = true; }
-            ImGui::TextDisabled("image file (PNG/JPG); shows in the built game");
+            if (ImGui::DragInt("Sort Order##sprite", &sr->sortOrder, 0.1f, -1000, 1000)) ed.dirty = true;
+            ImGui::TextDisabled("image file (PNG/JPG); higher Sort Order draws on top");
             if (ImGui::SmallButton("Remove##sprite")) toRemove = sr;
         }
     }

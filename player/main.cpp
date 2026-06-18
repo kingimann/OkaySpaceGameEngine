@@ -246,12 +246,20 @@ int main(int argc, char** argv) {
             float ortho = cam ? cam->orthographicSize : 5.0f;
             Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
             float scale = h / (2.0f * ortho);
-            for (const auto& up : scene.Objects()) {
-                auto* sr = up->GetComponent<SpriteRenderer>();
-                if (!sr || !up->active) continue;
+            // Gather active sprites and draw back-to-front by sortOrder (stable,
+            // so same-order sprites keep scene order). Enables layered 2D scenes.
+            std::vector<GameObject*> sprites;
+            for (const auto& up : scene.Objects())
+                if (up->active && up->GetComponent<SpriteRenderer>()) sprites.push_back(up.get());
+            std::stable_sort(sprites.begin(), sprites.end(), [](GameObject* a, GameObject* b) {
+                return a->GetComponent<SpriteRenderer>()->sortOrder <
+                       b->GetComponent<SpriteRenderer>()->sortOrder;
+            });
+            for (GameObject* obj : sprites) {
+                auto* sr = obj->GetComponent<SpriteRenderer>();
                 // Rotate/scale the sprite quad through the full transform so 2D
                 // games can spin and skew sprites, not just place axis-aligned ones.
-                Mat4 model = up->transform->LocalToWorldMatrix();
+                Mat4 model = obj->transform->LocalToWorldMatrix();
                 float hx = sr->size.x * 0.5f, hy = sr->size.y * 0.5f;
                 Vec3 corners[4] = {{-hx, -hy, 0}, {hx, -hy, 0}, {hx, hy, 0}, {-hx, hy, 0}};
                 SDL_Color col{(Uint8)(sr->color.r * 255), (Uint8)(sr->color.g * 255),

@@ -67,6 +67,7 @@ int main() {
         auto* sr = go->AddComponent<SpriteRenderer>();
         sr->texture = "player.png";
         sr->color = Color::Red;
+        sr->sortOrder = 7;
 
         std::string text = SceneSerializer::Serialize(scene);
         Scene loaded("L");
@@ -75,6 +76,7 @@ int main() {
         auto* r = loaded.Find("Sprite")->GetComponent<SpriteRenderer>();
         CHECK(r != nullptr);
         CHECK(r->texture == "player.png");
+        CHECK(r->sortOrder == 7);
     }
 
     TEST_MAIN_RESULT();

@@ -61,8 +61,19 @@ runs when the scene starts and `update(dt)` runs every frame.
 | --- | --- |
 | `time()` | seconds since start |
 | `dt()` | last frame delta time |
-| `get(name)` / `set(name, value)` | shared host globals |
+| `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `print(...)` | log values to the console |
+
+### Persistent prefs (high scores, settings)
+| Function | Effect |
+| --- | --- |
+| `prefs_set(key, value)` | store a number or string |
+| `prefs_get(key, default)` | read a number |
+| `prefs_get_str(key, default)` | read a string |
+| `prefs_save(path)` / `prefs_load(path)` | write/read the prefs file |
+
+The standalone player auto-loads `game.okayprefs` on launch and saves it on
+exit, so values set with `prefs_set` persist between play sessions.
 
 ### Math
 `abs sin cos tan sqrt pow floor ceil round sign min max clamp lerp atan2 len

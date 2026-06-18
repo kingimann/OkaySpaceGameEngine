@@ -5,6 +5,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
+#include "okay/Core/Prefs.hpp"
 
 #include <cctype>
 #include <cmath>
@@ -611,6 +612,28 @@ struct OkayScriptVM::Impl {
         b["set"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2 && rt.host) rt.host->globals[a[0].AsString()] = a[1];
             return Value{};
+        };
+        // Persistent prefs (high scores, settings) — survive across runs.
+        b["prefs_set"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) {
+                if (a[1].IsString()) Prefs::SetString(a[0].AsString(), a[1].AsString());
+                else Prefs::SetFloat(a[0].AsString(), a[1].AsFloat());
+            }
+            return Value{};
+        };
+        b["prefs_get"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            return Value{Prefs::GetFloat(a[0].AsString(), a.size() > 1 ? a[1].AsFloat() : 0.0f)};
+        };
+        b["prefs_get_str"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            return Value{Prefs::GetString(a[0].AsString(), a.size() > 1 ? a[1].AsString() : std::string{})};
+        };
+        b["prefs_save"] = [](std::vector<Value>& a) {
+            return Value{Prefs::Save(a.empty() ? "game.okayprefs" : a[0].AsString())};
+        };
+        b["prefs_load"] = [](std::vector<Value>& a) {
+            return Value{Prefs::Load(a.empty() ? "game.okayprefs" : a[0].AsString())};
         };
         // Math helpers
         b["abs"]   = [](std::vector<Value>& a) { return Value{Mathf::Abs(a.empty() ? 0 : a[0].AsFloat())}; };

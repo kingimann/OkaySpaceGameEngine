@@ -21,6 +21,11 @@ public:
 
     static float SmoothedFPS() { return s_fps; }
 
+    /// Advance global time by one frame of `unscaledDt` seconds. The Application
+    /// loop calls this automatically; standalone runtimes (the player) call it so
+    /// `ElapsedTime()`, `DeltaTime()`, and `timeScale` work there too.
+    static void Step(float unscaledDt) { Advance(unscaledDt); }
+
 private:
     friend class Application;
     static void Advance(float unscaledDt) {

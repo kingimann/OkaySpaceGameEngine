@@ -100,8 +100,12 @@ int main(int argc, char** argv) {
 #include <vector>
 
 #if defined(_WIN32)
-#  define WIN32_LEAN_AND_MEAN
-#  define NOMINMAX
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
 #  include <windows.h>
 #else
 #  include <unistd.h>
@@ -243,6 +247,11 @@ char g_pathBuf[256] = "scene.okayscene";
 bool  g_showStats = true;
 bool  g_showInstPrefab = false;
 char  g_prefabBuf[256] = "Prefab.okayprefab";
+bool  g_showBuildGame = false;
+char  g_buildDirBuf[256] = "build/MyGame";
+char  g_buildNameBuf[128] = "MyGame";
+std::string g_buildStatus;
+bool  g_openBuildResult = false;
 bool  g_snap = false;
 float g_snapSize = 1.0f;
 
@@ -298,6 +307,63 @@ std::string ExtFor(const std::string& lang) {
     return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
 }
 } // namespace extide
+
+// ---- Build Game: export the current scene as a standalone runnable game ----
+// A shipped game is just <Game>.exe (a copy of the player runtime) + a
+// game.okayscene sitting beside it. Double-clicking the exe runs the scene.
+namespace builder {
+namespace fs = std::filesystem;
+
+// Locate the player runtime that ships next to the editor executable.
+std::string FindPlayer() {
+    fs::path self = updater::SelfPath();
+    if (self.empty()) return {};
+    fs::path dir = self.parent_path();
+#if defined(_WIN32)
+    const char* names[] = {"OkaySpacePlayer.exe", "okay-player.exe"};
+#else
+    const char* names[] = {"okay-player", "OkaySpacePlayer"};
+#endif
+    for (const char* n : names) {
+        std::error_code ec;
+        if (fs::exists(dir / n, ec)) return (dir / n).string();
+    }
+    return {};
+}
+
+// Build the game into outDir. Returns a human-readable status string.
+std::string Build(EditorState& ed, const std::string& outDir,
+                  const std::string& gameName) {
+    std::error_code ec;
+    fs::path dir(outDir);
+    fs::create_directories(dir, ec);
+    if (ec) return "Couldn't create folder: " + ec.message();
+
+    // 1) Write the scene next to the player as game.okayscene.
+    if (!SceneSerializer::SaveToFile(ed.scene(), (dir / "game.okayscene").string()))
+        return "Failed to write game.okayscene.";
+
+    // 2) Copy the player runtime, renamed to <Game>.exe.
+    std::string player = FindPlayer();
+#if defined(_WIN32)
+    std::string exeName = gameName + ".exe";
+#else
+    std::string exeName = gameName;
+#endif
+    if (player.empty()) {
+        return "Wrote game.okayscene to " + dir.string() +
+               ", but couldn't find the player runtime to copy. Place "
+               "OkaySpacePlayer next to the editor and rebuild.";
+    }
+    fs::copy_file(player, dir / exeName, fs::copy_options::overwrite_existing, ec);
+    if (ec) return "Wrote scene but couldn't copy the player: " + ec.message();
+#if !defined(_WIN32)
+    fs::permissions(dir / exeName, fs::perms::owner_exec | fs::perms::group_exec |
+                    fs::perms::others_exec, fs::perm_options::add, ec);
+#endif
+    return "Built '" + gameName + "' to " + dir.string() + " — run " + exeName + " to play.";
+}
+} // namespace builder
 
 // ---- Console log -------------------------------------------------------
 std::vector<std::string> g_console;
@@ -368,6 +434,8 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
                          sizeof(g_pathBuf) - 1);
             g_showSaveAs = true;
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) running = false;
         ImGui::EndMenu();
@@ -707,6 +775,7 @@ void HandleShortcuts(EditorState& ed) {
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
         ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
     }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_B, false)) g_showBuildGame = true;
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
         ed.DeleteSelected(); ConsoleLog("Deleted selection");
     }
@@ -766,6 +835,37 @@ void DrawFileDialogs(EditorState& ed) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    if (g_showBuildGame) { ImGui::OpenPopup("Build Game"); g_showBuildGame = false; }
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Build Game", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Export this scene as a standalone game.");
+        ImGui::TextDisabled("Creates <Name>.exe + game.okayscene in the output folder.");
+        ImGui::Separator();
+        ImGui::InputText("Game name", g_buildNameBuf, sizeof(g_buildNameBuf));
+        ImGui::InputText("Output folder", g_buildDirBuf, sizeof(g_buildDirBuf));
+        ImGui::Separator();
+        if (ImGui::Button("Build", ImVec2(120, 0))) {
+            g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf);
+            g_openBuildResult = true;
+            ConsoleLog("Build Game: " + g_buildStatus);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    if (g_openBuildResult) { ImGui::OpenPopup("Build Result"); g_openBuildResult = false; }
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Build Result", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(420.0f);
+        ImGui::TextUnformatted(g_buildStatus.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }

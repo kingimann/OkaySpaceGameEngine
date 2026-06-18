@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Math/Vec2.hpp"
 #include <unordered_map>
+#include <vector>
 
 namespace okay {
 
@@ -18,6 +19,10 @@ public:
 
     /// Composite WASD / arrow axis in the range [-1, 1] per component.
     static Vec2 AxisWASD();
+
+    /// Drive input from a non-terminal source (SDL window): pass the set of keys
+    /// currently held this frame. Advances the down/up edge state.
+    static void FeedKeys(const std::vector<char>& downKeys);
 
 private:
     friend class Application;

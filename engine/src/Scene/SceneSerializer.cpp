@@ -9,6 +9,9 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
+#include "okay/Components/Mover.hpp"
+#include "okay/Components/Spinner.hpp"
+#include "okay/Components/Lifetime.hpp"
 
 #include <cctype>
 #include <functional>
@@ -100,6 +103,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
         out << "  visualscript " << Quote(vsc->Source()) << "\n";
+    }
+    if (auto* mv = go->GetComponent<Mover>()) {
+        out << "  mover " << mv->velocity.x << " " << mv->velocity.y << " " << mv->velocity.z << "\n";
+    }
+    if (auto* sp = go->GetComponent<Spinner>()) {
+        out << "  spinner " << sp->angularVelocity.x << " " << sp->angularVelocity.y
+            << " " << sp->angularVelocity.z << "\n";
+    }
+    if (auto* lt = go->GetComponent<Lifetime>()) {
+        out << "  lifetime " << lt->seconds << "\n";
     }
 }
 } // namespace
@@ -224,6 +237,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     std::string src = ReadQuoted(in);
                     auto* vsc = go->AddComponent<VisualScriptComponent>();
                     vsc->LoadFromText(src);
+                } else if (field == "mover") {
+                    Vec3 v; in >> v.x >> v.y >> v.z;
+                    go->AddComponent<Mover>()->velocity = v;
+                } else if (field == "spinner") {
+                    Vec3 v; in >> v.x >> v.y >> v.z;
+                    go->AddComponent<Spinner>()->angularVelocity = v;
+                } else if (field == "lifetime") {
+                    float s = 1.0f; in >> s;
+                    go->AddComponent<Lifetime>()->seconds = s;
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;

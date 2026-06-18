@@ -34,6 +34,10 @@ add_executable(test_core_features test_core_features.cpp)
 target_link_libraries(test_core_features PRIVATE okay::engine)
 add_test(NAME core_features COMMAND test_core_features)
 
+add_executable(test_gameplay test_gameplay.cpp)
+target_link_libraries(test_gameplay PRIVATE okay::engine)
+add_test(NAME gameplay COMMAND test_gameplay)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

@@ -51,6 +51,11 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
 
+// Gameplay behaviours (no-scripting motion/lifetime helpers)
+#include "okay/Components/Mover.hpp"
+#include "okay/Components/Spinner.hpp"
+#include "okay/Components/Lifetime.hpp"
+
 // Audio
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Components/AudioSource.hpp"

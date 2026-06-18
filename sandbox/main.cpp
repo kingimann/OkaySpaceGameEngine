@@ -5,9 +5,26 @@
 // planets), an orthographic Camera, the SpriteRenderer, Input, and Time.
 #include <Okay.hpp>
 #include <cstdlib>
+#include <cstdio>
 #include <string>
 
+#if defined(_WIN32)
+#  include <io.h>
+#  define OKAY_ISATTY(fd) _isatty(fd)
+#  define OKAY_FILENO(f)  _fileno(f)
+#else
+#  include <unistd.h>
+#  define OKAY_ISATTY(fd) isatty(fd)
+#  define OKAY_FILENO(f)  fileno(f)
+#endif
+
 using namespace okay;
+
+// True when launched in an interactive console (e.g. double-clicked .exe or a
+// terminal) rather than piped/redirected (CI, tests, logs).
+static bool IsInteractive() {
+    return OKAY_ISATTY(OKAY_FILENO(stdin)) != 0;
+}
 
 // ---------------------------------------------------------------------------
 // A script that orbits its Transform around the local origin of its parent.
@@ -80,8 +97,12 @@ int main(int argc, char** argv) {
     cfg.width     = 70;
     cfg.height    = 28;
     cfg.targetFps = 30.0f;
-    // Default to a finite run so the demo terminates cleanly when piped/headless.
-    cfg.maxFrames = (argc > 1) ? std::atoi(argv[1]) : 150;
+    // An explicit frame count always wins. Otherwise: run until the player
+    // presses Q when interactive (double-clicked .exe / terminal), or a finite
+    // run when piped/redirected so headless invocations terminate cleanly.
+    if (argc > 1)            cfg.maxFrames = std::atoi(argv[1]);
+    else if (IsInteractive()) cfg.maxFrames = 0;     // until Q
+    else                      cfg.maxFrames = 150;
 
     Application app(cfg);
     Scene scene("SolarSystem");

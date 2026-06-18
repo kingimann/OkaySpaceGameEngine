@@ -22,6 +22,9 @@ public:
     bool LoadFile(const std::string& path, std::string* error = nullptr);
 
     const std::string& Language() const { return m_language; }
+    void SetLanguage(const std::string& lang) { m_language = lang; }
+    /// The last source compiled (retained for editing and serialization).
+    const std::string& Source() const { return m_source; }
     IScriptVM* VM() const { return m_vm.get(); }
     ScriptHost& Host() { return m_host; }
 
@@ -30,6 +33,7 @@ public:
 
 private:
     std::string m_language;
+    std::string m_source;
     std::unique_ptr<IScriptVM> m_vm;
     ScriptHost m_host;
 };

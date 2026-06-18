@@ -5,6 +5,8 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 
@@ -88,6 +90,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* cc = go->GetComponent<CircleCollider2D>()) {
         out << "  circlecollider2d " << cc->radius << " "
             << cc->offset.x << " " << cc->offset.y << " " << (cc->isTrigger ? 1 : 0) << "\n";
+    }
+    if (auto* sc = go->GetComponent<ScriptComponent>()) {
+        out << "  script " << Quote(sc->Language()) << " " << Quote(sc->Source()) << "\n";
+    }
+    if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
+        out << "  visualscript " << Quote(vsc->Source()) << "\n";
     }
 }
 } // namespace
@@ -198,6 +206,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> r >> off.x >> off.y >> trig;
                     auto* cc = go->AddComponent<CircleCollider2D>();
                     cc->radius = r; cc->offset = off; cc->isTrigger = (trig != 0);
+                } else if (field == "script") {
+                    std::string lang = ReadQuoted(in);
+                    std::string src  = ReadQuoted(in);
+                    auto* sc = go->AddComponent<ScriptComponent>(lang);
+                    sc->LoadSource(src);
+                } else if (field == "visualscript") {
+                    std::string src = ReadQuoted(in);
+                    auto* vsc = go->AddComponent<VisualScriptComponent>();
+                    vsc->LoadFromText(src);
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;

@@ -1,5 +1,8 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Scene.hpp"
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
@@ -611,6 +614,25 @@ struct OkayScriptVM::Impl {
         };
         b["set"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2 && rt.host) rt.host->globals[a[0].AsString()] = a[1];
+            return Value{};
+        };
+        // Spawn a prefab file at (x, y); returns true on success. New objects
+        // are adopted next frame, so this is safe to call from update().
+        b["spawn"] = [this](std::vector<Value>& a) {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{false};
+            Scene* sc = rt.host->gameObject->scene();
+            if (!sc) return Value{false};
+            GameObject* go = SceneSerializer::InstantiateFromFile(*sc, a[0].AsString(), nullptr);
+            if (!go) return Value{false};
+            if (go->transform)
+                go->transform->localPosition = {a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                                 a.size() > 2 ? a[2].AsFloat() : 0.0f, 0.0f};
+            return Value{true};
+        };
+        // Destroy this script's own GameObject (deferred to end of frame).
+        b["destroy"] = [this](std::vector<Value>&) {
+            if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                rt.host->gameObject->scene()->Destroy(rt.host->gameObject);
             return Value{};
         };
         // Persistent prefs (high scores, settings) — survive across runs.

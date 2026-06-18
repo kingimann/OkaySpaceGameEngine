@@ -125,6 +125,18 @@ namespace fs = std::filesystem;
 const char* kRawBase =
     "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/main/dist/";
 
+bool pendingQuit = false; // set after a successful auto-update relaunch
+
+// Launch a (new) executable detached from this process.
+void Relaunch(const std::string& path) {
+#if defined(_WIN32)
+    int rc = std::system(("start \"\" \"" + path + "\"").c_str());
+#else
+    int rc = std::system(("\"" + path + "\" >/dev/null 2>&1 &").c_str());
+#endif
+    (void)rc;
+}
+
 // Absolute path of the running executable.
 std::string SelfPath() {
 #if defined(_WIN32)
@@ -206,16 +218,31 @@ std::string CheckAndUpdate() {
     fs::rename(newFile, self, ec);
     if (ec) { fs::rename(backup, self, ec); return "Couldn't install the update: " + ec.message(); }
 
-    return "Updated to v" + latest + "!\nClose and reopen the app to run it.";
+    // Auto-update: launch the new build and ask the app to close.
+    Relaunch(self.string());
+    pendingQuit = true;
+    return "Updated to v" + latest + "! Reopening...";
 }
 } // namespace updater
 
 std::string g_updateStatus;
 bool g_openUpdatePopup = false;
-bool g_showNewProject = true; // show the project chooser on launch
+bool g_showNewProject = true;   // show the project chooser on launch
 
 // Per-object editor-only Euler-angle cache (degrees) for the inspector.
 std::unordered_map<GameObject*, Vec3> g_euler;
+
+// Editable text buffers for script/visual-script components, keyed by pointer.
+std::unordered_map<void*, std::vector<char>> g_codeBuf;
+std::vector<char>& CodeBuffer(void* key, const std::string& initial) {
+    auto it = g_codeBuf.find(key);
+    if (it == g_codeBuf.end()) {
+        std::vector<char> b(16384, 0);
+        std::strncpy(b.data(), initial.c_str(), b.size() - 1);
+        it = g_codeBuf.emplace(key, std::move(b)).first;
+    }
+    return it->second;
+}
 
 // ---- Console log -------------------------------------------------------
 std::vector<std::string> g_console;
@@ -691,6 +718,44 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Mass", &rb->mass, 0.05f, 0.01f, 1000.0f);
             ImGui::DragFloat("Bounciness", &rb->bounciness, 0.01f, 0.0f, 1.0f);
         }
+    if (auto* sc = go->GetComponent<ScriptComponent>()) {
+        if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* langs[] = {"okayscript", "lua", "csharp"};
+            int li = sc->Language() == "lua" ? 1 : sc->Language() == "csharp" ? 2 : 0;
+            if (ImGui::Combo("Language", &li, langs, 3)) sc->SetLanguage(langs[li]);
+            auto& buf = CodeBuffer(sc, sc->Source().empty()
+                ? "function start()\nend\n\nfunction update(dt)\n  move(2 * dt, 0)\nend\n"
+                : sc->Source());
+            ImGui::InputTextMultiline("##code", buf.data(), buf.size(), ImVec2(-1, 170));
+            if (ImGui::Button("Compile & Run")) {
+                std::string err;
+                if (sc->LoadSource(buf.data(), &err)) ConsoleLog("Script compiled OK");
+                else ConsoleLog("Script error: " + err);
+                ed.dirty = true;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("runs on Play (start/update)");
+        }
+    }
+    if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
+        if (ImGui::CollapsingHeader("Visual Script", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& buf = CodeBuffer(vsc, vsc->Source().empty()
+                ? "# Move right at 2 units/sec\nnode 0 OnUpdate\nnode 1 Const 2\n"
+                  "node 2 DeltaTime\nnode 3 Mul\nnode 4 Const 0\nnode 5 Translate\n"
+                  "data 3 0 1 0\ndata 3 1 2 0\ndata 5 0 3 0\ndata 5 1 4 0\n"
+                  "exec 0 0 5\nentry OnUpdate 0\n"
+                : vsc->Source());
+            ImGui::InputTextMultiline("##vs", buf.data(), buf.size(), ImVec2(-1, 170));
+            if (ImGui::Button("Apply Graph")) {
+                std::string err;
+                if (vsc->LoadFromText(buf.data(), &err)) ConsoleLog("Visual script applied");
+                else ConsoleLog("Visual script error: " + err);
+                ed.dirty = true;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("OkayVS nodes (see docs)");
+        }
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -706,6 +771,10 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
         if (!go->GetComponent<BoxCollider2D>() && ImGui::Selectable("Box Collider 2D"))
             { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
+        if (!go->GetComponent<ScriptComponent>() && ImGui::Selectable("Script (OkayScript)"))
+            { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
+        if (!go->GetComponent<VisualScriptComponent>() && ImGui::Selectable("Visual Script"))
+            { go->AddComponent<VisualScriptComponent>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
@@ -1036,6 +1105,8 @@ int main(int argc, char** argv) {
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
+
+        if (updater::pendingQuit) running = false; // auto-update relaunched
     }
 
     ImGui_ImplSDLRenderer2_Shutdown();

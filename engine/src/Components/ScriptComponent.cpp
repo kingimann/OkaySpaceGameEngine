@@ -8,6 +8,7 @@
 namespace okay {
 
 bool ScriptComponent::LoadSource(const std::string& source, std::string* error) {
+    m_source = source;
     m_vm = CreateScriptVM(m_language);
     if (!m_vm) {
         std::string e = "scripting backend '" + m_language + "' is not available in this build";

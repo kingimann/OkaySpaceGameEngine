@@ -19,6 +19,8 @@ public:
     bool LoadFromFile(const std::string& path, std::string* error = nullptr);
 
     vs::NodeGraph* Graph() const { return m_graph.get(); }
+    /// The last OkayVS text loaded (retained for editing and serialization).
+    const std::string& Source() const { return m_source; }
     /// Read back a blackboard variable (handy for tests/gameplay glue).
     vs::VsValue GetVariable(const std::string& name) const;
 
@@ -28,6 +30,7 @@ public:
 private:
     std::unique_ptr<vs::NodeGraph> m_graph;
     vs::VsContext m_ctx;
+    std::string m_source;
 };
 
 } // namespace okay

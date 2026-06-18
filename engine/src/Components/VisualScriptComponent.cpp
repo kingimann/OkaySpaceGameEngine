@@ -17,6 +17,7 @@ bool VisualScriptComponent::LoadFromText(const std::string& text, std::string* e
         return false;
     }
     m_graph = std::move(graph);
+    m_source = text;
     return true;
 }
 

@@ -47,6 +47,10 @@ public:
     bool Load(const std::string& path, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
 
+    // ---- Project (a folder on disk holding the scenes + assets) ---------
+    const std::string& projectDir() const { return m_projectDir; }
+    void setProjectDir(const std::string& d) { m_projectDir = d; }
+
     // ---- Online services (built into the engine) ----------------------
     ISteamService*   steam()   { return m_steam.get(); }
     IPlayFabService* playfab() { return m_playfab.get(); }
@@ -97,6 +101,7 @@ private:
     Scene m_scene;
     GameObject* m_selected = nullptr;
     std::string m_path;
+    std::string m_projectDir;   // root folder of the open project (with /Assets)
     bool  m_playing = false;
     std::string m_snapshot;
 

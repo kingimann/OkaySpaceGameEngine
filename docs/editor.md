@@ -129,6 +129,11 @@ uses, built right into the engine app.
 - **3D meshes render solid** (flat-shaded, depth-sorted) by default in both the
   Scene/Game views and the built game; tick a Mesh Renderer's *Wireframe* for an
   edges-only view.
+- **Projects** — **File → New Project** creates a `<Location>/<Name>` folder with
+  an `Assets/` subfolder and saves the starting scene into it. The **Project**
+  panel is an asset browser rooted at the project's `Assets/`: navigate folders,
+  tick **All** to list the whole subtree (Unity-style), and click a `.okayscene`
+  to open or a `.okayprefab` to instantiate.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
   (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a
   standalone, double-clickable game.

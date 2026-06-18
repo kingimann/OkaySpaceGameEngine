@@ -685,8 +685,29 @@ static const char* AssetTag(const std::string& ext) {
 void DrawProject(EditorState& ed) {
     namespace fs = std::filesystem;
     static char dirBuf[512] = ".";
+    static bool recursive = false;
+    static std::string lastProject;   // re-home the browser when a project opens
     if (ImGui::Begin("Project")) {
-        ImGui::SetNextItemWidth(-70);
+        // When a project is opened/created, point the browser at its Assets/.
+        if (!ed.projectDir().empty() && ed.projectDir() != lastProject) {
+            lastProject = ed.projectDir();
+            std::string assets = (fs::path(ed.projectDir()) / "Assets").string();
+            std::strncpy(dirBuf, assets.c_str(), sizeof(dirBuf) - 1);
+        }
+
+        if (!ed.projectDir().empty()) {
+            fs::path root(ed.projectDir());
+            ImGui::Text("Project: %s", root.filename().string().c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Assets")) {
+                std::string a = (root / "Assets").string();
+                std::strncpy(dirBuf, a.c_str(), sizeof(dirBuf) - 1);
+            }
+        } else {
+            ImGui::TextDisabled("No project — File > New Project to create one.");
+        }
+
+        ImGui::SetNextItemWidth(-130);
         ImGui::InputText("##projdir", dirBuf, sizeof(dirBuf));
         ImGui::SameLine();
         if (ImGui::Button("Up")) {
@@ -694,6 +715,8 @@ void DrawProject(EditorState& ed) {
             fs::path p = fs::absolute(dirBuf, ec).parent_path();
             if (!ec) std::strncpy(dirBuf, p.string().c_str(), sizeof(dirBuf) - 1);
         }
+        ImGui::SameLine();
+        ImGui::Checkbox("All", &recursive);   // recurse the whole subtree (Unity-like)
         ImGui::TextDisabled("Scene: %s  |  %d objects",
                             ed.path().empty() ? "(unsaved)" : ed.path().c_str(),
                             (int)ed.scene().Objects().size());
@@ -704,9 +727,14 @@ void DrawProject(EditorState& ed) {
         fs::path dir(dirBuf);
         std::vector<fs::directory_entry> dirs, files;
         if (fs::is_directory(dir, ec)) {
-            for (auto& e : fs::directory_iterator(dir, ec)) {
-                if (e.is_directory(ec)) dirs.push_back(e);
-                else files.push_back(e);
+            if (recursive) {
+                for (auto& e : fs::recursive_directory_iterator(dir, ec))
+                    if (!e.is_directory(ec)) files.push_back(e);
+            } else {
+                for (auto& e : fs::directory_iterator(dir, ec)) {
+                    if (e.is_directory(ec)) dirs.push_back(e);
+                    else files.push_back(e);
+                }
             }
         }
         auto byName = [](const fs::directory_entry& a, const fs::directory_entry& b) {
@@ -1047,38 +1075,44 @@ void DrawNewProjectPopup(EditorState& ed) {
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("New Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        static char nameBuf[128] = "MyGame";
+        static char locBuf[400]  = ".";
         ImGui::Text("Create a new project");
-        ImGui::TextDisabled("Pick a starting scene type.");
+        ImGui::TextDisabled("A folder <Location>/<Name> is created with an Assets/ subfolder;");
+        ImGui::TextDisabled("the starting scene is saved into Assets/.");
+        ImGui::SetNextItemWidth(330); ImGui::InputText("Name", nameBuf, sizeof(nameBuf));
+        ImGui::SetNextItemWidth(330); ImGui::InputText("Location", locBuf, sizeof(locBuf));
         ImGui::Separator();
-        if (ImGui::Button("2D Scene", ImVec2(160, 70))) {
-            ed.NewScene2D(); ConsoleLog("New 2D project"); ImGui::CloseCurrentPopup();
-        }
+
+        // After a NewScene*/template call, lay down the project folder and save.
+        auto finishProject = [&]() {
+            namespace fs = std::filesystem;
+            std::string name = nameBuf[0] ? nameBuf : "MyGame";
+            fs::path root = fs::path(locBuf[0] ? locBuf : ".") / name;
+            std::error_code ec;
+            fs::create_directories(root / "Assets", ec);
+            if (ec) { ConsoleLog("Could not create project folder: " + ec.message()); return; }
+            ed.setProjectDir(root.string());
+            std::string sp = (root / "Assets" / (name + ".okayscene")).string();
+            if (ed.Save(sp)) ConsoleLog("Created project at " + root.string());
+            else ConsoleLog("Project folder made, but saving the scene failed.");
+            ImGui::CloseCurrentPopup();
+        };
+
+        ImGui::TextDisabled("Pick a starting scene type.");
+        if (ImGui::Button("2D Scene", ImVec2(160, 60))) { ed.NewScene2D(); finishProject(); }
         ImGui::SameLine();
-        if (ImGui::Button("3D Scene", ImVec2(160, 70))) {
-            ed.NewScene3D(); ConsoleLog("New 3D project"); ImGui::CloseCurrentPopup();
-        }
+        if (ImGui::Button("3D Scene", ImVec2(160, 60))) { ed.NewScene3D(); finishProject(); }
         ImGui::Spacing();
         ImGui::TextDisabled("Or start from a playable template:");
-        if (ImGui::Button("Platformer", ImVec2(160, 50))) {
-            ed.NewPlatformer(); ConsoleLog("New platformer template"); ImGui::CloseCurrentPopup();
-        }
+        if (ImGui::Button("Platformer", ImVec2(160, 44))) { ed.NewPlatformer(); finishProject(); }
         ImGui::SameLine();
-        if (ImGui::Button("Top-Down", ImVec2(160, 50))) {
-            ed.NewTopDown(); ConsoleLog("New top-down template"); ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 40))) {
-            ed.NewCoinCollector(); ConsoleLog("New coin-collector game"); ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 40))) {
-            ed.NewMainMenu(); ConsoleLog("New main-menu scene"); ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::Button("Snake (full game)", ImVec2(-1, 40))) {
-            ed.NewSnake(); ConsoleLog("New Snake game"); ImGui::CloseCurrentPopup();
-        }
+        if (ImGui::Button("Top-Down", ImVec2(160, 44)))   { ed.NewTopDown(); finishProject(); }
+        if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 36))) { ed.NewCoinCollector(); finishProject(); }
+        if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 36)))            { ed.NewMainMenu(); finishProject(); }
+        if (ImGui::Button("Snake (full game)", ImVec2(-1, 36)))         { ed.NewSnake(); finishProject(); }
         ImGui::Spacing();
-        if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) {
-            ed.NewScene(); ConsoleLog("New empty scene"); ImGui::CloseCurrentPopup();
-        }
+        if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) { ed.NewScene(); finishProject(); }
         ImGui::EndPopup();
     }
 }

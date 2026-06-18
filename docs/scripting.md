@@ -62,6 +62,8 @@ runs when the scene starts and `update(dt)` runs every frame.
 | `time()` | seconds since start |
 | `dt()` | last frame delta time |
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
+| `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
+| `destroy()` | destroy this script's own GameObject |
 | `print(...)` | log values to the console |
 
 ### Persistent prefs (high scores, settings)

@@ -230,4 +230,140 @@ void Physics2D::Step(Scene& scene, float dt) {
     m_contacts.swap(current);
 }
 
+// ===================== Scene queries ===================================
+namespace {
+
+bool RayAABB(const Vec2& o, const Vec2& d, const Vec2& mn, const Vec2& mx,
+             float maxT, float& tHit, Vec2& n) {
+    float tmin = 0.0f, tmax = maxT;
+    Vec2 nrm{0, 0};
+    for (int a = 0; a < 2; ++a) {
+        float od = a == 0 ? d.x : d.y;
+        float oo = a == 0 ? o.x : o.y;
+        float lo = a == 0 ? mn.x : mn.y;
+        float hi = a == 0 ? mx.x : mx.y;
+        if (Mathf::Abs(od) < 1e-8f) {
+            if (oo < lo || oo > hi) return false;
+        } else {
+            float inv = 1.0f / od;
+            float t1 = (lo - oo) * inv, t2 = (hi - oo) * inv;
+            if (t1 > t2) std::swap(t1, t2);
+            if (t1 > tmin) {
+                tmin = t1;
+                nrm = a == 0 ? Vec2{od > 0 ? -1.0f : 1.0f, 0}
+                             : Vec2{0, od > 0 ? -1.0f : 1.0f};
+            }
+            if (t2 < tmax) tmax = t2;
+            if (tmin > tmax) return false;
+        }
+    }
+    tHit = tmin;
+    n = nrm;
+    return true;
+}
+
+bool RayCircle(const Vec2& o, const Vec2& d, const Vec2& c, float r,
+               float maxT, float& tHit, Vec2& n) {
+    Vec2 m = o - c;
+    float b = Vec2::Dot(m, d);
+    float cc = Vec2::Dot(m, m) - r * r;
+    if (cc > 0.0f && b > 0.0f) return false;
+    float disc = b * b - cc;
+    if (disc < 0.0f) return false;
+    float t = -b - Mathf::Sqrt(disc);
+    if (t < 0.0f) t = 0.0f;
+    if (t > maxT) return false;
+    Vec2 p = o + d * t;
+    n = (p - c).Normalized();
+    tHit = t;
+    return true;
+}
+
+Vec2 ClosestOnBox(const Vec2& p, const Vec2& mn, const Vec2& mx) {
+    return {Mathf::Clamp(p.x, mn.x, mx.x), Mathf::Clamp(p.y, mn.y, mx.y)};
+}
+
+bool Alive(Collider2D* c) { return c->enabled && c->gameObject && c->gameObject->active; }
+
+} // namespace
+
+RaycastHit2D Physics2D::Raycast(Scene& scene, const Vec2& origin, const Vec2& direction,
+                                float maxDistance) {
+    RaycastHit2D best;
+    best.distance = maxDistance;
+    Vec2 dir = direction.Normalized();
+    for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Alive(c)) continue;
+        float t; Vec2 n;
+        bool hit = false;
+        if (c->shape() == Collider2D::Shape::Box) {
+            Vec2 mn, mx; c->WorldAABB(mn, mx);
+            hit = RayAABB(origin, dir, mn, mx, best.distance, t, n);
+        } else {
+            auto* cc = static_cast<CircleCollider2D*>(c);
+            hit = RayCircle(origin, dir, cc->WorldCenter(), cc->WorldRadius(), best.distance, t, n);
+        }
+        if (hit && t <= best.distance) {
+            best.hit = true;
+            best.collider = c;
+            best.gameObject = c->gameObject;
+            best.distance = t;
+            best.point = origin + dir * t;
+            best.normal = n;
+        }
+    }
+    return best;
+}
+
+Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p) {
+    for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Alive(c)) continue;
+        if (c->shape() == Collider2D::Shape::Box) {
+            Vec2 mn, mx; c->WorldAABB(mn, mx);
+            if (p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y) return c;
+        } else {
+            auto* cc = static_cast<CircleCollider2D*>(c);
+            if ((p - cc->WorldCenter()).Magnitude() <= cc->WorldRadius()) return c;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& center, float radius) {
+    std::vector<Collider2D*> out;
+    for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Alive(c)) continue;
+        bool hit = false;
+        if (c->shape() == Collider2D::Shape::Box) {
+            Vec2 mn, mx; c->WorldAABB(mn, mx);
+            hit = (ClosestOnBox(center, mn, mx) - center).Magnitude() <= radius;
+        } else {
+            auto* cc = static_cast<CircleCollider2D*>(c);
+            hit = (cc->WorldCenter() - center).Magnitude() <= radius + cc->WorldRadius();
+        }
+        if (hit) out.push_back(c);
+    }
+    return out;
+}
+
+std::vector<Collider2D*> Physics2D::OverlapBox(Scene& scene, const Vec2& center, const Vec2& half) {
+    std::vector<Collider2D*> out;
+    Vec2 qmn{center.x - half.x, center.y - half.y};
+    Vec2 qmx{center.x + half.x, center.y + half.y};
+    for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Alive(c)) continue;
+        bool hit = false;
+        if (c->shape() == Collider2D::Shape::Box) {
+            Vec2 mn, mx; c->WorldAABB(mn, mx);
+            hit = mn.x <= qmx.x && mx.x >= qmn.x && mn.y <= qmx.y && mx.y >= qmn.y;
+        } else {
+            auto* cc = static_cast<CircleCollider2D*>(c);
+            Vec2 cl = ClosestOnBox(cc->WorldCenter(), qmn, qmx);
+            hit = (cl - cc->WorldCenter()).Magnitude() <= cc->WorldRadius();
+        }
+        if (hit) out.push_back(c);
+    }
+    return out;
+}
+
 } // namespace okay

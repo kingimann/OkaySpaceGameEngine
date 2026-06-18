@@ -16,6 +16,9 @@ bool Input::s_interactive = false;
 
 Vec2     Input::s_mousePos;
 unsigned Input::s_mouseCurrent = 0;
+Vec2     Input::s_padAxis;
+unsigned Input::s_padCurrent = 0;
+unsigned Input::s_padPrevious = 0;
 unsigned Input::s_mousePrevious = 0;
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -102,6 +105,22 @@ bool Input::GetMouseButtonUp(int button) {
     if (button < 0 || button > 2) return false;
     unsigned bit = 1u << button;
     return !(s_mouseCurrent & bit) && (s_mousePrevious & bit);
+}
+
+void Input::FeedGamepad(const Vec2& axis, unsigned buttonMask) {
+    s_padAxis = axis;
+    s_padPrevious = s_padCurrent;
+    s_padCurrent = buttonMask;
+}
+Vec2 Input::GamepadAxis() { return s_padAxis; }
+bool Input::GetGamepadButton(int button) {
+    if (button < 0 || button > 31) return false;
+    return (s_padCurrent & (1u << button)) != 0;
+}
+bool Input::GetGamepadButtonDown(int button) {
+    if (button < 0 || button > 31) return false;
+    unsigned bit = 1u << button;
+    return (s_padCurrent & bit) && !(s_padPrevious & bit);
 }
 
 bool Input::GetKey(char key) {

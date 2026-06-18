@@ -52,5 +52,20 @@ int main() {
     CHECK(!Input::GetMouseButton(0));
     CHECK(Input::GetMouseButtonUp(0));
 
+    // Input::FeedGamepad drives the left stick and per-button down edges.
+    Input::FeedGamepad({-0.5f, 0.8f}, 1u << 0); // A pressed
+    CHECK(Input::GamepadAxis().x == -0.5f);
+    CHECK(Input::GamepadAxis().y == 0.8f);
+    CHECK(Input::GetGamepadButton(0));
+    CHECK(Input::GetGamepadButtonDown(0));
+    CHECK(!Input::GetGamepadButton(1));
+
+    Input::FeedGamepad({0.0f, 0.0f}, 1u << 0); // A still held
+    CHECK(Input::GetGamepadButton(0));
+    CHECK(!Input::GetGamepadButtonDown(0)); // not a new press
+
+    Input::FeedGamepad({0.0f, 0.0f}, 0u); // released
+    CHECK(!Input::GetGamepadButton(0));
+
     TEST_MAIN_RESULT();
 }

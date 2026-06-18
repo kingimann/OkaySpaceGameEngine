@@ -18,6 +18,14 @@ add_executable(test_scripting test_scripting.cpp)
 target_link_libraries(test_scripting PRIVATE okay::engine)
 add_test(NAME scripting COMMAND test_scripting)
 
+add_executable(test_steam test_steam.cpp)
+target_link_libraries(test_steam PRIVATE okay::engine)
+add_test(NAME steam COMMAND test_steam)
+
+add_executable(test_playfab test_playfab.cpp)
+target_link_libraries(test_playfab PRIVATE okay::engine)
+add_test(NAME playfab COMMAND test_playfab)
+
 # Built only when the optional Lua backend is enabled.
 if(OKAY_WITH_LUA)
     add_executable(test_lua test_lua.cpp)

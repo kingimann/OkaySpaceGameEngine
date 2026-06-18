@@ -87,14 +87,14 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/user/OkaySpaceGameEngine/build-win/CMakeFiles /home/user/OkaySpaceGameEngine/build-win//CMakeFiles/progress.marks
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 all
+	cd /home/user/OkaySpaceGameEngine/build-win && $(CMAKE_COMMAND) -E cmake_progress_start /home/user/OkaySpaceGameEngine/build-win/CMakeFiles /home/user/OkaySpaceGameEngine/build-win/launcher//CMakeFiles/progress.marks
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 launcher/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/user/OkaySpaceGameEngine/build-win/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
 clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 clean
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 launcher/clean
 .PHONY : clean
 
 # The main clean target
@@ -103,70 +103,56 @@ clean/fast: clean
 
 # Prepare targets for installation.
 preinstall: all
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 preinstall
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 launcher/preinstall
 .PHONY : preinstall
 
 # Prepare targets for installation.
 preinstall/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 preinstall
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 launcher/preinstall
 .PHONY : preinstall/fast
 
 # clear depends
 depend:
-	$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
+	cd /home/user/OkaySpaceGameEngine/build-win && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
 .PHONY : depend
 
-#=============================================================================
-# Target rules for targets named okay_engine
+# Convenience name for target.
+launcher/CMakeFiles/okayspace-launcher.dir/rule:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 launcher/CMakeFiles/okayspace-launcher.dir/rule
+.PHONY : launcher/CMakeFiles/okayspace-launcher.dir/rule
 
-# Build rule for target.
-okay_engine: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 okay_engine
-.PHONY : okay_engine
-
-# fast build rule for target.
-okay_engine/fast:
-	$(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/build
-.PHONY : okay_engine/fast
-
-#=============================================================================
-# Target rules for targets named sandbox
-
-# Build rule for target.
-sandbox: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 sandbox
-.PHONY : sandbox
-
-# fast build rule for target.
-sandbox/fast:
-	$(MAKE) $(MAKESILENT) -f sandbox/CMakeFiles/sandbox.dir/build.make sandbox/CMakeFiles/sandbox.dir/build
-.PHONY : sandbox/fast
-
-#=============================================================================
-# Target rules for targets named okayspace-launcher
-
-# Build rule for target.
-okayspace-launcher: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 okayspace-launcher
+# Convenience name for target.
+okayspace-launcher: launcher/CMakeFiles/okayspace-launcher.dir/rule
 .PHONY : okayspace-launcher
 
 # fast build rule for target.
 okayspace-launcher/fast:
-	$(MAKE) $(MAKESILENT) -f launcher/CMakeFiles/okayspace-launcher.dir/build.make launcher/CMakeFiles/okayspace-launcher.dir/build
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f launcher/CMakeFiles/okayspace-launcher.dir/build.make launcher/CMakeFiles/okayspace-launcher.dir/build
 .PHONY : okayspace-launcher/fast
 
-#=============================================================================
-# Target rules for targets named netdemo
+main.obj: main.cpp.obj
+.PHONY : main.obj
 
-# Build rule for target.
-netdemo: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 netdemo
-.PHONY : netdemo
+# target to build an object file
+main.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f launcher/CMakeFiles/okayspace-launcher.dir/build.make launcher/CMakeFiles/okayspace-launcher.dir/main.cpp.obj
+.PHONY : main.cpp.obj
 
-# fast build rule for target.
-netdemo/fast:
-	$(MAKE) $(MAKESILENT) -f examples/CMakeFiles/netdemo.dir/build.make examples/CMakeFiles/netdemo.dir/build
-.PHONY : netdemo/fast
+main.i: main.cpp.i
+.PHONY : main.i
+
+# target to preprocess a source file
+main.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f launcher/CMakeFiles/okayspace-launcher.dir/build.make launcher/CMakeFiles/okayspace-launcher.dir/main.cpp.i
+.PHONY : main.cpp.i
+
+main.s: main.cpp.s
+.PHONY : main.s
+
+# target to generate assembly for a file
+main.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f launcher/CMakeFiles/okayspace-launcher.dir/build.make launcher/CMakeFiles/okayspace-launcher.dir/main.cpp.s
+.PHONY : main.cpp.s
 
 # Help Target
 help:
@@ -176,10 +162,10 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... netdemo"
-	@echo "... okay_engine"
 	@echo "... okayspace-launcher"
-	@echo "... sandbox"
+	@echo "... main.obj"
+	@echo "... main.i"
+	@echo "... main.s"
 .PHONY : help
 
 
@@ -191,6 +177,6 @@ help:
 # No rule that depends on this can have commands that come from listfiles
 # because they might be regenerated.
 cmake_check_build_system:
-	$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
+	cd /home/user/OkaySpaceGameEngine/build-win && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
 .PHONY : cmake_check_build_system
 

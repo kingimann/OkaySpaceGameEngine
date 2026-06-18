@@ -52,7 +52,17 @@ planet, `A` player ship.)*
 - **Game loop** with frame pacing, delta time, smoothed FPS, and a frame cap.
 - **Input**: non-blocking terminal keyboard polling (`GetKey/Down/Up`,
   `AxisWASD`), gracefully no-ops when not attached to a TTY.
-- **No external dependencies** — just a C++17 compiler, CMake, and threads.
+- **Multiplayer** — cross-platform UDP networking (`NetworkManager`) with a
+  client/server join handshake and snapshot state sync.
+- **Visual scripting** — a node-graph runtime (events, math, branches,
+  variables, transform actions) you build in code or load from text.
+- **Text scripting** — a built-in language (works everywhere) plus optional
+  **Lua** and **C#** backends behind the same `IScriptVM` interface.
+- **Steam** and **PlayFab** integrations — full API surfaces with in-memory
+  simulation backends by default; real Steamworks/REST backends behind flags.
+- **Self-updating launcher** that pulls the latest from GitHub, rebuilds, runs.
+- **Core has no external dependencies** — just a C++17 compiler, CMake, threads.
+  Optional backends (Lua, C#/Mono, Steam, PlayFab/libcurl) are opt-in.
 
 ## Project layout
 
@@ -70,21 +80,57 @@ sandbox/                      # example "solar system" game
 tests/                        # dependency-free unit tests (CTest)
 ```
 
-## Build & run
+## How to run it
+
+You have three options, easiest first.
+
+### 1. Just play (prebuilt Windows binary)
+
+Download **`dist/OkaySpace.exe`** and double-click it. No build required.
+(`dist/OkaySpace-Launcher.exe` is the self-updating version — see below.)
+
+### 2. The launcher (build, auto-update, and run in one step)
+
+```bash
+./launch.sh            # Linux/macOS   (first run builds the launcher)
+launch.bat             # Windows
+```
+
+The launcher checks GitHub for a newer version, pulls it, rebuilds, and starts
+the game. Handy flags: `--check-only`, `--no-update`, `--no-run`,
+`--game <name>`, and `-- <args passed to the game>`.
+
+### 3. Build from source with CMake
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 
-# Run the demo (optional arg = number of frames; omit for the default run)
-./build/bin/sandbox
-
-# Run the tests
-cd build && ctest --output-on-failure
+./build/bin/sandbox            # run the demo (optional arg = frame count)
+cd build && ctest --output-on-failure   # run the tests
 ```
 
+In an interactive terminal the demo runs until you press **Q** (move with
+**WASD**); when piped/redirected it runs a fixed number of frames so it stays
+headless-friendly. Or use the helper script: `./scripts/build.sh`.
+
 Requirements: CMake ≥ 3.16 and a C++17 compiler (tested with GCC 13 and
-Clang 18).
+Clang 18). The core build needs nothing else.
+
+### Optional backends
+
+These are off by default to keep the core dependency-free:
+
+```bash
+cmake -S . -B build \
+  -DOKAY_WITH_LUA=ON \        # real Lua scripting   (needs liblua dev)
+  -DOKAY_WITH_CSHARP=ON \     # real C# scripting     (needs Mono + mcs)
+  -DOKAY_WITH_PLAYFAB=ON \    # real PlayFab REST     (needs libcurl)
+  -DOKAY_WITH_STEAM=ON -DSTEAMWORKS_SDK_PATH=/path/to/sdk  # real Steamworks
+```
+
+Without these flags the engine still exposes the same scripting languages and
+Steam/PlayFab APIs via built-in/simulation backends.
 
 ## A taste of the API
 

@@ -60,10 +60,20 @@ EQUALS = =
 CMAKE_SOURCE_DIR = /home/user/OkaySpaceGameEngine
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/user/OkaySpaceGameEngine/build-win
+CMAKE_BINARY_DIR = /home/user/OkaySpaceGameEngine/build-all
 
 #=============================================================================
 # Targets provided globally by CMake.
+
+# Special rule for the target test
+test:
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Running tests..."
+	/usr/bin/ctest --force-new-ctest-process $(ARGS)
+.PHONY : test
+
+# Special rule for the target test
+test/fast: test
+.PHONY : test/fast
 
 # Special rule for the target edit_cache
 edit_cache:
@@ -87,9 +97,9 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/user/OkaySpaceGameEngine/build-win/CMakeFiles /home/user/OkaySpaceGameEngine/build-win//CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/user/OkaySpaceGameEngine/build-all/CMakeFiles /home/user/OkaySpaceGameEngine/build-all//CMakeFiles/progress.marks
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/user/OkaySpaceGameEngine/build-win/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/user/OkaySpaceGameEngine/build-all/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
@@ -156,17 +166,121 @@ okayspace-launcher/fast:
 .PHONY : okayspace-launcher/fast
 
 #=============================================================================
-# Target rules for targets named netdemo
+# Target rules for targets named test_math
 
 # Build rule for target.
-netdemo: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 netdemo
-.PHONY : netdemo
+test_math: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_math
+.PHONY : test_math
 
 # fast build rule for target.
-netdemo/fast:
-	$(MAKE) $(MAKESILENT) -f examples/CMakeFiles/netdemo.dir/build.make examples/CMakeFiles/netdemo.dir/build
-.PHONY : netdemo/fast
+test_math/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_math.dir/build.make tests/CMakeFiles/test_math.dir/build
+.PHONY : test_math/fast
+
+#=============================================================================
+# Target rules for targets named test_scene
+
+# Build rule for target.
+test_scene: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_scene
+.PHONY : test_scene
+
+# fast build rule for target.
+test_scene/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_scene.dir/build.make tests/CMakeFiles/test_scene.dir/build
+.PHONY : test_scene/fast
+
+#=============================================================================
+# Target rules for targets named test_net
+
+# Build rule for target.
+test_net: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_net
+.PHONY : test_net
+
+# fast build rule for target.
+test_net/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_net.dir/build.make tests/CMakeFiles/test_net.dir/build
+.PHONY : test_net/fast
+
+#=============================================================================
+# Target rules for targets named test_visualscript
+
+# Build rule for target.
+test_visualscript: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_visualscript
+.PHONY : test_visualscript
+
+# fast build rule for target.
+test_visualscript/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_visualscript.dir/build.make tests/CMakeFiles/test_visualscript.dir/build
+.PHONY : test_visualscript/fast
+
+#=============================================================================
+# Target rules for targets named test_scripting
+
+# Build rule for target.
+test_scripting: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_scripting
+.PHONY : test_scripting
+
+# fast build rule for target.
+test_scripting/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_scripting.dir/build.make tests/CMakeFiles/test_scripting.dir/build
+.PHONY : test_scripting/fast
+
+#=============================================================================
+# Target rules for targets named test_steam
+
+# Build rule for target.
+test_steam: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_steam
+.PHONY : test_steam
+
+# fast build rule for target.
+test_steam/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_steam.dir/build.make tests/CMakeFiles/test_steam.dir/build
+.PHONY : test_steam/fast
+
+#=============================================================================
+# Target rules for targets named test_playfab
+
+# Build rule for target.
+test_playfab: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_playfab
+.PHONY : test_playfab
+
+# fast build rule for target.
+test_playfab/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_playfab.dir/build.make tests/CMakeFiles/test_playfab.dir/build
+.PHONY : test_playfab/fast
+
+#=============================================================================
+# Target rules for targets named test_lua
+
+# Build rule for target.
+test_lua: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_lua
+.PHONY : test_lua
+
+# fast build rule for target.
+test_lua/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_lua.dir/build.make tests/CMakeFiles/test_lua.dir/build
+.PHONY : test_lua/fast
+
+#=============================================================================
+# Target rules for targets named test_csharp
+
+# Build rule for target.
+test_csharp: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_csharp
+.PHONY : test_csharp
+
+# fast build rule for target.
+test_csharp/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_csharp.dir/build.make tests/CMakeFiles/test_csharp.dir/build
+.PHONY : test_csharp/fast
 
 # Help Target
 help:
@@ -176,10 +290,19 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... netdemo"
+	@echo "... test"
 	@echo "... okay_engine"
 	@echo "... okayspace-launcher"
 	@echo "... sandbox"
+	@echo "... test_csharp"
+	@echo "... test_lua"
+	@echo "... test_math"
+	@echo "... test_net"
+	@echo "... test_playfab"
+	@echo "... test_scene"
+	@echo "... test_scripting"
+	@echo "... test_steam"
+	@echo "... test_visualscript"
 .PHONY : help
 
 

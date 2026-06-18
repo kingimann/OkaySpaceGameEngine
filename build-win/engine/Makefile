@@ -154,6 +154,54 @@ src/Components/Camera.cpp.s:
 	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/Camera.cpp.s
 .PHONY : src/Components/Camera.cpp.s
 
+src/Components/PlayFabManager.obj: src/Components/PlayFabManager.cpp.obj
+.PHONY : src/Components/PlayFabManager.obj
+
+# target to build an object file
+src/Components/PlayFabManager.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/PlayFabManager.cpp.obj
+.PHONY : src/Components/PlayFabManager.cpp.obj
+
+src/Components/PlayFabManager.i: src/Components/PlayFabManager.cpp.i
+.PHONY : src/Components/PlayFabManager.i
+
+# target to preprocess a source file
+src/Components/PlayFabManager.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/PlayFabManager.cpp.i
+.PHONY : src/Components/PlayFabManager.cpp.i
+
+src/Components/PlayFabManager.s: src/Components/PlayFabManager.cpp.s
+.PHONY : src/Components/PlayFabManager.s
+
+# target to generate assembly for a file
+src/Components/PlayFabManager.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/PlayFabManager.cpp.s
+.PHONY : src/Components/PlayFabManager.cpp.s
+
+src/Components/ScriptComponent.obj: src/Components/ScriptComponent.cpp.obj
+.PHONY : src/Components/ScriptComponent.obj
+
+# target to build an object file
+src/Components/ScriptComponent.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/ScriptComponent.cpp.obj
+.PHONY : src/Components/ScriptComponent.cpp.obj
+
+src/Components/ScriptComponent.i: src/Components/ScriptComponent.cpp.i
+.PHONY : src/Components/ScriptComponent.i
+
+# target to preprocess a source file
+src/Components/ScriptComponent.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/ScriptComponent.cpp.i
+.PHONY : src/Components/ScriptComponent.cpp.i
+
+src/Components/ScriptComponent.s: src/Components/ScriptComponent.cpp.s
+.PHONY : src/Components/ScriptComponent.s
+
+# target to generate assembly for a file
+src/Components/ScriptComponent.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/ScriptComponent.cpp.s
+.PHONY : src/Components/ScriptComponent.cpp.s
+
 src/Components/SpriteRenderer.obj: src/Components/SpriteRenderer.cpp.obj
 .PHONY : src/Components/SpriteRenderer.obj
 
@@ -177,6 +225,54 @@ src/Components/SpriteRenderer.s: src/Components/SpriteRenderer.cpp.s
 src/Components/SpriteRenderer.cpp.s:
 	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/SpriteRenderer.cpp.s
 .PHONY : src/Components/SpriteRenderer.cpp.s
+
+src/Components/SteamManager.obj: src/Components/SteamManager.cpp.obj
+.PHONY : src/Components/SteamManager.obj
+
+# target to build an object file
+src/Components/SteamManager.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/SteamManager.cpp.obj
+.PHONY : src/Components/SteamManager.cpp.obj
+
+src/Components/SteamManager.i: src/Components/SteamManager.cpp.i
+.PHONY : src/Components/SteamManager.i
+
+# target to preprocess a source file
+src/Components/SteamManager.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/SteamManager.cpp.i
+.PHONY : src/Components/SteamManager.cpp.i
+
+src/Components/SteamManager.s: src/Components/SteamManager.cpp.s
+.PHONY : src/Components/SteamManager.s
+
+# target to generate assembly for a file
+src/Components/SteamManager.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/SteamManager.cpp.s
+.PHONY : src/Components/SteamManager.cpp.s
+
+src/Components/VisualScriptComponent.obj: src/Components/VisualScriptComponent.cpp.obj
+.PHONY : src/Components/VisualScriptComponent.obj
+
+# target to build an object file
+src/Components/VisualScriptComponent.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/VisualScriptComponent.cpp.obj
+.PHONY : src/Components/VisualScriptComponent.cpp.obj
+
+src/Components/VisualScriptComponent.i: src/Components/VisualScriptComponent.cpp.i
+.PHONY : src/Components/VisualScriptComponent.i
+
+# target to preprocess a source file
+src/Components/VisualScriptComponent.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/VisualScriptComponent.cpp.i
+.PHONY : src/Components/VisualScriptComponent.cpp.i
+
+src/Components/VisualScriptComponent.s: src/Components/VisualScriptComponent.cpp.s
+.PHONY : src/Components/VisualScriptComponent.s
+
+# target to generate assembly for a file
+src/Components/VisualScriptComponent.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Components/VisualScriptComponent.cpp.s
+.PHONY : src/Components/VisualScriptComponent.cpp.s
 
 src/Core/Application.obj: src/Core/Application.cpp.obj
 .PHONY : src/Core/Application.obj
@@ -225,6 +321,102 @@ src/Input/Input.s: src/Input/Input.cpp.s
 src/Input/Input.cpp.s:
 	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Input/Input.cpp.s
 .PHONY : src/Input/Input.cpp.s
+
+src/Net/NetworkManager.obj: src/Net/NetworkManager.cpp.obj
+.PHONY : src/Net/NetworkManager.obj
+
+# target to build an object file
+src/Net/NetworkManager.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Net/NetworkManager.cpp.obj
+.PHONY : src/Net/NetworkManager.cpp.obj
+
+src/Net/NetworkManager.i: src/Net/NetworkManager.cpp.i
+.PHONY : src/Net/NetworkManager.i
+
+# target to preprocess a source file
+src/Net/NetworkManager.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Net/NetworkManager.cpp.i
+.PHONY : src/Net/NetworkManager.cpp.i
+
+src/Net/NetworkManager.s: src/Net/NetworkManager.cpp.s
+.PHONY : src/Net/NetworkManager.s
+
+# target to generate assembly for a file
+src/Net/NetworkManager.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Net/NetworkManager.cpp.s
+.PHONY : src/Net/NetworkManager.cpp.s
+
+src/Net/UdpSocket.obj: src/Net/UdpSocket.cpp.obj
+.PHONY : src/Net/UdpSocket.obj
+
+# target to build an object file
+src/Net/UdpSocket.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Net/UdpSocket.cpp.obj
+.PHONY : src/Net/UdpSocket.cpp.obj
+
+src/Net/UdpSocket.i: src/Net/UdpSocket.cpp.i
+.PHONY : src/Net/UdpSocket.i
+
+# target to preprocess a source file
+src/Net/UdpSocket.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Net/UdpSocket.cpp.i
+.PHONY : src/Net/UdpSocket.cpp.i
+
+src/Net/UdpSocket.s: src/Net/UdpSocket.cpp.s
+.PHONY : src/Net/UdpSocket.s
+
+# target to generate assembly for a file
+src/Net/UdpSocket.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Net/UdpSocket.cpp.s
+.PHONY : src/Net/UdpSocket.cpp.s
+
+src/Platform/PlayFab/NullPlayFabService.obj: src/Platform/PlayFab/NullPlayFabService.cpp.obj
+.PHONY : src/Platform/PlayFab/NullPlayFabService.obj
+
+# target to build an object file
+src/Platform/PlayFab/NullPlayFabService.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Platform/PlayFab/NullPlayFabService.cpp.obj
+.PHONY : src/Platform/PlayFab/NullPlayFabService.cpp.obj
+
+src/Platform/PlayFab/NullPlayFabService.i: src/Platform/PlayFab/NullPlayFabService.cpp.i
+.PHONY : src/Platform/PlayFab/NullPlayFabService.i
+
+# target to preprocess a source file
+src/Platform/PlayFab/NullPlayFabService.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Platform/PlayFab/NullPlayFabService.cpp.i
+.PHONY : src/Platform/PlayFab/NullPlayFabService.cpp.i
+
+src/Platform/PlayFab/NullPlayFabService.s: src/Platform/PlayFab/NullPlayFabService.cpp.s
+.PHONY : src/Platform/PlayFab/NullPlayFabService.s
+
+# target to generate assembly for a file
+src/Platform/PlayFab/NullPlayFabService.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Platform/PlayFab/NullPlayFabService.cpp.s
+.PHONY : src/Platform/PlayFab/NullPlayFabService.cpp.s
+
+src/Platform/Steam/NullSteamService.obj: src/Platform/Steam/NullSteamService.cpp.obj
+.PHONY : src/Platform/Steam/NullSteamService.obj
+
+# target to build an object file
+src/Platform/Steam/NullSteamService.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Platform/Steam/NullSteamService.cpp.obj
+.PHONY : src/Platform/Steam/NullSteamService.cpp.obj
+
+src/Platform/Steam/NullSteamService.i: src/Platform/Steam/NullSteamService.cpp.i
+.PHONY : src/Platform/Steam/NullSteamService.i
+
+# target to preprocess a source file
+src/Platform/Steam/NullSteamService.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Platform/Steam/NullSteamService.cpp.i
+.PHONY : src/Platform/Steam/NullSteamService.cpp.i
+
+src/Platform/Steam/NullSteamService.s: src/Platform/Steam/NullSteamService.cpp.s
+.PHONY : src/Platform/Steam/NullSteamService.s
+
+# target to generate assembly for a file
+src/Platform/Steam/NullSteamService.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Platform/Steam/NullSteamService.cpp.s
+.PHONY : src/Platform/Steam/NullSteamService.cpp.s
 
 src/Render/ConsoleRenderer.obj: src/Render/ConsoleRenderer.cpp.obj
 .PHONY : src/Render/ConsoleRenderer.obj
@@ -346,6 +538,78 @@ src/Scene/Transform.cpp.s:
 	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Scene/Transform.cpp.s
 .PHONY : src/Scene/Transform.cpp.s
 
+src/Scripting/OkayScriptVM.obj: src/Scripting/OkayScriptVM.cpp.obj
+.PHONY : src/Scripting/OkayScriptVM.obj
+
+# target to build an object file
+src/Scripting/OkayScriptVM.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Scripting/OkayScriptVM.cpp.obj
+.PHONY : src/Scripting/OkayScriptVM.cpp.obj
+
+src/Scripting/OkayScriptVM.i: src/Scripting/OkayScriptVM.cpp.i
+.PHONY : src/Scripting/OkayScriptVM.i
+
+# target to preprocess a source file
+src/Scripting/OkayScriptVM.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Scripting/OkayScriptVM.cpp.i
+.PHONY : src/Scripting/OkayScriptVM.cpp.i
+
+src/Scripting/OkayScriptVM.s: src/Scripting/OkayScriptVM.cpp.s
+.PHONY : src/Scripting/OkayScriptVM.s
+
+# target to generate assembly for a file
+src/Scripting/OkayScriptVM.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Scripting/OkayScriptVM.cpp.s
+.PHONY : src/Scripting/OkayScriptVM.cpp.s
+
+src/Scripting/ScriptVM.obj: src/Scripting/ScriptVM.cpp.obj
+.PHONY : src/Scripting/ScriptVM.obj
+
+# target to build an object file
+src/Scripting/ScriptVM.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Scripting/ScriptVM.cpp.obj
+.PHONY : src/Scripting/ScriptVM.cpp.obj
+
+src/Scripting/ScriptVM.i: src/Scripting/ScriptVM.cpp.i
+.PHONY : src/Scripting/ScriptVM.i
+
+# target to preprocess a source file
+src/Scripting/ScriptVM.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Scripting/ScriptVM.cpp.i
+.PHONY : src/Scripting/ScriptVM.cpp.i
+
+src/Scripting/ScriptVM.s: src/Scripting/ScriptVM.cpp.s
+.PHONY : src/Scripting/ScriptVM.s
+
+# target to generate assembly for a file
+src/Scripting/ScriptVM.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/Scripting/ScriptVM.cpp.s
+.PHONY : src/Scripting/ScriptVM.cpp.s
+
+src/VisualScript/NodeGraph.obj: src/VisualScript/NodeGraph.cpp.obj
+.PHONY : src/VisualScript/NodeGraph.obj
+
+# target to build an object file
+src/VisualScript/NodeGraph.cpp.obj:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/VisualScript/NodeGraph.cpp.obj
+.PHONY : src/VisualScript/NodeGraph.cpp.obj
+
+src/VisualScript/NodeGraph.i: src/VisualScript/NodeGraph.cpp.i
+.PHONY : src/VisualScript/NodeGraph.i
+
+# target to preprocess a source file
+src/VisualScript/NodeGraph.cpp.i:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/VisualScript/NodeGraph.cpp.i
+.PHONY : src/VisualScript/NodeGraph.cpp.i
+
+src/VisualScript/NodeGraph.s: src/VisualScript/NodeGraph.cpp.s
+.PHONY : src/VisualScript/NodeGraph.s
+
+# target to generate assembly for a file
+src/VisualScript/NodeGraph.cpp.s:
+	cd /home/user/OkaySpaceGameEngine/build-win && $(MAKE) $(MAKESILENT) -f engine/CMakeFiles/okay_engine.dir/build.make engine/CMakeFiles/okay_engine.dir/src/VisualScript/NodeGraph.cpp.s
+.PHONY : src/VisualScript/NodeGraph.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -358,15 +622,39 @@ help:
 	@echo "... src/Components/Camera.obj"
 	@echo "... src/Components/Camera.i"
 	@echo "... src/Components/Camera.s"
+	@echo "... src/Components/PlayFabManager.obj"
+	@echo "... src/Components/PlayFabManager.i"
+	@echo "... src/Components/PlayFabManager.s"
+	@echo "... src/Components/ScriptComponent.obj"
+	@echo "... src/Components/ScriptComponent.i"
+	@echo "... src/Components/ScriptComponent.s"
 	@echo "... src/Components/SpriteRenderer.obj"
 	@echo "... src/Components/SpriteRenderer.i"
 	@echo "... src/Components/SpriteRenderer.s"
+	@echo "... src/Components/SteamManager.obj"
+	@echo "... src/Components/SteamManager.i"
+	@echo "... src/Components/SteamManager.s"
+	@echo "... src/Components/VisualScriptComponent.obj"
+	@echo "... src/Components/VisualScriptComponent.i"
+	@echo "... src/Components/VisualScriptComponent.s"
 	@echo "... src/Core/Application.obj"
 	@echo "... src/Core/Application.i"
 	@echo "... src/Core/Application.s"
 	@echo "... src/Input/Input.obj"
 	@echo "... src/Input/Input.i"
 	@echo "... src/Input/Input.s"
+	@echo "... src/Net/NetworkManager.obj"
+	@echo "... src/Net/NetworkManager.i"
+	@echo "... src/Net/NetworkManager.s"
+	@echo "... src/Net/UdpSocket.obj"
+	@echo "... src/Net/UdpSocket.i"
+	@echo "... src/Net/UdpSocket.s"
+	@echo "... src/Platform/PlayFab/NullPlayFabService.obj"
+	@echo "... src/Platform/PlayFab/NullPlayFabService.i"
+	@echo "... src/Platform/PlayFab/NullPlayFabService.s"
+	@echo "... src/Platform/Steam/NullSteamService.obj"
+	@echo "... src/Platform/Steam/NullSteamService.i"
+	@echo "... src/Platform/Steam/NullSteamService.s"
 	@echo "... src/Render/ConsoleRenderer.obj"
 	@echo "... src/Render/ConsoleRenderer.i"
 	@echo "... src/Render/ConsoleRenderer.s"
@@ -382,6 +670,15 @@ help:
 	@echo "... src/Scene/Transform.obj"
 	@echo "... src/Scene/Transform.i"
 	@echo "... src/Scene/Transform.s"
+	@echo "... src/Scripting/OkayScriptVM.obj"
+	@echo "... src/Scripting/OkayScriptVM.i"
+	@echo "... src/Scripting/OkayScriptVM.s"
+	@echo "... src/Scripting/ScriptVM.obj"
+	@echo "... src/Scripting/ScriptVM.i"
+	@echo "... src/Scripting/ScriptVM.s"
+	@echo "... src/VisualScript/NodeGraph.obj"
+	@echo "... src/VisualScript/NodeGraph.i"
+	@echo "... src/VisualScript/NodeGraph.s"
 .PHONY : help
 
 

@@ -5,7 +5,9 @@
 #if defined(_WIN32)
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
-#  pragma comment(lib, "ws2_32.lib")
+#  if defined(_MSC_VER)
+#    pragma comment(lib, "ws2_32.lib")
+#  endif
    using socklen_t = int;
 #else
 #  include <sys/socket.h>

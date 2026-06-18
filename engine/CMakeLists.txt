@@ -16,6 +16,10 @@ add_library(okay_engine
     src/Scripting/OkayScriptVM.cpp
     src/Scripting/ScriptVM.cpp
     src/Components/ScriptComponent.cpp
+    src/Platform/Steam/NullSteamService.cpp
+    src/Components/SteamManager.cpp
+    src/Platform/PlayFab/NullPlayFabService.cpp
+    src/Components/PlayFabManager.cpp
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
@@ -53,6 +57,41 @@ if(OKAY_WITH_LUA)
         message(STATUS "OkaySpace: Lua scripting ENABLED")
     else()
         message(WARNING "OKAY_WITH_LUA set but Lua not found; skipping Lua backend")
+    endif()
+endif()
+
+# Steam: real Steamworks backend. Enable with -DOKAY_WITH_STEAM=ON and point at
+# the SDK with -DSTEAMWORKS_SDK_PATH=/path/to/sdk (Valve's SDK is proprietary
+# and cannot be bundled). Without this, the in-memory simulation backend is used.
+if(OKAY_WITH_STEAM)
+    if(NOT STEAMWORKS_SDK_PATH)
+        message(FATAL_ERROR "OKAY_WITH_STEAM requires -DSTEAMWORKS_SDK_PATH=/path/to/steamworks_sdk")
+    endif()
+    if(WIN32)
+        set(_steam_lib "${STEAMWORKS_SDK_PATH}/redistributable_bin/win64/steam_api64.lib")
+    elseif(APPLE)
+        set(_steam_lib "${STEAMWORKS_SDK_PATH}/redistributable_bin/osx/libsteam_api.dylib")
+    else()
+        set(_steam_lib "${STEAMWORKS_SDK_PATH}/redistributable_bin/linux64/libsteam_api.so")
+    endif()
+    target_sources(okay_engine PRIVATE src/Platform/Steam/SteamworksService.cpp)
+    target_include_directories(okay_engine SYSTEM PRIVATE "${STEAMWORKS_SDK_PATH}/public")
+    target_link_libraries(okay_engine PRIVATE "${_steam_lib}")
+    target_compile_definitions(okay_engine PUBLIC OKAY_WITH_STEAM)
+    message(STATUS "OkaySpace: Steamworks backend ENABLED (${_steam_lib})")
+endif()
+
+# PlayFab: real REST backend over libcurl. Enable with -DOKAY_WITH_PLAYFAB=ON.
+# Without it, the in-memory simulation backend is used.
+if(OKAY_WITH_PLAYFAB)
+    find_package(CURL QUIET)
+    if(CURL_FOUND)
+        target_sources(okay_engine PRIVATE src/Platform/PlayFab/RestPlayFabService.cpp)
+        target_link_libraries(okay_engine PRIVATE CURL::libcurl)
+        target_compile_definitions(okay_engine PUBLIC OKAY_WITH_PLAYFAB)
+        message(STATUS "OkaySpace: PlayFab REST backend ENABLED")
+    else()
+        message(WARNING "OKAY_WITH_PLAYFAB set but libcurl not found; using simulation")
     endif()
 endif()
 

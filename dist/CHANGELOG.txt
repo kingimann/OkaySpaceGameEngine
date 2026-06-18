@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.9.0
+  - Collider gizmos: colliders now draw as green wireframe outlines in the
+    Scene view (2D box/circle/capsule and 3D box/sphere/capsule), so you can
+    see and size them like Unity. Toggle under View > Colliders (gizmos).
+
 v1.8.0
   - 3D physics: Rigidbody3D (gravity, mass, drag, bounciness, freeze axes) plus
     Box / Sphere / Capsule 3D colliders, with collision response, triggers and

@@ -314,6 +314,7 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
+bool g_showColliders = true;     // draw collider wireframes in the Scene view
 
 // File dialogs.
 bool g_showSaveAs = false, g_showOpen = false;
@@ -660,6 +661,8 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
+        ImGui::Separator();
+        ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
@@ -2444,6 +2447,32 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         DrawBitmapText(dl, tr->text, o.x, o.y, px, col);
     }
 
+    // 2D collider wireframes (Unity-style green outlines), Scene view only.
+    if (!gameView && g_showColliders) {
+        const ImU32 cg = IM_COL32(90, 230, 120, 255);
+        for (const auto& up : objs) {
+            if (!up->active) continue;
+            if (auto* bc = up->GetComponent<BoxCollider2D>()) {
+                Vec2 c = bc->WorldCenter(), h = bc->HalfExtents();
+                ImVec2 a = worldToScreen(Vec3{c.x - h.x, c.y - h.y, 0});
+                ImVec2 b = worldToScreen(Vec3{c.x + h.x, c.y + h.y, 0});
+                dl->AddRect(a, b, cg, 0, 0, 1.5f);
+            }
+            if (auto* cc = up->GetComponent<CircleCollider2D>())
+                dl->AddCircle(worldToScreen(Vec3{cc->WorldCenter(), 0}),
+                              cc->WorldRadius() * scale, cg, 28, 1.5f);
+            if (auto* cap = up->GetComponent<CapsuleCollider2D>()) {
+                Vec2 s0, s1; cap->Segment(s0, s1); float r = cap->WorldRadius();
+                dl->AddCircle(worldToScreen(Vec3{s0, 0}), r * scale, cg, 20, 1.5f);
+                dl->AddCircle(worldToScreen(Vec3{s1, 0}), r * scale, cg, 20, 1.5f);
+                Vec2 n = (cap->direction == CapsuleCollider2D::Direction::Vertical)
+                       ? Vec2{r, 0} : Vec2{0, r};
+                dl->AddLine(worldToScreen(Vec3{s0 + n, 0}), worldToScreen(Vec3{s1 + n, 0}), cg, 1.5f);
+                dl->AddLine(worldToScreen(Vec3{s0 - n, 0}), worldToScreen(Vec3{s1 - n, 0}), cg, 1.5f);
+            }
+        }
+    }
+
     // Screen-space UI (text, images, panels, bars, sliders, toggles, buttons).
     DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
@@ -2572,6 +2601,29 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (toScreen(vp * Vec4{a, 1}, pa) && toScreen(vp * Vec4{b, 1}, pb))
                 dl->AddLine(pa, pb, col, th);
         };
+        // A ring of `seg` segments centered at c, in the plane spanned by u,v.
+        auto ring = [&](const Vec3& c, const Vec3& u, const Vec3& v, float r,
+                        ImU32 col, int seg = 24) {
+            Vec3 prev = c + u * r;
+            for (int k = 1; k <= seg; ++k) {
+                float a = (float)k / seg * 6.2831853f;
+                Vec3 cur = c + u * (r * Mathf::Cos(a)) + v * (r * Mathf::Sin(a));
+                line(prev, cur, col, 1.0f);
+                prev = cur;
+            }
+        };
+        // Box wireframe (axis-aligned) from center + half extents.
+        auto box = [&](const Vec3& c, const Vec3& h, ImU32 col) {
+            Vec3 cr[8];
+            for (int i = 0; i < 8; ++i)
+                cr[i] = {c.x + ((i & 1) ? h.x : -h.x), c.y + ((i & 2) ? h.y : -h.y),
+                         c.z + ((i & 4) ? h.z : -h.z)};
+            static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},
+                                         {6,4},{0,4},{1,5},{2,6},{3,7}};
+            for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]], col, 1.0f);
+        };
+        const ImU32 kColliderCol = IM_COL32(90, 230, 120, 255); // Unity-ish green
+
         for (const auto& up : objs) {
             if (!up->active) continue;
             Transform* t = up->transform;
@@ -2602,6 +2654,30 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 line(p, tip, col, 2.0f);
                 line(tip, tip - f * 0.3f + t->Up() * 0.15f, col);
                 line(tip, tip - f * 0.3f - t->Up() * 0.15f, col);
+            }
+
+            // 3D collider wireframes (Unity-style green outlines).
+            if (g_showColliders) {
+                const Vec3 X{1, 0, 0}, Y{0, 1, 0}, Z{0, 0, 1};
+                if (auto* bc = up->GetComponent<BoxCollider3D>())
+                    box(bc->WorldCenter(), bc->HalfExtents(), kColliderCol);
+                if (auto* sp = up->GetComponent<SphereCollider3D>()) {
+                    Vec3 c = sp->WorldCenter(); float r = sp->WorldRadius();
+                    ring(c, X, Y, r, kColliderCol);
+                    ring(c, X, Z, r, kColliderCol);
+                    ring(c, Y, Z, r, kColliderCol);
+                }
+                if (auto* cap = up->GetComponent<CapsuleCollider3D>()) {
+                    Vec3 a, b; cap->Segment(a, b); float r = cap->WorldRadius();
+                    Vec3 u = cap->axis == 0 ? Y : X;
+                    Vec3 v = cap->axis == 2 ? Y : Z;
+                    ring(a, u, v, r, kColliderCol);
+                    ring(b, u, v, r, kColliderCol);
+                    line(a + u * r, b + u * r, kColliderCol, 1.0f);
+                    line(a - u * r, b - u * r, kColliderCol, 1.0f);
+                    line(a + v * r, b + v * r, kColliderCol, 1.0f);
+                    line(a - v * r, b - v * r, kColliderCol, 1.0f);
+                }
             }
         }
     }

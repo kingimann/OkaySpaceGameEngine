@@ -130,5 +130,102 @@ int main() {
         CHECK_NEAR(r->color.a, 0.8f, 0.01f);
     }
 
+    // --- UISlider: dragging maps mouse X to value and fires on_change() ---
+    {
+        Scene scene("Slide");
+        GameObject* go = scene.CreateGameObject("Vol");
+        auto* sl = go->AddComponent<UISlider>();
+        sl->position = {0, 0};
+        sl->size = {200, 20};
+        sl->minValue = 0.0f; sl->maxValue = 1.0f; sl->value = 0.0f;
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function on_change() { set_y(slider_value()); }"));
+        scene.Start();
+
+        // Press at the midpoint of the track -> value ~0.5.
+        Input::FeedMouse({100, 10}, 0);
+        Input::FeedMouse({100, 10}, 1u << 0);
+        scene.Update(0.016f);
+        CHECK(sl->IsDragging());
+        CHECK_NEAR(sl->value, 0.5f, 0.01f);
+        CHECK_NEAR(go->transform->localPosition.y, 0.5f, 0.01f); // on_change ran
+
+        // Release stops dragging.
+        Input::FeedMouse({100, 10}, 0);
+        scene.Update(0.016f);
+        CHECK(!sl->IsDragging());
+    }
+
+    // --- UISlider clamps and respects a custom range; serializes ---
+    {
+        Scene scene("SlideSer");
+        GameObject* go = scene.CreateGameObject("Sens");
+        auto* sl = go->AddComponent<UISlider>();
+        sl->minValue = 0.0f; sl->maxValue = 10.0f;
+        sl->SetValue(15.0f);                       // clamps to max
+        CHECK_NEAR(sl->value, 10.0f, 0.001f);
+        CHECK_NEAR(sl->Fraction(), 1.0f, 0.001f);
+        sl->SetValue(5.0f);
+        CHECK_NEAR(sl->Fraction(), 0.5f, 0.001f);
+        sl->position = {7, 8}; sl->size = {180, 22};
+
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("Sens")->GetComponent<UISlider>();
+        CHECK(r != nullptr);
+        CHECK_NEAR(r->value, 5.0f, 0.001f);
+        CHECK_NEAR(r->maxValue, 10.0f, 0.001f);
+        CHECK_NEAR(r->size.x, 180.0f, 0.001f);
+    }
+
+    // --- UIToggle: clicking flips state and fires on_toggle() ---
+    {
+        Scene scene("Tog");
+        GameObject* go = scene.CreateGameObject("Mute");
+        auto* tg = go->AddComponent<UIToggle>();
+        tg->position = {0, 0};
+        tg->size = {30, 30};
+        tg->on = false;
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        // When toggled on, move x to 1; off -> 0.
+        CHECK(sc->LoadSource(
+            "function on_toggle() { if (toggle_on()) { set_x(1); } else { set_x(0); } }"));
+        scene.Start();
+
+        Input::FeedMouse({10, 10}, 0);
+        Input::FeedMouse({10, 10}, 1u << 0);
+        scene.Update(0.016f);
+        CHECK(tg->on);
+        CHECK_NEAR(go->transform->localPosition.x, 1.0f, 0.001f);
+
+        // Click again -> off.
+        Input::FeedMouse({10, 10}, 0);
+        Input::FeedMouse({10, 10}, 1u << 0);
+        scene.Update(0.016f);
+        CHECK(!tg->on);
+        CHECK_NEAR(go->transform->localPosition.x, 0.0f, 0.001f);
+    }
+
+    // --- UIToggle serializes (label + state) ---
+    {
+        Scene scene("TogSer");
+        GameObject* go = scene.CreateGameObject("FS");
+        auto* tg = go->AddComponent<UIToggle>();
+        tg->label = "Fullscreen";
+        tg->on = true;
+        tg->position = {40, 50};
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("FS")->GetComponent<UIToggle>();
+        CHECK(r != nullptr);
+        CHECK(r->label == "Fullscreen");
+        CHECK(r->on == true);
+        CHECK_NEAR(r->position.y, 50.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

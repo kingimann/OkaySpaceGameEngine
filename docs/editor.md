@@ -83,6 +83,13 @@ uses, built right into the engine app.
   active perspective camera. You can also build compound models in C++ with
   `Mesh::Transformed(scale, offset)` and `Mesh::Combine`/`Combined`, and export
   any mesh with `Mesh::SaveOBJ`.
+- **UI widgets** — build menus and HUDs from screen-space components: *UI Panel*
+  (background/overlay), *UI Button* (calls the script's `on_click()`), *UI
+  Progress Bar* (`set_progress(0..1)`), *UI Slider* (drag to pick a value in a
+  min/max range; calls `on_change()`, read with `slider_value()` / set with
+  `set_slider(v)`), and *UI Toggle* (a labelled checkbox; calls `on_toggle()`,
+  read with `toggle_on()` / set with `set_toggle(true)`). All are previewed live
+  in the Scene viewport and render in the built game.
 - **Text** — add a *Text* component for score counters, labels, and HUD using
   the built-in 8x8 font (no font file needed). Use *Screen Space* for a fixed
   HUD or world space to anchor it to the GameObject. Renders in the built game.

@@ -22,6 +22,8 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UISlider.hpp"
+#include "okay/Components/UIToggle.hpp"
 
 #include <cctype>
 #include <functional>
@@ -175,6 +177,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pb->size.x << " " << pb->size.y << " " << pb->value << " "
             << pb->background.r << " " << pb->background.g << " " << pb->background.b << " " << pb->background.a << " "
             << pb->fill.r << " " << pb->fill.g << " " << pb->fill.b << " " << pb->fill.a << "\n";
+    }
+    if (auto* sl = go->GetComponent<UISlider>()) {
+        out << "  uislider " << sl->position.x << " " << sl->position.y << " "
+            << sl->size.x << " " << sl->size.y << " "
+            << sl->value << " " << sl->minValue << " " << sl->maxValue << " "
+            << sl->background.r << " " << sl->background.g << " " << sl->background.b << " " << sl->background.a << " "
+            << sl->fill.r << " " << sl->fill.g << " " << sl->fill.b << " " << sl->fill.a << " "
+            << sl->knob.r << " " << sl->knob.g << " " << sl->knob.b << " " << sl->knob.a << "\n";
+    }
+    if (auto* tg = go->GetComponent<UIToggle>()) {
+        out << "  uitoggle " << Quote(tg->label) << " "
+            << tg->position.x << " " << tg->position.y << " "
+            << tg->size.x << " " << tg->size.y << " " << (tg->on ? 1 : 0) << " "
+            << tg->boxColor.r << " " << tg->boxColor.g << " " << tg->boxColor.b << " " << tg->boxColor.a << " "
+            << tg->checkColor.r << " " << tg->checkColor.g << " " << tg->checkColor.b << " " << tg->checkColor.a << " "
+            << tg->textColor.r << " " << tg->textColor.g << " " << tg->textColor.b << " " << tg->textColor.a << "\n";
     }
     if (auto* ps = go->GetComponent<ParticleSystem>()) {
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
@@ -405,6 +423,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> pb->position.x >> pb->position.y >> pb->size.x >> pb->size.y >> pb->value
                        >> bg.r >> bg.g >> bg.b >> bg.a >> fl.r >> fl.g >> fl.b >> fl.a;
                     pb->background = bg; pb->fill = fl;
+                } else if (field == "uislider") {
+                    auto* sl = go->AddComponent<UISlider>();
+                    Color bg, fl, kn;
+                    in >> sl->position.x >> sl->position.y >> sl->size.x >> sl->size.y
+                       >> sl->value >> sl->minValue >> sl->maxValue
+                       >> bg.r >> bg.g >> bg.b >> bg.a >> fl.r >> fl.g >> fl.b >> fl.a
+                       >> kn.r >> kn.g >> kn.b >> kn.a;
+                    sl->background = bg; sl->fill = fl; sl->knob = kn;
+                } else if (field == "uitoggle") {
+                    auto* tg = go->AddComponent<UIToggle>();
+                    tg->label = ReadQuoted(in);
+                    Color b, c, t;
+                    int on = 0;
+                    in >> tg->position.x >> tg->position.y >> tg->size.x >> tg->size.y >> on
+                       >> b.r >> b.g >> b.b >> b.a >> c.r >> c.g >> c.b >> c.a
+                       >> t.r >> t.g >> t.b >> t.a;
+                    tg->on = (on != 0);
+                    tg->boxColor = b; tg->checkColor = c; tg->textColor = t;
                 } else if (field == "particles") {
                     auto* ps = go->AddComponent<ParticleSystem>();
                     int playing = 1, fade = 1;

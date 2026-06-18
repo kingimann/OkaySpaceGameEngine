@@ -43,7 +43,8 @@ Top-level statements run once when the script loads (good for setup); `start()`
 runs when the scene starts and `update(dt)` runs every frame. Define
 `on_trigger()` or `on_collision()` to react when this object's collider
 overlaps or contacts another (pickups, damage), or `on_click()` to handle a
-UI Button press.
+UI Button press. Sibling UI widgets fire their own events too: `on_change()`
+when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 
 ## Built-in functions
 
@@ -88,6 +89,8 @@ UI Button press.
 | `set_texture(path)` | set this object's SpriteRenderer image |
 | `flip_x(bool)` / `flip_y(bool)` | mirror this object's sprite |
 | `set_progress(v)` | set this object's UIProgressBar fill (0..1) |
+| `slider_value()` / `set_slider(v)` | read/set this object's UISlider value (fires on its own drag) |
+| `toggle_on()` / `set_toggle(b)` | read/set this object's UIToggle checkbox state |
 | `tile_resize(w,h)` `set_tile(x,y,id)` `get_tile(x,y)` `tile_w()` `tile_h()` | edit a sibling Tilemap |
 | `play_sound()` | play this object's AudioSource |
 | `print(...)` | log values to the console |

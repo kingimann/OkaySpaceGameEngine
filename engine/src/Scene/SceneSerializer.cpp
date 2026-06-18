@@ -93,6 +93,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* sc = go->GetComponent<ScriptComponent>()) {
         out << "  script " << Quote(sc->Language()) << " " << Quote(sc->Source()) << "\n";
+        if (!sc->Path().empty()) out << "  scriptpath " << Quote(sc->Path()) << "\n";
     }
     if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
         out << "  visualscript " << Quote(vsc->Source()) << "\n";
@@ -211,6 +212,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     std::string src  = ReadQuoted(in);
                     auto* sc = go->AddComponent<ScriptComponent>(lang);
                     sc->LoadSource(src);
+                } else if (field == "scriptpath") {
+                    std::string p = ReadQuoted(in);
+                    if (auto* sc = go->GetComponent<ScriptComponent>()) sc->SetPath(p);
                 } else if (field == "visualscript") {
                     std::string src = ReadQuoted(in);
                     auto* vsc = go->AddComponent<VisualScriptComponent>();

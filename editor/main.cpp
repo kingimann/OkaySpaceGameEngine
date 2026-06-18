@@ -16,8 +16,10 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 // ----------------------------------------------------------------------------
 // Headless self-test: verifies the editor's model logic with no GUI.
@@ -231,7 +233,7 @@ bool g_showNewProject = true;   // show the project chooser on launch
 
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
-     g_showProject = true, g_showServices = true;
+     g_showProject = true, g_showServices = true, g_showScriptEditor = true;
 
 // File dialogs.
 bool g_showSaveAs = false, g_showOpen = false;
@@ -245,12 +247,50 @@ std::unordered_map<void*, std::vector<char>> g_codeBuf;
 std::vector<char>& CodeBuffer(void* key, const std::string& initial) {
     auto it = g_codeBuf.find(key);
     if (it == g_codeBuf.end()) {
-        std::vector<char> b(16384, 0);
+        std::vector<char> b(65536, 0);
         std::strncpy(b.data(), initial.c_str(), b.size() - 1);
         it = g_codeBuf.emplace(key, std::move(b)).first;
     }
     return it->second;
 }
+void SetCodeBuffer(void* key, const std::string& text) {
+    auto& b = g_codeBuf[key];
+    if (b.size() < 65536) b.assign(65536, 0); else std::fill(b.begin(), b.end(), 0);
+    std::strncpy(b.data(), text.c_str(), b.size() - 1);
+}
+
+// External-IDE helpers: write/read script files and open them in the system editor.
+namespace extide {
+namespace fs = std::filesystem;
+bool WriteFile(const std::string& path, const std::string& text) {
+    std::ofstream f(path);
+    if (!f) return false;
+    f << text;
+    return static_cast<bool>(f);
+}
+std::string ReadFile(const std::string& path) {
+    std::ifstream f(path);
+    std::stringstream ss; ss << f.rdbuf();
+    return ss.str();
+}
+void OpenExternal(const std::string& path) {
+    // Prefer VS Code if present, otherwise the OS default handler.
+#if defined(_WIN32)
+    int rc = std::system(("code \"" + path + "\"").c_str());
+    if (rc != 0) rc = std::system(("start \"\" \"" + path + "\"").c_str());
+#elif defined(__APPLE__)
+    int rc = std::system(("code \"" + path + "\" 2>/dev/null").c_str());
+    if (rc != 0) rc = std::system(("open \"" + path + "\"").c_str());
+#else
+    int rc = std::system(("code \"" + path + "\" >/dev/null 2>&1").c_str());
+    if (rc != 0) rc = std::system(("xdg-open \"" + path + "\" >/dev/null 2>&1").c_str());
+#endif
+    (void)rc;
+}
+std::string ExtFor(const std::string& lang) {
+    return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
+}
+} // namespace extide
 
 // ---- Console log -------------------------------------------------------
 std::vector<std::string> g_console;
@@ -297,6 +337,7 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderDockWindow("Console", down);
     ImGui::DockBuilderDockWindow("Project", down);
     ImGui::DockBuilderDockWindow("Services", down);
+    ImGui::DockBuilderDockWindow("Script Editor", down);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderFinish(dockId);
 }
@@ -334,6 +375,7 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::MenuItem("Console", nullptr, &g_showConsole);
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
+        ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
@@ -523,6 +565,99 @@ void DrawServices(EditorState& ed) {
         } else ImGui::TextDisabled("not connected");
     }
 
+    ImGui::End();
+}
+
+// A dedicated code/graph editor panel (separate from the Inspector), with
+// external-IDE round-tripping.
+void DrawScriptEditor(EditorState& ed) {
+    if (!ImGui::Begin("Script Editor")) { ImGui::End(); return; }
+    GameObject* go = ed.selected();
+    ScriptComponent* sc = go ? go->GetComponent<ScriptComponent>() : nullptr;
+    VisualScriptComponent* vsc = go ? go->GetComponent<VisualScriptComponent>() : nullptr;
+
+    if (!sc && !vsc) {
+        ImGui::TextDisabled("Select an object with a Script or Visual Script.");
+        ImGui::TextDisabled("Add one via Inspector > Add Component.");
+        ImGui::End();
+        return;
+    }
+
+    if (sc) {
+        ImGui::Text("Script  -  %s", go->name.c_str());
+        const char* langs[] = {"okayscript", "lua", "csharp"};
+        int li = sc->Language() == "lua" ? 1 : sc->Language() == "csharp" ? 2 : 0;
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::Combo("Lang", &li, langs, 3)) sc->SetLanguage(langs[li]);
+        if (!sc->Path().empty()) { ImGui::SameLine(); ImGui::TextDisabled("(%s)", sc->Path().c_str()); }
+
+        auto& buf = CodeBuffer(sc, sc->Source().empty()
+            ? "function start()\nend\n\nfunction update(dt)\n  move(2 * dt, 0)\nend\n"
+            : sc->Source());
+        ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= 34.0f; if (av.y < 60) av.y = 60;
+        ImGui::InputTextMultiline("##editor", buf.data(), buf.size(), av);
+
+        auto filePath = [&]() {
+            return sc->Path().empty() ? go->name + "." + extide::ExtFor(sc->Language()) : sc->Path();
+        };
+        if (ImGui::Button("Compile & Run")) {
+            std::string e;
+            ConsoleLog(sc->LoadSource(buf.data(), &e) ? "Compiled OK" : "Error: " + e);
+            ed.dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Save File")) {
+            std::string p = filePath();
+            if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); ConsoleLog("Saved " + p); }
+            else { ConsoleLog("Save failed"); }
+            ed.dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Open in IDE")) {
+            std::string p = filePath();
+            extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p);
+            ConsoleLog("Opened " + p + " in external IDE");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reload")) {
+            if (!sc->Path().empty()) {
+                std::string src = extide::ReadFile(sc->Path());
+                SetCodeBuffer(sc, src);
+                std::string e; sc->LoadSource(src, &e);
+                ConsoleLog("Reloaded " + sc->Path());
+            } else ConsoleLog("No file to reload (Save File first)");
+        }
+    } else {
+        ImGui::Text("Visual Script  -  %s", go->name.c_str());
+        auto& buf = CodeBuffer(vsc, vsc->Source().empty()
+            ? "# Move right at 2 units/sec\nnode 0 OnUpdate\nnode 1 Const 2\n"
+              "node 2 DeltaTime\nnode 3 Mul\nnode 4 Const 0\nnode 5 Translate\n"
+              "data 3 0 1 0\ndata 3 1 2 0\ndata 5 0 3 0\ndata 5 1 4 0\n"
+              "exec 0 0 5\nentry OnUpdate 0\n"
+            : vsc->Source());
+        ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= 34.0f; if (av.y < 60) av.y = 60;
+        ImGui::InputTextMultiline("##vseditor", buf.data(), buf.size(), av);
+        std::string p = go->name + ".okayvs";
+        if (ImGui::Button("Apply Graph")) {
+            std::string e;
+            ConsoleLog(vsc->LoadFromText(buf.data(), &e) ? "Graph applied" : "Error: " + e);
+            ed.dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Open in IDE")) {
+            extide::WriteFile(p, buf.data()); extide::OpenExternal(p);
+            ConsoleLog("Opened " + p + " in external IDE");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reload")) {
+            if (extide::fs::exists(p)) {
+                std::string src = extide::ReadFile(p);
+                SetCodeBuffer(vsc, src);
+                std::string e; vsc->LoadFromText(src, &e);
+                ConsoleLog("Reloaded " + p);
+            } else ConsoleLog("No file to reload");
+        }
+    }
     ImGui::End();
 }
 
@@ -780,38 +915,15 @@ void DrawInspector(EditorState& ed) {
             const char* langs[] = {"okayscript", "lua", "csharp"};
             int li = sc->Language() == "lua" ? 1 : sc->Language() == "csharp" ? 2 : 0;
             if (ImGui::Combo("Language", &li, langs, 3)) sc->SetLanguage(langs[li]);
-            auto& buf = CodeBuffer(sc, sc->Source().empty()
-                ? "function start()\nend\n\nfunction update(dt)\n  move(2 * dt, 0)\nend\n"
-                : sc->Source());
-            ImGui::InputTextMultiline("##code", buf.data(), buf.size(), ImVec2(-1, 170));
-            if (ImGui::Button("Compile & Run")) {
-                std::string err;
-                if (sc->LoadSource(buf.data(), &err)) ConsoleLog("Script compiled OK");
-                else ConsoleLog("Script error: " + err);
-                ed.dirty = true;
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("runs on Play (start/update)");
+            if (sc->Path().empty()) ImGui::TextDisabled("inline script");
+            else ImGui::TextDisabled("file: %s", sc->Path().c_str());
+            ImGui::TextWrapped("Edit code in the Script Editor panel (View > Script Editor).");
             if (ImGui::SmallButton("Remove##script")) toRemove = sc;
         }
     }
     if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
         if (ImGui::CollapsingHeader("Visual Script", ImGuiTreeNodeFlags_DefaultOpen)) {
-            auto& buf = CodeBuffer(vsc, vsc->Source().empty()
-                ? "# Move right at 2 units/sec\nnode 0 OnUpdate\nnode 1 Const 2\n"
-                  "node 2 DeltaTime\nnode 3 Mul\nnode 4 Const 0\nnode 5 Translate\n"
-                  "data 3 0 1 0\ndata 3 1 2 0\ndata 5 0 3 0\ndata 5 1 4 0\n"
-                  "exec 0 0 5\nentry OnUpdate 0\n"
-                : vsc->Source());
-            ImGui::InputTextMultiline("##vs", buf.data(), buf.size(), ImVec2(-1, 170));
-            if (ImGui::Button("Apply Graph")) {
-                std::string err;
-                if (vsc->LoadFromText(buf.data(), &err)) ConsoleLog("Visual script applied");
-                else ConsoleLog("Visual script error: " + err);
-                ed.dirty = true;
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("OkayVS nodes (see docs)");
+            ImGui::TextWrapped("Edit the node graph in the Script Editor panel.");
             if (ImGui::SmallButton("Remove##vs")) toRemove = vsc;
         }
     }
@@ -1199,6 +1311,7 @@ int main(int argc, char** argv) {
         if (g_showConsole)   DrawConsole();
         if (g_showProject)   DrawProject(ed);
         if (g_showServices)  DrawServices(ed);
+        if (g_showScriptEditor) DrawScriptEditor(ed);
 
         ImGui::Render();
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);

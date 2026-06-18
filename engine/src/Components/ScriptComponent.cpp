@@ -24,6 +24,7 @@ bool ScriptComponent::LoadFile(const std::string& path, std::string* error) {
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss;
     ss << f.rdbuf();
+    m_path = path;
     return LoadSource(ss.str(), error);
 }
 

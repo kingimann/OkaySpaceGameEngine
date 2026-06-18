@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.6.0
+  - The launcher now checks the engine version on startup and auto-updates in
+    the background: if a newer build is published (or a runtime is missing) it
+    downloads the engine + player and stages a new launcher, with live status
+    in the sidebar and a manual "Check for updates" button. Self-heals the
+    "player runtime not found" case by fetching it automatically.
+  - Pressing Play in the editor now jumps straight to the Game tab so you see
+    your game immediately instead of staying on the Scene view.
+
 v1.5.0
   - Play mode now feeds real keyboard / mouse / gamepad into the engine, so the
     playable templates (Platformer, Top-Down, Coin Collector, Snake) and your

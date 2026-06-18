@@ -312,6 +312,7 @@ bool g_showNewProject = true;   // show the project chooser on launch
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProject = true, g_showServices = true, g_showScriptEditor = true;
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
+bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 
 // File dialogs.
 bool g_showSaveAs = false, g_showOpen = false;
@@ -725,7 +726,10 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
     if (!ed.isPlaying()) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
-        if (ImGui::Button(">  Play", ImVec2(btnW, 0))) { ed.Play(); ConsoleLog("Play"); ed.Achievement("HIT_PLAY"); }
+        if (ImGui::Button(">  Play", ImVec2(btnW, 0))) {
+            ed.Play(); ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+            g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
+        }
         ImGui::PopStyleColor(2);
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
@@ -1126,7 +1130,10 @@ void HandleShortcuts(EditorState& ed) {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
         if (ed.isPlaying()) { ed.Stop(); ConsoleLog("Stop"); }
-        else { ed.Play(); ConsoleLog("Play"); ed.Achievement("HIT_PLAY"); }
+        else {
+            ed.Play(); ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+            g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
+        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) {
         Vec3 pp = ed.selected()->transform->Position();
@@ -2585,6 +2592,9 @@ void DrawViewport(EditorState& ed) {
 // editor chrome (grid, gizmos, selection) — what the built game shows. 2D or 3D
 // follows the camera's projection. Read-only; press Play to make it live.
 void DrawGameView(EditorState& ed) {
+    // Pressing Play focuses this window so it comes forward if docked as a tab
+    // behind the Scene view. SetWindowFocus() must be called before Begin().
+    if (g_focusGameOnPlay) { ImGui::SetNextWindowFocus(); g_focusGameOnPlay = false; }
     if (!ImGui::Begin("Game")) { ImGui::End(); return; }
 
     Camera* mc = SceneCamera(ed.scene());

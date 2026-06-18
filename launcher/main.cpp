@@ -11,16 +11,218 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
 namespace fs = std::filesystem;
 
+#ifndef OKAY_ENGINE_VERSION
+#  define OKAY_ENGINE_VERSION "dev"
+#endif
+
 namespace {
 
 std::string g_exeDir = ".";
+std::string g_selfPath;   // absolute path of the running launcher exe
+
+// Raw GitHub URL of the published dist/ folder (where the exes + VERSION live).
+const char* kRawBase =
+    "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/main/dist/";
+
+// ---- Auto-updater ----------------------------------------------------------
+// On startup the launcher checks the published version and, if newer (or a
+// runtime is missing), downloads the engine + player in the background and
+// stages a new launcher for the next start. State is written by a worker
+// thread and read by the UI. SDL's threading primitives are used because the
+// MinGW win32 threads model doesn't provide std::thread / std::mutex.
+enum UpState { Up_Idle, Up_Checking, Up_Downloading, Up_UpToDate, Up_Updated, Up_Failed };
+SDL_atomic_t g_upState;          // holds a UpState value
+SDL_mutex* g_upMutex = nullptr;
+std::string g_upMessage = "Checking for updates...";
+std::string g_upLatest;
+bool g_upRelaunchNeeded = false;
+SDL_Thread* g_upThread = nullptr;
+
+void SetState(UpState s) { SDL_AtomicSet(&g_upState, (int)s); }
+UpState GetState() { return (UpState)SDL_AtomicGet(&g_upState); }
+
+void SetUpMsg(const std::string& m) {
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    g_upMessage = m;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+}
+std::string GetUpMsg() {
+    std::string m;
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    m = g_upMessage;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    return m;
+}
+
+// Download a URL to a file using whatever HTTP client is on the system.
+bool Download(const std::string& url, const std::string& out) {
+    std::error_code ec; fs::remove(out, ec);
+#if defined(_WIN32)
+    std::string c1 = "curl -L -s -f -o \"" + out + "\" \"" + url + "\"";
+    if (std::system(c1.c_str()) == 0 && fs::exists(out)) return true;
+    std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
+                     "-UseBasicParsing -Uri '" + url + "' -OutFile '" + out +
+                     "' } catch { exit 1 }\"";
+    return std::system(c2.c_str()) == 0 && fs::exists(out);
+#else
+    std::string c1 = "curl -L -s -f -o \"" + out + "\" \"" + url + "\" 2>/dev/null";
+    if (std::system(c1.c_str()) == 0 && fs::exists(out)) return true;
+    std::string c2 = "wget -q -O \"" + out + "\" \"" + url + "\" 2>/dev/null";
+    return std::system(c2.c_str()) == 0 && fs::exists(out);
+#endif
+}
+
+// Compare dotted versions ("1.5.0"); returns -1 / 0 / 1 for a<b / a==b / a>b.
+int CompareVersions(const std::string& a, const std::string& b) {
+    auto parse = [](const std::string& s) {
+        std::vector<int> v; std::stringstream ss(s); std::string tok;
+        while (std::getline(ss, tok, '.')) {
+            int n = 0; try { n = std::stoi(tok); } catch (...) { n = 0; }
+            v.push_back(n);
+        }
+        return v;
+    };
+    std::vector<int> va = parse(a), vb = parse(b);
+    std::size_t n = std::max(va.size(), vb.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        int x = i < va.size() ? va[i] : 0;
+        int y = i < vb.size() ? vb[i] : 0;
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return 0;
+}
+
+// The installed version: a VERSION.txt beside the launcher (written after each
+// upgrade) or, if newer, the version this launcher was compiled with.
+std::string LocalVersion() {
+    std::error_code ec;
+    fs::path vf = fs::path(g_exeDir) / "VERSION.txt";
+    if (fs::exists(vf, ec)) {
+        std::ifstream f(vf); std::string v; std::getline(f, v);
+        while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' '))
+            v.pop_back();
+        if (!v.empty())
+            return CompareVersions(v, OKAY_ENGINE_VERSION) >= 0 ? v : OKAY_ENGINE_VERSION;
+    }
+    return OKAY_ENGINE_VERSION;
+}
+
+// Download <url> to <dest>.new, validate it, then replace <dest>. If the file
+// is in use (the running launcher) the old exe is renamed aside first, which
+// Windows allows; the swap then takes effect on the next launch.
+bool ReplaceFile(const std::string& url, const fs::path& dest, bool inUse) {
+    fs::path tmp = dest; tmp += ".new";
+    if (!Download(url, tmp.string())) return false;
+    std::error_code ec;
+    if (!fs::exists(tmp, ec) || fs::file_size(tmp, ec) < 100000) {
+        fs::remove(tmp, ec);
+        return false;
+    }
+    if (inUse) {
+        fs::path old = dest; old += ".old";
+        fs::remove(old, ec);
+        fs::rename(dest, old, ec);          // running exe -> .old (allowed on Win)
+    } else {
+        fs::remove(dest, ec);
+    }
+    fs::rename(tmp, dest, ec);
+    if (ec) return false;
+#if !defined(_WIN32)
+    fs::permissions(dest, fs::perms::owner_exec | fs::perms::group_exec |
+                    fs::perms::others_exec, fs::perm_options::add, ec);
+#endif
+    return true;
+}
+
+// Worker: check the published version and, if newer, install it. Runs on a
+// background thread so the launcher stays responsive while ~35 MB downloads.
+int RunUpdateCheck(void*) {
+    SetState(Up_Checking);
+    SetUpMsg("Checking for updates...");
+    std::error_code ec;
+    fs::path tmp = fs::temp_directory_path(ec);
+    fs::path vf = tmp / "okayspace_launcher_ver.txt";
+    if (!Download(std::string(kRawBase) + "VERSION.txt", vf.string())) {
+        SetUpMsg("Couldn't reach GitHub (offline?).");
+        SetState(Up_Failed);
+        return 0;
+    }
+    std::string latest;
+    { std::ifstream f(vf); std::getline(f, latest); }
+    while (!latest.empty() && (latest.back() == '\r' || latest.back() == '\n' || latest.back() == ' '))
+        latest.pop_back();
+    fs::remove(vf, ec);
+    g_upLatest = latest;
+
+    std::string local = LocalVersion();
+    fs::path dir(g_exeDir);
+    std::error_code mec;
+    bool haveEngine = fs::exists(dir / "OkaySpaceEngine.exe", mec);
+    bool havePlayer = fs::exists(dir / "OkaySpacePlayer.exe", mec);
+    bool newer = !latest.empty() && CompareVersions(local, latest) < 0;
+
+    // Nothing to do only if we're current AND both runtimes are present.
+    if (!newer && haveEngine && havePlayer) {
+        SetUpMsg("Up to date (v" + local + ").");
+        SetState(Up_UpToDate);
+        return 0;
+    }
+
+    // Download what's needed: everything on a version bump, otherwise just the
+    // missing runtimes (self-healing a launcher-only download).
+    SetState(Up_Downloading);
+    bool ok = true;
+    if (newer || !haveEngine) {
+        SetUpMsg("Downloading engine v" + latest + "...");
+        ok = ReplaceFile(std::string(kRawBase) + "OkaySpaceEngine.exe",
+                         dir / "OkaySpaceEngine.exe", false) && ok;
+    }
+    if (newer || !havePlayer) {
+        SetUpMsg("Downloading player runtime v" + latest + "...");
+        ok = ReplaceFile(std::string(kRawBase) + "OkaySpacePlayer.exe",
+                         dir / "OkaySpacePlayer.exe", false) && ok;
+    }
+    // Only self-update the launcher on a genuine version bump.
+    bool launcherOk = false;
+    if (newer) {
+        SetUpMsg("Updating launcher...");
+        launcherOk = !g_selfPath.empty() &&
+            ReplaceFile(std::string(kRawBase) + "OkaySpace-Launcher.exe",
+                        fs::path(g_selfPath), true);
+    }
+
+    if (ok) {
+        std::ofstream(dir / "VERSION.txt") << latest << "\n";
+        g_upRelaunchNeeded = launcherOk;
+        SetUpMsg(launcherOk
+            ? "Updated to v" + latest + " — restart the launcher to finish."
+            : (newer ? "Updated engine & player to v" + latest + "."
+                     : "Downloaded the missing runtime (v" + local + ")."));
+        SetState(Up_Updated);
+    } else {
+        SetUpMsg("Download failed — check your internet connection.");
+        SetState(Up_Failed);
+    }
+    return 0;
+}
+
+// Kick off an update check on a background thread (no-op if one is running).
+void StartUpdateCheck() {
+    UpState s = GetState();
+    if (s == Up_Checking || s == Up_Downloading) return;
+    if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
+    g_upThread = SDL_CreateThread(RunUpdateCheck, "okay-update", nullptr);
+}
 
 // Find the first of `names` that exists next to the launcher.
 std::string FindExe(std::initializer_list<const char*> names) {
@@ -88,10 +290,21 @@ int main(int argc, char** argv) {
     if (argc > 0) {
         std::error_code ec;
         fs::path self = fs::absolute(argv[0], ec);
-        if (!ec) g_exeDir = self.parent_path().string();
+        if (!ec) { g_exeDir = self.parent_path().string(); g_selfPath = self.string(); }
+    }
+    // Clean up a launcher we replaced on a previous run.
+    if (!g_selfPath.empty()) {
+        std::error_code ec; fs::remove(fs::path(g_selfPath + ".old"), ec);
     }
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
+
+    // Auto-check for a newer engine version (or a missing runtime) and install
+    // it in the background so the launcher window stays responsive meanwhile.
+    SDL_AtomicSet(&g_upState, (int)Up_Idle);
+    g_upMutex = SDL_CreateMutex();
+    StartUpdateCheck();
+
     SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 600,
         SDL_WINDOW_ALLOW_HIGHDPI);
@@ -108,9 +321,10 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
-    const std::string editor = FindExe({"OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
-    const std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
+    std::string editor = FindExe({"OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
+    std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     std::vector<fs::path> scenes = FindScenes();
+    bool rescannedAfterUpdate = false;
 
     struct Template { const char* name; const char* desc; };
     const Template templates[] = {
@@ -129,6 +343,15 @@ int main(int argc, char** argv) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) running = false;
         }
+        // Once a background download finishes, re-detect the runtimes so the
+        // "not found" notices clear without needing a restart.
+        if (GetState() == Up_Updated && !rescannedAfterUpdate) {
+            editor = FindExe({"OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
+            player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
+            scenes = FindScenes();
+            rescannedAfterUpdate = true;
+        }
+
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
@@ -151,6 +374,30 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 3; ++i)
             if (ImGui::Selectable(navs[i], tab == i, 0, ImVec2(0, 34))) tab = i;
         ImGui::PopFont();
+
+        // ---- Update status (pinned to the bottom of the nav) ----
+        UpState st = GetState();
+        float footH = 78.0f;
+        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footH);
+        ImGui::Separator();
+        ImVec4 col = (st == Up_Failed)  ? ImVec4(1.0f, 0.55f, 0.55f, 1)
+                   : (st == Up_Updated) ? ImVec4(0.55f, 0.9f, 0.6f, 1)
+                   : (st == Up_Downloading || st == Up_Checking)
+                                        ? ImVec4(0.85f, 0.8f, 0.4f, 1)
+                                        : ImVec4(0.6f, 0.65f, 0.75f, 1);
+        const char* head = (st == Up_Downloading) ? "Updating..."
+                         : (st == Up_Checking)    ? "Checking..."
+                         : (st == Up_Updated)     ? "Updated"
+                         : (st == Up_Failed)      ? "Update failed"
+                                                  : "Engine";
+        ImGui::TextColored(col, "%s", head);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", GetUpMsg().c_str());
+        ImGui::PopTextWrapPos();
+        bool busy = (st == Up_Checking || st == Up_Downloading);
+        ImGui::BeginDisabled(busy);
+        if (ImGui::SmallButton("Check for updates")) StartUpdateCheck();
+        ImGui::EndDisabled();
         ImGui::EndChild();
 
         ImGui::SameLine();
@@ -217,6 +464,8 @@ int main(int argc, char** argv) {
         SDL_RenderPresent(renderer);
     }
 
+    if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
+    if (g_upMutex) { SDL_DestroyMutex(g_upMutex); g_upMutex = nullptr; }
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

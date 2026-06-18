@@ -36,5 +36,21 @@ int main() {
     CHECK(!Input::GetKey('w'));
     CHECK(Input::GetKeyUp('w'));
 
+    // Input::FeedMouse drives position and per-button held/down/up edges.
+    Input::FeedMouse({120.0f, 80.0f}, 1u << 0); // left pressed
+    CHECK(Input::MousePosition().x == 120.0f);
+    CHECK(Input::MousePosition().y == 80.0f);
+    CHECK(Input::GetMouseButton(0));
+    CHECK(Input::GetMouseButtonDown(0));
+    CHECK(!Input::GetMouseButton(1));
+
+    Input::FeedMouse({120.0f, 80.0f}, 1u << 0); // still held
+    CHECK(Input::GetMouseButton(0));
+    CHECK(!Input::GetMouseButtonDown(0)); // not a new press
+
+    Input::FeedMouse({0.0f, 0.0f}, 0u); // released
+    CHECK(!Input::GetMouseButton(0));
+    CHECK(Input::GetMouseButtonUp(0));
+
     TEST_MAIN_RESULT();
 }

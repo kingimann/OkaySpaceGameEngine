@@ -14,6 +14,10 @@ std::unordered_map<char, bool> Input::s_current;
 std::unordered_map<char, bool> Input::s_previous;
 bool Input::s_interactive = false;
 
+Vec2     Input::s_mousePos;
+unsigned Input::s_mouseCurrent = 0;
+unsigned Input::s_mousePrevious = 0;
+
 #if defined(__unix__) || defined(__APPLE__)
 namespace {
     termios g_savedTermios;
@@ -75,6 +79,29 @@ void Input::FeedKeys(const std::vector<char>& downKeys) {
     s_current.clear();
     for (char k : downKeys)
         s_current[static_cast<char>(std::tolower(static_cast<unsigned char>(k)))] = true;
+}
+
+void Input::FeedMouse(const Vec2& position, unsigned buttonMask) {
+    s_mousePos = position;
+    s_mousePrevious = s_mouseCurrent;
+    s_mouseCurrent = buttonMask;
+}
+
+Vec2 Input::MousePosition() { return s_mousePos; }
+
+bool Input::GetMouseButton(int button) {
+    if (button < 0 || button > 2) return false;
+    return (s_mouseCurrent & (1u << button)) != 0;
+}
+bool Input::GetMouseButtonDown(int button) {
+    if (button < 0 || button > 2) return false;
+    unsigned bit = 1u << button;
+    return (s_mouseCurrent & bit) && !(s_mousePrevious & bit);
+}
+bool Input::GetMouseButtonUp(int button) {
+    if (button < 0 || button > 2) return false;
+    unsigned bit = 1u << button;
+    return !(s_mouseCurrent & bit) && (s_mousePrevious & bit);
 }
 
 bool Input::GetKey(char key) {

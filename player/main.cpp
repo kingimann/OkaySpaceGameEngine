@@ -92,6 +92,14 @@ int main(int argc, char** argv) {
         if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
         Input::FeedKeys(down);
 
+        // Feed the mouse (position in pixels + left/right/middle button state).
+        int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+        unsigned mask = 0;
+        if (mb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
+        if (mb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
+        if (mb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
+        Input::FeedMouse(Vec2{(float)mx, (float)my}, mask);
+
         Uint64 now = SDL_GetPerformanceCounter();
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;

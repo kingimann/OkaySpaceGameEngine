@@ -52,6 +52,9 @@ runs when the scene starts and `update(dt)` runs every frame.
 | `key("a")` | true while the key is held |
 | `key_down("a")` | true on the frame the key is pressed |
 | `axis_x()` / `axis_y()` | -1..1 from A/D and S/W |
+| `mouse_x()` / `mouse_y()` | cursor position in pixels |
+| `mouse(btn)` | true while a mouse button is held (0=left, 1=right, 2=middle) |
+| `mouse_down(btn)` | true on the frame the button is pressed |
 
 ### Time & state
 | Function | Returns |

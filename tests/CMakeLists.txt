@@ -102,6 +102,10 @@ add_executable(test_particles_serialize test_particles_serialize.cpp)
 target_link_libraries(test_particles_serialize PRIVATE okay::engine)
 add_test(NAME particles_serialize COMMAND test_particles_serialize)
 
+add_executable(test_timescale test_timescale.cpp)
+target_link_libraries(test_timescale PRIVATE okay::engine)
+add_test(NAME timescale COMMAND test_timescale)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

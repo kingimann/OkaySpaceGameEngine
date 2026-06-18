@@ -581,6 +581,8 @@ struct OkayScriptVM::Impl {
         b["pos_x"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.x : 0.0f}; };
         b["pos_y"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.y : 0.0f}; };
         b["time"]  = [](std::vector<Value>&) { return Value{Time::ElapsedTime()}; };
+        b["set_timescale"] = [](std::vector<Value>& a) { Time::SetTimeScale(a.empty() ? 1.0f : a[0].AsFloat()); return Value{}; };
+        b["timescale"]     = [](std::vector<Value>&) { return Value{Time::TimeScale()}; };
         b["dt"]    = [this](std::vector<Value>&) { return Value{rt.host ? rt.host->deltaTime : 0.0f}; };
         b["axis_x"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().x}; };
         b["axis_y"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().y}; };

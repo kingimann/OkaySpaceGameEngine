@@ -185,7 +185,10 @@ int main(int argc, char** argv) {
         last = now;
         if (dt > 0.1f) dt = 0.1f;
 
-        scene.Update(dt);
+        // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
+        // advance the scene by the scaled delta (timeScale 0 = paused).
+        Time::Step(dt);
+        scene.Update(Time::DeltaTime());
 
         if (audioDev) {
             int n = (int)(dt * 44100.0f); if (n > 8192) n = 8192;

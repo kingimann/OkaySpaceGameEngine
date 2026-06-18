@@ -63,6 +63,7 @@ overlaps or contacts another (pickups, damage).
 | --- | --- |
 | `time()` | seconds since start |
 | `dt()` | last frame delta time |
+| `set_timescale(x)` / `timescale()` | global speed (0 = pause, 0.5 = slow-mo) |
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
 | `destroy()` | destroy this script's own GameObject |

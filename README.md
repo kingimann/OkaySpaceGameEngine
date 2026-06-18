@@ -243,6 +243,7 @@ int main() {
 
 ## Documentation
 
+- [`docs/making_a_game.md`](docs/making_a_game.md) — **start here**: empty editor → shipped game.
 - [`docs/editor.md`](docs/editor.md) — the desktop editor and **Build Game**.
 - [`docs/scripting.md`](docs/scripting.md) — the OkayScript language + builtins.
 - [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime.

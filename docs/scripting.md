@@ -64,6 +64,7 @@ runs when the scene starts and `update(dt)` runs every frame.
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
 | `destroy()` | destroy this script's own GameObject |
+| `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `set_text(string)` | set this object's TextRenderer text |
 | `set_color(r, g, b[, a])` | tint this object's Sprite/Text |
 | `set_texture(path)` | set this object's SpriteRenderer image |

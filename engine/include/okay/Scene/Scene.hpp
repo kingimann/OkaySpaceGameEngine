@@ -38,6 +38,11 @@ public:
     /// Mark a GameObject for destruction; removed at the end of the frame.
     void Destroy(GameObject* go);
 
+    /// Request loading a .okayscene file at the end of the current frame
+    /// (safe to call from a script/Update). Replaces this scene's contents.
+    void RequestLoad(const std::string& path) { m_pendingLoad = path; m_hasPendingLoad = true; }
+    bool HasPendingLoad() const { return m_hasPendingLoad; }
+
     // ---- Queries -------------------------------------------------------
     GameObject* Find(const std::string& name) const;
     GameObject* FindWithTag(const std::string& tag) const;
@@ -92,6 +97,8 @@ private:
     std::vector<Component*>  m_pending;   // awaiting Awake/Start
     std::vector<Component*>  m_active;    // receive Update each frame
     std::vector<GameObject*> m_destroyQueue;
+    std::string m_pendingLoad;
+    bool        m_hasPendingLoad = false;
 };
 
 } // namespace okay

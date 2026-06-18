@@ -90,7 +90,7 @@ static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
 
 int main(int argc, char** argv) {
     SDL_SetMainReady();
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
@@ -152,12 +152,19 @@ int main(int argc, char** argv) {
 
     scene.Start();
 
+    // Open the first connected game controller, if any.
+    SDL_GameController* pad = nullptr;
+    for (int i = 0; i < SDL_NumJoysticks(); ++i)
+        if (SDL_IsGameController(i)) { pad = SDL_GameControllerOpen(i); break; }
+
     bool running = true;
     Uint64 last = SDL_GetPerformanceCounter();
     auto frame = [&]() {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
+            if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
+                pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
         }
 
@@ -174,7 +181,33 @@ int main(int argc, char** argv) {
         if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
         if (ks[SDL_SCANCODE_DOWN])  down.push_back('s');
         if (ks[SDL_SCANCODE_RIGHT]) down.push_back('d');
+
+        // Read the gamepad (first connected controller).
+        Vec2 padAxis; unsigned padMask = 0;
+        if (pad) {
+            float lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
+            float ly = -SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
+            if (lx > -0.18f && lx < 0.18f) lx = 0.0f; // stick deadzone
+            if (ly > -0.18f && ly < 0.18f) ly = 0.0f;
+            padAxis = {lx, ly};
+            auto bit = [&](SDL_GameControllerButton b, int id) {
+                if (SDL_GameControllerGetButton(pad, b)) padMask |= 1u << id;
+            };
+            bit(SDL_CONTROLLER_BUTTON_A, 0); bit(SDL_CONTROLLER_BUTTON_B, 1);
+            bit(SDL_CONTROLLER_BUTTON_X, 2); bit(SDL_CONTROLLER_BUTTON_Y, 3);
+            bit(SDL_CONTROLLER_BUTTON_BACK, 4); bit(SDL_CONTROLLER_BUTTON_START, 5);
+            bit(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, 6); bit(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 7);
+            bit(SDL_CONTROLLER_BUTTON_DPAD_UP, 8); bit(SDL_CONTROLLER_BUTTON_DPAD_DOWN, 9);
+            bit(SDL_CONTROLLER_BUTTON_DPAD_LEFT, 10); bit(SDL_CONTROLLER_BUTTON_DPAD_RIGHT, 11);
+            // Fold the stick / d-pad into WASD so movement scripts work on a pad.
+            if (lx > 0.4f || (padMask & (1u << 11))) down.push_back('d');
+            if (lx < -0.4f || (padMask & (1u << 10))) down.push_back('a');
+            if (ly > 0.4f || (padMask & (1u << 8)))  down.push_back('w');
+            if (ly < -0.4f || (padMask & (1u << 9)))  down.push_back('s');
+            if (padMask & (1u << 0)) down.push_back(' '); // A -> space (jump/confirm)
+        }
         Input::FeedKeys(down);
+        Input::FeedGamepad(padAxis, padMask);
 
         // Feed the mouse (position in pixels + left/right/middle button state).
         int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);

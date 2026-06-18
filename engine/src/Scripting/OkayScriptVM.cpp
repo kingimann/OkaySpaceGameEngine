@@ -742,6 +742,14 @@ struct OkayScriptVM::Impl {
         b["mouse_down"] = [](std::vector<Value>& a) {
             return Value{Input::GetMouseButtonDown(a.empty() ? 0 : (int)a[0].AsFloat())};
         };
+        b["gamepad_x"] = [](std::vector<Value>&) { return Value{Input::GamepadAxis().x}; };
+        b["gamepad_y"] = [](std::vector<Value>&) { return Value{Input::GamepadAxis().y}; };
+        b["gamepad"] = [](std::vector<Value>& a) {
+            return Value{Input::GetGamepadButton(a.empty() ? 0 : (int)a[0].AsFloat())};
+        };
+        b["gamepad_down"] = [](std::vector<Value>& a) {
+            return Value{Input::GetGamepadButtonDown(a.empty() ? 0 : (int)a[0].AsFloat())};
+        };
         b["rand"] = [](std::vector<Value>& a) {
             float lo = a.size() > 0 ? a[0].AsFloat() : 0.0f;
             float hi = a.size() > 1 ? a[1].AsFloat() : 1.0f;

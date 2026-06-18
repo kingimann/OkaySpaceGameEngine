@@ -30,12 +30,24 @@ public:
     /// True only on the frame the button was released.
     static bool GetMouseButtonUp(int button);
 
+    // ---- Gamepad (driven by FeedGamepad from the windowed runtime) -------
+    /// Left-stick axis, each component in [-1, 1] (y up).
+    static Vec2 GamepadAxis();
+    /// True while a gamepad button is held. Button ids: 0=A 1=B 2=X 3=Y
+    /// 4=Back 5=Start 6=L 7=R 8=Up 9=Down 10=Left 11=Right.
+    static bool GetGamepadButton(int button);
+    /// True only on the frame the button was first pressed.
+    static bool GetGamepadButtonDown(int button);
+
     /// Drive input from a non-terminal source (SDL window): pass the set of keys
     /// currently held this frame. Advances the down/up edge state.
     static void FeedKeys(const std::vector<char>& downKeys);
     /// Drive mouse state from a windowed runtime. `buttonMask` bit 0/1/2 =
     /// left/right/middle held. Advances the mouse down/up edge state.
     static void FeedMouse(const Vec2& position, unsigned buttonMask);
+    /// Drive gamepad state: left-stick axis and a held-button bitmask (bit n =
+    /// button id n). Advances the gamepad down-edge state.
+    static void FeedGamepad(const Vec2& axis, unsigned buttonMask);
 
 private:
     friend class Application;
@@ -50,6 +62,10 @@ private:
     static Vec2     s_mousePos;
     static unsigned s_mouseCurrent;   // bitmask of held buttons this frame
     static unsigned s_mousePrevious;  // bitmask from last frame
+
+    static Vec2     s_padAxis;
+    static unsigned s_padCurrent;
+    static unsigned s_padPrevious;
 };
 
 } // namespace okay

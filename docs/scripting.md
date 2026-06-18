@@ -65,6 +65,8 @@ UI Button press.
 | `mouse_x()` / `mouse_y()` | cursor position in pixels |
 | `mouse(btn)` | true while a mouse button is held (0=left, 1=right, 2=middle) |
 | `mouse_down(btn)` | true on the frame the button is pressed |
+| `gamepad_x()` / `gamepad_y()` | left-stick axis (-1..1, y up) |
+| `gamepad(btn)` / `gamepad_down(btn)` | held / just-pressed (0=A 1=B 2=X 3=Y 5=Start ...) |
 
 ### Time & state
 | Function | Returns |

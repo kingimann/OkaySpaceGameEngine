@@ -22,6 +22,14 @@ add_executable(test_3d test_3d.cpp)
 target_link_libraries(test_3d PRIVATE okay::engine)
 add_test(NAME 3d COMMAND test_3d)
 
+add_executable(test_animation test_animation.cpp)
+target_link_libraries(test_animation PRIVATE okay::engine)
+add_test(NAME animation COMMAND test_animation)
+
+add_executable(test_queries test_queries.cpp)
+target_link_libraries(test_queries PRIVATE okay::engine)
+add_test(NAME physics_queries COMMAND test_queries)
+
 add_executable(test_net test_net.cpp)
 target_link_libraries(test_net PRIVATE okay::engine)
 add_test(NAME net COMMAND test_net)

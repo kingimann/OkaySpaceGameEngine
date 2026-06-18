@@ -42,6 +42,11 @@
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Physics2D.hpp"
 
+// Animation
+#include "okay/Animation/AnimationCurve.hpp"
+#include "okay/Animation/AnimationClip.hpp"
+#include "okay/Components/Animator.hpp"
+
 // Multiplayer networking
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/UdpSocket.hpp"

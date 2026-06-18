@@ -10,6 +10,7 @@
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 
+#include <cctype>
 #include <functional>
 #include <fstream>
 #include <sstream>
@@ -85,11 +86,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
-            << bc->offset.x << " " << bc->offset.y << " " << (bc->isTrigger ? 1 : 0) << "\n";
+            << bc->offset.x << " " << bc->offset.y << " " << (bc->isTrigger ? 1 : 0)
+            << " " << bc->layer << "\n";
     }
     if (auto* cc = go->GetComponent<CircleCollider2D>()) {
         out << "  circlecollider2d " << cc->radius << " "
-            << cc->offset.x << " " << cc->offset.y << " " << (cc->isTrigger ? 1 : 0) << "\n";
+            << cc->offset.x << " " << cc->offset.y << " " << (cc->isTrigger ? 1 : 0)
+            << " " << cc->layer << "\n";
     }
     if (auto* sc = go->GetComponent<ScriptComponent>()) {
         out << "  script " << Quote(sc->Language()) << " " << Quote(sc->Source()) << "\n";
@@ -198,15 +201,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rb->bodyType = (Rigidbody2D::BodyType)bt;
                     rb->gravityScale = gs; rb->mass = mass; rb->drag = drag; rb->bounciness = bounce;
                 } else if (field == "boxcollider2d") {
-                    Vec2 sz, off; int trig = 0;
+                    Vec2 sz, off; int trig = 0, layer = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> layer; // optional
                     auto* bc = go->AddComponent<BoxCollider2D>();
-                    bc->size = sz; bc->offset = off; bc->isTrigger = (trig != 0);
+                    bc->size = sz; bc->offset = off; bc->isTrigger = (trig != 0); bc->layer = layer;
                 } else if (field == "circlecollider2d") {
-                    float r = 0.5f; Vec2 off; int trig = 0;
+                    float r = 0.5f; Vec2 off; int trig = 0, layer = 0;
                     in >> r >> off.x >> off.y >> trig;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> layer; // optional
                     auto* cc = go->AddComponent<CircleCollider2D>();
-                    cc->radius = r; cc->offset = off; cc->isTrigger = (trig != 0);
+                    cc->radius = r; cc->offset = off; cc->isTrigger = (trig != 0); cc->layer = layer;
                 } else if (field == "script") {
                     std::string lang = ReadQuoted(in);
                     std::string src  = ReadQuoted(in);

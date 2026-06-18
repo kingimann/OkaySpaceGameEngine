@@ -141,6 +141,7 @@ void Physics2D::Step(Scene& scene, float dt) {
             if (!a->enabled || !b->enabled) continue;
             if (!a->gameObject->active || !b->gameObject->active) continue;
             if (a->gameObject == b->gameObject) continue;
+            if (!LayersCollide(a->layer, b->layer)) continue; // collision matrix
 
             // Broad phase: AABB reject.
             Vec2 aMin, aMax, bMin, bMax;

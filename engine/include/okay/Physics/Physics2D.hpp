@@ -39,10 +39,24 @@ struct RaycastHit2D {
 /// Assumes physics bodies are top-level (un-parented) Transforms.
 class Physics2D {
 public:
+    Physics2D() { for (int i = 0; i < 32; ++i) m_layerMask[i] = 0xFFFFFFFFu; }
+
     Vec2 gravity{0.0f, -9.81f};
 
     /// Advance the simulation for `scene` by `dt` seconds.
     void Step(Scene& scene, float dt);
+
+    // ---- Collision layers (0..31) -------------------------------------
+    /// Enable/disable collisions between two layers (default: all enabled).
+    void SetLayerCollision(int a, int b, bool enabled) {
+        if (a < 0 || a > 31 || b < 0 || b > 31) return;
+        if (enabled) { m_layerMask[a] |= (1u << b); m_layerMask[b] |= (1u << a); }
+        else { m_layerMask[a] &= ~(1u << b); m_layerMask[b] &= ~(1u << a); }
+    }
+    bool LayersCollide(int a, int b) const {
+        if (a < 0 || a > 31 || b < 0 || b > 31) return true;
+        return (m_layerMask[a] >> b) & 1u;
+    }
 
     // ---- Scene queries -------------------------------------------------
     /// Cast a ray and return the nearest collider hit (within maxDistance).
@@ -59,7 +73,8 @@ public:
 
 private:
     using Pair = std::pair<Collider2D*, Collider2D*>;
-    std::set<Pair> m_contacts; // contacts from the previous step
+    std::set<Pair> m_contacts;          // contacts from the previous step
+    std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)
 };
 
 } // namespace okay

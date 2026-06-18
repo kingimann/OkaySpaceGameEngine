@@ -15,6 +15,9 @@ public:
     bool isTrigger = false;
     /// Offset of the collider from the Transform, in local units.
     Vec2 offset = Vec2::Zero;
+    /// Collision layer [0, 31]. The Physics2D collision matrix decides which
+    /// layers interact (all do by default).
+    int layer = 0;
 
     virtual Shape shape() const = 0;
 

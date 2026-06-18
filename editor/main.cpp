@@ -962,6 +962,29 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Bounciness", &rb->bounciness, 0.01f, 0.0f, 1.0f);
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
+    if (auto* bc = go->GetComponent<BoxCollider2D>()) {
+        if (ImGui::CollapsingHeader("Box Collider 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float sz[2] = {bc->size.x, bc->size.y};
+            if (ImGui::DragFloat2("Size##bc", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1]}; ed.dirty = true; }
+            float off[2] = {bc->offset.x, bc->offset.y};
+            if (ImGui::DragFloat2("Offset##bc", off, 0.05f)) { bc->offset = {off[0], off[1]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##bc", &bc->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc", &bc->layer, 0.1f, 0, 31);
+            if (ImGui::SmallButton("Remove##bc")) toRemove = bc;
+        }
+    }
+    if (auto* cc = go->GetComponent<CircleCollider2D>()) {
+        if (ImGui::CollapsingHeader("Circle Collider 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::DragFloat("Radius##cc", &cc->radius, 0.05f, 0.0f, 1000.0f);
+            float off[2] = {cc->offset.x, cc->offset.y};
+            if (ImGui::DragFloat2("Offset##cc", off, 0.05f)) { cc->offset = {off[0], off[1]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##cc", &cc->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cc", &cc->layer, 0.1f, 0, 31);
+            if (ImGui::SmallButton("Remove##cc")) toRemove = cc;
+        }
+    }
     if (auto* sc = go->GetComponent<ScriptComponent>()) {
         if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* langs[] = {"okayscript", "lua", "csharp"};
@@ -1012,6 +1035,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
         if (!go->GetComponent<BoxCollider2D>() && ImGui::Selectable("Box Collider 2D"))
             { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
+        if (!go->GetComponent<CircleCollider2D>() && ImGui::Selectable("Circle Collider 2D"))
+            { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
         if (!go->GetComponent<ScriptComponent>() && ImGui::Selectable("Script (OkayScript)"))
             { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
         if (!go->GetComponent<VisualScriptComponent>() && ImGui::Selectable("Visual Script"))

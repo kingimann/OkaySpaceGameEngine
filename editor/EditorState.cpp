@@ -200,13 +200,15 @@ void EditorState::NewScene3D() {
     camObj->GetComponent<Camera>()->projection = Camera::Projection::Perspective;
     camObj->transform->localPosition = {0, 2, 10};
 
-    GameObject* ground = CreateCube("Ground");
-    ground->transform->localScale = {20.0f, 0.2f, 20.0f};
-    ground->GetComponent<MeshRenderer>()->color = Color::FromBytes(90, 90, 110);
-
+    // A single cube on the grid (clean, Unity-like default). Add a ground/other
+    // objects from the GameObject menu as needed.
     GameObject* cube = CreateCube("Cube");
-    cube->transform->localPosition = {0, 1, 0};
+    cube->transform->localPosition = {0, 0, 0};
     cube->GetComponent<MeshRenderer>()->color = Color::Cyan;
+
+    // Frame the editor orbit camera on the cube.
+    camTarget = {0, 0, 0};
+    camDist = 6.0f;
 
     m_suppressUndo = false;
     view3D = true;

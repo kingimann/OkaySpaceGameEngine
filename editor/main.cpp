@@ -174,6 +174,19 @@ float g_snapSize = 1.0f;
 // Active transform tool for the Scene view (Unity's W/E/R).
 enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
+int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
+bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+
+// Shortest distance (pixels) from point p to the segment a-b, for handle picking.
+static float SegDistPx(ImVec2 p, ImVec2 a, ImVec2 b) {
+    float vx = b.x - a.x, vy = b.y - a.y;
+    float wx = p.x - a.x, wy = p.y - a.y;
+    float L2 = vx * vx + vy * vy;
+    float t = (L2 > 0.0f) ? (wx * vx + wy * vy) / L2 : 0.0f;
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    float cx = a.x + t * vx, cy = a.y + t * vy;
+    return Mathf::Sqrt((p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy));
+}
 
 // Per-object editor-only Euler-angle cache (degrees) for the inspector.
 std::unordered_map<GameObject*, Vec3> g_euler;
@@ -2098,9 +2111,77 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     if (gameView) return;   // the Game view is non-interactive
 
-    // Click to select: pick the nearest mesh whose projected bounding box
-    // contains the cursor (so clicking anywhere on a model selects it).
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    // ---- Transform gizmo: 3 colored axis handles at the selected object
+    //      (Unity W/E/R). Grab a handle and drag to move/rotate/scale on that
+    //      axis. X=red, Y=green, Z=blue. ----
+    GameObject* sel = ed.selected();
+    bool grabbedThisClick = false;
+    if (sel && !ed.isPlaying()) {
+        Transform* t = sel->transform;
+        Vec3 o = t->Position();
+        float L = ed.camDist * 0.18f;                 // arm length, screen-stable
+        Vec3 axis[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        ImU32 col[3] = {IM_COL32(230, 80, 80, 255), IM_COL32(90, 210, 100, 255),
+                        IM_COL32(90, 150, 240, 255)};
+        ImVec2 so; bool oOk = toScreen(vp * Vec4{o, 1}, so);
+        ImVec2 tip[3]; bool tipOk[3];
+        for (int i = 0; i < 3; ++i) tipOk[i] = toScreen(vp * Vec4{o + axis[i] * L, 1}, tip[i]);
+
+        if (oOk) {
+            for (int i = 0; i < 3; ++i) {
+                if (!tipOk[i]) continue;
+                ImU32 c = (g_gizmoGrab && g_gizmoAxis == i) ? IM_COL32(255, 230, 90, 255) : col[i];
+                dl->AddLine(so, tip[i], c, 3.0f);
+                if (g_tool == Tool::Scale)
+                    dl->AddRectFilled(ImVec2(tip[i].x - 5, tip[i].y - 5),
+                                      ImVec2(tip[i].x + 5, tip[i].y + 5), c);   // scale cube
+                else
+                    dl->AddCircleFilled(tip[i], 5.0f, c);                       // move/rotate knob
+            }
+            dl->AddCircleFilled(so, 3.0f, IM_COL32(230, 230, 230, 255));
+        }
+
+        // Grab the closest handle on mouse-press.
+        if (hovered && oOk && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            float best = 11.0f; int pick = -1;
+            for (int i = 0; i < 3; ++i)
+                if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
+            if (pick >= 0) { g_gizmoAxis = pick; g_gizmoGrab = true; grabbedThisClick = true; }
+        }
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_gizmoGrab = false; g_gizmoAxis = -1; }
+
+        // Drag the grabbed axis.
+        if (g_gizmoGrab && g_gizmoAxis >= 0 && tipOk[g_gizmoAxis] && oOk &&
+            ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            int i = g_gizmoAxis;
+            ImVec2 sdir{tip[i].x - so.x, tip[i].y - so.y};
+            float slen = Mathf::Sqrt(sdir.x * sdir.x + sdir.y * sdir.y);
+            if (slen > 1e-3f) {
+                float along = (io.MouseDelta.x * sdir.x + io.MouseDelta.y * sdir.y) / slen;
+                float amt = along * (L / slen);       // screen px -> world units along axis
+                if (g_tool == Tool::Move) {
+                    t->localPosition += axis[i] * amt;
+                    if (g_snap && g_snapSize > 0.0f) {
+                        t->localPosition.x = Mathf::Round(t->localPosition.x / g_snapSize) * g_snapSize;
+                        t->localPosition.y = Mathf::Round(t->localPosition.y / g_snapSize) * g_snapSize;
+                        t->localPosition.z = Mathf::Round(t->localPosition.z / g_snapSize) * g_snapSize;
+                    }
+                } else if (g_tool == Tool::Rotate) {
+                    t->Rotate(axis[i] * (along * 0.6f));        // degrees about the axis
+                } else { // Scale
+                    Vec3 sc = t->localScale;
+                    if (i == 0) sc.x += amt; else if (i == 1) sc.y += amt; else sc.z += amt;
+                    sc.x = Mathf::Max(0.01f, sc.x); sc.y = Mathf::Max(0.01f, sc.y); sc.z = Mathf::Max(0.01f, sc.z);
+                    t->localScale = sc;
+                }
+                ed.dirty = true;
+            }
+        }
+    }
+
+    // Click-select (skipped when a gizmo handle was just grabbed): pick the
+    // nearest mesh whose projected bounding box contains the cursor.
+    if (hovered && !g_gizmoGrab && !grabbedThisClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = nullptr;
         float bestDepth = 1e30f;
         for (const auto& up : objs) {
@@ -2127,27 +2208,6 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
         }
         if (hit) ed.Select(hit);
-    }
-
-    // Drag the selected object with the active tool. Move follows the camera's
-    // screen plane (drag-right moves right on screen, drag-up moves up), so it
-    // feels natural from any orbit angle. Rotate spins about Y; Scale is uniform.
-    if (!ed.isPlaying() && ed.selected() && hovered &&
-        ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        Transform* t = ed.selected()->transform;
-        float s = ed.camDist / canvasSize.y;        // screen px -> world units
-        if (g_tool == Tool::Move) {
-            Vec3 fwd = (ed.camTarget - eye).Normalized();          // camera forward
-            Vec3 right = Vec3::Cross(fwd, Vec3::Up).Normalized();  // screen right
-            Vec3 up = Vec3::Cross(right, fwd).Normalized();        // screen up
-            t->localPosition += right * (io.MouseDelta.x * s) + up * (-io.MouseDelta.y * s);
-        } else if (g_tool == Tool::Rotate) {
-            t->Rotate({0, io.MouseDelta.x * 0.5f, 0});
-        } else {
-            float k = 1.0f + io.MouseDelta.x * 0.01f;
-            t->localScale = t->localScale * k;
-        }
-        ed.dirty = true;
     }
 }
 

@@ -10,6 +10,8 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
+#include "okay/Components/UIButton.hpp"
+#include "okay/Components/UIPanel.hpp"
 
 namespace okay {
 
@@ -147,6 +149,42 @@ inline void CoinCollector(Scene& scene) {
         coin->AddComponent<ScriptComponent>("okayscript")->LoadSource(
             "function on_trigger() { prefs_set(\"score\", prefs_get(\"score\") + 1); destroy(); }\n");
     }
+}
+
+/// A main-menu scene: a background panel, a title, and a Start button that loads
+/// the game scene on click. Shows how UI + scripting + scene-loading fit
+/// together. (The Start button loads "game.okayscene" — build your game to that
+/// name, or change the path.)
+inline void MainMenu(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Main Menu");
+
+    GameObject* camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->main = true;
+    cam->backgroundColor = Color::FromBytes(18, 20, 28);
+
+    GameObject* panel = scene.CreateGameObject("Panel");
+    auto* pn = panel->AddComponent<UIPanel>();
+    pn->position = {40, 40};
+    pn->size = {360, 240};
+    pn->color = Color::FromBytes(30, 36, 52, 220);
+
+    GameObject* title = scene.CreateGameObject("Title");
+    auto* tr = title->AddComponent<TextRenderer>();
+    tr->text = "MY GAME";
+    tr->screenSpace = true;
+    tr->screenPos = {70, 70};
+    tr->pixelSize = 5.0f;
+
+    GameObject* start = scene.CreateGameObject("StartButton");
+    auto* b = start->AddComponent<UIButton>();
+    b->label = "Start";
+    b->position = {70, 170};
+    b->size = {300, 60};
+    start->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function on_click() { load_scene(\"game.okayscene\"); }\n");
 }
 
 } // namespace Templates

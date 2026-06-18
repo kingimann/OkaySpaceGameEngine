@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <cstdio>
 
 using namespace okay;
 
@@ -88,6 +89,33 @@ int main() {
         // The HUD script reflects the score in its text.
         scene.Update(0.016f);
         CHECK(scene.Find("HUD")->GetComponent<TextRenderer>()->text == "Score: 1");
+    }
+
+    // --- Main Menu: panel + title + Start button that loads the game on click ---
+    {
+        Scene scene("x");
+        Templates::MainMenu(scene);
+        CHECK(scene.Find("Panel")->GetComponent<UIPanel>() != nullptr);
+        CHECK(scene.Find("Title")->GetComponent<TextRenderer>() != nullptr);
+        GameObject* start = scene.Find("StartButton");
+        CHECK(start->GetComponent<UIButton>() != nullptr);
+        CHECK(start->GetComponent<ScriptComponent>() != nullptr);
+
+        // Provide the target scene, then "click" Start and verify it requests a load.
+        Scene game("Game");
+        game.CreateGameObject("Hero");
+        CHECK(SceneSerializer::SaveToFile(game, "game.okayscene"));
+
+        scene.Start();
+        auto* b = start->GetComponent<UIButton>();
+        Input::FeedMouse({b->position.x + 5, b->position.y + 5}, 0);
+        Input::FeedMouse({b->position.x + 5, b->position.y + 5}, 1u << 0);
+        // Click -> on_click -> load_scene; the load is applied at the end of the
+        // same Update (deferred after iteration), so one step swaps the scene.
+        scene.Update(0.016f);
+        CHECK(scene.Name() == "Game");
+        CHECK(scene.Find("Hero") != nullptr);
+        std::remove("game.okayscene");
     }
 
     TEST_MAIN_RESULT();

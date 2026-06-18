@@ -244,6 +244,16 @@ void EditorState::NewCoinCollector() {
     dirty = false;
 }
 
+void EditorState::NewMainMenu() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::MainMenu(m_scene);
+    m_suppressUndo = false;
+    view3D = false;
+    m_selected = m_scene.Find("StartButton");
+    dirty = false;
+}
+
 bool EditorState::Save(const std::string& path) {
     if (!SceneSerializer::SaveToFile(m_scene, path)) return false;
     m_path = path;

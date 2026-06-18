@@ -1053,6 +1053,9 @@ void DrawNewProjectPopup(EditorState& ed) {
         if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 40))) {
             ed.NewCoinCollector(); ConsoleLog("New coin-collector game"); ImGui::CloseCurrentPopup();
         }
+        if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 40))) {
+            ed.NewMainMenu(); ConsoleLog("New main-menu scene"); ImGui::CloseCurrentPopup();
+        }
         ImGui::Spacing();
         if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) {
             ed.NewScene(); ConsoleLog("New empty scene"); ImGui::CloseCurrentPopup();

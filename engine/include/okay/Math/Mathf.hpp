@@ -56,6 +56,52 @@ struct Mathf {
         t = Repeat(t, length * 2.0f);
         return length - Abs(t - length);
     }
+
+    /// Where `value` lies between a and b, as a 0..1 fraction (inverse of Lerp).
+    static float InverseLerp(float a, float b, float value) {
+        if (Approximately(a, b)) return 0.0f;
+        return Clamp01((value - a) / (b - a));
+    }
+
+    /// Hermite smoothstep between edges.
+    static float SmoothStep(float from, float to, float t) {
+        t = Clamp01((t - from) / (to - from > 0 ? (to - from) : 1.0f));
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    /// Shortest signed difference between two angles (degrees), in [-180, 180].
+    static float DeltaAngle(float current, float target) {
+        float d = Repeat(target - current, 360.0f);
+        if (d > 180.0f) d -= 360.0f;
+        return d;
+    }
+
+    /// Lerp between angles taking the shortest path (degrees).
+    static float LerpAngle(float a, float b, float t) {
+        return a + DeltaAngle(a, b) * Clamp01(t);
+    }
+
+    /// Critically-damped spring toward a target (Unity's SmoothDamp).
+    static float SmoothDamp(float current, float target, float& velocity,
+                            float smoothTime, float deltaTime,
+                            float maxSpeed = Infinity) {
+        smoothTime = Max(0.0001f, smoothTime);
+        float omega = 2.0f / smoothTime;
+        float x = omega * deltaTime;
+        float exp = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+        float change = current - target;
+        float maxChange = maxSpeed * smoothTime;
+        change = Clamp(change, -maxChange, maxChange);
+        float temp = (velocity + omega * change) * deltaTime;
+        velocity = (velocity - omega * temp) * exp;
+        float output = (current - change) + (change + temp) * exp;
+        // Prevent overshoot.
+        if ((target - current > 0.0f) == (output > target)) {
+            output = target;
+            velocity = (output - target) / deltaTime;
+        }
+        return output;
+    }
 };
 
 } // namespace okay

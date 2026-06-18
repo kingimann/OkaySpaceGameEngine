@@ -33,6 +33,31 @@ cmake --build build -j
 Run `./build/bin/okay-editor --selftest` to exercise the editor's logic without
 a window (used in CI where there is no display).
 
+### One self-contained Windows .exe
+
+The editor can be cross-compiled from Linux into a single `.exe` with SDL2
+linked statically (no DLLs to ship alongside):
+
+```bash
+# Needs MinGW-w64 and the SDL2 MinGW devel package (SDL2-devel-*-mingw).
+cmake -S . -B build-win-editor \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake \
+  -DOKAY_BUILD_EDITOR=ON -DOKAY_EDITOR_STATIC_SDL=ON \
+  -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
+  -DCMAKE_PREFIX_PATH=/path/to/SDL2-x.y.z/x86_64-w64-mingw32 \
+  -DCMAKE_FIND_ROOT_PATH=/path/to/SDL2-x.y.z/x86_64-w64-mingw32 \
+  -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
+cmake --build build-win-editor -j
+# -> build-win-editor/bin/okay-editor.exe  (a prebuilt copy is in dist/OkaySpaceEngine.exe)
+```
+
+### Self-updating
+
+The **Engine → Check for Updates** menu pulls the latest engine from GitHub
+(`git fetch` + fast-forward `pull`) when the app is run from a source checkout,
+then prompts you to rebuild. This is the same updater the standalone launcher
+uses, built right into the engine app.
+
 ## What you can do
 
 - **Hierarchy** — see the scene tree (parents/children); click to select.

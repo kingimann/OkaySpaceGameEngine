@@ -52,6 +52,13 @@ planet, `A` player ship.)*
 - **Game loop** with frame pacing, delta time, smoothed FPS, and a frame cap.
 - **Input**: non-blocking terminal keyboard polling (`GetKey/Down/Up`,
   `AxisWASD`), gracefully no-ops when not attached to a TTY.
+- **2D physics** — `Rigidbody2D` + box/circle colliders, a `Physics2D` world
+  (gravity, drag, impulse resolution) and `OnCollision2D` / `OnTrigger2D`
+  callbacks, stepped automatically by the scene.
+- **Scheduler** — `Invoke`, `InvokeRepeating`, and value `Tween`s per scene
+  (Unity-style timed callbacks).
+- **Utilities** — seedable `Random`, a typed `EventBus`, `Rect`/`Bounds`, extra
+  `Mathf` (InverseLerp, SmoothDamp, LerpAngle…), and `Scene::FindObjectsOfType<T>`.
 - **Multiplayer** — cross-platform UDP networking (`NetworkManager`) with a
   client/server join handshake and snapshot state sync.
 - **Visual scripting** — a node-graph runtime (events, math, branches,

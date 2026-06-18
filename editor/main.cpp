@@ -9,7 +9,10 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 
+#include <array>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -70,6 +73,9 @@ int main(int argc, char** argv) {
 }
 #else
 
+// Take control of the program entry point ourselves so SDL doesn't #define
+// `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
+#define SDL_MAIN_HANDLED
 #include <SDL.h>
 #if defined(_WIN32)
 #include <SDL_opengl.h>
@@ -88,6 +94,66 @@ namespace {
 ImU32 ToColor(const Color& c) {
     return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(c.a * 255));
 }
+
+// ---- Self-updater: pull the latest engine from GitHub -----------------
+namespace updater {
+namespace fs = std::filesystem;
+
+std::string Capture(const std::string& cmd) {
+#if defined(_WIN32)
+    FILE* pipe = _popen(cmd.c_str(), "r");
+#else
+    FILE* pipe = popen((cmd + " 2>&1").c_str(), "r");
+#endif
+    if (!pipe) return {};
+    std::string out;
+    std::array<char, 256> buf{};
+    while (fgets(buf.data(), (int)buf.size(), pipe)) out += buf.data();
+#if defined(_WIN32)
+    _pclose(pipe);
+#else
+    pclose(pipe);
+#endif
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return out;
+}
+
+fs::path FindRepoRoot() {
+    std::error_code ec;
+    for (fs::path p = fs::current_path(ec); !p.empty(); p = p.parent_path()) {
+        if (fs::exists(p / ".git")) return p;
+        if (p == p.root_path()) break;
+    }
+    return {};
+}
+
+// Returns a human-readable status; pulls the latest if the local copy is behind.
+std::string CheckAndUpdate() {
+    fs::path root = FindRepoRoot();
+    if (root.empty()) return "Could not find the engine's git repository.";
+    std::string git = "git -C \"" + root.string() + "\"";
+    std::string branch = Capture(git + " rev-parse --abbrev-ref HEAD");
+    if (branch.empty() || branch == "HEAD") branch = "main";
+
+    Capture(git + " fetch --quiet origin " + branch);
+    std::string local  = Capture(git + " rev-parse HEAD");
+    std::string remote = Capture(git + " rev-parse origin/" + branch);
+    if (remote.empty()) return "Offline: couldn't reach GitHub.";
+    if (local == remote)
+        return "Up to date (" + local.substr(0, 8) + ") on '" + branch + "'.";
+
+    std::string pull = Capture(git + " pull --ff-only origin " + branch);
+    std::string now = Capture(git + " rev-parse HEAD");
+    if (now == remote)
+        return "Updated to " + now.substr(0, 8) +
+               ".\nRebuild the engine to apply (cmake --build build).";
+    return "Update available (" + remote.substr(0, 8) +
+           ") but pull failed:\n" + pull;
+}
+} // namespace updater
+
+std::string g_updateStatus;
+bool g_openUpdatePopup = false;
 
 // Per-object editor-only Z rotation cache (2D authoring convenience).
 std::unordered_map<GameObject*, float> g_eulerZ;
@@ -113,7 +179,24 @@ void DrawMenuBar(EditorState& ed, bool& running) {
         if (ImGui::MenuItem("Create Camera")) ed.CreateCamera();
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Engine")) {
+        if (ImGui::MenuItem("Check for Updates")) {
+            g_updateStatus = updater::CheckAndUpdate();
+            g_openUpdatePopup = true;
+        }
+        ImGui::EndMenu();
+    }
     ImGui::EndMainMenuBar();
+}
+
+void DrawUpdatePopup() {
+    if (g_openUpdatePopup) { ImGui::OpenPopup("Engine Update"); g_openUpdatePopup = false; }
+    if (ImGui::BeginPopupModal("Engine Update", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(g_updateStatus.c_str());
+        ImGui::Separator();
+        if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 }
 
 void DrawToolbar(EditorState& ed) {
@@ -318,6 +401,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
 
+    SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
         return 1;
@@ -371,6 +455,7 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
 
         DrawMenuBar(ed, running);
+        DrawUpdatePopup();
         LayoutOnce();
         DrawToolbar(ed);
         DrawHierarchy(ed);

@@ -10,6 +10,14 @@ add_executable(test_serialize test_serialize.cpp)
 target_link_libraries(test_serialize PRIVATE okay::engine)
 add_test(NAME serialize COMMAND test_serialize)
 
+add_executable(test_core_features test_core_features.cpp)
+target_link_libraries(test_core_features PRIVATE okay::engine)
+add_test(NAME core_features COMMAND test_core_features)
+
+add_executable(test_physics test_physics.cpp)
+target_link_libraries(test_physics PRIVATE okay::engine)
+add_test(NAME physics COMMAND test_physics)
+
 add_executable(test_net test_net.cpp)
 target_link_libraries(test_net PRIVATE okay::engine)
 add_test(NAME net COMMAND test_net)

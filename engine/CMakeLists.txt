@@ -1,6 +1,7 @@
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
+    src/Core/Scheduler.cpp
     src/Input/Input.cpp
     src/Render/ConsoleRenderer.cpp
     src/Scene/Component.cpp
@@ -21,6 +22,7 @@ add_library(okay_engine
     src/Components/SteamManager.cpp
     src/Platform/PlayFab/NullPlayFabService.cpp
     src/Components/PlayFabManager.cpp
+    src/Physics/Physics2D.cpp
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.

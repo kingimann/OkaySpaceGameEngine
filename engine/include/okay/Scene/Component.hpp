@@ -6,6 +6,8 @@ class GameObject;
 class Transform;
 class Scene;
 class IRenderer;
+class Collider2D;
+struct Collision2D;
 
 /// Base class for everything attachable to a GameObject. Scripts derive from
 /// this (see `Behaviour`), as do built-in pieces like Transform and Camera.
@@ -34,6 +36,14 @@ public:
     virtual void OnRender(IRenderer& /*renderer*/) {}
     /// Called when the component or its GameObject is destroyed.
     virtual void OnDestroy() {}
+
+    // ---- 2D physics messages (dispatched by Physics2D) ----------------
+    virtual void OnCollisionEnter2D(const Collision2D& /*collision*/) {}
+    virtual void OnCollisionStay2D(const Collision2D& /*collision*/) {}
+    virtual void OnCollisionExit2D(const Collision2D& /*collision*/) {}
+    virtual void OnTriggerEnter2D(Collider2D* /*other*/) {}
+    virtual void OnTriggerStay2D(Collider2D* /*other*/) {}
+    virtual void OnTriggerExit2D(Collider2D* /*other*/) {}
 
     Scene* GetScene() const;
 

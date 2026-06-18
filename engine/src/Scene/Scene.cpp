@@ -22,6 +22,8 @@ void Scene::Clear() {
     m_pending.clear();
     m_active.clear();
     m_destroyQueue.clear();
+    m_scheduler.Clear();
+    m_physics.Clear();
     mainCamera = nullptr;
     m_objects.clear();
 }
@@ -55,10 +57,15 @@ void Scene::Start() {
 void Scene::Update(float deltaTime) {
     FlushPending(); // adopt anything created since last frame
 
+    m_scheduler.Update(deltaTime);
+
     for (Component* c : m_active) {
         if (c->enabled && c->gameObject && c->gameObject->active)
             c->Update(deltaTime);
     }
+
+    if (physicsEnabled) m_physics.Step(*this, deltaTime);
+
     for (Component* c : m_active) {
         if (c->enabled && c->gameObject && c->gameObject->active)
             c->LateUpdate(deltaTime);

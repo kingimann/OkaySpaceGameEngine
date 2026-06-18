@@ -105,6 +105,9 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `slider_value()` / `set_slider(v)` | read/set this object's UISlider value (fires on its own drag) |
 | `toggle_on()` / `set_toggle(b)` | read/set this object's UIToggle checkbox state |
 | `tile_resize(w,h)` `set_tile(x,y,id)` `get_tile(x,y)` `tile_w()` `tile_h()` | edit a sibling Tilemap |
+| `emit(n)` | burst n particles from this object's ParticleSystem (explosions, dust) |
+| `particles_on(bool)` / `particles_alive()` | start/stop continuous emission / read live count |
+| `play_anim()` / `stop_anim()` | restart / pause this object's SpriteAnimator |
 | `play_sound()` | play this object's AudioSource |
 | `print(...)` | log values to the console |
 

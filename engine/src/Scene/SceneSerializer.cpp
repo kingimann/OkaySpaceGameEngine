@@ -74,7 +74,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  sprite " << static_cast<int>(sr->glyph) << " "
             << sr->color.r << " " << sr->color.g << " " << sr->color.b << " "
             << sr->color.a << " " << sr->size.x << " " << sr->size.y << " "
-            << Quote(sr->texture) << "\n";
+            << Quote(sr->texture)
+            << " " << sr->uvMin.x << " " << sr->uvMin.y
+            << " " << sr->uvMax.x << " " << sr->uvMax.y << "\n";
     }
     if (auto* cam = go->GetComponent<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
@@ -134,7 +136,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
             << (an->playing ? 1 : 0) << " " << an->frames.size();
         for (const auto& f : an->frames) out << " " << Quote(f);
-        out << "\n";
+        out << " " << an->atlasColumns << " " << an->atlasRows << " " << an->atlasCount << "\n";
     }
     if (auto* au = go->GetComponent<AudioSource>()) {
         out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
@@ -218,6 +220,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sr->size = size;
                     in >> std::ws; // optional texture path (quoted)
                     if (in.peek() == '"') sr->texture = ReadQuoted(in);
+                    // Optional uv sub-region (4 floats) for sprite sheets.
+                    in >> std::ws;
+                    int pk = in.peek();
+                    if (pk == '-' || pk == '.' || std::isdigit(pk))
+                        in >> sr->uvMin.x >> sr->uvMin.y >> sr->uvMax.x >> sr->uvMax.y;
                 } else if (field == "camera") {
                     Color c; int proj = 0; float ortho = 5.0f, fov = 60.0f; int main = 1;
                     in >> proj >> ortho >> fov >> c.r >> c.g >> c.b >> c.a >> main;
@@ -293,6 +300,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* an = go->AddComponent<SpriteAnimator>();
                     an->fps = fps; an->loop = (loop != 0); an->playing = (playing != 0);
                     for (int k = 0; k < count; ++k) an->frames.push_back(ReadQuoted(in));
+                    in >> std::ws; // optional atlas fields (3 ints)
+                    if (std::isdigit(in.peek()))
+                        in >> an->atlasColumns >> an->atlasRows >> an->atlasCount;
                 } else if (field == "audio") {
                     std::string cp = ReadQuoted(in);
                     float vol = 1.0f; int loop = 0, poa = 0;

@@ -1322,7 +1322,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Loop##anim", &an->loop)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Playing##anim", &an->playing)) ed.dirty = true;
-            ImGui::TextDisabled("Frames (image paths):");
+            ImGui::Spacing();
+            ImGui::TextDisabled("Atlas mode (sprite sheet on the SpriteRenderer texture):");
+            if (ImGui::DragInt("Columns##anim", &an->atlasColumns, 0.1f, 0, 64)) ed.dirty = true;
+            if (ImGui::DragInt("Rows##anim", &an->atlasRows, 0.1f, 1, 64)) ed.dirty = true;
+            if (ImGui::DragInt("Count 0=all##anim", &an->atlasCount, 0.1f, 0, 4096)) ed.dirty = true;
+            if (an->atlasColumns > 0) ImGui::TextDisabled("Using atlas cells; frame list ignored.");
+            ImGui::Spacing();
+            ImGui::TextDisabled("Frames (image paths, used when Columns = 0):");
             int removeAt = -1;
             for (std::size_t i = 0; i < an->frames.size(); ++i) {
                 char fb[256];

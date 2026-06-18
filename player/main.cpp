@@ -257,9 +257,11 @@ int main(int argc, char** argv) {
                 SDL_Color col{(Uint8)(sr->color.r * 255), (Uint8)(sr->color.g * 255),
                               (Uint8)(sr->color.b * 255), (Uint8)(sr->color.a * 255)};
                 // Texture coords map the image upright onto the quad corners
-                // (corner 3 = top-left in world = texture (0,0)).
+                // (corner 3 = top-left in world = texture uvMin). Honors the
+                // sprite's uv sub-region so sprite sheets / atlases work.
                 SDL_Texture* tex = GetTexture(renderer, sr->texture, baseDir, textureCache);
-                const SDL_FPoint uv[4] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+                float u0 = sr->uvMin.x, v0 = sr->uvMin.y, u1 = sr->uvMax.x, v1 = sr->uvMax.y;
+                const SDL_FPoint uv[4] = {{u0, v1}, {u1, v1}, {u1, v0}, {u0, v0}};
                 SDL_Vertex vtx[4];
                 for (int k = 0; k < 4; ++k) {
                     Vec3 wpos = model.MultiplyPoint(corners[k]);

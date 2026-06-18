@@ -43,6 +43,12 @@ void Scene::QueuePending(Component* component) {
     m_pending.push_back(component);
 }
 
+void Scene::NotifyComponentRemoved(Component* component) {
+    m_active.erase(std::remove(m_active.begin(), m_active.end(), component), m_active.end());
+    m_pending.erase(std::remove(m_pending.begin(), m_pending.end(), component), m_pending.end());
+    if (static_cast<Component*>(mainCamera) == component) mainCamera = nullptr;
+}
+
 void Scene::FlushPending() {
     if (m_pending.empty()) return;
     // Awake the whole batch first, then Start it (Unity message order).

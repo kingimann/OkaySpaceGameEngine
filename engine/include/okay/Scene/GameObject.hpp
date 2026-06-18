@@ -33,6 +33,17 @@ public:
     template <typename T>
     std::vector<T*> GetComponents() const;
 
+    /// Remove a specific component (Transform cannot be removed). Returns true
+    /// if it was found and removed.
+    bool RemoveComponent(Component* component);
+    /// Remove the first component of type T. Returns true if one was removed.
+    template <typename T>
+    bool RemoveComponent() {
+        for (const auto& c : m_components)
+            if (T* casted = dynamic_cast<T*>(c.get())) return RemoveComponent(casted);
+        return false;
+    }
+
     Scene* scene() const { return m_scene; }
 
 private:

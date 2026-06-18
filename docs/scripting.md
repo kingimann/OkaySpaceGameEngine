@@ -80,6 +80,8 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `destroy()` | destroy this script's own GameObject |
 | `activate(name)` / `deactivate(name)` | show/hide another object by name |
 | `exists(name)` / `is_active(name)` | query another object by name |
+| `obj_x(name)` / `obj_y(name)` / `obj_z(name)` | read another object's world position |
+| `dist_to(name)` | distance from this object to a named object (enemy AI, doors) |
 | `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `raycast_hit(ox, oy, dx, dy[, dist])` | true if a ray hits a collider |
 | `overlap(x, y)` | true if a collider contains the point |
@@ -108,9 +110,16 @@ The standalone player auto-loads `game.okayprefs` on launch and saves it on
 exit, so values set with `prefs_set` persist between play sessions.
 
 ### Math
-`abs sin cos tan sqrt pow floor ceil round sign min max clamp lerp atan2 len
-rand(lo, hi) randi(lo, hi) move_toward(cur, target, maxStep)
-dist(x1, y1, x2, y2) pi() deg2rad(d) rad2deg(r)`
+`abs sin cos tan asin acos atan atan2 sqrt pow exp log floor ceil round sign
+min max clamp lerp smoothstep len hypot wrap(v, lo, hi) ping_pong(t, len)
+rand(lo, hi) randi(lo, hi) chance(p) move_toward(cur, target, maxStep)
+dist(x1, y1, x2, y2) angle_to(x1, y1, x2, y2) pi() deg2rad(d) rad2deg(r)`
+
+- `wrap(v, lo, hi)` keeps a value inside `[lo, hi)` (angles, looping indices).
+- `ping_pong(t, len)` bounces `0..len..0` (patrols, bobbing, breathing scale).
+- `smoothstep(a, b, t)` is an ease-in/out interpolation between `a` and `b`.
+- `chance(p)` returns true with probability `p` (0..1).
+- `angle_to(x1, y1, x2, y2)` returns the heading in **degrees** from p1 to p2.
 
 ### Arrays
 `array() count(a) push(a, v) pop(a) contains(a, v) index_of(a, v) remove_at(a, i)
@@ -119,7 +128,9 @@ sum(a) min_of(a) max_of(a) reverse(a) sort_num(a) choose(a) shuffle(a)`
 
 ### Strings
 `str_len(s) upper(s) lower(s) substr(s, start, n) char_at(s, i) str_find(s, sub)
-to_num(s) to_str(x) split(s, sep) join(arr, sep)` — plus `+` concatenation.
+str_contains(s, sub) starts_with(s, prefix) ends_with(s, suffix)
+replace(s, find, repl) trim(s) repeat(s, n) to_num(s) to_str(x)
+split(s, sep) join(arr, sep)` — plus `+` concatenation.
 
 ### Maps / dictionaries (string keys)
 `map() map_set(m, k, v) map_get(m, k[, default]) map_has(m, k) map_remove(m, k)

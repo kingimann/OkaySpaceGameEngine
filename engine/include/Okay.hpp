@@ -64,6 +64,7 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/UIImage.hpp"
+#include "okay/Components/UINavigation.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"

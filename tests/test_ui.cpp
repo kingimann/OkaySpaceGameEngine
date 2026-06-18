@@ -417,6 +417,76 @@ int main() {
         CHECK_NEAR(r->disabledColor.r, 0.4f, 0.01f);
     }
 
+    // --- Keyboard/gamepad menu navigation moves focus and activates ---
+    {
+        Scene scene("Nav");
+        auto mkBtn = [&](const char* nm, float y) {
+            GameObject* g = scene.CreateGameObject(nm);
+            auto* b = g->AddComponent<UIButton>();
+            b->position = {0, y};            // ordered top-to-bottom by y
+            b->size = {100, 40};
+            auto* sc = g->AddComponent<ScriptComponent>("okayscript");
+            sc->LoadSource("function on_click() { set_x(99); }");
+            return b;
+        };
+        UIButton* top = mkBtn("Top", 10);
+        UIButton* mid = mkBtn("Mid", 60);
+        UIButton* bot = mkBtn("Bot", 110);
+        scene.Start();
+
+        // First call with no input focuses the first (top) button.
+        Input::FeedKeys({});
+        NavigateUI(scene);
+        CHECK(top->IsFocused());
+        CHECK(!mid->IsFocused());
+
+        // Press down ('s') twice -> focus moves Top -> Mid -> Bot.
+        Input::FeedKeys({}); Input::FeedKeys({'s'});   // down-edge
+        NavigateUI(scene);
+        CHECK(mid->IsFocused());
+        Input::FeedKeys({}); Input::FeedKeys({'s'});
+        NavigateUI(scene);
+        CHECK(bot->IsFocused());
+
+        // Wrap around: down again -> back to Top.
+        Input::FeedKeys({}); Input::FeedKeys({'s'});
+        NavigateUI(scene);
+        CHECK(top->IsFocused());
+
+        // Activate with Enter -> fires the focused (Top) button's on_click.
+        Input::FeedKeys({}); Input::FeedKeys({'\r'});
+        GameObject* fired = NavigateUI(scene);
+        CHECK(fired == top->gameObject);
+        CHECK(top->WasClicked());
+        CHECK_NEAR(scene.Find("Top")->transform->localPosition.x, 99.0f, 0.001f);
+    }
+
+    // --- Non-focusable / disabled buttons are skipped by navigation ---
+    {
+        Scene scene("NavSkip");
+        GameObject* a = scene.CreateGameObject("A");
+        auto* ba = a->AddComponent<UIButton>(); ba->position = {0, 0}; ba->focusable = false;
+        GameObject* b = scene.CreateGameObject("B");
+        auto* bb = b->AddComponent<UIButton>(); bb->position = {0, 50};
+        scene.Start();
+        Input::FeedKeys({});
+        NavigateUI(scene);
+        CHECK(!ba->IsFocused());      // skipped (not focusable)
+        CHECK(bb->IsFocused());       // only focusable one gets focus
+    }
+
+    // --- Button focusable flag round-trips through serialization ---
+    {
+        Scene scene("FocusSer");
+        GameObject* go = scene.CreateGameObject("B");
+        go->AddComponent<UIButton>()->focusable = false;
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        CHECK(loaded.Find("B")->GetComponent<UIButton>()->focusable == false);
+    }
+
     // --- Backward compat: a uibutton line ending at the anchor (pre-state
     //     format) still loads, defaulting interactable to true ---
     {

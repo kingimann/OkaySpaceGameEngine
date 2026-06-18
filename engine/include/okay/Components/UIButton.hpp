@@ -28,18 +28,33 @@ public:
     /// When false the button is greyed out and ignores hover/click (e.g. a
     /// "Continue" entry with no save). Scripts toggle it via set_interactable().
     bool interactable = true;
+    /// Whether keyboard/gamepad menu navigation can focus this button.
+    bool focusable = true;
 
     bool IsHovered() const { return m_hover; }
     /// True while the mouse is held down over an interactable button.
     bool IsPressed() const { return m_pressed; }
     /// True only on the frame the button was clicked.
     bool WasClicked() const { return m_clicked; }
+    /// Whether menu navigation currently highlights this button.
+    bool IsFocused() const { return m_focused; }
+    void SetFocused(bool f) { m_focused = f; }
+
+    /// Activate as if clicked (keyboard/gamepad). Fires on_click and reports
+    /// WasClicked() for this frame.
+    void Press() {
+        if (!interactable) return;
+        m_clicked = true;
+        if (gameObject)
+            if (auto* sc = gameObject->GetComponent<ScriptComponent>())
+                if (sc->VM()) sc->VM()->CallEvent("on_click");
+    }
 
     /// The color the renderer should use for the current state.
     Color CurrentColor() const {
-        if (!interactable) return disabledColor;
-        if (m_pressed)     return pressedColor;
-        if (m_hover)       return hoverColor;
+        if (!interactable)        return disabledColor;
+        if (m_pressed)            return pressedColor;
+        if (m_hover || m_focused) return hoverColor;
         return color;
     }
 
@@ -64,6 +79,7 @@ private:
     bool m_hover = false;
     bool m_pressed = false;
     bool m_clicked = false;
+    bool m_focused = false;
 };
 
 } // namespace okay

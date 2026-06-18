@@ -298,7 +298,7 @@ void EditorState::Stop() {
 }
 
 void EditorState::Tick(float dt) {
-    if (m_playing) m_scene.Update(dt);
+    if (m_playing) { m_scene.Update(dt); NavigateUI(m_scene); }
 }
 
 } // namespace okay::editor

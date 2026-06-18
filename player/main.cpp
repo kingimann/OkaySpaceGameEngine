@@ -242,6 +242,9 @@ int main(int argc, char** argv) {
         Time::Step(dt);
         scene.Update(Time::DeltaTime());
 
+        // Keyboard / gamepad menu navigation (arrows/WASD + Enter/Space/A).
+        NavigateUI(scene);
+
         if (audioDev) {
             int n = (int)(dt * 44100.0f); if (n > 8192) n = 8192;
             if (n > 0) {

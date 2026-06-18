@@ -1486,6 +1486,8 @@ void DrawInspector(EditorState& ed) {
             float dc[4] = {btn->disabledColor.r, btn->disabledColor.g, btn->disabledColor.b, btn->disabledColor.a};
             if (ImGui::ColorEdit4("Disabled##uib", dc)) { btn->disabledColor = {dc[0], dc[1], dc[2], dc[3]}; ed.dirty = true; }
             if (ImGui::Checkbox("Interactable##uib", &btn->interactable)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Focusable##uib", &btn->focusable)) ed.dirty = true;
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;

@@ -98,8 +98,10 @@ uses, built right into the engine app.
   (background/overlay), *UI Image* (logos/icons/title art from a PNG/JPG, tinted;
   a colored rect when no texture; optional *Nine-slice* keeps a bordered frame
   undistorted while the edges/center stretch — resizable panels from one image), *UI Button* (calls the script's `on_click()`; has hover / pressed / disabled
-  state colors and an *Interactable* toggle that greys it out — script:
-  `set_interactable(bool)`), *UI
+  state colors, an *Interactable* toggle that greys it out — script:
+  `set_interactable(bool)` — and a *Focusable* toggle for **keyboard/gamepad menu
+  navigation**: arrows/WASD or the D-pad move focus, Enter/Space or gamepad A
+  activates), *UI
   Progress Bar* (`set_progress(0..1)`), *UI Slider* (drag to pick a value in a
   min/max range; calls `on_change()`, read with `slider_value()` / set with
   `set_slider(v)`), and *UI Toggle* (a labelled checkbox; calls `on_toggle()`,

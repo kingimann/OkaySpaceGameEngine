@@ -185,7 +185,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)btn->anchor << " "
             << btn->pressedColor.r << " " << btn->pressedColor.g << " " << btn->pressedColor.b << " " << btn->pressedColor.a << " "
             << btn->disabledColor.r << " " << btn->disabledColor.g << " " << btn->disabledColor.b << " " << btn->disabledColor.a << " "
-            << (btn->interactable ? 1 : 0) << "\n";
+            << (btn->interactable ? 1 : 0) << " " << (btn->focusable ? 1 : 0) << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -461,6 +461,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                            >> dc.r >> dc.g >> dc.b >> dc.a >> inter;
                         btn->pressedColor = pc; btn->disabledColor = dc;
                         btn->interactable = (inter != 0);
+                        // focusable appended later still within this block.
+                        in >> std::ws;
+                        int fk = in.peek();
+                        if (fk >= '0' && fk <= '9') { int foc = 1; in >> foc; btn->focusable = (foc != 0); }
                     }
                 } else if (field == "uipanel") {
                     auto* pn = go->AddComponent<UIPanel>();

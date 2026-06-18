@@ -29,6 +29,13 @@ int main() {
         CHECK(cyl.name == "Cylinder");
         CHECK(cyl.TriangleCount() == 12 * 2 /*sides*/ + 12 * 2 /*caps*/);
 
+        Mesh wedge = Mesh::Wedge(2.0f);
+        CHECK(wedge.name == "Wedge");
+        CHECK(wedge.vertices.size() == 6u);
+        CHECK(wedge.TriangleCount() == 8);           // base + front + slope + 2 sides
+        CHECK_NEAR(wedge.Size().x, 2.0f, 0.001f);    // spans the full cube box
+        CHECK_NEAR(wedge.Size().y, 2.0f, 0.001f);
+
         Mesh cone = Mesh::Cone(0.5f, 1.0f, 16);
         CHECK(cone.name == "Cone");
         CHECK(cone.vertices.size() == 16u + 2u);          // ring + apex + base center
@@ -189,6 +196,7 @@ int main() {
         CHECK(Mesh::FromName("Cone").name == "Cone");
         CHECK(Mesh::FromName("Torus").name == "Torus");
         CHECK(Mesh::FromName("Capsule").name == "Capsule");
+        CHECK(Mesh::FromName("Wedge").name == "Wedge");
 
         Scene scene("S");
         GameObject* go = scene.CreateGameObject("Ball");
@@ -297,6 +305,43 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.x, 1.0f, 0.001f);
         CHECK_NEAR(go->transform->localPosition.y, 2.0f, 0.001f);
         CHECK_NEAR(go->transform->localPosition.z, 9.0f, 0.001f); // 3 + 5 + 1
+    }
+
+    // --- 3D scale / dist3_to / set_mesh script builtins ---
+    {
+        Scene scene("3DX");
+        GameObject* target = scene.CreateGameObject("Target");
+        target->transform->localPosition = {0, 0, 4};       // 4 units away on Z
+
+        GameObject* go = scene.CreateGameObject("Obj");
+        go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();   // starts as Cube
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() {"
+            "  set_scale3(2, 3, 4);"
+            "  set_mesh(\"Sphere\");"
+            "  set_z(dist3_to(\"Target\"));" // measured at origin: (0,0,0)->(0,0,4) = 4
+            "  set_x(scale_y());"            // -> 3 (after, so it doesn't skew the dist)
+            "}"));
+        scene.Start();
+        CHECK_NEAR(go->transform->localScale.x, 2.0f, 0.001f);
+        CHECK_NEAR(go->transform->localScale.z, 4.0f, 0.001f);
+        CHECK_NEAR(go->transform->localPosition.x, 3.0f, 0.001f);   // scale_y readback
+        CHECK_NEAR(go->transform->localPosition.z, 4.0f, 0.001f);   // dist3_to
+        CHECK(go->GetComponent<MeshRenderer>()->mesh.name == "Sphere"); // set_mesh swapped it
+    }
+
+    // --- set_rot3 sets an absolute orientation (face +X via 90deg about Y) ---
+    {
+        Scene scene("Rot");
+        GameObject* go = scene.CreateGameObject("Turner");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function start() { set_rot3(0, 90, 0); }"));
+        scene.Start();
+        // Forward (local +Z) rotated 90deg about Y points down +X.
+        Vec3 fwd = go->transform->Forward();
+        CHECK_NEAR(fwd.x, 1.0f, 0.01f);
+        CHECK_NEAR(fwd.z, 0.0f, 0.01f);
     }
 
     TEST_MAIN_RESULT();

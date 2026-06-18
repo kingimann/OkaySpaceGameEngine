@@ -52,6 +52,26 @@ struct Mesh {
         return m;
     }
 
+    /// A wedge / ramp: a right-triangular prism (a cube sliced corner-to-corner)
+    /// rising along +Z toward +Y. Great for ramps, rooftops, and level blockouts.
+    static Mesh Wedge(float size = 1.0f) {
+        float h = size * 0.5f;
+        Mesh m;
+        m.name = "Wedge";
+        m.vertices = {
+            {-h, -h, -h}, { h, -h, -h}, { h, -h, h}, {-h, -h, h}, // base (y = -h)
+            {-h,  h,  h}, { h,  h, h},                            // top edge (y = +h, z = +h)
+        };
+        m.triangles = {
+            0,2,1, 0,3,2,        // base (y = -h)
+            3,4,5, 3,5,2,        // vertical front face (z = +h)
+            0,1,5, 0,5,4,        // sloped face (back-bottom up to front-top)
+            1,2,5,               // right side triangle (x = +h)
+            0,4,3,               // left side triangle (x = -h)
+        };
+        return m;
+    }
+
     static Mesh Pyramid(float size = 1.0f) {
         float h = size * 0.5f;
         Mesh m;
@@ -227,6 +247,7 @@ struct Mesh {
         if (n == "Capsule")   return Capsule();
         if (n == "Icosphere") return Icosphere();
         if (n == "Grid")      return Grid();
+        if (n == "Wedge")     return Wedge();
         return Cube();
     }
 

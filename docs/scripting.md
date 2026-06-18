@@ -30,6 +30,10 @@ function update(dt) {
   - `while (cond) { ... }`
   - `for (var i = 0; i < 10; i += 1) { ... }`
 - **Functions:** `function name(a, b) { return a + b; }`
+- **Arrays:** `var a = [1, 2, 3];` — index with `a[0]`, assign `a[1] = 9`,
+  append with `a[count(a)] = x` or `push(a, x)`, remove with `pop(a)`, length
+  via `count(a)`. Arrays are shared by reference. Make an empty one with
+  `array()`.
 - **Comments:** `// ...` or `# ...`
 
 Top-level statements run once when the script loads (good for setup); `start()`

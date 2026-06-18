@@ -36,7 +36,7 @@ enum class Tok {
     Plus, Minus, Star, Slash, Percent,
     Assign, PlusEq, MinusEq, StarEq, SlashEq,
     Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
-    LParen, RParen, LBrace, RBrace, Comma, Semicolon
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semicolon
 };
 
 struct Token {
@@ -137,6 +137,8 @@ private:
             case ')': return {Tok::RParen, "", 0, m_line};
             case '{': return {Tok::LBrace, "", 0, m_line};
             case '}': return {Tok::RBrace, "", 0, m_line};
+            case '[': return {Tok::LBracket, "", 0, m_line};
+            case ']': return {Tok::RBracket, "", 0, m_line};
             case ',': return {Tok::Comma, "", 0, m_line};
             case ';': return {Tok::Semicolon, "", 0, m_line};
             case '=': { auto t = two('=', Tok::Eq); return t.type != Tok::End ? t : Token{Tok::Assign, "", 0, m_line}; }
@@ -266,6 +268,49 @@ struct CallExpr : Expr {
         vals.reserve(args.size());
         for (auto& a : args) vals.push_back(a->Eval(rt));
         return rt.Call(name, vals);
+    }
+};
+
+// An array literal: [a, b, c].
+struct ArrayExpr : Expr {
+    std::vector<ExprPtr> elems;
+    Value Eval(Runtime& rt) override {
+        Value v = Value::MakeArray();
+        auto arr = v.AsArray();
+        for (auto& e : elems) arr->push_back(e->Eval(rt));
+        return v;
+    }
+};
+
+// Read an element: arr[index].
+struct IndexExpr : Expr {
+    ExprPtr arr, index;
+    IndexExpr(ExprPtr a, ExprPtr i) : arr(std::move(a)), index(std::move(i)) {}
+    Value Eval(Runtime& rt) override {
+        Value a = arr->Eval(rt);
+        auto v = a.AsArray();
+        if (!v) return Value{};
+        int i = (int)index->Eval(rt).AsFloat();
+        if (i < 0 || i >= (int)v->size()) return Value{};
+        return (*v)[i];
+    }
+};
+
+// Assign an element: arr[index] = value.
+struct IndexAssignExpr : Expr {
+    ExprPtr arr, index, value;
+    IndexAssignExpr(ExprPtr a, ExprPtr i, ExprPtr v)
+        : arr(std::move(a)), index(std::move(i)), value(std::move(v)) {}
+    Value Eval(Runtime& rt) override {
+        Value a = arr->Eval(rt);
+        Value val = value->Eval(rt);
+        auto v = a.AsArray();
+        if (v) {
+            int i = (int)index->Eval(rt).AsFloat();
+            if (i >= 0 && i < (int)v->size()) (*v)[i] = val;
+            else if (i == (int)v->size()) v->push_back(val); // append at end
+        }
+        return val;
     }
 };
 
@@ -464,11 +509,18 @@ private:
     ExprPtr ParseAssignment() {
         ExprPtr left = ParseOr();
         if (Match(Tok::Assign)) {
-            auto* var = dynamic_cast<VarExpr*>(left.get());
-            if (!var) throw ScriptError("invalid assignment target");
-            std::string name = var->n;
             ExprPtr value = ParseAssignment();
-            return std::make_unique<AssignExpr>(name, std::move(value));
+            if (auto* var = dynamic_cast<VarExpr*>(left.get()))
+                return std::make_unique<AssignExpr>(var->n, std::move(value));
+            // Assigning to an array element: arr[i] = value.
+            if (dynamic_cast<IndexExpr*>(left.get())) {
+                auto* ix = static_cast<IndexExpr*>(left.release());
+                auto out = std::make_unique<IndexAssignExpr>(
+                    std::move(ix->arr), std::move(ix->index), std::move(value));
+                delete ix;
+                return out;
+            }
+            throw ScriptError("invalid assignment target");
         }
         // Compound assignment: x += e  desugars to  x = x + e.
         if (Check(Tok::PlusEq) || Check(Tok::MinusEq) ||
@@ -518,7 +570,17 @@ private:
     }
     ExprPtr ParseUnary() {
         if (Check(Tok::Minus) || Check(Tok::Not)) { Tok op = Peek().type; ++m_pos; return std::make_unique<UnaryExpr>(op, ParseUnary()); }
-        return ParsePrimary();
+        return ParsePostfix();
+    }
+    // Postfix indexing: base[i][j]...
+    ExprPtr ParsePostfix() {
+        ExprPtr e = ParsePrimary();
+        while (Match(Tok::LBracket)) {
+            ExprPtr idx = ParseExpression();
+            Expect(Tok::RBracket, "']'");
+            e = std::make_unique<IndexExpr>(std::move(e), std::move(idx));
+        }
+        return e;
     }
     ExprPtr ParsePrimary() {
         if (Match(Tok::Number)) return std::make_unique<NumberExpr>(Prev().number);
@@ -526,6 +588,14 @@ private:
         if (Match(Tok::True))   return std::make_unique<BoolExpr>(true);
         if (Match(Tok::False))  return std::make_unique<BoolExpr>(false);
         if (Match(Tok::LParen)) { auto e = ParseExpression(); Expect(Tok::RParen, "')'"); return e; }
+        if (Match(Tok::LBracket)) { // array literal [a, b, c]
+            auto arr = std::make_unique<ArrayExpr>();
+            if (!Check(Tok::RBracket)) {
+                do { arr->elems.push_back(ParseExpression()); } while (Match(Tok::Comma));
+            }
+            Expect(Tok::RBracket, "']'");
+            return arr;
+        }
         if (Check(Tok::Ident)) {
             std::string name = m_toks[m_pos++].text;
             if (Match(Tok::LParen)) {
@@ -762,6 +832,26 @@ struct OkayScriptVM::Impl {
             return Value{Mathf::Lerp(x, y, t)};
         };
         b["len"]   = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
+        // Arrays/lists.
+        b["array"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeArray();
+            auto arr = v.AsArray();
+            for (auto& e : a) arr->push_back(e); // array(1,2,3) -> [1,2,3]
+            return v;
+        };
+        b["count"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray()) return Value{(float)arr->size()};
+            return Value{0.0f};
+        };
+        b["push"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) arr->push_back(a[1]);
+            return a.empty() ? Value{} : a[0];
+        };
+        b["pop"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray())
+                if (!arr->empty()) { Value last = arr->back(); arr->pop_back(); return last; }
+            return Value{};
+        };
         b["pi"]    = [](std::vector<Value>&) { return Value{Mathf::PI}; };
         b["deg2rad"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Deg2Rad}; };
         b["rad2deg"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Rad2Deg}; };

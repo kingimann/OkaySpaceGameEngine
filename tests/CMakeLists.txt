@@ -114,6 +114,10 @@ add_executable(test_master_volume test_master_volume.cpp)
 target_link_libraries(test_master_volume PRIVATE okay::engine)
 add_test(NAME master_volume COMMAND test_master_volume)
 
+add_executable(test_script_arrays test_script_arrays.cpp)
+target_link_libraries(test_script_arrays PRIVATE okay::engine)
+add_test(NAME script_arrays COMMAND test_script_arrays)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

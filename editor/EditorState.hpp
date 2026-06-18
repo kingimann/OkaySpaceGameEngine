@@ -39,6 +39,7 @@ public:
     void NewPlatformer();
     void NewTopDown();
     void NewCoinCollector();
+    void NewMainMenu();
 
     // ---- Files ---------------------------------------------------------
     bool Save(const std::string& path);

@@ -70,7 +70,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* sr = go->GetComponent<SpriteRenderer>()) {
         out << "  sprite " << static_cast<int>(sr->glyph) << " "
             << sr->color.r << " " << sr->color.g << " " << sr->color.b << " "
-            << sr->color.a << " " << sr->size.x << " " << sr->size.y << "\n";
+            << sr->color.a << " " << sr->size.x << " " << sr->size.y << " "
+            << Quote(sr->texture) << "\n";
     }
     if (auto* cam = go->GetComponent<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
@@ -196,6 +197,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sr->glyph = static_cast<char>(glyph);
                     sr->color = c;
                     sr->size = size;
+                    in >> std::ws; // optional texture path (quoted)
+                    if (in.peek() == '"') sr->texture = ReadQuoted(in);
                 } else if (field == "camera") {
                     Color c; int proj = 0; float ortho = 5.0f, fov = 60.0f; int main = 1;
                     in >> proj >> ortho >> fov >> c.r >> c.g >> c.b >> c.a >> main;

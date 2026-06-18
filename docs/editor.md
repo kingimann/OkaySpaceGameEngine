@@ -69,6 +69,10 @@ uses, built right into the engine app.
   add components or delete the object.
 - **Scene viewport** — sprites are drawn as colored quads. Left-click to select,
   left-drag to move, right-drag to pan, mouse-wheel to zoom.
+- **Sprite textures** — set a Sprite Renderer's *Texture* to a PNG/JPG/BMP path
+  (loaded via `okay::Image`/stb_image). The built game draws the image, tinted by
+  the sprite color; the editor viewport still shows the colored quad. Keep the
+  image next to the built `.exe` (relative paths resolve there).
 - **GameObject menu** — create Empty / Sprite / Camera objects.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
   (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a

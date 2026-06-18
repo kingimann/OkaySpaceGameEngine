@@ -33,6 +33,9 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 
+// Graphics assets
+#include "okay/Graphics/Image.hpp"
+
 // Built-in components
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"

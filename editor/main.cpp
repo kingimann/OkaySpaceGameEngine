@@ -1025,6 +1025,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Size", size, 0.05f, 0.0f, 1000.0f)) {
                 sr->size = {size[0], size[1]}; ed.dirty = true;
             }
+            char tex[256];
+            std::strncpy(tex, sr->texture.c_str(), sizeof(tex) - 1);
+            tex[sizeof(tex) - 1] = '\0';
+            if (ImGui::InputText("Texture##sprite", tex, sizeof(tex))) { sr->texture = tex; ed.dirty = true; }
+            ImGui::TextDisabled("image file (PNG/JPG); shows in the built game");
             if (ImGui::SmallButton("Remove##sprite")) toRemove = sr;
         }
     }

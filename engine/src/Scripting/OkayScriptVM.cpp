@@ -857,6 +857,25 @@ struct OkayScriptVM::Impl {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) return Value{g->active};
             return Value{false};
         };
+        // Parent this object under a named one (pick up items, mount turrets on a
+        // moving platform); detach() returns it to the scene root. World position
+        // is preserved across the change.
+        b["set_parent"] = [this, sceneOf](std::vector<Value>& a) {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{};
+            if (Scene* s = sceneOf())
+                if (GameObject* p = s->Find(a[0].AsString()))
+                    rt.host->gameObject->transform->SetParent(p->transform, true);
+            return Value{};
+        };
+        b["detach"] = [this](std::vector<Value>&) {
+            if (rt.host && rt.host->gameObject)
+                rt.host->gameObject->transform->SetParent(nullptr, true);
+            return Value{};
+        };
+        b["has_parent"] = [this](std::vector<Value>&) -> Value {
+            return Value{rt.host && rt.host->gameObject &&
+                         rt.host->gameObject->transform->Parent() != nullptr};
+        };
         // Read another object's world position by name (enemy AI chasing the
         // player, doors tracking a key, cameras following a target…).
         b["obj_x"] = [sceneOf](std::vector<Value>& a) -> Value {

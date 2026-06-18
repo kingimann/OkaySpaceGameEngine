@@ -83,6 +83,7 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `destroy()` | destroy this script's own GameObject |
 | `activate(name)` / `deactivate(name)` | show/hide another object by name |
 | `exists(name)` / `is_active(name)` | query another object by name |
+| `set_parent(name)` / `detach()` / `has_parent()` | parent this object under another / unparent / query (pickups, mounts) |
 | `obj_x(name)` / `obj_y(name)` / `obj_z(name)` | read another object's world position |
 | `dist_to(name)` | 2D distance from this object to a named object (enemy AI, doors) |
 | `dist3_to(name)` | full 3D distance to a named object |

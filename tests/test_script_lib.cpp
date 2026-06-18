@@ -113,6 +113,29 @@ int main() {
         CHECK(go->transform->localPosition.y >= 4.0f);              // more ticks
     }
 
+    // --- set_parent / detach / has_parent reparent the object ---
+    {
+        Scene scene("Parent");
+        GameObject* platform = scene.CreateGameObject("Platform");
+        platform->transform->localPosition = {5, 0, 0};
+
+        GameObject* go = scene.CreateGameObject("Crate");
+        go->transform->localPosition = {5, 2, 0};   // world (5,2)
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function mount() { set_parent(\"Platform\"); set_x(has_parent()); }\n"
+            "function drop()  { detach();              set_y(has_parent()); }\n"));
+        scene.Start();
+
+        sc->VM()->CallEvent("mount");
+        CHECK(go->transform->Parent() == platform->transform);
+        CHECK_NEAR(go->transform->localPosition.x, 1.0f, 0.001f);   // has_parent() -> true(1)
+
+        sc->VM()->CallEvent("drop");
+        CHECK(go->transform->Parent() == nullptr);
+        CHECK_NEAR(go->transform->localPosition.y, 0.0f, 0.001f);   // has_parent() -> false(0)
+    }
+
     // --- cancel_timers() halts a repeating callback ---
     {
         Scene scene("Cancel");

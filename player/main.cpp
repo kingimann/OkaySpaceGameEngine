@@ -10,6 +10,10 @@
 
 #include <Okay.hpp>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include <algorithm>
 #include <string>
 #include <unordered_map>
@@ -150,7 +154,7 @@ int main(int argc, char** argv) {
 
     bool running = true;
     Uint64 last = SDL_GetPerformanceCounter();
-    while (running) {
+    auto frame = [&]() {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
@@ -362,7 +366,17 @@ int main(int argc, char** argv) {
             DrawText(renderer, btn->label, tx, ty, px, tc);
         }
         SDL_RenderPresent(renderer);
-    }
+    };
+
+    // Drive the frame loop: the browser owns the loop on web (a blocking while
+    // would freeze the tab), so register the frame with Emscripten there.
+#ifdef __EMSCRIPTEN__
+    (void)running;
+    static auto* s_frame = &frame;
+    emscripten_set_main_loop([]() { (*s_frame)(); }, 0, 1);
+#else
+    while (running) frame();
+#endif
 
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 

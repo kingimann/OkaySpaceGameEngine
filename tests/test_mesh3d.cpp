@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <cstdio>
+#include <fstream>
 
 using namespace okay;
 
@@ -42,6 +44,74 @@ int main() {
         std::string err;
         CHECK(SceneSerializer::Deserialize(loaded, text, &err));
         CHECK(loaded.Find("Ball")->GetComponent<MeshRenderer>()->mesh.name == "Sphere");
+    }
+
+    // --- OBJ save/load round-trips a cube (8 verts, 12 triangles) ---
+    {
+        Mesh cube = Mesh::Cube();
+        const std::string path = "okay_test_cube.obj";
+        CHECK(cube.SaveOBJ(path));
+        bool ok = false;
+        Mesh loaded = Mesh::LoadOBJ(path, &ok);
+        CHECK(ok);
+        CHECK(loaded.vertices.size() == cube.vertices.size());      // 8
+        CHECK(loaded.TriangleCount() == cube.TriangleCount());      // 12
+        for (std::size_t i = 0; i < cube.vertices.size(); ++i) {
+            CHECK_NEAR(loaded.vertices[i].x, cube.vertices[i].x, 0.001f);
+            CHECK_NEAR(loaded.vertices[i].y, cube.vertices[i].y, 0.001f);
+            CHECK_NEAR(loaded.vertices[i].z, cube.vertices[i].z, 0.001f);
+        }
+        std::remove(path.c_str());
+        // Missing file reports failure and yields an empty mesh.
+        bool ok2 = true;
+        Mesh missing = Mesh::LoadOBJ("does_not_exist.obj", &ok2);
+        CHECK(!ok2);
+        CHECK(missing.vertices.empty());
+    }
+
+    // --- LoadOBJ handles f indices with v/vt/vn slashes and negatives ---
+    {
+        const std::string path = "okay_test_face.obj";
+        {
+            std::ofstream f(path);
+            f << "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n";
+            f << "f 1/1/1 2/2/1 3/3/1 4/4/1\n";   // quad -> fan -> 2 triangles
+        }
+        bool ok = false;
+        Mesh m = Mesh::LoadOBJ(path, &ok);
+        CHECK(ok);
+        CHECK(m.vertices.size() == 4);
+        CHECK(m.TriangleCount() == 2);
+        std::remove(path.c_str());
+    }
+
+    // --- Transformed / Combine build compound models ---
+    {
+        Mesh a = Mesh::Cube();
+        Mesh b = a.Transformed({2.0f, 2.0f, 2.0f}, {10.0f, 0.0f, 0.0f});
+        CHECK(b.name.empty());                       // no longer a primitive
+        CHECK(b.vertices.size() == a.vertices.size());
+        // Original first vert (-0.5) scaled by 2 then +10 -> 9.
+        CHECK_NEAR(b.vertices[0].x, a.vertices[0].x * 2.0f + 10.0f, 0.001f);
+
+        Mesh combo = Mesh::Combined(a, b);
+        CHECK(combo.vertices.size() == a.vertices.size() + b.vertices.size());
+        CHECK(combo.TriangleCount() == a.TriangleCount() + b.TriangleCount());
+        // Re-indexed: the appended triangles point past the first mesh's verts.
+        CHECK(combo.triangles[a.triangles.size()] >= (int)a.vertices.size());
+    }
+
+    // --- MeshRenderer.meshPath survives serialization ---
+    {
+        Scene scene("Model");
+        GameObject* go = scene.CreateGameObject("Imported");
+        go->AddComponent<MeshRenderer>()->meshPath = "models/ship.obj";
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        CHECK(loaded.Find("Imported")->GetComponent<MeshRenderer>()->meshPath
+              == "models/ship.obj");
     }
 
     // --- Scripts can move and rotate in 3D ---

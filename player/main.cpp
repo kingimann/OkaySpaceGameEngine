@@ -150,6 +150,16 @@ int main(int argc, char** argv) {
             au->clip = wav.Resampled(44100);
     }
 
+    // Load any .OBJ models referenced by MeshRenderers (resolve next to the exe).
+    for (const auto& up : scene.Objects()) {
+        auto* mr = up->GetComponent<MeshRenderer>();
+        if (!mr || mr->meshPath.empty()) continue;
+        bool ok = false;
+        Mesh m = Mesh::LoadOBJ(mr->meshPath, &ok);
+        if (!ok || m.vertices.empty()) m = Mesh::LoadOBJ(baseDir + mr->meshPath, &ok);
+        if (ok && !m.vertices.empty()) mr->mesh = m;
+    }
+
     scene.Start();
 
     // Open the first connected game controller, if any.

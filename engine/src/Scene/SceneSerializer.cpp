@@ -96,7 +96,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* mr = go->GetComponent<MeshRenderer>()) {
         out << "  mesh " << Quote(mr->mesh.name.empty() ? "Cube" : mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
-            << mr->color.a << " " << (mr->wireframe ? 1 : 0) << "\n";
+            << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
+            << Quote(mr->meshPath) << "\n";
     }
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -298,6 +299,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     mr->mesh = Mesh::FromName(kind);
                     mr->color = c;
                     mr->wireframe = (wire != 0);
+                    in >> std::ws; // optional .OBJ model path (quoted)
+                    if (in.peek() == '"') {
+                        mr->meshPath = ReadQuoted(in);
+                        if (!mr->meshPath.empty()) {
+                            bool ok = false;
+                            Mesh loaded = Mesh::LoadOBJ(mr->meshPath, &ok);
+                            if (ok && !loaded.vertices.empty()) mr->mesh = loaded;
+                        }
+                    }
                 } else if (field == "rigidbody2d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;
                     in >> bt >> gs >> mass >> drag >> bounce;
@@ -498,6 +508,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     for (const auto& go : scene.Objects()) {
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
+        if (auto* mr = go->GetComponent<MeshRenderer>())   add(mr->meshPath);
         if (auto* an = go->GetComponent<SpriteAnimator>())
             for (const auto& f : an->frames) add(f);
     }

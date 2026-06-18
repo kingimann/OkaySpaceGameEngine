@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
+#include <string>
 
 namespace okay {
 
@@ -12,6 +13,9 @@ public:
     Mesh  mesh;
     Color color = Color::White;
     bool  wireframe = true;
+    /// Optional .OBJ model file. When set, the scene loader replaces `mesh` with
+    /// the loaded geometry (and Build Game bundles the file alongside the exe).
+    std::string meshPath;
 
     MeshRenderer() : mesh(Mesh::Cube()) {}
     explicit MeshRenderer(Mesh m) : mesh(std::move(m)) {}

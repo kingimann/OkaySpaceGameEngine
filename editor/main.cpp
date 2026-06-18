@@ -124,24 +124,11 @@ ImU32 ToColor(const Color& c) {
     return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(c.a * 255));
 }
 
-// ---- Self-updater: pull the latest engine from GitHub -----------------
+// ---- Executable path helper (used by Build Game to find the player) -------
 namespace updater {
 namespace fs = std::filesystem;
 
-const char* kRawBase =
-    "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/main/dist/";
-
-bool pendingQuit = false; // set after a successful auto-update relaunch
-
-// Launch a (new) executable detached from this process.
-void Relaunch(const std::string& path) {
-#if defined(_WIN32)
-    int rc = std::system(("start \"\" \"" + path + "\"").c_str());
-#else
-    int rc = std::system(("\"" + path + "\" >/dev/null 2>&1 &").c_str());
-#endif
-    (void)rc;
-}
+bool pendingQuit = false; // reserved (self-update was removed)
 
 // Absolute path of the running executable.
 std::string SelfPath() {
@@ -157,78 +144,6 @@ std::string SelfPath() {
 #endif
 }
 
-// Download a URL to a file using whatever HTTP client is on the system.
-bool Download(const std::string& url, const std::string& outPath) {
-#if defined(_WIN32)
-    std::string c1 = "curl -L -s -o \"" + outPath + "\" \"" + url + "\"";
-    if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
-    std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
-                     "-UseBasicParsing -Uri '" + url + "' -OutFile '" + outPath +
-                     "' } catch { exit 1 }\"";
-    return std::system(c2.c_str()) == 0 && fs::exists(outPath);
-#else
-    std::string c1 = "curl -L -s -o \"" + outPath + "\" \"" + url + "\"";
-    if (std::system((c1 + " 2>/dev/null").c_str()) == 0 && fs::exists(outPath)) return true;
-    std::string c2 = "wget -q -O \"" + outPath + "\" \"" + url + "\"";
-    return std::system((c2 + " 2>/dev/null").c_str()) == 0 && fs::exists(outPath);
-#endif
-}
-
-// Check GitHub for a newer engine build and, if found, download and swap it in.
-// No git required — works for a standalone .exe.
-std::string CheckAndUpdate() {
-    std::error_code ec;
-    fs::path tmpDir = fs::temp_directory_path(ec);
-
-    // 1) Compare the embedded version against the published VERSION.txt.
-    fs::path verFile = tmpDir / "okayspace_version.txt";
-    std::string latest;
-    if (Download(std::string(kRawBase) + "VERSION.txt", verFile.string())) {
-        std::ifstream vf(verFile);
-        std::getline(vf, latest);
-        while (!latest.empty() && (latest.back() == '\r' || latest.back() == ' '))
-            latest.pop_back();
-        fs::remove(verFile, ec);
-    } else {
-        return "Couldn't reach GitHub (no internet, or curl/PowerShell missing).";
-    }
-
-    std::string current = OKAY_ENGINE_VERSION;
-    if (!latest.empty() && latest == current)
-        return "You're up to date (v" + current + ").";
-
-    // 2) Download the new executable next to the current one.
-    fs::path self = SelfPath();
-    if (self.empty()) return "Update available (v" + latest +
-                             "), but couldn't locate the running .exe.";
-#if defined(_WIN32)
-    std::string assetName = "OkaySpaceEngine.exe";
-#else
-    std::string assetName = "OkaySpaceEngine.exe"; // only a Windows binary is published
-#endif
-    fs::path newFile = self;
-    newFile += ".new";
-    if (!Download(std::string(kRawBase) + assetName, newFile.string()))
-        return "Update v" + latest + " found, but the download failed.";
-    if (fs::file_size(newFile, ec) < 100000) {
-        fs::remove(newFile, ec);
-        return "Downloaded file looked invalid; update aborted.";
-    }
-
-    // 3) Swap: move the running exe aside, move the new one into place.
-    fs::path backup = self;
-    backup += ".old";
-    fs::remove(backup, ec);
-    fs::rename(self, backup, ec);
-    if (ec) { fs::remove(newFile, ec); return "Couldn't replace the app: " + ec.message(); }
-    fs::rename(newFile, self, ec);
-    if (ec) { fs::rename(backup, self, ec); return "Couldn't install the update: " + ec.message(); }
-
-    // Auto-update: launch the new build and ask the app to close.
-    Relaunch(self.string());
-    pendingQuit = true;
-    return "Updated to v" + latest + "! Reopening...";
-}
 } // namespace updater
 
 std::string g_updateStatus;
@@ -562,11 +477,6 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
     }
     if (ImGui::BeginMenu("Engine")) {
         if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
-        if (ImGui::MenuItem("Check for Updates")) {
-            g_updateStatus = updater::CheckAndUpdate();
-            g_openUpdatePopup = true;
-            ConsoleLog("Update check: " + g_updateStatus);
-        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
@@ -2197,19 +2107,23 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (hit) ed.Select(hit);
     }
 
-    // Drag the selected object with the active tool (Move in the X/Z ground
-    // plane, Rotate about Y, uniform Scale).
+    // Drag the selected object with the active tool. Move follows the camera's
+    // screen plane (drag-right moves right on screen, drag-up moves up), so it
+    // feels natural from any orbit angle. Rotate spins about Y; Scale is uniform.
     if (!ed.isPlaying() && ed.selected() && hovered &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         Transform* t = ed.selected()->transform;
         float s = ed.camDist / canvasSize.y;        // screen px -> world units
         if (g_tool == Tool::Move) {
-            t->localPosition.x += io.MouseDelta.x * s;
-            t->localPosition.z += io.MouseDelta.y * s;
+            Vec3 fwd = (ed.camTarget - eye).Normalized();          // camera forward
+            Vec3 right = Vec3::Cross(fwd, Vec3::Up).Normalized();  // screen right
+            Vec3 up = Vec3::Cross(right, fwd).Normalized();        // screen up
+            t->localPosition += right * (io.MouseDelta.x * s) + up * (-io.MouseDelta.y * s);
         } else if (g_tool == Tool::Rotate) {
             t->Rotate({0, io.MouseDelta.x * 0.5f, 0});
         } else {
-            t->localScale = t->localScale * (1.0f + io.MouseDelta.x * 0.01f);
+            float k = 1.0f + io.MouseDelta.x * 0.01f;
+            t->localScale = t->localScale * k;
         }
         ed.dirty = true;
     }

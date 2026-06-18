@@ -412,7 +412,27 @@ int main(int argc, char** argv) {
                 SDL_SetTextureColorMod(tex, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
                                        (Uint8)(im->color.b * 255));
                 SDL_SetTextureAlphaMod(tex, (Uint8)(im->color.a * 255));
-                SDL_RenderCopy(renderer, tex, nullptr, &r);
+                if (im->nineSlice && im->border > 0.0f) {
+                    int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+                    int sb = (int)im->border;                       // source border
+                    int dbx = (int)im->border, dby = (int)im->border;  // dest border (clamped)
+                    if (dbx * 2 > r.w) dbx = r.w / 2;
+                    if (dby * 2 > r.h) dby = r.h / 2;
+                    // Column x's (src and dst) and row y's: left | middle | right.
+                    int sx[4] = {0, sb, tw - sb, tw};
+                    int sy[4] = {0, sb, th - sb, th};
+                    int dx[4] = {r.x, r.x + dbx, r.x + r.w - dbx, r.x + r.w};
+                    int dy[4] = {r.y, r.y + dby, r.y + r.h - dby, r.y + r.h};
+                    for (int cy = 0; cy < 3; ++cy)
+                        for (int cx = 0; cx < 3; ++cx) {
+                            SDL_Rect s{sx[cx], sy[cy], sx[cx + 1] - sx[cx], sy[cy + 1] - sy[cy]};
+                            SDL_Rect d{dx[cx], dy[cy], dx[cx + 1] - dx[cx], dy[cy + 1] - dy[cy]};
+                            if (s.w > 0 && s.h > 0 && d.w > 0 && d.h > 0)
+                                SDL_RenderCopy(renderer, tex, &s, &d);
+                        }
+                } else {
+                    SDL_RenderCopy(renderer, tex, nullptr, &r);
+                }
             } else {                                        // no image -> colored fill
                 SDL_SetRenderDrawColor(renderer, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
                                        (Uint8)(im->color.b * 255), (Uint8)(im->color.a * 255));

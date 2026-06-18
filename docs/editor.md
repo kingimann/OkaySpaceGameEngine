@@ -96,7 +96,8 @@ uses, built right into the engine app.
   resolution. Hit-testing and the built game honor the anchor.
 - **UI widgets** — build menus and HUDs from screen-space components: *UI Panel*
   (background/overlay), *UI Image* (logos/icons/title art from a PNG/JPG, tinted;
-  a colored rect when no texture), *UI Button* (calls the script's `on_click()`; has hover / pressed / disabled
+  a colored rect when no texture; optional *Nine-slice* keeps a bordered frame
+  undistorted while the edges/center stretch — resizable panels from one image), *UI Button* (calls the script's `on_click()`; has hover / pressed / disabled
   state colors and an *Interactable* toggle that greys it out — script:
   `set_interactable(bool)`), *UI
   Progress Bar* (`set_progress(0..1)`), *UI Slider* (drag to pick a value in a

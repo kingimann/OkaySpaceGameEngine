@@ -204,7 +204,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
             << im->size.x << " " << im->size.y << " "
             << im->color.r << " " << im->color.g << " " << im->color.b << " " << im->color.a << " "
-            << Quote(im->texture) << " " << (int)im->anchor << "\n";
+            << Quote(im->texture) << " " << (int)im->anchor << " "
+            << (im->nineSlice ? 1 : 0) << " " << im->border << "\n";
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
         out << "  uislider " << sl->position.x << " " << sl->position.y << " "
@@ -483,6 +484,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     im->color = c;
                     im->texture = ReadQuoted(in);
                     ReadAnchor(in, im->anchor);
+                    // Optional nine-slice block (added later; absent in older files).
+                    in >> std::ws;
+                    int nk = in.peek();
+                    if (nk >= '0' && nk <= '9') {
+                        int ns = 0; in >> ns >> im->border; im->nineSlice = (ns != 0);
+                    }
                 } else if (field == "uislider") {
                     auto* sl = go->AddComponent<UISlider>();
                     Color bg, fl, kn;

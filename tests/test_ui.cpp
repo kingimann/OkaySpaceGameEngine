@@ -255,6 +255,37 @@ int main() {
         CHECK(found);
     }
 
+    // --- UIImage nine-slice flag + border survive serialization ---
+    {
+        Scene scene("NineSlice");
+        GameObject* go = scene.CreateGameObject("Frame");
+        auto* im = go->AddComponent<UIImage>();
+        im->texture = "ui/panel.png";
+        im->nineSlice = true;
+        im->border = 24.0f;
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("Frame")->GetComponent<UIImage>();
+        CHECK(r != nullptr);
+        CHECK(r->nineSlice == true);
+        CHECK_NEAR(r->border, 24.0f, 0.001f);
+
+        // Back-compat: an older uiimage line (texture + anchor, no nine-slice block).
+        std::string old =
+            "okayscene 1\nname \"S\"\ngravity 0 0\n"
+            "gameobject 0 \"I\"\n  active 1\n  parent -1\n"
+            "  uiimage 0 0 64 64 1 1 1 1 \"x.png\" 4\n"   // ...anchor(4), no nine-slice
+            "end\n";
+        Scene l2("L2");
+        CHECK(SceneSerializer::Deserialize(l2, old, &err));
+        auto* r2 = l2.Find("I")->GetComponent<UIImage>();
+        CHECK(r2 != nullptr);
+        CHECK(r2->anchor == UIAnchor::Center);
+        CHECK(r2->nineSlice == false);     // defaulted
+    }
+
     // --- ResolveAnchor maps offsets to screen corners/center ---
     {
         // 800x600 canvas, a 100x40 element.

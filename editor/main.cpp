@@ -1118,6 +1118,30 @@ void DrawInspector(EditorState& ed) {
         }
     }
 
+    if (auto* mv = go->GetComponent<Mover>()) {
+        if (ImGui::CollapsingHeader("Mover", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float v[3] = {mv->velocity.x, mv->velocity.y, mv->velocity.z};
+            if (ImGui::DragFloat3("Velocity##mv", v, 0.05f)) { mv->velocity = {v[0], v[1], v[2]}; ed.dirty = true; }
+            ImGui::TextDisabled("units / second");
+            if (ImGui::SmallButton("Remove##mv")) toRemove = mv;
+        }
+    }
+    if (auto* sp = go->GetComponent<Spinner>()) {
+        if (ImGui::CollapsingHeader("Spinner", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float v[3] = {sp->angularVelocity.x, sp->angularVelocity.y, sp->angularVelocity.z};
+            if (ImGui::DragFloat3("Angular Vel##sp", v, 0.5f)) { sp->angularVelocity = {v[0], v[1], v[2]}; ed.dirty = true; }
+            ImGui::TextDisabled("degrees / second (X, Y, Z)");
+            if (ImGui::SmallButton("Remove##sp")) toRemove = sp;
+        }
+    }
+    if (auto* lt = go->GetComponent<Lifetime>()) {
+        if (ImGui::CollapsingHeader("Lifetime", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::DragFloat("Seconds##lt", &lt->seconds, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
+            ImGui::TextDisabled("destroys this object after N seconds of play");
+            if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
+        }
+    }
+
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
 
@@ -1143,6 +1167,13 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<VisualScriptComponent>(); ed.dirty = true; }
         if (!go->GetComponent<AudioSource>() && ImGui::Selectable("Audio Source"))
             { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+        ImGui::Separator();
+        if (!go->GetComponent<Mover>() && ImGui::Selectable("Mover"))
+            { go->AddComponent<Mover>(); ed.dirty = true; }
+        if (!go->GetComponent<Spinner>() && ImGui::Selectable("Spinner"))
+            { go->AddComponent<Spinner>(); ed.dirty = true; }
+        if (!go->GetComponent<Lifetime>() && ImGui::Selectable("Lifetime"))
+            { go->AddComponent<Lifetime>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));

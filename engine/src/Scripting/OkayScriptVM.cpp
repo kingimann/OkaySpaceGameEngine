@@ -4,8 +4,10 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/UIProgressBar.hpp"
@@ -904,6 +906,46 @@ struct OkayScriptVM::Impl {
         b["set_toggle"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* tg = g->GetComponent<UIToggle>()) tg->on = !a.empty() && a[0].AsBool();
+            return Value{};
+        };
+        // Sibling Rigidbody2D control (jump, dash, knockback, top-down movement).
+        b["velocity_x"] = [go](std::vector<Value>&) -> Value {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>()) return Value{rb->velocity.x};
+            return Value{0.0f};
+        };
+        b["velocity_y"] = [go](std::vector<Value>&) -> Value {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>()) return Value{rb->velocity.y};
+            return Value{0.0f};
+        };
+        b["set_velocity"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
+                rb->velocity = {a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f};
+            return Value{};
+        };
+        b["set_vx"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
+                rb->velocity.x = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["set_vy"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
+                rb->velocity.y = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["add_force"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
+                rb->AddForce({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f});
+            return Value{};
+        };
+        b["add_impulse"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
+                rb->AddImpulse({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f});
+            return Value{};
+        };
+        // Set a sibling UIImage's texture from script (swap icons, states).
+        b["set_image"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* im = g->GetComponent<UIImage>())
+                im->texture = a.empty() ? std::string{} : a[0].AsString();
             return Value{};
         };
         // Tilemap editing on a sibling Tilemap (procedural levels).

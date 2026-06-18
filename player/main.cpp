@@ -232,6 +232,11 @@ int main(int argc, char** argv) {
         last = now;
         if (dt > 0.1f) dt = 0.1f;
 
+        // Publish the render-target size so anchored UI widgets and their
+        // hit-tests (run inside scene.Update) agree on where things sit.
+        { int cw, ch; SDL_GetRendererOutputSize(renderer, &cw, &ch);
+          UICanvas::Set((float)cw, (float)ch); }
+
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
         Time::Step(dt);
@@ -393,7 +398,8 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {           // images (logos/icons) first
             auto* im = up->GetComponent<UIImage>();
             if (!im || !up->active) continue;
-            SDL_Rect r{(int)im->position.x, (int)im->position.y, (int)im->size.x, (int)im->size.y};
+            Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, (float)w, (float)h);
+            SDL_Rect r{(int)o.x, (int)o.y, (int)im->size.x, (int)im->size.y};
             SDL_Texture* tex = GetTexture(renderer, im->texture, baseDir, textureCache);
             if (tex) {
                 SDL_SetTextureColorMod(tex, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
@@ -409,7 +415,8 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {           // panels (backgrounds) first
             auto* pn = up->GetComponent<UIPanel>();
             if (!pn || !up->active) continue;
-            SDL_Rect r{(int)pn->position.x, (int)pn->position.y, (int)pn->size.x, (int)pn->size.y};
+            Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, (float)w, (float)h);
+            SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(pn->color.r * 255), (Uint8)(pn->color.g * 255),
                                    (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255));
             SDL_RenderFillRect(renderer, &r);
@@ -417,11 +424,12 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {           // progress bars
             auto* pb = up->GetComponent<UIProgressBar>();
             if (!pb || !up->active) continue;
-            SDL_Rect bg{(int)pb->position.x, (int)pb->position.y, (int)pb->size.x, (int)pb->size.y};
+            Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, (float)w, (float)h);
+            SDL_Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(pb->background.r * 255), (Uint8)(pb->background.g * 255),
                                    (Uint8)(pb->background.b * 255), (Uint8)(pb->background.a * 255));
             SDL_RenderFillRect(renderer, &bg);
-            SDL_Rect fl{(int)pb->position.x, (int)pb->position.y,
+            SDL_Rect fl{(int)o.x, (int)o.y,
                         (int)(pb->size.x * pb->Fraction()), (int)pb->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(pb->fill.r * 255), (Uint8)(pb->fill.g * 255),
                                    (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255));
@@ -430,18 +438,19 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {           // sliders
             auto* sl = up->GetComponent<UISlider>();
             if (!sl || !up->active) continue;
-            SDL_Rect bg{(int)sl->position.x, (int)sl->position.y, (int)sl->size.x, (int)sl->size.y};
+            Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, (float)w, (float)h);
+            SDL_Rect bg{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->background.r * 255), (Uint8)(sl->background.g * 255),
                                    (Uint8)(sl->background.b * 255), (Uint8)(sl->background.a * 255));
             SDL_RenderFillRect(renderer, &bg);
-            SDL_Rect fl{(int)sl->position.x, (int)sl->position.y,
+            SDL_Rect fl{(int)o.x, (int)o.y,
                         (int)(sl->size.x * sl->Fraction()), (int)sl->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->fill.r * 255), (Uint8)(sl->fill.g * 255),
                                    (Uint8)(sl->fill.b * 255), (Uint8)(sl->fill.a * 255));
             SDL_RenderFillRect(renderer, &fl);
             int kw = (int)(sl->size.y * 0.6f);
-            SDL_Rect kn{(int)(sl->position.x + sl->size.x * sl->Fraction()) - kw / 2,
-                        (int)sl->position.y - 2, kw, (int)sl->size.y + 4};
+            SDL_Rect kn{(int)(o.x + sl->size.x * sl->Fraction()) - kw / 2,
+                        (int)o.y - 2, kw, (int)sl->size.y + 4};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->knob.r * 255), (Uint8)(sl->knob.g * 255),
                                    (Uint8)(sl->knob.b * 255), (Uint8)(sl->knob.a * 255));
             SDL_RenderFillRect(renderer, &kn);
@@ -449,7 +458,8 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {           // toggles (checkboxes)
             auto* tg = up->GetComponent<UIToggle>();
             if (!tg || !up->active) continue;
-            SDL_Rect box{(int)tg->position.x, (int)tg->position.y, (int)tg->size.x, (int)tg->size.y};
+            Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, (float)w, (float)h);
+            SDL_Rect box{(int)o.x, (int)o.y, (int)tg->size.x, (int)tg->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(tg->boxColor.r * 255), (Uint8)(tg->boxColor.g * 255),
                                    (Uint8)(tg->boxColor.b * 255), (Uint8)(tg->boxColor.a * 255));
             SDL_RenderFillRect(renderer, &box);
@@ -461,8 +471,8 @@ int main(int argc, char** argv) {
                 SDL_RenderFillRect(renderer, &chk);
             }
             float px = 2.0f;
-            float tx = tg->position.x + tg->size.x + 8.0f;
-            float ty = tg->position.y + (tg->size.y - Font8x8::Height * px) * 0.5f;
+            float tx = o.x + tg->size.x + 8.0f;
+            float ty = o.y + (tg->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(tg->textColor.r * 255), (Uint8)(tg->textColor.g * 255),
                          (Uint8)(tg->textColor.b * 255), (Uint8)(tg->textColor.a * 255)};
             DrawText(renderer, tg->label, tx, ty, px, tc);
@@ -471,16 +481,16 @@ int main(int argc, char** argv) {
             auto* btn = up->GetComponent<UIButton>();
             if (!btn || !up->active) continue;
             const Color& bg = btn->IsHovered() ? btn->hoverColor : btn->color;
-            SDL_Rect r{(int)btn->position.x, (int)btn->position.y,
-                       (int)btn->size.x, (int)btn->size.y};
+            Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, (float)w, (float)h);
+            SDL_Rect r{(int)o.x, (int)o.y, (int)btn->size.x, (int)btn->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
                                    (Uint8)(bg.b * 255), (Uint8)(bg.a * 255));
             SDL_RenderFillRect(renderer, &r);
             // Center the label (8px glyphs, ~1px gap) at pixel size 2.
             float px = 2.0f;
             float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-            float tx = btn->position.x + (btn->size.x - tw) * 0.5f;
-            float ty = btn->position.y + (btn->size.y - Font8x8::Height * px) * 0.5f;
+            float tx = o.x + (btn->size.x - tw) * 0.5f;
+            float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(btn->textColor.r * 255), (Uint8)(btn->textColor.g * 255),
                          (Uint8)(btn->textColor.b * 255), (Uint8)(btn->textColor.a * 255)};
             DrawText(renderer, btn->label, tx, ty, px, tc);

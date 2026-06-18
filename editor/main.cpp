@@ -1183,6 +1183,15 @@ void DrawHierarchy(EditorState& ed) {
     ImGui::End();
 }
 
+// A 9-way anchor dropdown shared by every UI widget inspector.
+static void AnchorCombo(const char* id, okay::UIAnchor& anchor, EditorState& ed) {
+    static const char* kAnchors[] = {
+        "Top-Left", "Top", "Top-Right", "Left", "Center", "Right",
+        "Bottom-Left", "Bottom", "Bottom-Right"};
+    int ai = (int)anchor;
+    if (ImGui::Combo(id, &ai, kAnchors, 9)) { anchor = (okay::UIAnchor)ai; ed.dirty = true; }
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector");
     GameObject* go = ed.selected();
@@ -1456,6 +1465,7 @@ void DrawInspector(EditorState& ed) {
             float hc[4] = {btn->hoverColor.r, btn->hoverColor.g, btn->hoverColor.b, btn->hoverColor.a};
             if (ImGui::ColorEdit4("Hover##uib", hc)) { btn->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("calls the script's on_click() in the built game");
+            AnchorCombo("Anchor##uib", btn->anchor, ed);
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
     }
@@ -1467,6 +1477,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Size (px)##uip", sz, 1.0f, 0.0f, 8000.0f)) { pn->size = {sz[0], sz[1]}; ed.dirty = true; }
             float c[4] = {pn->color.r, pn->color.g, pn->color.b, pn->color.a};
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            AnchorCombo("Anchor##uip", pn->anchor, ed);
             if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
         }
     }
@@ -1482,6 +1493,7 @@ void DrawInspector(EditorState& ed) {
             float bc[4] = {pb->background.r, pb->background.g, pb->background.b, pb->background.a};
             if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("script: set_progress(0..1)");
+            AnchorCombo("Anchor##upb", pb->anchor, ed);
             if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
         }
     }
@@ -1498,6 +1510,7 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
             if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             ImGui::TextDisabled("image path (PNG/JPG); empty = colored rect");
+            AnchorCombo("Anchor##uim", im->anchor, ed);
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -1515,6 +1528,7 @@ void DrawInspector(EditorState& ed) {
             float kc[4] = {sl->knob.r, sl->knob.g, sl->knob.b, sl->knob.a};
             if (ImGui::ColorEdit4("Knob##usl", kc)) { sl->knob = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
+            AnchorCombo("Anchor##usl", sl->anchor, ed);
             if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
         }
     }
@@ -1532,6 +1546,7 @@ void DrawInspector(EditorState& ed) {
             float cc[4] = {tg->checkColor.r, tg->checkColor.g, tg->checkColor.b, tg->checkColor.a};
             if (ImGui::ColorEdit4("Check##utg", cc)) { tg->checkColor = {cc[0], cc[1], cc[2], cc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("click in the built game; calls script on_toggle()");
+            AnchorCombo("Anchor##utg", tg->anchor, ed);
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }
     }
@@ -1758,11 +1773,16 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    // Publish the canvas size so anchored widgets resolve and (in Play) hit-test
+    // against the same dimensions the preview uses.
+    UICanvas::Set(canvasSize.x, canvasSize.y);
+
     // UI images (logos/icons): preview as a tinted rect with the path centered.
     for (const auto& up : objs) {
         auto* im = up->GetComponent<UIImage>();
         if (!im || !up->active) continue;
-        ImVec2 a(canvasPos.x + im->position.x, canvasPos.y + im->position.y);
+        Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + im->size.x, a.y + im->size.y);
         dl->AddRectFilled(a, b, ToColor(im->color), 3.0f);
         dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), 3.0f);
@@ -1774,13 +1794,15 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     for (const auto& up : objs) {
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active) continue;
-        ImVec2 a(canvasPos.x + pn->position.x, canvasPos.y + pn->position.y);
+        Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         dl->AddRectFilled(a, ImVec2(a.x + pn->size.x, a.y + pn->size.y), ToColor(pn->color), 4.0f);
     }
     for (const auto& up : objs) {
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active) continue;
-        ImVec2 a(canvasPos.x + pb->position.x, canvasPos.y + pb->position.y);
+        Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         dl->AddRectFilled(a, ImVec2(a.x + pb->size.x, a.y + pb->size.y), ToColor(pb->background), 3.0f);
         dl->AddRectFilled(a, ImVec2(a.x + pb->size.x * pb->Fraction(), a.y + pb->size.y),
                           ToColor(pb->fill), 3.0f);
@@ -1790,7 +1812,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     for (const auto& up : objs) {
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active) continue;
-        ImVec2 a(canvasPos.x + sl->position.x, canvasPos.y + sl->position.y);
+        Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         dl->AddRectFilled(a, ImVec2(a.x + sl->size.x, a.y + sl->size.y), ToColor(sl->background), 3.0f);
         dl->AddRectFilled(a, ImVec2(a.x + sl->size.x * sl->Fraction(), a.y + sl->size.y),
                           ToColor(sl->fill), 3.0f);
@@ -1802,7 +1825,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     for (const auto& up : objs) {
         auto* tg = up->GetComponent<UIToggle>();
         if (!tg || !up->active) continue;
-        ImVec2 a(canvasPos.x + tg->position.x, canvasPos.y + tg->position.y);
+        Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + tg->size.x, a.y + tg->size.y);
         dl->AddRectFilled(a, b, ToColor(tg->boxColor), 3.0f);
         if (tg->on) {
@@ -1819,7 +1843,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     for (const auto& up : objs) {
         auto* btn = up->GetComponent<UIButton>();
         if (!btn || !up->active) continue;
-        ImVec2 a(canvasPos.x + btn->position.x, canvasPos.y + btn->position.y);
+        Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + btn->size.x, a.y + btn->size.y);
         dl->AddRectFilled(a, b, ToColor(btn->color), 4.0f);
         float px = 2.0f;

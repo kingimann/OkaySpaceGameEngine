@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
@@ -22,12 +23,14 @@ public:
     Color boxColor   = Color::FromBytes(40, 40, 50);
     Color checkColor = Color::FromBytes(90, 200, 110);
     Color textColor  = Color::White;
+    UIAnchor anchor = UIAnchor::TopLeft;
 
     bool IsHovered() const { return m_hover; }
 
     bool Contains(const Vec2& p) const {
-        return p.x >= position.x && p.y >= position.y &&
-               p.x <= position.x + size.x && p.y <= position.y + size.y;
+        Vec2 o = ResolveAnchor(anchor, position, size);
+        return p.x >= o.x && p.y >= o.y &&
+               p.x <= o.x + size.x && p.y <= o.y + size.y;
     }
 
     void Update(float) override {

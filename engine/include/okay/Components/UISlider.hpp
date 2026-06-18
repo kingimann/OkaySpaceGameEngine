@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -23,6 +24,7 @@ public:
     Color background = Color::FromBytes(40, 40, 50);
     Color fill       = Color::FromBytes(90, 140, 220);
     Color knob       = Color::FromBytes(230, 230, 240);
+    UIAnchor anchor = UIAnchor::TopLeft;
 
     /// 0..1 position of the handle along the track (for rendering).
     float Fraction() const {
@@ -33,8 +35,9 @@ public:
     bool IsDragging() const { return m_dragging; }
 
     bool Contains(const Vec2& p) const {
-        return p.x >= position.x && p.y >= position.y &&
-               p.x <= position.x + size.x && p.y <= position.y + size.y;
+        Vec2 o = ResolveAnchor(anchor, position, size);
+        return p.x >= o.x && p.y >= o.y &&
+               p.x <= o.x + size.x && p.y <= o.y + size.y;
     }
 
     void Update(float) override {
@@ -42,7 +45,8 @@ public:
         if (Input::GetMouseButtonDown(0) && Contains(m)) m_dragging = true;
         if (!Input::GetMouseButton(0)) m_dragging = false;
         if (m_dragging && size.x > 0.0f) {
-            float frac = Mathf::Clamp01((m.x - position.x) / size.x);
+            Vec2 o = ResolveAnchor(anchor, position, size);
+            float frac = Mathf::Clamp01((m.x - o.x) / size.x);
             float nv = minValue + frac * (maxValue - minValue);
             if (nv != value) {
                 value = nv;

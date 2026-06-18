@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -15,6 +16,7 @@ public:
     float value = 1.0f;                              // clamped to [0, 1]
     Color background = Color::FromBytes(40, 40, 50);
     Color fill = Color::FromBytes(90, 200, 110);
+    UIAnchor anchor = UIAnchor::TopLeft;
 
     void SetValue(float v) { value = Mathf::Clamp01(v); }
     float Fraction() const { return Mathf::Clamp01(value); }

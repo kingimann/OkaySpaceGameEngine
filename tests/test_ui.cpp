@@ -77,5 +77,58 @@ int main() {
         CHECK_NEAR(r->color.b, 0.3f, 0.01f);
     }
 
+    // --- UIProgressBar clamps its value and serializes ---
+    {
+        Scene scene("PB");
+        GameObject* go = scene.CreateGameObject("Health");
+        auto* pb = go->AddComponent<UIProgressBar>();
+        pb->SetValue(1.5f);  // clamps to 1
+        CHECK_NEAR(pb->Fraction(), 1.0f, 0.001f);
+        pb->SetValue(-0.5f); // clamps to 0
+        CHECK_NEAR(pb->Fraction(), 0.0f, 0.001f);
+        pb->value = 0.4f;
+        pb->position = {10, 20};
+        pb->size = {300, 24};
+
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("Health")->GetComponent<UIProgressBar>();
+        CHECK(r != nullptr);
+        CHECK_NEAR(r->value, 0.4f, 0.001f);
+        CHECK_NEAR(r->size.x, 300.0f, 0.001f);
+    }
+
+    // --- A script sets the progress bar via set_progress() ---
+    {
+        Scene scene("PBScript");
+        GameObject* go = scene.CreateGameObject("Bar");
+        auto* pb = go->AddComponent<UIProgressBar>();
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function start() { set_progress(0.25); }"));
+        scene.Start();
+        CHECK_NEAR(pb->value, 0.25f, 0.001f);
+    }
+
+    // --- UIPanel serializes ---
+    {
+        Scene scene("Pan");
+        GameObject* go = scene.CreateGameObject("BG");
+        auto* pn = go->AddComponent<UIPanel>();
+        pn->position = {5, 6};
+        pn->size = {640, 480};
+        pn->color = Color(0.1f, 0.1f, 0.1f, 0.8f);
+
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("BG")->GetComponent<UIPanel>();
+        CHECK(r != nullptr);
+        CHECK_NEAR(r->size.x, 640.0f, 0.001f);
+        CHECK_NEAR(r->color.a, 0.8f, 0.01f);
+    }
+
     TEST_MAIN_RESULT();
 }

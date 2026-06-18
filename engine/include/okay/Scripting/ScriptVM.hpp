@@ -39,6 +39,11 @@ public:
     virtual void CallStart() = 0;
     virtual void CallUpdate(float deltaTime) = 0;
 
+    /// Invoke a named zero-argument event handler if the script defines it
+    /// (e.g. "on_trigger", "on_collision"). Default: no-op, so backends that
+    /// don't implement events still compile.
+    virtual void CallEvent(const std::string& /*function*/) {}
+
     /// Read back a global the script defined (for tests and gameplay glue).
     virtual vs::VsValue GetGlobal(const std::string& name) const = 0;
 };

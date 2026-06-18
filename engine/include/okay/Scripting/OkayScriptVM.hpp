@@ -22,6 +22,7 @@ public:
     void Bind(ScriptHost* host) override;
     void CallStart() override;
     void CallUpdate(float deltaTime) override;
+    void CallEvent(const std::string& function) override;
     vs::VsValue GetGlobal(const std::string& name) const override;
 
 private:

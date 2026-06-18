@@ -39,6 +39,15 @@ public:
     void Start() override;
     void Update(float dt) override;
 
+    // Forward physics messages to optional script handlers: a script can define
+    // on_trigger() and on_collision() to react to overlaps/contacts.
+    void OnTriggerEnter2D(Collider2D* /*other*/) override {
+        if (m_vm) m_vm->CallEvent("on_trigger");
+    }
+    void OnCollisionEnter2D(const Collision2D& /*c*/) override {
+        if (m_vm) m_vm->CallEvent("on_collision");
+    }
+
 private:
     std::string m_language;
     std::string m_source;

@@ -15,6 +15,7 @@
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
+#include "okay/Components/AudioSource.hpp"
 
 #include <cctype>
 #include <functional>
@@ -134,6 +135,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (an->playing ? 1 : 0) << " " << an->frames.size();
         for (const auto& f : an->frames) out << " " << Quote(f);
         out << "\n";
+    }
+    if (auto* au = go->GetComponent<AudioSource>()) {
+        out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
+            << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << "\n";
     }
 }
 } // namespace
@@ -288,6 +293,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* an = go->AddComponent<SpriteAnimator>();
                     an->fps = fps; an->loop = (loop != 0); an->playing = (playing != 0);
                     for (int k = 0; k < count; ++k) an->frames.push_back(ReadQuoted(in));
+                } else if (field == "audio") {
+                    std::string cp = ReadQuoted(in);
+                    float vol = 1.0f; int loop = 0, poa = 0;
+                    in >> vol >> loop >> poa;
+                    auto* au = go->AddComponent<AudioSource>();
+                    au->clipPath = cp; au->volume = vol;
+                    au->loop = (loop != 0); au->playOnAwake = (poa != 0);
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;

@@ -1127,7 +1127,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Button("Noise")) a->clip = AudioClip::Noise(0.3f);
             ImGui::SameLine();
             if (ImGui::Button("Play"))  a->Play();
-            ImGui::TextDisabled("%.2fs clip (plays on Play)", a->clip.Duration());
+            char cb[256];
+            std::strncpy(cb, a->clipPath.c_str(), sizeof(cb) - 1);
+            cb[sizeof(cb) - 1] = '\0';
+            if (ImGui::InputText("WAV File##audio", cb, sizeof(cb))) { a->clipPath = cb; ed.dirty = true; }
+            ImGui::TextDisabled("WAV path loads in the built game; %.2fs clip", a->clip.Duration());
             if (ImGui::SmallButton("Remove##audio")) toRemove = a;
         }
     }

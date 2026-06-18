@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -84,6 +85,18 @@ int main(int argc, char** argv) {
 
 #include <vector>
 
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#else
+#  include <unistd.h>
+#endif
+
+#ifndef OKAY_ENGINE_VERSION
+#  define OKAY_ENGINE_VERSION "dev"
+#endif
+
 using namespace okay;
 using namespace okay::editor;
 
@@ -97,64 +110,99 @@ ImU32 ToColor(const Color& c) {
 namespace updater {
 namespace fs = std::filesystem;
 
-std::string Capture(const std::string& cmd) {
-#if defined(_WIN32)
-    FILE* pipe = _popen(cmd.c_str(), "r");
-#else
-    FILE* pipe = popen((cmd + " 2>&1").c_str(), "r");
-#endif
-    if (!pipe) return {};
-    std::string out;
-    std::array<char, 256> buf{};
-    while (fgets(buf.data(), (int)buf.size(), pipe)) out += buf.data();
-#if defined(_WIN32)
-    _pclose(pipe);
-#else
-    pclose(pipe);
-#endif
-    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
-    return out;
-}
+const char* kRawBase =
+    "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/main/dist/";
 
-fs::path FindRepoRoot() {
-    std::error_code ec;
-    for (fs::path p = fs::current_path(ec); !p.empty(); p = p.parent_path()) {
-        if (fs::exists(p / ".git")) return p;
-        if (p == p.root_path()) break;
-    }
+// Absolute path of the running executable.
+std::string SelfPath() {
+#if defined(_WIN32)
+    char buf[MAX_PATH];
+    DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    return std::string(buf, n);
+#else
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) { buf[n] = '\0'; return buf; }
     return {};
+#endif
 }
 
-// Returns a human-readable status; pulls the latest if the local copy is behind.
+// Download a URL to a file using whatever HTTP client is on the system.
+bool Download(const std::string& url, const std::string& outPath) {
+#if defined(_WIN32)
+    std::string c1 = "curl -L -s -o \"" + outPath + "\" \"" + url + "\"";
+    if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
+    std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
+                     "-UseBasicParsing -Uri '" + url + "' -OutFile '" + outPath +
+                     "' } catch { exit 1 }\"";
+    return std::system(c2.c_str()) == 0 && fs::exists(outPath);
+#else
+    std::string c1 = "curl -L -s -o \"" + outPath + "\" \"" + url + "\"";
+    if (std::system((c1 + " 2>/dev/null").c_str()) == 0 && fs::exists(outPath)) return true;
+    std::string c2 = "wget -q -O \"" + outPath + "\" \"" + url + "\"";
+    return std::system((c2 + " 2>/dev/null").c_str()) == 0 && fs::exists(outPath);
+#endif
+}
+
+// Check GitHub for a newer engine build and, if found, download and swap it in.
+// No git required — works for a standalone .exe.
 std::string CheckAndUpdate() {
-    fs::path root = FindRepoRoot();
-    if (root.empty()) return "Could not find the engine's git repository.";
-    std::string git = "git -C \"" + root.string() + "\"";
-    std::string branch = Capture(git + " rev-parse --abbrev-ref HEAD");
-    if (branch.empty() || branch == "HEAD") branch = "main";
+    std::error_code ec;
+    fs::path tmpDir = fs::temp_directory_path(ec);
 
-    Capture(git + " fetch --quiet origin " + branch);
-    std::string local  = Capture(git + " rev-parse HEAD");
-    std::string remote = Capture(git + " rev-parse origin/" + branch);
-    if (remote.empty()) return "Offline: couldn't reach GitHub.";
-    if (local == remote)
-        return "Up to date (" + local.substr(0, 8) + ") on '" + branch + "'.";
+    // 1) Compare the embedded version against the published VERSION.txt.
+    fs::path verFile = tmpDir / "okayspace_version.txt";
+    std::string latest;
+    if (Download(std::string(kRawBase) + "VERSION.txt", verFile.string())) {
+        std::ifstream vf(verFile);
+        std::getline(vf, latest);
+        while (!latest.empty() && (latest.back() == '\r' || latest.back() == ' '))
+            latest.pop_back();
+        fs::remove(verFile, ec);
+    } else {
+        return "Couldn't reach GitHub (no internet, or curl/PowerShell missing).";
+    }
 
-    std::string pull = Capture(git + " pull --ff-only origin " + branch);
-    std::string now = Capture(git + " rev-parse HEAD");
-    if (now == remote)
-        return "Updated to " + now.substr(0, 8) +
-               ".\nRebuild the engine to apply (cmake --build build).";
-    return "Update available (" + remote.substr(0, 8) +
-           ") but pull failed:\n" + pull;
+    std::string current = OKAY_ENGINE_VERSION;
+    if (!latest.empty() && latest == current)
+        return "You're up to date (v" + current + ").";
+
+    // 2) Download the new executable next to the current one.
+    fs::path self = SelfPath();
+    if (self.empty()) return "Update available (v" + latest +
+                             "), but couldn't locate the running .exe.";
+#if defined(_WIN32)
+    std::string assetName = "OkaySpaceEngine.exe";
+#else
+    std::string assetName = "OkaySpaceEngine.exe"; // only a Windows binary is published
+#endif
+    fs::path newFile = self;
+    newFile += ".new";
+    if (!Download(std::string(kRawBase) + assetName, newFile.string()))
+        return "Update v" + latest + " found, but the download failed.";
+    if (fs::file_size(newFile, ec) < 100000) {
+        fs::remove(newFile, ec);
+        return "Downloaded file looked invalid; update aborted.";
+    }
+
+    // 3) Swap: move the running exe aside, move the new one into place.
+    fs::path backup = self;
+    backup += ".old";
+    fs::remove(backup, ec);
+    fs::rename(self, backup, ec);
+    if (ec) { fs::remove(newFile, ec); return "Couldn't replace the app: " + ec.message(); }
+    fs::rename(newFile, self, ec);
+    if (ec) { fs::rename(backup, self, ec); return "Couldn't install the update: " + ec.message(); }
+
+    return "Updated to v" + latest + "!\nClose and reopen the app to run it.";
 }
 } // namespace updater
 
 std::string g_updateStatus;
 bool g_openUpdatePopup = false;
 
-// Per-object editor-only Z rotation cache (2D authoring convenience).
-std::unordered_map<GameObject*, float> g_eulerZ;
+// Per-object editor-only Euler-angle cache (degrees) for the inspector.
+std::unordered_map<GameObject*, Vec3> g_euler;
 
 // ---- Console log -------------------------------------------------------
 std::vector<std::string> g_console;
@@ -222,9 +270,12 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
-        if (ImGui::MenuItem("Create Empty"))  { ed.CreateEmpty();  ConsoleLog("Created empty GameObject"); }
-        if (ImGui::MenuItem("Create Sprite")) { ed.CreateSprite(); ConsoleLog("Created Sprite"); }
-        if (ImGui::MenuItem("Create Camera")) { ed.CreateCamera(); ConsoleLog("Created Camera"); }
+        if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); }
+        if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); }
+        if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Create Cube (3D)"))    { ed.CreateCube();    ConsoleLog("Created Cube"); }
+        if (ImGui::MenuItem("Create Pyramid (3D)")) { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Engine")) {
@@ -248,8 +299,8 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
     if (ImGui::Button("Step", ImVec2(50, 0))) ed.Tick(1.0f / 60.0f);
 
     // Right-aligned status.
-    char status[64];
-    std::snprintf(status, sizeof(status), "%s   %.0f FPS",
+    char status[96];
+    std::snprintf(status, sizeof(status), "v%s   %s   %.0f FPS", OKAY_ENGINE_VERSION,
                   ed.isPlaying() ? "PLAYING" : "EDIT", ImGui::GetIO().Framerate);
     ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - 16);
     ImGui::TextColored(ed.isPlaying() ? ImVec4(0.4f, 0.9f, 0.4f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1),
@@ -347,26 +398,39 @@ void DrawHierarchy(EditorState& ed) {
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector");
     GameObject* go = ed.selected();
-    if (!go) { ImGui::TextDisabled("Nothing selected"); ImGui::End(); return; }
+    if (!go) {
+        ImGui::Dummy(ImVec2(0, 8));
+        ImGui::TextDisabled("  Select an object in the Hierarchy");
+        ImGui::TextDisabled("  or Scene to edit it here.");
+        ImGui::End();
+        return;
+    }
 
+    // Header: active + name.
+    ImGui::Checkbox("##active", &go->active);
+    ImGui::SameLine();
     char nameBuf[128];
     std::strncpy(nameBuf, go->name.c_str(), sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
-    if (ImGui::InputText("Name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
-    ImGui::Checkbox("Active", &go->active);
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
+    if (!go->tag.empty()) ImGui::TextDisabled("Tag: %s", go->tag.c_str());
+    ImGui::Spacing();
 
     if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
         Transform* t = go->transform;
         float pos[3] = {t->localPosition.x, t->localPosition.y, t->localPosition.z};
-        if (ImGui::DragFloat3("Position", pos, 0.1f)) {
+        if (ImGui::DragFloat3("Position", pos, 0.05f)) {
             t->localPosition = {pos[0], pos[1], pos[2]}; ed.dirty = true;
         }
-        float& ez = g_eulerZ[go];
-        if (ImGui::DragFloat("Rotation Z", &ez, 1.0f)) {
-            t->localRotation = Quat::Euler(0, 0, ez); ed.dirty = true;
+        Vec3& e = g_euler[go];
+        float rot[3] = {e.x, e.y, e.z};
+        if (ImGui::DragFloat3("Rotation", rot, 1.0f)) {
+            e = {rot[0], rot[1], rot[2]};
+            t->localRotation = Quat::Euler(e); ed.dirty = true;
         }
         float scl[3] = {t->localScale.x, t->localScale.y, t->localScale.z};
-        if (ImGui::DragFloat3("Scale", scl, 0.1f)) {
+        if (ImGui::DragFloat3("Scale", scl, 0.05f)) {
             t->localScale = {scl[0], scl[1], scl[2]}; ed.dirty = true;
         }
     }
@@ -374,49 +438,80 @@ void DrawInspector(EditorState& ed) {
     if (auto* sr = go->GetComponent<SpriteRenderer>()) {
         if (ImGui::CollapsingHeader("Sprite Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
             float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
-            if (ImGui::ColorEdit4("Color", col)) {
+            if (ImGui::ColorEdit4("Color##sprite", col)) {
                 sr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
             }
             float size[2] = {sr->size.x, sr->size.y};
-            if (ImGui::DragFloat2("Size", size, 0.1f, 0.0f, 1000.0f)) {
+            if (ImGui::DragFloat2("Size", size, 0.05f, 0.0f, 1000.0f)) {
                 sr->size = {size[0], size[1]}; ed.dirty = true;
             }
         }
     }
+    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+        if (ImGui::CollapsingHeader("Mesh Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float col[4] = {mr->color.r, mr->color.g, mr->color.b, mr->color.a};
+            if (ImGui::ColorEdit4("Color##mesh", col)) {
+                mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
+            }
+            ImGui::Checkbox("Wireframe", &mr->wireframe);
+            const char* shapes[] = {"Cube", "Pyramid", "Quad"};
+            static int shapeIdx = 0;
+            if (ImGui::Combo("Mesh", &shapeIdx, shapes, 3)) {
+                mr->mesh = shapeIdx == 0 ? Mesh::Cube()
+                         : shapeIdx == 1 ? Mesh::Pyramid() : Mesh::Quad();
+                ed.dirty = true;
+            }
+            ImGui::TextDisabled("%d triangles", mr->mesh.TriangleCount());
+        }
+    }
     if (auto* cam = go->GetComponent<Camera>()) {
         if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::DragFloat("Ortho Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f);
+            int proj = (int)cam->projection;
+            const char* projs[] = {"Orthographic", "Perspective"};
+            if (ImGui::Combo("Projection", &proj, projs, 2))
+                cam->projection = (Camera::Projection)proj;
+            if (cam->projection == Camera::Projection::Orthographic)
+                ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f);
+            else
+                ImGui::DragFloat("FOV", &cam->fieldOfView, 0.5f, 10.0f, 170.0f);
             ImGui::Checkbox("Main", &cam->main);
         }
     }
+    if (go->GetComponent<Rigidbody2D>())
+        if (ImGui::CollapsingHeader("Rigidbody2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto* rb = go->GetComponent<Rigidbody2D>();
+            int bt = (int)rb->bodyType;
+            const char* types[] = {"Dynamic", "Kinematic", "Static"};
+            if (ImGui::Combo("Body Type", &bt, types, 3)) rb->bodyType = (Rigidbody2D::BodyType)bt;
+            ImGui::DragFloat("Gravity Scale", &rb->gravityScale, 0.05f);
+            ImGui::DragFloat("Mass", &rb->mass, 0.05f, 0.01f, 1000.0f);
+            ImGui::DragFloat("Bounciness", &rb->bounciness, 0.01f, 0.0f, 1.0f);
+        }
 
+    ImGui::Spacing();
     ImGui::Separator();
-    if (!go->GetComponent<SpriteRenderer>() && ImGui::Button("Add Sprite Renderer")) {
-        go->AddComponent<SpriteRenderer>(); ed.dirty = true;
+    if (ImGui::Button("Add Component", ImVec2(-1, 0))) ImGui::OpenPopup("AddComponent");
+    if (ImGui::BeginPopup("AddComponent")) {
+        if (!go->GetComponent<SpriteRenderer>() && ImGui::Selectable("Sprite Renderer"))
+            { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
+        if (!go->GetComponent<MeshRenderer>() && ImGui::Selectable("Mesh Renderer (Cube)"))
+            { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+        if (!go->GetComponent<Camera>() && ImGui::Selectable("Camera"))
+            { go->AddComponent<Camera>(); ed.dirty = true; }
+        if (!go->GetComponent<Rigidbody2D>() && ImGui::Selectable("Rigidbody2D"))
+            { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+        if (!go->GetComponent<BoxCollider2D>() && ImGui::Selectable("Box Collider 2D"))
+            { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
+        ImGui::EndPopup();
     }
-    if (!go->GetComponent<Camera>() && ImGui::Button("Add Camera")) {
-        go->AddComponent<Camera>(); ed.dirty = true;
-    }
-    if (ImGui::Button("Delete GameObject")) ed.DeleteSelected();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
+    if (ImGui::Button("Delete GameObject", ImVec2(-1, 0))) ed.DeleteSelected();
+    ImGui::PopStyleColor();
     ImGui::End();
 }
 
-void DrawViewport(EditorState& ed) {
-    ImGui::Begin("Scene");
-    ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
-    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
-    if (canvasSize.x < 50) canvasSize.x = 50;
-    if (canvasSize.y < 50) canvasSize.y = 50;
-    ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
-
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
-
-    ImGui::InvisibleButton("canvas", canvasSize,
-        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    bool hovered = ImGui::IsItemHovered();
-    ImGuiIO& io = ImGui::GetIO();
-
+void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
+                 ImVec2 canvasEnd, bool hovered, ImGuiIO& io) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
     float scale = canvasSize.y / ed.cameraZoom;
     auto worldToScreen = [&](const Vec3& w) {
@@ -428,7 +523,6 @@ void DrawViewport(EditorState& ed) {
                     -(s.y - center.y) / scale + ed.cameraPos.y);
     };
 
-    // Zoom with the wheel, pan with right-drag.
     if (hovered && io.MouseWheel != 0.0f)
         ed.cameraZoom = Mathf::Clamp(ed.cameraZoom * (1.0f - io.MouseWheel * 0.1f), 2.0f, 200.0f);
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
@@ -437,8 +531,6 @@ void DrawViewport(EditorState& ed) {
     }
 
     dl->PushClipRect(canvasPos, canvasEnd, true);
-
-    // Axes through the world origin.
     dl->AddLine(worldToScreen({-1000, 0, 0}), worldToScreen({1000, 0, 0}), IM_COL32(60, 60, 90, 255));
     dl->AddLine(worldToScreen({0, -1000, 0}), worldToScreen({0, 1000, 0}), IM_COL32(60, 60, 90, 255));
 
@@ -460,7 +552,6 @@ void DrawViewport(EditorState& ed) {
     }
     dl->PopClipRect();
 
-    // Click to select the top-most sprite under the cursor.
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         Vec2 world = screenToWorld(io.MousePos);
         GameObject* hit = nullptr;
@@ -470,22 +561,136 @@ void DrawViewport(EditorState& ed) {
             if (!sr || !go->active) continue;
             Vec3 wp = go->transform->Position();
             Vec3 ls = go->transform->LossyScale();
-            float hx = sr->size.x * ls.x * 0.5f;
-            float hy = sr->size.y * ls.y * 0.5f;
+            float hx = sr->size.x * ls.x * 0.5f, hy = sr->size.y * ls.y * 0.5f;
             if (world.x >= wp.x - hx && world.x <= wp.x + hx &&
                 world.y >= wp.y - hy && world.y <= wp.y + hy)
-                hit = go; // keep last = topmost drawn
+                hit = go;
         }
         ed.Select(hit);
     }
-
-    // Drag the selected object (edit mode only).
     if (!ed.isPlaying() && ed.selected() && hovered &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         ed.selected()->transform->localPosition.x += io.MouseDelta.x / scale;
         ed.selected()->transform->localPosition.y -= io.MouseDelta.y / scale;
         ed.dirty = true;
     }
+}
+
+void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
+                 ImVec2 canvasEnd, bool hovered, ImGuiIO& io) {
+    ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
+
+    // Orbit controls.
+    if (hovered && io.MouseWheel != 0.0f)
+        ed.camDist = Mathf::Clamp(ed.camDist * (1.0f - io.MouseWheel * 0.1f), 2.0f, 400.0f);
+    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ed.selected()) {
+        ed.camYaw   -= io.MouseDelta.x * 0.4f;
+        ed.camPitch = Mathf::Clamp(ed.camPitch + io.MouseDelta.y * 0.4f, -85.0f, 85.0f);
+    }
+    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+        ed.camYaw   -= io.MouseDelta.x * 0.4f;
+        ed.camPitch = Mathf::Clamp(ed.camPitch + io.MouseDelta.y * 0.4f, -85.0f, 85.0f);
+    }
+
+    float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
+    Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
+             Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
+    Vec3 eye = ed.camTarget + dir * ed.camDist;
+    Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
+    Mat4 proj = Mat4::Perspective(50.0f, canvasSize.x / canvasSize.y, 0.1f, 2000.0f);
+    Mat4 vp = proj * view;
+
+    auto toScreen = [&](const Vec4& c, ImVec2& out) -> bool {
+        if (c.w <= 0.05f) return false;
+        out = ImVec2(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
+                     center.y - (c.y / c.w) * canvasSize.y * 0.5f);
+        return true;
+    };
+
+    dl->PushClipRect(canvasPos, canvasEnd, true);
+
+    // Ground grid on the XZ plane.
+    for (int i = -10; i <= 10; ++i) {
+        ImVec2 a, b;
+        if (toScreen(vp * Vec4{Vec3{(float)i, 0, -10}, 1}, a) &&
+            toScreen(vp * Vec4{Vec3{(float)i, 0, 10}, 1}, b))
+            dl->AddLine(a, b, IM_COL32(50, 50, 64, 255));
+        if (toScreen(vp * Vec4{Vec3{-10, 0, (float)i}, 1}, a) &&
+            toScreen(vp * Vec4{Vec3{10, 0, (float)i}, 1}, b))
+            dl->AddLine(a, b, IM_COL32(50, 50, 64, 255));
+    }
+
+    // Wireframe meshes.
+    const auto& objs = ed.scene().Objects();
+    for (const auto& up : objs) {
+        GameObject* go = up.get();
+        auto* mr = go->GetComponent<MeshRenderer>();
+        if (!mr || !go->active) continue;
+        Mat4 m = vp * go->transform->LocalToWorldMatrix();
+        ImU32 col = (go == ed.selected()) ? IM_COL32(255, 200, 0, 255) : ToColor(mr->color);
+        const auto& v = mr->mesh.vertices;
+        const auto& t = mr->mesh.triangles;
+        for (size_t i = 0; i + 2 < t.size(); i += 3) {
+            ImVec2 p0, p1, p2;
+            if (toScreen(m * Vec4{v[t[i]], 1}, p0) &&
+                toScreen(m * Vec4{v[t[i + 1]], 1}, p1) &&
+                toScreen(m * Vec4{v[t[i + 2]], 1}, p2)) {
+                dl->AddLine(p0, p1, col);
+                dl->AddLine(p1, p2, col);
+                dl->AddLine(p2, p0, col);
+            }
+        }
+    }
+    dl->PopClipRect();
+
+    // Click to select the nearest object center on screen.
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        GameObject* hit = nullptr;
+        float best = 18.0f; // pixels
+        for (const auto& up : objs) {
+            GameObject* go = up.get();
+            if (!go->GetComponent<MeshRenderer>() || !go->active) continue;
+            ImVec2 sp;
+            if (!toScreen(vp * Vec4{go->transform->Position(), 1}, sp)) continue;
+            float d = Mathf::Sqrt((sp.x - io.MousePos.x) * (sp.x - io.MousePos.x) +
+                                  (sp.y - io.MousePos.y) * (sp.y - io.MousePos.y));
+            if (d < best) { best = d; hit = go; }
+        }
+        if (hit) ed.Select(hit);
+    }
+}
+
+void DrawViewport(EditorState& ed) {
+    ImGui::Begin("Scene");
+
+    // 2D / 3D toggle + frame the selection.
+    if (ImGui::Button(ed.view3D ? "3D" : "2D")) ed.view3D = !ed.view3D;
+    ImGui::SameLine();
+    if (ImGui::Button("Frame") && ed.selected()) {
+        Vec3 p = ed.selected()->transform->Position();
+        ed.camTarget = p;
+        ed.cameraPos = {p.x, p.y};
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled(ed.view3D ? "drag: orbit  wheel: zoom"
+                                  : "drag: move  right-drag: pan  wheel: zoom");
+
+    ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
+    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+    if (canvasSize.x < 50) canvasSize.x = 50;
+    if (canvasSize.y < 50) canvasSize.y = 50;
+    ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
+
+    ImGui::InvisibleButton("canvas", canvasSize,
+        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    bool hovered = ImGui::IsItemHovered();
+    ImGuiIO& io = ImGui::GetIO();
+
+    if (ed.view3D) DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
+    else           DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
 
     ImGui::End();
 }
@@ -524,11 +729,14 @@ int main(int argc, char** argv) {
 
     // A starter scene so the editor isn't empty on first launch.
     EditorState ed;
-    ed.CreateCamera("MainCamera");
-    GameObject* demo = ed.CreateSprite("Player");
-    demo->GetComponent<SpriteRenderer>()->color = Color::Green;
-    ed.Select(nullptr);
-    ConsoleLog("Welcome to the OkaySpace editor. Use GameObject > Create to add objects.");
+    GameObject* camObj = ed.CreateCamera("MainCamera");
+    camObj->GetComponent<Camera>()->projection = Camera::Projection::Perspective;
+    camObj->transform->localPosition = {0, 2, 10};
+    GameObject* cube = ed.CreateCube("Cube");
+    cube->transform->localRotation = Quat::Euler(0, 25, 0);
+    ed.Select(cube);
+    ConsoleLog("Welcome to OkaySpace v" OKAY_ENGINE_VERSION
+               ". Use the GameObject menu to add objects; toggle 2D/3D in the Scene panel.");
 
     bool running = true;
     Uint64 last = SDL_GetPerformanceCounter();

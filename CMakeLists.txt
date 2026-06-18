@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 0.1.0
+    VERSION 0.5.0
     DESCRIPTION "A Unity-inspired C++ game engine"
     LANGUAGES CXX)
+
+# Stamp the version into binaries (used by the editor's self-updater).
+add_compile_definitions(OKAY_ENGINE_VERSION="${PROJECT_VERSION}")
 
 # ---- Global settings --------------------------------------------------
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

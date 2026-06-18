@@ -29,6 +29,28 @@ GameObject* EditorState::CreateCamera(const std::string& name) {
     return go;
 }
 
+GameObject* EditorState::CreateCube(const std::string& name) {
+    GameObject* go = m_scene.CreateGameObject(name);
+    auto* mr = go->AddComponent<MeshRenderer>();
+    mr->mesh = Mesh::Cube();
+    mr->color = Color::Cyan;
+    m_selected = go;
+    view3D = true;
+    dirty = true;
+    return go;
+}
+
+GameObject* EditorState::CreatePyramid(const std::string& name) {
+    GameObject* go = m_scene.CreateGameObject(name);
+    auto* mr = go->AddComponent<MeshRenderer>();
+    mr->mesh = Mesh::Pyramid();
+    mr->color = Color::Yellow;
+    m_selected = go;
+    view3D = true;
+    dirty = true;
+    return go;
+}
+
 void EditorState::DeleteSelected() {
     if (!m_selected) return;
     m_scene.Destroy(m_selected);

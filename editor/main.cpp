@@ -1931,12 +1931,51 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             dl->AddLine(a, b, IM_COL32(50, 50, 64, 255));
     }
 
-    // Wireframe meshes.
     const auto& objs = ed.scene().Objects();
+
+    // Solid meshes (wireframe == false): flat-shaded, back-face-culled, and
+    // depth-sorted across all objects (painter's algorithm) so they occlude
+    // correctly — mirrors the player's 3D renderer. The fixed key light matches.
+    Vec3 lightDir = DefaultLightDir();
+    struct EdTri { float depth; ImVec2 p[3]; ImU32 col; };
+    std::vector<EdTri> solid;
     for (const auto& up : objs) {
         GameObject* go = up.get();
         auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || !go->active) continue;
+        if (!mr || !go->active || mr->wireframe) continue;
+        Mat4 model = go->transform->LocalToWorldMatrix();
+        const auto& v = mr->mesh.vertices;
+        const auto& t = mr->mesh.triangles;
+        for (size_t i = 0; i + 2 < t.size(); i += 3) {
+            Vec3 wp[3];
+            for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[t[i + k]]);
+            Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
+            Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
+            if (Vec3::Dot(normal, eye - centroid) < 0.0f) continue;     // back-face cull
+            EdTri tri; bool ok = true;
+            for (int k = 0; k < 3; ++k)
+                if (!toScreen(vp * Vec4{wp[k], 1}, tri.p[k])) { ok = false; break; }
+            if (!ok) continue;
+            float shade = LambertShade(normal, lightDir);
+            Color c = mr->color;
+            tri.col = (go == ed.selected())
+                ? IM_COL32((int)(255 * shade), (int)(200 * shade), 0, 255)
+                : IM_COL32((int)(c.r * 255 * shade), (int)(c.g * 255 * shade),
+                           (int)(c.b * 255 * shade), 255);
+            tri.depth = (centroid - eye).SqrMagnitude();
+            solid.push_back(tri);
+        }
+    }
+    std::sort(solid.begin(), solid.end(),
+              [](const EdTri& a, const EdTri& b) { return a.depth > b.depth; });
+    for (const auto& tr : solid)
+        dl->AddTriangleFilled(tr.p[0], tr.p[1], tr.p[2], tr.col);
+
+    // Wireframe meshes (wireframe == true): edges only, drawn over the solids.
+    for (const auto& up : objs) {
+        GameObject* go = up.get();
+        auto* mr = go->GetComponent<MeshRenderer>();
+        if (!mr || !go->active || !mr->wireframe) continue;
         Mat4 m = vp * go->transform->LocalToWorldMatrix();
         ImU32 col = (go == ed.selected()) ? IM_COL32(255, 200, 0, 255) : ToColor(mr->color);
         const auto& v = mr->mesh.vertices;

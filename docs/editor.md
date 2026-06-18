@@ -81,8 +81,11 @@ uses, built right into the engine app.
   polygons fan-triangulated, `v/vt/vn` and negative indices handled). The
   inspector shows the live vertex/triangle count. Imported `.obj` files are
   remembered on the component and bundled next to the built `.exe` by Build Game,
-  so the player reloads them at runtime. Meshes draw as wireframes through the
-  active perspective camera. You can also build compound models in C++ with
+  so the player reloads them at runtime. Meshes draw through the active
+  perspective camera — as a wireframe when *Wireframe* is checked, otherwise as
+  flat-shaded, depth-sorted, back-face-culled solids (a fixed key light, shared
+  by the editor preview and the built game so they match). You can also build
+  compound models in C++ with
   `Mesh::Transformed(scale, offset)` and `Mesh::Combine`/`Combined`, and export
   any mesh with `Mesh::SaveOBJ`.
 - **UI anchors** — every UI widget has an *Anchor* (Top-Left … Center …

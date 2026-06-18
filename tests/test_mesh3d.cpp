@@ -199,6 +199,24 @@ int main() {
               == "models/ship.obj");
     }
 
+    // --- LambertShade: facing the light is bright, away is ambient-floored ---
+    {
+        Vec3 light = DefaultLightDir();
+        // A normal pointing straight back at the light source is fully lit.
+        float lit = LambertShade(light * -1.0f, light);
+        CHECK_NEAR(lit, 1.0f, 0.001f);
+        // A normal pointing along the light (away) gets only the ambient floor.
+        float dark = LambertShade(light, light);
+        CHECK_NEAR(dark, 0.25f, 0.001f);
+        // Perpendicular is the ambient floor too (Lambert clamped at 0).
+        Vec3 perp = Vec3::Cross(light, Vec3{0, 1, 0}).Normalized();
+        float side = LambertShade(perp, light);
+        CHECK_NEAR(side, 0.25f, 0.02f);
+        // Custom ambient is respected and the result never exceeds 1.
+        CHECK_NEAR(LambertShade(light * -1.0f, light, 0.1f), 1.0f, 0.001f);
+        CHECK(LambertShade(light, light, 0.4f) >= 0.4f);
+    }
+
     // --- Scripts can move and rotate in 3D ---
     {
         Scene scene("3D");

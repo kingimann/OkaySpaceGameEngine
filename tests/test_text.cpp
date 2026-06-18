@@ -100,6 +100,43 @@ int main() {
         CHECK_NEAR(br.y, 600 - th, 0.001f);
     }
 
+    // --- Text shadow round-trips through serialization ---
+    {
+        Scene scene("Shadow");
+        GameObject* go = scene.CreateGameObject("HUD");
+        auto* tr = go->AddComponent<TextRenderer>();
+        tr->text = "Lives";
+        tr->shadow = true;
+        tr->shadowColor = Color(0.0f, 0.0f, 0.0f, 0.5f);
+        tr->shadowOffset = {3.0f, 2.0f};
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("HUD")->GetComponent<TextRenderer>();
+        CHECK(r != nullptr);
+        CHECK(r->shadow == true);
+        CHECK_NEAR(r->shadowColor.a, 0.5f, 0.01f);
+        CHECK_NEAR(r->shadowOffset.x, 3.0f, 0.001f);
+        CHECK_NEAR(r->shadowOffset.y, 2.0f, 0.001f);
+    }
+
+    // --- A text line with anchor but no shadow block still loads (back-compat) ---
+    {
+        std::string text =
+            "okayscene 1\nname \"S\"\ngravity 0 0\n"
+            "gameobject 0 \"T\"\n  active 1\n  parent -1\n"
+            "  text \"Hi\" 1 1 1 1 0.1 1 12 12 4\n"   // ...screenPos + anchor(4), no shadow
+            "end\n";
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("T")->GetComponent<TextRenderer>();
+        CHECK(r != nullptr);
+        CHECK(r->anchor == UIAnchor::Center);
+        CHECK(r->shadow == false);            // defaulted (no trailing block)
+    }
+
     // --- Text anchor round-trips through serialization ---
     {
         Scene scene("AnchorSer");

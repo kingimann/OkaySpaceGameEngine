@@ -1456,6 +1456,13 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat2("Screen Pos##txt", sp, 1.0f)) { tr->screenPos = {sp[0], sp[1]}; ed.dirty = true; }
                 AnchorCombo("Anchor##txt", tr->anchor, ed);
             }
+            if (ImGui::Checkbox("Shadow##txt", &tr->shadow)) ed.dirty = true;
+            if (tr->shadow) {
+                float scol[4] = {tr->shadowColor.r, tr->shadowColor.g, tr->shadowColor.b, tr->shadowColor.a};
+                if (ImGui::ColorEdit4("Shadow Color##txt", scol)) { tr->shadowColor = {scol[0], scol[1], scol[2], scol[3]}; ed.dirty = true; }
+                float so[2] = {tr->shadowOffset.x, tr->shadowOffset.y};
+                if (ImGui::DragFloat2("Shadow Offset##txt", so, 0.1f)) { tr->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+            }
             ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
@@ -1779,13 +1786,21 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active) continue;
         ImU32 col = ToColor(tr->color);
+        ImU32 sh = ToColor(tr->shadowColor);
         if (tr->screenSpace) {
             Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y);
-            DrawBitmapText(dl, tr->text, canvasPos.x + o.x, canvasPos.y + o.y,
-                           tr->pixelSize, col);
+            float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
+            if (tr->shadow)
+                DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * tr->pixelSize,
+                               by + tr->shadowOffset.y * tr->pixelSize, tr->pixelSize, sh);
+            DrawBitmapText(dl, tr->text, bx, by, tr->pixelSize, col);
         } else {
             ImVec2 o = worldToScreen(up->transform->Position());
-            DrawBitmapText(dl, tr->text, o.x, o.y, tr->pixelSize * scale, col);
+            float px = tr->pixelSize * scale;
+            if (tr->shadow)
+                DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
+                               o.y + tr->shadowOffset.y * px, px, sh);
+            DrawBitmapText(dl, tr->text, o.x, o.y, px, col);
         }
     }
 

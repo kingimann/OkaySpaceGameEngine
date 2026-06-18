@@ -134,6 +134,10 @@ add_executable(test_script_maps test_script_maps.cpp)
 target_link_libraries(test_script_maps PRIVATE okay::engine)
 add_test(NAME script_maps COMMAND test_script_maps)
 
+add_executable(test_script_lang3 test_script_lang3.cpp)
+target_link_libraries(test_script_lang3 PRIVATE okay::engine)
+add_test(NAME script_lang3 COMMAND test_script_lang3)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

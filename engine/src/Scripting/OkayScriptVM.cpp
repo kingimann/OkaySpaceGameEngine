@@ -32,7 +32,8 @@ using Value = vs::VsValue;
 // ===================== Lexer =====================
 enum class Tok {
     End, Number, String, Ident,
-    Var, If, Else, While, For, Function, Return, True, False, Break, Continue,
+    Var, If, Else, While, For, In, Function, Return, True, False, Break, Continue,
+    Question, Colon,
     Plus, Minus, Star, Slash, Percent,
     Assign, PlusEq, MinusEq, StarEq, SlashEq,
     Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
@@ -117,7 +118,7 @@ private:
         while (std::isalnum((unsigned char)Peek()) || Peek() == '_') s += Advance();
         static const std::unordered_map<std::string, Tok> kw = {
             {"var", Tok::Var}, {"if", Tok::If}, {"else", Tok::Else},
-            {"while", Tok::While}, {"for", Tok::For},
+            {"while", Tok::While}, {"for", Tok::For}, {"in", Tok::In},
             {"function", Tok::Function}, {"return", Tok::Return},
             {"true", Tok::True}, {"false", Tok::False},
             {"break", Tok::Break}, {"continue", Tok::Continue}};
@@ -140,6 +141,8 @@ private:
             case '}': return {Tok::RBrace, "", 0, m_line};
             case '[': return {Tok::LBracket, "", 0, m_line};
             case ']': return {Tok::RBracket, "", 0, m_line};
+            case '?': return {Tok::Question, "", 0, m_line};
+            case ':': return {Tok::Colon, "", 0, m_line};
             case ',': return {Tok::Comma, "", 0, m_line};
             case ';': return {Tok::Semicolon, "", 0, m_line};
             case '=': { auto t = two('=', Tok::Eq); return t.type != Tok::End ? t : Token{Tok::Assign, "", 0, m_line}; }
@@ -274,6 +277,13 @@ struct CallExpr : Expr {
     }
 };
 
+// Ternary: cond ? a : b.
+struct TernaryExpr : Expr {
+    ExprPtr cond, a, b;
+    TernaryExpr(ExprPtr c, ExprPtr x, ExprPtr y) : cond(std::move(c)), a(std::move(x)), b(std::move(y)) {}
+    Value Eval(Runtime& rt) override { return cond->Eval(rt).AsBool() ? a->Eval(rt) : b->Eval(rt); }
+};
+
 // An array literal: [a, b, c].
 struct ArrayExpr : Expr {
     std::vector<ExprPtr> elems;
@@ -363,6 +373,24 @@ struct ForStmt : Stmt {
             catch (BreakSignal&) { break; }
             if (step) step->Eval(r);
             if (++guard > 1000000) throw ScriptError("for loop exceeded iteration limit");
+        }
+    }
+};
+// foreach: for x in <array> { body }
+struct ForEachStmt : Stmt {
+    std::string var; ExprPtr iterable; std::vector<StmtPtr> body;
+    void Exec(Runtime& r) override {
+        Value coll = iterable->Eval(r);
+        auto arr = coll.AsArray();
+        if (!arr) return;
+        r.Define(var, Value{}); // loop variable lives in the current scope
+        // Iterate a snapshot of the size so push during iteration is bounded.
+        std::size_t n = arr->size();
+        for (std::size_t i = 0; i < n && i < arr->size(); ++i) {
+            r.Assign(var, (*arr)[i]);
+            try { for (auto& s : body) s->Exec(r); }
+            catch (ContinueSignal&) {}
+            catch (BreakSignal&) { break; }
         }
     }
 };
@@ -474,6 +502,19 @@ private:
             return st;
         }
         if (Match(Tok::For)) {
+            // foreach form: for x in <array> { ... }
+            if (Check(Tok::Ident)) {
+                std::size_t save = m_pos;
+                std::string var = m_toks[m_pos++].text;
+                if (Match(Tok::In)) {
+                    auto fe = std::make_unique<ForEachStmt>();
+                    fe->var = var;
+                    fe->iterable = ParseExpression();
+                    fe->body = ParseBlock();
+                    return fe;
+                }
+                m_pos = save; // not foreach; fall back to C-style for
+            }
             Expect(Tok::LParen, "'('");
             auto st = std::make_unique<ForStmt>();
             // init: a var declaration, an expression, or empty.
@@ -519,8 +560,19 @@ private:
     // Expression grammar with precedence climbing.
     ExprPtr ParseExpression() { return ParseAssignment(); }
 
+    // Ternary: cond ? a : b (lower precedence than assignment's RHS).
+    ExprPtr ParseTernary() {
+        ExprPtr c = ParseOr();
+        if (Match(Tok::Question)) {
+            ExprPtr a = ParseAssignment();
+            Expect(Tok::Colon, "':'");
+            ExprPtr b = ParseAssignment();
+            return std::make_unique<TernaryExpr>(std::move(c), std::move(a), std::move(b));
+        }
+        return c;
+    }
     ExprPtr ParseAssignment() {
-        ExprPtr left = ParseOr();
+        ExprPtr left = ParseTernary();
         if (Match(Tok::Assign)) {
             ExprPtr value = ParseAssignment();
             if (auto* var = dynamic_cast<VarExpr*>(left.get()))

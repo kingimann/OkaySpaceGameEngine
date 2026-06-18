@@ -197,6 +197,30 @@ struct Runtime {
     std::unordered_map<std::string, std::function<Value(std::vector<Value>&)>> builtins;
     ScriptHost* host = nullptr;
 
+    // Scheduled callbacks (after / every). interval == 0 means fire once.
+    struct Timer { float remaining; float interval; std::string fn; bool dead; };
+    std::vector<Timer> timers;
+
+    /// Advance scheduled timers by dt and invoke any that come due. Once-timers
+    /// are removed after firing; repeating ones re-arm by their interval.
+    void TickTimers(float dt) {
+        std::vector<std::string> due;
+        const float kEps = 1e-4f;                // absorb fp dust at the boundary
+        for (auto& t : timers) {
+            t.remaining -= dt;
+            int guard = 0;                       // cap multi-fires on a big dt
+            while (t.remaining <= kEps && guard++ < 64) {
+                due.push_back(t.fn);
+                if (t.interval > 0.0f) t.remaining += t.interval;
+                else { t.dead = true; break; }
+            }
+        }
+        timers.erase(std::remove_if(timers.begin(), timers.end(),
+                                    [](const Timer& t) { return t.dead; }), timers.end());
+        std::vector<Value> none;
+        for (const auto& fn : due) if (functions.count(fn)) Call(fn, none);
+    }
+
     Environment& Global() { return scopes.front(); }
 
     void Define(const std::string& n, const Value& v) { scopes.back().vars[n] = v; }
@@ -729,6 +753,21 @@ struct OkayScriptVM::Impl {
         b["set_timescale"] = [](std::vector<Value>& a) { Time::SetTimeScale(a.empty() ? 1.0f : a[0].AsFloat()); return Value{}; };
         b["timescale"]     = [](std::vector<Value>&) { return Value{Time::TimeScale()}; };
         b["dt"]    = [this](std::vector<Value>&) { return Value{rt.host ? rt.host->deltaTime : 0.0f}; };
+        // Scheduled callbacks: after(seconds, "fn") fires once; every(seconds,
+        // "fn") repeats; cancel_timers() clears them. fn is a function in this
+        // script. Great for spawn waves, respawns, cooldowns, blinking text.
+        b["after"] = [this](std::vector<Value>& a) {
+            if (a.size() >= 2) rt.timers.push_back({a[0].AsFloat(), 0.0f, a[1].AsString(), false});
+            return Value{};
+        };
+        b["every"] = [this](std::vector<Value>& a) {
+            if (a.size() >= 2) {
+                float iv = a[0].AsFloat(); if (iv <= 0.0f) iv = 0.0001f;
+                rt.timers.push_back({iv, iv, a[1].AsString(), false});
+            }
+            return Value{};
+        };
+        b["cancel_timers"] = [this](std::vector<Value>&) { rt.timers.clear(); return Value{}; };
         b["axis_x"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().x}; };
         b["axis_y"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().y}; };
         b["key"]    = [](std::vector<Value>& a) {
@@ -1456,6 +1495,11 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
         std::vector<Value> args{Value{deltaTime}};
         try { m_impl->rt.Call("update", args); }
         catch (const std::exception& e) { Log::Error("OkayScript update(): ", e.what()); }
+    }
+    // Scheduled after()/every() callbacks tick even without an update().
+    if (!m_impl->rt.timers.empty()) {
+        try { m_impl->rt.TickTimers(deltaTime); }
+        catch (const std::exception& e) { Log::Error("OkayScript timer: ", e.what()); }
     }
 }
 

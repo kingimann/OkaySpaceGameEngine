@@ -74,6 +74,9 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | --- | --- |
 | `time()` | seconds since start |
 | `dt()` | last frame delta time |
+| `after(secs, "fn")` | call a function once after a delay (respawns, cooldowns) |
+| `every(secs, "fn")` | call a function repeatedly at an interval (spawn waves, blinking) |
+| `cancel_timers()` | clear this script's scheduled after()/every() callbacks |
 | `set_timescale(x)` / `timescale()` | global speed (0 = pause, 0.5 = slow-mo) |
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |

@@ -93,5 +93,38 @@ int main() {
         CHECK_NEAR(enemy->transform->localPosition.z, 5.0f, 0.001f);
     }
 
+    // --- after() fires once at its delay; every() repeats; cancel_timers stops ---
+    {
+        Scene scene("Timers");
+        GameObject* go = scene.CreateGameObject("T");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() { after(0.5, \"boom\"); every(0.2, \"tick\"); }\n"
+            "function boom() { set_x(1); }\n"
+            "function tick() { move(0, 1); }\n"));   // y += 1 per tick
+        scene.Start();
+        for (int i = 0; i < 5; ++i) scene.Update(0.1f);   // 0.5s total
+        CHECK_NEAR(go->transform->localPosition.x, 1.0f, 0.001f);   // boom fired once
+        CHECK_NEAR(go->transform->localPosition.y, 2.0f, 0.001f);   // ticks at 0.2, 0.4
+
+        // boom does not fire again; ticks keep coming.
+        for (int i = 0; i < 5; ++i) scene.Update(0.1f);   // to 1.0s
+        CHECK_NEAR(go->transform->localPosition.x, 1.0f, 0.001f);   // still once
+        CHECK(go->transform->localPosition.y >= 4.0f);              // more ticks
+    }
+
+    // --- cancel_timers() halts a repeating callback ---
+    {
+        Scene scene("Cancel");
+        GameObject* go = scene.CreateGameObject("C");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() { every(0.1, \"tick\"); }\n"
+            "function tick() { move(1, 0); cancel_timers(); }\n"));  // fire once then stop
+        scene.Start();
+        for (int i = 0; i < 10; ++i) scene.Update(0.1f);
+        CHECK_NEAR(go->transform->localPosition.x, 1.0f, 0.001f);    // exactly one tick
+    }
+
     TEST_MAIN_RESULT();
 }

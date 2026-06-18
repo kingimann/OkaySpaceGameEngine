@@ -7,6 +7,7 @@
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/TextRenderer.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 
@@ -91,6 +92,60 @@ inline void TopDown(Scene& scene) {
         auto* wsr = wall->AddComponent<SpriteRenderer>();
         wsr->color = Color::FromBytes(110, 110, 130);
         wsr->size = {1, 4};
+    }
+}
+
+/// A complete little game: drive the player with WASD to collect spinning
+/// coins; a HUD counts the score. Shows off sprites, triggers, script events,
+/// shared state (prefs), camera-follow, and text — a working sample to learn
+/// from. Uses only OkayScript + components, so it runs in the player too.
+inline void CoinCollector(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Coin Collector");
+
+    GameObject* camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->orthographicSize = 6.0f;
+    cam->main = true;
+    auto* follow = camObj->AddComponent<CameraFollow>();
+    follow->targetName = "Player";
+    follow->smoothing = 6.0f;
+
+    GameObject* player = scene.CreateGameObject("Player");
+    player->AddComponent<SpriteRenderer>()->color = Color::FromBytes(80, 160, 240);
+    player->AddComponent<BoxCollider2D>()->size = {1, 1};
+    auto* psc = player->AddComponent<ScriptComponent>("okayscript");
+    psc->LoadSource(
+        "function start() { prefs_set(\"score\", 0); }\n"
+        "function update(d) {\n"
+        "  var speed = 6;\n"
+        "  move(axis_x() * speed * d, axis_y() * speed * d);\n"
+        "}\n");
+
+    GameObject* hud = scene.CreateGameObject("HUD");
+    auto* txt = hud->AddComponent<TextRenderer>();
+    txt->screenSpace = true;
+    txt->screenPos = {16, 16};
+    txt->pixelSize = 3.0f;
+    txt->text = "Score: 0";
+    hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
+
+    // A few collectible coins.
+    const float xs[] = {-3.0f, 0.0f, 3.0f};
+    for (int i = 0; i < 3; ++i) {
+        GameObject* coin = scene.CreateGameObject("Coin");
+        coin->transform->localPosition = {xs[i], 2.0f, 0.0f};
+        auto* sr = coin->AddComponent<SpriteRenderer>();
+        sr->color = Color::FromBytes(240, 210, 70);
+        sr->size = {0.6f, 0.6f};
+        auto* cc = coin->AddComponent<BoxCollider2D>();
+        cc->size = {0.6f, 0.6f};
+        cc->isTrigger = true;
+        coin->AddComponent<Spinner>()->angularVelocity = {0, 0, 120};
+        coin->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function on_trigger() { prefs_set(\"score\", prefs_get(\"score\") + 1); destroy(); }\n");
     }
 }
 

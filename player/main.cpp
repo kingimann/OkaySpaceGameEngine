@@ -340,6 +340,27 @@ int main(int argc, char** argv) {
                 }
             }
         }
+
+        // In-game UI buttons (screen space), drawn on top of everything.
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        for (const auto& up : scene.Objects()) {
+            auto* btn = up->GetComponent<UIButton>();
+            if (!btn || !up->active) continue;
+            const Color& bg = btn->IsHovered() ? btn->hoverColor : btn->color;
+            SDL_Rect r{(int)btn->position.x, (int)btn->position.y,
+                       (int)btn->size.x, (int)btn->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
+                                   (Uint8)(bg.b * 255), (Uint8)(bg.a * 255));
+            SDL_RenderFillRect(renderer, &r);
+            // Center the label (8px glyphs, ~1px gap) at pixel size 2.
+            float px = 2.0f;
+            float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+            float tx = btn->position.x + (btn->size.x - tw) * 0.5f;
+            float ty = btn->position.y + (btn->size.y - Font8x8::Height * px) * 0.5f;
+            SDL_Color tc{(Uint8)(btn->textColor.r * 255), (Uint8)(btn->textColor.g * 255),
+                         (Uint8)(btn->textColor.b * 255), (Uint8)(btn->textColor.a * 255)};
+            DrawText(renderer, btn->label, tx, ty, px, tc);
+        }
         SDL_RenderPresent(renderer);
     }
 

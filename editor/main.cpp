@@ -1406,6 +1406,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
     }
+    if (auto* btn = go->GetComponent<UIButton>()) {
+        if (ImGui::CollapsingHeader("UI Button", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char lb[128];
+            std::strncpy(lb, btn->label.c_str(), sizeof(lb) - 1);
+            lb[sizeof(lb) - 1] = '\0';
+            if (ImGui::InputText("Label##uib", lb, sizeof(lb))) { btn->label = lb; ed.dirty = true; }
+            float pos[2] = {btn->position.x, btn->position.y};
+            if (ImGui::DragFloat2("Pos (px)##uib", pos, 1.0f)) { btn->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {btn->size.x, btn->size.y};
+            if (ImGui::DragFloat2("Size (px)##uib", sz, 1.0f, 1.0f, 4000.0f)) { btn->size = {sz[0], sz[1]}; ed.dirty = true; }
+            float c[4] = {btn->color.r, btn->color.g, btn->color.b, btn->color.a};
+            if (ImGui::ColorEdit4("Color##uib", c)) { btn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            float hc[4] = {btn->hoverColor.r, btn->hoverColor.g, btn->hoverColor.b, btn->hoverColor.a};
+            if (ImGui::ColorEdit4("Hover##uib", hc)) { btn->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("calls the script's on_click() in the built game");
+            if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
+        }
+    }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         if (ImGui::CollapsingHeader("Sprite Animator", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
@@ -1490,6 +1508,8 @@ void DrawInspector(EditorState& ed) {
         if (go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>() &&
             F("Tilemap Collider 2D") && ImGui::Selectable("Tilemap Collider 2D"))
             { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+        if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
+            { go->AddComponent<UIButton>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
@@ -1615,6 +1635,23 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ImVec2 o = worldToScreen(up->transform->Position());
             DrawBitmapText(dl, tr->text, o.x, o.y, tr->pixelSize * scale, col);
         }
+    }
+
+    // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
+    for (const auto& up : objs) {
+        auto* btn = up->GetComponent<UIButton>();
+        if (!btn || !up->active) continue;
+        ImVec2 a(canvasPos.x + btn->position.x, canvasPos.y + btn->position.y);
+        ImVec2 b(a.x + btn->size.x, a.y + btn->size.y);
+        dl->AddRectFilled(a, b, ToColor(btn->color), 4.0f);
+        float px = 2.0f;
+        float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+        DrawBitmapText(dl, btn->label, a.x + (btn->size.x - tw) * 0.5f,
+                       a.y + (btn->size.y - Font8x8::Height * px) * 0.5f, px,
+                       ToColor(btn->textColor));
+        if (up.get() == ed.selected())
+            dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
+                        IM_COL32(255, 200, 0, 255), 4.0f, 0, 2.0f);
     }
     dl->PopClipRect();
 

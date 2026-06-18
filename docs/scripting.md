@@ -40,7 +40,8 @@ function update(dt) {
 Top-level statements run once when the script loads (good for setup); `start()`
 runs when the scene starts and `update(dt)` runs every frame. Define
 `on_trigger()` or `on_collision()` to react when this object's collider
-overlaps or contacts another (pickups, damage).
+overlaps or contacts another (pickups, damage), or `on_click()` to handle a
+UI Button press.
 
 ## Built-in functions
 

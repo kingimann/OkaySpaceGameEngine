@@ -154,7 +154,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  text " << Quote(tr->text) << " "
             << tr->color.r << " " << tr->color.g << " " << tr->color.b << " " << tr->color.a << " "
             << tr->pixelSize << " " << (tr->screenSpace ? 1 : 0) << " "
-            << tr->screenPos.x << " " << tr->screenPos.y << "\n";
+            << tr->screenPos.x << " " << tr->screenPos.y << " " << (int)tr->anchor << "\n";
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -405,6 +405,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* tr = go->AddComponent<TextRenderer>();
                     tr->text = str; tr->color = c; tr->pixelSize = px;
                     tr->screenSpace = (ss != 0); tr->screenPos = sp;
+                    ReadAnchor(in, tr->anchor);   // optional trailing field
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;

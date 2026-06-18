@@ -382,8 +382,8 @@ int main(int argc, char** argv) {
                 SDL_Color col{(Uint8)(tr->color.r * 255), (Uint8)(tr->color.g * 255),
                               (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255)};
                 if (tr->screenSpace) {
-                    DrawText(renderer, tr->text, tr->screenPos.x, tr->screenPos.y,
-                             tr->pixelSize, col);
+                    Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);
+                    DrawText(renderer, tr->text, o.x, o.y, tr->pixelSize, col);
                 } else {
                     SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
                     DrawText(renderer, tr->text, (float)o.x, (float)o.y,

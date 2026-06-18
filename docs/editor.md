@@ -105,7 +105,9 @@ uses, built right into the engine app.
   in the Scene viewport and render in the built game.
 - **Text** — add a *Text* component for score counters, labels, and HUD using
   the built-in 8x8 font (no font file needed). Use *Screen Space* for a fixed
-  HUD or world space to anchor it to the GameObject. Renders in the built game.
+  HUD (with an *Anchor* so a centered title or bottom-right score adapts to the
+  window size) or world space to anchor it to the GameObject. Renders in the
+  built game.
 - **GameObject menu** — create Empty / Sprite / Camera objects.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
   (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a

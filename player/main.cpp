@@ -54,6 +54,15 @@ int main(int argc, char** argv) {
         if (base) SDL_free(base);
     }
 
+    // Persistent prefs (high scores, settings) live beside the scene file.
+    std::string prefsPath;
+    {
+        char* base = SDL_GetBasePath();
+        prefsPath = (base ? std::string(base) : "") + "game.okayprefs";
+        if (base) SDL_free(base);
+    }
+    Prefs::Load(prefsPath);
+
     Scene scene("Game");
     std::string err;
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
@@ -222,6 +231,8 @@ int main(int argc, char** argv) {
         }
         SDL_RenderPresent(renderer);
     }
+
+    Prefs::Save(prefsPath); // persist any prefs the game set this session
 
     if (audioDev) SDL_CloseAudioDevice(audioDev);
     SDL_DestroyRenderer(renderer);

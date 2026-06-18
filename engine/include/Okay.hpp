@@ -14,6 +14,7 @@
 #include "okay/Core/Random.hpp"
 #include "okay/Core/EventBus.hpp"
 #include "okay/Core/Scheduler.hpp"
+#include "okay/Core/Prefs.hpp"
 #include "okay/Core/Application.hpp"
 
 // Input

@@ -129,29 +129,39 @@ ImU32 ToColor(const Color& c) {
 //      so overlapping faces occlude correctly (the ImGui draw list has no depth
 //      buffer). Set by main(); the texture is reused/resized across frames.
 SDL_Renderer* g_sdlRenderer = nullptr;
-SDL_Texture*  g_view3DTex = nullptr;
-int g_view3DW = 0, g_view3DH = 0;
-Raster g_view3DRaster;
 
-// Render the scene's solid meshes (z-buffered) at w*h into the shared texture;
+// One render target per 3D view "slot" (0 = Scene viewport, 1 = Game view).
+// ImGui defers rendering, so the SDL texture is only sampled at SDL_RenderCopy
+// time — if the Scene and Game views shared one texture, whichever drew last
+// would overwrite it and BOTH panels would show that content (the flicker seen
+// when splitting Scene + Game). A texture per slot keeps them independent.
+static const int kView3DSlots = 2;
+SDL_Texture* g_view3DTex[kView3DSlots] = {nullptr, nullptr};
+int g_view3DW[kView3DSlots] = {0, 0}, g_view3DH[kView3DSlots] = {0, 0};
+Raster g_view3DRaster[kView3DSlots];
+
+// Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
-SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye, int w, int h) {
+SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye,
+                             int w, int h, int slot = 0) {
     if (!g_sdlRenderer) return nullptr;
+    if (slot < 0 || slot >= kView3DSlots) slot = 0;
     w = w < 1 ? 1 : (w > 4096 ? 4096 : w);
     h = h < 1 ? 1 : (h > 4096 ? 4096 : h);
-    g_view3DRaster.Resize(w, h);
-    g_view3DRaster.Clear(0u);                    // transparent
+    Raster& ras = g_view3DRaster[slot];
+    ras.Resize(w, h);
+    ras.Clear(0u);                               // transparent
     ApplySceneLight(scene);                      // a Light object aims the shading
-    RenderMeshes(g_view3DRaster, scene, vp, eye);
-    if (!g_view3DTex || g_view3DW != w || g_view3DH != h) {
-        if (g_view3DTex) SDL_DestroyTexture(g_view3DTex);
-        g_view3DTex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                        SDL_TEXTUREACCESS_STREAMING, w, h);
-        SDL_SetTextureBlendMode(g_view3DTex, SDL_BLENDMODE_BLEND);
-        g_view3DW = w; g_view3DH = h;
+    RenderMeshes(ras, scene, vp, eye);
+    if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h) {
+        if (g_view3DTex[slot]) SDL_DestroyTexture(g_view3DTex[slot]);
+        g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                              SDL_TEXTUREACCESS_STREAMING, w, h);
+        SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
+        g_view3DW[slot] = w; g_view3DH[slot] = h;
     }
-    SDL_UpdateTexture(g_view3DTex, nullptr, g_view3DRaster.color.data(), w * 4);
-    return g_view3DTex;
+    SDL_UpdateTexture(g_view3DTex[slot], nullptr, ras.color.data(), w * 4);
+    return g_view3DTex[slot];
 }
 
 // ---- Self-updater + runtime fetcher -----------------------------------
@@ -2685,7 +2695,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Solid meshes: render z-buffered into a texture (correct per-pixel
     // occlusion) and blit it; transparent where empty so the grid shows through.
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
-                                           (int)canvasSize.x, (int)canvasSize.y))
+                                           (int)canvasSize.x, (int)canvasSize.y,
+                                           gameView ? 1 : 0))
         dl->AddImage((ImTextureID)tex, canvasPos, canvasEnd);
 
     // Highlight the selection with a clean yellow bounding box (12 edges).

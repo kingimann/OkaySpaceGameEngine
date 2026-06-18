@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.9.1
+  - Fixed Scene/Game flicker when both 3D views are visible at once (split or
+    docked, in or out of Play): the two views shared one render texture and
+    fought over it each frame. Each view now renders to its own texture.
+
 v1.9.0
   - Collider gizmos: colliders now draw as green wireframe outlines in the
     Scene view (2D box/circle/capsule and 3D box/sphere/capsule), so you can

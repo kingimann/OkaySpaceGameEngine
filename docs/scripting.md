@@ -85,6 +85,7 @@ overlaps or contacts another (pickups, damage).
 | `prefs_get(key, default)` | read a number |
 | `prefs_get_str(key, default)` | read a string |
 | `prefs_save(path)` / `prefs_load(path)` | write/read the prefs file |
+| `set_volume(x)` / `volume()` / `mute(bool)` | global audio level (options menus) |
 
 The standalone player auto-loads `game.okayprefs` on launch and saves it on
 exit, so values set with `prefs_set` persist between play sessions.

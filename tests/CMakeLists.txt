@@ -110,6 +110,10 @@ add_executable(test_gravity test_gravity.cpp)
 target_link_libraries(test_gravity PRIVATE okay::engine)
 add_test(NAME gravity COMMAND test_gravity)
 
+add_executable(test_master_volume test_master_volume.cpp)
+target_link_libraries(test_master_volume PRIVATE okay::engine)
+add_test(NAME master_volume COMMAND test_master_volume)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

@@ -8,6 +8,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
@@ -682,6 +683,10 @@ struct OkayScriptVM::Impl {
                 if (auto* au = g->GetComponent<AudioSource>()) au->Play();
             return Value{};
         };
+        // Global audio settings (for options menus).
+        b["set_volume"] = [](std::vector<Value>& a) { AudioMixer::masterVolume = a.empty() ? 1.0f : a[0].AsFloat(); return Value{}; };
+        b["volume"]     = [](std::vector<Value>&) { return Value{AudioMixer::masterVolume}; };
+        b["mute"]       = [](std::vector<Value>& a) { AudioMixer::muted = a.empty() ? true : a[0].AsBool(); return Value{}; };
         // Physics queries: raycast_hit(ox, oy, dx, dy [, maxDist]) returns 1 if
         // the ray hits a collider, and overlap(x, y) returns 1 if a collider
         // contains that point. Great for shooting, ground checks, line-of-sight.

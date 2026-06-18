@@ -1266,8 +1266,8 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
             const char* shapes[] = {"Cube", "Pyramid", "Quad", "Plane", "Sphere",
-                                    "Cylinder", "Cone", "Torus"};
-            const int kShapeCount = 8;
+                                    "Cylinder", "Cone", "Torus", "Capsule"};
+            const int kShapeCount = 9;
             int shapeIdx = -1;
             for (int i = 0; i < kShapeCount; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
             if (ImGui::Combo("Primitive", &shapeIdx, shapes, kShapeCount)) {
@@ -1290,6 +1290,15 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
+            if (ImGui::SmallButton("Subdivide##mesh")) { mr->mesh.Subdivide(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Smooth##mesh")) {     // subdivide + reproject to sphere
+                Vec3 sz = mr->mesh.Size();
+                mr->mesh.Subdivide();
+                mr->mesh.ProjectToSphere(0.5f * std::fmax(sz.x, std::fmax(sz.y, sz.z)));
+                ed.dirty = true;
+            }
+            ImGui::SameLine();
             if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
         }
     }

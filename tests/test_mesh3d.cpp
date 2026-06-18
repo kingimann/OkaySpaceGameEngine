@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 
@@ -37,6 +38,52 @@ int main() {
         CHECK(tor.name == "Torus");
         CHECK(tor.vertices.size() == 16u * 10u);
         CHECK(tor.TriangleCount() == 16 * 10 * 2);
+
+        Mesh cap = Mesh::Capsule(0.5f, 2.0f, 12, 6);
+        CHECK(cap.name == "Capsule");
+        CHECK(!cap.vertices.empty());
+        CHECK(cap.TriangleCount() > 0);
+        // Capsule height ~2 -> spans about -1..1 in Y.
+        CHECK_NEAR(cap.Size().y, 2.0f, 0.05f);
+    }
+
+    // --- Subdivide quadruples triangle count and stays welded ---
+    {
+        Mesh quad = Mesh::Quad();          // 2 triangles, 4 verts
+        int t0 = quad.TriangleCount();
+        quad.Subdivide();
+        CHECK(quad.TriangleCount() == t0 * 4);
+        CHECK(quad.name.empty());          // no longer a tagged primitive
+        // Shared edge midpoints are welded: a single quad's 2 tris share one
+        // diagonal edge, so 5 unique midpoints are added (not 6).
+        CHECK(quad.vertices.size() == 4u + 5u);
+    }
+
+    // --- ProjectToSphere puts every vertex on the given radius ---
+    {
+        Mesh m = Mesh::Cube();
+        m.Subdivide();
+        m.ProjectToSphere(2.0f);
+        for (auto& v : m.vertices) CHECK_NEAR(v.Magnitude(), 2.0f, 0.001f);
+    }
+
+    // --- Normals are unit length and radial on a sphere ---
+    {
+        Mesh sph = Mesh::Sphere(1.0f, 6, 8);
+        auto normals = sph.Normals();
+        CHECK(normals.size() == sph.vertices.size());
+        int checked = 0;
+        for (std::size_t i = 0; i < sph.vertices.size(); ++i) {
+            float mag = normals[i].Magnitude();
+            if (mag < 0.5f) continue;             // skip seam/pole verts whose faces cancel
+            CHECK_NEAR(mag, 1.0f, 0.001f);
+            // On a sphere about the origin the surface normal is (anti)parallel
+            // to the radial direction; |dot| ~ 1 regardless of winding.
+            Vec3 p = sph.vertices[i];
+            CHECK(std::fabs(Vec3::Dot(normals[i], p.Normalized())) > 0.7f);
+            ++checked;
+        }
+        CHECK(checked > 0);
     }
 
     // --- Bounds / Center / Size of the AABB ---
@@ -72,6 +119,7 @@ int main() {
         CHECK(Mesh::FromName("Cube").name == "Cube");
         CHECK(Mesh::FromName("Cone").name == "Cone");
         CHECK(Mesh::FromName("Torus").name == "Torus");
+        CHECK(Mesh::FromName("Capsule").name == "Capsule");
 
         Scene scene("S");
         GameObject* go = scene.CreateGameObject("Ball");

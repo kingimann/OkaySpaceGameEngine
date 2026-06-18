@@ -65,6 +65,8 @@ planet, `A` player ship.)*
   animation, and a `TextRenderer` using a built-in **8×8 bitmap font** (no font
   file) for HUDs and labels. The player draws shaded 3D meshes, rotated/textured
   layered sprites, tilemaps, particles, and text.
+- **3D primitives** — `Mesh::Cube/Pyramid/Plane/Sphere/Cylinder`, drawn as
+  shaded, back-face-culled, depth-sorted meshes via a perspective `Camera`.
 - **WAV audio** — `AudioClip::LoadWAV` (8/16/24/32-bit + float, resampled) and
   `SaveWAV`; `AudioSource` clip paths load in the built game and mix live.
 - **Gameplay components (no scripting needed)** — `Mover` (constant velocity),
@@ -78,9 +80,9 @@ planet, `A` player ship.)*
   `Tween` for game-feel animation.
 - **Persistent save data** — `Prefs` (PlayerPrefs-style key/value) for high
   scores and settings; the player auto-loads/saves it.
-- **Starter templates** — `Templates::Platformer` / `TopDown` / **`CoinCollector`**
-  (a complete, playable game: WASD player, follow camera, trigger-collected
-  coins, and a score HUD) build component-wired scenes from the New Project flow.
+- **Starter templates** — `Platformer` / `TopDown` / **`CoinCollector`** (a
+  complete, playable game) / **`MainMenu`** (UI panel + title + Start button)
+  build component-wired scenes from the New Project flow.
 - **Utilities** — seedable `Random`, a typed `EventBus`, `Rect`/`Bounds`, extra
   `Mathf` (InverseLerp, SmoothDamp, LerpAngle…), and `Scene::FindObjectsOfType<T>`.
 - **Multiplayer** — cross-platform UDP networking (`NetworkManager`) with a
@@ -89,11 +91,21 @@ planet, `A` player ship.)*
   variables, transform actions) you build in code or load from text.
 - **Text scripting** — a built-in language (works everywhere) plus optional
   **Lua** and **C#** backends behind the same `IScriptVM` interface. OkayScript
-  has `for`/`while`/`if`, functions, strings, and a deep builtin set: input
-  (keyboard+mouse), `spawn`/`destroy`, `load_scene`, physics `raycast_hit`/
-  `overlap`, component control (`set_text`/`set_color`/`set_texture`/`play_sound`),
-  `prefs_*` save data, and `on_trigger()`/`on_collision()` event handlers.
+  has `if`/`while`/`for`/**foreach**/`break`/`continue`, functions, the
+  **ternary** `?:`, **arrays** and **maps**, a full **string** library, and a
+  deep builtin set: input (keyboard+mouse), 2D/3D transform control,
+  `spawn`/`destroy`, `load_scene`, physics `raycast_hit`/`overlap`,
+  component control (`set_text`/`set_color`/`set_texture`/`play_sound`/`set_progress`),
+  audio/gravity/time-scale, `prefs_*` save data, and
+  `on_trigger()`/`on_collision()`/`on_click()` event handlers.
   See [`docs/scripting.md`](docs/scripting.md).
+- **In-game UI** — screen-space `UIButton` (fires `on_click()`), `UIPanel`
+  (backgrounds), and `UIProgressBar` (health/mana bars), rendered in both the
+  editor and the built game.
+- **Build for desktop, web & mobile** — one project, every target: a
+  self-contained Windows `.exe`, a **WebAssembly** build via Emscripten
+  (`scripts/build-web.sh`), and Android/iOS via SDL2.
+  See [`docs/web_mobile.md`](docs/web_mobile.md).
 - **Steam** and **PlayFab** integrations — full API surfaces with in-memory
   simulation backends by default; real Steamworks/REST backends behind flags.
 - **Self-updating launcher** that pulls the latest from GitHub, rebuilds, runs.

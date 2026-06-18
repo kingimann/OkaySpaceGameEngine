@@ -7,6 +7,7 @@
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
@@ -1509,6 +1510,43 @@ struct OkayScriptVM::Impl {
             if (Transform* t = tf())
                 t->Rotate({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f,
                            a.size() > 2 ? a[2].AsFloat() : 0.0f});
+            return Value{};
+        };
+        // Absolute 3D euler rotation (degrees) — face a direction outright.
+        b["set_rot3"] = [tf](std::vector<Value>& a) {
+            if (Transform* t = tf())
+                t->localRotation = Quat::Euler({a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                                                a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                                a.size() > 2 ? a[2].AsFloat() : 0.0f});
+            return Value{};
+        };
+        // 3D scale: set all axes, or read one.
+        b["set_scale3"] = [tf](std::vector<Value>& a) {
+            if (Transform* t = tf())
+                t->localScale = {a.size() > 0 ? a[0].AsFloat() : 1.0f, a.size() > 1 ? a[1].AsFloat() : 1.0f,
+                                 a.size() > 2 ? a[2].AsFloat() : 1.0f};
+            return Value{};
+        };
+        b["set_scale"] = [tf](std::vector<Value>& a) {     // uniform scale
+            if (Transform* t = tf()) { float s = a.empty() ? 1.0f : a[0].AsFloat(); t->localScale = {s, s, s}; }
+            return Value{};
+        };
+        b["scale_x"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localScale.x : 1.0f}; };
+        b["scale_y"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localScale.y : 1.0f}; };
+        b["scale_z"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localScale.z : 1.0f}; };
+        // Full 3D distance to a named object (vs dist_to which ignores Z).
+        b["dist3_to"] = [this, sceneOf](std::vector<Value>& a) -> Value {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
+            Scene* s = sceneOf(); if (!s) return Value{0.0f};
+            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{0.0f};
+            Vec3 d = g->transform->Position() - rt.host->gameObject->transform->Position();
+            return Value{d.Magnitude()};
+        };
+        // Swap a sibling MeshRenderer's primitive at runtime (morph, LOD, states).
+        b["set_mesh"] = [this](std::vector<Value>& a) {
+            if (!a.empty() && rt.host && rt.host->gameObject)
+                if (auto* mr = rt.host->gameObject->GetComponent<MeshRenderer>())
+                    mr->mesh = Mesh::FromName(a[0].AsString());
             return Value{};
         };
     }

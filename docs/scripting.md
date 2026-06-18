@@ -84,7 +84,12 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `activate(name)` / `deactivate(name)` | show/hide another object by name |
 | `exists(name)` / `is_active(name)` | query another object by name |
 | `obj_x(name)` / `obj_y(name)` / `obj_z(name)` | read another object's world position |
-| `dist_to(name)` | distance from this object to a named object (enemy AI, doors) |
+| `dist_to(name)` | 2D distance from this object to a named object (enemy AI, doors) |
+| `dist3_to(name)` | full 3D distance to a named object |
+| `set_scale3(x, y, z)` / `set_scale(s)` | set per-axis or uniform scale |
+| `scale_x()` / `scale_y()` / `scale_z()` | read this object's scale |
+| `set_rot3(x, y, z)` | set absolute 3D euler rotation (degrees) |
+| `set_mesh(name)` | swap this object's MeshRenderer primitive at runtime |
 | `count_tag(tag)` | how many active objects have a tag (coins left, enemies alive) |
 | `nearest_tag(tag)` | name of the nearest tagged object to this one ("" if none) — targeting |
 | `screen_w()` / `screen_h()` | render-target size in pixels |

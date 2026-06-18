@@ -26,6 +26,10 @@ add_executable(test_layers test_layers.cpp)
 target_link_libraries(test_layers PRIVATE okay::engine)
 add_test(NAME physics_layers COMMAND test_layers)
 
+add_executable(test_physics3d test_physics3d.cpp)
+target_link_libraries(test_physics3d PRIVATE okay::engine)
+add_test(NAME physics3d COMMAND test_physics3d)
+
 add_executable(test_transform_input test_transform_input.cpp)
 target_link_libraries(test_transform_input PRIVATE okay::engine)
 add_test(NAME transform_input COMMAND test_transform_input)

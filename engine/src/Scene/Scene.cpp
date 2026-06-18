@@ -81,7 +81,7 @@ void Scene::Update(float deltaTime) {
             c->Update(deltaTime);
     }
 
-    if (physicsEnabled) m_physics.Step(*this, deltaTime);
+    if (physicsEnabled) { m_physics.Step(*this, deltaTime); m_physics3d.Step(*this, deltaTime); }
 
     for (Component* c : m_active) {
         if (c->enabled && c->gameObject && c->gameObject->active)

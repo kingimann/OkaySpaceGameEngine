@@ -8,6 +8,8 @@ class Scene;
 class IRenderer;
 class Collider2D;
 struct Collision2D;
+class Collider3D;
+struct Collision3D;
 
 /// Base class for everything attachable to a GameObject. Scripts derive from
 /// this (see `Behaviour`), as do built-in pieces like Transform and Camera.
@@ -44,6 +46,14 @@ public:
     virtual void OnTriggerEnter2D(Collider2D* /*other*/) {}
     virtual void OnTriggerStay2D(Collider2D* /*other*/) {}
     virtual void OnTriggerExit2D(Collider2D* /*other*/) {}
+
+    // ---- 3D physics messages (dispatched by Physics3D) ----------------
+    virtual void OnCollisionEnter3D(const Collision3D& /*collision*/) {}
+    virtual void OnCollisionStay3D(const Collision3D& /*collision*/) {}
+    virtual void OnCollisionExit3D(const Collision3D& /*collision*/) {}
+    virtual void OnTriggerEnter3D(Collider3D* /*other*/) {}
+    virtual void OnTriggerStay3D(Collider3D* /*other*/) {}
+    virtual void OnTriggerExit3D(Collider3D* /*other*/) {}
 
     Scene* GetScene() const;
 

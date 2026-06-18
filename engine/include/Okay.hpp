@@ -51,6 +51,9 @@
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Physics3D.hpp"
 
 // Animation
 #include "okay/Animation/AnimationCurve.hpp"

@@ -2,6 +2,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Physics3D.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -74,6 +75,9 @@ public:
     /// The 2D physics world, stepped each frame during Update.
     Physics2D& physics() { return m_physics; }
     const Physics2D& physics() const { return m_physics; }
+    /// The 3D physics world, stepped each frame during Update.
+    Physics3D& physics3D() { return m_physics3d; }
+    const Physics3D& physics3D() const { return m_physics3d; }
     /// Set false to skip the physics step (e.g. for pure-UI scenes).
     bool physicsEnabled = true;
 
@@ -94,6 +98,7 @@ private:
     std::string m_name;
     Scheduler   m_scheduler;
     Physics2D   m_physics;
+    Physics3D   m_physics3d;
     std::vector<std::unique_ptr<GameObject>> m_objects;
     std::vector<Component*>  m_pending;   // awaiting Awake/Start
     std::vector<Component*>  m_active;    // receive Update each frame

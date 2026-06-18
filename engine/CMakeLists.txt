@@ -24,6 +24,7 @@ add_library(okay_engine
     src/Platform/PlayFab/NullPlayFabService.cpp
     src/Components/PlayFabManager.cpp
     src/Physics/Physics2D.cpp
+    src/Physics/Physics3D.cpp
     src/Audio/AudioMixer.cpp
     src/Audio/AudioClip.cpp
     src/AI/Pathfinding.cpp
@@ -57,40 +58,17 @@ if(WIN32)
 endif()
 
 # ---- Optional scripting backends -------------------------------------
-# Lua: real Lua embedding. Enable with -DOKAY_WITH_LUA=ON. Uses a system Lua if
-# present, otherwise vendors the reference Lua source (small, portable C) so the
-# backend works out of the box — including the static Windows cross-build.
+# Lua: real Lua embedding. Enable with -DOKAY_WITH_LUA=ON (needs liblua dev).
+# Disabled by default — the engine ships OkayScript as its scripting language.
 if(OKAY_WITH_LUA)
-    # Use a system Lua only for native builds; when cross-compiling, the host's
-    # pkg-config Lua isn't linkable for the target, so go straight to vendoring.
-    if(NOT CMAKE_CROSSCOMPILING)
-        find_package(Lua QUIET)
-        if(NOT LUA_FOUND)
-            find_package(PkgConfig QUIET)
-            if(PkgConfig_FOUND)
-                pkg_check_modules(LUA QUIET lua5.4 lua-5.4 lua)
-                set(LUA_LIBRARIES ${LUA_LIBRARIES})
-                set(LUA_INCLUDE_DIR ${LUA_INCLUDE_DIRS})
-            endif()
+    find_package(Lua QUIET)
+    if(NOT LUA_FOUND)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(LUA QUIET lua5.4 lua-5.4 lua)
+            set(LUA_LIBRARIES ${LUA_LIBRARIES})
+            set(LUA_INCLUDE_DIR ${LUA_INCLUDE_DIRS})
         endif()
-    endif()
-    if(NOT LUA_LIBRARIES)
-        # Vendor Lua: fetch the reference source and build the core as a static
-        # lib (excluding the standalone interpreter/compiler/amalgam mains).
-        enable_language(C)   # vendored Lua is C; the project is otherwise CXX-only
-        include(FetchContent)
-        FetchContent_Declare(lua
-            GIT_REPOSITORY https://github.com/lua/lua.git
-            GIT_TAG        v5.4.6)
-        FetchContent_MakeAvailable(lua)
-        file(GLOB OKAY_LUA_SRC ${lua_SOURCE_DIR}/*.c)
-        list(FILTER OKAY_LUA_SRC EXCLUDE REGEX "(lua|luac|onelua)\\.c$")
-        add_library(okay_lua STATIC ${OKAY_LUA_SRC})
-        target_include_directories(okay_lua SYSTEM PUBLIC ${lua_SOURCE_DIR})
-        target_compile_options(okay_lua PRIVATE -w)
-        set(LUA_LIBRARIES okay_lua)
-        set(LUA_INCLUDE_DIR ${lua_SOURCE_DIR})
-        message(STATUS "OkaySpace: Lua scripting ENABLED (vendored Lua 5.4.6)")
     endif()
     if(LUA_LIBRARIES)
         target_sources(okay_engine PRIVATE src/Scripting/LuaScriptVM.cpp)

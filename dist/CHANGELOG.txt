@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v1.8.0
+  - 3D physics: Rigidbody3D (gravity, mass, drag, bounciness, freeze axes) plus
+    Box / Sphere / Capsule 3D colliders, with collision response, triggers and
+    Raycast / OverlapSphere queries. Stepped automatically each frame.
+  - More 2D colliders: added a Capsule Collider 2D (vertical or horizontal).
+  - Scene gizmos: cameras now draw a wireframe frustum and lights draw a sun +
+    direction arrow, so you can see and place them in the Scene view.
+  - Scripting documentation: Help > Scripting Reference (and a Docs button in
+    the Script Editor) opens a full OkayScript reference; also in docs/.
+  - Scripting is OkayScript-only now (Lua removed); the language picker reflects
+    that and the starter script is valid OkayScript so Compile & Run works.
+
 v1.7.0
   - Script editor works now: the starter script is written in the correct
     syntax for the selected language (OkayScript uses C-style braces and

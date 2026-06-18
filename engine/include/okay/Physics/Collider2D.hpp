@@ -9,7 +9,7 @@ namespace okay {
 /// broad-phase tests; subclasses describe the actual shape.
 class Collider2D : public Component {
 public:
-    enum class Shape { Box, Circle };
+    enum class Shape { Box, Circle, Capsule };
 
     /// Trigger colliders detect overlap but don't push objects apart.
     bool isTrigger = false;
@@ -64,6 +64,45 @@ public:
         float r = WorldRadius();
         outMin = {c.x - r, c.y - r};
         outMax = {c.x + r, c.y + r};
+    }
+};
+
+/// Capsule collider: a segment with a radius (rounded ends). `size` is the full
+/// width and height of the capsule's bounding box; the longer of the two picks
+/// the segment axis (vertical when taller, horizontal when wider).
+class CapsuleCollider2D : public Collider2D {
+public:
+    Vec2 size = {1.0f, 2.0f};
+    enum class Direction { Vertical, Horizontal };
+    Direction direction = Direction::Vertical;
+
+    Shape shape() const override { return Shape::Capsule; }
+
+    float WorldRadius() const {
+        Vec3 s = transform ? transform->LossyScale() : Vec3::One;
+        // Radius is half the capsule's thin dimension.
+        return direction == Direction::Vertical
+            ? Mathf::Abs(size.x * s.x) * 0.5f
+            : Mathf::Abs(size.y * s.y) * 0.5f;
+    }
+    /// The capsule's inner segment endpoints in world space.
+    void Segment(Vec2& a, Vec2& b) const {
+        Vec3 s = transform ? transform->LossyScale() : Vec3::One;
+        Vec2 c = WorldCenter();
+        float r = WorldRadius();
+        if (direction == Direction::Vertical) {
+            float half = Mathf::Max(0.0f, Mathf::Abs(size.y * s.y) * 0.5f - r);
+            a = {c.x, c.y - half}; b = {c.x, c.y + half};
+        } else {
+            float half = Mathf::Max(0.0f, Mathf::Abs(size.x * s.x) * 0.5f - r);
+            a = {c.x - half, c.y}; b = {c.x + half, c.y};
+        }
+    }
+    void WorldAABB(Vec2& outMin, Vec2& outMax) const override {
+        Vec2 a, b; Segment(a, b);
+        float r = WorldRadius();
+        outMin = {Mathf::Min(a.x, b.x) - r, Mathf::Min(a.y, b.y) - r};
+        outMax = {Mathf::Max(a.x, b.x) + r, Mathf::Max(a.y, b.y) + r};
     }
 };
 

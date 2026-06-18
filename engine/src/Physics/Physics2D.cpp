@@ -71,35 +71,88 @@ Contact TestBoxCircle(const Vec2& cBox, const Vec2& hBox, const Vec2& cCir, floa
     return c;
 }
 
+Vec2 ClosestOnSegment(const Vec2& p, const Vec2& a, const Vec2& b) {
+    Vec2 ab = b - a;
+    float len2 = ab.SqrMagnitude();
+    if (len2 < Mathf::Epsilon) return a;
+    float t = Mathf::Clamp(Vec2::Dot(p - a, ab) / len2, 0.0f, 1.0f);
+    return a + ab * t;
+}
+
+void ClosestSegSeg(const Vec2& p1, const Vec2& q1, const Vec2& p2, const Vec2& q2,
+                   Vec2& c1, Vec2& c2) {
+    Vec2 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+    float a = d1.SqrMagnitude(), e = d2.SqrMagnitude(), f = Vec2::Dot(d2, r);
+    float s, t;
+    if (a <= Mathf::Epsilon && e <= Mathf::Epsilon) { c1 = p1; c2 = p2; return; }
+    if (a <= Mathf::Epsilon) { s = 0.0f; t = Mathf::Clamp(f / e, 0.0f, 1.0f); }
+    else {
+        float c = Vec2::Dot(d1, r);
+        if (e <= Mathf::Epsilon) { t = 0.0f; s = Mathf::Clamp(-c / a, 0.0f, 1.0f); }
+        else {
+            float b = Vec2::Dot(d1, d2);
+            float denom = a * e - b * b;
+            s = denom > Mathf::Epsilon ? Mathf::Clamp((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
+            t = (b * s + f) / e;
+            if (t < 0.0f)      { t = 0.0f; s = Mathf::Clamp(-c / a, 0.0f, 1.0f); }
+            else if (t > 1.0f) { t = 1.0f; s = Mathf::Clamp((b - c) / a, 0.0f, 1.0f); }
+        }
+    }
+    c1 = p1 + d1 * s;
+    c2 = p2 + d2 * t;
+}
+
+// Reduce a collider to a circle (center + radius) as seen from `ref`. Capsules
+// collapse to a circle at the segment point nearest `ref`.
+void AsCircle(Collider2D* col, const Vec2& ref, Vec2& center, float& radius) {
+    if (col->shape() == Collider2D::Shape::Circle) {
+        auto* c = static_cast<CircleCollider2D*>(col);
+        center = c->WorldCenter(); radius = c->WorldRadius();
+    } else { // Capsule
+        auto* cap = static_cast<CapsuleCollider2D*>(col);
+        Vec2 a, b; cap->Segment(a, b);
+        center = ClosestOnSegment(ref, a, b);
+        radius = cap->WorldRadius();
+    }
+}
+
 Contact TestColliders(Collider2D* a, Collider2D* b) {
-    bool aBox = a->shape() == Collider2D::Shape::Box;
-    bool bBox = b->shape() == Collider2D::Shape::Box;
+    using S = Collider2D::Shape;
+    S sa = a->shape(), sb = b->shape();
+
+    // Capsule vs capsule: closest points between the two segments.
+    if (sa == S::Capsule && sb == S::Capsule) {
+        auto* ca = static_cast<CapsuleCollider2D*>(a);
+        auto* cb = static_cast<CapsuleCollider2D*>(b);
+        Vec2 a0, a1, b0, b1; ca->Segment(a0, a1); cb->Segment(b0, b1);
+        Vec2 pa, pb; ClosestSegSeg(a0, a1, b0, b1, pa, pb);
+        return TestCircleCircle(pa, ca->WorldRadius(), pb, cb->WorldRadius());
+    }
+
+    bool aBox = sa == S::Box, bBox = sb == S::Box;
     if (aBox && bBox) {
         auto* ba = static_cast<BoxCollider2D*>(a);
         auto* bb = static_cast<BoxCollider2D*>(b);
         return TestBoxBox(ba->WorldCenter(), ba->HalfExtents(),
                           bb->WorldCenter(), bb->HalfExtents());
     }
-    if (!aBox && !bBox) {
-        auto* ca = static_cast<CircleCollider2D*>(a);
-        auto* cb = static_cast<CircleCollider2D*>(b);
-        return TestCircleCircle(ca->WorldCenter(), ca->WorldRadius(),
-                                cb->WorldCenter(), cb->WorldRadius());
-    }
-    // One box, one circle — normalize so the box is A, then flip if needed.
-    if (aBox) {
+    if (aBox) { // A box, B circle/capsule
         auto* box = static_cast<BoxCollider2D*>(a);
-        auto* cir = static_cast<CircleCollider2D*>(b);
-        return TestBoxCircle(box->WorldCenter(), box->HalfExtents(),
-                             cir->WorldCenter(), cir->WorldRadius());
-    } else {
-        auto* cir = static_cast<CircleCollider2D*>(a);
+        Vec2 cc; float r; AsCircle(b, box->WorldCenter(), cc, r);
+        return TestBoxCircle(box->WorldCenter(), box->HalfExtents(), cc, r);
+    }
+    if (bBox) { // A circle/capsule, B box
         auto* box = static_cast<BoxCollider2D*>(b);
-        Contact c = TestBoxCircle(box->WorldCenter(), box->HalfExtents(),
-                                  cir->WorldCenter(), cir->WorldRadius());
-        c.normal = -c.normal; // flip to point from A(circle) to B(box)
+        Vec2 cc; float r; AsCircle(a, box->WorldCenter(), cc, r);
+        Contact c = TestBoxCircle(box->WorldCenter(), box->HalfExtents(), cc, r);
+        c.normal = -c.normal; // flip to point from A toward B
         return c;
     }
+    // Circle/capsule vs circle/capsule.
+    Vec2 ac, bc; float ar, br;
+    AsCircle(a, b->WorldCenter(), ac, ar);
+    AsCircle(b, a->WorldCenter(), bc, br);
+    return TestCircleCircle(ac, ar, bc, br);
 }
 
 void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision2D&),
@@ -297,12 +350,12 @@ RaycastHit2D Physics2D::Raycast(Scene& scene, const Vec2& origin, const Vec2& di
         if (!Alive(c)) continue;
         float t; Vec2 n;
         bool hit = false;
-        if (c->shape() == Collider2D::Shape::Box) {
-            Vec2 mn, mx; c->WorldAABB(mn, mx);
-            hit = RayAABB(origin, dir, mn, mx, best.distance, t, n);
-        } else {
+        if (c->shape() == Collider2D::Shape::Circle) {
             auto* cc = static_cast<CircleCollider2D*>(c);
             hit = RayCircle(origin, dir, cc->WorldCenter(), cc->WorldRadius(), best.distance, t, n);
+        } else { // Box or capsule (via its AABB)
+            Vec2 mn, mx; c->WorldAABB(mn, mx);
+            hit = RayAABB(origin, dir, mn, mx, best.distance, t, n);
         }
         if (hit && t <= best.distance) {
             best.hit = true;
@@ -322,9 +375,13 @@ Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p) {
         if (c->shape() == Collider2D::Shape::Box) {
             Vec2 mn, mx; c->WorldAABB(mn, mx);
             if (p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y) return c;
-        } else {
+        } else if (c->shape() == Collider2D::Shape::Circle) {
             auto* cc = static_cast<CircleCollider2D*>(c);
             if ((p - cc->WorldCenter()).Magnitude() <= cc->WorldRadius()) return c;
+        } else { // Capsule: distance from point to the inner segment.
+            auto* cap = static_cast<CapsuleCollider2D*>(c);
+            Vec2 a, b; cap->Segment(a, b);
+            if ((p - ClosestOnSegment(p, a, b)).Magnitude() <= cap->WorldRadius()) return c;
         }
     }
     return nullptr;
@@ -338,9 +395,9 @@ std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& cent
         if (c->shape() == Collider2D::Shape::Box) {
             Vec2 mn, mx; c->WorldAABB(mn, mx);
             hit = (ClosestOnBox(center, mn, mx) - center).Magnitude() <= radius;
-        } else {
-            auto* cc = static_cast<CircleCollider2D*>(c);
-            hit = (cc->WorldCenter() - center).Magnitude() <= radius + cc->WorldRadius();
+        } else { // circle or capsule, reduced to a circle near the query center
+            Vec2 cc; float r; AsCircle(c, center, cc, r);
+            hit = (cc - center).Magnitude() <= radius + r;
         }
         if (hit) out.push_back(c);
     }
@@ -357,10 +414,10 @@ std::vector<Collider2D*> Physics2D::OverlapBox(Scene& scene, const Vec2& center,
         if (c->shape() == Collider2D::Shape::Box) {
             Vec2 mn, mx; c->WorldAABB(mn, mx);
             hit = mn.x <= qmx.x && mx.x >= qmn.x && mn.y <= qmx.y && mx.y >= qmn.y;
-        } else {
-            auto* cc = static_cast<CircleCollider2D*>(c);
-            Vec2 cl = ClosestOnBox(cc->WorldCenter(), qmn, qmx);
-            hit = (cl - cc->WorldCenter()).Magnitude() <= cc->WorldRadius();
+        } else { // circle or capsule
+            Vec2 cc; float r; AsCircle(c, center, cc, r);
+            Vec2 cl = ClosestOnBox(cc, qmn, qmx);
+            hit = (cl - cc).Magnitude() <= r;
         }
         if (hit) out.push_back(c);
     }

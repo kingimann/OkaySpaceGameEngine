@@ -313,6 +313,7 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProject = true, g_showServices = true, g_showScriptEditor = true;
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
+bool g_showScriptDocs = false;   // OkayScript reference window
 
 // File dialogs.
 bool g_showSaveAs = false, g_showOpen = false;
@@ -729,6 +730,7 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("Scripting Reference")) g_showScriptDocs = true;
         if (ImGui::MenuItem("About OkaySpace")) g_openAbout = true;
         ImGui::EndMenu();
     }
@@ -1027,6 +1029,83 @@ void DrawStats(EditorState& ed) {
 
 // A dedicated code/graph editor panel (separate from the Inspector), with
 // external-IDE round-tripping.
+// In-editor OkayScript reference, so scripting is documented without leaving
+// the app. Opened from Help > Scripting Reference or the Script Editor's Docs.
+void DrawScriptDocs() {
+    if (!g_showScriptDocs) return;
+    ImGui::SetNextWindowSize(ImVec2(560, 600), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Scripting Reference", &g_showScriptDocs)) { ImGui::End(); return; }
+
+    auto header = [](const char* s) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "%s", s);
+        ImGui::Separator();
+    };
+    auto api = [](const char* sig, const char* desc) {
+        ImGui::BulletText("%s", sig);
+        ImGui::SameLine(230); ImGui::TextDisabled("%s", desc);
+    };
+
+    ImGui::TextWrapped("OkaySpace scripts are written in OkayScript — a small "
+        "C-style language. Attach a Script component, then edit it in the Script "
+        "Editor. Two functions drive a script, just like Unity's MonoBehaviour:");
+    ImGui::Indent();
+    ImGui::TextDisabled("start()      runs once when the scene starts");
+    ImGui::TextDisabled("update(dt)   runs every frame; dt is seconds elapsed");
+    ImGui::Unindent();
+
+    header("Syntax");
+    ImGui::TextWrapped("%s",
+        "Blocks use braces { }, statements end with ;  (NOT Lua-style 'end').\n\n"
+        "function start() {\n"
+        "    set_pos(0, 0);\n"
+        "    set(\"score\", 0);\n"
+        "}\n\n"
+        "function update(dt) {\n"
+        "    var speed = 3;\n"
+        "    if (key(\"d\")) { move(speed * dt, 0); }\n"
+        "    if (key(\"a\")) { move(-speed * dt, 0); }\n"
+        "    move(axis_x() * speed * dt, axis_y() * speed * dt);\n"
+        "}\n\n"
+        "Has: var, if/else, while, for, return, break, continue, + - * / %, "
+        "== != < > <= >=, && || !, and arrays a[i].");
+
+    header("Movement & Transform");
+    api("move(dx, dy)", "translate by (dx, dy)");
+    api("set_pos(x, y)", "set local position");
+    api("rotate(deg)", "rotate around Z by degrees");
+    api("pos_x() / pos_y()", "current local position");
+
+    header("Input");
+    api("key(\"w\")", "true while a key is held");
+    api("key_down(\"w\")", "true the frame it's pressed");
+    api("axis_x() / axis_y()", "WASD / arrows, -1..1");
+    api("mouse_x() / mouse_y()", "cursor position");
+    api("mouse(btn) / mouse_down(btn)", "0=L 1=R 2=M");
+    api("gamepad(btn) / gamepad_x()", "controller input");
+
+    header("State & Math");
+    api("set(\"k\", v) / get(\"k\")", "shared variables");
+    api("rand(lo, hi)", "random float in range");
+    api("dist(x1,y1,x2,y2)", "distance between points");
+    api("time() / dt()", "elapsed time / frame delta");
+
+    header("Timers & Spawning");
+    api("after(s, \"fn\")", "call fn once after s seconds");
+    api("every(s, \"fn\")", "call fn every s seconds");
+    api("cancel_timers()", "clear scheduled callbacks");
+    api("spawn(\"prefab\", x, y)", "instantiate a prefab (2D)");
+    api("spawn3(\"prefab\", x, y, z)", "instantiate a prefab (3D)");
+
+    header("Physics events");
+    ImGui::TextWrapped("Define on_collision() or on_trigger() and they fire when "
+        "this object's collider hits / overlaps another.");
+
+    ImGui::Spacing();
+    if (ImGui::Button("Close")) g_showScriptDocs = false;
+    ImGui::End();
+}
+
 void DrawScriptEditor(EditorState& ed) {
     if (!ImGui::Begin("Script Editor")) { ImGui::End(); return; }
     GameObject* go = ed.selected();
@@ -1076,6 +1155,9 @@ void DrawScriptEditor(EditorState& ed) {
         auto filePath = [&]() {
             return sc->Path().empty() ? go->name + "." + extide::ExtFor(sc->Language()) : sc->Path();
         };
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
+
         if (ImGui::Button("Compile & Run")) {
             std::string e;
             ConsoleLog(sc->LoadSource(buf.data(), &e) ? "Compiled OK" : "Error: " + e);
@@ -1691,6 +1773,74 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cc")) toRemove = cc;
         }
     }
+    if (auto* cap = go->GetComponent<CapsuleCollider2D>()) {
+        if (ImGui::CollapsingHeader("Capsule Collider 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float sz[2] = {cap->size.x, cap->size.y};
+            if (ImGui::DragFloat2("Size##cap2", sz, 0.05f, 0.0f, 1000.0f)) { cap->size = {sz[0], sz[1]}; ed.dirty = true; }
+            int dir = (int)cap->direction;
+            const char* dirs[] = {"Vertical", "Horizontal"};
+            if (ImGui::Combo("Direction##cap2", &dir, dirs, 2)) cap->direction = (CapsuleCollider2D::Direction)dir;
+            float off[2] = {cap->offset.x, cap->offset.y};
+            if (ImGui::DragFloat2("Offset##cap2", off, 0.05f)) { cap->offset = {off[0], off[1]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##cap2", &cap->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap2", &cap->layer, 0.1f, 0, 31);
+            if (ImGui::SmallButton("Remove##cap2")) toRemove = cap;
+        }
+    }
+    if (go->GetComponent<Rigidbody3D>())
+        if (ImGui::CollapsingHeader("Rigidbody3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto* rb = go->GetComponent<Rigidbody3D>();
+            int bt = (int)rb->bodyType;
+            const char* types[] = {"Dynamic", "Kinematic", "Static"};
+            if (ImGui::Combo("Body Type##rb3", &bt, types, 3)) rb->bodyType = (Rigidbody3D::BodyType)bt;
+            ImGui::DragFloat("Gravity Scale##rb3", &rb->gravityScale, 0.05f);
+            ImGui::DragFloat("Mass##rb3", &rb->mass, 0.05f, 0.01f, 1000.0f);
+            ImGui::DragFloat("Drag##rb3", &rb->drag, 0.01f, 0.0f, 100.0f);
+            ImGui::DragFloat("Bounciness##rb3", &rb->bounciness, 0.01f, 0.0f, 1.0f);
+            ImGui::TextDisabled("Freeze position");
+            ImGui::SameLine(); ImGui::Checkbox("X##fz", &rb->freezeX);
+            ImGui::SameLine(); ImGui::Checkbox("Y##fz", &rb->freezeY);
+            ImGui::SameLine(); ImGui::Checkbox("Z##fz", &rb->freezeZ);
+            if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
+        }
+    if (auto* bc = go->GetComponent<BoxCollider3D>()) {
+        if (ImGui::CollapsingHeader("Box Collider 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
+            if (ImGui::DragFloat3("Size##bc3", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
+            float off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
+            if (ImGui::DragFloat3("Offset##bc3", off, 0.05f)) { bc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##bc3", &bc->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc3", &bc->layer, 0.1f, 0, 31);
+            if (ImGui::SmallButton("Remove##bc3")) toRemove = bc;
+        }
+    }
+    if (auto* sc = go->GetComponent<SphereCollider3D>()) {
+        if (ImGui::CollapsingHeader("Sphere Collider 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::DragFloat("Radius##sc3", &sc->radius, 0.05f, 0.0f, 1000.0f);
+            float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
+            if (ImGui::DragFloat3("Offset##sc3", off, 0.05f)) { sc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##sc3", &sc->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##sc3", &sc->layer, 0.1f, 0, 31);
+            if (ImGui::SmallButton("Remove##sc3")) toRemove = sc;
+        }
+    }
+    if (auto* cap = go->GetComponent<CapsuleCollider3D>()) {
+        if (ImGui::CollapsingHeader("Capsule Collider 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::DragFloat("Radius##cap3", &cap->radius, 0.05f, 0.0f, 1000.0f);
+            ImGui::DragFloat("Height##cap3", &cap->height, 0.05f, 0.0f, 1000.0f);
+            const char* axes[] = {"X", "Y", "Z"};
+            ImGui::Combo("Axis##cap3", &cap->axis, axes, 3);
+            float off[3] = {cap->offset.x, cap->offset.y, cap->offset.z};
+            if (ImGui::DragFloat3("Offset##cap3", off, 0.05f)) { cap->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##cap3", &cap->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap3", &cap->layer, 0.1f, 0, 31);
+            if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
+        }
+    }
     if (auto* sc = go->GetComponent<ScriptComponent>()) {
         if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
             static std::vector<std::string> avail = AvailableScriptLanguages();
@@ -1974,16 +2124,28 @@ void DrawInspector(EditorState& ed) {
         if (!go->GetComponent<ParticleSystem>() && F("Particle System") && ImGui::Selectable("Particle System"))
             { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
 
-        Hdr("Physics");
+        Hdr("Physics 2D");
         if (!go->GetComponent<Rigidbody2D>() && F("Rigidbody2D") && ImGui::Selectable("Rigidbody2D"))
             { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
         if (!go->GetComponent<BoxCollider2D>() && F("Box Collider 2D") && ImGui::Selectable("Box Collider 2D"))
             { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
         if (!go->GetComponent<CircleCollider2D>() && F("Circle Collider 2D") && ImGui::Selectable("Circle Collider 2D"))
             { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
+        if (!go->GetComponent<CapsuleCollider2D>() && F("Capsule Collider 2D") && ImGui::Selectable("Capsule Collider 2D"))
+            { go->AddComponent<CapsuleCollider2D>(); ed.dirty = true; }
         if (go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>() &&
             F("Tilemap Collider 2D") && ImGui::Selectable("Tilemap Collider 2D"))
             { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+
+        Hdr("Physics 3D");
+        if (!go->GetComponent<Rigidbody3D>() && F("Rigidbody3D") && ImGui::Selectable("Rigidbody3D"))
+            { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+        if (!go->GetComponent<BoxCollider3D>() && F("Box Collider 3D") && ImGui::Selectable("Box Collider 3D"))
+            { go->AddComponent<BoxCollider3D>(); ed.dirty = true; }
+        if (!go->GetComponent<SphereCollider3D>() && F("Sphere Collider 3D") && ImGui::Selectable("Sphere Collider 3D"))
+            { go->AddComponent<SphereCollider3D>(); ed.dirty = true; }
+        if (!go->GetComponent<CapsuleCollider3D>() && F("Capsule Collider 3D") && ImGui::Selectable("Capsule Collider 3D"))
+            { go->AddComponent<CapsuleCollider3D>(); ed.dirty = true; }
 
         Hdr("Lighting");
         if (!go->GetComponent<Light>() && F("Directional Light") && ImGui::Selectable("Directional Light"))
@@ -2400,6 +2562,49 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
 
     const auto& objs = ed.scene().Objects();
+
+    // Editor gizmos for non-visual objects (Scene view only): a wireframe
+    // frustum for cameras, a sun + direction arrow for lights, so you can see
+    // and place them even though they don't render a mesh.
+    if (!gameView) {
+        auto line = [&](const Vec3& a, const Vec3& b, ImU32 col, float th = 1.5f) {
+            ImVec2 pa, pb;
+            if (toScreen(vp * Vec4{a, 1}, pa) && toScreen(vp * Vec4{b, 1}, pb))
+                dl->AddLine(pa, pb, col, th);
+        };
+        for (const auto& up : objs) {
+            if (!up->active) continue;
+            Transform* t = up->transform;
+            Vec3 p = t->Position();
+
+            if (up->GetComponent<Camera>()) {
+                ImU32 col = (up.get() == ed.selected()) ? IM_COL32(255, 220, 90, 255)
+                                                        : IM_COL32(120, 200, 255, 255);
+                Vec3 f = t->Forward(), r = t->Right(), u = t->Up();
+                float d = 1.4f, w = 0.5f, h = 0.35f;
+                Vec3 c[4] = { p + f * d + r * w + u * h, p + f * d - r * w + u * h,
+                              p + f * d - r * w - u * h, p + f * d + r * w - u * h };
+                for (int i = 0; i < 4; ++i) {
+                    line(p, c[i], col);
+                    line(c[i], c[(i + 1) % 4], col);
+                }
+            }
+
+            if (up->GetComponent<Light>()) {
+                ImU32 col = (up.get() == ed.selected()) ? IM_COL32(255, 220, 90, 255)
+                                                        : IM_COL32(255, 210, 70, 255);
+                // Sun: short rays around the light's position.
+                Vec3 ax[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+                for (auto& a : ax) { line(p - a * 0.25f, p + a * 0.25f, col); }
+                // Direction arrow along the light's forward axis.
+                Vec3 f = t->Forward();
+                Vec3 tip = p + f * 1.4f;
+                line(p, tip, col, 2.0f);
+                line(tip, tip - f * 0.3f + t->Up() * 0.15f, col);
+                line(tip, tip - f * 0.3f - t->Up() * 0.15f, col);
+            }
+        }
+    }
 
     // Solid meshes: render z-buffered into a texture (correct per-pixel
     // occlusion) and blit it; transparent where empty so the grid shows through.
@@ -2853,6 +3058,7 @@ int main(int argc, char** argv) {
         if (g_showProject)   DrawProject(ed);
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);
+        DrawScriptDocs();
         if (g_showStats)     DrawStats(ed);
 
         ImGui::Render();

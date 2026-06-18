@@ -16,7 +16,6 @@ BUILD_DIR=build-win
 cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake \
       -DCMAKE_BUILD_TYPE=Release \
-      -DOKAY_WITH_LUA=ON \
       -DOKAY_BUILD_TESTS=OFF
 cmake --build "$BUILD_DIR" -j
 

@@ -69,10 +69,14 @@ planet, `A` player ship.)*
   simulation backends by default; real Steamworks/REST backends behind flags.
 - **Self-updating launcher** that pulls the latest from GitHub, rebuilds, runs.
 - **Desktop GUI editor** (Dear ImGui docking + SDL2) — Unity-style **docked**
-  Hierarchy / Scene / Inspector / Console panels, a Play·Stop·Step toolbar, a
-  dark theme, scene save/load, and an in-app self-updater. Ships as a single
-  self-contained `.exe` (`dist/OkaySpaceEngine.exe`). See
-  [`docs/editor.md`](docs/editor.md).
+  Hierarchy / Scene / Inspector / Console / **Services** panels, a Play·Stop·Step
+  toolbar, a dark theme, **New Project (2D / 3D)** flow, a **2D/3D scene
+  viewport** (orbit camera + wireframe meshes), scene save/load, and an in-app
+  self-updater. Ships as a single self-contained `.exe`
+  (`dist/OkaySpaceEngine.exe`). See [`docs/editor.md`](docs/editor.md).
+- **Online services built into the engine & editor** — Steam (achievements/stats),
+  PlayFab (login/leaderboards), and multiplayer (host/join) live in the editor's
+  **Services** panel. Ship on Steam via [`docs/steam_release.md`](docs/steam_release.md).
 - **Scene serialization** — save/load scenes (and the hierarchy) to readable
   `.okayscene` text files via `SceneSerializer`.
 - **Core has no external dependencies** — just a C++17 compiler, CMake, threads.

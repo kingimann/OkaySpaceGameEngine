@@ -2,7 +2,56 @@
 
 namespace okay::editor {
 
-EditorState::EditorState() : m_scene("Untitled") {}
+EditorState::EditorState() : m_scene("Untitled") {
+    // Online services are part of the engine: simulation backends by default,
+    // real Steamworks / PlayFab when the engine is built with those flags.
+    m_steam = CreateSteamService();
+    SteamConfig sc; sc.appId = 480; // Spacewar test app id
+    if (m_steam) m_steam->Initialize(sc);
+
+    m_playfab = CreatePlayFabService();
+    PlayFabConfig pf; pf.titleId = "OKAYDEMO";
+    if (m_playfab) m_playfab->Initialize(pf);
+}
+
+bool EditorState::StartHost(std::uint16_t port) {
+    StopNetwork();
+    GameObject* go = m_scene.CreateGameObject("__Network");
+    m_net = go->AddComponent<NetworkManager>();
+    m_net->SetLocalAvatar(go->transform, '@');
+    m_net->SetRemoteFactory([this](std::uint32_t id, char) {
+        return m_scene.CreateGameObject("Peer" + std::to_string(id));
+    });
+    return m_net->StartServer(port);
+}
+
+bool EditorState::StartJoin(const std::string& host, std::uint16_t port) {
+    StopNetwork();
+    GameObject* go = m_scene.CreateGameObject("__Network");
+    m_net = go->AddComponent<NetworkManager>();
+    m_net->SetLocalAvatar(go->transform, '@');
+    m_net->SetRemoteFactory([this](std::uint32_t id, char) {
+        return m_scene.CreateGameObject("Peer" + std::to_string(id));
+    });
+    return m_net->StartClient(host, port);
+}
+
+void EditorState::StopNetwork() {
+    if (!m_net) return;
+    GameObject* go = m_net->gameObject;
+    m_net->Stop();
+    if (go) { m_scene.Destroy(go); m_scene.Update(0.0f); }
+    m_net = nullptr;
+}
+
+void EditorState::TickServices(float dt) {
+    if (m_steam) m_steam->RunCallbacks();
+    if (m_net) m_net->Update(dt);
+}
+
+void EditorState::Achievement(const std::string& id) {
+    if (m_steam) m_steam->UnlockAchievement(id);
+}
 
 GameObject* EditorState::CreateEmpty(const std::string& name) {
     GameObject* go = m_scene.CreateGameObject(name);
@@ -61,10 +110,43 @@ void EditorState::DeleteSelected() {
 
 void EditorState::NewScene() {
     if (m_playing) Stop();
+    StopNetwork();
     m_scene.Clear();
     m_scene.SetName("Untitled");
     m_selected = nullptr;
     m_path.clear();
+    dirty = false;
+}
+
+void EditorState::NewScene2D() {
+    NewScene();
+    m_scene.SetName("Untitled 2D");
+    auto* cam = CreateCamera("MainCamera");
+    cam->GetComponent<Camera>()->projection = Camera::Projection::Orthographic;
+    GameObject* sp = CreateSprite("Sprite");
+    sp->GetComponent<SpriteRenderer>()->color = Color::Green;
+    view3D = false;
+    m_selected = sp;
+    dirty = false;
+}
+
+void EditorState::NewScene3D() {
+    NewScene();
+    m_scene.SetName("Untitled 3D");
+    auto* camObj = CreateCamera("MainCamera");
+    camObj->GetComponent<Camera>()->projection = Camera::Projection::Perspective;
+    camObj->transform->localPosition = {0, 2, 10};
+
+    GameObject* ground = CreateCube("Ground");
+    ground->transform->localScale = {20.0f, 0.2f, 20.0f};
+    ground->GetComponent<MeshRenderer>()->color = Color::FromBytes(90, 90, 110);
+
+    GameObject* cube = CreateCube("Cube");
+    cube->transform->localPosition = {0, 1, 0};
+    cube->GetComponent<MeshRenderer>()->color = Color::Cyan;
+
+    view3D = true;
+    m_selected = cube;
     dirty = false;
 }
 
@@ -77,6 +159,7 @@ bool EditorState::Save(const std::string& path) {
 
 bool EditorState::Load(const std::string& path, std::string* error) {
     if (m_playing) Stop();
+    StopNetwork();
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;
     m_path = path;
     m_selected = nullptr;

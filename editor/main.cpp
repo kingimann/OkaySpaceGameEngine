@@ -200,6 +200,7 @@ std::string CheckAndUpdate() {
 
 std::string g_updateStatus;
 bool g_openUpdatePopup = false;
+bool g_showNewProject = true; // show the project chooser on launch
 
 // Per-object editor-only Euler-angle cache (degrees) for the inspector.
 std::unordered_map<GameObject*, Vec3> g_euler;
@@ -248,6 +249,7 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderDockWindow("Inspector", right);
     ImGui::DockBuilderDockWindow("Console", down);
     ImGui::DockBuilderDockWindow("Project", down);
+    ImGui::DockBuilderDockWindow("Services", down);
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderFinish(dockId);
 }
@@ -255,7 +257,10 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
 void DrawMenuAndToolbar(EditorState& ed, bool& running) {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Scene", "Ctrl+N")) { ed.NewScene(); ConsoleLog("New scene"); }
+        if (ImGui::MenuItem("New Project...", "Ctrl+N")) g_showNewProject = true;
+        if (ImGui::MenuItem("New 2D Scene")) { ed.NewScene2D(); ConsoleLog("New 2D project"); }
+        if (ImGui::MenuItem("New 3D Scene")) { ed.NewScene3D(); ConsoleLog("New 3D project"); }
+        ImGui::Separator();
         if (ImGui::MenuItem("Open...", "Ctrl+O")) {
             std::string err;
             if (ed.Load("scene.okayscene", &err)) ConsoleLog("Opened scene.okayscene");
@@ -263,19 +268,22 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         }
         if (ImGui::MenuItem("Save", "Ctrl+S")) {
             std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-            ConsoleLog(ed.Save(p) ? "Saved " + p : "Save failed");
+            if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE"); }
+            else ConsoleLog("Save failed");
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) running = false;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
-        if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); }
-        if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); }
-        if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); }
+        bool created = false;
+        if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
+        if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
+        if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
         ImGui::Separator();
-        if (ImGui::MenuItem("Create Cube (3D)"))    { ed.CreateCube();    ConsoleLog("Created Cube"); }
-        if (ImGui::MenuItem("Create Pyramid (3D)")) { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); }
+        if (ImGui::MenuItem("Create Cube (3D)"))    { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
+        if (ImGui::MenuItem("Create Pyramid (3D)")) { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
+        if (created) ed.Achievement("FIRST_OBJECT");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Engine")) {
@@ -291,7 +299,7 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
     float btnW = 60.0f;
     ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - btnW);
     if (!ed.isPlaying()) {
-        if (ImGui::Button(">  Play", ImVec2(btnW, 0))) { ed.Play(); ConsoleLog("Play"); }
+        if (ImGui::Button(">  Play", ImVec2(btnW, 0))) { ed.Play(); ConsoleLog("Play"); ed.Achievement("HIT_PLAY"); }
     } else {
         if (ImGui::Button("[]  Stop", ImVec2(btnW, 0))) { ed.Stop(); ConsoleLog("Stop"); }
     }
@@ -355,6 +363,101 @@ void DrawProject(EditorState& ed) {
         ImGui::TextWrapped("Scenes are saved as .okayscene text files via File > Save.");
     }
     ImGui::End();
+}
+
+// The online services that ship inside the engine: Steam, PlayFab, Multiplayer.
+void DrawServices(EditorState& ed) {
+    if (!ImGui::Begin("Services")) { ImGui::End(); return; }
+
+    // ---- Steam ----
+    if (ImGui::CollapsingHeader("Steam", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (auto* s = ed.steam()) {
+            ImGui::Text("Backend: %s%s", s->BackendName(),
+                        s->IsAvailable() ? " (live)" : " (simulation)");
+            ImGui::Text("User: %s", s->UserName().c_str());
+            static char ach[64] = "MY_ACHIEVEMENT";
+            ImGui::SetNextItemWidth(180);
+            ImGui::InputText("##ach", ach, sizeof(ach));
+            ImGui::SameLine();
+            if (ImGui::Button("Unlock")) s->UnlockAchievement(ach);
+            ImGui::SameLine();
+            if (ImGui::Button("Clear")) s->ClearAchievement(ach);
+            const char* known[] = {"FIRST_OBJECT", "FIRST_SAVE", "HIT_PLAY"};
+            for (const char* a : known)
+                ImGui::BulletText("%s: %s", a,
+                    s->IsAchievementUnlocked(a) ? "unlocked" : "locked");
+        } else ImGui::TextDisabled("unavailable");
+    }
+
+    // ---- PlayFab ----
+    if (ImGui::CollapsingHeader("PlayFab", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (auto* p = ed.playfab()) {
+            ImGui::Text("Backend: %s%s", p->BackendName(),
+                        p->IsRealBackend() ? " (live)" : " (simulation)");
+            static char customId[64] = "editor-user";
+            ImGui::SetNextItemWidth(180);
+            ImGui::InputText("Custom Id", customId, sizeof(customId));
+            ImGui::SameLine();
+            if (ImGui::Button("Login")) p->LoginWithCustomId(customId);
+            if (p->IsLoggedIn()) ImGui::Text("Logged in as %s", p->PlayFabId().c_str());
+            else ImGui::TextDisabled("not logged in");
+
+            static int score = 100;
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputInt("high_score", &score);
+            ImGui::SameLine();
+            if (ImGui::Button("Submit") && p->IsLoggedIn())
+                p->UpdateStatistic("high_score", score);
+            if (p->IsLoggedIn())
+                ImGui::Text("stored high_score: %d", p->GetStatistic("high_score"));
+        } else ImGui::TextDisabled("unavailable");
+    }
+
+    // ---- Multiplayer ----
+    if (ImGui::CollapsingHeader("Multiplayer", ImGuiTreeNodeFlags_DefaultOpen)) {
+        static int port = 45000;
+        static char host[64] = "127.0.0.1";
+        ImGui::SetNextItemWidth(120);
+        ImGui::InputInt("Port", &port);
+        if (ImGui::Button("Host")) ed.StartHost((std::uint16_t)port);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(140);
+        ImGui::InputText("##host", host, sizeof(host));
+        ImGui::SameLine();
+        if (ImGui::Button("Join")) ed.StartJoin(host, (std::uint16_t)port);
+        ImGui::SameLine();
+        if (ImGui::Button("Disconnect")) ed.StopNetwork();
+        if (auto* n = ed.net()) {
+            const char* mode = n->IsServer() ? "Server" : n->IsClient() ? "Client" : "Offline";
+            ImGui::Text("Mode: %s   Peers: %d   LocalId: %u",
+                        mode, (int)n->PeerCount(), n->LocalId());
+        } else ImGui::TextDisabled("not connected");
+    }
+
+    ImGui::End();
+}
+
+void DrawNewProjectPopup(EditorState& ed) {
+    if (g_showNewProject) { ImGui::OpenPopup("New Project"); g_showNewProject = false; }
+    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("New Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Create a new project");
+        ImGui::TextDisabled("Pick a starting scene type.");
+        ImGui::Separator();
+        if (ImGui::Button("2D Scene", ImVec2(160, 70))) {
+            ed.NewScene2D(); ConsoleLog("New 2D project"); ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("3D Scene", ImVec2(160, 70))) {
+            ed.NewScene3D(); ConsoleLog("New 3D project"); ImGui::CloseCurrentPopup();
+        }
+        ImGui::Spacing();
+        if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) {
+            ed.NewScene(); ConsoleLog("New empty scene"); ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void DrawUpdatePopup() {
@@ -727,16 +830,10 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
-    // A starter scene so the editor isn't empty on first launch.
+    // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
-    GameObject* camObj = ed.CreateCamera("MainCamera");
-    camObj->GetComponent<Camera>()->projection = Camera::Projection::Perspective;
-    camObj->transform->localPosition = {0, 2, 10};
-    GameObject* cube = ed.CreateCube("Cube");
-    cube->transform->localRotation = Quat::Euler(0, 25, 0);
-    ed.Select(cube);
     ConsoleLog("Welcome to OkaySpace v" OKAY_ENGINE_VERSION
-               ". Use the GameObject menu to add objects; toggle 2D/3D in the Scene panel.");
+               ". Choose a 2D or 3D project to begin.");
 
     bool running = true;
     Uint64 last = SDL_GetPerformanceCounter();
@@ -754,18 +851,21 @@ int main(int argc, char** argv) {
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
         ed.Tick(dt);
+        ed.TickServices(dt); // Steam callbacks + networking every frame
 
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
         DrawDockSpace(ed, running);
+        DrawNewProjectPopup(ed);
         DrawUpdatePopup();
         DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel
         DrawInspector(ed);
         DrawConsole();
         DrawProject(ed);
+        DrawServices(ed);
 
         ImGui::Render();
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);

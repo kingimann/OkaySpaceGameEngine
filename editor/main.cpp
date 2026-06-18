@@ -1076,6 +1076,18 @@ void DrawHierarchy(EditorState& ed) {
     ImGui::TextDisabled("Scene: %s%s", ed.scene().Name().c_str(), ed.dirty ? " *" : "");
     ImGui::SameLine(ImGui::GetWindowWidth() - 70);
     ImGui::TextDisabled("%d obj", (int)ed.scene().Objects().size());
+    if (ImGui::Button("+ Create")) ImGui::OpenPopup("HierCreate");
+    if (ImGui::BeginPopup("HierCreate")) {
+        if (ImGui::MenuItem("Empty"))  ed.Select(ed.CreateEmpty());
+        if (ImGui::MenuItem("Sprite")) ed.Select(ed.CreateSprite());
+        if (ImGui::MenuItem("Camera")) ed.Select(ed.CreateCamera());
+        if (ImGui::MenuItem("Cube"))   ed.Select(ed.CreateCube());
+        ImGui::Separator();
+        if (ImGui::MenuItem("UI Button")) { GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); ed.Select(g); }
+        if (ImGui::MenuItem("UI Text"))   { GameObject* g = ed.CreateEmpty("Text"); g->AddComponent<TextRenderer>()->screenSpace = true; ed.Select(g); }
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
     ImGui::SetNextItemWidth(-1);
     ImGui::InputTextWithHint("##hfilter", "search objects...", g_hierFilter, sizeof(g_hierFilter));
     ImGui::Separator();
@@ -1163,8 +1175,14 @@ void DrawInspector(EditorState& ed) {
         return;
     }
 
-    // Header: active + name.
+    // Header (Unity-style): an active toggle + the object name on a tinted bar,
+    // then Tag, then a divider before the component list.
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
+    ImGui::BeginChild("##objheader", ImVec2(0, 58), true);
     ImGui::Checkbox("##active", &go->active);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active in scene");
+    ImGui::SameLine();
+    ImGui::TextUnformatted(ObjectKind(go));   // [Spr]/[Mesh]/... type chip
     ImGui::SameLine();
     char nameBuf[128];
     std::strncpy(nameBuf, go->name.c_str(), sizeof(nameBuf) - 1);
@@ -1174,12 +1192,16 @@ void DrawInspector(EditorState& ed) {
     char tagBuf[64];
     std::strncpy(tagBuf, go->tag.c_str(), sizeof(tagBuf) - 1);
     tagBuf[sizeof(tagBuf) - 1] = '\0';
+    ImGui::SetNextItemWidth(150);
     if (ImGui::InputText("Tag", tagBuf, sizeof(tagBuf))) { go->tag = tagBuf; ed.dirty = true; }
+    ImGui::SameLine();
     if (ImGui::SmallButton("Save as Prefab")) {
         std::string p = go->name + ".okayprefab";
         if (SceneSerializer::SaveObjectToFile(*go, p)) ConsoleLog("Saved prefab " + p);
         else ConsoleLog("Prefab save failed");
     }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
     ImGui::Spacing();
 
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
@@ -2205,18 +2227,39 @@ void DrawGameView(EditorState& ed) {
     Camera* mc = SceneCamera(ed.scene());
     bool persp = mc && mc->projection == Camera::Projection::Perspective;
 
-    ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
-    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
-    if (canvasSize.x < 50) canvasSize.x = 50;
-    if (canvasSize.y < 50) canvasSize.y = 50;
+    // Aspect-ratio selector (Unity's Game-view "Free / 16:9 / ..." dropdown).
+    static int s_aspect = 0;
+    static const char* kAspectNames[] = {"Free", "16:9", "9:16", "4:3", "1:1"};
+    static const float kAspectVals[]  = {0.0f, 16.0f / 9, 9.0f / 16, 4.0f / 3, 1.0f};
+    ImGui::SetNextItemWidth(110);
+    ImGui::Combo("Aspect", &s_aspect, kAspectNames, IM_ARRAYSIZE(kAspectNames));
+    ImGui::SameLine();
+    ImGui::TextDisabled(ed.isPlaying() ? "live" : "press Play to run");
+
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    if (avail.x < 50) avail.x = 50;
+    if (avail.y < 50) avail.y = 50;
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+
+    // Letterbox a fixed-aspect rect centered in the available region.
+    ImVec2 canvasSize = avail, canvasPos = origin;
+    if (kAspectVals[s_aspect] > 0.0f) {
+        float target = kAspectVals[s_aspect];
+        float boxW = avail.x, boxH = avail.x / target;
+        if (boxH > avail.y) { boxH = avail.y; boxW = avail.y * target; }
+        canvasSize = {boxW, boxH};
+        canvasPos = {origin.x + (avail.x - boxW) * 0.5f, origin.y + (avail.y - boxH) * 0.5f};
+    }
     ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    // Dark letterbox bars over the whole region, then the camera background.
+    dl->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), IM_COL32(8, 8, 10, 255));
     Color bg = mc ? mc->backgroundColor : Color::Black;
     dl->AddRectFilled(canvasPos, canvasEnd,
                       IM_COL32((int)(bg.r * 255), (int)(bg.g * 255), (int)(bg.b * 255), 255));
 
-    ImGui::InvisibleButton("gamecanvas", canvasSize);
+    ImGui::InvisibleButton("gamecanvas", avail);
     ImGuiIO& io = ImGui::GetIO();
     // Publish the canvas size so anchored UI resolves to this view.
     UICanvas::Set(canvasSize.x, canvasSize.y);

@@ -35,6 +35,7 @@ public:
         if (auto* f = std::get_if<float>(&m_data)) return Vec3{*f};
         return Vec3::Zero;
     }
+    bool IsString() const { return std::holds_alternative<std::string>(m_data); }
     std::string AsString() const {
         if (auto* s = std::get_if<std::string>(&m_data)) return *s;
         if (auto* b = std::get_if<bool>(&m_data)) return *b ? "true" : "false";

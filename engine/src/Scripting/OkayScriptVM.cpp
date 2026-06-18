@@ -7,6 +7,7 @@
 #include "okay/Core/Random.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -21,9 +22,10 @@ using Value = vs::VsValue;
 // ===================== Lexer =====================
 enum class Tok {
     End, Number, String, Ident,
-    Var, If, Else, While, Function, Return, True, False,
+    Var, If, Else, While, For, Function, Return, True, False,
     Plus, Minus, Star, Slash, Percent,
-    Assign, Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
+    Assign, PlusEq, MinusEq, StarEq, SlashEq,
+    Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
     LParen, RParen, LBrace, RBrace, Comma, Semicolon
 };
 
@@ -105,7 +107,8 @@ private:
         while (std::isalnum((unsigned char)Peek()) || Peek() == '_') s += Advance();
         static const std::unordered_map<std::string, Tok> kw = {
             {"var", Tok::Var}, {"if", Tok::If}, {"else", Tok::Else},
-            {"while", Tok::While}, {"function", Tok::Function}, {"return", Tok::Return},
+            {"while", Tok::While}, {"for", Tok::For},
+            {"function", Tok::Function}, {"return", Tok::Return},
             {"true", Tok::True}, {"false", Tok::False}};
         auto it = kw.find(s);
         return {it != kw.end() ? it->second : Tok::Ident, s, 0, m_line};
@@ -115,10 +118,10 @@ private:
         char c = Advance();
         auto two = [&](char n, Tok t) { if (Peek() == n) { Advance(); return Token{t, "", 0, m_line}; } return Token{Tok::End, "", 0, m_line}; };
         switch (c) {
-            case '+': return {Tok::Plus, "", 0, m_line};
-            case '-': return {Tok::Minus, "", 0, m_line};
-            case '*': return {Tok::Star, "", 0, m_line};
-            case '/': return {Tok::Slash, "", 0, m_line};
+            case '+': { auto t = two('=', Tok::PlusEq);  return t.type != Tok::End ? t : Token{Tok::Plus, "", 0, m_line}; }
+            case '-': { auto t = two('=', Tok::MinusEq); return t.type != Tok::End ? t : Token{Tok::Minus, "", 0, m_line}; }
+            case '*': { auto t = two('=', Tok::StarEq);  return t.type != Tok::End ? t : Token{Tok::Star, "", 0, m_line}; }
+            case '/': { auto t = two('=', Tok::SlashEq); return t.type != Tok::End ? t : Token{Tok::Slash, "", 0, m_line}; }
             case '%': return {Tok::Percent, "", 0, m_line};
             case '(': return {Tok::LParen, "", 0, m_line};
             case ')': return {Tok::RParen, "", 0, m_line};
@@ -225,7 +228,9 @@ struct BinaryExpr : Expr {
     Value Eval(Runtime& rt) override {
         Value a = l->Eval(rt), b = r->Eval(rt);
         switch (op) {
-            case Tok::Plus:    return a.AsFloat() + b.AsFloat();
+            case Tok::Plus:
+                if (a.IsString() || b.IsString()) return a.AsString() + b.AsString();
+                return a.AsFloat() + b.AsFloat();
             case Tok::Minus:   return a.AsFloat() - b.AsFloat();
             case Tok::Star:    return a.AsFloat() * b.AsFloat();
             case Tok::Slash:   { float d = b.AsFloat(); return d != 0 ? a.AsFloat() / d : 0.0f; }
@@ -234,8 +239,10 @@ struct BinaryExpr : Expr {
             case Tok::Gt: return a.AsFloat() >  b.AsFloat();
             case Tok::Le: return a.AsFloat() <= b.AsFloat();
             case Tok::Ge: return a.AsFloat() >= b.AsFloat();
-            case Tok::Eq: return a.AsFloat() == b.AsFloat();
-            case Tok::Ne: return a.AsFloat() != b.AsFloat();
+            case Tok::Eq: return (a.IsString() || b.IsString()) ? a.AsString() == b.AsString()
+                                                                : a.AsFloat() == b.AsFloat();
+            case Tok::Ne: return (a.IsString() || b.IsString()) ? a.AsString() != b.AsString()
+                                                                : a.AsFloat() != b.AsFloat();
             default: return Value{};
         }
     }
@@ -278,6 +285,20 @@ struct WhileStmt : Stmt {
         while (cond->Eval(r).AsBool()) {
             for (auto& s : body) s->Exec(r);
             if (++guard > 1000000) throw ScriptError("while loop exceeded iteration limit");
+        }
+    }
+};
+struct ForStmt : Stmt {
+    // Function-level scoping (like the rest of the language): the init runs in
+    // the current scope, so `return` inside the body can't corrupt the stack.
+    StmtPtr init; ExprPtr cond; ExprPtr step; std::vector<StmtPtr> body;
+    void Exec(Runtime& r) override {
+        if (init) init->Exec(r);
+        int guard = 0;
+        while (!cond || cond->Eval(r).AsBool()) {
+            for (auto& s : body) s->Exec(r);
+            if (step) step->Eval(r);
+            if (++guard > 1000000) throw ScriptError("for loop exceeded iteration limit");
         }
     }
 };
@@ -386,6 +407,30 @@ private:
             st->body = ParseBlock();
             return st;
         }
+        if (Match(Tok::For)) {
+            Expect(Tok::LParen, "'('");
+            auto st = std::make_unique<ForStmt>();
+            // init: a var declaration, an expression, or empty.
+            if (!Match(Tok::Semicolon)) {
+                if (Match(Tok::Var)) {
+                    std::string name = Expect(Tok::Ident, "variable name").text;
+                    ExprPtr in;
+                    if (Match(Tok::Assign)) in = ParseExpression();
+                    st->init = std::make_unique<VarDeclStmt>(name, std::move(in));
+                } else {
+                    st->init = std::make_unique<ExprStmt>(ParseExpression());
+                }
+                Expect(Tok::Semicolon, "';'");
+            }
+            // condition (optional).
+            if (!Check(Tok::Semicolon)) st->cond = ParseExpression();
+            Expect(Tok::Semicolon, "';'");
+            // step (optional).
+            if (!Check(Tok::RParen)) st->step = ParseExpression();
+            Expect(Tok::RParen, "')'");
+            st->body = ParseBlock();
+            return st;
+        }
         if (Match(Tok::Return)) {
             ExprPtr e;
             if (!Check(Tok::Semicolon) && !Check(Tok::RBrace)) e = ParseExpression();
@@ -414,6 +459,20 @@ private:
             std::string name = var->n;
             ExprPtr value = ParseAssignment();
             return std::make_unique<AssignExpr>(name, std::move(value));
+        }
+        // Compound assignment: x += e  desugars to  x = x + e.
+        if (Check(Tok::PlusEq) || Check(Tok::MinusEq) ||
+            Check(Tok::StarEq) || Check(Tok::SlashEq)) {
+            auto* var = dynamic_cast<VarExpr*>(left.get());
+            if (!var) throw ScriptError("invalid assignment target");
+            std::string name = var->n;
+            Tok t = Peek().type; ++m_pos;
+            Tok bin = t == Tok::PlusEq ? Tok::Plus : t == Tok::MinusEq ? Tok::Minus
+                    : t == Tok::StarEq ? Tok::Star : Tok::Slash;
+            ExprPtr value = ParseAssignment();
+            auto combined = std::make_unique<BinaryExpr>(
+                bin, std::make_unique<VarExpr>(name), std::move(value));
+            return std::make_unique<AssignExpr>(name, std::move(combined));
         }
         return left;
     }
@@ -553,6 +612,27 @@ struct OkayScriptVM::Impl {
         b["floor"] = [](std::vector<Value>& a) { return Value{Mathf::Floor(a.empty() ? 0 : a[0].AsFloat())}; };
         b["min"]   = [](std::vector<Value>& a) { return Value{Mathf::Min(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 0)}; };
         b["max"]   = [](std::vector<Value>& a) { return Value{Mathf::Max(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 0)}; };
+        b["tan"]   = [](std::vector<Value>& a) { return Value{std::tan(a.empty() ? 0 : a[0].AsFloat())}; };
+        b["pow"]   = [](std::vector<Value>& a) { return Value{std::pow(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 1)}; };
+        b["round"] = [](std::vector<Value>& a) { return Value{Mathf::Round(a.empty() ? 0 : a[0].AsFloat())}; };
+        b["ceil"]  = [](std::vector<Value>& a) { return Value{Mathf::Ceil(a.empty() ? 0 : a[0].AsFloat())}; };
+        b["sign"]  = [](std::vector<Value>& a) { float v = a.empty() ? 0 : a[0].AsFloat(); return Value{v > 0 ? 1.0f : v < 0 ? -1.0f : 0.0f}; };
+        b["atan2"] = [](std::vector<Value>& a) { return Value{std::atan2(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 0)}; };
+        b["clamp"] = [](std::vector<Value>& a) {
+            float v = a.size() > 0 ? a[0].AsFloat() : 0, lo = a.size() > 1 ? a[1].AsFloat() : 0, hi = a.size() > 2 ? a[2].AsFloat() : 1;
+            return Value{Mathf::Clamp(v, lo, hi)};
+        };
+        b["lerp"]  = [](std::vector<Value>& a) {
+            float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0, t = a.size() > 2 ? a[2].AsFloat() : 0;
+            return Value{Mathf::Lerp(x, y, t)};
+        };
+        b["len"]   = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
+        b["pi"]    = [](std::vector<Value>&) { return Value{Mathf::PI}; };
+        b["deg2rad"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Deg2Rad}; };
+        b["rad2deg"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Rad2Deg}; };
+        // Transform helpers
+        b["set_x"] = [tf](std::vector<Value>& a) { if (Transform* t = tf()) t->localPosition.x = a.empty() ? 0 : a[0].AsFloat(); return Value{}; };
+        b["set_y"] = [tf](std::vector<Value>& a) { if (Transform* t = tf()) t->localPosition.y = a.empty() ? 0 : a[0].AsFloat(); return Value{}; };
     }
 };
 

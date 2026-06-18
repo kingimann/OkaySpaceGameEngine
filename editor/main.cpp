@@ -425,6 +425,7 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderDockWindow("Script Editor", down);
     ImGui::DockBuilderDockWindow("Stats", right);
     ImGui::DockBuilderDockWindow("Scene", center);
+    ImGui::DockBuilderDockWindow("Game", center);   // tab alongside Scene (Unity-style)
     ImGui::DockBuilderFinish(dockId);
 }
 

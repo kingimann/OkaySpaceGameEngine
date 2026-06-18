@@ -1141,6 +1141,19 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
         }
     }
+    if (auto* cf = go->GetComponent<CameraFollow>()) {
+        if (ImGui::CollapsingHeader("Camera Follow", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char buf[128];
+            std::strncpy(buf, cf->targetName.c_str(), sizeof(buf) - 1);
+            buf[sizeof(buf) - 1] = '\0';
+            if (ImGui::InputText("Target##cf", buf, sizeof(buf))) { cf->targetName = buf; ed.dirty = true; }
+            float off[3] = {cf->offset.x, cf->offset.y, cf->offset.z};
+            if (ImGui::DragFloat3("Offset##cf", off, 0.05f)) { cf->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Smoothing##cf", &cf->smoothing, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            ImGui::TextDisabled("follows the named GameObject (0 = instant snap)");
+            if (ImGui::SmallButton("Remove##cf")) toRemove = cf;
+        }
+    }
 
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
@@ -1174,6 +1187,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<Spinner>(); ed.dirty = true; }
         if (!go->GetComponent<Lifetime>() && ImGui::Selectable("Lifetime"))
             { go->AddComponent<Lifetime>(); ed.dirty = true; }
+        if (!go->GetComponent<CameraFollow>() && ImGui::Selectable("Camera Follow"))
+            { go->AddComponent<CameraFollow>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));

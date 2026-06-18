@@ -46,13 +46,41 @@ int main() {
         CHECK(scene.Find("Temp") == nullptr);
     }
 
-    // --- All three round-trip through serialization ---
+    // --- CameraFollow eases the camera toward its target, snaps when smoothing=0 ---
+    {
+        Scene scene("Follow");
+        GameObject* target = scene.CreateGameObject("Player");
+        target->transform->localPosition = {10, 5, 0};
+        GameObject* cam = scene.CreateGameObject("Cam");
+        auto* cf = cam->AddComponent<CameraFollow>();
+        cf->targetName = "Player";
+        cf->smoothing = 0.0f; // instant snap
+        scene.Start();
+        scene.Update(0.1f);
+        CHECK_NEAR(cam->transform->localPosition.x, 10.0f, 0.001f);
+        CHECK_NEAR(cam->transform->localPosition.y, 5.0f, 0.001f);
+
+        // With smoothing it should approach but (after one small step) not arrive.
+        GameObject* cam2 = scene.CreateGameObject("Cam2");
+        auto* cf2 = cam2->AddComponent<CameraFollow>();
+        cf2->targetName = "Player";
+        cf2->smoothing = 5.0f;
+        cf2->offset = {0, 0, 0};
+        cam2->transform->localPosition = {0, 0, 0};
+        cf2->LateUpdate(0.05f);
+        CHECK(cam2->transform->localPosition.x > 0.0f);
+        CHECK(cam2->transform->localPosition.x < 10.0f);
+    }
+
+    // --- All round-trip through serialization ---
     {
         Scene scene("Ser");
         GameObject* go = scene.CreateGameObject("Obj");
         go->AddComponent<Mover>()->velocity = {1, 2, 3};
         go->AddComponent<Spinner>()->angularVelocity = {10, 20, 30};
         go->AddComponent<Lifetime>()->seconds = 4.5f;
+        auto* cf = go->AddComponent<CameraFollow>();
+        cf->targetName = "Hero"; cf->offset = {0, 1, -10}; cf->smoothing = 7.0f;
 
         std::string text = SceneSerializer::Serialize(scene);
         Scene loaded("L");
@@ -64,6 +92,11 @@ int main() {
         CHECK_NEAR(r->GetComponent<Mover>()->velocity.z, 3.0f, 0.001f);
         CHECK_NEAR(r->GetComponent<Spinner>()->angularVelocity.y, 20.0f, 0.001f);
         CHECK_NEAR(r->GetComponent<Lifetime>()->seconds, 4.5f, 0.001f);
+        auto* rcf = r->GetComponent<CameraFollow>();
+        CHECK(rcf != nullptr);
+        CHECK(rcf->targetName == "Hero");
+        CHECK_NEAR(rcf->offset.z, -10.0f, 0.001f);
+        CHECK_NEAR(rcf->smoothing, 7.0f, 0.001f);
     }
 
     TEST_MAIN_RESULT();

@@ -12,6 +12,7 @@
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
+#include "okay/Components/CameraFollow.hpp"
 
 #include <cctype>
 #include <functional>
@@ -113,6 +114,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* lt = go->GetComponent<Lifetime>()) {
         out << "  lifetime " << lt->seconds << "\n";
+    }
+    if (auto* cf = go->GetComponent<CameraFollow>()) {
+        out << "  camerafollow " << Quote(cf->targetName) << " "
+            << cf->offset.x << " " << cf->offset.y << " " << cf->offset.z << " "
+            << cf->smoothing << "\n";
     }
 }
 } // namespace
@@ -246,6 +252,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "lifetime") {
                     float s = 1.0f; in >> s;
                     go->AddComponent<Lifetime>()->seconds = s;
+                } else if (field == "camerafollow") {
+                    std::string tgt = ReadQuoted(in);
+                    Vec3 off; float sm = 5.0f;
+                    in >> off.x >> off.y >> off.z >> sm;
+                    auto* cf = go->AddComponent<CameraFollow>();
+                    cf->targetName = tgt; cf->offset = off; cf->smoothing = sm;
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;

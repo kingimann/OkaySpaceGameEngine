@@ -56,6 +56,7 @@
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
+#include "okay/Components/CameraFollow.hpp"
 
 // AI
 #include "okay/AI/Pathfinding.hpp"

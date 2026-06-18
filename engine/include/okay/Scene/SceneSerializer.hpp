@@ -4,11 +4,12 @@
 namespace okay {
 
 class Scene;
+class GameObject;
 
-/// Saves and loads a Scene to a simple, human-readable text format. Supports the
-/// built-in component types (Transform, SpriteRenderer, Camera) and preserves
-/// the parent/child hierarchy. Used by the editor's File menu, but usable from
-/// gameplay code too (level files, save games).
+/// Saves and loads a Scene to a simple, human-readable text format. Covers the
+/// built-in components (Transform, SpriteRenderer, Camera, MeshRenderer,
+/// Rigidbody2D, box/circle colliders) and preserves the parent/child hierarchy.
+/// Used by the editor's File menu and for prefab instantiation.
 class SceneSerializer {
 public:
     /// Serialize an entire scene to a string.
@@ -21,6 +22,11 @@ public:
     static bool Deserialize(Scene& scene, const std::string& text, std::string* error = nullptr);
     /// Load a scene from a file.
     static bool LoadFromFile(Scene& scene, const std::string& path, std::string* error = nullptr);
+
+    /// Serialize a single GameObject and its descendants (a prefab).
+    static std::string SerializeObject(const GameObject& root);
+    /// Clone `prefab` (and its descendants) into `scene`; returns the new root.
+    static GameObject* Instantiate(Scene& scene, const GameObject& prefab);
 };
 
 } // namespace okay

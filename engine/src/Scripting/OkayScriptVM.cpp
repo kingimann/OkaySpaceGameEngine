@@ -788,6 +788,26 @@ struct OkayScriptVM::Impl {
                 rt.host->gameObject->scene()->Destroy(rt.host->gameObject);
             return Value{};
         };
+        // Control other objects by name (show/hide UI, toggle enemies, etc.).
+        auto sceneOf = [this]() -> Scene* {
+            return (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+        };
+        b["activate"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) g->active = true;
+            return Value{};
+        };
+        b["deactivate"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) g->active = false;
+            return Value{};
+        };
+        b["exists"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) return Value{s->Find(a[0].AsString()) != nullptr};
+            return Value{false};
+        };
+        b["is_active"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) return Value{g->active};
+            return Value{false};
+        };
         // Drive sibling components on this GameObject.
         auto go = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
         b["set_text"] = [go](std::vector<Value>& a) {

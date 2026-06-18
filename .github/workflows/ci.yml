@@ -32,3 +32,14 @@ jobs:
             -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF \
             -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF
           cmake --build build-player -j
+
+      # Build the editor (Dear ImGui + SDL2) and run its headless self-test so
+      # editor regressions are caught. --selftest returns before any SDL/display
+      # use, so it runs on the CI box with no GPU.
+      - name: Build & self-test editor
+        run: |
+          cmake -S . -B build-editor -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_TESTS=OFF \
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF
+          cmake --build build-editor -j
+          ./build-editor/bin/okay-editor --selftest

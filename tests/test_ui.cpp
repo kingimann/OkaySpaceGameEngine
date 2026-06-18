@@ -313,5 +313,101 @@ int main() {
         CHECK(loaded.Find("HUD")->GetComponent<UIProgressBar>()->anchor == UIAnchor::TopRight);
     }
 
+    // --- A non-interactable button ignores clicks and reports its state ---
+    {
+        Scene scene("Disabled");
+        GameObject* go = scene.CreateGameObject("Continue");
+        auto* b = go->AddComponent<UIButton>();
+        b->position = {0, 0};
+        b->size = {100, 40};
+        b->interactable = false;
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function on_click() { set_x(1); }"));
+        scene.Start();
+        Input::FeedMouse({50, 20}, 0);
+        Input::FeedMouse({50, 20}, 1u << 0);
+        scene.Update(0.016f);
+        CHECK(!b->WasClicked());
+        CHECK(!b->IsHovered());
+        CHECK_NEAR(go->transform->localPosition.x, 0.0f, 0.001f);
+        // CurrentColor returns the disabled tint when not interactable.
+        CHECK(b->CurrentColor().r == b->disabledColor.r);
+    }
+
+    // --- Pressed state + CurrentColor track the mouse on an enabled button ---
+    {
+        Scene scene("Press");
+        GameObject* go = scene.CreateGameObject("Btn");
+        auto* b = go->AddComponent<UIButton>();
+        b->position = {0, 0};
+        b->size = {100, 40};
+        scene.Start();
+        Input::FeedMouse({50, 20}, 0);          // hover, not pressed
+        Input::FeedMouse({50, 20}, 1u << 0);    // press (held)
+        scene.Update(0.016f);
+        CHECK(b->IsPressed());
+        CHECK(b->CurrentColor().r == b->pressedColor.r);
+        // Release: no longer pressed, falls back to hover color.
+        Input::FeedMouse({50, 20}, 0);
+        scene.Update(0.016f);
+        CHECK(!b->IsPressed());
+        CHECK(b->CurrentColor().r == b->hoverColor.r);
+    }
+
+    // --- set_interactable() from script toggles the button ---
+    {
+        Scene scene("ScriptDisable");
+        GameObject* go = scene.CreateGameObject("Btn");
+        go->AddComponent<UIButton>();
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource("function start() { set_interactable(false); }"));
+        scene.Start();
+        CHECK(go->GetComponent<UIButton>()->interactable == false);
+    }
+
+    // --- Button state colors + interactable survive serialization ---
+    {
+        Scene scene("BtnSer");
+        GameObject* go = scene.CreateGameObject("B");
+        auto* b = go->AddComponent<UIButton>();
+        b->interactable = false;
+        b->pressedColor = Color(0.1f, 0.2f, 0.3f, 1.0f);
+        b->disabledColor = Color(0.4f, 0.4f, 0.4f, 1.0f);
+        b->anchor = UIAnchor::Center;
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("B")->GetComponent<UIButton>();
+        CHECK(r != nullptr);
+        CHECK(r->interactable == false);
+        CHECK(r->anchor == UIAnchor::Center);
+        CHECK_NEAR(r->pressedColor.b, 0.3f, 0.01f);
+        CHECK_NEAR(r->disabledColor.r, 0.4f, 0.01f);
+    }
+
+    // --- Backward compat: a uibutton line ending at the anchor (pre-state
+    //     format) still loads, defaulting interactable to true ---
+    {
+        std::string text =
+            "okayscene 1\n"
+            "name \"S\"\n"
+            "gravity 0 0\n"
+            "gameobject 0 \"B\"\n"
+            "  active 1\n"
+            "  parent -1\n"
+            "  uibutton \"Go\" 10 20 100 40 "
+            "0.2 0.3 0.5 1 0.3 0.4 0.7 1 1 1 1 1 4\n"   // ...colors + anchor(4)=Center
+            "end\n";
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("B")->GetComponent<UIButton>();
+        CHECK(r != nullptr);
+        CHECK(r->anchor == UIAnchor::Center);
+        CHECK(r->interactable == true);              // defaulted (no trailing block)
+        CHECK_NEAR(r->position.x, 10.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

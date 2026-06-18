@@ -7,6 +7,7 @@
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/UIButton.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
@@ -994,6 +995,12 @@ struct OkayScriptVM::Impl {
         b["set_image"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go()) if (auto* im = g->GetComponent<UIImage>())
                 im->texture = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        // Enable/disable a sibling UIButton (grey out a "Continue" entry, etc.).
+        b["set_interactable"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* bt = g->GetComponent<UIButton>())
+                bt->interactable = a.empty() || a[0].AsBool();
             return Value{};
         };
         // Tilemap editing on a sibling Tilemap (procedural levels).

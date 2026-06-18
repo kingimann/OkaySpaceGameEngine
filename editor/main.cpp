@@ -317,13 +317,19 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::EndMenu();
     }
 
-    // Centered Play / Stop / Step controls (Unity-style toolbar).
-    float btnW = 60.0f;
+    // Centered Play / Stop / Step controls (Unity-style toolbar), color-coded.
+    float btnW = 64.0f;
     ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - btnW);
     if (!ed.isPlaying()) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         if (ImGui::Button(">  Play", ImVec2(btnW, 0))) { ed.Play(); ConsoleLog("Play"); ed.Achievement("HIT_PLAY"); }
+        ImGui::PopStyleColor(2);
     } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
         if (ImGui::Button("[]  Stop", ImVec2(btnW, 0))) { ed.Stop(); ConsoleLog("Stop"); }
+        ImGui::PopStyleColor(2);
     }
     ImGui::SameLine();
     if (ImGui::Button("Step", ImVec2(50, 0))) ed.Tick(1.0f / 60.0f);
@@ -459,6 +465,32 @@ void DrawServices(EditorState& ed) {
     ImGui::End();
 }
 
+// Global keyboard shortcuts (ignored while typing in a field).
+void HandleShortcuts(EditorState& ed) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) return;
+    bool ctrl = io.KeyCtrl;
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) g_showNewProject = true;
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
+        if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE"); }
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
+        ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
+        ed.DeleteSelected(); ConsoleLog("Deleted selection");
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+        if (ed.isPlaying()) { ed.Stop(); ConsoleLog("Stop"); }
+        else { ed.Play(); ConsoleLog("Play"); ed.Achievement("HIT_PLAY"); }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) {
+        Vec3 pp = ed.selected()->transform->Position();
+        ed.camTarget = pp; ed.cameraPos = {pp.x, pp.y};
+    }
+}
+
 void DrawNewProjectPopup(EditorState& ed) {
     if (g_showNewProject) { ImGui::OpenPopup("New Project"); g_showNewProject = false; }
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
@@ -507,8 +539,22 @@ void DrawHierarchy(EditorState& ed) {
                                        ImGuiTreeNodeFlags_SpanAvailWidth;
             if (node == ed.selected()) flags |= ImGuiTreeNodeFlags_Selected;
             if (node->transform->ChildCount() == 0) flags |= ImGuiTreeNodeFlags_Leaf;
-            bool open = ImGui::TreeNodeEx(node, flags, "%s", node->name.c_str());
+            bool open = ImGui::TreeNodeEx(node, flags, "%s%s", node->name.c_str(),
+                                          node->active ? "" : "  (off)");
             if (ImGui::IsItemClicked()) ed.Select(node);
+            // Right-click context menu per item.
+            if (ImGui::BeginPopupContextItem()) {
+                ed.Select(node);
+                if (ImGui::MenuItem("Duplicate")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
+                if (ImGui::MenuItem("Delete"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Add Child")) {
+                    GameObject* child = ed.scene().CreateGameObject("Child");
+                    child->transform->SetParent(node->transform, false);
+                    ed.Select(child);
+                }
+                ImGui::EndPopup();
+            }
             if (open) {
                 for (Transform* child : node->transform->Children())
                     drawNode(child->gameObject);
@@ -516,6 +562,14 @@ void DrawHierarchy(EditorState& ed) {
             }
         };
         drawNode(go);
+    }
+    // Right-click empty space to create objects.
+    if (ImGui::BeginPopupContextWindow("HierarchyCtx",
+            ImGuiPopupFlags_NoOpenOverItems | ImGuiPopupFlags_MouseButtonRight)) {
+        if (ImGui::MenuItem("Create Empty"))  ed.CreateEmpty();
+        if (ImGui::MenuItem("Create Sprite")) ed.CreateSprite();
+        if (ImGui::MenuItem("Create Cube"))   ed.CreateCube();
+        ImGui::EndPopup();
     }
     ImGui::End();
 }
@@ -656,8 +710,27 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
 
     dl->PushClipRect(canvasPos, canvasEnd, true);
-    dl->AddLine(worldToScreen({-1000, 0, 0}), worldToScreen({1000, 0, 0}), IM_COL32(60, 60, 90, 255));
-    dl->AddLine(worldToScreen({0, -1000, 0}), worldToScreen({0, 1000, 0}), IM_COL32(60, 60, 90, 255));
+
+    // Faint unit grid across the visible area.
+    {
+        float halfH = ed.cameraZoom * 0.5f;
+        float halfW = halfH * (canvasSize.x / canvasSize.y);
+        int x0 = (int)Mathf::Floor(ed.cameraPos.x - halfW);
+        int x1 = (int)Mathf::Ceil(ed.cameraPos.x + halfW);
+        int y0 = (int)Mathf::Floor(ed.cameraPos.y - halfH);
+        int y1 = (int)Mathf::Ceil(ed.cameraPos.y + halfH);
+        ImU32 grid = IM_COL32(40, 40, 52, 255);
+        if (x1 - x0 < 200) // avoid drawing thousands of lines when zoomed way out
+            for (int x = x0; x <= x1; ++x)
+                dl->AddLine(worldToScreen({(float)x, (float)y0, 0}),
+                            worldToScreen({(float)x, (float)y1, 0}), grid);
+        if (y1 - y0 < 200)
+            for (int y = y0; y <= y1; ++y)
+                dl->AddLine(worldToScreen({(float)x0, (float)y, 0}),
+                            worldToScreen({(float)x1, (float)y, 0}), grid);
+    }
+    dl->AddLine(worldToScreen({-1000, 0, 0}), worldToScreen({1000, 0, 0}), IM_COL32(120, 60, 60, 255));
+    dl->AddLine(worldToScreen({0, -1000, 0}), worldToScreen({0, 1000, 0}), IM_COL32(60, 120, 60, 255));
 
     const auto& objs = ed.scene().Objects();
     for (const auto& up : objs) {
@@ -845,6 +918,14 @@ void DrawViewport(EditorState& ed) {
     if (ed.view3D) DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     else           DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
 
+    // Corner overlay.
+    char overlay[128];
+    std::snprintf(overlay, sizeof(overlay), "%s  |  %d objects%s%s",
+                  ed.view3D ? "3D" : "2D", (int)ed.scene().Objects().size(),
+                  ed.selected() ? "  |  " : "",
+                  ed.selected() ? ed.selected()->name.c_str() : "");
+    dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(200, 200, 210, 255), overlay);
+
     ImGui::End();
 }
 
@@ -886,6 +967,7 @@ int main(int argc, char** argv) {
                ". Choose a 2D or 3D project to begin.");
 
     bool running = true;
+    std::string lastTitle;
     Uint64 last = SDL_GetPerformanceCounter();
     while (running) {
         SDL_Event e;
@@ -903,10 +985,16 @@ int main(int argc, char** argv) {
         ed.Tick(dt);
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
+        // Keep the window title in sync with the scene + dirty state.
+        std::string title = "OkaySpace Editor  -  " + ed.scene().Name() +
+                            (ed.dirty ? " *" : "") + "   [v" OKAY_ENGINE_VERSION "]";
+        if (title != lastTitle) { SDL_SetWindowTitle(window, title.c_str()); lastTitle = title; }
+
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
+        HandleShortcuts(ed);
         DrawDockSpace(ed, running);
         DrawNewProjectPopup(ed);
         DrawUpdatePopup();

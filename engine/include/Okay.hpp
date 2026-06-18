@@ -23,6 +23,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Render/Renderer.hpp"
 #include "okay/Render/ConsoleRenderer.hpp"
+#include "okay/Render/Mesh.hpp"
 
 // Scene graph
 #include "okay/Scene/Component.hpp"
@@ -34,6 +35,7 @@
 // Built-in components
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Components/MeshRenderer.hpp"
 
 // 2D physics
 #include "okay/Physics/Rigidbody2D.hpp"

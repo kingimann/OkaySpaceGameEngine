@@ -22,6 +22,8 @@ public:
     GameObject* CreateEmpty(const std::string& name = "GameObject");
     GameObject* CreateSprite(const std::string& name = "Sprite");
     GameObject* CreateCamera(const std::string& name = "Camera");
+    GameObject* CreateCube(const std::string& name = "Cube");
+    GameObject* CreatePyramid(const std::string& name = "Pyramid");
     void DeleteSelected();
     void NewScene();
 
@@ -39,9 +41,16 @@ public:
     /// Advance the simulation by dt (only has effect while playing).
     void Tick(float dt);
 
-    // ---- Editor camera (world units) ----------------------------------
+    // ---- 2D editor camera (world units) -------------------------------
     Vec2  cameraPos{0, 0};
     float cameraZoom = 18.0f; // world units visible vertically
+
+    // ---- 3D editor camera (orbit) -------------------------------------
+    bool  view3D    = false;
+    float camYaw    = 35.0f;   // degrees
+    float camPitch  = 22.0f;   // degrees
+    float camDist   = 14.0f;   // distance from target
+    Vec3  camTarget = Vec3::Zero;
 
     bool dirty = false; // unsaved changes
 

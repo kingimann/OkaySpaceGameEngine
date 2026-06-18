@@ -106,6 +106,10 @@ add_executable(test_timescale test_timescale.cpp)
 target_link_libraries(test_timescale PRIVATE okay::engine)
 add_test(NAME timescale COMMAND test_timescale)
 
+add_executable(test_gravity test_gravity.cpp)
+target_link_libraries(test_gravity PRIVATE okay::engine)
+add_test(NAME gravity COMMAND test_gravity)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

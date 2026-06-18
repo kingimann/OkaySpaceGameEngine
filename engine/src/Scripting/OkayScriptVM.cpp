@@ -700,6 +700,12 @@ struct OkayScriptVM::Impl {
             if (!sc) return Value{false};
             return Value{sc->physics().OverlapPoint(*sc, Vec2{a[0].AsFloat(), a[1].AsFloat()}) != nullptr};
         };
+        b["set_gravity"] = [this](std::vector<Value>& a) {
+            if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                rt.host->gameObject->scene()->physics().gravity =
+                    Vec2{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f};
+            return Value{};
+        };
         // Load another scene at end of frame (level transitions, restart).
         b["load_scene"] = [this](std::vector<Value>& a) {
             if (!a.empty() && rt.host && rt.host->gameObject && rt.host->gameObject->scene())

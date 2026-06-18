@@ -930,6 +930,43 @@ struct OkayScriptVM::Impl {
                 s->mainCamera->orthographicSize = Mathf::Max(0.01f, a[0].AsFloat());
             return Value{};
         };
+        // Set the main camera's clear/background color (flash, day-night, fades).
+        b["set_bg"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera)
+                s->mainCamera->backgroundColor = {a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                                                  a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                                  a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                                                  a.size() > 3 ? a[3].AsFloat() : 1.0f};
+            return Value{};
+        };
+        // Screen size in pixels (HUD layout, clamping, spawn-at-edge).
+        b["screen_w"] = [](std::vector<Value>&) { return Value{UICanvas::Width()}; };
+        b["screen_h"] = [](std::vector<Value>&) { return Value{UICanvas::Height()}; };
+        // Tag queries: count active objects with a tag, or find the nearest one
+        // to this object (returns its name, "" if none) — enemy targeting, "all
+        // coins collected?", proximity doors.
+        b["count_tag"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{0.0f};
+            int n = 0;
+            if (Scene* s = sceneOf())
+                for (const auto& o : s->Objects())
+                    if (o->active && o->tag == a[0].AsString()) ++n;
+            return Value{(float)n};
+        };
+        b["nearest_tag"] = [this, sceneOf](std::vector<Value>& a) -> Value {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{std::string{}};
+            Scene* s = sceneOf(); if (!s) return Value{std::string{}};
+            Vec3 me = rt.host->gameObject->transform->Position();
+            std::string best; float bestD = 0.0f;
+            for (const auto& o : s->Objects()) {
+                if (!o->active || o->tag != a[0].AsString()) continue;
+                if (o.get() == rt.host->gameObject) continue;       // skip self
+                Vec3 p = o->transform->Position();
+                float dx = p.x - me.x, dy = p.y - me.y, d = dx * dx + dy * dy;
+                if (best.empty() || d < bestD) { best = o->name; bestD = d; }
+            }
+            return Value{best};
+        };
         // Drive sibling components on this GameObject.
         auto go = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
         b["set_text"] = [go](std::vector<Value>& a) {

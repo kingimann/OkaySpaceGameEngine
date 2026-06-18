@@ -1275,8 +1275,8 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
             const char* shapes[] = {"Cube", "Pyramid", "Quad", "Plane", "Sphere",
-                                    "Cylinder", "Cone", "Torus", "Capsule", "Icosphere"};
-            const int kShapeCount = 10;
+                                    "Cylinder", "Cone", "Torus", "Capsule", "Icosphere", "Grid"};
+            const int kShapeCount = 11;
             int shapeIdx = -1;
             for (int i = 0; i < kShapeCount; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
             if (ImGui::Combo("Primitive", &shapeIdx, shapes, kShapeCount)) {
@@ -1313,6 +1313,9 @@ void DrawInspector(EditorState& ed) {
                 ConsoleLog("Welded " + std::to_string(n) + " duplicate verts");
                 ed.dirty = true;
             }
+            if (ImGui::SmallButton("Recenter##mesh")) { mr->mesh.RecenterToOrigin(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Fit 1u##mesh")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
         }

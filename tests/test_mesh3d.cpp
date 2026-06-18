@@ -294,6 +294,34 @@ int main() {
         CHECK(LambertShade(light, light, 0.4f) >= 0.4f);
     }
 
+    // --- SceneLight global drives shading and is script-controllable ---
+    {
+        SceneLight::Reset();
+        CHECK_NEAR(SceneLight::Ambient(), 0.25f, 0.001f);
+        // A normal facing the (default) light is fully lit through the global.
+        CHECK_NEAR(SceneLight::Shade(SceneLight::Direction() * -1.0f), 1.0f, 0.001f);
+
+        // Point the light straight down (0,-1,0); a flat ground (normal +Y) is lit.
+        SceneLight::SetDirection({0, -1, 0});
+        CHECK_NEAR(SceneLight::Shade({0, 1, 0}), 1.0f, 0.001f);
+        // Raise the ambient floor; a surface facing away still gets it.
+        SceneLight::SetAmbient(0.6f);
+        CHECK_NEAR(SceneLight::Shade({0, -1, 0}), 0.6f, 0.001f);
+
+        // Scripts set the same global via set_light / set_ambient.
+        SceneLight::Reset();
+        Scene scene("Lit");
+        GameObject* go = scene.CreateGameObject("Director");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() { set_light(0, -1, 0); set_ambient(0.5); set_x(ambient()); }"));
+        scene.Start();
+        CHECK_NEAR(go->transform->localPosition.x, 0.5f, 0.001f);   // ambient() readback
+        CHECK_NEAR(SceneLight::Ambient(), 0.5f, 0.001f);
+        CHECK_NEAR(SceneLight::Shade({0, 1, 0}), 1.0f, 0.001f);     // ground lit by down-light
+        SceneLight::Reset();                                        // leave global clean
+    }
+
     // --- Scripts can move and rotate in 3D ---
     {
         Scene scene("3D");

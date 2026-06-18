@@ -60,10 +60,13 @@ planet, `A` player ship.)*
 - **Scheduler** — `Invoke`, `InvokeRepeating`, and value `Tween`s per scene
   (Unity-style timed callbacks).
 - **Sprites, textures & text** — `SpriteRenderer` with optional **image
-  textures** (`okay::Image`, PNG/JPG/BMP via stb_image), `SpriteAnimator`
-  flip-book frame animation, and a `TextRenderer` using a built-in **8×8 bitmap
-  font** (no font file) for HUDs and labels. The player draws shaded 3D meshes,
-  rotated/textured sprites, tilemaps, particles, and text.
+  textures** (`okay::Image`, PNG/JPG/BMP via stb_image), **sprite-sheet/atlas**
+  sub-regions + **`sortOrder`** layering, `SpriteAnimator` flip-book/atlas
+  animation, and a `TextRenderer` using a built-in **8×8 bitmap font** (no font
+  file) for HUDs and labels. The player draws shaded 3D meshes, rotated/textured
+  layered sprites, tilemaps, particles, and text.
+- **WAV audio** — `AudioClip::LoadWAV` (8/16/24/32-bit + float, resampled) and
+  `SaveWAV`; `AudioSource` clip paths load in the built game and mix live.
 - **Gameplay components (no scripting needed)** — `Mover` (constant velocity),
   `Spinner` (constant rotation), `Lifetime` (auto-destroy), and `CameraFollow`
   (smooth chase camera). All serialized and editable in the Inspector.
@@ -75,8 +78,9 @@ planet, `A` player ship.)*
   `Tween` for game-feel animation.
 - **Persistent save data** — `Prefs` (PlayerPrefs-style key/value) for high
   scores and settings; the player auto-loads/saves it.
-- **Starter templates** — `Templates::Platformer` / `TopDown` build a playable,
-  component-wired scene; surfaced in the editor's New Project flow.
+- **Starter templates** — `Templates::Platformer` / `TopDown` / **`CoinCollector`**
+  (a complete, playable game: WASD player, follow camera, trigger-collected
+  coins, and a score HUD) build component-wired scenes from the New Project flow.
 - **Utilities** — seedable `Random`, a typed `EventBus`, `Rect`/`Bounds`, extra
   `Mathf` (InverseLerp, SmoothDamp, LerpAngle…), and `Scene::FindObjectsOfType<T>`.
 - **Multiplayer** — cross-platform UDP networking (`NetworkManager`) with a
@@ -84,17 +88,24 @@ planet, `A` player ship.)*
 - **Visual scripting** — a node-graph runtime (events, math, branches,
   variables, transform actions) you build in code or load from text.
 - **Text scripting** — a built-in language (works everywhere) plus optional
-  **Lua** and **C#** backends behind the same `IScriptVM` interface.
+  **Lua** and **C#** backends behind the same `IScriptVM` interface. OkayScript
+  has `for`/`while`/`if`, functions, strings, and a deep builtin set: input
+  (keyboard+mouse), `spawn`/`destroy`, `load_scene`, physics `raycast_hit`/
+  `overlap`, component control (`set_text`/`set_color`/`set_texture`/`play_sound`),
+  `prefs_*` save data, and `on_trigger()`/`on_collision()` event handlers.
+  See [`docs/scripting.md`](docs/scripting.md).
 - **Steam** and **PlayFab** integrations — full API surfaces with in-memory
   simulation backends by default; real Steamworks/REST backends behind flags.
 - **Self-updating launcher** that pulls the latest from GitHub, rebuilds, runs.
 - **Desktop GUI editor** (Dear ImGui docking + SDL2) — Unity-style **docked**
   Hierarchy / Scene / Inspector / Console / **Services** / **Script Editor**
-  panels, a Play·Stop·Step toolbar, a dark theme, a **New Project** flow with
-  2D / 3D and **playable templates**, a **2D/3D scene viewport** (orbit camera +
-  shaded meshes), Add Component / Inspector for every component, scene save/load,
-  **Build Game**, and an in-app self-updater. Ships as a single self-contained
-  `.exe` (`dist/OkaySpaceEngine.exe`). See [`docs/editor.md`](docs/editor.md).
+  panels, a Play·Stop·Step·Build toolbar, a polished dark theme, a **New Project**
+  flow with 2D / 3D and **playable templates**, a **2D/3D scene viewport** (orbit
+  camera + shaded meshes), a searchable Hierarchy + Add Component, a filterable
+  colored Console, a filesystem **asset browser** (open scenes / drop in prefabs),
+  Add Component / Inspector for every component, scene save/load, **Build Game**,
+  and an in-app self-updater. Ships as a single self-contained `.exe`
+  (`dist/OkaySpaceEngine.exe`). See [`docs/editor.md`](docs/editor.md).
 - **Online services built into the engine & editor** — Steam (achievements/stats),
   PlayFab (login/leaderboards), and multiplayer (host/join) live in the editor's
   **Services** panel. Ship on Steam via [`docs/steam_release.md`](docs/steam_release.md).

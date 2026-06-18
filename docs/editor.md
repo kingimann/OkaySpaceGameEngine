@@ -68,7 +68,9 @@ uses, built right into the engine app.
   scale), edit the Sprite Renderer (color, size) and Camera (ortho size), and
   add components or delete the object.
 - **Scene viewport** — sprites are drawn as colored quads. Left-click to select,
-  left-drag to move, right-drag to pan, mouse-wheel to zoom.
+  right-drag to pan, mouse-wheel to zoom. The **Move / Rotate / Scale** tools
+  (toolbar or **W / E / R**) set what a left-drag on the selection does; a gizmo
+  at the selected object shows the active tool. Works in 2D and 3D.
 - **Sprite textures** — set a Sprite Renderer's *Texture* to a PNG/JPG/BMP path
   (loaded via `okay::Image`/stb_image). The built game draws the image, tinted by
   the sprite color; the editor viewport still shows the colored quad. Keep the

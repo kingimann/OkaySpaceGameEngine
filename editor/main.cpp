@@ -256,6 +256,9 @@ std::string g_buildStatus;
 bool  g_openBuildResult = false;
 bool  g_snap = false;
 float g_snapSize = 1.0f;
+// Active transform tool for the Scene view (Unity's W/E/R).
+enum class Tool { Move, Rotate, Scale };
+Tool  g_tool = Tool::Move;
 
 // Per-object editor-only Euler-angle cache (degrees) for the inspector.
 std::unordered_map<GameObject*, Vec3> g_euler;
@@ -1937,6 +1940,26 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
                         IM_COL32(255, 200, 0, 255), 4.0f, 0, 2.0f);
     }
+    // Transform gizmo at the selection, reflecting the active tool (Move/Rotate/Scale).
+    if (!gameView && ed.selected()) {
+        ImVec2 g = worldToScreen(ed.selected()->transform->Position());
+        if (g_tool == Tool::Move) {
+            dl->AddLine(g, ImVec2(g.x + 36, g.y), IM_COL32(230, 70, 70, 255), 2.0f);   // +X red
+            dl->AddTriangleFilled(ImVec2(g.x + 36, g.y - 4), ImVec2(g.x + 36, g.y + 4),
+                                  ImVec2(g.x + 44, g.y), IM_COL32(230, 70, 70, 255));
+            dl->AddLine(g, ImVec2(g.x, g.y - 36), IM_COL32(80, 210, 90, 255), 2.0f);   // +Y green
+            dl->AddTriangleFilled(ImVec2(g.x - 4, g.y - 36), ImVec2(g.x + 4, g.y - 36),
+                                  ImVec2(g.x, g.y - 44), IM_COL32(80, 210, 90, 255));
+        } else if (g_tool == Tool::Rotate) {
+            dl->AddCircle(g, 34.0f, IM_COL32(90, 170, 240, 255), 32, 2.0f);
+        } else { // Scale — axis lines capped with square handles
+            dl->AddLine(g, ImVec2(g.x + 36, g.y), IM_COL32(230, 70, 70, 255), 2.0f);
+            dl->AddRectFilled(ImVec2(g.x + 32, g.y - 4), ImVec2(g.x + 40, g.y + 4), IM_COL32(230, 70, 70, 255));
+            dl->AddLine(g, ImVec2(g.x, g.y - 36), IM_COL32(80, 210, 90, 255), 2.0f);
+            dl->AddRectFilled(ImVec2(g.x - 4, g.y - 40), ImVec2(g.x + 4, g.y - 32), IM_COL32(80, 210, 90, 255));
+        }
+    }
+
     dl->PopClipRect();
 
     if (gameView) return;   // the Game view is non-interactive
@@ -1959,12 +1982,20 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
     if (!ed.isPlaying() && ed.selected() && hovered &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        Vec3& lp = ed.selected()->transform->localPosition;
-        lp.x += io.MouseDelta.x / scale;
-        lp.y -= io.MouseDelta.y / scale;
-        if (g_snap && g_snapSize > 0.0f) {
-            lp.x = Mathf::Round(lp.x / g_snapSize) * g_snapSize;
-            lp.y = Mathf::Round(lp.y / g_snapSize) * g_snapSize;
+        Transform* t = ed.selected()->transform;
+        if (g_tool == Tool::Move) {
+            Vec3& lp = t->localPosition;
+            lp.x += io.MouseDelta.x / scale;
+            lp.y -= io.MouseDelta.y / scale;
+            if (g_snap && g_snapSize > 0.0f) {
+                lp.x = Mathf::Round(lp.x / g_snapSize) * g_snapSize;
+                lp.y = Mathf::Round(lp.y / g_snapSize) * g_snapSize;
+            }
+        } else if (g_tool == Tool::Rotate) {
+            t->Rotate({0, 0, -io.MouseDelta.x * 0.5f});      // drag X to spin about Z
+        } else { // Scale (uniform; horizontal drag grows/shrinks)
+            float k = 1.0f + io.MouseDelta.x * 0.01f;
+            t->localScale = t->localScale * k;
         }
         ed.dirty = true;
     }
@@ -2101,6 +2132,23 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
         if (hit) ed.Select(hit);
     }
+
+    // Drag the selected object with the active tool (Move in the X/Z ground
+    // plane, Rotate about Y, uniform Scale).
+    if (!ed.isPlaying() && ed.selected() && hovered &&
+        ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        Transform* t = ed.selected()->transform;
+        float s = ed.camDist / canvasSize.y;        // screen px -> world units
+        if (g_tool == Tool::Move) {
+            t->localPosition.x += io.MouseDelta.x * s;
+            t->localPosition.z += io.MouseDelta.y * s;
+        } else if (g_tool == Tool::Rotate) {
+            t->Rotate({0, io.MouseDelta.x * 0.5f, 0});
+        } else {
+            t->localScale = t->localScale * (1.0f + io.MouseDelta.x * 0.01f);
+        }
+        ed.dirty = true;
+    }
 }
 
 void DrawViewport(EditorState& ed) {
@@ -2114,7 +2162,24 @@ void DrawViewport(EditorState& ed) {
         ed.camTarget = p;
         ed.cameraPos = {p.x, p.y};
     }
-    ImGui::SameLine();
+    // Transform tools (W/E/R), highlighting the active one.
+    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+    auto toolBtn = [&](const char* lbl, Tool t) {
+        bool active = g_tool == t;
+        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.75f, 1.0f));
+        if (ImGui::Button(lbl)) g_tool = t;
+        if (active) ImGui::PopStyleColor();
+        ImGui::SameLine();
+    };
+    toolBtn("Move", Tool::Move);
+    toolBtn("Rotate", Tool::Rotate);
+    toolBtn("Scale", Tool::Scale);
+    // Keyboard shortcuts W/E/R when the Scene window is focused (and not typing).
+    if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_W, false)) g_tool = Tool::Move;
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false)) g_tool = Tool::Rotate;
+        if (ImGui::IsKeyPressed(ImGuiKey_R, false)) g_tool = Tool::Scale;
+    }
     ImGui::Checkbox("Snap", &g_snap);
     if (g_snap) {
         ImGui::SameLine();

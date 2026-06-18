@@ -20,6 +20,11 @@ public:
     /// Optional image file drawn by the editor/player (PNG/JPG/BMP/...).
     /// Empty means a flat colored quad.
     std::string texture;
+    /// Sub-region of the texture to draw, in normalized 0..1 coordinates
+    /// (origin top-left). The default covers the whole image; a SpriteAnimator
+    /// in atlas mode rewrites these to walk a sprite sheet.
+    Vec2 uvMin{0.0f, 0.0f};
+    Vec2 uvMax{1.0f, 1.0f};
 
     void OnRender(IRenderer& renderer) override;
 };

@@ -1451,6 +1451,7 @@ void DrawInspector(EditorState& ed) {
             if (tr->screenSpace) {
                 float sp[2] = {tr->screenPos.x, tr->screenPos.y};
                 if (ImGui::DragFloat2("Screen Pos##txt", sp, 1.0f)) { tr->screenPos = {sp[0], sp[1]}; ed.dirty = true; }
+                AnchorCombo("Anchor##txt", tr->anchor, ed);
             }
             ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
@@ -1775,10 +1776,11 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active) continue;
         ImU32 col = ToColor(tr->color);
-        if (tr->screenSpace)
-            DrawBitmapText(dl, tr->text, canvasPos.x + tr->screenPos.x,
-                           canvasPos.y + tr->screenPos.y, tr->pixelSize, col);
-        else {
+        if (tr->screenSpace) {
+            Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y);
+            DrawBitmapText(dl, tr->text, canvasPos.x + o.x, canvasPos.y + o.y,
+                           tr->pixelSize, col);
+        } else {
             ImVec2 o = worldToScreen(up->transform->Position());
             DrawBitmapText(dl, tr->text, o.x, o.y, tr->pixelSize * scale, col);
         }

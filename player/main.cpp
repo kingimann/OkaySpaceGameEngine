@@ -345,8 +345,29 @@ int main(int argc, char** argv) {
             }
         }
 
-        // In-game UI buttons (screen space), drawn on top of everything.
+        // In-game UI (screen space), drawn on top of everything.
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        for (const auto& up : scene.Objects()) {           // panels (backgrounds) first
+            auto* pn = up->GetComponent<UIPanel>();
+            if (!pn || !up->active) continue;
+            SDL_Rect r{(int)pn->position.x, (int)pn->position.y, (int)pn->size.x, (int)pn->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(pn->color.r * 255), (Uint8)(pn->color.g * 255),
+                                   (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255));
+            SDL_RenderFillRect(renderer, &r);
+        }
+        for (const auto& up : scene.Objects()) {           // progress bars
+            auto* pb = up->GetComponent<UIProgressBar>();
+            if (!pb || !up->active) continue;
+            SDL_Rect bg{(int)pb->position.x, (int)pb->position.y, (int)pb->size.x, (int)pb->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(pb->background.r * 255), (Uint8)(pb->background.g * 255),
+                                   (Uint8)(pb->background.b * 255), (Uint8)(pb->background.a * 255));
+            SDL_RenderFillRect(renderer, &bg);
+            SDL_Rect fl{(int)pb->position.x, (int)pb->position.y,
+                        (int)(pb->size.x * pb->Fraction()), (int)pb->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(pb->fill.r * 255), (Uint8)(pb->fill.g * 255),
+                                   (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255));
+            SDL_RenderFillRect(renderer, &fl);
+        }
         for (const auto& up : scene.Objects()) {
             auto* btn = up->GetComponent<UIButton>();
             if (!btn || !up->active) continue;

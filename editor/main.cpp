@@ -1427,6 +1427,32 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
     }
+    if (auto* pn = go->GetComponent<UIPanel>()) {
+        if (ImGui::CollapsingHeader("UI Panel", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float pos[2] = {pn->position.x, pn->position.y};
+            if (ImGui::DragFloat2("Pos (px)##uip", pos, 1.0f)) { pn->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {pn->size.x, pn->size.y};
+            if (ImGui::DragFloat2("Size (px)##uip", sz, 1.0f, 0.0f, 8000.0f)) { pn->size = {sz[0], sz[1]}; ed.dirty = true; }
+            float c[4] = {pn->color.r, pn->color.g, pn->color.b, pn->color.a};
+            if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
+        }
+    }
+    if (auto* pb = go->GetComponent<UIProgressBar>()) {
+        if (ImGui::CollapsingHeader("UI Progress Bar", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float pos[2] = {pb->position.x, pb->position.y};
+            if (ImGui::DragFloat2("Pos (px)##upb", pos, 1.0f)) { pb->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {pb->size.x, pb->size.y};
+            if (ImGui::DragFloat2("Size (px)##upb", sz, 1.0f, 1.0f, 8000.0f)) { pb->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::SliderFloat("Value##upb", &pb->value, 0.0f, 1.0f)) ed.dirty = true;
+            float fc[4] = {pb->fill.r, pb->fill.g, pb->fill.b, pb->fill.a};
+            if (ImGui::ColorEdit4("Fill##upb", fc)) { pb->fill = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
+            float bc[4] = {pb->background.r, pb->background.g, pb->background.b, pb->background.a};
+            if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("script: set_progress(0..1)");
+            if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
+        }
+    }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         if (ImGui::CollapsingHeader("Sprite Animator", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
@@ -1513,6 +1539,10 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
         if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
             { go->AddComponent<UIButton>(); ed.dirty = true; }
+        if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))
+            { go->AddComponent<UIPanel>(); ed.dirty = true; }
+        if (!go->GetComponent<UIProgressBar>() && F("UI Progress Bar") && ImGui::Selectable("UI Progress Bar"))
+            { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
@@ -1638,6 +1668,22 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ImVec2 o = worldToScreen(up->transform->Position());
             DrawBitmapText(dl, tr->text, o.x, o.y, tr->pixelSize * scale, col);
         }
+    }
+
+    // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.
+    for (const auto& up : objs) {
+        auto* pn = up->GetComponent<UIPanel>();
+        if (!pn || !up->active) continue;
+        ImVec2 a(canvasPos.x + pn->position.x, canvasPos.y + pn->position.y);
+        dl->AddRectFilled(a, ImVec2(a.x + pn->size.x, a.y + pn->size.y), ToColor(pn->color), 4.0f);
+    }
+    for (const auto& up : objs) {
+        auto* pb = up->GetComponent<UIProgressBar>();
+        if (!pb || !up->active) continue;
+        ImVec2 a(canvasPos.x + pb->position.x, canvasPos.y + pb->position.y);
+        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x, a.y + pb->size.y), ToColor(pb->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x * pb->Fraction(), a.y + pb->size.y),
+                          ToColor(pb->fill), 3.0f);
     }
 
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).

@@ -20,6 +20,8 @@
 #include "okay/Components/TilemapCollider2D.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/UIPanel.hpp"
+#include "okay/Components/UIProgressBar.hpp"
 
 #include <cctype>
 #include <functional>
@@ -161,6 +163,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << btn->color.r << " " << btn->color.g << " " << btn->color.b << " " << btn->color.a << " "
             << btn->hoverColor.r << " " << btn->hoverColor.g << " " << btn->hoverColor.b << " " << btn->hoverColor.a << " "
             << btn->textColor.r << " " << btn->textColor.g << " " << btn->textColor.b << " " << btn->textColor.a << "\n";
+    }
+    if (auto* pn = go->GetComponent<UIPanel>()) {
+        out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
+            << pn->size.x << " " << pn->size.y << " "
+            << pn->color.r << " " << pn->color.g << " " << pn->color.b << " " << pn->color.a << "\n";
+    }
+    if (auto* pb = go->GetComponent<UIProgressBar>()) {
+        out << "  uiprogress " << pb->position.x << " " << pb->position.y << " "
+            << pb->size.x << " " << pb->size.y << " " << pb->value << " "
+            << pb->background.r << " " << pb->background.g << " " << pb->background.b << " " << pb->background.a << " "
+            << pb->fill.r << " " << pb->fill.g << " " << pb->fill.b << " " << pb->fill.a << "\n";
     }
     if (auto* ps = go->GetComponent<ParticleSystem>()) {
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
@@ -370,6 +383,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> c.r >> c.g >> c.b >> c.a >> h.r >> h.g >> h.b >> h.a
                        >> t.r >> t.g >> t.b >> t.a;
                     btn->color = c; btn->hoverColor = h; btn->textColor = t;
+                } else if (field == "uipanel") {
+                    auto* pn = go->AddComponent<UIPanel>();
+                    Color c;
+                    in >> pn->position.x >> pn->position.y >> pn->size.x >> pn->size.y
+                       >> c.r >> c.g >> c.b >> c.a;
+                    pn->color = c;
+                } else if (field == "uiprogress") {
+                    auto* pb = go->AddComponent<UIProgressBar>();
+                    Color bg, fl;
+                    in >> pb->position.x >> pb->position.y >> pb->size.x >> pb->size.y >> pb->value
+                       >> bg.r >> bg.g >> bg.b >> bg.a >> fl.r >> fl.g >> fl.b >> fl.a;
+                    pb->background = bg; pb->fill = fl;
                 } else if (field == "particles") {
                     auto* ps = go->AddComponent<ParticleSystem>();
                     int playing = 1, fade = 1;

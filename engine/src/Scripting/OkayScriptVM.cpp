@@ -8,6 +8,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Components/UIProgressBar.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
@@ -816,6 +817,12 @@ struct OkayScriptVM::Impl {
         b["play_sound"] = [go](std::vector<Value>&) {
             if (GameObject* g = go())
                 if (auto* au = g->GetComponent<AudioSource>()) au->Play();
+            return Value{};
+        };
+        b["set_progress"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->SetValue(a.empty() ? 0.0f : a[0].AsFloat());
             return Value{};
         };
         // Global audio settings (for options menus).

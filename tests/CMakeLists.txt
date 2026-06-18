@@ -146,6 +146,10 @@ add_executable(test_script_lib test_script_lib.cpp)
 target_link_libraries(test_script_lib PRIVATE okay::engine)
 add_test(NAME script_lib COMMAND test_script_lib)
 
+add_executable(test_script_camera test_script_camera.cpp)
+target_link_libraries(test_script_camera PRIVATE okay::engine)
+add_test(NAME script_camera COMMAND test_script_camera)
+
 add_executable(test_script_objects test_script_objects.cpp)
 target_link_libraries(test_script_objects PRIVATE okay::engine)
 add_test(NAME script_objects COMMAND test_script_objects)

@@ -25,6 +25,9 @@ public:
     /// in atlas mode rewrites these to walk a sprite sheet.
     Vec2 uvMin{0.0f, 0.0f};
     Vec2 uvMax{1.0f, 1.0f};
+    /// Draw order: lower values render first (further back), higher on top.
+    /// Use it for parallax backgrounds, characters, foreground props, etc.
+    int sortOrder = 0;
 
     void OnRender(IRenderer& renderer) override;
 };

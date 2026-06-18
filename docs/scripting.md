@@ -87,6 +87,8 @@ UI Button press.
 | `set_color(r, g, b[, a])` | tint this object's Sprite/Text |
 | `set_texture(path)` | set this object's SpriteRenderer image |
 | `flip_x(bool)` / `flip_y(bool)` | mirror this object's sprite |
+| `set_progress(v)` | set this object's UIProgressBar fill (0..1) |
+| `tile_resize(w,h)` `set_tile(x,y,id)` `get_tile(x,y)` `tile_w()` `tile_h()` | edit a sibling Tilemap |
 | `play_sound()` | play this object's AudioSource |
 | `print(...)` | log values to the console |
 

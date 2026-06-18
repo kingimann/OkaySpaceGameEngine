@@ -94,6 +94,10 @@ add_executable(test_assets test_assets.cpp)
 target_link_libraries(test_assets PRIVATE okay::engine)
 add_test(NAME assets COMMAND test_assets)
 
+add_executable(test_tilemap_collision test_tilemap_collision.cpp)
+target_link_libraries(test_tilemap_collision PRIVATE okay::engine)
+add_test(NAME tilemap_collision COMMAND test_tilemap_collision)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

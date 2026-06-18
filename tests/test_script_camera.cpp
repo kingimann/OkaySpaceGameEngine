@@ -51,5 +51,47 @@ int main() {
         CHECK_NEAR(right.y, 1.0f, 0.01f);
     }
 
+    // --- set_bg sets the main camera's clear color; screen_w/h read the canvas ---
+    {
+        UICanvas::Set(1024, 768);
+        Scene scene("Env");
+        GameObject* camObj = scene.CreateGameObject("Cam");
+        auto* cam = camObj->AddComponent<Camera>();
+        GameObject* d = scene.CreateGameObject("D");
+        auto* sc = d->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() { set_bg(0.1, 0.2, 0.3); set_x(screen_w()); set_y(screen_h()); }"));
+        scene.Start();
+        CHECK_NEAR(cam->backgroundColor.r, 0.1f, 0.01f);
+        CHECK_NEAR(cam->backgroundColor.b, 0.3f, 0.01f);
+        CHECK_NEAR(d->transform->localPosition.x, 1024.0f, 0.001f);
+        CHECK_NEAR(d->transform->localPosition.y, 768.0f, 0.001f);
+    }
+
+    // --- count_tag / nearest_tag drive targeting ---
+    {
+        Scene scene("Tags");
+        auto mkEnemy = [&](const char* nm, float x) {
+            GameObject* e = scene.CreateGameObject(nm);
+            e->tag = "enemy";
+            e->transform->localPosition = {x, 0, 0};
+            return e;
+        };
+        mkEnemy("Far", 100.0f);
+        mkEnemy("Near", 5.0f);
+        mkEnemy("Mid", 20.0f);
+
+        GameObject* hero = scene.CreateGameObject("Hero");   // at origin, no tag
+        auto* sc = hero->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() {"
+            "  set_x(count_tag(\"enemy\"));"             // 3
+            "  if (nearest_tag(\"enemy\") == \"Near\") { set_y(1); }"
+            "}"));
+        scene.Start();
+        CHECK_NEAR(hero->transform->localPosition.x, 3.0f, 0.001f);
+        CHECK_NEAR(hero->transform->localPosition.y, 1.0f, 0.001f);  // nearest is "Near"
+    }
+
     TEST_MAIN_RESULT();
 }

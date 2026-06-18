@@ -85,6 +85,10 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `exists(name)` / `is_active(name)` | query another object by name |
 | `obj_x(name)` / `obj_y(name)` / `obj_z(name)` | read another object's world position |
 | `dist_to(name)` | distance from this object to a named object (enemy AI, doors) |
+| `count_tag(tag)` | how many active objects have a tag (coins left, enemies alive) |
+| `nearest_tag(tag)` | name of the nearest tagged object to this one ("" if none) — targeting |
+| `screen_w()` / `screen_h()` | render-target size in pixels |
+| `set_bg(r, g, b[, a])` | set the main camera's background/clear color (flash, fades) |
 | `look_at(name)` | rotate (about Z) so local +X faces a named object (turrets, aiming) |
 | `cam_x()` / `cam_y()` / `set_cam(x, y)` / `move_cam(dx, dy)` | read/move the main camera (follow, cutscenes) |
 | `cam_zoom()` / `set_cam_zoom(z)` | read/set the main camera's orthographic size |

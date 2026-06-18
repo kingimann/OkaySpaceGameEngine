@@ -27,6 +27,41 @@ int main() {
         Mesh cyl = Mesh::Cylinder(0.5f, 2.0f, 12);
         CHECK(cyl.name == "Cylinder");
         CHECK(cyl.TriangleCount() == 12 * 2 /*sides*/ + 12 * 2 /*caps*/);
+
+        Mesh cone = Mesh::Cone(0.5f, 1.0f, 16);
+        CHECK(cone.name == "Cone");
+        CHECK(cone.vertices.size() == 16u + 2u);          // ring + apex + base center
+        CHECK(cone.TriangleCount() == 16 * 2);            // sides + base cap
+
+        Mesh tor = Mesh::Torus(0.5f, 0.2f, 16, 10);
+        CHECK(tor.name == "Torus");
+        CHECK(tor.vertices.size() == 16u * 10u);
+        CHECK(tor.TriangleCount() == 16 * 10 * 2);
+    }
+
+    // --- Bounds / Center / Size of the AABB ---
+    {
+        Mesh cube = Mesh::Cube(2.0f);                      // spans -1..1 on each axis
+        Vec3 lo, hi; cube.Bounds(lo, hi);
+        CHECK_NEAR(lo.x, -1.0f, 0.001f);
+        CHECK_NEAR(hi.z, 1.0f, 0.001f);
+        Vec3 c = cube.Center();
+        CHECK_NEAR(c.x, 0.0f, 0.001f);
+        CHECK_NEAR(c.y, 0.0f, 0.001f);
+        Vec3 s = cube.Size();
+        CHECK_NEAR(s.x, 2.0f, 0.001f);
+        CHECK_NEAR(s.y, 2.0f, 0.001f);
+
+        // A translated mesh reports a shifted center but the same size.
+        Mesh moved = cube.Transformed({1, 1, 1}, {10, 0, 0});
+        CHECK_NEAR(moved.Center().x, 10.0f, 0.001f);
+        CHECK_NEAR(moved.Size().x, 2.0f, 0.001f);
+
+        // Empty mesh is safe.
+        Mesh empty;
+        Vec3 el, eh; empty.Bounds(el, eh);
+        CHECK_NEAR(el.x, 0.0f, 0.001f);
+        CHECK_NEAR(eh.y, 0.0f, 0.001f);
     }
 
     // --- FromName round-trips the new primitives (so they serialize) ---
@@ -35,6 +70,8 @@ int main() {
         CHECK(Mesh::FromName("Cylinder").name == "Cylinder");
         CHECK(Mesh::FromName("Plane").name == "Plane");
         CHECK(Mesh::FromName("Cube").name == "Cube");
+        CHECK(Mesh::FromName("Cone").name == "Cone");
+        CHECK(Mesh::FromName("Torus").name == "Torus");
 
         Scene scene("S");
         GameObject* go = scene.CreateGameObject("Ball");

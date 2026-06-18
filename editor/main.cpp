@@ -1265,10 +1265,12 @@ void DrawInspector(EditorState& ed) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
-            const char* shapes[] = {"Cube", "Pyramid", "Quad", "Plane", "Sphere", "Cylinder"};
+            const char* shapes[] = {"Cube", "Pyramid", "Quad", "Plane", "Sphere",
+                                    "Cylinder", "Cone", "Torus"};
+            const int kShapeCount = 8;
             int shapeIdx = -1;
-            for (int i = 0; i < 6; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
-            if (ImGui::Combo("Primitive", &shapeIdx, shapes, 6)) {
+            for (int i = 0; i < kShapeCount; ++i) if (mr->mesh.name == shapes[i]) shapeIdx = i;
+            if (ImGui::Combo("Primitive", &shapeIdx, shapes, kShapeCount)) {
                 mr->mesh = Mesh::FromName(shapes[shapeIdx]);
                 mr->meshPath.clear();
                 ed.dirty = true;

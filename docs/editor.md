@@ -74,7 +74,7 @@ uses, built right into the engine app.
   the sprite color; the editor viewport still shows the colored quad. Keep the
   image next to the built `.exe` (relative paths resolve there).
 - **Mesh Renderer (3D)** — pick a built-in primitive (Cube, Pyramid, Quad,
-  Plane, Sphere, Cylinder) from the *Primitive* dropdown, or type an *OBJ File*
+  Plane, Sphere, Cylinder, Cone, Torus) from the *Primitive* dropdown, or type an *OBJ File*
   path and click *Load* to import a Wavefront `.obj` model (positions + faces,
   polygons fan-triangulated, `v/vt/vn` and negative indices handled). The
   inspector shows the live vertex/triangle count. Imported `.obj` files are

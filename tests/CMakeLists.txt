@@ -90,6 +90,10 @@ add_executable(test_script_events test_script_events.cpp)
 target_link_libraries(test_script_events PRIVATE okay::engine)
 add_test(NAME script_events COMMAND test_script_events)
 
+add_executable(test_assets test_assets.cpp)
+target_link_libraries(test_assets PRIVATE okay::engine)
+add_test(NAME assets COMMAND test_assets)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

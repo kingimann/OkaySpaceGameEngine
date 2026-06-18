@@ -362,7 +362,26 @@ std::string Build(EditorState& ed, const std::string& outDir,
     fs::permissions(dir / exeName, fs::perms::owner_exec | fs::perms::group_exec |
                     fs::perms::others_exec, fs::perm_options::add, ec);
 #endif
-    return "Built '" + gameName + "' to " + dir.string() + " — run " + exeName + " to play.";
+
+    // 3) Copy every asset the scene references (textures, WAVs, frames) so the
+    // shipped game folder is self-contained, preserving relative subpaths.
+    int copied = 0, missing = 0;
+    for (const std::string& asset : SceneSerializer::CollectAssetPaths(ed.scene())) {
+        fs::path src(asset);
+        std::error_code aec;
+        if (!fs::exists(src, aec)) { ++missing; continue; }
+        fs::path dst = src.is_absolute() ? (dir / src.filename()) : (dir / src);
+        if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
+        if (!aec) ++copied;
+    }
+
+    std::string msg = "Built '" + gameName + "' to " + dir.string() +
+                      " — run " + exeName + " to play.";
+    if (copied)  msg += "  (" + std::to_string(copied) + " asset(s) copied)";
+    if (missing) msg += "  WARNING: " + std::to_string(missing) +
+                        " referenced asset(s) not found and not copied.";
+    return msg;
 }
 } // namespace builder
 

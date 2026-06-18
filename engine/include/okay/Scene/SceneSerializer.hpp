@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -33,6 +34,11 @@ public:
     /// Instantiate a prefab file into `scene`; returns the new root (or nullptr).
     static GameObject* InstantiateFromFile(Scene& scene, const std::string& path,
                                            std::string* error = nullptr);
+
+    /// Collect the unique external asset paths a scene references (sprite
+    /// textures, audio WAVs, sprite-animator frames). Used by Build Game to copy
+    /// the files a shipped game needs alongside the executable.
+    static std::vector<std::string> CollectAssetPaths(const Scene& scene);
 };
 
 } // namespace okay

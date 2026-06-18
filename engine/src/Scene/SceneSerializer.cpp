@@ -404,6 +404,22 @@ GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string
     return root;
 }
 
+std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) {
+    std::vector<std::string> out;
+    auto add = [&](const std::string& p) {
+        if (p.empty()) return;
+        for (const auto& e : out) if (e == p) return; // unique
+        out.push_back(p);
+    };
+    for (const auto& go : scene.Objects()) {
+        if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
+        if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
+        if (auto* an = go->GetComponent<SpriteAnimator>())
+            for (const auto& f : an->frames) add(f);
+    }
+    return out;
+}
+
 bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::string* error) {
     std::ifstream f(path);
     if (!f) { if (error) *error = "cannot open " + path; return false; }

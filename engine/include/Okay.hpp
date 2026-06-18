@@ -57,6 +57,9 @@
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
 
+// AI
+#include "okay/AI/Pathfinding.hpp"
+
 // Audio
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Components/AudioSource.hpp"

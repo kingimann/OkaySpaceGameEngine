@@ -31,8 +31,10 @@ planet, `A` player ship.)*
 | `MonoBehaviour`      | `okay::Behaviour` (alias of `Component`)            |
 | `Transform`          | `okay::Transform` (full parent/child hierarchy)    |
 | `Scene`              | `okay::Scene`                                       |
-| `Camera`             | `okay::Camera` (orthographic)                       |
-| `SpriteRenderer`     | `okay::SpriteRenderer`                              |
+| `Camera`             | `okay::Camera` (orthographic + perspective)         |
+| `SpriteRenderer` / `MeshRenderer` | `okay::SpriteRenderer` / `okay::MeshRenderer` |
+| `PlayerPrefs`        | `okay::Prefs`                                       |
+| Prefab `.prefab`     | `okay::SceneSerializer` `.okayprefab`               |
 | `Vector2/3`, `Quaternion`, `Matrix4x4` | `okay::Vec2/Vec3/Quat/Mat4`      |
 | `Mathf`, `Time`, `Input`, `Color` | same names, same spirit               |
 | `AddComponent<T>()`, `GetComponent<T>()` | identical templated API       |
@@ -57,6 +59,19 @@ planet, `A` player ship.)*
   callbacks, stepped automatically by the scene.
 - **Scheduler** — `Invoke`, `InvokeRepeating`, and value `Tween`s per scene
   (Unity-style timed callbacks).
+- **Gameplay components (no scripting needed)** — `Mover` (constant velocity),
+  `Spinner` (constant rotation), `Lifetime` (auto-destroy), and `CameraFollow`
+  (smooth chase camera). All serialized and editable in the Inspector.
+- **Mouse + keyboard input** — `GetKey/Down/Up`, `AxisWASD`, `MousePosition`,
+  `GetMouseButton/Down/Up`, fed from the editor/player windows or a terminal.
+- **A\* pathfinding** — `Pathfinding::AStar` over a grid (4/8-directional) or
+  directly over a `Tilemap`, for enemy nav and click-to-move.
+- **Easing & Tween** — the classic easing curve set (`Ease`) plus a one-shot
+  `Tween` for game-feel animation.
+- **Persistent save data** — `Prefs` (PlayerPrefs-style key/value) for high
+  scores and settings; the player auto-loads/saves it.
+- **Starter templates** — `Templates::Platformer` / `TopDown` build a playable,
+  component-wired scene; surfaced in the editor's New Project flow.
 - **Utilities** — seedable `Random`, a typed `EventBus`, `Rect`/`Bounds`, extra
   `Mathf` (InverseLerp, SmoothDamp, LerpAngle…), and `Scene::FindObjectsOfType<T>`.
 - **Multiplayer** — cross-platform UDP networking (`NetworkManager`) with a
@@ -69,16 +84,21 @@ planet, `A` player ship.)*
   simulation backends by default; real Steamworks/REST backends behind flags.
 - **Self-updating launcher** that pulls the latest from GitHub, rebuilds, runs.
 - **Desktop GUI editor** (Dear ImGui docking + SDL2) — Unity-style **docked**
-  Hierarchy / Scene / Inspector / Console / **Services** panels, a Play·Stop·Step
-  toolbar, a dark theme, **New Project (2D / 3D)** flow, a **2D/3D scene
-  viewport** (orbit camera + wireframe meshes), scene save/load, and an in-app
-  self-updater. Ships as a single self-contained `.exe`
-  (`dist/OkaySpaceEngine.exe`). See [`docs/editor.md`](docs/editor.md).
+  Hierarchy / Scene / Inspector / Console / **Services** / **Script Editor**
+  panels, a Play·Stop·Step toolbar, a dark theme, a **New Project** flow with
+  2D / 3D and **playable templates**, a **2D/3D scene viewport** (orbit camera +
+  shaded meshes), Add Component / Inspector for every component, scene save/load,
+  **Build Game**, and an in-app self-updater. Ships as a single self-contained
+  `.exe` (`dist/OkaySpaceEngine.exe`). See [`docs/editor.md`](docs/editor.md).
 - **Online services built into the engine & editor** — Steam (achievements/stats),
   PlayFab (login/leaderboards), and multiplayer (host/join) live in the editor's
   **Services** panel. Ship on Steam via [`docs/steam_release.md`](docs/steam_release.md).
 - **Scene serialization** — save/load scenes (and the hierarchy) to readable
   `.okayscene` text files via `SceneSerializer`.
+- **Build games to a standalone `.exe`** — the editor's **Build Game** (Ctrl+B)
+  writes your scene next to a tiny SDL2 **player runtime** (`player/`), renamed
+  `<Game>.exe`. The result is a double-clickable game (sprites in 2D, shaded
+  meshes in 3D, audio, input) you can ship — see [`docs/editor.md`](docs/editor.md).
 - **Core has no external dependencies** — just a C++17 compiler, CMake, threads.
   Optional backends (Lua, C#/Mono, Steam, PlayFab/libcurl) and the editor
   (SDL2/OpenGL) are opt-in.
@@ -94,8 +114,12 @@ engine/
   include/okay/Components/    # Camera, SpriteRenderer
   include/okay/Render/        # IRenderer, ConsoleRenderer, Color
   include/okay/Input/         # Input
+  include/okay/AI/            # Pathfinding (A*)
   src/                        # implementations
+editor/                       # Dear ImGui + SDL2 desktop editor (the engine app)
+player/                       # standalone SDL2 runtime that runs a built game
 sandbox/                      # example "solar system" game
+docs/                         # editor, scripting, Steam release guides
 tests/                        # dependency-free unit tests (CTest)
 ```
 
@@ -103,10 +127,15 @@ tests/                        # dependency-free unit tests (CTest)
 
 You have three options, easiest first.
 
-### 1. Just play (prebuilt Windows binary)
+### 1. Open the engine (prebuilt Windows binary)
 
-Download **`dist/OkaySpace.exe`** and double-click it. No build required.
-(`dist/OkaySpace-Launcher.exe` is the self-updating version — see below.)
+Download **`dist/OkaySpaceEngine.exe`** and double-click it — that single,
+self-contained `.exe` *is* the engine: the full Dear ImGui editor. Make a scene,
+press **Play**, then **File → Build Game** (Ctrl+B) to export a standalone
+`<Game>.exe`. It self-updates from GitHub via **Engine → Check for Updates**.
+
+(`dist/OkaySpace.exe` is the headless console sandbox demo;
+`dist/OkaySpace-Launcher.exe` is the self-updating launcher — see below.)
 
 ### 2. The launcher (build, auto-update, and run in one step)
 
@@ -170,8 +199,8 @@ Steam/PlayFab APIs via built-in/simulation backends.
 #include <Okay.hpp>
 using namespace okay;
 
-// A script, just like a MonoBehaviour.
-class Spinner : public Behaviour {
+// A script, just like a MonoBehaviour. (There's also a built-in okay::Spinner.)
+class MySpin : public Behaviour {
 public:
     float speed = 90.0f; // degrees/second
     void Update(float dt) override {
@@ -188,19 +217,25 @@ int main() {
 
     GameObject* player = scene.CreateGameObject("Player");
     player->AddComponent<SpriteRenderer>()->glyph = '@';
-    player->AddComponent<Spinner>();
+    player->AddComponent<MySpin>();
 
     app.Run(scene); // pumps Time, Input, Update, and Render every frame
 }
 ```
+
+## Documentation
+
+- [`docs/editor.md`](docs/editor.md) — the desktop editor and **Build Game**.
+- [`docs/scripting.md`](docs/scripting.md) — the OkayScript language + builtins.
+- [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime.
+- [`docs/steam_release.md`](docs/steam_release.md) — shipping on Steam.
 
 ## Extending it
 
 The renderer is the obvious next layer: implement `okay::IRenderer`'s five
 methods against OpenGL/SDL and hand it to `Application::SetRenderer(...)` — the
 scene, components, and scripts need no changes. Other natural additions:
-physics/colliders as components, an asset/resource system, and an event/message
-bus.
+an asset/resource system, texture/sprite-sheet loading, and a UI/text layer.
 
 ## License
 

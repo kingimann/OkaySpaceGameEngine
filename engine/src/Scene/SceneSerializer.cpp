@@ -19,6 +19,7 @@
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/TilemapCollider2D.hpp"
 #include "okay/Components/ParticleSystem.hpp"
+#include "okay/Components/UIButton.hpp"
 
 #include <cctype>
 #include <functional>
@@ -153,6 +154,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     if (go->GetComponent<TilemapCollider2D>()) out << "  tilemapcollider\n";
+    if (auto* btn = go->GetComponent<UIButton>()) {
+        out << "  uibutton " << Quote(btn->label) << " "
+            << btn->position.x << " " << btn->position.y << " "
+            << btn->size.x << " " << btn->size.y << " "
+            << btn->color.r << " " << btn->color.g << " " << btn->color.b << " " << btn->color.a << " "
+            << btn->hoverColor.r << " " << btn->hoverColor.g << " " << btn->hoverColor.b << " " << btn->hoverColor.a << " "
+            << btn->textColor.r << " " << btn->textColor.g << " " << btn->textColor.b << " " << btn->textColor.a << "\n";
+    }
     if (auto* ps = go->GetComponent<ParticleSystem>()) {
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
             << (ps->playing ? 1 : 0) << " " << ps->startLifetime << " " << ps->startSize << " "
@@ -353,6 +362,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         for (int x = 0; x < tw; ++x) { int id = 0; in >> id; tm->SetTile(x, y, id); }
                 } else if (field == "tilemapcollider") {
                     go->AddComponent<TilemapCollider2D>();
+                } else if (field == "uibutton") {
+                    auto* btn = go->AddComponent<UIButton>();
+                    btn->label = ReadQuoted(in);
+                    Color c, h, t;
+                    in >> btn->position.x >> btn->position.y >> btn->size.x >> btn->size.y
+                       >> c.r >> c.g >> c.b >> c.a >> h.r >> h.g >> h.b >> h.a
+                       >> t.r >> t.g >> t.b >> t.a;
+                    btn->color = c; btn->hoverColor = h; btn->textColor = t;
                 } else if (field == "particles") {
                     auto* ps = go->AddComponent<ParticleSystem>();
                     int playing = 1, fade = 1;

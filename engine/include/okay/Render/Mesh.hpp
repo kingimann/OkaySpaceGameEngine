@@ -123,6 +123,50 @@ struct Mesh {
         return m;
     }
 
+    /// A cone with a circular base on the XZ plane and apex on +Y.
+    static Mesh Cone(float radius = 0.5f, float height = 1.0f, int sectors = 16) {
+        Mesh m;
+        m.name = "Cone";
+        const float kPi = 3.14159265358979323846f;
+        float h = height * 0.5f;
+        for (int s = 0; s < sectors; ++s) {            // base ring
+            float th = 2.0f * kPi * (float)s / sectors;
+            m.vertices.push_back({radius * std::cos(th), -h, radius * std::sin(th)});
+        }
+        int apex = (int)m.vertices.size(); m.vertices.push_back({0, h, 0});
+        int base = (int)m.vertices.size(); m.vertices.push_back({0, -h, 0});
+        for (int s = 0; s < sectors; ++s) {
+            int n = (s + 1) % sectors;
+            m.triangles.insert(m.triangles.end(), {s, n, apex});   // side
+            m.triangles.insert(m.triangles.end(), {base, n, s});   // base cap
+        }
+        return m;
+    }
+
+    /// A torus (donut) around the Y axis. `radius` is the ring radius, `tube`
+    /// the tube thickness.
+    static Mesh Torus(float radius = 0.5f, float tube = 0.2f, int rings = 16, int sides = 10) {
+        Mesh m;
+        m.name = "Torus";
+        const float kPi = 3.14159265358979323846f;
+        for (int r = 0; r < rings; ++r) {
+            float u = 2.0f * kPi * (float)r / rings;
+            for (int s = 0; s < sides; ++s) {
+                float v = 2.0f * kPi * (float)s / sides;
+                float cx = (radius + tube * std::cos(v));
+                m.vertices.push_back({cx * std::cos(u), tube * std::sin(v), cx * std::sin(u)});
+            }
+        }
+        for (int r = 0; r < rings; ++r)
+            for (int s = 0; s < sides; ++s) {
+                int r1 = (r + 1) % rings, s1 = (s + 1) % sides;
+                int a = r * sides + s, b = r1 * sides + s;
+                int c = r1 * sides + s1, d = r * sides + s1;
+                m.triangles.insert(m.triangles.end(), {a, b, d, d, b, c});
+            }
+        return m;
+    }
+
     /// Recreate a primitive mesh from its name.
     static Mesh FromName(const std::string& n) {
         if (n == "Pyramid")  return Pyramid();
@@ -130,7 +174,31 @@ struct Mesh {
         if (n == "Plane")    return Plane();
         if (n == "Sphere")   return Sphere();
         if (n == "Cylinder") return Cylinder();
+        if (n == "Cone")     return Cone();
+        if (n == "Torus")    return Torus();
         return Cube();
+    }
+
+    /// Axis-aligned bounding box of the vertices. `outMin`/`outMax` receive the
+    /// corners; safe on an empty mesh (both set to origin). Useful for placing,
+    /// centering, framing the camera, or simple culling.
+    void Bounds(Vec3& outMin, Vec3& outMax) const {
+        if (vertices.empty()) { outMin = outMax = Vec3{0, 0, 0}; return; }
+        outMin = outMax = vertices[0];
+        for (const Vec3& v : vertices) {
+            outMin = {std::fmin(outMin.x, v.x), std::fmin(outMin.y, v.y), std::fmin(outMin.z, v.z)};
+            outMax = {std::fmax(outMax.x, v.x), std::fmax(outMax.y, v.y), std::fmax(outMax.z, v.z)};
+        }
+    }
+    /// Center of the bounding box.
+    Vec3 Center() const {
+        Vec3 lo, hi; Bounds(lo, hi);
+        return {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+    }
+    /// Size (extent) of the bounding box.
+    Vec3 Size() const {
+        Vec3 lo, hi; Bounds(lo, hi);
+        return {hi.x - lo.x, hi.y - lo.y, hi.z - lo.z};
     }
 
     // ---- Modeling: import/export and mesh operations -------------------

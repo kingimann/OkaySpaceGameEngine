@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.7.0
+  - Script editor works now: the starter script is written in the correct
+    syntax for the selected language (OkayScript uses C-style braces and
+    semicolons, which the previous end-style template broke on).
+  - The language picker is real: it lists only the backends this build
+    supports, and Lua is now bundled (no external install) so selecting "lua"
+    actually runs Lua. Switching language swaps in matching starter syntax.
+    (C# needs Mono and isn't available in the standalone Windows build.)
+
 v1.6.0
   - The launcher now checks the engine version on startup and auto-updates in
     the background: if a newer build is published (or a runtime is missing) it

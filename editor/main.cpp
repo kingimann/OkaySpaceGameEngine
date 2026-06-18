@@ -404,6 +404,19 @@ void OpenExternal(const std::string& path) {
 std::string ExtFor(const std::string& lang) {
     return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
 }
+// A starter script written in the right syntax for each language, so the
+// example actually compiles in the selected backend. OkayScript is C-style
+// (braces + semicolons); Lua uses function...end; C# is class-based.
+const char* StarterScript(const std::string& lang) {
+    if (lang == "lua")
+        return "function start()\n    set_pos(0, 0)\nend\n\n"
+               "function update(dt)\n    move(2 * dt, 0)\nend\n";
+    if (lang == "csharp")
+        return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
+               "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
+    return "function start() {\n    set_pos(0, 0);\n}\n\n"
+           "function update(dt) {\n    move(2 * dt, 0);\n}\n";
+}
 } // namespace extide
 
 // ---- Build Game: export the current scene as a standalone runnable game ----
@@ -1029,15 +1042,34 @@ void DrawScriptEditor(EditorState& ed) {
 
     if (sc) {
         ImGui::Text("Script  -  %s", go->name.c_str());
-        const char* langs[] = {"okayscript", "lua", "csharp"};
-        int li = sc->Language() == "lua" ? 1 : sc->Language() == "csharp" ? 2 : 0;
-        ImGui::SetNextItemWidth(150);
-        if (ImGui::Combo("Lang", &li, langs, 3)) sc->SetLanguage(langs[li]);
-        if (!sc->Path().empty()) { ImGui::SameLine(); ImGui::TextDisabled("(%s)", sc->Path().c_str()); }
 
         auto& buf = CodeBuffer(sc, sc->Source().empty()
-            ? "function start()\nend\n\nfunction update(dt)\n  move(2 * dt, 0)\nend\n"
-            : sc->Source());
+            ? extide::StarterScript(sc->Language()) : sc->Source());
+
+        // Only list backends this build actually supports, so the choice is
+        // meaningful (no "backend not available" errors). okayscript is always
+        // present; lua/csharp appear when compiled in.
+        static std::vector<std::string> avail = AvailableScriptLanguages();
+        std::vector<const char*> items; items.reserve(avail.size());
+        for (auto& s : avail) items.push_back(s.c_str());
+        int li = 0;
+        for (int i = 0; i < (int)avail.size(); ++i)
+            if (avail[i] == sc->Language()) li = i;
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::Combo("Lang", &li, items.data(), (int)items.size())) {
+            std::string oldLang = sc->Language(), newLang = avail[li];
+            sc->SetLanguage(newLang);
+            // Swap the starter in if the editor still holds the old default, so
+            // switching languages gives syntax that compiles in the new one.
+            std::string cur = buf.data();
+            if (cur.empty() || cur == extide::StarterScript(oldLang))
+                SetCodeBuffer(sc, extide::StarterScript(newLang));
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(sc->Language() == "okayscript" ? "C-style: { } ;"
+                          : sc->Language() == "lua"        ? "Lua: function ... end"
+                                                           : "");
+        if (!sc->Path().empty()) { ImGui::SameLine(); ImGui::TextDisabled("(%s)", sc->Path().c_str()); }
         ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= 34.0f; if (av.y < 60) av.y = 60;
         ImGui::InputTextMultiline("##editor", buf.data(), buf.size(), av);
 
@@ -1661,9 +1693,14 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* sc = go->GetComponent<ScriptComponent>()) {
         if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char* langs[] = {"okayscript", "lua", "csharp"};
-            int li = sc->Language() == "lua" ? 1 : sc->Language() == "csharp" ? 2 : 0;
-            if (ImGui::Combo("Language", &li, langs, 3)) sc->SetLanguage(langs[li]);
+            static std::vector<std::string> avail = AvailableScriptLanguages();
+            std::vector<const char*> items; items.reserve(avail.size());
+            for (auto& s : avail) items.push_back(s.c_str());
+            int li = 0;
+            for (int i = 0; i < (int)avail.size(); ++i)
+                if (avail[i] == sc->Language()) li = i;
+            if (ImGui::Combo("Language", &li, items.data(), (int)items.size()))
+                sc->SetLanguage(avail[li]);
             if (sc->Path().empty()) ImGui::TextDisabled("inline script");
             else ImGui::TextDisabled("file: %s", sc->Path().c_str());
             ImGui::TextWrapped("Edit code in the Script Editor panel (View > Script Editor).");

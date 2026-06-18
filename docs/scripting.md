@@ -77,6 +77,8 @@ UI Button press.
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
 | `destroy()` | destroy this script's own GameObject |
+| `activate(name)` / `deactivate(name)` | show/hide another object by name |
+| `exists(name)` / `is_active(name)` | query another object by name |
 | `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `raycast_hit(ox, oy, dx, dy[, dist])` | true if a ray hits a collider |
 | `overlap(x, y)` | true if a collider contains the point |

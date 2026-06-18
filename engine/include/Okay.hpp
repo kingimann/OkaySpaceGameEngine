@@ -57,6 +57,7 @@
 // More components
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
+#include "okay/Components/TilemapCollider2D.hpp"
 
 // Gameplay behaviours (no-scripting motion/lifetime helpers)
 #include "okay/Components/Mover.hpp"

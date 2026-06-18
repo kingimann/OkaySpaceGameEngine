@@ -1487,6 +1487,9 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<Lifetime>(); ed.dirty = true; }
         if (!go->GetComponent<CameraFollow>() && F("Camera Follow") && ImGui::Selectable("Camera Follow"))
             { go->AddComponent<CameraFollow>(); ed.dirty = true; }
+        if (go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>() &&
+            F("Tilemap Collider 2D") && ImGui::Selectable("Tilemap Collider 2D"))
+            { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));

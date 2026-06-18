@@ -16,6 +16,8 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Components/Tilemap.hpp"
+#include "okay/Components/TilemapCollider2D.hpp"
 
 #include <cctype>
 #include <functional>
@@ -144,6 +146,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << "\n";
     }
+    if (auto* tm = go->GetComponent<Tilemap>()) {
+        out << "  tilemap " << tm->tileSize << " " << tm->Width() << " " << tm->Height();
+        for (int t : tm->Tiles()) out << " " << t;
+        out << "\n";
+    }
+    if (go->GetComponent<TilemapCollider2D>()) out << "  tilemapcollider\n";
 }
 } // namespace
 
@@ -323,6 +331,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* au = go->AddComponent<AudioSource>();
                     au->clipPath = cp; au->volume = vol;
                     au->loop = (loop != 0); au->playOnAwake = (poa != 0);
+                } else if (field == "tilemap") {
+                    float ts = 1.0f; int tw = 0, th = 0;
+                    in >> ts >> tw >> th;
+                    auto* tm = go->AddComponent<Tilemap>();
+                    tm->tileSize = ts; tm->Resize(tw, th);
+                    for (int y = 0; y < th; ++y)
+                        for (int x = 0; x < tw; ++x) { int id = 0; in >> id; tm->SetTile(x, y, id); }
+                } else if (field == "tilemapcollider") {
+                    go->AddComponent<TilemapCollider2D>();
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;

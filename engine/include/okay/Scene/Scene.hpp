@@ -31,6 +31,10 @@ public:
     /// Remove every GameObject immediately (used when loading a scene).
     void Clear();
 
+    /// Clone a prefab (a GameObject and its descendants) into this scene.
+    GameObject* Instantiate(const GameObject& prefab);
+    GameObject* Instantiate(const GameObject& prefab, const Vec3& position);
+
     /// Mark a GameObject for destruction; removed at the end of the frame.
     void Destroy(GameObject* go);
 

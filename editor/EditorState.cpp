@@ -100,6 +100,17 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     return go;
 }
 
+GameObject* EditorState::DuplicateSelected() {
+    if (!m_selected) return nullptr;
+    GameObject* clone = m_scene.Instantiate(*m_selected);
+    if (clone) {
+        clone->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f}; // offset so it's visible
+        m_selected = clone;
+        dirty = true;
+    }
+    return clone;
+}
+
 void EditorState::DeleteSelected() {
     if (!m_selected) return;
     m_scene.Destroy(m_selected);

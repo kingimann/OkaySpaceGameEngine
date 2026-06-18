@@ -299,6 +299,13 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
             created = true;
         }
         if (created) ed.Achievement("FIRST_OBJECT");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Duplicate Selected", "Ctrl+D", false, ed.selected() != nullptr)) {
+            ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
+        }
+        if (ImGui::MenuItem("Delete Selected", "Del", false, ed.selected() != nullptr)) {
+            ed.DeleteSelected(); ConsoleLog("Deleted selection");
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Engine")) {

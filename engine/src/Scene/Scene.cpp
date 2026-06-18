@@ -1,6 +1,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Render/Renderer.hpp"
 #include <algorithm>
@@ -9,6 +10,16 @@ namespace okay {
 
 Scene::Scene(std::string name) : m_name(std::move(name)) {}
 Scene::~Scene() = default;
+
+GameObject* Scene::Instantiate(const GameObject& prefab) {
+    return SceneSerializer::Instantiate(*this, prefab);
+}
+
+GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position) {
+    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    if (go) go->transform->localPosition = position;
+    return go;
+}
 
 GameObject* Scene::CreateGameObject(const std::string& name) {
     auto go = std::unique_ptr<GameObject>(new GameObject(this, name));

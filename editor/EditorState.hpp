@@ -25,6 +25,8 @@ public:
     GameObject* CreateCube(const std::string& name = "Cube");
     GameObject* CreatePyramid(const std::string& name = "Pyramid");
     void DeleteSelected();
+    /// Clone the selected object (and its children); selects the clone.
+    GameObject* DuplicateSelected();
     void NewScene();
     /// New project templates: a 2D scene (ortho camera + sprite) or a 3D scene
     /// (perspective camera + ground + cube).

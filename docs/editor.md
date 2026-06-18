@@ -73,6 +73,9 @@ uses, built right into the engine app.
   (loaded via `okay::Image`/stb_image). The built game draws the image, tinted by
   the sprite color; the editor viewport still shows the colored quad. Keep the
   image next to the built `.exe` (relative paths resolve there).
+- **Text** — add a *Text* component for score counters, labels, and HUD using
+  the built-in 8x8 font (no font file needed). Use *Screen Space* for a fixed
+  HUD or world space to anchor it to the GameObject. Renders in the built game.
 - **GameObject menu** — create Empty / Sprite / Camera objects.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
   (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a

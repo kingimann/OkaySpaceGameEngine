@@ -39,6 +39,26 @@ static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, flo
     SDL_RenderFillRect(r, &rect);
 }
 
+// Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
+// in screen pixels, each font pixel `px` screen pixels wide.
+static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float oy,
+                     float px, SDL_Color col) {
+    if (px < 1.0f) px = 1.0f;
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    float cx = ox;
+    for (char ch : text) {
+        if (ch == '\n') { oy += (Font8x8::Height + 1) * px; cx = ox; continue; }
+        for (int y = 0; y < Font8x8::Height; ++y)
+            for (int x = 0; x < Font8x8::Width; ++x)
+                if (Font8x8::Pixel(ch, x, y)) {
+                    SDL_Rect cell{(int)(cx + x * px), (int)(oy + y * px),
+                                  (int)px + 1, (int)px + 1};
+                    SDL_RenderFillRect(r, &cell);
+                }
+        cx += (Font8x8::Width + 1) * px; // 1px inter-glyph gap
+    }
+}
+
 // Load (and cache) a sprite texture. Returns nullptr if the image can't be read,
 // in which case the caller falls back to a flat colored quad. A null cache entry
 // is stored for misses so we don't retry decoding a bad path every frame.
@@ -265,6 +285,27 @@ int main(int argc, char** argv) {
                                   (Uint8)(p.color.b * 255), (Uint8)(p.color.a * 255)};
                     FillWorldQuad(renderer, p.position, p.size, p.size,
                                   camPos, scale, w, h, col);
+                }
+            }
+        }
+
+        // Text (HUD / labels) — drawn last so it sits on top, in 2D or 3D scenes.
+        {
+            float ortho = cam ? cam->orthographicSize : 5.0f;
+            Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
+            float scale = h / (2.0f * ortho);
+            for (const auto& up : scene.Objects()) {
+                auto* tr = up->GetComponent<TextRenderer>();
+                if (!tr || !up->active) continue;
+                SDL_Color col{(Uint8)(tr->color.r * 255), (Uint8)(tr->color.g * 255),
+                              (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255)};
+                if (tr->screenSpace) {
+                    DrawText(renderer, tr->text, tr->screenPos.x, tr->screenPos.y,
+                             tr->pixelSize, col);
+                } else {
+                    SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
+                    DrawText(renderer, tr->text, (float)o.x, (float)o.y,
+                             tr->pixelSize * scale, col);
                 }
             }
         }

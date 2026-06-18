@@ -1168,6 +1168,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cf")) toRemove = cf;
         }
     }
+    if (auto* tr = go->GetComponent<TextRenderer>()) {
+        if (ImGui::CollapsingHeader("Text", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char buf[256];
+            std::strncpy(buf, tr->text.c_str(), sizeof(buf) - 1);
+            buf[sizeof(buf) - 1] = '\0';
+            if (ImGui::InputText("Text##txt", buf, sizeof(buf))) { tr->text = buf; ed.dirty = true; }
+            float col[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
+            if (ImGui::ColorEdit4("Color##txt", col)) { tr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Pixel Size##txt", &tr->pixelSize, 0.005f, 0.001f, 100.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Screen Space##txt", &tr->screenSpace)) ed.dirty = true;
+            if (tr->screenSpace) {
+                float sp[2] = {tr->screenPos.x, tr->screenPos.y};
+                if (ImGui::DragFloat2("Screen Pos##txt", sp, 1.0f)) { tr->screenPos = {sp[0], sp[1]}; ed.dirty = true; }
+            }
+            ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
+            if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
+        }
+    }
 
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
@@ -1194,6 +1212,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<VisualScriptComponent>(); ed.dirty = true; }
         if (!go->GetComponent<AudioSource>() && ImGui::Selectable("Audio Source"))
             { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+        if (!go->GetComponent<TextRenderer>() && ImGui::Selectable("Text"))
+            { go->AddComponent<TextRenderer>(); ed.dirty = true; }
         ImGui::Separator();
         if (!go->GetComponent<Mover>() && ImGui::Selectable("Mover"))
             { go->AddComponent<Mover>(); ed.dirty = true; }

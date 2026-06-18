@@ -27,6 +27,7 @@ add_library(okay_engine
     src/Audio/AudioMixer.cpp
     src/AI/Pathfinding.cpp
     src/Graphics/Image.cpp
+    src/Graphics/Font.cpp
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
@@ -38,9 +39,11 @@ target_include_directories(okay_engine PUBLIC
 # the Image translation unit. Kept PRIVATE so it doesn't leak to consumers.
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/font8x8
 )
-# Silence warnings from the third-party stb implementation in Image.cpp.
-set_source_files_properties(src/Graphics/Image.cpp PROPERTIES COMPILE_OPTIONS "-w")
+# Silence warnings from the third-party single-header libraries.
+set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp
+    PROPERTIES COMPILE_OPTIONS "-w")
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)
 

@@ -35,11 +35,13 @@
 
 // Graphics assets
 #include "okay/Graphics/Image.hpp"
+#include "okay/Graphics/Font.hpp"
 
 // Built-in components
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/TextRenderer.hpp"
 
 // 2D physics
 #include "okay/Physics/Rigidbody2D.hpp"

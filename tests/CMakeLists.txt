@@ -46,6 +46,10 @@ add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)
 
+add_executable(test_easing test_easing.cpp)
+target_link_libraries(test_easing PRIVATE okay::engine)
+add_test(NAME easing COMMAND test_easing)
+
 add_executable(test_physics test_physics.cpp)
 target_link_libraries(test_physics PRIVATE okay::engine)
 add_test(NAME physics COMMAND test_physics)

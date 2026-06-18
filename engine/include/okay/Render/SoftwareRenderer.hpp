@@ -101,7 +101,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 if (c.w <= 0.05f) { ok = false; break; }       // behind camera
                 sx[k] = (c.x / c.w * 0.5f + 0.5f) * W;
                 sy[k] = (1.0f - (c.y / c.w * 0.5f + 0.5f)) * H;
-                sd[k] = (eye - wp[k]).Magnitude();             // camera distance
+                // Normalized-device depth (clip z/w). Unlike world distance, this
+                // is affine in screen space, so per-pixel barycentric interpolation
+                // gives the correct depth — fixes faces bleeding through at angles.
+                sd[k] = c.z / c.w;
             }
             if (!ok) continue;
             std::uint32_t abgr = Raster::Pack(mr->color, SceneLight::Shade(normal));

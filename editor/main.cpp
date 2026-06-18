@@ -2082,21 +2082,21 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                            (int)canvasSize.x, (int)canvasSize.y))
         dl->AddImage((ImTextureID)tex, canvasPos, canvasEnd);
 
-    // Highlight the selection with a yellow wireframe over the solid render.
+    // Highlight the selection with a clean yellow bounding box (12 edges).
     if (!gameView && ed.selected()) {
         if (auto* mr = ed.selected()->GetComponent<MeshRenderer>()) {
             Mat4 m = vp * ed.selected()->transform->LocalToWorldMatrix();
-            const auto& v = mr->mesh.vertices;
-            const auto& t = mr->mesh.triangles;
-            for (size_t i = 0; i + 2 < t.size(); i += 3) {
-                ImVec2 p0, p1, p2;
-                if (toScreen(m * Vec4{v[t[i]], 1}, p0) &&
-                    toScreen(m * Vec4{v[t[i + 1]], 1}, p1) &&
-                    toScreen(m * Vec4{v[t[i + 2]], 1}, p2)) {
-                    ImU32 y = IM_COL32(255, 200, 0, 160);
-                    dl->AddLine(p0, p1, y); dl->AddLine(p1, p2, y); dl->AddLine(p2, p0, y);
-                }
-            }
+            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            ImVec2 corner[8]; bool cOk[8];
+            for (int ci = 0; ci < 8; ++ci)
+                cOk[ci] = toScreen(m * Vec4{Vec3{(ci & 1) ? hi.x : lo.x,
+                                                 (ci & 2) ? hi.y : lo.y,
+                                                 (ci & 4) ? hi.z : lo.z}, 1}, corner[ci]);
+            static const int edges[12][2] = {
+                {0,1},{1,3},{3,2},{2,0}, {4,5},{5,7},{7,6},{6,4}, {0,4},{1,5},{2,6},{3,7}};
+            ImU32 y = IM_COL32(255, 200, 0, 220);
+            for (auto& e : edges)
+                if (cOk[e[0]] && cOk[e[1]]) dl->AddLine(corner[e[0]], corner[e[1]], y, 1.5f);
         }
     }
 

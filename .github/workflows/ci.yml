@@ -40,6 +40,6 @@ jobs:
         run: |
           cmake -S . -B build-editor -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_TESTS=OFF \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON
           cmake --build build-editor -j
           ./build-editor/bin/okay-editor --selftest

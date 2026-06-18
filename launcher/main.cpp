@@ -1,25 +1,18 @@
-// OkaySpace Launcher
+// OkaySpace Launcher — a small FiveM-style front end with three sections:
+//   Create      launch the engine/editor to build a game
+//   Play        run a game you've built (any game.okayscene found nearby)
+//   Marketplace browse starter templates to open in the editor
 //
-// A small self-updating front end: it checks GitHub for a newer version of the
-// engine, pulls it, rebuilds, and launches the game. Run it instead of the game
-// binary and players always stay up to date.
-//
-//   okayspace-launcher [options] [-- <args passed to the game>]
-//
-// Options:
-//   --no-update     Skip the GitHub update check
-//   --check-only    Report whether an update is available, then exit
-//   --no-build      Don't rebuild after updating
-//   --no-run        Update/build only; don't launch the game
-//   --game <name>   Which built binary to run (default: sandbox)
-//   --branch <b>    Branch to track (default: the current branch)
-#include <algorithm>
-#include <array>
-#include <cctype>
-#include <cstdio>
+// It looks for OkaySpaceEngine.exe (editor) and OkaySpacePlayer.exe (runtime)
+// sitting next to it, and launches them. Built with Dear ImGui + SDL2.
+#define SDL_MAIN_HANDLED
+#include <SDL.h>
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_sdlrenderer2.h"
+
 #include <cstdlib>
 #include <filesystem>
-#include <iostream>
 #include <string>
 #include <vector>
 
@@ -27,147 +20,208 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::string Trim(std::string s) {
-    auto notSpace = [](unsigned char c) { return !std::isspace(c); };
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(), notSpace));
-    s.erase(std::find_if(s.rbegin(), s.rend(), notSpace).base(), s.end());
-    return s;
-}
+std::string g_exeDir = ".";
 
-// Run a command, returning its exit code.
-int Run(const std::string& cmd) { return std::system(cmd.c_str()); }
-
-// Run a command and capture stdout.
-std::string Capture(const std::string& cmd) {
-    std::string full = cmd + " 2>/dev/null";
-#if defined(_WIN32)
-    FILE* pipe = _popen(cmd.c_str(), "r");
-#else
-    FILE* pipe = popen(full.c_str(), "r");
-#endif
-    if (!pipe) return {};
-    std::string out;
-    std::array<char, 256> buf{};
-    while (fgets(buf.data(), (int)buf.size(), pipe)) out += buf.data();
-#if defined(_WIN32)
-    _pclose(pipe);
-#else
-    pclose(pipe);
-#endif
-    return Trim(out);
-}
-
-// Walk up from `start` to find the repository root (the dir containing .git).
-fs::path FindRepoRoot(fs::path start) {
-    for (fs::path p = start; !p.empty(); p = p.parent_path()) {
-        if (fs::exists(p / ".git")) return p;
-        if (p == p.root_path()) break;
+// Find the first of `names` that exists next to the launcher.
+std::string FindExe(std::initializer_list<const char*> names) {
+    std::error_code ec;
+    for (const char* n : names) {
+        fs::path p = fs::path(g_exeDir) / n;
+        if (fs::exists(p, ec)) return p.string();
     }
     return {};
 }
 
-struct Options {
-    bool update = true, checkOnly = false, build = true, run = true;
-    std::string game = "sandbox";
-    std::string branch;
-    std::vector<std::string> gameArgs;
-};
+// Launch an executable (detached), optionally with one argument.
+void Launch(const std::string& exe, const std::string& arg = "") {
+    if (exe.empty()) return;
+#if defined(_WIN32)
+    std::string cmd = "start \"\" \"" + exe + "\"";
+    if (!arg.empty()) cmd += " \"" + arg + "\"";
+#else
+    std::string cmd = "\"" + exe + "\"";
+    if (!arg.empty()) cmd += " \"" + arg + "\"";
+    cmd += " >/dev/null 2>&1 &";
+#endif
+    std::system(cmd.c_str());
+}
+
+// Scan a few likely folders for built games (*.okayscene).
+std::vector<fs::path> FindScenes() {
+    std::vector<fs::path> out;
+    std::error_code ec;
+    auto scan = [&](const fs::path& dir) {
+        if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return;
+        for (auto it = fs::recursive_directory_iterator(dir, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (it->is_regular_file(ec) && it->path().extension() == ".okayscene")
+                out.push_back(it->path());
+        }
+    };
+    fs::path base(g_exeDir);
+    scan(base);
+    scan(base / "games");
+    scan(base / "Projects");
+    return out;
+}
+
+void DarkTheme() {
+    ImGui::StyleColorsDark();
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.WindowRounding = 0.0f; s.FrameRounding = 5.0f; s.GrabRounding = 5.0f;
+    s.FramePadding = ImVec2(10, 7); s.ItemSpacing = ImVec2(10, 10);
+    ImVec4* c = s.Colors;
+    ImVec4 accent(0.20f, 0.45f, 0.85f, 1.0f);
+    c[ImGuiCol_WindowBg]     = ImVec4(0.09f, 0.10f, 0.13f, 1.0f);
+    c[ImGuiCol_ChildBg]      = ImVec4(0.12f, 0.13f, 0.17f, 1.0f);
+    c[ImGuiCol_Button]       = ImVec4(0.18f, 0.20f, 0.26f, 1.0f);
+    c[ImGuiCol_ButtonHovered]= accent;
+    c[ImGuiCol_ButtonActive] = ImVec4(0.16f, 0.38f, 0.72f, 1.0f);
+    c[ImGuiCol_Header]       = accent;
+    c[ImGuiCol_HeaderHovered]= accent;
+}
 
 } // namespace
 
 int main(int argc, char** argv) {
-    Options opt;
-    bool passthrough = false;
-    for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        if (passthrough) { opt.gameArgs.push_back(a); continue; }
-        if (a == "--")               passthrough = true;
-        else if (a == "--no-update") opt.update = false;
-        else if (a == "--check-only")opt.checkOnly = true;
-        else if (a == "--no-build")  opt.build = false;
-        else if (a == "--no-run")    opt.run = false;
-        else if (a == "--game" && i + 1 < argc) opt.game = argv[++i];
-        else if (a == "--branch" && i + 1 < argc) opt.branch = argv[++i];
-        else if (a == "--help" || a == "-h") {
-            std::cout << "Usage: okayspace-launcher [--no-update] [--check-only] "
-                         "[--no-build] [--no-run] [--game <name>] [--branch <b>] "
-                         "[-- <game args>]\n";
-            return 0;
-        } else {
-            std::cerr << "Unknown option: " << a << "\n";
-            return 2;
+    SDL_SetMainReady();
+    if (argc > 0) {
+        std::error_code ec;
+        fs::path self = fs::absolute(argv[0], ec);
+        if (!ec) g_exeDir = self.parent_path().string();
+    }
+
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
+    SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 600,
+        SDL_WINDOW_ALLOW_HIGHDPI);
+    if (!window) return 1;
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1,
+        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    if (!renderer) return 1;
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr; // the launcher has a fixed layout
+    DarkTheme();
+    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer2_Init(renderer);
+
+    const std::string editor = FindExe({"OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
+    const std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
+    std::vector<fs::path> scenes = FindScenes();
+
+    struct Template { const char* name; const char* desc; };
+    const Template templates[] = {
+        {"Platformer",     "Side-scrolling jump-and-run starter."},
+        {"Top-Down",       "Top-down movement and rooms."},
+        {"Coin Collector", "A complete pickup-the-coins game."},
+        {"Main Menu (UI)", "A title screen with buttons."},
+        {"Snake",          "The classic, fully playable."},
+    };
+
+    int tab = 0; // 0 Create, 1 Play, 2 Marketplace
+    bool running = true;
+    while (running) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            ImGui_ImplSDL2_ProcessEvent(&e);
+            if (e.type == SDL_QUIT) running = false;
         }
-    }
+        ImGui_ImplSDLRenderer2_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui::NewFrame();
 
-    fs::path exeDir = fs::absolute(fs::path(argv[0])).parent_path();
-    fs::path root = FindRepoRoot(exeDir);
-    if (root.empty()) root = FindRepoRoot(fs::current_path());
-    if (root.empty()) {
-        std::cerr << "[launcher] Could not locate the OkaySpace git repository.\n";
-        return 1;
-    }
-    std::cout << "[launcher] Repository: " << root << "\n";
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(vp->WorkPos);
+        ImGui::SetNextWindowSize(vp->WorkSize);
+        ImGui::Begin("##launcher", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-    const std::string git = "git -C \"" + root.string() + "\"";
-    std::string branch = opt.branch.empty()
-        ? Capture(git + " rev-parse --abbrev-ref HEAD") : opt.branch;
-    if (branch.empty() || branch == "HEAD") branch = "main";
+        // ---- Left nav ----
+        ImGui::BeginChild("nav", ImVec2(190, 0), true);
+        ImGui::PushFont(nullptr);
+        ImGui::TextColored(ImVec4(0.45f, 0.7f, 1.0f, 1.0f), "OkaySpace");
+        ImGui::TextDisabled("game engine");
+        ImGui::Dummy(ImVec2(0, 14));
+        const char* navs[] = {"  Create", "  Play", "  Marketplace"};
+        for (int i = 0; i < 3; ++i)
+            if (ImGui::Selectable(navs[i], tab == i, 0, ImVec2(0, 34))) tab = i;
+        ImGui::PopFont();
+        ImGui::EndChild();
 
-    bool updateApplied = false;
-    if (opt.update || opt.checkOnly) {
-        std::cout << "[launcher] Checking GitHub for updates on '" << branch << "'...\n";
-        Run(git + " fetch --quiet origin " + branch);
-        std::string local  = Capture(git + " rev-parse HEAD");
-        std::string remote = Capture(git + " rev-parse origin/" + branch);
+        ImGui::SameLine();
+        ImGui::BeginChild("content", ImVec2(0, 0), true);
 
-        if (remote.empty()) {
-            std::cout << "[launcher] Could not reach origin; continuing offline.\n";
-        } else if (local == remote) {
-            std::cout << "[launcher] Already up to date (" << local.substr(0, 8) << ").\n";
-        } else {
-            std::cout << "[launcher] Update available: " << local.substr(0, 8)
-                      << " -> " << remote.substr(0, 8) << "\n";
-            if (opt.checkOnly) return 10; // signal "update available"
-            if (opt.update) {
-                std::cout << "[launcher] Pulling latest...\n";
-                if (Run(git + " pull --ff-only origin " + branch) == 0) {
-                    updateApplied = true;
-                    std::cout << "[launcher] Updated to " << remote.substr(0, 8) << ".\n";
-                } else {
-                    std::cerr << "[launcher] Pull failed (local changes?). Continuing "
-                                 "with the current version.\n";
-                }
+        if (tab == 0) {                                   // ---- Create ----
+            ImGui::TextColored(ImVec4(0.85f, 0.9f, 1.0f, 1.0f), "Create a game");
+            ImGui::TextWrapped("Open the OkaySpace editor to build 2D or 3D scenes, "
+                               "script them, and design UI. Use File > Build Game to "
+                               "export a standalone game.");
+            ImGui::Dummy(ImVec2(0, 16));
+            if (editor.empty()) {
+                ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Editor not found next to the launcher.");
+                ImGui::TextDisabled("Place OkaySpaceEngine.exe beside this launcher.");
+            } else {
+                if (ImGui::Button("Open Editor", ImVec2(220, 56))) Launch(editor);
+                ImGui::TextDisabled("%s", editor.c_str());
             }
+        } else if (tab == 1) {                            // ---- Play ----
+            ImGui::TextColored(ImVec4(0.85f, 0.9f, 1.0f, 1.0f), "Play a game");
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
+            if (ImGui::Button("Refresh", ImVec2(80, 0))) scenes = FindScenes();
+            ImGui::Separator();
+            if (player.empty())
+                ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Player runtime not found next to the launcher.");
+            else if (scenes.empty())
+                ImGui::TextDisabled("No games found. Build one from the editor (File > Build Game), "
+                                    "then put it next to the launcher or in a 'games' folder.");
+            else
+                for (std::size_t i = 0; i < scenes.size(); ++i) {
+                    ImGui::PushID((int)i);
+                    if (ImGui::Button("Play", ImVec2(70, 0))) Launch(player, scenes[i].string());
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(scenes[i].filename().string().c_str());
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
+                    ImGui::PopID();
+                }
+        } else {                                          // ---- Marketplace ----
+            ImGui::TextColored(ImVec4(0.85f, 0.9f, 1.0f, 1.0f), "Marketplace");
+            ImGui::TextDisabled("Starter templates — open one in the editor (New Project) to begin.");
+            ImGui::Separator();
+            for (const auto& t : templates) {
+                ImGui::BeginChild(t.name, ImVec2(0, 64), true);
+                ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.95f, 1.0f), "%s", t.name);
+                ImGui::TextDisabled("%s", t.desc);
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
+                ImGui::PushID(t.name);
+                if (ImGui::Button("Open", ImVec2(86, 0))) Launch(editor);
+                ImGui::PopID();
+                ImGui::EndChild();
+            }
+            ImGui::Dummy(ImVec2(0, 8));
+            ImGui::TextDisabled("Community content marketplace coming soon.");
         }
-    }
-    if (opt.checkOnly) return 0;
 
-    fs::path buildDir = root / "build";
-    if (opt.build && (updateApplied || !fs::exists(buildDir / "bin"))) {
-        std::cout << "[launcher] Building engine...\n";
-        if (!fs::exists(buildDir))
-            Run("cmake -S \"" + root.string() + "\" -B \"" + buildDir.string() +
-                "\" -DCMAKE_BUILD_TYPE=Release");
-        if (Run("cmake --build \"" + buildDir.string() + "\" -j") != 0) {
-            std::cerr << "[launcher] Build failed.\n";
-            return 1;
-        }
+        ImGui::EndChild();
+        ImGui::End();
+
+        ImGui::Render();
+        SDL_SetRenderDrawColor(renderer, 18, 20, 26, 255);
+        SDL_RenderClear(renderer);
+        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        SDL_RenderPresent(renderer);
     }
 
-    if (!opt.run) return 0;
-
-#if defined(_WIN32)
-    fs::path gameExe = buildDir / "bin" / (opt.game + ".exe");
-#else
-    fs::path gameExe = buildDir / "bin" / opt.game;
-#endif
-    if (!fs::exists(gameExe)) {
-        std::cerr << "[launcher] Game binary not found: " << gameExe << "\n";
-        return 1;
-    }
-
-    std::string cmd = "\"" + gameExe.string() + "\"";
-    for (auto& a : opt.gameArgs) cmd += " \"" + a + "\"";
-    std::cout << "[launcher] Launching " << opt.game << "...\n";
-    return Run(cmd);
+    ImGui_ImplSDLRenderer2_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
+    ImGui::DestroyContext();
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+    return 0;
 }

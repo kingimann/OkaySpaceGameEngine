@@ -1498,6 +1498,23 @@ void DrawInspector(EditorState& ed) {
     ImGui::End();
 }
 
+// Draw a string with the engine's 8x8 bitmap font into an ImGui draw list, so
+// the editor viewport shows the same text the built game will (HUDs, labels).
+void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
+                    float px, ImU32 col) {
+    if (px < 1.0f) px = 1.0f;
+    float cx = ox;
+    for (char ch : text) {
+        if (ch == '\n') { oy += (Font8x8::Height + 1) * px; cx = ox; continue; }
+        for (int y = 0; y < Font8x8::Height; ++y)
+            for (int x = 0; x < Font8x8::Width; ++x)
+                if (Font8x8::Pixel(ch, x, y))
+                    dl->AddRectFilled(ImVec2(cx + x * px, oy + y * px),
+                                      ImVec2(cx + (x + 1) * px, oy + (y + 1) * px), col);
+        cx += (Font8x8::Width + 1) * px;
+    }
+}
+
 void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
@@ -1583,6 +1600,20 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (!p.alive) continue;
             ImVec2 sp = worldToScreen(p.position);
             dl->AddCircleFilled(sp, Mathf::Max(1.0f, p.size * scale * 0.5f), ToColor(p.color));
+        }
+    }
+
+    // Text: world-space anchored to the object, screen-space pinned to the canvas.
+    for (const auto& up : objs) {
+        auto* tr = up->GetComponent<TextRenderer>();
+        if (!tr || !up->active) continue;
+        ImU32 col = ToColor(tr->color);
+        if (tr->screenSpace)
+            DrawBitmapText(dl, tr->text, canvasPos.x + tr->screenPos.x,
+                           canvasPos.y + tr->screenPos.y, tr->pixelSize, col);
+        else {
+            ImVec2 o = worldToScreen(up->transform->Position());
+            DrawBitmapText(dl, tr->text, o.x, o.y, tr->pixelSize * scale, col);
         }
     }
     dl->PopClipRect();

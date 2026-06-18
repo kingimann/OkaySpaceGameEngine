@@ -77,14 +77,12 @@ int main(int argc, char** argv) {
 // `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
-#if defined(_WIN32)
-#include <SDL_opengl.h>
-#else
-#include <SDL_opengles2.h>
-#endif
 #include "imgui.h"
+#include "imgui_internal.h" // DockBuilder for the default layout
 #include "backends/imgui_impl_sdl2.h"
-#include "backends/imgui_impl_opengl3.h"
+#include "backends/imgui_impl_sdlrenderer2.h"
+
+#include <vector>
 
 using namespace okay;
 using namespace okay::editor;
@@ -158,35 +156,154 @@ bool g_openUpdatePopup = false;
 // Per-object editor-only Z rotation cache (2D authoring convenience).
 std::unordered_map<GameObject*, float> g_eulerZ;
 
-void DrawMenuBar(EditorState& ed, bool& running) {
-    if (!ImGui::BeginMainMenuBar()) return;
+// ---- Console log -------------------------------------------------------
+std::vector<std::string> g_console;
+void ConsoleLog(const std::string& msg) {
+    g_console.push_back(msg);
+    if (g_console.size() > 300) g_console.erase(g_console.begin());
+}
+
+// ---- A dark, Unity-ish theme ------------------------------------------
+void ApplyTheme() {
+    ImGui::StyleColorsDark();
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.WindowRounding = 4.0f; s.FrameRounding = 3.0f; s.GrabRounding = 3.0f;
+    s.TabRounding = 3.0f;   s.ScrollbarRounding = 3.0f;
+    s.WindowPadding = ImVec2(8, 8); s.FramePadding = ImVec2(6, 4);
+    s.ItemSpacing = ImVec2(8, 6);
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_WindowBg]      = ImVec4(0.16f, 0.16f, 0.18f, 1.0f);
+    c[ImGuiCol_Header]        = ImVec4(0.20f, 0.42f, 0.74f, 0.55f);
+    c[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.52f, 0.88f, 0.80f);
+    c[ImGuiCol_HeaderActive]  = ImVec4(0.20f, 0.42f, 0.74f, 1.00f);
+    c[ImGuiCol_Button]        = ImVec4(0.24f, 0.24f, 0.28f, 1.00f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.30f, 0.50f, 0.85f, 1.00f);
+    c[ImGuiCol_ButtonActive]  = ImVec4(0.22f, 0.40f, 0.72f, 1.00f);
+    c[ImGuiCol_TitleBgActive] = ImVec4(0.13f, 0.26f, 0.42f, 1.00f);
+    c[ImGuiCol_Tab]           = ImVec4(0.18f, 0.22f, 0.30f, 1.00f);
+    c[ImGuiCol_TabActive]     = ImVec4(0.22f, 0.42f, 0.70f, 1.00f);
+    c[ImGuiCol_TabHovered]    = ImVec4(0.28f, 0.52f, 0.85f, 1.00f);
+}
+
+// Build the default Unity-style dock layout once.
+void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
+    ImGui::DockBuilderRemoveNode(dockId);
+    ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockId, size);
+
+    ImGuiID center = dockId, left, right, down;
+    left  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,  0.18f, nullptr, &center);
+    right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
+    down  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,  0.26f, nullptr, &center);
+
+    ImGui::DockBuilderDockWindow("Hierarchy", left);
+    ImGui::DockBuilderDockWindow("Inspector", right);
+    ImGui::DockBuilderDockWindow("Console", down);
+    ImGui::DockBuilderDockWindow("Project", down);
+    ImGui::DockBuilderDockWindow("Scene", center);
+    ImGui::DockBuilderFinish(dockId);
+}
+
+void DrawMenuAndToolbar(EditorState& ed, bool& running) {
+    if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Scene", "Ctrl+N")) ed.NewScene();
+        if (ImGui::MenuItem("New Scene", "Ctrl+N")) { ed.NewScene(); ConsoleLog("New scene"); }
         if (ImGui::MenuItem("Open...", "Ctrl+O")) {
             std::string err;
-            if (!ed.Load("scene.okayscene", &err))
-                std::cerr << "Open failed: " << err << "\n";
+            if (ed.Load("scene.okayscene", &err)) ConsoleLog("Opened scene.okayscene");
+            else ConsoleLog("Open failed: " + err);
         }
-        if (ImGui::MenuItem("Save", "Ctrl+S"))
-            ed.Save(ed.path().empty() ? "scene.okayscene" : ed.path());
+        if (ImGui::MenuItem("Save", "Ctrl+S")) {
+            std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
+            ConsoleLog(ed.Save(p) ? "Saved " + p : "Save failed");
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) running = false;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
-        if (ImGui::MenuItem("Create Empty"))  ed.CreateEmpty();
-        if (ImGui::MenuItem("Create Sprite")) ed.CreateSprite();
-        if (ImGui::MenuItem("Create Camera")) ed.CreateCamera();
+        if (ImGui::MenuItem("Create Empty"))  { ed.CreateEmpty();  ConsoleLog("Created empty GameObject"); }
+        if (ImGui::MenuItem("Create Sprite")) { ed.CreateSprite(); ConsoleLog("Created Sprite"); }
+        if (ImGui::MenuItem("Create Camera")) { ed.CreateCamera(); ConsoleLog("Created Camera"); }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Engine")) {
         if (ImGui::MenuItem("Check for Updates")) {
             g_updateStatus = updater::CheckAndUpdate();
             g_openUpdatePopup = true;
+            ConsoleLog("Update check: " + g_updateStatus);
         }
         ImGui::EndMenu();
     }
-    ImGui::EndMainMenuBar();
+
+    // Centered Play / Stop / Step controls (Unity-style toolbar).
+    float btnW = 60.0f;
+    ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - btnW);
+    if (!ed.isPlaying()) {
+        if (ImGui::Button(">  Play", ImVec2(btnW, 0))) { ed.Play(); ConsoleLog("Play"); }
+    } else {
+        if (ImGui::Button("[]  Stop", ImVec2(btnW, 0))) { ed.Stop(); ConsoleLog("Stop"); }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Step", ImVec2(50, 0))) ed.Tick(1.0f / 60.0f);
+
+    // Right-aligned status.
+    char status[64];
+    std::snprintf(status, sizeof(status), "%s   %.0f FPS",
+                  ed.isPlaying() ? "PLAYING" : "EDIT", ImGui::GetIO().Framerate);
+    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - 16);
+    ImGui::TextColored(ed.isPlaying() ? ImVec4(0.4f, 0.9f, 0.4f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1),
+                       "%s", status);
+    ImGui::EndMenuBar();
+}
+
+// Full-window host that hosts the dockspace + menu/toolbar.
+void DrawDockSpace(EditorState& ed, bool& running) {
+    static bool first = true;
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->WorkPos);
+    ImGui::SetNextWindowSize(vp->WorkSize);
+    ImGui::SetNextWindowViewport(vp->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+        ImGuiWindowFlags_MenuBar;
+    ImGui::Begin("##OkayDockHost", nullptr, flags);
+    ImGui::PopStyleVar(3);
+
+    ImGuiID dockId = ImGui::GetID("OkayDockSpace");
+    if (first) { first = false; BuildDefaultLayout(dockId, vp->WorkSize); }
+    ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
+
+    DrawMenuAndToolbar(ed, running);
+    ImGui::End();
+}
+
+void DrawConsole() {
+    if (ImGui::Begin("Console")) {
+        if (ImGui::Button("Clear")) g_console.clear();
+        ImGui::SameLine(); ImGui::TextDisabled("%zu messages", g_console.size());
+        ImGui::Separator();
+        ImGui::BeginChild("log");
+        for (const auto& line : g_console) ImGui::TextUnformatted(line.c_str());
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+        ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
+void DrawProject(EditorState& ed) {
+    if (ImGui::Begin("Project")) {
+        ImGui::TextDisabled("Assets");
+        ImGui::Separator();
+        ImGui::BulletText("Scene: %s", ed.path().empty() ? "(unsaved)" : ed.path().c_str());
+        ImGui::BulletText("%d GameObjects", (int)ed.scene().Objects().size());
+        ImGui::TextWrapped("Scenes are saved as .okayscene text files via File > Save.");
+    }
+    ImGui::End();
 }
 
 void DrawUpdatePopup() {
@@ -197,21 +314,6 @@ void DrawUpdatePopup() {
         if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
-}
-
-void DrawToolbar(EditorState& ed) {
-    ImGui::Begin("Toolbar");
-    if (!ed.isPlaying()) {
-        if (ImGui::Button("> Play")) ed.Play();
-    } else {
-        if (ImGui::Button("[] Stop")) ed.Stop();
-        ImGui::SameLine();
-        if (ImGui::Button("Step")) ed.Tick(1.0f / 60.0f);
-    }
-    ImGui::SameLine();
-    ImGui::Text("| %s | %.1f FPS", ed.isPlaying() ? "PLAYING" : "EDIT",
-                ImGui::GetIO().Framerate);
-    ImGui::End();
 }
 
 void DrawHierarchy(EditorState& ed) {
@@ -388,13 +490,6 @@ void DrawViewport(EditorState& ed) {
     ImGui::End();
 }
 
-void LayoutOnce() {
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImVec2 o = vp->WorkPos, s = vp->WorkSize;
-    ImGui::SetNextWindowPos(ImVec2(o.x, o.y), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(s.x, 40), ImGuiCond_FirstUseEver);
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -406,32 +501,34 @@ int main(int argc, char** argv) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
         return 1;
     }
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
     SDL_Window* window = SDL_CreateWindow(
         "OkaySpace Editor", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+        1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { std::cerr << "CreateWindow failed: " << SDL_GetError() << "\n"; return 1; }
 
-    SDL_GLContext gl = SDL_GL_CreateContext(window);
-    SDL_GL_MakeCurrent(window, gl);
-    SDL_GL_SetSwapInterval(1);
+    // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
+    SDL_Renderer* renderer = SDL_CreateRenderer(
+        window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    ImGui::StyleColorsDark();
-    ImGui_ImplSDL2_InitForOpenGL(window, gl);
-    ImGui_ImplOpenGL3_Init("#version 130");
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    ApplyTheme();
+    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer2_Init(renderer);
 
+    // A starter scene so the editor isn't empty on first launch.
     EditorState ed;
     ed.CreateCamera("MainCamera");
     GameObject* demo = ed.CreateSprite("Player");
     demo->GetComponent<SpriteRenderer>()->color = Color::Green;
+    ed.Select(nullptr);
+    ConsoleLog("Welcome to the OkaySpace editor. Use GameObject > Create to add objects.");
 
     bool running = true;
     Uint64 last = SDL_GetPerformanceCounter();
@@ -450,32 +547,30 @@ int main(int argc, char** argv) {
         last = now;
         ed.Tick(dt);
 
-        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        DrawMenuBar(ed, running);
+        DrawDockSpace(ed, running);
         DrawUpdatePopup();
-        LayoutOnce();
-        DrawToolbar(ed);
         DrawHierarchy(ed);
+        DrawViewport(ed);   // the "Scene" panel
         DrawInspector(ed);
-        DrawViewport(ed);
+        DrawConsole();
+        DrawProject(ed);
 
         ImGui::Render();
-        int w, h;
-        SDL_GL_GetDrawableSize(window, &w, &h);
-        glViewport(0, 0, w, h);
-        glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        SDL_GL_SwapWindow(window);
+        SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+        SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);
+        SDL_RenderClear(renderer);
+        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        SDL_RenderPresent(renderer);
     }
 
-    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
-    SDL_GL_DeleteContext(gl);
+    SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;

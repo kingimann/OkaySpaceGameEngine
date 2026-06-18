@@ -1,7 +1,10 @@
 # OkaySpace Editor
 
-A Unity-style desktop editor built with **Dear ImGui + SDL2 + OpenGL**. It opens
-a real window with movable panels and edits live `okay::Scene`s.
+A Unity-style desktop editor built with **Dear ImGui (docking) + SDL2**. It opens
+a real window with **docked** panels (Hierarchy / Scene / Inspector / Console /
+Project), a Play·Stop·Step toolbar, and a dark theme, and edits live
+`okay::Scene`s. The UI renders through SDL's 2D renderer (Direct3D on Windows,
+Metal on macOS), so no OpenGL driver is required.
 
 ```
  File  GameObject
@@ -35,8 +38,8 @@ a window (used in CI where there is no display).
 
 ### One self-contained Windows .exe
 
-The editor can be cross-compiled from Linux into a single `.exe` with SDL2
-linked statically (no DLLs to ship alongside):
+The editor cross-compiles from Linux into a single `.exe` with SDL2 linked
+statically — no DLLs (not even OpenGL) to ship alongside:
 
 ```bash
 # Needs MinGW-w64 and the SDL2 MinGW devel package (SDL2-devel-*-mingw).

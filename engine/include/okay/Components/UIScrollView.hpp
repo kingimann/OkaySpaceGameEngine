@@ -4,6 +4,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Input/Input.hpp"
 
 namespace okay {
 
@@ -27,6 +28,19 @@ public:
     void  SetScroll(float v)    { scroll = Mathf::Clamp(v, 0.0f, ScrollMax()); }
     /// 0..1 fraction scrolled (for a scrollbar thumb).
     float Fraction() const { float m = ScrollMax(); return m > 0.0f ? scroll / m : 0.0f; }
+    /// Pixels scrolled per wheel notch.
+    float wheelSpeed = 30.0f;
+
+    bool Contains(const Vec2& p) const {
+        Vec2 o = ResolveAnchor(anchor, position, size);
+        return p.x >= o.x && p.y >= o.y && p.x <= o.x + size.x && p.y <= o.y + size.y;
+    }
+
+    // Wheel-scroll when the pointer is over the viewport (built game + play mode).
+    void Update(float) override {
+        float wheel = Input::MouseWheel();
+        if (wheel != 0.0f && Contains(Input::MousePosition())) ScrollBy(-wheel * wheelSpeed);
+    }
 };
 
 } // namespace okay

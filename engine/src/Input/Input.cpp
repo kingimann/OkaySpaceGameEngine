@@ -21,6 +21,7 @@ unsigned Input::s_padCurrent = 0;
 unsigned Input::s_padPrevious = 0;
 unsigned Input::s_mousePrevious = 0;
 std::string Input::s_typedText;
+float Input::s_mouseWheel = 0.0f;
 
 #if defined(__unix__) || defined(__APPLE__)
 namespace {
@@ -115,7 +116,10 @@ void Input::FeedGamepad(const Vec2& axis, unsigned buttonMask) {
 }
 const std::string& Input::TypedText() { return s_typedText; }
 void Input::FeedText(const std::string& utf8) { s_typedText += utf8; }
-void Input::ClearTypedText() { s_typedText.clear(); }
+void Input::ClearTypedText() { s_typedText.clear(); s_mouseWheel = 0.0f; }
+
+float Input::MouseWheel() { return s_mouseWheel; }
+void Input::FeedMouseWheel(float delta) { s_mouseWheel += delta; }
 
 Vec2 Input::GamepadAxis() { return s_padAxis; }
 bool Input::GetGamepadButton(int button) {

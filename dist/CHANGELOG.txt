@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.89.0
+  - Mouse wheel now reaches the game: a new Input wheel channel (MouseWheel /
+    FeedMouseWheel) fed by the player and editor. Scroll Views now actually
+    wheel-scroll in built games (and in editor Play), not just in edit-mode
+    authoring — fixing scrollable lists/menus in shipped games.
+
 v1.88.0
   - Button icons: a UI Button can show an image (PNG/JPG) left of its label —
     set Icon + Icon Size in the inspector (or icon=/iconsize= in OkayUI markup).

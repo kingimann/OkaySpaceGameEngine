@@ -4342,7 +4342,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
     Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
 
     // Mouse wheel over a Scroll View's viewport scrolls it (preview authoring).
-    if (hovered && io.MouseWheel != 0.0f) {
+    if (hovered && io.MouseWheel != 0.0f && !ed.isPlaying()) {  // play mode scrolls via Input wheel
         for (const auto& up : ed.scene().Objects()) {
             auto* sv = up->GetComponent<UIScrollView>();
             if (!sv || !up->active) continue;
@@ -5314,6 +5314,8 @@ int main(int argc, char** argv) {
             // while an ImGui field — inspector/markup box — is capturing text).
             if (e.type == SDL_TEXTINPUT && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
                 Input::FeedText(e.text.text);
+            if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
+                Input::FeedMouseWheel((float)e.wheel.y);
         }
 
         Uint64 now = SDL_GetPerformanceCounter();

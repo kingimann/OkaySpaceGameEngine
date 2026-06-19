@@ -213,6 +213,7 @@ int main(int argc, char** argv) {
             if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
                 pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
+            if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
             // Esc quits only when no input field is focused (otherwise it cancels it).
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                 bool typing = false;

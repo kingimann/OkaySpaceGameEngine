@@ -411,6 +411,28 @@ int main() {
         Input::FeedMouse({0, 0}, 0);
     }
 
+    // --- Scroll View wheel-scrolls in the built game (Input wheel) -----
+    {
+        Scene s("scroll"); s.physicsEnabled = false;
+        UICanvas::Set(1280, 720);
+        auto* sv = s.CreateGameObject("SV")->AddComponent<UIScrollView>();
+        sv->position = {0, 0}; sv->size = {200, 100}; sv->contentHeight = 400;
+        s.Start();
+        CHECK_NEAR(sv->scroll, 0.0f, 1e-4f);
+        // Wheel down over the viewport scrolls; clamped to ScrollMax (300).
+        Input::ClearTypedText(); Input::FeedMouseWheel(-3.0f);
+        Input::FeedMouse({20, 20}, 0);
+        s.Update(0.016f);
+        CHECK(sv->scroll > 0.0f);
+        // Wheel only scrolls when the pointer is over the viewport.
+        float was = sv->scroll;
+        Input::ClearTypedText(); Input::FeedMouseWheel(-3.0f);
+        Input::FeedMouse({900, 900}, 0);
+        s.Update(0.016f);
+        CHECK_NEAR(sv->scroll, was, 1e-4f);
+        Input::ClearTypedText();
+    }
+
     // --- Menu navigation reaches toggles, sliders, dropdowns -----------
     {
         Scene s("nav"); s.physicsEnabled = false;

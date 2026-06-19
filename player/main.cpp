@@ -109,7 +109,9 @@ int main(int argc, char** argv) {
     struct GameConfig {
         std::string title = "OkaySpace Game";
         int  width = 960, height = 600;
-        bool fullscreen = false, resizable = true, vsync = true;
+        bool fullscreen = false, borderless = false, resizable = true, vsync = true;
+        bool showCursor = true;
+        int  fpsCap = 0;
         std::string startup;
         std::vector<std::string> scenes;
     } cfg;
@@ -125,8 +127,11 @@ int main(int argc, char** argv) {
             else if (k == "width")      cfg.width = std::atoi(v.c_str());
             else if (k == "height")     cfg.height = std::atoi(v.c_str());
             else if (k == "fullscreen") cfg.fullscreen = std::atoi(v.c_str()) != 0;
+            else if (k == "borderless") cfg.borderless = std::atoi(v.c_str()) != 0;
             else if (k == "resizable")  cfg.resizable = std::atoi(v.c_str()) != 0;
             else if (k == "vsync")      cfg.vsync = std::atoi(v.c_str()) != 0;
+            else if (k == "cursor")     cfg.showCursor = std::atoi(v.c_str()) != 0;
+            else if (k == "fps_cap")    cfg.fpsCap = std::atoi(v.c_str());
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
         }
@@ -156,6 +161,8 @@ int main(int argc, char** argv) {
     Uint32 winFlags = SDL_WINDOW_ALLOW_HIGHDPI;
     if (cfg.resizable)  winFlags |= SDL_WINDOW_RESIZABLE;
     if (cfg.fullscreen) winFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    if (cfg.borderless) winFlags |= SDL_WINDOW_BORDERLESS;
+    if (!cfg.showCursor) SDL_ShowCursor(SDL_DISABLE);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
     SDL_Window* window = SDL_CreateWindow(
         title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -207,6 +214,7 @@ int main(int argc, char** argv) {
     bool running = true;
     Uint64 last = SDL_GetPerformanceCounter();
     auto frame = [&]() {
+        Uint64 fStart = SDL_GetPerformanceCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -874,6 +882,15 @@ int main(int argc, char** argv) {
             DrawText(renderer, tt->text, m.x + 20, m.y + 19, px, tc);
         }
         SDL_RenderPresent(renderer);
+
+        // Optional frame-rate cap: sleep the remainder of the frame budget.
+        if (cfg.fpsCap > 0) {
+            double budget = 1.0 / cfg.fpsCap;
+            double freq = (double)SDL_GetPerformanceFrequency();
+            double elapsed = (SDL_GetPerformanceCounter() - fStart) / freq;
+            double remain = budget - elapsed;
+            if (remain > 0.0015) SDL_Delay((Uint32)((remain - 0.0005) * 1000.0));
+        }
     };
 
     // Drive the frame loop: the browser owns the loop on web (a blocking while

@@ -378,6 +378,7 @@ bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
+float g_uiScale = 1.10f;         // global UI scale (font + implicit spacing feel)
 bool g_autosave = false;         // periodically save the open scene
 double g_lastAutosave = 0.0;     // seconds since last autosave
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
@@ -427,10 +428,14 @@ bool  g_openBuildResult = false;
 // game.okayconfig, plus which scenes to include.
 struct BuildSettings {
     char  company[128] = "OkaySpace";
+    char  version[32]  = "1.0.0";
     int   width = 1280, height = 720;
     bool  fullscreen = false;
+    bool  borderless = false;
     bool  resizable = true;
     bool  vsync = true;
+    bool  hideCursor = false;
+    int   fpsCap = 0;                      // 0 = uncapped (vsync paces)
     bool  includeAllProjectScenes = false; // else just the current scene
     bool  developmentBuild = false;
 };
@@ -624,8 +629,11 @@ std::string EnsurePlayer(std::string* note) {
 // Options forwarded from the Build Settings dialog into the build.
 struct Options {
     std::string company = "OkaySpace";
+    std::string version = "1.0.0";
     int  width = 1280, height = 720;
-    bool fullscreen = false, resizable = true, vsync = true;
+    bool fullscreen = false, borderless = false, resizable = true, vsync = true;
+    bool hideCursor = false;
+    int  fpsCap = 0;
     bool includeAllProjectScenes = false, developmentBuild = false;
 };
 
@@ -662,11 +670,15 @@ std::string Build(EditorState& ed, const std::string& outDir,
         std::ofstream cf((dir / "game.okayconfig").string());
         cf << "title=" << gameName << "\n";
         cf << "company=" << opt.company << "\n";
+        cf << "version=" << opt.version << "\n";
         cf << "width=" << opt.width << "\n";
         cf << "height=" << opt.height << "\n";
         cf << "fullscreen=" << (opt.fullscreen ? 1 : 0) << "\n";
+        cf << "borderless=" << (opt.borderless ? 1 : 0) << "\n";
         cf << "resizable=" << (opt.resizable ? 1 : 0) << "\n";
         cf << "vsync=" << (opt.vsync ? 1 : 0) << "\n";
+        cf << "cursor=" << (opt.hideCursor ? 0 : 1) << "\n";
+        cf << "fps_cap=" << opt.fpsCap << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
@@ -763,10 +775,15 @@ void ApplyTheme() {
     s.FrameRounding     = 6.0f;  s.GrabRounding     = 6.0f;
     s.PopupRounding     = 7.0f;  s.TabRounding      = 6.0f;
     s.ScrollbarRounding = 10.0f;
-    s.WindowPadding   = ImVec2(11, 10); s.FramePadding = ImVec2(9, 6);
-    s.ItemSpacing     = ImVec2(9, 8);   s.ItemInnerSpacing = ImVec2(7, 6);
-    s.CellPadding     = ImVec2(7, 5);   s.IndentSpacing = 18.0f;
-    s.ScrollbarSize   = 13.0f;          s.GrabMinSize = 11.0f;
+    // Roomier metrics so the editor doesn't feel cramped (taller fields/rows,
+    // more breathing room between items).
+    s.WindowPadding   = ImVec2(13, 12); s.FramePadding = ImVec2(12, 9);
+    s.ItemSpacing     = ImVec2(11, 11); s.ItemInnerSpacing = ImVec2(9, 8);
+    s.CellPadding     = ImVec2(9, 7);   s.IndentSpacing = 21.0f;
+    s.ScrollbarSize   = 14.0f;          s.GrabMinSize = 12.0f;
+    // Global UI scale (applies to font + all of the above metrics).
+    s.ScaleAllSizes(g_uiScale);
+    ImGui::GetIO().FontGlobalScale = g_uiScale;
     s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 0.0f;
     s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 2.0f;
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
@@ -924,6 +941,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
         ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);
         ImGui::Separator();
+        if (ImGui::BeginMenu("UI Scale")) {
+            struct { const char* n; float s; } presets[] = {
+                {"Compact (90%)", 0.9f}, {"Normal (100%)", 1.0f},
+                {"Comfortable (110%)", 1.1f}, {"Large (125%)", 1.25f}, {"Huge (150%)", 1.5f}};
+            for (auto& p : presets)
+                if (ImGui::MenuItem(p.n, nullptr, std::fabs(g_uiScale - p.s) < 0.01f))
+                    { g_uiScale = p.s; ApplyTheme(); }
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("Theme")) {
             if (ImGui::MenuItem("Dark", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); }
             if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); }
@@ -2240,34 +2266,48 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SeparatorText("Player");
         ImGui::InputText("Product name", g_buildNameBuf, sizeof(g_buildNameBuf));
         ImGui::InputText("Company", g_build.company, sizeof(g_build.company));
+        ImGui::SetNextItemWidth(140);
+        ImGui::InputText("Version", g_build.version, sizeof(g_build.version));
         ImGui::InputText("Output folder", g_buildDirBuf, sizeof(g_buildDirBuf));
 
-        ImGui::SeparatorText("Window");
+        ImGui::SeparatorText("Window / Display");
         ImGui::SetNextItemWidth(90); ImGui::InputInt("Width", &g_build.width); ImGui::SameLine();
         ImGui::SetNextItemWidth(90); ImGui::InputInt("Height", &g_build.height);
-        const char* presets[] = {"1280 x 720", "1920 x 1080", "960 x 600", "800 x 600"};
+        const char* presets[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "960 x 600", "800 x 600"};
         static int presetSel = 0;
-        ImGui::SetNextItemWidth(140);
-        if (ImGui::Combo("Preset", &presetSel, presets, IM_ARRAYSIZE(presets))) {
-            const int dims[][2] = {{1280,720},{1920,1080},{960,600},{800,600}};
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::Combo("Resolution", &presetSel, presets, IM_ARRAYSIZE(presets))) {
+            const int dims[][2] = {{1280,720},{1920,1080},{2560,1440},{960,600},{800,600}};
             g_build.width = dims[presetSel][0]; g_build.height = dims[presetSel][1];
         }
         ImGui::Checkbox("Fullscreen", &g_build.fullscreen); ImGui::SameLine();
-        ImGui::Checkbox("Resizable", &g_build.resizable);   ImGui::SameLine();
-        ImGui::Checkbox("VSync", &g_build.vsync);
+        ImGui::Checkbox("Borderless", &g_build.borderless); ImGui::SameLine();
+        ImGui::Checkbox("Resizable", &g_build.resizable);
+        ImGui::Checkbox("VSync", &g_build.vsync);           ImGui::SameLine();
+        ImGui::Checkbox("Hide cursor", &g_build.hideCursor);
+        const char* fpsOpts[] = {"Uncapped", "30", "60", "120", "144"};
+        const int   fpsVals[] = {0, 30, 60, 120, 144};
+        int fpsSel = 0; for (int i = 0; i < 5; ++i) if (fpsVals[i] == g_build.fpsCap) fpsSel = i;
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::Combo("Frame rate cap", &fpsSel, fpsOpts, 5)) g_build.fpsCap = fpsVals[fpsSel];
 
         ImGui::SeparatorText("Scenes & Options");
         ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene_index works");
         ImGui::Checkbox("Development build", &g_build.developmentBuild);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra logging; marks the build as non-final");
         if (g_build.width  < 320) g_build.width  = 320;
         if (g_build.height < 240) g_build.height = 240;
+        if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
         ImGui::Separator();
         if (ImGui::Button("Build", ImVec2(120, 0))) {
             builder::Options o;
-            o.company = g_build.company;
+            o.company = g_build.company; o.version = g_build.version;
             o.width = g_build.width; o.height = g_build.height;
-            o.fullscreen = g_build.fullscreen; o.resizable = g_build.resizable; o.vsync = g_build.vsync;
+            o.fullscreen = g_build.fullscreen; o.borderless = g_build.borderless;
+            o.resizable = g_build.resizable; o.vsync = g_build.vsync;
+            o.hideCursor = g_build.hideCursor; o.fpsCap = g_build.fpsCap;
             o.includeAllProjectScenes = g_build.includeAllProjectScenes;
             o.developmentBuild = g_build.developmentBuild;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);

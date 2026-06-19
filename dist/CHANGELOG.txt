@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.10.0
+  - Less-compact editor UI: roomier spacing/padding and a new View > UI Scale
+    (Compact / Normal / Comfortable / Large / Huge) that scales the whole
+    interface (font + metrics). Defaults to a comfortable 110%.
+  - Expanded Build Settings: product Version, a Borderless window option, Hide
+    cursor, a Frame-rate cap (Uncapped/30/60/120/144), and a 2560x1440 resolution
+    preset — all written to game.okayconfig and applied by the player runtime.
+
 v2.9.0
   - Hierarchy rearranging (Unity-style): DRAG a row and drop near another row's
     top/bottom edge to reorder it as a sibling (a blue insert line shows where),

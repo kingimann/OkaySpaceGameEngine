@@ -117,11 +117,23 @@ planet, `A` player ship.)*
 - **In-game UI like Unity** — a **Canvas** (CanvasScaler: constant-pixel or
   scale-with-screen) parents the widgets, with one **Event System** routing
   pointer input. Widgets: `UIButton` (`on_click()`), `UIPanel`, `UIImage`,
-  `UISlider`, `UIToggle`, `UIProgressBar`, screen-space text — selectable and
-  drag/resizable in the Scene view. A **UIDocument** builds whole HUDs/menus
-  from OkayUI markup (with reusable styles + custom widgets). A **Scroll View**
-  (wheel-scrollable, clipped) and a **Layout Group** (vertical/horizontal
-  auto-layout) make scrollable lists/menus without hand-placing elements.
+  `UISlider`, `UIToggle`, `UIProgressBar`, `UIInputField` (real OS text input —
+  caret, scroll, Integer/Decimal/Password types), `UIDropdown`, `UITooltip`,
+  and screen-space text. Widgets are richly customizable (rounded corners,
+  borders, gradients, font scale, fills, outlines, data-bound text). A
+  **Scroll View** (wheel-scrollable, clipped) and **Layout Group** make
+  scrollable, auto-arranged lists — all rendered identically in built games.
+- **Unity-style UI editing** — select, drag and resize any widget in the Scene
+  view with anchor-correct handles; **snapping** to a pixel grid plus smart
+  edge/center **alignment guides** to the canvas and siblings; arrow-key
+  nudging; a **3×3 anchor preset** grid (re-anchors without moving the widget);
+  Bring to Front / Send to Back, Center in Canvas, and Fill Width/Height/Canvas.
+- **UI Toolkit (OkayUI markup)** — a **UIDocument** authors whole HUDs/menus as
+  text: every widget type, customization keys (corner/border/gradient/font/
+  align/outline/fill/…), `tooltip=`, percent sizing (`50%`), `name=` (script-
+  addressable), reusable `style` classes, parameterized `define` custom widgets,
+  live data **binding** (`bind="Score: {score}"`), and inline validation with
+  line numbers.
 - **Tweening & saves** — DOTween-style `tween_move`/`tween_scale` (with easings)
   and a save system (`save_game`/`load_game`/`save_exists` slots) from OkayScript.
 - **Build for desktop, web & mobile** — one project, every target: a

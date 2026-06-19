@@ -71,6 +71,15 @@ uses, built right into the engine app.
   right-drag to pan, mouse-wheel to zoom. The **Move / Rotate / Scale** tools
   (toolbar or **W / E / R**) set what a left-drag on the selection does; a gizmo
   at the selected object shows the active tool. Works in 2D and 3D.
+- **UI editing** — screen-space widgets are clickable/draggable in the Scene
+  view with 8 resize handles that track the cursor for any anchor. Toggle
+  **Snap** for a pixel grid (set "UI px") plus smart **alignment guides** to the
+  canvas edges/center and sibling widgets (magenta lines) while moving or
+  resizing. **Arrow keys** nudge the selection (Shift = grid step). A selected
+  widget's inspector adds a **3×3 anchor preset** grid (re-anchors without
+  moving it), **Bring to Front / Send to Back**, **Center in Canvas**, and
+  **Fill Width / Height / Canvas**. A live `W x H` readout and an anchor marker
+  are drawn on the selection.
 - **Sprite textures** — set a Sprite Renderer's *Texture* to a PNG/JPG/BMP path
   (loaded via `okay::Image`/stb_image). The built game draws the image, tinted by
   the sprite color; the editor viewport still shows the colored quad. Keep the

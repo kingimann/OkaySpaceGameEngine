@@ -4386,7 +4386,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Transform gizmo at the selection, reflecting the active tool (Move/Rotate/Scale).
-    if (!gameView && ed.selected()) {
+    if (!gameView && ed.selected() && !IsUIElement(ed.selected())) {
         ImVec2 g = worldToScreen(ed.selected()->transform->Position());
         if (g_tool == Tool::Move) {
             dl->AddLine(g, ImVec2(g.x + 36, g.y), IM_COL32(230, 70, 70, 255), 2.0f);   // +X red
@@ -4862,8 +4862,18 @@ void DrawViewport(EditorState& ed) {
 
     ImGui::InvisibleButton("canvas", canvasSize,
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    bool hovered = ImGui::IsItemHovered();
     ImGuiIO& io = ImGui::GetIO();
+    // Treat the canvas as hovered when the pointer is over it. IsItemHovered()
+    // alone can read false in some docking/overlap states (and while the canvas
+    // is the active item mid-drag), which would make clicks do nothing — so also
+    // accept "window hovered + mouse inside the canvas rect" as a fallback.
+    bool hovered = ImGui::IsItemHovered() || ImGui::IsItemActive();
+    if (!hovered && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        ImVec2 mp = io.MousePos;
+        if (mp.x >= canvasPos.x && mp.y >= canvasPos.y &&
+            mp.x <= canvasEnd.x && mp.y <= canvasEnd.y)
+            hovered = true;
+    }
 
     // UI editing (pick/drag screen-space widgets) runs first and may consume the
     // click so the world pickers below leave the selection alone.

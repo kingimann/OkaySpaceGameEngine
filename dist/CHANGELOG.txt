@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.67.0
+  - Fix: selecting and resizing screen-space UI in the Scene view was
+    unreliable — the canvas "hovered" test could read false in some docking /
+    overlap states (and while mid-drag), so clicks on a widget did nothing.
+    Hover detection is now robust (window-hover + pointer-in-canvas fallback,
+    and stays true while the canvas is the active drag item).
+  - A selected UI widget no longer shows the world move/rotate/scale gizmo
+    (only its UI selection box + resize handles), so the handles are clear.
+
 v1.66.0
   - UI Toolkit parameterized custom widgets: a `define` body can use $args, and
     each instance supplies them — define a `card` once with text "$title", then

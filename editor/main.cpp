@@ -687,11 +687,20 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
         if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
         ImGui::Separator();
-        if (ImGui::MenuItem("Create Cube (3D)"))     { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
-        if (ImGui::MenuItem("Create Pyramid (3D)"))  { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
-        if (ImGui::MenuItem("Create Sphere (3D)"))   { ed.CreateMesh("Sphere");   ConsoleLog("Created Sphere"); created = true; }
-        if (ImGui::MenuItem("Create Cylinder (3D)")) { ed.CreateMesh("Cylinder"); ConsoleLog("Created Cylinder"); created = true; }
-        if (ImGui::MenuItem("Create Plane (3D)"))    { ed.CreateMesh("Plane");    ConsoleLog("Created Plane"); created = true; }
+        if (ImGui::BeginMenu("3D Object")) {       // every built-in primitive
+            if (ImGui::MenuItem("Cube"))      { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
+            if (ImGui::MenuItem("Sphere"))    { ed.CreateMesh("Sphere");    ConsoleLog("Created Sphere"); created = true; }
+            if (ImGui::MenuItem("Cylinder"))  { ed.CreateMesh("Cylinder");  ConsoleLog("Created Cylinder"); created = true; }
+            if (ImGui::MenuItem("Capsule"))   { ed.CreateMesh("Capsule");   ConsoleLog("Created Capsule"); created = true; }
+            if (ImGui::MenuItem("Cone"))      { ed.CreateMesh("Cone");      ConsoleLog("Created Cone"); created = true; }
+            if (ImGui::MenuItem("Plane"))     { ed.CreateMesh("Plane");     ConsoleLog("Created Plane"); created = true; }
+            if (ImGui::MenuItem("Pyramid"))   { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
+            if (ImGui::MenuItem("Wedge"))     { ed.CreateMesh("Wedge");     ConsoleLog("Created Wedge"); created = true; }
+            if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
+            if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
+            if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Create Directional Light")) {
             GameObject* go = ed.CreateEmpty("Directional Light");
             go->AddComponent<Light>();
@@ -1659,6 +1668,33 @@ static void AnchorCombo(const char* id, okay::UIAnchor& anchor, EditorState& ed)
     if (ImGui::Combo(id, &ai, kAnchors, 9)) { anchor = (okay::UIAnchor)ai; ed.dirty = true; }
 }
 
+// Size a 3D collider to wrap the object's MeshRenderer bounds (Unity's "fit").
+// Collider size/offset are in local units (scaled by the Transform), matching
+// how the mesh is drawn, so the wireframe lands right on the mesh.
+static bool MeshBounds(GameObject* go, Vec3& lo, Vec3& hi) {
+    auto* mr = go->GetComponent<MeshRenderer>();
+    if (!mr) return false;
+    mr->mesh.Bounds(lo, hi);
+    return true;
+}
+static void FitBox(GameObject* go, BoxCollider3D* bc) {
+    Vec3 lo, hi; if (!MeshBounds(go, lo, hi)) return;
+    bc->size = {hi.x - lo.x, hi.y - lo.y, hi.z - lo.z};
+    bc->offset = {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+}
+static void FitSphere(GameObject* go, SphereCollider3D* sc) {
+    Vec3 lo, hi; if (!MeshBounds(go, lo, hi)) return;
+    sc->radius = Mathf::Max(hi.x - lo.x, Mathf::Max(hi.y - lo.y, hi.z - lo.z)) * 0.5f;
+    sc->offset = {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+}
+static void FitCapsule(GameObject* go, CapsuleCollider3D* cap) {
+    Vec3 lo, hi; if (!MeshBounds(go, lo, hi)) return;
+    cap->axis = 1; // Y-up
+    cap->radius = Mathf::Max(hi.x - lo.x, hi.z - lo.z) * 0.5f;
+    cap->height = hi.y - lo.y;
+    cap->offset = {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     GameObject* go = ed.selected();
@@ -1816,6 +1852,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Fit 1u##mesh")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
+            // One-click physics: add a Rigidbody3D + a box collider fitted to the
+            // mesh, so a primitive drops and collides immediately on Play.
+            if (!go->GetComponent<Rigidbody3D>() || !go->GetComponent<BoxCollider3D>()) {
+                if (ImGui::SmallButton("Add Physics (Rigidbody + Box)##mesh")) {
+                    if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>();
+                    BoxCollider3D* bc = go->GetComponent<BoxCollider3D>();
+                    if (!bc) bc = go->AddComponent<BoxCollider3D>();
+                    FitBox(go, bc);
+                    ed.dirty = true;
+                    ConsoleLog("Added Rigidbody3D + fitted BoxCollider3D");
+                }
+            }
         }
     }
     if (auto* li = go->GetComponent<Light>()) {
@@ -1915,6 +1963,10 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc3", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc3", &bc->layer, 0.1f, 0, 31);
+            if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##bc3")) {
+                FitBox(go, bc); ed.dirty = true;
+            }
+            ImGui::SameLine();
             if (ImGui::SmallButton("Remove##bc3")) toRemove = bc;
         }
     }
@@ -1926,6 +1978,10 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##sc3", &sc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##sc3", &sc->layer, 0.1f, 0, 31);
+            if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##sc3")) {
+                FitSphere(go, sc); ed.dirty = true;
+            }
+            ImGui::SameLine();
             if (ImGui::SmallButton("Remove##sc3")) toRemove = sc;
         }
     }
@@ -1940,6 +1996,10 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap3", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap3", &cap->layer, 0.1f, 0, 31);
+            if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cap3")) {
+                FitCapsule(go, cap); ed.dirty = true;
+            }
+            ImGui::SameLine();
             if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
         }
     }

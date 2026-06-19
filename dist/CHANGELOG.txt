@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v1.11.0
+  - GameObject > 3D Object submenu to create any built-in primitive (Cube,
+    Sphere, Cylinder, Capsule, Cone, Plane, Pyramid, Wedge, Torus, Icosphere,
+    Quad).
+  - "Fit to mesh" button on 3D Box/Sphere/Capsule colliders sizes them to the
+    object's mesh in one click.
+  - One-click "Add Physics (Rigidbody + Box)" on a Mesh Renderer adds a
+    Rigidbody3D and a box collider fitted to the mesh, so a shape drops and
+    collides immediately on Play.
+
 v1.10.0
   - Edit the scene while playing: select and Move/Rotate/Scale objects in the
     Scene view during Play (changes revert on Stop, like Unity).

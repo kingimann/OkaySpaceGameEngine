@@ -7,6 +7,7 @@
 // sitting next to it, and launches them. Built with Dear ImGui + SDL2.
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "AppIcon.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -322,6 +323,7 @@ int main(int argc, char** argv) {
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 600,
         SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) return 1;
+    okay::SetAppIcon(window);   // placeholder OkaySpace logo
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1,
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);

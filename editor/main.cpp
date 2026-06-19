@@ -94,6 +94,7 @@ int main(int argc, char** argv) {
 // `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "AppIcon.hpp"
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "backends/imgui_impl_sdl2.h"
@@ -4289,6 +4290,7 @@ int main(int argc, char** argv) {
         "OkaySpace Editor", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { std::cerr << "CreateWindow failed: " << SDL_GetError() << "\n"; return 1; }
+    okay::SetAppIcon(window);   // placeholder OkaySpace logo
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
     SDL_Renderer* renderer = SDL_CreateRenderer(

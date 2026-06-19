@@ -51,6 +51,7 @@ target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
 add_executable(okay-editor main.cpp EditorState.cpp)
+target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
 set_target_properties(okay-editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

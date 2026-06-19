@@ -138,6 +138,7 @@ function update(dt) {
 | `net_disconnect()` | Leave / stop the session |
 | `net_connected()` / `net_is_server()` / `net_is_client()` | Status |
 | `net_id()` / `net_peers()` | Your peer id / connected peer count |
+| `net_ping()` | Round-trip time to the server in ms (clients) |
 | `net_name("name")` | Set/get this peer's display name |
 | `net_send("channel", "data")` | Broadcast a message to all peers |
 | `net_send_to(id, "channel", "data")` | Message one peer |

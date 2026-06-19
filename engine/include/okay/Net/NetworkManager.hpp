@@ -37,6 +37,15 @@ public:
     bool IsClient() const { return m_mode == Mode::Client; }
     /// This peer's network id (0 for the server, >0 for clients once joined).
     std::uint32_t LocalId() const { return m_localId; }
+
+    /// How fast remote avatars are eased toward their latest networked position
+    /// (per second; 0 = snap instantly). Smooths the ~20 Hz snapshots into fluid
+    /// motion at the local frame rate.
+    float interpolationRate = 12.0f;
+
+    /// Round-trip time to the server in milliseconds (clients only; 0 until the
+    /// first ping completes). A simple latency readout for HUDs / netcode.
+    float RttMs() const { return m_rtt; }
     /// The UDP port the server is bound to (0 if not a server).
     std::uint16_t ServerPort() const { return m_socket.LocalPort(); }
     /// True once a client has completed the join handshake.
@@ -175,6 +184,13 @@ private:
     net::Endpoint m_serverEp{};
     bool     m_joined = false;
     float    m_joinTimer = 0.0f;
+    float    m_clock = 0.0f;      // local seconds, for ping timestamps
+    float    m_pingTimer = 0.0f;
+    float    m_rtt = 0.0f;        // last measured round-trip, ms
+
+    // Smooth remote avatars toward their latest received position.
+    std::unordered_map<std::uint32_t, Vec3> m_remoteTarget;
+    void InterpolateRemotes(float dt);
 
     // Server-only
     std::unordered_map<net::Endpoint, Client, net::EndpointHash> m_clients;

@@ -139,6 +139,31 @@ int main() {
         CHECK(server->GetVar("ready") == "1");
     }
 
+    // --- Ping: the client measures a round-trip time after ~1s of pinging ---
+    {
+        for (int i = 0; i < 150; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (client->RttMs() > 0.0f) break;
+        }
+        CHECK(client->RttMs() > 0.0f);
+    }
+
+    // --- Interpolation: the client's mirror of the host converges to its pos ---
+    {
+        host->transform->localPosition = {5.0f, 6.0f, 0.0f};
+        for (int i = 0; i < 150; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        GameObject* mh = clientScene.Find("Remote0");
+        CHECK(mh != nullptr);
+        if (mh) {
+            CHECK_NEAR(mh->transform->localPosition.x, 5.0f, 0.2f);
+            CHECK_NEAR(mh->transform->localPosition.y, 6.0f, 0.2f);
+        }
+    }
+
     // --- Networked spawn: server spawns a prefab on every peer ---
     {
         // Write a small prefab file to instantiate.

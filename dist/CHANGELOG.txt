@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.44.0
+  - Smoother multiplayer: remote avatars are now interpolated toward their latest
+    networked position instead of snapping (tunable "Smoothing" on the Network
+    Manager; first sample still snaps so nothing slides in from the origin).
+  - Latency readout: clients ping the server ~1x/sec; net_ping() returns the
+    round-trip in ms, shown in the Network Manager inspector + Services panel.
+
 v1.43.0
   - Replicated spawning: net_spawn("prefab", x, y[, z]) instantiates a prefab on
     every peer with one call (bullets, pickups, effects) — the server relays it

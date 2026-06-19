@@ -1497,6 +1497,7 @@ void DrawServices(EditorState& ed) {
             const char* mode = n->IsServer() ? "Server" : n->IsClient() ? "Client" : "Offline";
             ImGui::Text("Mode: %s   Peers: %d   LocalId: %u",
                         mode, (int)n->PeerCount(), n->LocalId());
+            if (n->IsClient()) ImGui::SameLine(), ImGui::Text("  Ping: %.0f ms", n->RttMs());
             // Chat: broadcast a line to every peer; show what arrives.
             static char chat[128] = "";
             static std::vector<std::string> log;
@@ -3150,8 +3151,10 @@ void DrawInspector(EditorState& ed) {
             static char nameBuf[48]; static NetworkManager* nbound = nullptr;
             if (nbound != nm) { std::strncpy(nameBuf, nm->startName.c_str(), sizeof(nameBuf) - 1); nameBuf[sizeof(nameBuf)-1]='\0'; nbound = nm; }
             if (ImGui::InputText("Player Name##nm", nameBuf, sizeof(nameBuf))) { nm->startName = nameBuf; ed.dirty = true; }
+            ImGui::SliderFloat("Smoothing##nm", &nm->interpolationRate, 0.0f, 30.0f, "%.0f /s");
             const char* mode = nm->IsServer() ? "Server" : nm->IsClient() ? "Client" : "Offline";
             ImGui::Text("Live: %s   Peers: %d   Id: %u", mode, (int)nm->PeerCount(), nm->LocalId());
+            if (nm->IsClient()) ImGui::Text("Ping: %.0f ms", nm->RttMs());
             ImGui::TextDisabled("Add this, pick Host/Join, press Play — no code needed.");
             if (ImGui::SmallButton("Remove##nm")) toRemove = nm;
         }

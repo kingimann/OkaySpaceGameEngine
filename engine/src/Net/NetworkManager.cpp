@@ -14,7 +14,7 @@ namespace okay {
 namespace {
     enum Msg : std::uint8_t {
         Join = 1, Welcome = 2, State = 3, Snapshot = 4, Leave = 5,
-        Message = 6, DirectMessage = 7, SyncVar = 8
+        Message = 6, DirectMessage = 7, SyncVar = 8, Ping = 9, Pong = 10
     };
     constexpr float kClientTimeout = 5.0f;
 }
@@ -60,8 +60,10 @@ void NetworkManager::Stop() {
     if (m_netStarted) { net::Shutdown(); m_netStarted = false; }
     m_clients.clear();
     m_remotes.clear();
+    m_remoteTarget.clear();
     m_inbox.clear();
     m_syncVars.clear();
+    m_rtt = 0.0f;
     m_mode = Mode::Offline;
     m_joined = false;
 }
@@ -77,12 +79,36 @@ GameObject* NetworkManager::EnsureRemote(std::uint32_t id, char glyph) {
 void NetworkManager::ApplyPeer(const PeerState& s) {
     if (s.id == m_localId) return; // never mirror ourselves
     GameObject* go = EnsureRemote(s.id, s.glyph);
-    if (go && go->transform) go->transform->localPosition = {s.x, s.y, s.z};
+    if (!go || !go->transform) return;
+    Vec3 target{s.x, s.y, s.z};
+    if (interpolationRate > 0.0f) {
+        // Ease toward the latest position over the next frames (set the target;
+        // InterpolateRemotes moves there). Snap on the first sample so a freshly
+        // spawned remote doesn't slide in from the origin.
+        if (m_remoteTarget.find(s.id) == m_remoteTarget.end())
+            go->transform->localPosition = target;
+        m_remoteTarget[s.id] = target;
+    } else {
+        go->transform->localPosition = target;
+    }
+}
+
+void NetworkManager::InterpolateRemotes(float dt) {
+    if (interpolationRate <= 0.0f) return;
+    float t = interpolationRate * dt;
+    if (t > 1.0f) t = 1.0f;
+    for (auto& [id, go] : m_remotes) {
+        auto it = m_remoteTarget.find(id);
+        if (it == m_remoteTarget.end() || !go || !go->transform) continue;
+        Vec3 p = go->transform->localPosition;
+        go->transform->localPosition = p + (it->second - p) * t;
+    }
 }
 
 void NetworkManager::Update(float dt) {
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
+    InterpolateRemotes(dt);
 }
 
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
@@ -239,6 +265,11 @@ void NetworkManager::ServerTick(float dt) {
             ApplySyncVar(key, value);
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
             for (auto& [ep, c] : m_clients) m_socket.SendTo(c.endpoint, out.Data(), out.Size());
+        } else if (type == Ping) {
+            // Echo the client's timestamp straight back so it can measure RTT.
+            float stamp = p.ReadF32();
+            net::Packet pong(Pong); pong.Write(stamp);
+            m_socket.SendTo(from, pong.Data(), pong.Size());
         } else if (type == DirectMessage) {
             auto it = m_clients.find(from);
             if (it != m_clients.end()) {
@@ -340,6 +371,7 @@ void NetworkManager::ServerTick(float dt) {
 }
 
 void NetworkManager::ClientTick(float dt) {
+    m_clock += dt;
     if (!m_joined) {
         m_joinTimer -= dt;
         if (m_joinTimer <= 0.0f) {
@@ -347,6 +379,14 @@ void NetworkManager::ClientTick(float dt) {
             p.Write(m_localName);
             m_socket.SendTo(m_serverEp, p.Data(), p.Size());
             m_joinTimer = 0.5f;
+        }
+    } else {
+        // Ping the server about once a second to measure round-trip time.
+        m_pingTimer -= dt;
+        if (m_pingTimer <= 0.0f) {
+            net::Packet p(Ping); p.Write(m_clock);
+            m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+            m_pingTimer = 1.0f;
         }
     }
 
@@ -378,6 +418,10 @@ void NetworkManager::ClientTick(float dt) {
             std::string key = p.ReadString();
             std::string value = p.ReadString();
             ApplySyncVar(key, value);
+        } else if (type == Pong) {
+            float stamp = p.ReadF32();
+            m_rtt = (m_clock - stamp) * 1000.0f;   // round-trip in ms
+            if (m_rtt < 0.0f) m_rtt = 0.0f;
         }
     }
 

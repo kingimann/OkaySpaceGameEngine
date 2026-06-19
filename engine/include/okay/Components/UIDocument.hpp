@@ -24,7 +24,9 @@ class GameObject;
 /// Indentation nests a widget under the one above it (a button inside a panel).
 /// Widget types: panel, text, button, image, slider, toggle, progress, input,
 /// dropdown, scroll, layout. Common keys:
-///   pos=x,y  size=x,y (or one number for text px)  color=r,g,b[,a] (0-255)
+///   pos=x,y  size=x,y (or one number for text px); a component with a trailing
+///     '%' is a fraction of the canvas (size=50%,40 = half-wide, 40px tall)
+///   color=r,g,b[,a] (0-255)
 ///   anchor=topleft|topcenter|topright|middleleft|center|middleright|bottomleft|
 ///   bottomcenter|bottomright  corner=<radius>  tooltip="hint" [tipdelay=s]
 ///   name=<id> (addressable by the ui_* script API)  active=0|1

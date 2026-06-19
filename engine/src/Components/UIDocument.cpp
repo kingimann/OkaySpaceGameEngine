@@ -33,12 +33,22 @@ int IndentOf(const std::string& line) {
     return n;
 }
 
+// Resolve one pos/size component. A trailing '%' makes it a fraction of the
+// given axis length (canvas width for x, height for y) — `size=50%,40` is half
+// the canvas wide, 40px tall — so layouts adapt to the window.
+float ParseComponent(const std::string& s, float axis) {
+    if (!s.empty() && s.back() == '%')
+        return (float)std::atof(s.c_str()) / 100.0f * axis;
+    return (float)std::atof(s.c_str());
+}
+
 Vec2 ParsePair(const std::string& v, float defY) {
     Vec2 out{0.0f, defY};
+    float cw = UICanvas::Width(), ch = UICanvas::Height();
     std::size_t comma = v.find(',');
-    if (comma == std::string::npos) { out.x = (float)std::atof(v.c_str()); return out; }
-    out.x = (float)std::atof(v.substr(0, comma).c_str());
-    out.y = (float)std::atof(v.substr(comma + 1).c_str());
+    if (comma == std::string::npos) { out.x = ParseComponent(v, cw); return out; }
+    out.x = ParseComponent(v.substr(0, comma), cw);
+    out.y = ParseComponent(v.substr(comma + 1), ch);
     return out;
 }
 

@@ -321,5 +321,23 @@ int main() {
         CHECK(doc->Diagnostics()[0].rfind("line 2", 0) == 0);
     }
 
+    // --- Percent sizing resolves against the canvas --------------------
+    {
+        UICanvas::Set(1000, 800);
+        Scene s("pct"); s.physicsEnabled = false;
+        GameObject* docGo = s.CreateGameObject("Doc");
+        auto* doc = docGo->AddComponent<UIDocument>();
+        doc->markup = "panel pos=10%,25% size=50%,40\n";
+        doc->Rebuild(); s.Update(0.0f);
+        UIPanel* pn = nullptr;
+        for (GameObject* g : doc->Generated())
+            if (auto* x = g->GetComponent<UIPanel>()) pn = x;
+        CHECK(pn != nullptr);
+        CHECK_NEAR(pn->position.x, 100.0f, 1e-3f);   // 10% of 1000
+        CHECK_NEAR(pn->position.y, 200.0f, 1e-3f);   // 25% of 800
+        CHECK_NEAR(pn->size.x, 500.0f, 1e-3f);       // 50% of 1000
+        CHECK_NEAR(pn->size.y, 40.0f, 1e-3f);        // literal px
+    }
+
     TEST_MAIN_RESULT();
 }

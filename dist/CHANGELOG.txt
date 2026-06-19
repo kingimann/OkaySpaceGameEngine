@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.64.0
+  - UI Toolkit percent sizing: any pos/size component can be a percentage of the
+    canvas — e.g. `panel pos=10%,25% size=50%,40` is positioned a tenth in,
+    a quarter down, half the canvas wide and 40px tall. Mix percent and pixels
+    freely; resolved against the canvas when the document builds.
+
 v1.63.0
   - UI Toolkit live validation: the UI Document now reports markup problems —
     unknown widget types and unrecognized keys (typos) — each with its line

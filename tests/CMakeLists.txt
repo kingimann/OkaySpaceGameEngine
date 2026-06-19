@@ -243,3 +243,7 @@ endif()
 add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)
 add_test(NAME follow COMMAND test_follow)
+
+add_executable(test_ui_system test_ui_system.cpp)
+target_link_libraries(test_ui_system PRIVATE okay::engine)
+add_test(NAME ui_system COMMAND test_ui_system)

@@ -5,7 +5,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace okay {
 
@@ -52,6 +54,33 @@ public:
         m_spawnRemote = std::move(f);
     }
 
+    // ---- Custom messages (RPC / events / chat) -------------------------
+    /// A custom message received from a peer: who sent it, a `channel` tag the
+    /// game chooses (e.g. "chat", "spawn", "hit"), and an opaque string payload.
+    struct NetMessage {
+        std::uint32_t from;
+        std::string   channel;
+        std::string   data;
+    };
+
+    /// Broadcast a custom message to every other peer. On a client it travels to
+    /// the server, which relays it to all the others (and delivers it to the
+    /// host); on the server it goes straight out to every client. This is the
+    /// general-purpose channel games build chat, events and spawn requests on.
+    void Send(const std::string& channel, const std::string& data);
+
+    /// Register a callback fired the moment a custom message arrives.
+    void SetMessageHandler(std::function<void(const NetMessage&)> f) {
+        m_msgHandler = std::move(f);
+    }
+    /// Drain the queue of messages received since the last call (for polling
+    /// code and scripts that don't use a callback).
+    std::vector<NetMessage> TakeMessages() {
+        std::vector<NetMessage> out;
+        out.swap(m_inbox);
+        return out;
+    }
+
     void Update(float dt) override;
     void OnDestroy() override { Stop(); }
 
@@ -68,6 +97,8 @@ private:
     void ClientTick(float dt);
     GameObject* EnsureRemote(std::uint32_t id, char glyph);
     void ApplyPeer(const PeerState& s);
+    /// Deliver a received custom message to the handler and the inbox queue.
+    void Deliver(std::uint32_t from, const std::string& channel, const std::string& data);
 
     Mode m_mode = Mode::Offline;
     net::UdpSocket m_socket;
@@ -92,6 +123,10 @@ private:
     // Remotes mirrored into the scene
     std::function<GameObject*(std::uint32_t, char)> m_spawnRemote;
     std::unordered_map<std::uint32_t, GameObject*>  m_remotes;
+
+    // Custom message channel
+    std::function<void(const NetMessage&)> m_msgHandler;
+    std::vector<NetMessage> m_inbox;
 };
 
 } // namespace okay

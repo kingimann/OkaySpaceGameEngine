@@ -71,6 +71,33 @@ int main() {
         CHECK_NEAR(p.y, 2.0f, 0.01f);
     }
 
+    // --- Custom message channel: client -> server, and server -> client ---
+    {
+        std::string fromClient, fromServer;
+        std::uint32_t clientMsgSender = 999, serverMsgSender = 999;
+        server->SetMessageHandler([&](const NetworkManager::NetMessage& m) {
+            if (m.channel == "chat") { fromClient = m.data; clientMsgSender = m.from; }
+        });
+        client->SetMessageHandler([&](const NetworkManager::NetMessage& m) {
+            if (m.channel == "evt") { fromServer = m.data; serverMsgSender = m.from; }
+        });
+
+        client->Send("chat", "hello server");
+        server->Send("evt", "world tick");
+
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f);
+            clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (!fromClient.empty() && !fromServer.empty()) break;
+        }
+
+        CHECK(fromClient == "hello server");
+        CHECK(clientMsgSender == client->LocalId());  // stamped with the real sender
+        CHECK(fromServer == "world tick");
+        CHECK(serverMsgSender == 0);                  // server avatar id is 0
+    }
+
     server->Stop();
     client->Stop();
     TEST_MAIN_RESULT();

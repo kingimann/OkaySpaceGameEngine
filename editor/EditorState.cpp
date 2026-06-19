@@ -231,6 +231,18 @@ void EditorState::NewPlatformer() {
     dirty = false;
 }
 
+void EditorState::NewPlatformer3D() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Platformer3D(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 1, 0};
+    camDist = 14.0f;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
 void EditorState::NewTopDown() {
     NewScene();
     m_suppressUndo = true;

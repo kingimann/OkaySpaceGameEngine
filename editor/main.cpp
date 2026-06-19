@@ -398,6 +398,8 @@ enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
 int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
+bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
 
 // First connected game controller (opened in main); fed into Input during Play.
 SDL_GameController* g_pad = nullptr;
@@ -821,6 +823,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         ImGui::Separator();
         if (ImGui::BeginMenu("UI")) {   // each UI element is its own GameObject
+            if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>();        ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
+            ImGui::Separator();
             if (ImGui::MenuItem("Button"))       { ed.Select(ed.CreateEmpty("Button"));   ed.selected()->AddComponent<UIButton>();      ed.dirty = true; created = true; }
             if (ImGui::MenuItem("Panel"))        { ed.Select(ed.CreateEmpty("Panel"));    ed.selected()->AddComponent<UIPanel>();       ed.dirty = true; created = true; }
             if (ImGui::MenuItem("Image"))        { ed.Select(ed.CreateEmpty("Image"));    ed.selected()->AddComponent<UIImage>();       ed.dirty = true; created = true; }
@@ -1842,6 +1847,7 @@ void DrawNewProjectPopup(EditorState& ed) {
         if (ImGui::Button("Platformer", ImVec2(160, 44))) { ed.NewPlatformer(); finishProject(); }
         ImGui::SameLine();
         if (ImGui::Button("Top-Down", ImVec2(160, 44)))   { ed.NewTopDown(); finishProject(); }
+        if (ImGui::Button("3D Platformer (physics)", ImVec2(-1, 44))) { ed.NewPlatformer3D(); finishProject(); }
         if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 36))) { ed.NewCoinCollector(); finishProject(); }
         if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 36)))            { ed.NewMainMenu(); finishProject(); }
         if (ImGui::Button("Snake (full game)", ImVec2(-1, 36)))         { ed.NewSnake(); finishProject(); }
@@ -2737,6 +2743,33 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
     }
+    if (auto* cv = go->GetComponent<Canvas>()) {
+        if (ImGui::CollapsingHeader("Canvas", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* modes[] = {"Constant Pixel Size", "Scale With Screen Size"};
+            int m = (int)cv->scaleMode;
+            if (ImGui::Combo("UI Scale Mode##cv", &m, modes, 2)) { cv->scaleMode = (Canvas::ScaleMode)m; ed.dirty = true; }
+            if (cv->scaleMode == Canvas::ScaleMode::ConstantPixelSize) {
+                if (ImGui::DragFloat("Scale Factor##cv", &cv->scaleFactor, 0.01f, 0.1f, 10.0f)) ed.dirty = true;
+            } else {
+                float ref[2] = {cv->referenceResolution.x, cv->referenceResolution.y};
+                if (ImGui::DragFloat2("Reference Res##cv", ref, 1.0f, 1.0f, 8000.0f)) { cv->referenceResolution = {ref[0], ref[1]}; ed.dirty = true; }
+                if (ImGui::SliderFloat("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f)) ed.dirty = true;
+            }
+            if (ImGui::DragInt("Sort Order##cv", &cv->sortOrder)) ed.dirty = true;
+            ImGui::TextDisabled("scales screen-space UI to the window (Unity CanvasScaler)");
+            if (ImGui::SmallButton("Remove##cv")) toRemove = cv;
+        }
+    }
+    if (auto* es = go->GetComponent<EventSystem>()) {
+        if (ImGui::CollapsingHeader("Event System", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextDisabled("Routes pointer input to UI widgets.");
+            GameObject* h = es->Hovered();
+            ImGui::Text("Hovered: %s", h ? h->name.c_str() : "(none)");
+            GameObject* s = es->Selected();
+            ImGui::Text("Selected: %s", s ? s->name.c_str() : "(none)");
+            if (ImGui::SmallButton("Remove##es")) toRemove = es;
+        }
+    }
     if (auto* btn = go->GetComponent<UIButton>()) {
         if (ImGui::CollapsingHeader("UI Button", ImGuiTreeNodeFlags_DefaultOpen)) {
             char lb[128];
@@ -2974,6 +3007,10 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<Lifetime>(); ed.dirty = true; }
 
         Hdr("UI");
+        if (!go->GetComponent<Canvas>() && F("Canvas") && ImGui::Selectable("Canvas"))
+            { go->AddComponent<Canvas>(); ed.dirty = true; }
+        if (!go->GetComponent<EventSystem>() && F("Event System") && ImGui::Selectable("Event System"))
+            { go->AddComponent<EventSystem>(); ed.dirty = true; }
         if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
             { go->AddComponent<UIButton>(); ed.dirty = true; }
         if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))
@@ -3123,9 +3160,58 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         DrawBitmapText(dl, btn->label, a.x + (btn->size.x - tw) * 0.5f,
                        a.y + (btn->size.y - Font8x8::Height * px) * 0.5f, px,
                        ToColor(btn->textColor));
-        if (!gameView && up.get() == ed.selected())
-            dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
-                        IM_COL32(255, 200, 0, 255), 4.0f, 0, 2.0f);
+    }
+
+    // Selection highlight for the selected widget — works for every UI type and
+    // in both the 2D and 3D Scene views (the Game view stays clean). A small
+    // corner handle hints that it can be dragged to reposition.
+    if (!gameView && ed.selected()) {
+        UIRect r = GetUIRect(ed.selected());
+        if (r.valid) {
+            Vec2 o = r.Origin(canvasSize.x, canvasSize.y);
+            ImVec2 a(canvasPos.x + o.x - 1, canvasPos.y + o.y - 1);
+            ImVec2 b(a.x + r.size.x + 2, a.y + r.size.y + 2);
+            dl->AddRect(a, b, IM_COL32(255, 200, 0, 255), 3.0f, 0, 2.0f);
+            dl->AddRectFilled(ImVec2(b.x - 6, b.y - 6), ImVec2(b.x + 2, b.y + 2),
+                              IM_COL32(255, 200, 0, 255));
+        }
+    }
+}
+
+// Click-to-select and drag-to-reposition for screen-space UI in the Scene view.
+// Runs in both 2D and 3D modes (UI is an overlay, identical in either), and
+// takes priority over the world picking below it — clicking a HUD button selects
+// the button, dragging it edits its pixel offset. Sets g_uiHandled so the 2D/3D
+// world pickers skip a click the UI already consumed.
+void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
+                   bool hovered, ImGuiIO& io) {
+    g_uiHandled = false;
+    UICanvas::Set(canvasSize.x, canvasSize.y);
+    Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
+
+    // Continue an in-progress drag of the grabbed widget.
+    if (g_uiDragTarget) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            UIRect r = GetUIRect(g_uiDragTarget);
+            if (r.valid && r.position) {
+                r.position->x += io.MouseDelta.x;
+                r.position->y += io.MouseDelta.y;
+                ed.dirty = true;
+            }
+            g_uiHandled = true;
+            return;
+        }
+        g_uiDragTarget = nullptr;
+    }
+
+    // Press on a widget: select it and begin dragging.
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        GameObject* hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
+        if (hit) {
+            ed.Select(hit);
+            g_uiDragTarget = hit;
+            g_uiHandled = true;
+        }
     }
 }
 
@@ -3295,7 +3381,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     if (gameView) return;   // the Game view is non-interactive
 
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         Vec2 world = screenToWorld(io.MousePos);
         GameObject* hit = nullptr;
         for (const auto& up : objs) {
@@ -3312,7 +3398,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ed.Select(hit);
     }
     // Selecting and dragging work in Play too (edits revert on Stop, like Unity).
-    if (ed.selected() && hovered &&
+    // Skipped while a UI widget is being dragged (it owns the drag this frame).
+    if (ed.selected() && hovered && !g_uiHandled && !IsUIElement(ed.selected()) &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         Transform* t = ed.selected()->transform;
         if (g_tool == Tool::Move) {
@@ -3598,7 +3685,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
 
         // Grab the closest handle on mouse-press.
-        if (hovered && oOk && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (hovered && oOk && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             float best = 11.0f; int pick = -1;
             for (int i = 0; i < 3; ++i)
                 if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
@@ -3637,7 +3724,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Click-select (skipped when a gizmo handle was just grabbed): pick the
     // nearest mesh whose projected bounding box contains the cursor.
-    if (hovered && !g_gizmoGrab && !grabbedThisClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = nullptr;
         float bestDepth = 1e30f;
         for (const auto& up : objs) {
@@ -3719,6 +3806,10 @@ void DrawViewport(EditorState& ed) {
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     bool hovered = ImGui::IsItemHovered();
     ImGuiIO& io = ImGui::GetIO();
+
+    // UI editing (pick/drag screen-space widgets) runs first and may consume the
+    // click so the world pickers below leave the selection alone.
+    EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
 
     if (ed.view3D) DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     else           DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);

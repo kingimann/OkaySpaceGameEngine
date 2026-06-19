@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v1.31.0
+  - Scene view: click any UI widget to select it, then drag to reposition it —
+    works in BOTH the 2D and 3D Scene views (UI used to only be selectable in
+    2D). World picking yields to UI so a HUD click selects the HUD.
+  - New Canvas component (Unity-style CanvasScaler): Constant Pixel Size or
+    Scale With Screen Size with a reference resolution and width/height match.
+  - New Event System component: central UI pointer dispatch — tracks the
+    hovered / pressed / selected widget and exposes IsPointerOverUI(). Added
+    UIRaycast() and a uniform UIRect view of every widget.
+  - New 3D Platformer starter template: perspective camera, directional light,
+    a physics ground and a Character Controller 3D player (New Project > 3D
+    Platformer).
+  - Networking: a custom message channel (RPC / events / chat). Send(channel,
+    data) fans out to every peer; receive via a handler or TakeMessages().
+    The server relays client messages to all other peers.
+
 v1.30.0
   - New Follow Target 2D component: no-code chase AI — moves toward a named
     object at a set speed and stops within a distance (enemies, homing).

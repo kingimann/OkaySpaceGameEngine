@@ -74,6 +74,9 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UIElement.hpp"
+#include "okay/Components/Canvas.hpp"
+#include "okay/Components/EventSystem.hpp"
 
 // Gameplay behaviours (no-scripting motion/lifetime helpers)
 #include "okay/Components/Mover.hpp"

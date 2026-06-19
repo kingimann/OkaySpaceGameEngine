@@ -28,6 +28,8 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
+#include "okay/Components/Canvas.hpp"
+#include "okay/Components/EventSystem.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -248,6 +250,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pn->size.x << " " << pn->size.y << " "
             << pn->color.r << " " << pn->color.g << " " << pn->color.b << " " << pn->color.a
             << " " << (int)pn->anchor << "\n";
+    }
+    if (auto* cv = go->GetComponent<Canvas>()) {
+        out << "  canvas " << (int)cv->scaleMode << " "
+            << cv->referenceResolution.x << " " << cv->referenceResolution.y << " "
+            << cv->matchWidthOrHeight << " " << cv->scaleFactor << " " << cv->sortOrder << "\n";
+    }
+    if (go->GetComponent<EventSystem>()) {
+        out << "  eventsystem\n";
     }
     if (auto* pb = go->GetComponent<UIProgressBar>()) {
         out << "  uiprogress " << pb->position.x << " " << pb->position.y << " "
@@ -605,6 +615,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> c.r >> c.g >> c.b >> c.a;
                     pn->color = c;
                     ReadAnchor(in, pn->anchor);
+                } else if (field == "canvas") {
+                    auto* cv = go->AddComponent<Canvas>();
+                    int sm = 0;
+                    in >> sm >> cv->referenceResolution.x >> cv->referenceResolution.y
+                       >> cv->matchWidthOrHeight >> cv->scaleFactor >> cv->sortOrder;
+                    cv->scaleMode = (Canvas::ScaleMode)sm;
+                } else if (field == "eventsystem") {
+                    go->AddComponent<EventSystem>();
                 } else if (field == "uiprogress") {
                     auto* pb = go->AddComponent<UIProgressBar>();
                     Color bg, fl;

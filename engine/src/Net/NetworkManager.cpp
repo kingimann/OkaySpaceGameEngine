@@ -8,7 +8,7 @@
 namespace okay {
 
 namespace {
-    enum Msg : std::uint8_t { Join = 1, Welcome = 2, State = 3, Snapshot = 4, Leave = 5 };
+    enum Msg : std::uint8_t { Join = 1, Welcome = 2, State = 3, Snapshot = 4, Leave = 5, Message = 6 };
     constexpr float kClientTimeout = 5.0f;
 }
 
@@ -53,6 +53,7 @@ void NetworkManager::Stop() {
     if (m_netStarted) { net::Shutdown(); m_netStarted = false; }
     m_clients.clear();
     m_remotes.clear();
+    m_inbox.clear();
     m_mode = Mode::Offline;
     m_joined = false;
 }
@@ -74,6 +75,31 @@ void NetworkManager::ApplyPeer(const PeerState& s) {
 void NetworkManager::Update(float dt) {
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
+}
+
+void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
+                             const std::string& data) {
+    NetMessage m{from, channel, data};
+    if (m_msgHandler) m_msgHandler(m);
+    m_inbox.push_back(std::move(m));
+}
+
+void NetworkManager::Send(const std::string& channel, const std::string& data) {
+    if (m_mode == Mode::Server) {
+        // Server originates a message: stamp it with our id (0) and fan out.
+        net::Packet p(Message);
+        p.Write(m_localId);
+        p.Write(channel);
+        p.Write(data);
+        for (auto& [ep, c] : m_clients)
+            m_socket.SendTo(c.endpoint, p.Data(), p.Size());
+    } else if (m_mode == Mode::Client && m_joined) {
+        net::Packet p(Message);
+        p.Write(m_localId);
+        p.Write(channel);
+        p.Write(data);
+        m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+    }
 }
 
 void NetworkManager::ServerTick(float dt) {
@@ -116,6 +142,23 @@ void NetworkManager::ServerTick(float dt) {
                     m_remotes.erase(r);
                 }
                 m_clients.erase(it);
+            }
+        } else if (type == Message) {
+            auto it = m_clients.find(from);
+            if (it != m_clients.end()) {
+                std::uint32_t sender = it->second.id;   // endpoint is the source of truth
+                p.ReadU32();                            // sender-reported id (ignored)
+                std::string channel = p.ReadString();
+                std::string data    = p.ReadString();
+                Deliver(sender, channel, data);         // the host sees it too
+                // Relay to every other client, stamped with the real sender id.
+                net::Packet relay(Message);
+                relay.Write(sender);
+                relay.Write(channel);
+                relay.Write(data);
+                for (auto& [ep, c] : m_clients)
+                    if (c.id != sender)
+                        m_socket.SendTo(c.endpoint, relay.Data(), relay.Size());
             }
         }
     }
@@ -185,6 +228,11 @@ void NetworkManager::ClientTick(float dt) {
                 s.glyph = static_cast<char>(p.ReadU8());
                 ApplyPeer(s);
             }
+        } else if (type == Message) {
+            std::uint32_t sender = p.ReadU32();
+            std::string channel = p.ReadString();
+            std::string data    = p.ReadString();
+            if (sender != m_localId) Deliver(sender, channel, data);
         }
     }
 

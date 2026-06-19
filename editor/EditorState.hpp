@@ -37,6 +37,7 @@ public:
     void NewScene3D();
     /// Starter templates that build a small playable scene to learn from.
     void NewPlatformer();
+    void NewPlatformer3D();
     void NewTopDown();
     void NewCoinCollector();
     void NewMainMenu();

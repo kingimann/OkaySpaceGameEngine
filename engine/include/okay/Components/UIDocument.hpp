@@ -23,10 +23,11 @@ class GameObject;
 ///
 /// Indentation nests a widget under the one above it (a button inside a panel).
 /// Widget types: panel, text, button, image, slider, toggle, progress, input,
-/// dropdown. Common keys:
+/// dropdown, scroll, layout. Common keys:
 ///   pos=x,y  size=x,y (or one number for text px)  color=r,g,b[,a] (0-255)
 ///   anchor=topleft|topcenter|topright|middleleft|center|middleright|bottomleft|
 ///   bottomcenter|bottomright  corner=<radius>  tooltip="hint" [tipdelay=s]
+///   name=<id> (addressable by the ui_* script API)  active=0|1
 /// Per-type keys:
 ///   panel:    border=w bordercolor=r,g,b,a gradient=r,g,b,a
 ///   button:   hover= pressed= textcolor= font=<scale> border= onclick=<script>
@@ -37,6 +38,8 @@ class GameObject;
 ///   image:    texture=path nineslice=1 border=px fill=left|right|up|down amount=f
 ///   input:    placeholder="..." max=N onsubmit=<script>  (label = initial text)
 ///   dropdown: options=A|B|C value=i onchange=<script>
+///   scroll:   content=<px> bar=r,g,b,a   (parent widgets to it to clip+scroll)
+///   layout:   dir=vertical|horizontal spacing= padding=  (auto-arranges kids)
 /// Event handlers (on*) take the rest of the line, so put them last.
 ///
 /// Two "advanced" constructs make UIs reusable (UI-Toolkit-like):

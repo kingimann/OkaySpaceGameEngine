@@ -11,6 +11,8 @@
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -226,6 +228,19 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         if (t.Has("options")) c->options = SplitPipes(t.Get("options"));
         if (t.Has("value")) c->value = std::atoi(t.Get("value").c_str());
         Handler(go, t, "onchange", "on_change");
+    } else if (t.type == "scroll") {
+        auto* c = go->AddComponent<UIScrollView>();
+        applyBox(c->position, c->size, c->anchor, &c->background);
+        if (t.Has("content")) c->contentHeight = ParseF(t.Get("content"));
+        if (t.Has("bar"))     c->barColor = ParseColor(t.Get("bar"));
+    } else if (t.type == "layout") {
+        auto* c = go->AddComponent<UILayoutGroup>();
+        if (t.Has("dir")) c->direction = (t.Get("dir") == "horizontal")
+                              ? UILayoutGroup::Direction::Horizontal : UILayoutGroup::Direction::Vertical;
+        if (t.Has("anchor"))  c->anchor  = ParseAnchor(t.Get("anchor"));
+        if (t.Has("pos"))     c->origin  = ParsePair(t.Get("pos"), c->origin.y) + offset;
+        if (t.Has("spacing")) c->spacing = ParseF(t.Get("spacing"));
+        if (t.Has("padding")) c->padding = ParseF(t.Get("padding"));
     } else { // text (default)
         auto* c = go->AddComponent<TextRenderer>();
         c->screenSpace = true;
@@ -246,6 +261,10 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         tip->text = t.Get("tooltip");
         if (t.Has("tipdelay")) tip->delay = ParseF(t.Get("tipdelay"), 0.5f);
     }
+    // `name=` makes the widget addressable by the ui_* script API (ui_set_text,
+    // ui_slider_value, …); `active=0` starts it hidden.
+    if (t.Has("name") && !t.Get("name").empty()) go->name = t.Get("name");
+    if (t.Has("active")) go->active = ParseBool(t.Get("active"));
     return go;
 }
 
@@ -328,6 +347,8 @@ void BuildForest(Scene& scene, const std::vector<Line>& lines, std::size_t& i,
             go->transform->SetParent(parentT, /*worldPositionStays=*/false);
             out.push_back(go);
             BuildForest(scene, lines, i, myIndent, go->transform, offset, styles, defines, out);
+            // A layout group lays its just-built children out by size + spacing.
+            if (auto* lg = go->GetComponent<UILayoutGroup>()) lg->Arrange();
         }
     }
 }

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.61.0
+  - UI Toolkit containers: author `scroll` (clipped, scrollable region with
+    content= height) and `layout` (dir=vertical|horizontal, spacing=, padding=)
+    directly in OkayUI markup — parent widgets to them for scrollable, auto-
+    arranged lists with no hand-placing.
+  - name=<id> on any markup widget sets its GameObject name, so the ui_* script
+    API (ui_set_text, ui_slider_value, …) can target widgets the document built.
+  - active=0|1 starts a widget shown/hidden.
+
 v1.60.0
   - UI Toolkit (OkayUI markup) greatly expanded: the UI Document now authors the
     full widget set — added `input` and `dropdown` to panel/text/button/image/

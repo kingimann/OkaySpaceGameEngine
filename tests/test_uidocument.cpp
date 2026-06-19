@@ -217,5 +217,43 @@ int main() {
         CHECK(tooltips == 2);   // panel + button
     }
 
+    // --- Containers + name= + active= -----------------------------------
+    {
+        Scene s("containers"); s.physicsEnabled = false;
+        GameObject* docGo = s.CreateGameObject("Doc");
+        auto* doc = docGo->AddComponent<UIDocument>();
+        doc->markup =
+            "scroll pos=20,20 size=300,200 content=600\n"
+            "  layout dir=vertical pos=0,0 spacing=8\n"
+            "    button \"Row1\" size=280,40 name=row1\n"
+            "    button \"Row2\" size=280,40\n"
+            "button \"Hidden\" pos=0,0 size=80,30 active=0\n";
+        doc->Rebuild(); s.Update(0.0f);
+
+        UIScrollView* sv = nullptr; UILayoutGroup* lg = nullptr;
+        GameObject* row1 = nullptr; GameObject* hidden = nullptr;
+        for (GameObject* g : doc->Generated()) {
+            if (auto* x = g->GetComponent<UIScrollView>())  sv = x;
+            if (auto* x = g->GetComponent<UILayoutGroup>()) lg = x;
+            if (g->name == "row1") row1 = g;
+            if (auto* b = g->GetComponent<UIButton>()) if (b->label == "Hidden") hidden = g;
+        }
+        CHECK(sv != nullptr);
+        CHECK_NEAR(sv->contentHeight, 600.0f, 1e-4f);
+        CHECK(lg != nullptr);
+        // name= renamed the GameObject so the ui_* API can target it.
+        CHECK(row1 != nullptr);
+        CHECK(s.Find("row1") == row1);
+        // active=0 starts the widget hidden.
+        CHECK(hidden != nullptr && !hidden->active);
+        // The layout arranged its two rows vertically (row2 below row1).
+        std::vector<float> ys;
+        for (GameObject* g : doc->Generated())
+            if (auto* b = g->GetComponent<UIButton>())
+                if (b->label == "Row1" || b->label == "Row2") ys.push_back(b->position.y);
+        CHECK(ys.size() == 2);
+        CHECK(ys[0] != ys[1]);   // stacked, not overlapping
+    }
+
     TEST_MAIN_RESULT();
 }

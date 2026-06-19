@@ -3,6 +3,7 @@
 #include "okay/Math/Math.hpp"
 #include <vector>
 #include <utility>
+#include <algorithm>
 
 namespace okay {
 
@@ -59,6 +60,26 @@ public:
             if (i != j) std::swap(m_children[i], m_children[j]);
             return;
         }
+    }
+    /// Move `child` to the first (front) or last (back) sibling position.
+    void MoveChildToEdge(Transform* child, bool toFront) {
+        auto it = std::find(m_children.begin(), m_children.end(), child);
+        if (it == m_children.end()) return;
+        m_children.erase(it);
+        if (toFront) m_children.insert(m_children.begin(), child);
+        else         m_children.push_back(child);
+    }
+    /// Position `child` immediately before/after `anchor` in the child list
+    /// (drag-to-reorder). Both must already be children of this transform.
+    void ReorderChild(Transform* child, Transform* anchor, bool after) {
+        if (child == anchor) return;
+        auto rm = std::find(m_children.begin(), m_children.end(), child);
+        if (rm == m_children.end()) return;
+        m_children.erase(rm);
+        auto at = std::find(m_children.begin(), m_children.end(), anchor);
+        if (at == m_children.end()) { m_children.push_back(child); return; }
+        if (after) ++at;
+        m_children.insert(at, child);
     }
 
 private:

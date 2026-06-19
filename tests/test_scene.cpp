@@ -83,6 +83,11 @@ int main() {
         scene.MoveSibling(a, +1);                              // A down -> C A B
         CHECK(p->transform->Children()[0] == c->transform);
         CHECK(p->transform->Children()[1] == a->transform);
+        scene.MoveSiblingToEdge(b, true);                      // B to top -> B C A
+        CHECK(p->transform->Children()[0] == b->transform);
+        scene.ReorderSibling(a, b, false);                     // A before B -> A B C
+        CHECK(p->transform->Children()[0] == a->transform);
+        CHECK(p->transform->Children()[1] == b->transform);
         scene.Destroy(p); scene.Update(0.016f);
     }
 

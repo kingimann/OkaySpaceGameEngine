@@ -27,6 +27,7 @@ add_library(okay_engine
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
     src/Components/UIDraggable.cpp
+    src/Components/Draggable.cpp
     src/Components/Terrain.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Platform/Steam/Steam.cpp

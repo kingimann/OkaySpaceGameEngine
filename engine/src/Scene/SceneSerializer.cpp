@@ -36,6 +36,7 @@
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/UIDraggable.hpp"
+#include "okay/Components/Draggable.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
@@ -327,6 +328,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (dt->showHighlight ? 1 : 0)
             << " " << dt->highlight.r << " " << dt->highlight.g
             << " " << dt->highlight.b << " " << dt->highlight.a << "\n";
+    }
+    if (auto* dg = go->GetComponent<Draggable>()) {
+        out << "  draggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
+            << " " << (dg->snapToZone ? 1 : 0)
+            << " " << (int)dg->axis << " " << dg->dragThreshold << " " << (dg->bringToFront ? 1 : 0) << "\n";
+    }
+    if (auto* dz = go->GetComponent<DropZone>()) {
+        out << "  dropzone " << Quote(dz->acceptTag) << "\n";
     }
     if (auto* tt = go->GetComponent<UITooltip>()) {
         out << "  uitooltip " << Quote(tt->text) << " " << tt->delay << " "
@@ -864,6 +873,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> dt->highlight.r >> dt->highlight.g
                            >> dt->highlight.b >> dt->highlight.a;
                     }
+                } else if (field == "draggable") {
+                    auto* dg = go->AddComponent<Draggable>();
+                    int rs = 0, at = 0, sn = 0, ax = 0, bf = 0;
+                    in >> rs >> at >> sn >> ax >> dg->dragThreshold >> bf;
+                    dg->returnToStart = (rs != 0); dg->anyTarget = (at != 0);
+                    dg->snapToZone = (sn != 0); dg->axis = (Draggable::Axis)ax;
+                    dg->bringToFront = (bf != 0);
+                } else if (field == "dropzone") {
+                    auto* dz = go->AddComponent<DropZone>();
+                    in >> std::ws;
+                    if (in.peek() == '"') dz->acceptTag = ReadQuoted(in);
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
                     tt->text = ReadQuoted(in);

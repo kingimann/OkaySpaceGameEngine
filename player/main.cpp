@@ -413,6 +413,18 @@ int main(int argc, char** argv) {
                 SDL_RenderGeometry(renderer, tex, vtx, 4, idx, 6);
             }
 
+            // Drop-zone highlight: tint a zone while a valid item hovers it.
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            for (const auto& up : scene.Objects()) {
+                auto* dz = up->GetComponent<DropZone>();
+                auto* sr = up->GetComponent<SpriteRenderer>();
+                if (!dz || !sr || !up->active || !dz->IsHovered()) continue;
+                Vec3 ls = up->transform->LossyScale();
+                FillWorldQuad(renderer, up->transform->Position(),
+                              sr->size.x * ls.x, sr->size.y * ls.y,
+                              camPos, scale, w, h, SDL_Color{255, 255, 255, 70});
+            }
+
             // Tilemaps: draw each non-empty cell as a colored quad.
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
             for (const auto& up : scene.Objects()) {

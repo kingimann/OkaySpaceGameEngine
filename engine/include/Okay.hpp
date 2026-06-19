@@ -85,6 +85,7 @@
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/UIDraggable.hpp"
+#include "okay/Components/Draggable.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"

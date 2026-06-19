@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v1.95.0
+  - Drag & drop for world items (not just UI): add a "Draggable (item)" component
+    to a sprite to pick it up and move it around the scene at runtime, and a
+    "Drop Zone (item)" to sprites that can receive it. Dropping fires on_drop()
+    on the item and on_receive() on the zone (scripts read drop_source() &
+    drop_target()). Same rich options as the UI version — lock axis, drag
+    threshold, bring-to-front, snap-onto-zone (instant world-space slots),
+    return-to-start, and an accept-tag filter. Zones highlight while a valid item
+    hovers them. Great for board games, crafting, card games, and loot.
+
 v1.94.0
   - Drop-target feedback: UI Drop Target now highlights itself while a valid
     draggable hovers over it during a drag (toggle "Highlight on hover" and pick

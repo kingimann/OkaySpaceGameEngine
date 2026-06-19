@@ -1213,6 +1213,8 @@ struct OkayScriptVM::Impl {
         // The last drag-and-drop result (set by UIDraggable via Prefs).
         b["ui_drop_source"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("ui_drop_source", "")}; };
         b["ui_drop_target"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("ui_drop_target", "")}; };
+        b["drop_source"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("drop_source", "")}; };
+        b["drop_target"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("drop_target", "")}; };
         b["set_texture"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* sr = g->GetComponent<SpriteRenderer>())

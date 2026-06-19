@@ -3712,6 +3712,32 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##udt")) toRemove = dt;
         }
     }
+    if (auto* dg = go->GetComponent<Draggable>()) {
+        if (ImGui::CollapsingHeader("Draggable (item)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Checkbox("Return to Start##dg", &dg->returnToStart)) ed.dirty = true;
+            if (ImGui::Checkbox("Any sprite is a target##dg", &dg->anyTarget)) ed.dirty = true;
+            if (ImGui::Checkbox("Snap onto zone##dg", &dg->snapToZone)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Centers the item on the drop zone — instant world-space slots");
+            const char* axes[] = {"Both", "Horizontal", "Vertical"};
+            int ax = (int)dg->axis;
+            if (ImGui::Combo("Lock Axis##dg", &ax, axes, 3)) { dg->axis = (Draggable::Axis)ax; ed.dirty = true; }
+            if (ImGui::DragFloat("Drag Threshold##dg", &dg->dragThreshold, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units before a drag starts (0 = instant)");
+            if (ImGui::Checkbox("Bring to Front while dragging##dg", &dg->bringToFront)) ed.dirty = true;
+            ImGui::TextDisabled("Drag the sprite at runtime; dropping on a Drop Zone");
+            ImGui::TextDisabled("fires on_drop() here + on_receive() on the zone.");
+            if (ImGui::SmallButton("Remove##dg")) toRemove = dg;
+        }
+    }
+    if (auto* dz = go->GetComponent<DropZone>()) {
+        if (ImGui::CollapsingHeader("Drop Zone (item)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char tb[64]; std::strncpy(tb, dz->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
+            if (ImGui::InputText("Accept Tag##dz", tb, sizeof(tb))) { dz->acceptTag = tb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
+            ImGui::TextDisabled("Sprites dropped here call this object's on_receive().");
+            if (ImGui::SmallButton("Remove##dz")) toRemove = dz;
+        }
+    }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         if (ImGui::CollapsingHeader("UI Layout Group", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* dirs[] = {"Vertical", "Horizontal"};
@@ -3925,6 +3951,10 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
         if (!go->GetComponent<ParticleSystem>() && F("Particle System") && ImGui::Selectable("Particle System"))
             { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
+        if (!go->GetComponent<Draggable>() && F("Draggable (item)") && ImGui::Selectable("Draggable (item)"))
+            { go->AddComponent<Draggable>(); ed.dirty = true; }
+        if (!go->GetComponent<DropZone>() && F("Drop Zone (item)") && ImGui::Selectable("Drop Zone (item)"))
+            { go->AddComponent<DropZone>(); ed.dirty = true; }
 
         Hdr("Physics 2D");
         if (!go->GetComponent<Rigidbody2D>() && F("Rigidbody2D") && ImGui::Selectable("Rigidbody2D"))

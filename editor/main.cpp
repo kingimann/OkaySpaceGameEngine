@@ -2892,15 +2892,19 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
 
-            static const char* condOps[] = {"always", "key", "key_down", "mouse",
-                "chance", "var_eq", "var_gt", "var_lt", "has_tag", "is_active",
+            static const char* condOps[] = {"always", "key", "key_down", "key_up", "mouse",
+                "mouse_down", "chance", "var_eq", "var_neq", "var_gt", "var_lt",
+                "prefs_eq", "prefs_gt", "has_tag", "is_active",
                 "dist_lt", "dist_gt", "exists"};
             static const char* instOps[] = {"move", "set_pos", "rotate", "set_scale",
                 "set_scale3", "move_toward", "look_at", "wait", "goto", "stop",
-                "set_var", "add_var", "set_active", "set_text", "set_color", "velocity",
+                "set_var", "add_var", "mul_var", "div_var", "copy_var", "rand_var",
+                "set_active", "set_text", "set_color", "velocity",
                 "impulse", "emit", "play_anim", "play_sound", "set_cam", "set_bg",
                 "set_light", "set_ambient", "set_timescale", "send", "spawn", "spawn3",
-                "destroy", "destroy_obj", "activate", "deactivate", "load_scene", "log"};
+                "destroy", "destroy_obj", "activate", "deactivate", "set_tag",
+                "set_prefs", "add_prefs", "save_prefs",
+                "load_scene", "load_scene_index", "load_next_scene", "log"};
 
             ImGui::SeparatorText("Conditions (all must pass)");
             for (std::size_t i = 0; i < al->conditions.size();) {

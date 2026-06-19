@@ -130,5 +130,38 @@ int main() {
         CHECK_NEAR(o->transform->localPosition.x, 1.0f, 1e-4f);
     }
 
+    // New variable arithmetic ops: set / mul / div / copy.
+    {
+        ActionList::ResetVars();
+        Scene s("V"); s.physicsEnabled = false;
+        GameObject* o = s.CreateGameObject("Math");
+        auto* al = o->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        al->instructions = {
+            I("set_var", {"x", "10"}),
+            I("mul_var", {"x", "3"}),     // 30
+            I("div_var", {"x", "2"}),     // 15
+            I("copy_var", {"y", "x"}),    // y = 15
+        };
+        s.Start(); s.Update(0.016f);
+        CHECK_NEAR(ActionList::Vars()["x"], 15.0f, 1e-4f);
+        CHECK_NEAR(ActionList::Vars()["y"], 15.0f, 1e-4f);
+    }
+
+    // var_neq condition gates a list, and prefs ops persist a value.
+    {
+        ActionList::ResetVars();
+        Prefs::SetFloat("score", 0.0f);
+        Scene s("P"); s.physicsEnabled = false;
+        GameObject* o = s.CreateGameObject("Scorer");
+        auto* al = o->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        al->conditions   = { I("var_neq", {"done", "1"}) };  // done==0 -> passes
+        al->instructions = { I("add_prefs", {"score", "5"}), I("set_var", {"done", "1"}) };
+        s.Start(); s.Update(0.016f);
+        CHECK_NEAR(Prefs::GetFloat("score", 0.0f), 5.0f, 1e-4f);
+        CHECK_NEAR(ActionList::Vars()["done"], 1.0f, 1e-4f);
+    }
+
     TEST_MAIN_RESULT();
 }

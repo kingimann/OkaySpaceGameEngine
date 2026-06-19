@@ -3,6 +3,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/SceneManager.hpp"
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -1227,6 +1228,31 @@ struct OkayScriptVM::Impl {
             if (!a.empty() && rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 rt.host->gameObject->scene()->RequestLoad(a[0].AsString());
             return Value{};
+        };
+        // Scene Manager (build list) — load by index/name, next, reload, query.
+        b["load_scene_index"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            if (s && !a.empty()) return Value{SceneManager::LoadScene(*s, (int)a[0].AsFloat()) ? 1.0f : 0.0f};
+            return Value{0.0f};
+        };
+        b["load_scene_name"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            if (s && !a.empty()) return Value{SceneManager::LoadSceneByName(*s, a[0].AsString()) ? 1.0f : 0.0f};
+            return Value{0.0f};
+        };
+        b["load_next_scene"] = [this](std::vector<Value>&) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            return Value{(s && SceneManager::LoadNextScene(*s)) ? 1.0f : 0.0f};
+        };
+        b["reload_scene"] = [this](std::vector<Value>&) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            return Value{(s && SceneManager::ReloadScene(*s)) ? 1.0f : 0.0f};
+        };
+        b["scene_count"] = [](std::vector<Value>&) { return Value{(float)SceneManager::SceneCount()}; };
+        b["scene_index"] = [](std::vector<Value>&) { return Value{(float)SceneManager::ActiveIndex()}; };
+        b["scene_name"]  = [this](std::vector<Value>&) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            return Value{s ? s->Name() : std::string{}};
         };
         // Persistent prefs (high scores, settings) — survive across runs.
         b["prefs_set"] = [](std::vector<Value>& a) {

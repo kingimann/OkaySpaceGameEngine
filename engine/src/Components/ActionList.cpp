@@ -13,6 +13,8 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/SceneManager.hpp"
+#include "okay/Core/Prefs.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
@@ -123,8 +125,13 @@ bool ActionList::EvalConditions() {
         else if (op == "mouse")    ok = Input::GetMouseButton((int)Num(c, 0));
         else if (op == "chance")   ok = Random::Shared().Range(0.0f, 1.0f) < Num(c, 0);
         else if (op == "var_eq")   ok = Mathf::Approximately(Vars()[Str(c, 0)], Num(c, 1));
+        else if (op == "var_neq")  ok = !Mathf::Approximately(Vars()[Str(c, 0)], Num(c, 1));
         else if (op == "var_gt")   ok = Vars()[Str(c, 0)] > Num(c, 1);
         else if (op == "var_lt")   ok = Vars()[Str(c, 0)] < Num(c, 1);
+        else if (op == "key_up")   ok = !Str(c, 0).empty() && Input::GetKeyUp(Str(c, 0)[0]);
+        else if (op == "mouse_down") ok = Input::GetMouseButtonDown((int)Num(c, 0));
+        else if (op == "prefs_eq") ok = Mathf::Approximately(Prefs::GetFloat(Str(c, 0), 0.0f), Num(c, 1));
+        else if (op == "prefs_gt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) > Num(c, 1);
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
@@ -267,6 +274,17 @@ void ActionList::Update(float dt) {
             }
         }
         else if (op == "load_scene") { if (scene) scene->RequestLoad(Str(it, 0)); return; }
+        else if (op == "load_scene_index") { if (scene) SceneManager::LoadScene(*scene, (int)Num(it, 0)); return; }
+        else if (op == "load_next_scene")  { if (scene) SceneManager::LoadNextScene(*scene); return; }
+        else if (op == "mul_var") { Vars()[Str(it, 0)] *= Num(it, 1); }
+        else if (op == "div_var") { float d = Num(it, 1); if (d != 0.0f) Vars()[Str(it, 0)] /= d; }
+        else if (op == "copy_var") { Vars()[Str(it, 0)] = Vars()[Str(it, 1)]; }
+        else if (op == "rand_var") { Vars()[Str(it, 0)] = Random::Shared().Range(Num(it, 1), Num(it, 2)); }
+        else if (op == "set_prefs") { Prefs::SetFloat(Str(it, 0), Num(it, 1)); }
+        else if (op == "add_prefs") { Prefs::SetFloat(Str(it, 0), Prefs::GetFloat(Str(it, 0), 0.0f) + Num(it, 1)); }
+        else if (op == "save_prefs") { Prefs::Save(Str(it, 0).empty() ? "game.okayprefs" : Str(it, 0)); }
+        else if (op == "set_tag") { if (gameObject) gameObject->tag = Str(it, 0); }
+        else if (op == "set_timescale_var") { Vars()[Str(it, 0)] = Time::TimeScale(); }
         else if (op == "log") { Log::Info("[actions] ", Rest(it, 0)); }
         // unknown ops are ignored, so files stay forward-compatible
     }

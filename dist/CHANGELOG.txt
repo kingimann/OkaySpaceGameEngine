@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.37.0
+  - Expanded scripting: SceneManager from OkayScript — load_scene_index(i),
+    load_scene_name(n), load_next_scene(), reload_scene(), scene_count(),
+    scene_index(), scene_name().
+  - Expanded visual scripting (ActionList): new instructions mul_var, div_var,
+    copy_var, rand_var, set_prefs, add_prefs, save_prefs, set_tag,
+    load_scene_index, load_next_scene; new conditions var_neq, key_up,
+    mouse_down, prefs_eq, prefs_gt. All selectable in the visual editor.
+
 v1.36.0
   - New Scene Manager (engine + a Scenes panel): a build list of the project's
     scenes with by-index / by-name loading, Load Next and Reload — the engine

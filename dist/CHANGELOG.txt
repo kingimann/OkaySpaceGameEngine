@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v1.19.0
+  - No-code visual scripting (Game Creator-style): a new "Actions" component
+    with a Trigger (On Start / Update / Key / Collision / Click), a list of
+    Conditions (key, chance, var compare, distance, tag, exists…), and a list of
+    Instructions that run top-to-bottom (move, rotate, scale, wait, set/add var,
+    set color/text, velocity/impulse, emit, play sound/anim, camera/light, spawn,
+    destroy, load scene, log…). Authored from dropdowns in the inspector; runs in
+    the editor and the player; saved with the scene.
+  - Expanded OkayScript: set_emissive / set_unlit / set_specular / set_tiling /
+    set_mesh_texture, and gc_get / gc_set to share variables with the Actions
+    visual scripting.
+
 v1.18.0
   - 3D positional audio: an Audio Source can be marked 3D (spatial) with Min/Max
     Distance, and the mixer attenuates it by distance to the listener (the main

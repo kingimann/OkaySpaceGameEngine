@@ -11,6 +11,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/ActionList.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
@@ -1771,6 +1772,47 @@ struct OkayScriptVM::Impl {
                          a.size() > 1 ? a[1].AsFloat() : -9.81f,
                          a.size() > 2 ? a[2].AsFloat() : 0.0f};
             return Value{};
+        };
+
+        // --- Material control on a sibling MeshRenderer ---
+        b["set_emissive"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* mr = g->GetComponent<MeshRenderer>())
+                mr->emissive = {a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                                a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                a.size() > 2 ? a[2].AsFloat() : 0.0f, 1.0f};
+            return Value{};
+        };
+        b["set_unlit"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* mr = g->GetComponent<MeshRenderer>())
+                mr->unlit = a.empty() ? true : a[0].AsBool();
+            return Value{};
+        };
+        b["set_specular"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* mr = g->GetComponent<MeshRenderer>())
+                mr->specular = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["set_mesh_texture"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* mr = g->GetComponent<MeshRenderer>())
+                mr->texture = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["set_tiling"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* mr = g->GetComponent<MeshRenderer>())
+                mr->tiling = {a.size() > 0 ? a[0].AsFloat() : 1.0f, a.size() > 1 ? a[1].AsFloat() : 1.0f};
+            return Value{};
+        };
+        // --- Bridge to the visual-script (ActionList) shared variables, so
+        //     OkayScript and the no-code Actions can read/write the same state. ---
+        b["gc_set"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) ActionList::Vars()[a[0].AsString()] = a[1].AsFloat();
+            return Value{};
+        };
+        b["gc_get"] = [](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{0.0f};
+            auto& m = ActionList::Vars();
+            auto it = m.find(a[0].AsString());
+            return Value{it != m.end() ? it->second : 0.0f};
         };
     }
 };

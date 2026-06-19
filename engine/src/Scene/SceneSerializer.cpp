@@ -8,6 +8,7 @@
 #include "okay/Components/Light.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Components/ActionList.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -173,6 +174,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
         out << "  visualscript " << Quote(vsc->Source()) << "\n";
+    }
+    if (auto* al = go->GetComponent<ActionList>()) {
+        out << "  actions " << Quote(al->ToText()) << "\n";
     }
     if (auto* mv = go->GetComponent<Mover>()) {
         out << "  mover " << mv->velocity.x << " " << mv->velocity.y << " " << mv->velocity.z << "\n";
@@ -481,6 +485,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     std::string src = ReadQuoted(in);
                     auto* vsc = go->AddComponent<VisualScriptComponent>();
                     vsc->LoadFromText(src);
+                } else if (field == "actions") {
+                    go->AddComponent<ActionList>()->FromText(ReadQuoted(in));
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
                     go->AddComponent<Mover>()->velocity = v;

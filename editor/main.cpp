@@ -1934,6 +1934,35 @@ static void FitCapsule(GameObject* go, CapsuleCollider3D* cap) {
     cap->offset = {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
 }
 
+// One row of the Game-Creator-style action editor: an op dropdown + a free-text
+// args field + a remove button. Returns true if the row asked to be removed.
+static bool DrawActionItem(ActionList::Item& it, const char* const* ops, int nops,
+                           int id, bool& dirty) {
+    bool removed = false;
+    ImGui::PushID(id);
+    if (it.op.empty()) it.op = ops[0];
+    int cur = 0;
+    for (int i = 0; i < nops; ++i) if (it.op == ops[i]) cur = i;
+    ImGui::SetNextItemWidth(132);
+    if (ImGui::Combo("##op", &cur, ops, nops)) { it.op = ops[cur]; dirty = true; }
+    ImGui::SameLine();
+    std::string joined;
+    for (auto& a : it.args) { if (!joined.empty()) joined += ' '; joined += a; }
+    char buf[256];
+    std::strncpy(buf, joined.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+    ImGui::SetNextItemWidth(-34);
+    if (ImGui::InputTextWithHint("##args", "args (space-separated)", buf, sizeof(buf))) {
+        it.args.clear();
+        std::stringstream ss(buf); std::string tok;
+        while (ss >> tok) it.args.push_back(tok);
+        dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("X")) { removed = true; dirty = true; }
+    ImGui::PopID();
+    return removed;
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     GameObject* go = ed.selected();
@@ -2287,6 +2316,52 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##vs")) toRemove = vsc;
         }
     }
+    if (auto* al = go->GetComponent<ActionList>()) {
+        if (ImGui::CollapsingHeader("Actions (Visual Script)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // Trigger -> Conditions -> Instructions, Game-Creator style.
+            const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision", "On Click"};
+            int ti = (int)al->trigger;
+            ImGui::SetNextItemWidth(150);
+            if (ImGui::Combo("Trigger", &ti, trigs, 5)) { al->trigger = (ActionList::Trigger)ti; ed.dirty = true; }
+            if (al->trigger == ActionList::Trigger::OnKey) {
+                ImGui::SameLine();
+                char kb[16];
+                std::strncpy(kb, al->triggerKey.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
+                ImGui::SetNextItemWidth(50);
+                if (ImGui::InputText("Key##al", kb, sizeof(kb))) { al->triggerKey = kb; ed.dirty = true; }
+            }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
+
+            static const char* condOps[] = {"always", "key", "key_down", "mouse",
+                "chance", "var_eq", "var_gt", "var_lt", "has_tag", "is_active",
+                "dist_lt", "dist_gt", "exists"};
+            static const char* instOps[] = {"move", "set_pos", "rotate", "set_scale",
+                "set_scale3", "move_toward", "look_at", "wait", "set_var", "add_var",
+                "set_active", "set_text", "set_color", "velocity", "impulse", "emit",
+                "play_anim", "play_sound", "set_cam", "set_bg", "set_light", "set_ambient",
+                "destroy", "destroy_obj", "activate", "deactivate", "spawn", "load_scene", "log"};
+
+            ImGui::SeparatorText("Conditions (all must pass)");
+            for (std::size_t i = 0; i < al->conditions.size();) {
+                if (DrawActionItem(al->conditions[i], condOps, IM_ARRAYSIZE(condOps), (int)i, ed.dirty))
+                    al->conditions.erase(al->conditions.begin() + i);
+                else ++i;
+            }
+            if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({"always", {}}); ed.dirty = true; }
+
+            ImGui::SeparatorText("Instructions (run top to bottom)");
+            for (std::size_t i = 0; i < al->instructions.size();) {
+                if (DrawActionItem(al->instructions[i], instOps, IM_ARRAYSIZE(instOps), 1000 + (int)i, ed.dirty))
+                    al->instructions.erase(al->instructions.begin() + i);
+                else ++i;
+            }
+            if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({"move", {}}); ed.dirty = true; }
+
+            ImGui::Spacing();
+            if (ImGui::SmallButton("Remove##al")) toRemove = al;
+        }
+    }
     if (auto* a = go->GetComponent<AudioSource>()) {
         if (ImGui::CollapsingHeader("Audio Source", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f);
@@ -2591,6 +2666,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
         if (!go->GetComponent<VisualScriptComponent>() && F("Visual Script") && ImGui::Selectable("Visual Script"))
             { go->AddComponent<VisualScriptComponent>(); ed.dirty = true; }
+        if (!go->GetComponent<ActionList>() && F("Actions (Visual Script)") && ImGui::Selectable("Actions (Visual Script)"))
+            { go->AddComponent<ActionList>(); ed.dirty = true; }
 
         Hdr("Audio");
         if (!go->GetComponent<AudioSource>() && F("Audio Source") && ImGui::Selectable("Audio Source"))

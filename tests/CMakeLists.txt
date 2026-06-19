@@ -38,6 +38,10 @@ add_executable(test_material test_material.cpp)
 target_link_libraries(test_material PRIVATE okay::engine)
 add_test(NAME material COMMAND test_material)
 
+add_executable(test_actionlist test_actionlist.cpp)
+target_link_libraries(test_actionlist PRIVATE okay::engine)
+add_test(NAME actionlist COMMAND test_actionlist)
+
 add_executable(test_transform_input test_transform_input.cpp)
 target_link_libraries(test_transform_input PRIVATE okay::engine)
 add_test(NAME transform_input COMMAND test_transform_input)

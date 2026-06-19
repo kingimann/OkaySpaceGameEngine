@@ -293,6 +293,7 @@ void EditorState::Play() {
     if (m_playing) return;
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
     m_selected = nullptr;
+    ActionList::ResetVars();   // clear visual-script variables each Play session
     m_scene.Start();
     m_playing = true;
 }

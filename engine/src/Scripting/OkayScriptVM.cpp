@@ -25,6 +25,8 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
@@ -1113,6 +1115,75 @@ struct OkayScriptVM::Impl {
                 if (auto* sr = g->GetComponent<SpriteRenderer>()) sr->color = c;
                 if (auto* tr = g->GetComponent<TextRenderer>()) tr->color = c;
             }
+            return Value{};
+        };
+        // ---- UI by name: read/drive any widget from script -----------------
+        // All take the GameObject name as the first argument so one script can
+        // wire up a whole menu. Missing objects/components are no-ops / defaults.
+        b["ui_set_text"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = a[1].AsString();
+                else if (auto* bt = g->GetComponent<UIButton>()) bt->label = a[1].AsString();
+                else if (auto* in = g->GetComponent<UIInputField>()) in->text = a[1].AsString();
+            }
+            return Value{};
+        };
+        b["ui_get_text"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* tr = g->GetComponent<TextRenderer>()) return Value{tr->text};
+                if (auto* in = g->GetComponent<UIInputField>()) return Value{in->text};
+                if (auto* bt = g->GetComponent<UIButton>()) return Value{bt->label};
+            }
+            return Value{std::string{}};
+        };
+        b["ui_clicked"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* bt = g->GetComponent<UIButton>()) return Value{bt->WasClicked()};
+            return Value{false};
+        };
+        b["ui_set_interactable"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* bt = g->GetComponent<UIButton>()) bt->interactable = a[1].AsBool();
+            return Value{};
+        };
+        b["ui_slider_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) return Value{sl->value};
+            return Value{0.0f};
+        };
+        b["ui_set_slider"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) sl->value = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_toggle_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tg = g->GetComponent<UIToggle>()) return Value{tg->on};
+            return Value{false};
+        };
+        b["ui_set_toggle"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tg = g->GetComponent<UIToggle>()) tg->on = a[1].AsBool();
+            return Value{};
+        };
+        b["ui_dropdown_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) return Value{(float)dd->value};
+            return Value{0.0f};
+        };
+        b["ui_dropdown_text"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) return Value{dd->Selected()};
+            return Value{std::string{}};
+        };
+        b["ui_set_dropdown"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetValue((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["ui_set_progress"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
         };
         b["set_texture"] = [go](std::vector<Value>& a) {

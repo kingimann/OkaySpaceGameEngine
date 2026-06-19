@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.56.0
+  - UI scripting API: drive any widget from OkayScript by name —
+    ui_set_text / ui_get_text, ui_clicked, ui_set_interactable,
+    ui_slider_value / ui_set_slider, ui_toggle_value / ui_set_toggle,
+    ui_dropdown_value / ui_dropdown_text / ui_set_dropdown, and
+    ui_set_progress. One controller script can now wire up a whole menu
+    (read a slider, flip a toggle, pick a dropdown option, update a label).
+    Documented in docs/SCRIPTING.md.
+
 v1.55.0
   - Panel gradients: a UI Panel can fade top-to-bottom — turn on "Gradient" and
     set a Bottom Color (Color is the top). Great for headers and backdrops.

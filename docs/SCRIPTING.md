@@ -121,6 +121,18 @@ function update(dt) {
 | `load_scene("file")` | Switch to another scene |
 | `screen_w()` / `screen_h()` | Viewport size in pixels |
 
+### UI (drive widgets by name)
+| Function | Description |
+|---|---|
+| `ui_set_text("n", "s")` / `ui_get_text("n")` | Text/button label/input text |
+| `ui_clicked("n")` | True the frame a named button was clicked |
+| `ui_set_interactable("n", on)` | Enable/grey-out a button |
+| `ui_slider_value("n")` / `ui_set_slider("n", v)` | Read/set a slider (0..1) |
+| `ui_toggle_value("n")` / `ui_set_toggle("n", on)` | Read/set a toggle |
+| `ui_dropdown_value("n")` / `ui_dropdown_text("n")` | Selected index / option text |
+| `ui_set_dropdown("n", i)` | Select a dropdown option (fires on_change) |
+| `ui_set_progress("n", v)` | Set a progress bar's fill (0..1) |
+
 ### Tweening & saves
 | Function | Description |
 |---|---|

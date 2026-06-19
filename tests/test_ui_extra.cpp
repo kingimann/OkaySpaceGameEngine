@@ -217,5 +217,40 @@ int main() {
         Input::FeedMouse({0, 0}, 0);
     }
 
+    // --- UI script API: read/drive widgets by name from a script -------
+    {
+        Scene s("UiApi"); s.physicsEnabled = false;
+        // Target widgets.
+        auto* sl = s.CreateGameObject("Vol")->AddComponent<UISlider>();
+        sl->value = 0.25f;
+        auto* tg = s.CreateGameObject("Mute")->AddComponent<UIToggle>();
+        tg->on = false;
+        auto* dd = s.CreateGameObject("Quality")->AddComponent<UIDropdown>();
+        dd->options = {"Low", "Medium", "High"}; dd->value = 0;
+        auto* lbl = s.CreateGameObject("Label")->AddComponent<TextRenderer>();
+        lbl->text = "old";
+
+        // A controller script drives them all by name.
+        auto* ctrl = s.CreateGameObject("Ctrl")->AddComponent<ScriptComponent>("okayscript");
+        ctrl->LoadSource(
+            "var read = 0; var pick = \"\";\n"
+            "function start() {\n"
+            "  ui_set_slider(\"Vol\", 0.8);\n"
+            "  read = ui_slider_value(\"Vol\");\n"
+            "  ui_set_toggle(\"Mute\", 1);\n"
+            "  ui_set_dropdown(\"Quality\", 2);\n"
+            "  pick = ui_dropdown_text(\"Quality\");\n"
+            "  ui_set_text(\"Label\", \"new\");\n"
+            "}\n");
+        s.Start();
+
+        CHECK_NEAR(sl->value, 0.8f, 1e-4f);
+        CHECK(tg->on);
+        CHECK(dd->value == 2);
+        CHECK(lbl->text == "new");
+        CHECK_NEAR(ctrl->VM()->GetGlobal("read").AsFloat(), 0.8f, 1e-4f);
+        CHECK(ctrl->VM()->GetGlobal("pick").AsString() == "High");
+    }
+
     TEST_MAIN_RESULT();
 }

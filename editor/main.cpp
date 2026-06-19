@@ -2182,6 +2182,19 @@ static std::size_t ApplyItemAction(std::vector<ActionList::Item>& list, std::siz
     return i + 1;
 }
 
+// If an asset is dropped on the previous widget, set `field` to its path.
+static bool AcceptAssetPathField(std::string& field) {
+    bool changed = false;
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            field = std::string((const char*)p->Data);
+            changed = true;
+        }
+        ImGui::EndDragDropTarget();
+    }
+    return changed;
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
 
@@ -2297,6 +2310,7 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(tex, sr->texture.c_str(), sizeof(tex) - 1);
             tex[sizeof(tex) - 1] = '\0';
             if (ImGui::InputText("Texture##sprite", tex, sizeof(tex))) { sr->texture = tex; ed.dirty = true; }
+            if (AcceptAssetPathField(sr->texture)) ed.dirty = true;   // drop from Project
             if (ImGui::DragInt("Sort Order##sprite", &sr->sortOrder, 0.1f, -1000, 1000)) ed.dirty = true;
             if (ImGui::Checkbox("Flip X##sprite", &sr->flipX)) ed.dirty = true;
             ImGui::SameLine();
@@ -2350,6 +2364,7 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(tex, mr->texture.c_str(), sizeof(tex) - 1);
             tex[sizeof(tex) - 1] = '\0';
             if (ImGui::InputText("Texture##mesh", tex, sizeof(tex))) { mr->texture = tex; ed.dirty = true; }
+            if (AcceptAssetPathField(mr->texture)) ed.dirty = true;   // drop from Project
             if (!mr->texture.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##tex")) { mr->texture.clear(); ed.dirty = true; }
@@ -2638,6 +2653,7 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(cb, a->clipPath.c_str(), sizeof(cb) - 1);
             cb[sizeof(cb) - 1] = '\0';
             if (ImGui::InputText("WAV File##audio", cb, sizeof(cb))) { a->clipPath = cb; ed.dirty = true; }
+            if (AcceptAssetPathField(a->clipPath)) ed.dirty = true;   // drop from Project
             ImGui::TextDisabled("WAV path loads in the built game; %.2fs clip", a->clip.Duration());
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
             if (a->spatial) {

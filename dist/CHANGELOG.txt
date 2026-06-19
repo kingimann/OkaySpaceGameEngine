@@ -1,5 +1,9 @@
 OkaySpace Game Engine — Changelog
 
+v1.29.0
+  - Inspector: drag an asset from the Project onto a Texture or WAV field to
+    set it (Mesh Renderer texture, Sprite texture, Audio Source clip).
+
 v1.28.0
   - Hierarchy: double-click a row (or right-click > Rename) to rename it, and
     Activate/Deactivate from the right-click menu.

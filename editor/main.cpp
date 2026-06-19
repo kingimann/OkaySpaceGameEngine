@@ -424,6 +424,11 @@ struct BuildSettings {
 BuildSettings g_build;
 bool  g_snap = false;
 float g_snapSize = 1.0f;
+int   g_uiGrid = 8;         // UI snap grid in pixels (Snap on)
+// Alignment guides: screen-space lines the UI drag snapped to this frame, drawn
+// by the overlay (Unity-style smart snapping). Cleared and refilled each drag.
+float g_uiGuideX = -1.0f;   // canvas-x of a vertical guide, or <0 = none
+float g_uiGuideY = -1.0f;   // canvas-y of a horizontal guide, or <0 = none
 // Active transform tool for the Scene view (Unity's W/E/R).
 enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
@@ -4166,6 +4171,15 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             std::snprintf(dims, sizeof(dims), "%g x %g", r.size.x, r.size.y);
             dl->AddText(ImVec2(a.x, a.y - 16), IM_COL32(255, 220, 120, 255), dims);
         }
+        // Smart-snap alignment guides (magenta), full canvas extent.
+        if (g_uiGuideX >= 0.0f)
+            dl->AddLine(ImVec2(canvasPos.x + g_uiGuideX, canvasPos.y),
+                        ImVec2(canvasPos.x + g_uiGuideX, canvasPos.y + canvasSize.y),
+                        IM_COL32(255, 80, 220, 200), 1.0f);
+        if (g_uiGuideY >= 0.0f)
+            dl->AddLine(ImVec2(canvasPos.x, canvasPos.y + g_uiGuideY),
+                        ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY),
+                        IM_COL32(255, 80, 220, 200), 1.0f);
     }
 }
 
@@ -4206,7 +4220,8 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 float s = UIScaleFor(g_uiDragTarget, canvasSize.x, canvasSize.y);
                 if (s < 1e-3f) s = 1.0f;
                 float dx = io.MouseDelta.x / s, dy = io.MouseDelta.y / s;
-                auto snap = [&](float v) { return g_snap ? (float)((int)(v + (v < 0 ? -0.5f : 0.5f))) : v; };
+                float grid = g_uiGrid > 0 ? (float)g_uiGrid : 1.0f;
+                auto snap = [&](float v) { return g_snap ? Mathf::Round(v / grid) * grid : v; };
                 if (g_uiResizeHandle >= 0 && r.sizePtr) {
                     int hdl = g_uiResizeHandle;
                     bool left  = (hdl == 0 || hdl == 6 || hdl == 7);
@@ -4233,6 +4248,38 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 } else {
                     r.position->x = snap(r.position->x + dx);
                     r.position->y = snap(r.position->y + dy);
+                    // Unity-style smart guides: snap our edges/center to the canvas
+                    // edges/center and to sibling widgets, drawing a guide line.
+                    g_uiGuideX = g_uiGuideY = -1.0f;
+                    if (g_snap) {
+                        Vec2 o, sz; GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o, sz);
+                        std::vector<float> cx{0.0f, canvasSize.x * 0.5f, canvasSize.x};
+                        std::vector<float> cy{0.0f, canvasSize.y * 0.5f, canvasSize.y};
+                        for (const auto& up2 : ed.scene().Objects()) {
+                            if (up2.get() == g_uiDragTarget) continue;
+                            Vec2 oo, ss;
+                            if (GetUIScreenRect(up2.get(), canvasSize.x, canvasSize.y, oo, ss)) {
+                                cx.push_back(oo.x); cx.push_back(oo.x + ss.x * 0.5f); cx.push_back(oo.x + ss.x);
+                                cy.push_back(oo.y); cy.push_back(oo.y + ss.y * 0.5f); cy.push_back(oo.y + ss.y);
+                            }
+                        }
+                        const float thr = 6.0f;
+                        auto bestSnap = [&](float lo, float mid, float hi, const std::vector<float>& cands,
+                                            float& guide) -> float {
+                            float best = thr, adj = 0.0f; bool found = false;
+                            for (float m : {lo, mid, hi})
+                                for (float c : cands) {
+                                    float d = m > c ? m - c : c - m;
+                                    if (d < best) { best = d; adj = c - m; guide = c; found = true; }
+                                }
+                            return found ? adj : 0.0f;
+                        };
+                        float gx = -1.0f, gy = -1.0f;
+                        float adjX = bestSnap(o.x, o.x + sz.x * 0.5f, o.x + sz.x, cx, gx);
+                        float adjY = bestSnap(o.y, o.y + sz.y * 0.5f, o.y + sz.y, cy, gy);
+                        if (adjX != 0.0f) { r.position->x += adjX / s; g_uiGuideX = gx; }
+                        if (adjY != 0.0f) { r.position->y += adjY / s; g_uiGuideY = gy; }
+                    }
                 }
                 ed.dirty = true;
             }
@@ -4241,6 +4288,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
         }
         g_uiDragTarget = nullptr;
         g_uiResizeHandle = -1;
+        g_uiGuideX = g_uiGuideY = -1.0f;   // clear guides when the drag ends
     }
 
     // Press: first try a resize handle on the current selection, then fall back
@@ -4881,6 +4929,10 @@ void DrawViewport(EditorState& ed) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(70);
         ImGui::DragFloat("##snap", &g_snapSize, 0.05f, 0.05f, 10.0f);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::DragInt("UI px##uigrid", &g_uiGrid, 1, 1, 256);   // UI pixel grid
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("UI snap grid (pixels) + edge/center guides");
     }
     ImGui::SameLine();
     ImGui::TextDisabled(ed.view3D ? "drag: orbit  wheel: zoom"

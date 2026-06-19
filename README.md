@@ -97,8 +97,13 @@ planet, `A` player ship.)*
   Trigger → Conditions → Instructions) with ~60 ops including variables/math,
   transform/physics, prefs, scene loading, **and networking** (`net_host`,
   `net_join`, `net_send`), plus a node-graph runtime you build in code or text.
-- **Text scripting (OkayScript)** — a built-in language (works everywhere; an
-  optional **C#** backend sits behind the same `IScriptVM`). Has
+- **Text scripting (OkayScript), Unity-style** — write scripts that look almost
+  exactly like a Unity C# `MonoBehaviour`: `void Start()` / `void Update()`,
+  `transform.position = new Vector3(...)`, `Input.GetKeyDown("space")`,
+  `Time.deltaTime`, `Mathf.Sin(t)`, `Debug.Log(...)`, typed vars (`float speed = 5f;`),
+  `i++` loops, and a `public class Foo : MonoBehaviour { }` wrapper that pastes in.
+  The classic lowercase style still works too. A built-in language (works
+  everywhere; an optional **C#** backend sits behind the same `IScriptVM`). Has
   `if`/`while`/`for`/**foreach**/`break`/`continue`, functions, the **ternary**
   `?:`, **arrays** and **maps**, a full **string** library, and a deep builtin
   set: input (keyboard+mouse), 2D/3D transform control, `spawn`/`destroy`,

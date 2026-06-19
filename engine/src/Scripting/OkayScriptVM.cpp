@@ -62,7 +62,7 @@ enum class Tok {
     Var, If, Else, While, For, In, Function, Return, True, False, Break, Continue,
     Question, Colon,
     Plus, Minus, Star, Slash, Percent,
-    Assign, PlusEq, MinusEq, StarEq, SlashEq,
+    Assign, PlusEq, MinusEq, StarEq, SlashEq, Inc, Dec,
     Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semicolon
 };
@@ -119,6 +119,8 @@ private:
     Token Number() {
         std::string s;
         while (std::isdigit((unsigned char)Peek()) || Peek() == '.') s += Advance();
+        // Allow C#/Unity numeric suffixes (5f, 1.0f, 2d) — just drop them.
+        if (Peek() == 'f' || Peek() == 'F' || Peek() == 'd' || Peek() == 'D') Advance();
         return {Tok::Number, s, std::stod(s), m_line};
     }
 
@@ -143,6 +145,12 @@ private:
     Token Ident() {
         std::string s;
         while (std::isalnum((unsigned char)Peek()) || Peek() == '_') s += Advance();
+        // Unity-style dotted names are a single token: Input.GetKeyDown,
+        // Time.deltaTime, transform.position.x, gameObject.SetActive.
+        while (Peek() == '.' && (std::isalpha((unsigned char)Peek(1)) || Peek(1) == '_')) {
+            s += Advance();                                   // the '.'
+            while (std::isalnum((unsigned char)Peek()) || Peek() == '_') s += Advance();
+        }
         static const std::unordered_map<std::string, Tok> kw = {
             {"var", Tok::Var}, {"if", Tok::If}, {"else", Tok::Else},
             {"while", Tok::While}, {"for", Tok::For}, {"in", Tok::In},
@@ -157,8 +165,10 @@ private:
         char c = Advance();
         auto two = [&](char n, Tok t) { if (Peek() == n) { Advance(); return Token{t, "", 0, m_line}; } return Token{Tok::End, "", 0, m_line}; };
         switch (c) {
-            case '+': { auto t = two('=', Tok::PlusEq);  return t.type != Tok::End ? t : Token{Tok::Plus, "", 0, m_line}; }
-            case '-': { auto t = two('=', Tok::MinusEq); return t.type != Tok::End ? t : Token{Tok::Minus, "", 0, m_line}; }
+            case '+': { if (Peek() == '+') { Advance(); return {Tok::Inc, "", 0, m_line}; }
+                        auto t = two('=', Tok::PlusEq);  return t.type != Tok::End ? t : Token{Tok::Plus, "", 0, m_line}; }
+            case '-': { if (Peek() == '-') { Advance(); return {Tok::Dec, "", 0, m_line}; }
+                        auto t = two('=', Tok::MinusEq); return t.type != Tok::End ? t : Token{Tok::Minus, "", 0, m_line}; }
             case '*': { auto t = two('=', Tok::StarEq);  return t.type != Tok::End ? t : Token{Tok::Star, "", 0, m_line}; }
             case '/': { auto t = two('=', Tok::SlashEq); return t.type != Tok::End ? t : Token{Tok::Slash, "", 0, m_line}; }
             case '%': return {Tok::Percent, "", 0, m_line};
@@ -268,18 +278,39 @@ struct Runtime {
     }
 
     Value Call(const std::string& name, std::vector<Value>& args);
+
+    // Unity-style dotted property read/write (transform.position.x, Time.timeScale,
+    // gameObject.name, ...). GetDotted sets `ok` when it recognized the name;
+    // SetDotted returns true when it handled the assignment.
+    Value GetDotted(const std::string& name, bool& ok);
+    bool  SetDotted(const std::string& name, const Value& v);
 };
 
 // ---- Expressions ----
 struct NumberExpr : Expr { double v; explicit NumberExpr(double x) : v(x) {} Value Eval(Runtime&) override { return (float)v; } };
 struct StringExpr : Expr { std::string v; explicit StringExpr(std::string s) : v(std::move(s)) {} Value Eval(Runtime&) override { return v; } };
 struct BoolExpr   : Expr { bool v; explicit BoolExpr(bool b) : v(b) {} Value Eval(Runtime&) override { return v; } };
-struct VarExpr    : Expr { std::string n; explicit VarExpr(std::string s) : n(std::move(s)) {} Value Eval(Runtime& r) override { return r.Get(n); } };
+struct VarExpr    : Expr {
+    std::string n; explicit VarExpr(std::string s) : n(std::move(s)) {}
+    Value Eval(Runtime& r) override {
+        // Unity-style property reads: transform.position.x, Time.deltaTime, ...
+        if (n.find('.') != std::string::npos) {
+            bool ok = false; Value v = r.GetDotted(n, ok);
+            if (ok) return v;
+        }
+        return r.Get(n);
+    }
+};
 
 struct AssignExpr : Expr {
     std::string n; ExprPtr value;
     AssignExpr(std::string s, ExprPtr e) : n(std::move(s)), value(std::move(e)) {}
-    Value Eval(Runtime& r) override { Value v = value->Eval(r); r.Assign(n, v); return v; }
+    Value Eval(Runtime& r) override {
+        Value v = value->Eval(r);
+        if (n.find('.') != std::string::npos && r.SetDotted(n, v)) return v;
+        r.Assign(n, v);
+        return v;
+    }
 };
 
 struct UnaryExpr : Expr {
@@ -486,6 +517,99 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
     return ret;
 }
 
+// ---- Unity-style dotted property access --------------------------------------
+namespace {
+// Euler Z angle (degrees) of a quaternion, for transform.eulerAngles.z.
+float EulerZ(const Quat& q) {
+    return std::atan2(2.0f * (q.w * q.z + q.x * q.y),
+                      1.0f - 2.0f * (q.y * q.y + q.z * q.z)) * Mathf::Rad2Deg;
+}
+} // namespace
+
+Value Runtime::GetDotted(const std::string& name, bool& ok) {
+    ok = true;
+    Transform* t = host ? host->transform : nullptr;
+    GameObject* g = host ? host->gameObject : nullptr;
+
+    // Time
+    if (name == "Time.deltaTime")  return Value{host ? host->deltaTime : 0.0f};
+    if (name == "Time.time")       return Value{Time::ElapsedTime()};
+    if (name == "Time.timeScale")  return Value{Time::TimeScale()};
+    // Mathf constants
+    if (name == "Mathf.PI")        return Value{Mathf::PI};
+    if (name == "Mathf.Deg2Rad")   return Value{Mathf::Deg2Rad};
+    if (name == "Mathf.Rad2Deg")   return Value{Mathf::Rad2Deg};
+    if (name == "Mathf.Infinity")  return Value{1e30f};
+    if (name == "Mathf.Epsilon")   return Value{1e-6f};
+    if (name == "Random.value")    return Value{Random::Shared().Range(0.0f, 1.0f)};
+    // Screen / Input
+    if (name == "Screen.width")        return Value{UICanvas::Width()};
+    if (name == "Screen.height")       return Value{UICanvas::Height()};
+    if (name == "Input.mousePosition.x") return Value{Input::MousePosition().x};
+    if (name == "Input.mousePosition.y") return Value{Input::MousePosition().y};
+    // Vector constants
+    if (name == "Vector3.zero" || name == "Vector2.zero") return Value{Vec3::Zero};
+    if (name == "Vector3.one"  || name == "Vector2.one")  return Value{Vec3{1, 1, 1}};
+    if (name == "Vector3.up")    return Value{Vec3{0, 1, 0}};
+    if (name == "Vector3.down")  return Value{Vec3{0, -1, 0}};
+    if (name == "Vector3.right") return Value{Vec3{1, 0, 0}};
+    if (name == "Vector3.left")  return Value{Vec3{-1, 0, 0}};
+
+    if (t) {
+        Vec3 wp = t->Position();
+        if (name == "transform.position")   return Value{wp};
+        if (name == "transform.position.x") return Value{wp.x};
+        if (name == "transform.position.y") return Value{wp.y};
+        if (name == "transform.position.z") return Value{wp.z};
+        if (name == "transform.localPosition")   return Value{t->localPosition};
+        if (name == "transform.localPosition.x") return Value{t->localPosition.x};
+        if (name == "transform.localPosition.y") return Value{t->localPosition.y};
+        if (name == "transform.localPosition.z") return Value{t->localPosition.z};
+        if (name == "transform.localScale")   return Value{t->localScale};
+        if (name == "transform.localScale.x") return Value{t->localScale.x};
+        if (name == "transform.localScale.y") return Value{t->localScale.y};
+        if (name == "transform.localScale.z") return Value{t->localScale.z};
+        if (name == "transform.eulerAngles.z" || name == "transform.rotation")
+            return Value{EulerZ(t->localRotation)};
+    }
+    if (g) {
+        if (name == "gameObject.name") return Value{g->name};
+        if (name == "gameObject.activeSelf" || name == "gameObject.active") return Value{g->active};
+        if (name == "gameObject.tag")  return Value{g->tag};
+    }
+    ok = false;
+    return Value{};
+}
+
+bool Runtime::SetDotted(const std::string& name, const Value& v) {
+    Transform* t = host ? host->transform : nullptr;
+    GameObject* g = host ? host->gameObject : nullptr;
+
+    if (name == "Time.timeScale") { Time::SetTimeScale(v.AsFloat()); return true; }
+    if (t) {
+        if (name == "transform.position")        { t->SetPosition(v.AsVec3()); return true; }
+        if (name == "transform.localPosition")   { t->localPosition = v.AsVec3(); return true; }
+        if (name == "transform.localScale")      { t->localScale = v.AsVec3(); return true; }
+        if (name == "transform.position.x")      { Vec3 p = t->Position(); p.x = v.AsFloat(); t->SetPosition(p); return true; }
+        if (name == "transform.position.y")      { Vec3 p = t->Position(); p.y = v.AsFloat(); t->SetPosition(p); return true; }
+        if (name == "transform.position.z")      { Vec3 p = t->Position(); p.z = v.AsFloat(); t->SetPosition(p); return true; }
+        if (name == "transform.localPosition.x") { t->localPosition.x = v.AsFloat(); return true; }
+        if (name == "transform.localPosition.y") { t->localPosition.y = v.AsFloat(); return true; }
+        if (name == "transform.localPosition.z") { t->localPosition.z = v.AsFloat(); return true; }
+        if (name == "transform.localScale.x")    { t->localScale.x = v.AsFloat(); return true; }
+        if (name == "transform.localScale.y")    { t->localScale.y = v.AsFloat(); return true; }
+        if (name == "transform.localScale.z")    { t->localScale.z = v.AsFloat(); return true; }
+        if (name == "transform.eulerAngles.z" || name == "transform.rotation")
+            { t->localRotation = Quat::Euler({0, 0, v.AsFloat()}); return true; }
+    }
+    if (g) {
+        if (name == "gameObject.name")       { g->name = v.AsString(); return true; }
+        if (name == "gameObject.activeSelf" || name == "gameObject.active") { g->active = v.AsBool(); return true; }
+        if (name == "gameObject.tag")        { g->tag = v.AsString(); return true; }
+    }
+    return false;
+}
+
 // ===================== Parser =====================
 class Parser {
 public:
@@ -493,16 +617,40 @@ public:
 
     std::vector<StmtPtr> ParseProgram(std::unordered_map<std::string, FunctionDecl>& funcs) {
         std::vector<StmtPtr> top;
-        while (!Check(Tok::End)) {
-            if (Check(Tok::Function)) {
-                std::string name;
-                FunctionDecl decl = ParseFunction(name);
-                funcs[name] = std::move(decl);
-            } else {
-                top.push_back(ParseStatement());
-            }
-        }
+        while (!Check(Tok::End)) ParseMember(top, funcs);
         return top;
+    }
+
+    // Parse one top-level (or in-class) member: a function, a C#-style method,
+    // a `[public] class Name : MonoBehaviour { ... }` wrapper (its methods/fields
+    // are hoisted out, so real Unity scripts paste in), or a statement.
+    void ParseMember(std::vector<StmtPtr>& top, std::unordered_map<std::string, FunctionDecl>& funcs) {
+        if (IsClassAhead()) {
+            while (Check(Tok::Ident) && Peek().text != "class") ++m_pos;  // skip modifiers
+            Expect(Tok::Ident, "'class'");                                // the 'class' keyword
+            Expect(Tok::Ident, "class name");                            // its name
+            if (Match(Tok::Colon)) { do { Expect(Tok::Ident, "base type"); } while (Match(Tok::Comma)); }
+            Expect(Tok::LBrace, "'{'");
+            while (!Check(Tok::RBrace) && !Check(Tok::End)) ParseMember(top, funcs);
+            Expect(Tok::RBrace, "'}'");
+            return;
+        }
+        if (Check(Tok::Function)) {
+            std::string name; FunctionDecl decl = ParseFunction(name);
+            funcs[name] = std::move(decl);
+        } else if (IsTypedFunctionAhead()) {            // C#-style: void Start() { }
+            std::string name; FunctionDecl decl = ParseTypedFunction(name);
+            funcs[name] = std::move(decl);
+        } else {
+            top.push_back(ParseStatement());
+        }
+    }
+
+    // A run of identifiers containing "class" (e.g. `public class Foo`).
+    bool IsClassAhead() const {
+        std::size_t i = m_pos;
+        while (m_toks[i].type == Tok::Ident) { if (m_toks[i].text == "class") return true; ++i; }
+        return false;
     }
 
 private:
@@ -518,11 +666,39 @@ private:
     FunctionDecl ParseFunction(std::string& nameOut) {
         Expect(Tok::Function, "'function'");
         nameOut = Expect(Tok::Ident, "function name").text;
-        Expect(Tok::LParen, "'('");
+        return ParseParamsAndBody();
+    }
+
+    // A C#-style method declaration like `void Update()` / `private void Start()`
+    // is a run of >= 2 identifiers (modifiers + return type + name) ending in a
+    // name immediately followed by '('. (A plain call `foo()` is a single ident.)
+    bool IsTypedFunctionAhead() const {
+        std::size_t i = m_pos;
+        int idents = 0;
+        while (m_toks[i].type == Tok::Ident) { ++idents; ++i; }
+        return idents >= 2 && m_toks[i].type == Tok::LParen;
+    }
+
+    FunctionDecl ParseTypedFunction(std::string& nameOut) {
+        // Consume modifier/type identifiers, keeping the last one (before '(')
+        // as the function name.
+        std::string last = Expect(Tok::Ident, "type").text;
+        while (Check(Tok::Ident)) last = m_toks[m_pos++].text;
+        nameOut = last;
+        return ParseParamsAndBody();
+    }
+
+    // Shared by `function f(...)` and `void F(...)`: parse the parameter list
+    // (params may be bare `a` or typed `int a`) and the body block.
+    FunctionDecl ParseParamsAndBody() {
         FunctionDecl decl;
+        Expect(Tok::LParen, "'('");
         if (!Check(Tok::RParen)) {
-            do { decl.params.push_back(Expect(Tok::Ident, "parameter").text); }
-            while (Match(Tok::Comma));
+            do {
+                std::string p = Expect(Tok::Ident, "parameter").text;
+                if (Check(Tok::Ident)) p = m_toks[m_pos++].text; // was a type; real name follows
+                decl.params.push_back(p);
+            } while (Match(Tok::Comma));
         }
         Expect(Tok::RParen, "')'");
         decl.body = ParseBlock();
@@ -537,9 +713,20 @@ private:
         return stmts;
     }
 
+    // A C#-style typed local/field: a run of >= 2 identifiers (type + modifiers
+    // + name) ending in '=' or ';' (e.g. `int score = 0;`, `Vector3 v;`).
+    bool IsTypedVarDeclAhead() const {
+        std::size_t i = m_pos;
+        int idents = 0;
+        while (m_toks[i].type == Tok::Ident) { ++idents; ++i; }
+        return idents >= 2 && (m_toks[i].type == Tok::Assign || m_toks[i].type == Tok::Semicolon);
+    }
+
     StmtPtr ParseStatement() {
-        if (Match(Tok::Var)) {
+        if (Match(Tok::Var) || IsTypedVarDeclAhead()) {
+            // For a typed decl, drop the leading type/modifier idents, keep the last.
             std::string name = Expect(Tok::Ident, "variable name").text;
+            while (Check(Tok::Ident)) name = m_toks[m_pos++].text;
             ExprPtr init;
             if (Match(Tok::Assign)) init = ParseExpression();
             Match(Tok::Semicolon);
@@ -580,10 +767,11 @@ private:
             }
             Expect(Tok::LParen, "'('");
             auto st = std::make_unique<ForStmt>();
-            // init: a var declaration, an expression, or empty.
+            // init: a var declaration (var or typed), an expression, or empty.
             if (!Match(Tok::Semicolon)) {
-                if (Match(Tok::Var)) {
+                if (Match(Tok::Var) || IsTypedVarDeclAhead()) {
                     std::string name = Expect(Tok::Ident, "variable name").text;
+                    while (Check(Tok::Ident)) name = m_toks[m_pos++].text;
                     ExprPtr in;
                     if (Match(Tok::Assign)) in = ParseExpression();
                     st->init = std::make_unique<VarDeclStmt>(name, std::move(in));
@@ -664,6 +852,16 @@ private:
                 bin, std::make_unique<VarExpr>(name), std::move(value));
             return std::make_unique<AssignExpr>(name, std::move(combined));
         }
+        // Postfix increment/decrement: x++  ->  x = x + 1  (also x--).
+        if (Check(Tok::Inc) || Check(Tok::Dec)) {
+            auto* var = dynamic_cast<VarExpr*>(left.get());
+            if (!var) throw ScriptError("invalid increment target");
+            std::string name = var->n;
+            Tok bin = Peek().type == Tok::Inc ? Tok::Plus : Tok::Minus; ++m_pos;
+            auto combined = std::make_unique<BinaryExpr>(
+                bin, std::make_unique<VarExpr>(name), std::make_unique<NumberExpr>(1.0));
+            return std::make_unique<AssignExpr>(name, std::move(combined));
+        }
         return left;
     }
     ExprPtr ParseOr() {
@@ -698,6 +896,17 @@ private:
     }
     ExprPtr ParseUnary() {
         if (Check(Tok::Minus) || Check(Tok::Not)) { Tok op = Peek().type; ++m_pos; return std::make_unique<UnaryExpr>(op, ParseUnary()); }
+        // Prefix ++x / --x  ->  x = x + 1 / x = x - 1.
+        if (Check(Tok::Inc) || Check(Tok::Dec)) {
+            Tok bin = Peek().type == Tok::Inc ? Tok::Plus : Tok::Minus; ++m_pos;
+            ExprPtr target = ParseUnary();
+            auto* var = dynamic_cast<VarExpr*>(target.get());
+            if (!var) throw ScriptError("invalid increment target");
+            std::string name = var->n;
+            auto combined = std::make_unique<BinaryExpr>(
+                bin, std::make_unique<VarExpr>(name), std::make_unique<NumberExpr>(1.0));
+            return std::make_unique<AssignExpr>(name, std::move(combined));
+        }
         return ParsePostfix();
     }
     // Postfix indexing: base[i][j]...
@@ -726,6 +935,8 @@ private:
         }
         if (Check(Tok::Ident)) {
             std::string name = m_toks[m_pos++].text;
+            // C#-style `new Vector3(...)` — drop `new`, the T(...) is just a call.
+            if (name == "new") return ParsePrimary();
             if (Match(Tok::LParen)) {
                 auto call = std::make_unique<CallExpr>(name);
                 if (!Check(Tok::RParen)) {
@@ -2677,6 +2888,68 @@ struct OkayScriptVM::Impl {
         alias("screen_width", "screen_w");
         alias("screen_height", "screen_h");
         alias("debug", "debug_log");
+
+        // ---- Unity-style API: write scripts that look like C# in Unity. -----
+        //      Dotted names are single tokens (see the lexer), so these read as
+        //      Input.GetKeyDown("space"), Mathf.Sin(t), Debug.Log(x), etc.
+        b["Vector3"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                              a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                              a.size() > 2 ? a[2].AsFloat() : 0.0f}};
+        };
+        b["Vector2"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                              a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f}};
+        };
+        // Input.GetAxis("Horizontal"/"Vertical") -> WASD/stick axis.
+        b["Input.GetAxis"] = [](std::vector<Value>& a) -> Value {
+            std::string ax = a.empty() ? std::string{} : a[0].AsString();
+            return Value{ax == "Vertical" ? Input::AxisWASD().y : Input::AxisWASD().x};
+        };
+        // gameObject.SetActive(bool) toggles this object.
+        b["gameObject.SetActive"] = [this](std::vector<Value>& a) -> Value {
+            if (rt.host && rt.host->gameObject)
+                rt.host->gameObject->active = a.empty() ? true : a[0].AsBool();
+            return Value{};
+        };
+        b["GetComponent"] = [this](std::vector<Value>& a) -> Value {
+            // Lightweight: true if this object has the named component (so scripts
+            // can guard with `if (GetComponent("Rigidbody2D")) ...`).
+            if (!rt.host || !rt.host->gameObject || a.empty()) return Value{false};
+            const std::string& c = a[0].AsString();
+            GameObject* g = rt.host->gameObject;
+            bool has = (c == "SpriteRenderer" && g->GetComponent<SpriteRenderer>())
+                    || (c == "Rigidbody2D"   && g->GetComponent<Rigidbody2D>())
+                    || (c == "TextRenderer"  && g->GetComponent<TextRenderer>());
+            return Value{has};
+        };
+        // Method-name aliases mapping Unity calls onto existing builtins.
+        alias("Input.GetKey", "key");
+        alias("Input.GetKeyDown", "key_down");
+        alias("Input.GetKeyUp", "key_up");
+        alias("Input.GetMouseButton", "mouse");
+        alias("Input.GetMouseButtonDown", "mouse_down");
+        alias("Input.GetMouseButtonUp", "mouse_up");
+        alias("Debug.Log", "print");
+        alias("Debug.LogWarning", "print");
+        alias("Debug.LogError", "print");
+        alias("Mathf.Sin", "sin");   alias("Mathf.Cos", "cos");   alias("Mathf.Tan", "tan");
+        alias("Mathf.Sqrt", "sqrt"); alias("Mathf.Abs", "abs");   alias("Mathf.Sign", "sign");
+        alias("Mathf.Floor", "floor"); alias("Mathf.Ceil", "ceil"); alias("Mathf.Round", "round");
+        alias("Mathf.Min", "min");   alias("Mathf.Max", "max");   alias("Mathf.Pow", "pow");
+        alias("Mathf.Clamp", "clamp"); alias("Mathf.Lerp", "lerp"); alias("Mathf.Atan2", "atan2");
+        alias("Mathf.PingPong", "ping_pong"); alias("Mathf.SmoothStep", "smoothstep");
+        alias("Mathf.MoveTowards", "move_toward");
+        alias("Random.Range", "rand");
+        alias("Vector3.Distance", "dist3"); alias("Vector2.Distance", "dist");
+        alias("transform.Translate", "move"); alias("transform.Rotate", "rotate");
+        alias("transform.LookAt", "look_at3");
+        alias("Instantiate", "spawn"); alias("Object.Instantiate", "spawn");
+        alias("Destroy", "destroy"); alias("Object.Destroy", "destroy");
+        alias("Physics2D.Raycast", "raycast"); alias("Physics.Raycast", "raycast3");
+        alias("SceneManager.LoadScene", "load_scene_name");
+        alias("Application.Quit", "quit");
+        alias("GameObject.Find", "exists");
     }
 };
 
@@ -2711,23 +2984,35 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
 
 void OkayScriptVM::Bind(ScriptHost* host) { m_impl->rt.host = host; }
 
+namespace {
+// Call the first of `names` that the script defines (with the given args).
+// Lets a script use Unity's PascalCase (Start/Update) or the classic
+// lowercase (start/update) names interchangeably.
+void CallFirst(Runtime& rt, std::initializer_list<const char*> names,
+               std::vector<Value>& args, const char* label) {
+    for (const char* n : names) {
+        if (rt.functions.count(n)) {
+            try { rt.Call(n, args); }
+            catch (const std::exception& e) { Log::Error("OkayScript ", label, "(): ", e.what()); }
+            return;
+        }
+    }
+}
+} // namespace
+
 void OkayScriptVM::CallStart() {
     if (!m_impl->loaded) return;
-    if (m_impl->rt.functions.count("start")) {
-        std::vector<Value> none;
-        try { m_impl->rt.Call("start", none); }
-        catch (const std::exception& e) { Log::Error("OkayScript start(): ", e.what()); }
-    }
+    std::vector<Value> none;
+    CallFirst(m_impl->rt, {"Awake", "awake"}, none, "Awake");   // Unity runs Awake then Start
+    CallFirst(m_impl->rt, {"Start", "start"}, none, "Start");
 }
 
 void OkayScriptVM::CallUpdate(float deltaTime) {
     if (!m_impl->loaded) return;
     if (m_impl->rt.host) m_impl->rt.host->deltaTime = deltaTime;
-    if (m_impl->rt.functions.count("update")) {
-        std::vector<Value> args{Value{deltaTime}};
-        try { m_impl->rt.Call("update", args); }
-        catch (const std::exception& e) { Log::Error("OkayScript update(): ", e.what()); }
-    }
+    std::vector<Value> args{Value{deltaTime}};
+    CallFirst(m_impl->rt, {"Update", "update"}, args, "Update");
+    CallFirst(m_impl->rt, {"LateUpdate", "late_update"}, args, "LateUpdate");
     // Scheduled after()/every() callbacks tick even without an update().
     if (!m_impl->rt.timers.empty()) {
         try { m_impl->rt.TickTimers(deltaTime); }
@@ -2737,10 +3022,30 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
 
 void OkayScriptVM::CallEvent(const std::string& function) {
     if (!m_impl->loaded) return;
-    if (m_impl->rt.functions.count(function)) {
+    // The requested (engine) name wins; otherwise accept a Unity-style alias so
+    // scripts can name handlers the Unity way (OnCollisionEnter, OnClick, ...).
+    static const std::unordered_map<std::string, std::vector<std::string>> kAliases = {
+        {"on_collision", {"OnCollisionEnter", "OnCollisionEnter2D"}},
+        {"on_trigger",   {"OnTriggerEnter",   "OnTriggerEnter2D"}},
+        {"on_click",     {"OnClick", "OnMouseDown", "OnPointerClick"}},
+        {"on_change",    {"OnValueChanged"}},
+        {"on_toggle",    {"OnToggle", "OnValueChanged"}},
+        {"on_drop",      {"OnDrop"}},
+        {"on_receive",   {"OnReceive"}},
+        {"on_drag",      {"OnDrag"}},
+        {"on_drag_start",{"OnBeginDrag"}},
+    };
+    std::string fn = function;
+    if (!m_impl->rt.functions.count(fn)) {
+        auto it = kAliases.find(function);
+        if (it != kAliases.end())
+            for (const auto& alt : it->second)
+                if (m_impl->rt.functions.count(alt)) { fn = alt; break; }
+    }
+    if (m_impl->rt.functions.count(fn)) {
         std::vector<Value> none;
-        try { m_impl->rt.Call(function, none); }
-        catch (const std::exception& e) { Log::Error("OkayScript ", function.c_str(), "(): ", e.what()); }
+        try { m_impl->rt.Call(fn, none); }
+        catch (const std::exception& e) { Log::Error("OkayScript ", fn.c_str(), "(): ", e.what()); }
     }
 }
 

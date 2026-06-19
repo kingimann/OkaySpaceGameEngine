@@ -24,6 +24,26 @@ function update(dt) {
 }
 ```
 
+### Prefer Unity style? Write it like C#.
+
+OkayScript also accepts a Unity/C# flavor — PascalCase `Start()`/`Update()`,
+`transform.position`, `Input.GetKeyDown(...)`, `Time.deltaTime`, `new Vector3(...)`,
+typed vars (`float speed = 5f;`), `i++`, and a `class : MonoBehaviour` wrapper —
+so Unity code often pastes in unchanged:
+
+```cs
+public class Player : MonoBehaviour {
+    float speed = 5f;
+    void Update() {
+        transform.position.x += Input.GetAxis("Horizontal") * speed * Time.deltaTime;
+        if (Input.GetKeyDown("space")) { Debug.Log("jump!"); }
+    }
+}
+```
+
+See **Unity-style syntax** in [scripting.md](scripting.md) for the full list of
+supported properties, methods, and event-handler names.
+
 A complete movement example:
 
 ```

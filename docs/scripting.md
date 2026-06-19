@@ -17,6 +17,54 @@ function update(dt) {
 }
 ```
 
+## Unity-style syntax
+
+OkayScript can be written to look almost exactly like a Unity C# `MonoBehaviour`,
+so Unity habits (and code) carry over. All of this is optional — the classic
+style below still works — but you can write:
+
+```cs
+public class Player : MonoBehaviour {
+    float speed = 5f;
+
+    void Start() {
+        transform.position = new Vector3(0, 0, 0);
+    }
+
+    void Update() {
+        // Move with the arrow/WASD axes, scaled by deltaTime.
+        transform.position.x += Input.GetAxis("Horizontal") * speed * Time.deltaTime;
+        transform.position.y += Input.GetAxis("Vertical")   * speed * Time.deltaTime;
+
+        if (Input.GetKeyDown("space")) { Debug.Log("jump!"); }
+
+        for (int i = 0; i < 3; i++) { /* ... */ }
+    }
+}
+```
+
+What's supported:
+
+- **Lifecycle methods** `Awake()`, `Start()`, `Update()`, `LateUpdate()` (and the
+  classic `start`/`update`). `void`/typed return + a `class : MonoBehaviour`
+  wrapper are accepted and the methods are hoisted out, so a real Unity script
+  often pastes in unchanged.
+- **Dot properties**: `transform.position` / `.localPosition` / `.localScale`
+  (and `.x/.y/.z`), `transform.eulerAngles.z`, `Time.deltaTime` / `Time.time` /
+  `Time.timeScale`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
+  `Input.mousePosition.x/y`, `Mathf.PI`, `Random.value`, `Vector3.zero/one/up/...`.
+  Readable and assignable (`transform.position.x = 5;`).
+- **Dot methods**: `Input.GetKey/GetKeyDown/GetKeyUp/GetAxis/GetMouseButton...`,
+  `Mathf.Sin/Cos/Sqrt/Abs/Clamp/Lerp/...`, `Debug.Log(...)`,
+  `transform.Translate(x,y)` / `transform.Rotate(deg)`, `gameObject.SetActive(b)`,
+  `Instantiate(...)`, `Destroy()`, `Physics2D.Raycast(...)`,
+  `Random.Range(a,b)`, `SceneManager.LoadScene("name")`.
+- **`new Vector3(x,y,z)`** / `new Vector2(x,y)` constructors.
+- **Typed declarations** `int x = 0;` `float speed = 5f;` `Vector3 v = ...;` (with
+  `f`/`d` numeric suffixes), plus `i++` / `++i` / `i--`.
+- **Event handlers** the Unity way: `OnCollisionEnter()`, `OnTriggerEnter()`,
+  `OnClick()`, `OnValueChanged()` (alongside the classic `on_collision` etc).
+
 ## Language
 
 - **Variables:** `var x = 1;` (function-level scope). Reassign with `x = 2;`.

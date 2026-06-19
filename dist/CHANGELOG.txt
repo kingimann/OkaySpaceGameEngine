@@ -1,5 +1,26 @@
 OkaySpace Game Engine — Changelog
 
+v1.99.0
+  - Scripting now reads like Unity C#. You can write OkayScript almost exactly
+    like a Unity MonoBehaviour, and a real Unity script often pastes in unchanged:
+      * Lifecycle: void Start() / void Update() / Awake() / LateUpdate() (the
+        classic start/update still work), plus a "public class Foo : MonoBehaviour
+        { ... }" wrapper whose methods & fields are hoisted out automatically.
+      * Dotted properties: transform.position(.x/.y/.z), transform.localScale,
+        transform.eulerAngles.z, Time.deltaTime/time/timeScale, gameObject.name/
+        activeSelf/tag, Screen.width/height, Input.mousePosition, Mathf.PI,
+        Random.value, Vector3.zero/one/up/... — readable AND assignable
+        (transform.position = new Vector3(x, y, z); transform.position.x = 5;).
+      * Dotted methods: Input.GetKey/GetKeyDown/GetAxis/GetMouseButton...,
+        Mathf.Sin/Cos/Sqrt/Clamp/Lerp/..., Debug.Log, transform.Translate/Rotate,
+        gameObject.SetActive, Instantiate/Destroy, Physics2D.Raycast,
+        Random.Range, SceneManager.LoadScene.
+      * Language: typed declarations (int x = 0; float speed = 5f;), f/d numeric
+        suffixes, i++ / ++i / i--, and new Vector3()/Vector2() constructors.
+      * Unity event names: OnCollisionEnter / OnTriggerEnter / OnClick /
+        OnValueChanged (alongside the classic on_collision etc).
+    Fully backward compatible — existing scripts are untouched.
+
 v1.98.0
   - DOTween for UI + more transform tweens: tween_ui_move / tween_ui_size animate
     a UI widget's anchored position and size (slide menus in, pop panels open) —

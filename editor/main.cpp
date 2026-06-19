@@ -164,6 +164,28 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     return g_view3DTex[slot];
 }
 
+// Cached image thumbnail for the Project browser: loads the file once and
+// uploads it as an SDL texture. okay::Image is tightly-packed RGBA8, which is
+// exactly SDL_PIXELFORMAT_ABGR8888 byte order on little-endian. Returns nullptr
+// if the image can't be loaded.
+SDL_Texture* GetThumb(const std::string& path) {
+    static std::unordered_map<std::string, SDL_Texture*> cache;
+    auto it = cache.find(path);
+    if (it != cache.end()) return it->second;
+    SDL_Texture* tex = nullptr;
+    okay::Image img;
+    if (g_sdlRenderer && img.Load(path) && img.Width() > 0) {
+        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
+        if (tex) {
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+            SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4);
+        }
+    }
+    cache[path] = tex;   // cache failures (nullptr) too, so we don't retry
+    return tex;
+}
+
 // ---- Self-updater + runtime fetcher -----------------------------------
 // The editor can pull newer published builds from GitHub and, when exporting a
 // game, fetch the player runtime if it isn't sitting beside the editor — so a
@@ -1107,12 +1129,21 @@ void DrawProject(EditorState& ed) {
         ImGui::PushID(shown);
         ImGui::BeginGroup();
         ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cv.x * 0.5f, cv.y * 0.5f, cv.z * 0.5f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, cv);
-        if (selected == full) ImGui::PushStyleColor(ImGuiCol_Button, cv);
-        ImGui::Button(k.letter, ImVec2(cell, cell));
-        if (selected == full) ImGui::PopStyleColor();
-        ImGui::PopStyleColor(2);
+        SDL_Texture* thumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
+        if (thumb) {
+            // Real image preview; tint the frame when selected.
+            if (selected == full) ImGui::PushStyleColor(ImGuiCol_Button, cv);
+            if (ImGui::ImageButton("##thumb", (ImTextureID)thumb, ImVec2(cell, cell)))
+                selected = full;
+            if (selected == full) ImGui::PopStyleColor();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cv.x * 0.5f, cv.y * 0.5f, cv.z * 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, cv);
+            if (selected == full) ImGui::PushStyleColor(ImGuiCol_Button, cv);
+            ImGui::Button(k.letter, ImVec2(cell, cell));
+            if (selected == full) ImGui::PopStyleColor();
+            ImGui::PopStyleColor(2);
+        }
         bool hov = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked()) selected = full;
         bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
@@ -1168,6 +1199,22 @@ void DrawProject(EditorState& ed) {
         ImGui::TextDisabled(ed.projectDir().empty()
             ? "No project open — File > New Project to create one."
             : "Empty folder.");
+    }
+
+    // Right-click empty space: create assets here / reveal the folder.
+    if (ImGui::BeginPopupContextWindow("bgctx",
+            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        if (canEdit) {
+            if (ImGui::MenuItem("New Folder")) { std::error_code ce; fs::create_directory(uniquePath("New Folder", ""), ce); }
+            if (ImGui::MenuItem("New Script")) {
+                fs::path p = uniquePath("NewScript", ".okay");
+                std::ofstream(p) << extide::StarterScript("okayscript");
+                ConsoleLog("Created " + p.string());
+            }
+            ImGui::Separator();
+        }
+        if (ImGui::MenuItem("Show in Explorer")) extide::OpenExternal(dir.string());
+        ImGui::EndPopup();
     }
 
     // Rename modal (opened from an item's context menu).

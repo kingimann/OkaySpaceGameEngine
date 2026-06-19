@@ -2544,11 +2544,56 @@ struct OkayScriptVM::Impl {
             });
             return Value{};
         };
-        // Returns the host's tweenable albedo color, if any (sprite then mesh).
+        // Rotate to an ABSOLUTE Z angle over dur (DOTween's DORotate) — unlike
+        // tween_rotate which spins by a relative amount.
+        b["tween_rotate_to"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Quat start = t->localRotation, target = Quat::Euler({0, 0, a[0].AsFloat()});
+            Ease e = easeFromArg(a, 2);
+            s->Tween(a[1].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localRotation = Quat::Slerp(start, target, k); }, onDoneFromArg(a, 3));
+            return Value{};
+        };
+        // Non-uniform scale to (sx, sy) (DOTween's DOScale with a Vector).
+        b["tween_scale_xy"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            Vec3 start = t->localScale, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
+            Ease e = easeFromArg(a, 3);
+            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = start + (target - start) * k; }, onDoneFromArg(a, 4));
+            return Value{};
+        };
+        // Tween a UI widget's anchored position (UI widgets don't use the
+        // Transform) — slide menus/panels in and out.
+        b["tween_ui_move"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Scheduler* s = sched();
+            if (!s || !rt.host || !rt.host->gameObject || a.size() < 3) return Value{};
+            UIRect r = GetUIRect(rt.host->gameObject);
+            if (!r.valid || !r.position) return Value{};
+            Vec2* pos = r.position; Vec2 start = *pos, target{a[0].AsFloat(), a[1].AsFloat()};
+            Ease e = easeFromArg(a, 3);
+            s->Tween(a[2].AsFloat(), [pos, start, target, e](float u) { float k = Easing::Evaluate(e, u); *pos = start + (target - start) * k; }, onDoneFromArg(a, 4));
+            return Value{};
+        };
+        // Tween a UI widget's size (grow/shrink panels, popups).
+        b["tween_ui_size"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Scheduler* s = sched();
+            if (!s || !rt.host || !rt.host->gameObject || a.size() < 3) return Value{};
+            UIRect r = GetUIRect(rt.host->gameObject);
+            if (!r.valid || !r.sizePtr) return Value{};
+            Vec2* sz = r.sizePtr; Vec2 start = *sz, target{a[0].AsFloat(), a[1].AsFloat()};
+            Ease e = easeFromArg(a, 3);
+            s->Tween(a[2].AsFloat(), [sz, start, target, e](float u) { float k = Easing::Evaluate(e, u); *sz = start + (target - start) * k; }, onDoneFromArg(a, 4));
+            return Value{};
+        };
+        // Returns the host's tweenable albedo color, if any (sprite, mesh, or UI).
         auto colorPtr = [this]() -> Color* {
             if (!rt.host || !rt.host->gameObject) return nullptr;
-            if (auto* sr = rt.host->gameObject->GetComponent<SpriteRenderer>()) return &sr->color;
-            if (auto* mr = rt.host->gameObject->GetComponent<MeshRenderer>()) return &mr->color;
+            GameObject* g = rt.host->gameObject;
+            if (auto* sr = g->GetComponent<SpriteRenderer>()) return &sr->color;
+            if (auto* mr = g->GetComponent<MeshRenderer>())   return &mr->color;
+            if (auto* im = g->GetComponent<UIImage>())        return &im->color;
+            if (auto* pn = g->GetComponent<UIPanel>())        return &pn->color;
             return nullptr;
         };
         b["tween_color"] = [this, sched, easeFromArg, colorPtr, onDoneFromArg](std::vector<Value>& a) {

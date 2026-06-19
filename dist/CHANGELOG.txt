@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.98.0
+  - DOTween for UI + more transform tweens: tween_ui_move / tween_ui_size animate
+    a UI widget's anchored position and size (slide menus in, pop panels open) —
+    UI widgets don't use the Transform, so these target the widget directly. Also
+    tween_rotate_to (rotate to an ABSOLUTE angle via shortest path, vs the
+    relative tween_rotate) and tween_scale_xy (non-uniform scale). And tween_color
+    / tween_fade now also drive UI Image and UI Panel colors, not just sprites and
+    meshes.
+
 v1.97.0
   - DOTween, even bigger: tween_move_by (relative glide), tween_jump (arc-jump
     to a target peaking at a height — coins flying to the HUD, hops), tween_path

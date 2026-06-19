@@ -83,6 +83,35 @@ int main() {
         CHECK(go->GetComponent<TextRenderer>()->text == "Score: 100");
     }
 
+    // --- tween_rotate_to / tween_scale_xy reach absolute targets -------
+    {
+        Scene s("TwRotScale"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Obj");
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() { tween_scale_xy(3, 5, 1.0); }\n");
+        s.Start();
+        for (int i = 0; i < 15; ++i) s.Update(0.1f);
+        CHECK_NEAR(go->transform->localScale.x, 3.0f, 0.05f);
+        CHECK_NEAR(go->transform->localScale.y, 5.0f, 0.05f);
+    }
+
+    // --- tween_ui_move / tween_ui_size animate a UI widget -------------
+    {
+        Scene s("TwUI"); s.physicsEnabled = false;
+        UICanvas::Set(1280, 720);
+        GameObject* go = s.CreateGameObject("Panel");
+        auto* pn = go->AddComponent<UIPanel>();
+        pn->position = {0, 0}; pn->size = {10, 10};
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() { tween_ui_move(200, 100, 1.0); tween_ui_size(300, 80, 1.0); }\n");
+        s.Start();
+        for (int i = 0; i < 15; ++i) s.Update(0.1f);
+        CHECK_NEAR(pn->position.x, 200.0f, 0.5f);
+        CHECK_NEAR(pn->position.y, 100.0f, 0.5f);
+        CHECK_NEAR(pn->size.x, 300.0f, 0.5f);
+        CHECK_NEAR(pn->size.y, 80.0f, 0.5f);
+    }
+
     // --- Tween shake settles back to the starting position --------------
     {
         Scene s("TwShake"); s.physicsEnabled = false;

@@ -179,9 +179,13 @@ its last argument(s).
 | `tween_move(x, y, dur[, ease][, "done"])` | move to (x, y); `ease` e.g. `"out_quad"` |
 | `tween_move3(x, y, z, dur[, ease][, "done"])` | move in 3D |
 | `tween_scale(s, dur[, ease][, "done"])` | scale to uniform `s` |
-| `tween_rotate(deg, dur[, ease][, "done"])` | spin `deg` degrees about Z |
+| `tween_rotate(deg, dur[, ease][, "done"])` | spin `deg` degrees about Z (relative) |
+| `tween_rotate_to(deg, dur[, ease][, "done"])` | rotate to an **absolute** Z angle (shortest path) |
+| `tween_scale_xy(sx, sy, dur[, ease][, "done"])` | non-uniform scale to (sx, sy) |
+| `tween_ui_move(x, y, dur[, ease][, "done"])` | move a **UI widget** (anchored position) |
+| `tween_ui_size(w, h, dur[, ease][, "done"])` | resize a **UI widget** (grow/shrink panels) |
 | `tween_color(r, g, b, dur[, ease][, "done"])` | fade the sprite/mesh color |
-| `tween_fade(a, dur[, ease][, "done"])` | fade alpha to `a` |
+| `tween_fade(a, dur[, ease][, "done"])` | fade alpha to `a` (works on sprites, meshes & UI Image/Panel) |
 | `tween_move_by(dx, dy, dur[, ease][, "done"])` | move by a **relative** offset |
 | `tween_jump(x, y, height, dur[, "done"])` | arc-jump to (x, y) peaking `height` up (coins, hops) |
 | `tween_path(dur, x1, y1, x2, y2, ...)` | move through a list of waypoints |

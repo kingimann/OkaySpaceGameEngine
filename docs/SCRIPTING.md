@@ -142,7 +142,10 @@ name as its trailing argument(s).
 |---|---|
 | `tween_move(x, y, dur [, ease][, "done"])` / `tween_move3(x,y,z,dur ...)` | Animate position |
 | `tween_scale(s, dur [, ease][, "done"])` | Animate uniform scale |
-| `tween_rotate(deg, dur [, ease][, "done"])` | Spin about Z |
+| `tween_rotate(deg, dur [, ease][, "done"])` | Spin about Z (relative) |
+| `tween_rotate_to(deg, dur [, ease][, "done"])` | Rotate to an absolute Z angle |
+| `tween_scale_xy(sx, sy, dur [, ease][, "done"])` | Non-uniform scale |
+| `tween_ui_move(x, y, dur [, ease][, "done"])` / `tween_ui_size(w, h, dur ...)` | Move / resize a UI widget |
 | `tween_color(r, g, b, dur [, ease][, "done"])` / `tween_fade(alpha, dur ...)` | Animate color / opacity |
 | `tween_move_by(dx, dy, dur [, ease][, "done"])` | Move by a relative offset |
 | `tween_jump(x, y, height, dur [, "done"])` | Arc-jump to a target (coins, hops) |

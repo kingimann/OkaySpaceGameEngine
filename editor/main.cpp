@@ -2780,6 +2780,33 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
         }
+        // Anchor presets (Unity's 3x3): pick a corner/edge/center; the widget
+        // keeps its on-screen position (its offset is recomputed for the new
+        // anchor) so re-anchoring never makes it jump.
+        UIRect ar = GetUIRect(go);
+        if (ar.anchorPtr && ar.position) {
+            ImGui::TextDisabled("Anchor preset:");
+            float cw = UICanvas::Width(), ch = UICanvas::Height();
+            Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, cw, ch);
+            for (int row = 0; row < 3; ++row) {
+                for (int col = 0; col < 3; ++col) {
+                    if (col) ImGui::SameLine();
+                    UIAnchor cand = (UIAnchor)(row * 3 + col);
+                    bool sel = (*ar.anchorPtr == cand);
+                    if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.75f, 1.0f));
+                    ImGui::PushID(row * 3 + col);
+                    if (ImGui::Button("##anc", ImVec2(20, 18))) {
+                        *ar.anchorPtr = cand;       // preserve on-screen position
+                        Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, cw, ch);
+                        ar.position->x = resolved.x - term.x;
+                        ar.position->y = resolved.y - term.y;
+                        ed.dirty = true;
+                    }
+                    ImGui::PopID();
+                    if (sel) ImGui::PopStyleColor();
+                }
+            }
+        }
         ImGui::Spacing();
     }
 

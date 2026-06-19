@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.75.0
+  - Anchor presets (Unity-style 3x3 grid) in a selected UI widget's inspector:
+    click a corner/edge/center to set the anchor. The widget keeps its on-screen
+    position — its pixel offset is recomputed for the new anchor — so switching
+    anchors never makes it jump. The current anchor is highlighted.
+
 v1.74.0
   - UI layering + centering: a selected UI widget's inspector gains Bring to
     Front / Send to Back (controls draw order and which overlapping widget gets

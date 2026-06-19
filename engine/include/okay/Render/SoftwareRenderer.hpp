@@ -157,6 +157,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const auto& t = mr->mesh.triangles;
         const bool hasUV = mr->mesh.uvs.size() == v.size();
         Image* tex = mr->texture.empty() ? nullptr : GetCachedTexture(mr->texture);
+        // A clip-space vertex carrying its (unprojected) UV, for near-plane
+        // clipping. Clipping in homogeneous space before the /w divide is what
+        // prevents triangles from exploding/vanishing when you zoom in close.
+        struct CV { float x, y, z, w, u, v; };
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
             Vec3 wp[3];
@@ -164,19 +168,42 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
             Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
             if (Vec3::Dot(normal, eye - centroid) < 0.0f) normal = normal * -1.0f; // two-sided
-            float sx[3], sy[3], sd[3], iw[3]; bool ok = true;
+
+            // Per-corner clip coords + UV (planar/box projection unless the mesh
+            // carries its own UVs).
+            Vec3 ln = Vec3::Cross(v[idx[1]] - v[idx[0]], v[idx[2]] - v[idx[0]]);
+            float ax = std::fabs(ln.x), ay = std::fabs(ln.y), az = std::fabs(ln.z);
+            CV in[3];
             for (int k = 0; k < 3; ++k) {
                 Vec4 c = vp * Vec4{wp[k], 1.0f};
-                if (c.w <= 0.05f) { ok = false; break; }       // behind camera
-                sx[k] = (c.x / c.w * 0.5f + 0.5f) * W;
-                sy[k] = (1.0f - (c.y / c.w * 0.5f + 0.5f)) * H;
-                // Normalized-device depth (clip z/w). Unlike world distance, this
-                // is affine in screen space, so per-pixel barycentric interpolation
-                // gives the correct depth — fixes faces bleeding through at angles.
-                sd[k] = c.z / c.w;
-                iw[k] = 1.0f / c.w;
+                float uu, vt;
+                if (hasUV) { uu = mr->mesh.uvs[idx[k]].x; vt = mr->mesh.uvs[idx[k]].y; }
+                else {
+                    const Vec3& p = v[idx[k]];
+                    if (ax >= ay && ax >= az) { uu = p.z + 0.5f; vt = p.y + 0.5f; }
+                    else if (ay >= ax && ay >= az) { uu = p.x + 0.5f; vt = p.z + 0.5f; }
+                    else { uu = p.x + 0.5f; vt = p.y + 0.5f; }
+                }
+                in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y};
             }
-            if (!ok) continue;
+
+            // Sutherland-Hodgman clip against the near plane (w > NEAR).
+            const float NEAR = 1e-4f;
+            CV poly[8]; int pn = 0;
+            for (int e = 0; e < 3; ++e) {
+                const CV& A = in[e];
+                const CV& B = in[(e + 1) % 3];
+                bool inA = A.w > NEAR, inB = B.w > NEAR;
+                if (inA) poly[pn++] = A;
+                if (inA != inB) {
+                    float tt = (NEAR - A.w) / (B.w - A.w);
+                    poly[pn++] = {A.x + (B.x - A.x) * tt, A.y + (B.y - A.y) * tt,
+                                  A.z + (B.z - A.z) * tt, A.w + (B.w - A.w) * tt,
+                                  A.u + (B.u - A.u) * tt, A.v + (B.v - A.v) * tt};
+                }
+            }
+            if (pn < 3) continue;   // entirely behind the camera
+
             // Material: diffuse (Lambert, or flat when unlit) + Blinn-Phong
             // specular highlight + self-illuminating emissive.
             float shade = mr->unlit ? 1.0f : SceneLight::Shade(normal);
@@ -188,33 +215,31 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 float nh = Vec3::Dot(normal, h);
                 if (nh > 0.0f) spec = std::pow(nh, mr->shininess) * mr->specular;
             }
-            if (tex) {
-                // UVs: use the mesh's own if present, else planar/box-project
-                // from local position along the face's dominant axis (exact on
-                // axis-aligned faces like cubes/planes).
-                float u[3], vv[3];
-                Vec3 ln = Vec3::Cross(v[idx[1]] - v[idx[0]], v[idx[2]] - v[idx[0]]);
-                float ax = std::fabs(ln.x), ay = std::fabs(ln.y), az = std::fabs(ln.z);
-                for (int k = 0; k < 3; ++k) {
-                    float uu, vt;
-                    if (hasUV) { uu = mr->mesh.uvs[idx[k]].x; vt = mr->mesh.uvs[idx[k]].y; }
-                    else {
-                        const Vec3& p = v[idx[k]];
-                        if (ax >= ay && ax >= az) { uu = p.z + 0.5f; vt = p.y + 0.5f; }
-                        else if (ay >= ax && ay >= az) { uu = p.x + 0.5f; vt = p.z + 0.5f; }
-                        else { uu = p.x + 0.5f; vt = p.y + 0.5f; }
-                    }
-                    uu *= mr->tiling.x; vt *= mr->tiling.y;   // texture repeat
-                    u[k] = uu * iw[k]; vv[k] = vt * iw[k];   // perspective-correct
-                }
-                r.TriangleTex(sx, sy, sd, iw, u, vv, *tex, mr->color, shade, spec,
-                              mr->emissive.r, mr->emissive.g, mr->emissive.b);
-            } else {
-                std::uint32_t abgr = Raster::PackRGB(
-                    mr->color.r * shade + spec + mr->emissive.r,
-                    mr->color.g * shade + spec + mr->emissive.g,
-                    mr->color.b * shade + spec + mr->emissive.b);
-                r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1], sx[2], sy[2], sd[2], abgr);
+            std::uint32_t abgr = Raster::PackRGB(
+                mr->color.r * shade + spec + mr->emissive.r,
+                mr->color.g * shade + spec + mr->emissive.g,
+                mr->color.b * shade + spec + mr->emissive.b);
+
+            // Fan-triangulate the (possibly clipped) polygon and rasterize.
+            auto project = [&](const CV& c, float& sx, float& sy, float& sd, float& iw,
+                               float& uo, float& vo) {
+                iw = 1.0f / c.w;
+                sx = (c.x * iw * 0.5f + 0.5f) * W;
+                sy = (1.0f - (c.y * iw * 0.5f + 0.5f)) * H;
+                sd = c.z * iw;
+                uo = c.u * iw; vo = c.v * iw;
+            };
+            for (int j = 1; j + 1 < pn; ++j) {
+                const CV* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
+                float sx[3], sy[3], sd[3], iw[3], uu[3], vv[3];
+                for (int k = 0; k < 3; ++k)
+                    project(*tri[k], sx[k], sy[k], sd[k], iw[k], uu[k], vv[k]);
+                if (tex)
+                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, shade, spec,
+                                  mr->emissive.r, mr->emissive.g, mr->emissive.b);
+                else
+                    r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1],
+                               sx[2], sy[2], sd[2], abgr);
             }
         }
     }

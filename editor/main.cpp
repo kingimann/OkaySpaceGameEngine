@@ -593,16 +593,19 @@ void ApplyTheme() {
     else                   ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
     // Rounding & spacing for a soft, modern look.
-    s.WindowRounding    = 6.0f;  s.ChildRounding    = 6.0f;
-    s.FrameRounding     = 5.0f;  s.GrabRounding     = 5.0f;
-    s.PopupRounding     = 6.0f;  s.TabRounding      = 5.0f;
-    s.ScrollbarRounding = 9.0f;
-    s.WindowPadding   = ImVec2(10, 10); s.FramePadding = ImVec2(8, 5);
-    s.ItemSpacing     = ImVec2(8, 7);   s.ItemInnerSpacing = ImVec2(6, 5);
+    s.WindowRounding    = 7.0f;  s.ChildRounding    = 6.0f;
+    s.FrameRounding     = 6.0f;  s.GrabRounding     = 6.0f;
+    s.PopupRounding     = 7.0f;  s.TabRounding      = 6.0f;
+    s.ScrollbarRounding = 10.0f;
+    s.WindowPadding   = ImVec2(11, 10); s.FramePadding = ImVec2(9, 6);
+    s.ItemSpacing     = ImVec2(9, 8);   s.ItemInnerSpacing = ImVec2(7, 6);
+    s.CellPadding     = ImVec2(7, 5);   s.IndentSpacing = 18.0f;
     s.ScrollbarSize   = 13.0f;          s.GrabMinSize = 11.0f;
     s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 0.0f;
+    s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 2.0f;
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
     s.WindowMenuButtonPosition = ImGuiDir_None;
+    s.DockingSeparatorSize = 2.0f;
 
     // Light / Classic keep ImGui's own palette (only the metrics above apply).
     if (g_theme != 0) return;
@@ -643,6 +646,14 @@ void ApplyTheme() {
     c[ImGuiCol_DockingPreview]   = accentDim;
     c[ImGuiCol_TextSelectedBg]   = accentDim;
     c[ImGuiCol_NavHighlight]     = accent;
+    c[ImGuiCol_Text]             = ImVec4(0.90f, 0.92f, 0.95f, 1.00f);
+    c[ImGuiCol_TextDisabled]     = ImVec4(0.50f, 0.53f, 0.60f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.18f);
+    c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.32f, 0.35f, 0.42f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.40f, 0.44f, 0.52f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = accent;
+    c[ImGuiCol_CheckMark]        = ImVec4(0.40f, 0.80f, 1.00f, 1.00f);
+    c[ImGuiCol_DockingEmptyBg]   = ImVec4(0.085f, 0.09f, 0.11f, 1.00f);
 }
 
 // Build the default Unity-style dock layout once.
@@ -945,106 +956,236 @@ void DrawConsole() {
     ImGui::End();
 }
 
-// A short tag for a file, by extension, for the asset browser.
-static const char* AssetTag(const std::string& ext) {
-    if (ext == ".okayscene")  return "[Scene] ";
-    if (ext == ".okayprefab") return "[Prefab]";
-    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga")
-        return "[Image] ";
-    if (ext == ".wav")        return "[Sound] ";
-    if (ext == ".okay" || ext == ".lua" || ext == ".cs") return "[Script]";
-    return "[File]  ";
+// Lowercase a copy of a string (for case-insensitive compares).
+static std::string Lower(std::string s) {
+    for (auto& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+// Visual kind (icon color + short letter) for an asset, by extension.
+struct AssetKind { ImU32 col; const char* letter; };
+static AssetKind KindOf(const std::string& extLower, bool isDir) {
+    if (isDir) return {IM_COL32(225, 200, 95, 255), "DIR"};
+    if (extLower == ".okayscene")  return {IM_COL32(90, 150, 240, 255), "SCN"};
+    if (extLower == ".okayprefab") return {IM_COL32(80, 210, 225, 255), "PFB"};
+    if (extLower == ".png" || extLower == ".jpg" || extLower == ".jpeg" ||
+        extLower == ".bmp" || extLower == ".tga") return {IM_COL32(110, 200, 120, 255), "IMG"};
+    if (extLower == ".wav")        return {IM_COL32(230, 160, 70, 255), "WAV"};
+    if (extLower == ".okay" || extLower == ".lua" || extLower == ".cs")
+        return {IM_COL32(185, 140, 235, 255), "CS"};
+    if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ"};
+    if (extLower == ".okayvs")     return {IM_COL32(150, 200, 170, 255), "VS"};
+    return {IM_COL32(150, 152, 162, 255), "•"};
+}
+
+// Recursive folder tree (left pane). Clicking a node makes it the current dir.
+static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::size_t bufsz) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::vector<fs::path> subs;
+    for (auto& e : fs::directory_iterator(dir, ec))
+        if (e.is_directory(ec)) subs.push_back(e.path());
+    std::sort(subs.begin(), subs.end(), [](const fs::path& a, const fs::path& b) {
+        return Lower(a.filename().string()) < Lower(b.filename().string());
+    });
+    for (const fs::path& s : subs) {
+        bool hasKids = false;
+        std::error_code e2;
+        for (auto& c : fs::directory_iterator(s, e2)) { if (c.is_directory(e2)) { hasKids = true; break; } }
+        ImGuiTreeNodeFlags f = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (!hasKids) f |= ImGuiTreeNodeFlags_Leaf;
+        if (fs::path(dirBuf) == s) f |= ImGuiTreeNodeFlags_Selected;
+        bool open = ImGui::TreeNodeEx(s.filename().string().c_str(), f);
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+            std::strncpy(dirBuf, s.string().c_str(), bufsz - 1);
+        if (open) { DrawFolderTree(s, dirBuf, bufsz); ImGui::TreePop(); }
+    }
 }
 
 void DrawProject(EditorState& ed) {
     namespace fs = std::filesystem;
     static char dirBuf[512] = ".";
-    static bool recursive = false;
-    static std::string lastProject;   // re-home the browser when a project opens
-    if (ImGui::Begin("Project", &g_showProject)) {
-        // When a project is opened/created, point the browser at its Assets/.
-        if (!ed.projectDir().empty() && ed.projectDir() != lastProject) {
-            lastProject = ed.projectDir();
-            std::string assets = (fs::path(ed.projectDir()) / "Assets").string();
-            std::strncpy(dirBuf, assets.c_str(), sizeof(dirBuf) - 1);
-        }
+    static char search[96] = "";
+    static std::string selected;        // currently selected asset path
+    static std::string lastProject;     // re-home the browser when a project opens
+    if (!ImGui::Begin("Project", &g_showProject)) { ImGui::End(); return; }
 
-        if (!ed.projectDir().empty()) {
-            fs::path root(ed.projectDir());
-            ImGui::Text("Project: %s", root.filename().string().c_str());
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Assets")) {
-                std::string a = (root / "Assets").string();
-                std::strncpy(dirBuf, a.c_str(), sizeof(dirBuf) - 1);
-            }
-        } else {
-            ImGui::TextDisabled("No project — File > New Project to create one.");
-        }
-
-        ImGui::SetNextItemWidth(-130);
-        ImGui::InputText("##projdir", dirBuf, sizeof(dirBuf));
-        ImGui::SameLine();
-        if (ImGui::Button("Up")) {
-            std::error_code ec;
-            fs::path p = fs::absolute(dirBuf, ec).parent_path();
-            if (!ec) std::strncpy(dirBuf, p.string().c_str(), sizeof(dirBuf) - 1);
-        }
-        ImGui::SameLine();
-        ImGui::Checkbox("All", &recursive);   // recurse the whole subtree (Unity-like)
-        ImGui::TextDisabled("Scene: %s  |  %d objects",
-                            ed.path().empty() ? "(unsaved)" : ed.path().c_str(),
-                            (int)ed.scene().Objects().size());
-        ImGui::Separator();
-
-        ImGui::BeginChild("assets");
-        std::error_code ec;
-        fs::path dir(dirBuf);
-        std::vector<fs::directory_entry> dirs, files;
-        if (fs::is_directory(dir, ec)) {
-            if (recursive) {
-                for (auto& e : fs::recursive_directory_iterator(dir, ec))
-                    if (!e.is_directory(ec)) files.push_back(e);
-            } else {
-                for (auto& e : fs::directory_iterator(dir, ec)) {
-                    if (e.is_directory(ec)) dirs.push_back(e);
-                    else files.push_back(e);
-                }
-            }
-        }
-        auto byName = [](const fs::directory_entry& a, const fs::directory_entry& b) {
-            return a.path().filename().string() < b.path().filename().string();
-        };
-        std::sort(dirs.begin(), dirs.end(), byName);
-        std::sort(files.begin(), files.end(), byName);
-
-        for (auto& e : dirs) {
-            std::string name = e.path().filename().string();
-            if (ImGui::Selectable(("[Dir]    " + name).c_str()))
-                std::strncpy(dirBuf, e.path().string().c_str(), sizeof(dirBuf) - 1);
-        }
-        for (auto& e : files) {
-            std::string ext = e.path().extension().string();
-            for (auto& ch : ext) ch = (char)std::tolower((unsigned char)ch);
-            std::string label = std::string(AssetTag(ext)) + " " + e.path().filename().string();
-            if (ImGui::Selectable(label.c_str())) {
-                std::string full = e.path().string();
-                if (ext == ".okayscene") {
-                    std::string err;
-                    if (ed.Load(full, &err)) ConsoleLog("Opened " + full);
-                    else ConsoleLog("Open failed: " + err);
-                } else if (ext == ".okayprefab") {
-                    ed.PushUndo();
-                    std::string err;
-                    if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
-                        ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + full);
-                    } else ConsoleLog("Prefab load failed: " + err);
-                }
-            }
-        }
-        if (dirs.empty() && files.empty())
-            ImGui::TextDisabled("(empty or unreadable folder)");
-        ImGui::EndChild();
+    std::error_code ec;
+    fs::path root = ed.projectDir().empty() ? fs::absolute(".", ec)
+                                            : fs::path(ed.projectDir()) / "Assets";
+    if (!ed.projectDir().empty() && ed.projectDir() != lastProject) {
+        lastProject = ed.projectDir();
+        std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
     }
+    fs::path dir(dirBuf);
+
+    // ---- Top bar: breadcrumb + search --------------------------------
+    if (ImGui::SmallButton("Assets")) std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
+    {   // breadcrumb of folders between root and the current dir
+        fs::path rel = fs::relative(dir, root, ec);
+        if (!ec && !rel.empty() && rel.native()[0] != '.') {
+            fs::path acc = root;
+            for (const auto& part : rel) {
+                acc /= part;
+                ImGui::SameLine(0, 4); ImGui::TextDisabled("/"); ImGui::SameLine(0, 4);
+                if (ImGui::SmallButton(part.string().c_str()))
+                    std::strncpy(dirBuf, acc.string().c_str(), sizeof(dirBuf) - 1);
+            }
+        }
+    }
+    ImGui::SameLine();
+    float sw = 180.0f;
+    ImGui::SameLine(ImGui::GetContentRegionMax().x - sw);
+    ImGui::SetNextItemWidth(sw);
+    ImGui::InputTextWithHint("##search", "search...", search, sizeof(search));
+    ImGui::Separator();
+
+    // ---- Two panes: folder tree (left) + asset grid (right) ----------
+    ImGui::BeginChild("tree", ImVec2(180, 0), true);
+    ImGuiTreeNodeFlags rootF = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow |
+                               ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (fs::path(dirBuf) == root) rootF |= ImGuiTreeNodeFlags_Selected;
+    bool ro = ImGui::TreeNodeEx("Assets##root", rootF);
+    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+        std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
+    if (ro) { DrawFolderTree(root, dirBuf, sizeof(dirBuf)); ImGui::TreePop(); }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginChild("grid", ImVec2(0, 0), true);
+
+    // Asset operations toolbar + the deferred rename target.
+    static std::string renameTarget;
+    static char renameBuf[256] = "";
+    auto uniquePath = [&](const std::string& base, const std::string& ext) {
+        std::error_code ue;
+        fs::path p = dir / (base + ext);
+        for (int n = 1; fs::exists(p, ue); ++n) p = dir / (base + std::to_string(n) + ext);
+        return p;
+    };
+    bool canEdit = fs::is_directory(dir, ec);
+    ImGui::BeginDisabled(!canEdit);
+    if (ImGui::SmallButton("+ Folder")) {
+        std::error_code ce; fs::create_directory(uniquePath("New Folder", ""), ce);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Script")) {
+        fs::path p = uniquePath("NewScript", ".okay");
+        std::ofstream(p) << extide::StarterScript("okayscript");
+        ConsoleLog("Created " + p.string());
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(right-click an item for Rename / Delete)");
+    ImGui::Separator();
+
+    std::vector<fs::directory_entry> entries;
+    if (fs::is_directory(dir, ec))
+        for (auto& e : fs::directory_iterator(dir, ec)) entries.push_back(e);
+    std::sort(entries.begin(), entries.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
+        bool da = a.is_directory(), db = b.is_directory();
+        if (da != db) return da;     // folders first
+        return Lower(a.path().filename().string()) < Lower(b.path().filename().string());
+    });
+
+    std::string needle = Lower(search);
+    const float cell = 76.0f;
+    float availW = ImGui::GetContentRegionAvail().x;
+    int cols = (int)(availW / (cell + ImGui::GetStyle().ItemSpacing.x));
+    if (cols < 1) cols = 1;
+
+    int shown = 0, col = 0;
+    for (auto& e : entries) {
+        std::error_code de;
+        bool isDir = e.is_directory(de);
+        std::string name = e.path().filename().string();
+        if (!needle.empty() && Lower(name).find(needle) == std::string::npos) continue;
+        std::string ext = Lower(e.path().extension().string());
+        AssetKind k = KindOf(ext, isDir);
+        std::string full = e.path().string();
+
+        ImGui::PushID(shown);
+        ImGui::BeginGroup();
+        ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cv.x * 0.5f, cv.y * 0.5f, cv.z * 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, cv);
+        if (selected == full) ImGui::PushStyleColor(ImGuiCol_Button, cv);
+        ImGui::Button(k.letter, ImVec2(cell, cell));
+        if (selected == full) ImGui::PopStyleColor();
+        ImGui::PopStyleColor(2);
+        bool hov = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) selected = full;
+        bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cell);
+        ImGui::TextWrapped("%s", name.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", name.c_str());
+
+        // Per-item right-click: Open / Rename / Delete.
+        if (ImGui::BeginPopupContextItem("itemctx")) {
+            selected = full;
+            if (ImGui::MenuItem("Open")) dbl = true;
+            if (ImGui::MenuItem("Rename")) {
+                renameTarget = full;
+                std::strncpy(renameBuf, name.c_str(), sizeof(renameBuf) - 1);
+                renameBuf[sizeof(renameBuf) - 1] = '\0';
+            }
+            if (ImGui::MenuItem("Delete")) {
+                std::error_code re; fs::remove_all(full, re);
+                ConsoleLog((re ? "Delete failed: " : "Deleted ") + full);
+                if (selected == full) selected.clear();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (dbl) {
+            if (isDir) std::strncpy(dirBuf, full.c_str(), sizeof(dirBuf) - 1);
+            else if (ext == ".okayscene") {
+                std::string err;
+                if (ed.Load(full, &err)) ConsoleLog("Opened " + full);
+                else ConsoleLog("Open failed: " + err);
+            } else if (ext == ".okayprefab") {
+                ed.PushUndo();
+                std::string err;
+                if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
+                    ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + full);
+                } else ConsoleLog("Prefab load failed: " + err);
+            } else if (ext == ".okay" || ext == ".lua" || ext == ".cs" || ext == ".okayvs") {
+                extide::OpenExternal(full);
+            }
+        }
+
+        ImGui::PopID();
+        if (++col < cols) ImGui::SameLine();
+        else col = 0;
+        ++shown;
+    }
+    if (shown == 0) {
+        ImGui::TextDisabled(ed.projectDir().empty()
+            ? "No project open — File > New Project to create one."
+            : "Empty folder.");
+    }
+
+    // Rename modal (opened from an item's context menu).
+    if (!renameTarget.empty()) ImGui::OpenPopup("Rename Asset");
+    if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputText("New name", renameBuf, sizeof(renameBuf));
+        bool ok = ImGui::Button("Rename", ImVec2(110, 0));
+        ImGui::SameLine();
+        bool cancel = ImGui::Button("Cancel", ImVec2(110, 0));
+        if (ok && renameBuf[0]) {
+            fs::path src(renameTarget), dst = fs::path(renameTarget).parent_path() / renameBuf;
+            std::error_code re; fs::rename(src, dst, re);
+            ConsoleLog((re ? "Rename failed: " : "Renamed to ") + dst.string());
+            if (selected == renameTarget) selected = dst.string();
+            renameTarget.clear(); ImGui::CloseCurrentPopup();
+        } else if (cancel) { renameTarget.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+
+    ImGui::EndChild();
     ImGui::End();
 }
 
@@ -2832,6 +2973,23 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
         ed.camYaw   -= io.MouseDelta.x * 0.4f;
         ed.camPitch = Mathf::Clamp(ed.camPitch + io.MouseDelta.y * 0.4f, -85.0f, 85.0f);
+    }
+    // Fly the Scene camera with WASD while holding the right mouse button
+    // (Unity-style); Q/E go down/up, Shift moves faster. Right-mouse gating keeps
+    // the W/E/R tool shortcuts working normally when not flying.
+    if (!gameView && ImGui::IsMouseDown(ImGuiMouseButton_Right) && !io.WantTextInput) {
+        float yr = ed.camYaw * Mathf::Deg2Rad;
+        Vec3 fwd{-Mathf::Sin(yr), 0.0f, -Mathf::Cos(yr)};   // ground-plane forward
+        Vec3 right{Mathf::Cos(yr), 0.0f, -Mathf::Sin(yr)};
+        float spd = ed.camDist * (io.KeyShift ? 3.5f : 1.6f) * io.DeltaTime;
+        Vec3 mv{0, 0, 0};
+        if (ImGui::IsKeyDown(ImGuiKey_W)) mv = mv + fwd;
+        if (ImGui::IsKeyDown(ImGuiKey_S)) mv = mv - fwd;
+        if (ImGui::IsKeyDown(ImGuiKey_D)) mv = mv + right;
+        if (ImGui::IsKeyDown(ImGuiKey_A)) mv = mv - right;
+        if (ImGui::IsKeyDown(ImGuiKey_E)) mv.y += 1.0f;
+        if (ImGui::IsKeyDown(ImGuiKey_Q)) mv.y -= 1.0f;
+        ed.camTarget = ed.camTarget + mv * spd;
     }
 
     float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;

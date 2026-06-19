@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v1.17.0
+  - Unity-style Project tab: a folder tree on the left, an icon grid on the
+    right with type-colored thumbnails, a clickable breadcrumb, and search.
+    Double-click to enter folders / open scenes / instantiate prefabs / open
+    scripts. New Folder + New Script buttons, plus right-click Rename / Delete.
+  - Fly the Scene camera: hold the right mouse button and use WASD to move
+    (Q/E down/up, Shift to move faster) while you look around.
+  - Fixed models glitching/vanishing when you zoom in very close — the renderer
+    now clips triangles against the camera near plane instead of dropping them.
+  - More UI polish: refined dark theme (spacing, scrollbars, contrast, rounding).
+
 v1.16.0
   - Proper UV wrapping on Sphere and Cylinder primitives, so textures wrap
     around them cleanly instead of using the planar decal fallback.

@@ -302,6 +302,46 @@ function start() {
 }
 ```
 
+## Plain-English names
+
+Most builtins have a readable alias so you can usually guess the right word —
+they all call the same function, so use whichever reads best to you:
+
+| If you think… | …you can also write |
+| --- | --- |
+| `place_at(x, y)` | `set_pos` |
+| `move_by(dx, dy)` | `move` / `translate` |
+| `position_x()` / `position_y()` | `pos_x` / `pos_y` / `get_x` / `get_y` |
+| `set_position_x(v)` | `set_x` |
+| `turn(deg)` | `rotate` |
+| `face("Target")` | `look_at` |
+| `key_pressed("space")` | `key_down` / `Input.GetKeyDown` |
+| `is_key_held("a")` | `key` / `Input.GetKey` |
+| `input_horizontal()` / `input_vertical()` | `axis_x` / `axis_y` / `Input.GetAxis` |
+| `mouse_pressed(0)` | `mouse_down` |
+| `create_object("p", x, y)` | `spawn` / `instantiate` / `Instantiate` |
+| `remove_object()` | `destroy` |
+| `show_object("n")` / `hide_object("n")` | `activate` / `deactivate` |
+| `object_exists("n")` | `exists` |
+| `nearest_with_tag("enemy")` | `nearest_tag` |
+| `count_with_tag("coin")` | `count_tag` |
+| `distance_to("n")` | `dist_to` |
+| `call_later(secs, "fn")` | `after` |
+| `repeat_every(secs, "fn")` | `every` |
+| `time_elapsed()` / `frame_time()` | `time` / `dt` / `Time.time` / `Time.deltaTime` |
+| `set_tint(r,g,b)` | `set_color` |
+| `set_sprite("img.png")` | `set_texture` |
+| `set_background_color(r,g,b)` | `set_bg` |
+| `emit_particles(n)` | `emit` |
+| `play_sfx()` | `play_sound` |
+| `apply_force(x, y)` / `apply_impulse(x, y)` | `add_force` / `add_impulse` |
+| `is_overlapping(x, y)` | `overlap` |
+| `cast_ray(ox,oy,dx,dy)` | `raycast` |
+| `set_camera(x, y)` / `set_zoom(z)` | `set_cam` / `set_cam_zoom` |
+| `save_value(k, v)` / `load_number(k, def)` / `load_text(k, def)` | `prefs_set` / `prefs_get` / `prefs_get_str` |
+| `random_float(lo, hi)` / `random_int(lo, hi)` / `random_chance(p)` | `rand` / `randi` / `chance` |
+| `log(...)` | `print` / `Debug.Log` |
+
 ## Other backends
 
 OkayScript is the default, but the engine also supports **Lua** and **C#**

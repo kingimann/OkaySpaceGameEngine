@@ -3017,6 +3017,102 @@ struct OkayScriptVM::Impl {
         alias("SceneManager.LoadScene", "load_scene_name");
         alias("Application.Quit", "quit");
         alias("GameObject.Find", "exists");
+
+        // ---- Plain-English aliases: say what you mean. Every name below points
+        //      at an existing builtin, so beginners can guess the right word. ----
+        // Input
+        alias("is_key_held", "key");
+        alias("key_pressed", "key_down");
+        alias("key_released", "key_up");
+        alias("input_horizontal", "axis_x");
+        alias("input_vertical", "axis_y");
+        alias("move_input_x", "axis_x");
+        alias("move_input_y", "axis_y");
+        alias("is_mouse_held", "mouse");
+        alias("mouse_pressed", "mouse_down");
+        alias("mouse_released", "mouse_up");
+        alias("mouse_position_x", "mouse_x");
+        alias("mouse_position_y", "mouse_y");
+        // Transform / movement
+        alias("move_by", "move");
+        alias("place_at", "set_pos");
+        alias("set_position_x", "set_x");
+        alias("set_position_y", "set_y");
+        alias("position_x", "pos_x");
+        alias("position_y", "pos_y");
+        alias("position_z", "pos_z");
+        alias("turn", "rotate");
+        alias("face", "look_at");
+        alias("face_3d", "look_at3");
+        alias("set_size", "set_scale");
+        alias("move_towards_object", "move_toward3");
+        // Time & scheduling
+        alias("frame_time", "dt");
+        alias("time_elapsed", "time");
+        alias("game_time", "time");
+        alias("call_later", "after");
+        alias("invoke_after", "after");
+        alias("repeat_every", "every");
+        alias("set_time_scale", "set_timescale");
+        alias("time_scale", "timescale");
+        // Objects & scene
+        alias("create_object", "spawn");
+        alias("create_object_3d", "spawn3");
+        alias("remove_object", "destroy");
+        alias("show_object", "activate");
+        alias("hide_object", "deactivate");
+        alias("object_exists", "exists");
+        alias("is_object_active", "is_active");
+        alias("object_x", "obj_x");
+        alias("object_y", "obj_y");
+        alias("object_z", "obj_z");
+        alias("nearest_with_tag", "nearest_tag");
+        alias("count_with_tag", "count_tag");
+        // Rendering & components
+        alias("set_tint", "set_color");
+        alias("set_sprite", "set_texture");
+        alias("set_background_color", "set_bg");
+        alias("set_background", "set_bg");
+        alias("set_light_direction", "set_light");
+        alias("set_ui_image", "set_image");
+        alias("set_button_enabled", "set_interactable");
+        alias("set_progress_bar", "set_progress");
+        alias("emit_particles", "emit");
+        alias("play_sfx", "play_sound");
+        alias("set_flip_x", "flip_x");
+        alias("set_flip_y", "flip_y");
+        // Camera
+        alias("camera_x", "cam_x");
+        alias("camera_y", "cam_y");
+        alias("set_camera", "set_cam");
+        alias("move_camera", "move_cam");
+        alias("camera_zoom", "cam_zoom");
+        alias("set_camera_zoom", "set_cam_zoom");
+        alias("set_zoom", "set_cam_zoom");
+        // Physics
+        alias("is_overlapping", "overlap");
+        alias("point_overlaps", "overlap");
+        alias("cast_ray", "raycast");
+        alias("apply_force", "add_force");
+        alias("apply_impulse", "add_impulse");
+        alias("get_velocity_x", "velocity_x");
+        alias("get_velocity_y", "velocity_y");
+        // Saving / prefs
+        alias("save_value", "prefs_set");
+        alias("load_number", "prefs_get");
+        alias("load_value", "prefs_get");
+        alias("load_text", "prefs_get_str");
+        alias("write_save", "prefs_save");
+        alias("read_save", "prefs_load");
+        alias("set_master_volume", "set_volume");
+        // Math
+        alias("random_float", "rand");
+        alias("random_chance", "chance");
+        alias("roll_chance", "chance");
+        alias("blend", "lerp");
+        // Logging
+        alias("log", "print");
+        alias("log_message", "print");
     }
 };
 

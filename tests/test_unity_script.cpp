@@ -113,6 +113,22 @@ int main() {
         CHECK_NEAR(go->transform->Position().y, 90.0f, 0.5f);     // rotation applied
     }
 
+    // --- Plain-English aliases read naturally --------------------------
+    {
+        Scene s("UFriendly"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Friendly");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() {\n"
+            "    place_at(3, 4);\n"
+            "    set_position_x(position_x() + 1);\n"      // 3 -> 4
+            "    set_position_y(position_y() + 6);\n"      // 4 -> 10
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->localPosition.x, 4.0f, 0.001f);
+        CHECK_NEAR(go->transform->localPosition.y, 10.0f, 0.001f);
+    }
+
     // --- Legacy lowercase still works (backward compatible) ------------
     {
         Scene s("ULegacy"); s.physicsEnabled = false;

@@ -770,25 +770,25 @@ void ApplyTheme() {
     else if (g_theme == 2) ImGui::StyleColorsClassic();
     else                   ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Rounding & spacing for a soft, modern look.
+    // Rounding for a soft, modern look.
     s.WindowRounding    = 7.0f;  s.ChildRounding    = 6.0f;
-    s.FrameRounding     = 6.0f;  s.GrabRounding     = 6.0f;
+    s.FrameRounding     = 5.0f;  s.GrabRounding     = 5.0f;
     s.PopupRounding     = 7.0f;  s.TabRounding      = 6.0f;
     s.ScrollbarRounding = 10.0f;
-    // Roomier metrics so the editor doesn't feel cramped (taller fields/rows,
-    // more breathing room between items).
-    s.WindowPadding   = ImVec2(13, 12); s.FramePadding = ImVec2(12, 9);
-    s.ItemSpacing     = ImVec2(11, 11); s.ItemInnerSpacing = ImVec2(9, 8);
-    s.CellPadding     = ImVec2(9, 7);   s.IndentSpacing = 21.0f;
-    s.ScrollbarSize   = 14.0f;          s.GrabMinSize = 12.0f;
-    // Global UI scale (applies to font + all of the above metrics).
-    s.ScaleAllSizes(g_uiScale);
-    ImGui::GetIO().FontGlobalScale = g_uiScale;
+    // Balanced spacing: comfortable but not bloated (slightly roomier than the
+    // ImGui defaults). View > UI Scale scales everything for bigger displays.
+    s.WindowPadding   = ImVec2(10, 9);  s.FramePadding = ImVec2(8, 5);
+    s.ItemSpacing     = ImVec2(8, 7);   s.ItemInnerSpacing = ImVec2(7, 5);
+    s.CellPadding     = ImVec2(6, 4);   s.IndentSpacing = 19.0f;
+    s.ScrollbarSize   = 13.0f;          s.GrabMinSize = 11.0f;
     s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 0.0f;
     s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 2.0f;
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.DockingSeparatorSize = 2.0f;
+    // Apply the global UI scale LAST so every metric above is scaled together.
+    if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
+    ImGui::GetIO().FontGlobalScale = g_uiScale;
 
     // Light / Classic keep ImGui's own palette (only the metrics above apply).
     if (g_theme != 0) return;

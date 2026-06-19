@@ -15,6 +15,8 @@
 #endif
 
 #include <algorithm>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -95,22 +97,50 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Resolve the scene path.
+    // Resolve where the game files live (beside the executable).
+    std::string baseDir;
+    { char* base = SDL_GetBasePath(); baseDir = base ? base : ""; if (base) SDL_free(base); }
+
+    // Build settings (written by the editor's Build Settings) live in an optional
+    // game.okayconfig beside the exe: window size/title/flags, the scene list (so
+    // load_scene_index works) and which scene starts. Sensible defaults if absent.
+    struct GameConfig {
+        std::string title = "OkaySpace Game";
+        int  width = 960, height = 600;
+        bool fullscreen = false, resizable = true, vsync = true;
+        std::string startup;
+        std::vector<std::string> scenes;
+    } cfg;
+    {
+        std::ifstream cf(baseDir + "game.okayconfig");
+        std::string line;
+        while (std::getline(cf, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            std::size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+            if      (k == "title")      cfg.title = v;
+            else if (k == "width")      cfg.width = std::atoi(v.c_str());
+            else if (k == "height")     cfg.height = std::atoi(v.c_str());
+            else if (k == "fullscreen") cfg.fullscreen = std::atoi(v.c_str()) != 0;
+            else if (k == "resizable")  cfg.resizable = std::atoi(v.c_str()) != 0;
+            else if (k == "vsync")      cfg.vsync = std::atoi(v.c_str()) != 0;
+            else if (k == "startup")    cfg.startup = v;
+            else if (k == "scene")      cfg.scenes.push_back(v);
+        }
+    }
+    // Register the build's scenes so scripts can load_scene_index / load_next.
+    SceneManager::ClearScenes();
+    for (const std::string& s : cfg.scenes) SceneManager::AddScene(baseDir + s);
+
+    // Resolve the scene path: CLI arg > config startup > game.okayscene.
     std::string scenePath;
     if (argc > 1) scenePath = argv[1];
-    else {
-        char* base = SDL_GetBasePath();
-        scenePath = (base ? std::string(base) : "") + "game.okayscene";
-        if (base) SDL_free(base);
-    }
+    else if (!cfg.startup.empty()) scenePath = baseDir + cfg.startup;
+    else scenePath = baseDir + "game.okayscene";
 
     // Persistent prefs (high scores, settings) live beside the scene file.
-    std::string prefsPath;
-    {
-        char* base = SDL_GetBasePath();
-        prefsPath = (base ? std::string(base) : "") + "game.okayprefs";
-        if (base) SDL_free(base);
-    }
+    std::string prefsPath = baseDir + "game.okayprefs";
     Prefs::Load(prefsPath);
 
     Scene scene("Game");
@@ -120,11 +150,15 @@ int main(int argc, char** argv) {
         // Keep running with an empty scene rather than failing outright.
     }
 
+    Uint32 winFlags = SDL_WINDOW_ALLOW_HIGHDPI;
+    if (cfg.resizable)  winFlags |= SDL_WINDOW_RESIZABLE;
+    if (cfg.fullscreen) winFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
     SDL_Window* window = SDL_CreateWindow(
-        scene.Name().c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        960, 600, SDL_WINDOW_RESIZABLE);
-    SDL_Renderer* renderer = SDL_CreateRenderer(
-        window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        cfg.width, cfg.height, winFlags);
+    Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
 
     SDL_AudioSpec want{}, have{};
@@ -132,13 +166,7 @@ int main(int argc, char** argv) {
     SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
     if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
 
-    // Resolve the directory the game files live in, for relative texture paths.
-    std::string baseDir;
-    {
-        char* base = SDL_GetBasePath();
-        baseDir = base ? std::string(base) : "";
-        if (base) SDL_free(base);
-    }
+    // baseDir (resolved above) is where the game files live, for relative paths.
     std::unordered_map<std::string, SDL_Texture*> textureCache;
     // Z-buffered 3D: meshes are rasterized into this texture each frame so
     // overlapping faces occlude correctly, then blitted under the 2D/UI layers.
@@ -269,6 +297,30 @@ int main(int argc, char** argv) {
         SDL_RenderClear(renderer);
 
         bool perspective = cam && cam->projection == Camera::Projection::Perspective;
+
+        // Skybox: the same vertical sky gradient the editor previews, baked into
+        // the scene's render settings so a built game looks identical. Drawn
+        // first (behind everything) for 3D/perspective scenes.
+        if (perspective && scene.renderSettings.skybox && w > 0 && h > 0) {
+            const auto& rs = scene.renderSettings;
+            auto sc = [](const Color& c) {
+                SDL_Color o; o.r = (Uint8)(c.r * 255); o.g = (Uint8)(c.g * 255);
+                o.b = (Uint8)(c.b * 255); o.a = 255; return o;
+            };
+            SDL_Color top = sc(rs.skyTop), mid = sc(rs.skyHorizon), bot = sc(rs.skyBottom);
+            float my = h * 0.5f;
+            auto band = [&](float y0, float y1, SDL_Color c0, SDL_Color c1) {
+                SDL_Vertex v[4] = {
+                    {{0.0f, y0}, c0, {0, 0}}, {{(float)w, y0}, c0, {0, 0}},
+                    {{(float)w, y1}, c1, {0, 0}}, {{0.0f, y1}, c1, {0, 0}},
+                };
+                int idx[6] = {0, 1, 2, 0, 2, 3};
+                SDL_RenderGeometry(renderer, nullptr, v, 4, idx, 6);
+            };
+            band(0.0f, my, top, mid);
+            band(my, (float)h, mid, bot);
+        }
+
         if (perspective) {
             // Z-buffered software render so overlapping faces occlude correctly,
             // then blit it under the 2D/UI layers (transparent where no geometry).

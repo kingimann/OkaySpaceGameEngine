@@ -9,6 +9,7 @@ add_library(okay_engine
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp
     src/Scene/Scene.cpp
+    src/Scene/SceneManager.cpp
     src/Scene/SceneSerializer.cpp
     src/Components/Camera.cpp
     src/Components/SpriteRenderer.cpp
@@ -20,10 +21,9 @@ add_library(okay_engine
     src/Scripting/ScriptVM.cpp
     src/Components/ScriptComponent.cpp
     src/Components/ActionList.cpp
+    src/Components/UIDocument.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Components/SteamManager.cpp
-    src/Platform/PlayFab/NullPlayFabService.cpp
-    src/Components/PlayFabManager.cpp
     src/Physics/Physics2D.cpp
     src/Physics/Physics3D.cpp
     src/Audio/AudioMixer.cpp
@@ -101,20 +101,6 @@ if(OKAY_WITH_STEAM)
     target_link_libraries(okay_engine PRIVATE "${_steam_lib}")
     target_compile_definitions(okay_engine PUBLIC OKAY_WITH_STEAM)
     message(STATUS "OkaySpace: Steamworks backend ENABLED (${_steam_lib})")
-endif()
-
-# PlayFab: real REST backend over libcurl. Enable with -DOKAY_WITH_PLAYFAB=ON.
-# Without it, the in-memory simulation backend is used.
-if(OKAY_WITH_PLAYFAB)
-    find_package(CURL QUIET)
-    if(CURL_FOUND)
-        target_sources(okay_engine PRIVATE src/Platform/PlayFab/RestPlayFabService.cpp)
-        target_link_libraries(okay_engine PRIVATE CURL::libcurl)
-        target_compile_definitions(okay_engine PUBLIC OKAY_WITH_PLAYFAB)
-        message(STATUS "OkaySpace: PlayFab REST backend ENABLED")
-    else()
-        message(WARNING "OKAY_WITH_PLAYFAB set but libcurl not found; using simulation")
-    endif()
 endif()
 
 # C#: real Mono embedding. Enable with -DOKAY_WITH_CSHARP=ON (needs Mono dev).

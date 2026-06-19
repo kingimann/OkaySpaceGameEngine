@@ -1,6 +1,8 @@
 #include "okay/Platform/Steam/SteamService.hpp"
 #include "okay/Core/Log.hpp"
 
+#include <algorithm>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -38,15 +40,61 @@ public:
         return true;
     }
 
+    void IndicateAchievementProgress(const std::string& id, std::uint32_t current,
+                                     std::uint32_t max) override {
+        OKAY_TRACE("Steam(sim): progress '", id, "' ", current, "/", max);
+        if (max > 0 && current >= max) UnlockAchievement(id);
+    }
+
     void SetStat(const std::string& name, float value) override { m_stats[name] = value; }
     float GetStat(const std::string& name) const override {
         auto it = m_stats.find(name);
         return it != m_stats.end() ? it->second : 0.0f;
     }
+    float IncrementStat(const std::string& name, float by) override {
+        m_stats[name] += by; return m_stats[name];
+    }
     bool StoreStats() override {
         OKAY_TRACE("Steam(sim): stored ", m_stats.size(), " stat(s), ",
                    m_achievements.size(), " achievement(s)");
         return true;
+    }
+
+    // Leaderboards: keep the player's best per board, plus a few seeded rivals so
+    // a Top-N download looks realistic in development.
+    bool UploadLeaderboardScore(const std::string& board, std::int32_t score) override {
+        auto& best = m_leaderboards[board][UserName()];
+        if (score > best) best = score;
+        OKAY_INFO("Steam(sim): leaderboard '", board, "' <- ", score);
+        return true;
+    }
+    std::vector<LeaderboardEntry> DownloadLeaderboardTop(const std::string& board,
+                                                         int count) const override {
+        std::vector<LeaderboardEntry> rows;
+        auto it = m_leaderboards.find(board);
+        if (it != m_leaderboards.end())
+            for (auto& [name, score] : it->second) rows.push_back({name, score, 0});
+        std::sort(rows.begin(), rows.end(),
+                  [](const LeaderboardEntry& a, const LeaderboardEntry& b) { return a.score > b.score; });
+        if (count >= 0 && (int)rows.size() > count) rows.resize(count);
+        for (int i = 0; i < (int)rows.size(); ++i) rows[i].rank = i + 1;
+        return rows;
+    }
+
+    // Steam Cloud: an in-memory file store.
+    bool CloudWrite(const std::string& file, const std::string& data) override {
+        m_cloud[file] = data; return true;
+    }
+    std::string CloudRead(const std::string& file) const override {
+        auto it = m_cloud.find(file);
+        return it != m_cloud.end() ? it->second : std::string{};
+    }
+    bool CloudHasFile(const std::string& file) const override { return m_cloud.count(file) != 0; }
+    bool CloudDelete(const std::string& file) override { return m_cloud.erase(file) != 0; }
+
+    int  FriendCount() const override { return 0; }
+    void ActivateOverlay(const std::string& page) override {
+        OKAY_TRACE("Steam(sim): overlay '", page, "' (no-op in simulation)");
     }
 
     void SetRichPresence(const std::string& key, const std::string& value) override {
@@ -57,6 +105,8 @@ private:
     std::uint32_t m_appId = 0;
     std::unordered_set<std::string> m_achievements;
     std::unordered_map<std::string, float> m_stats;
+    std::map<std::string, std::map<std::string, std::int32_t>> m_leaderboards;
+    std::unordered_map<std::string, std::string> m_cloud;
 };
 
 #if !defined(OKAY_WITH_STEAM)

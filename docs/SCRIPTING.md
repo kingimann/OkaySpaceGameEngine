@@ -121,6 +121,29 @@ function update(dt) {
 | `load_scene("file")` | Switch to another scene |
 | `screen_w()` / `screen_h()` | Viewport size in pixels |
 
+### Scene Manager (build list)
+| Function | Description |
+|---|---|
+| `load_scene_index(i)` | Load scene `i` from the build list |
+| `load_scene_name("n")` | Load by scene name (file stem) or path |
+| `load_next_scene()` | Load the next scene (wraps to the first) |
+| `reload_scene()` | Reload the active scene |
+| `scene_count()` / `scene_index()` / `scene_name()` | Query the build list |
+
+### Multiplayer (networking)
+| Function | Description |
+|---|---|
+| `net_host(port)` | Start a server on this machine |
+| `net_join("ip", port)` | Connect to a host |
+| `net_disconnect()` | Leave / stop the session |
+| `net_connected()` / `net_is_server()` / `net_is_client()` | Status |
+| `net_id()` / `net_peers()` | Your peer id / connected peer count |
+| `net_name("name")` | Set/get this peer's display name |
+| `net_send("channel", "data")` | Broadcast a message to all peers |
+| `net_send_to(id, "channel", "data")` | Message one peer |
+| `net_poll()` | Pop one received message (use in a `while`) |
+| `net_msg_channel()` / `net_msg_data()` / `net_msg_from()` | The popped message |
+
 ### State, math & data
 | Function | Description |
 |---|---|

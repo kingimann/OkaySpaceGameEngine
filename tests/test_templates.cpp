@@ -40,6 +40,34 @@ int main() {
         CHECK(loaded.Find("MainCamera")->GetComponent<CameraFollow>() != nullptr);
     }
 
+    // --- 3D Platformer: perspective camera, lit, physics player on ground ---
+    {
+        Scene scene("x");
+        Templates::Platformer3D(scene);
+
+        GameObject* cam = scene.Find("MainCamera");
+        CHECK(cam != nullptr);
+        CHECK(cam->GetComponent<Camera>()->projection == Camera::Projection::Perspective);
+        CHECK(scene.Find("Directional Light")->GetComponent<Light>() != nullptr);
+
+        GameObject* ground = scene.Find("Ground");
+        CHECK(ground != nullptr);
+        CHECK(ground->GetComponent<BoxCollider3D>() != nullptr);
+        CHECK(ground->GetComponent<Rigidbody3D>()->bodyType == Rigidbody3D::BodyType::Static);
+
+        GameObject* player = scene.Find("Player");
+        CHECK(player != nullptr);
+        CHECK(player->GetComponent<Rigidbody3D>() != nullptr);
+        CHECK(player->GetComponent<BoxCollider3D>() != nullptr);
+        CHECK(player->GetComponent<CharacterController3D>() != nullptr);
+
+        // Survives a serialization round-trip (so Build Game works).
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("y"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        CHECK(loaded.Find("Player")->GetComponent<CharacterController3D>() != nullptr);
+    }
+
     // --- Top-down starter builds a scripted player and walls ---
     {
         Scene scene("x");

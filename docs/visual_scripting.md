@@ -43,3 +43,28 @@ data 5 1 4 0      # translate.y = 0
 exec 0 0 5        # OnUpdate -> Translate
 entry OnUpdate 0
 ```
+
+## ActionList — no-code triggers (Game Creator 2 style)
+
+The `ActionList` component is the simpler, designer-facing visual scripting:
+a **Trigger** (`OnStart`, `OnUpdate`, `OnKey`, `OnCollision`, `OnClick`,
+`OnKeyUp`, `OnMessage`) → a list of **Conditions** (all must pass) → a list of
+**Instructions** (run top to bottom). Build it entirely in the Inspector.
+
+- **Conditions**: `always`, `key`, `key_down`, `key_up`, `mouse`, `mouse_down`,
+  `chance`, `var_eq`, `var_neq`, `var_gt`, `var_lt`, `prefs_eq`, `prefs_gt`,
+  `has_tag`, `is_active`, `dist_lt`, `dist_gt`, `exists`.
+- **Instructions**: movement (`move`, `set_pos`, `rotate`, `set_scale(3)`,
+  `move_toward`, `look_at`), control (`wait`, `goto`, `stop`), variables
+  (`set_var`, `add_var`, `mul_var`, `div_var`, `copy_var`, `rand_var`),
+  objects (`spawn`, `spawn3`, `destroy`, `destroy_obj`, `activate`,
+  `deactivate`, `set_active`, `set_tag`), rendering/audio (`set_text`,
+  `set_color`, `emit`, `play_anim`, `play_sound`, `set_cam`, `set_bg`,
+  `set_light`, `set_ambient`), physics (`velocity`, `impulse`), data
+  (`set_prefs`, `add_prefs`, `save_prefs`), **scenes** (`load_scene`,
+  `load_scene_index`, `load_next_scene`), **multiplayer** (`net_host`,
+  `net_join`, `net_send`, `net_disconnect`), messaging (`send`), and `log`.
+
+Multiplayer with zero code: a `Player` with an `OnKey` ActionList whose
+instruction is `net_host 45000`, and another whose instruction is
+`net_join 127.0.0.1 45000`, is a complete host/join setup.

@@ -222,9 +222,6 @@ add_executable(test_steam test_steam.cpp)
 target_link_libraries(test_steam PRIVATE okay::engine)
 add_test(NAME steam COMMAND test_steam)
 
-add_executable(test_playfab test_playfab.cpp)
-target_link_libraries(test_playfab PRIVATE okay::engine)
-add_test(NAME playfab COMMAND test_playfab)
 
 # Built only when the optional Lua backend is enabled.
 if(OKAY_WITH_LUA)
@@ -243,3 +240,19 @@ endif()
 add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)
 add_test(NAME follow COMMAND test_follow)
+
+add_executable(test_ui_system test_ui_system.cpp)
+target_link_libraries(test_ui_system PRIVATE okay::engine)
+add_test(NAME ui_system COMMAND test_ui_system)
+
+add_executable(test_scenemanager test_scenemanager.cpp)
+target_link_libraries(test_scenemanager PRIVATE okay::engine)
+add_test(NAME scenemanager COMMAND test_scenemanager)
+
+add_executable(test_script_net test_script_net.cpp)
+target_link_libraries(test_script_net PRIVATE okay::engine)
+add_test(NAME script_net COMMAND test_script_net)
+
+add_executable(test_uidocument test_uidocument.cpp)
+target_link_libraries(test_uidocument PRIVATE okay::engine)
+add_test(NAME uidocument COMMAND test_uidocument)

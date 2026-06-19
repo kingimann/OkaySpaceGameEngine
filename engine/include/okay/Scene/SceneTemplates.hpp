@@ -10,8 +10,15 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/CharacterController3D.hpp"
+#include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
+#include "okay/Components/Canvas.hpp"
+#include "okay/Components/EventSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
 
 namespace okay {
@@ -64,6 +71,44 @@ inline void Platformer(Scene& scene) {
     coin->AddComponent<Spinner>()->angularVelocity = {0, 0, 120};
 }
 
+/// A 3D platformer starter: a lit ground, a physics player cube you drive with
+/// WASD + Space (CharacterController3D + Rigidbody3D), and a perspective camera.
+inline void Platformer3D(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Platformer 3D");
+
+    GameObject* camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {0, 6, 12};
+    camObj->transform->localRotation = Quat::Euler({-25, 0, 0});
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {24, 1, 24};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube();
+    gmr->color = Color::FromBytes(90, 110, 90);
+    auto* gbc = ground->AddComponent<BoxCollider3D>();
+    gbc->size = {24, 1, 24};
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = {0, 2, 0};
+    auto* pmr = player->AddComponent<MeshRenderer>();
+    pmr->mesh = Mesh::Cube();
+    pmr->color = Color::FromBytes(80, 160, 240);
+    player->AddComponent<Rigidbody3D>();
+    player->AddComponent<BoxCollider3D>();
+    auto* cc = player->AddComponent<CharacterController3D>();
+    cc->speed = 5.0f; cc->jumpForce = 7.0f;
+}
+
 /// A top-down starter: a follow camera and a script-driven player that walks
 /// with WASD, plus a couple of walls.
 inline void TopDown(Scene& scene) {
@@ -96,6 +141,43 @@ inline void TopDown(Scene& scene) {
         wsr->color = Color::FromBytes(110, 110, 130);
         wsr->size = {1, 4};
     }
+}
+
+/// The simplest possible multiplayer: one player object whose script hosts (or
+/// joins) a server and broadcasts its position, plus a HUD line of help. Drop
+/// two copies of the built game on a LAN — one presses H to host, the other
+/// presses J to join — and they see each other move. Shows how few lines the
+/// net_* OkayScript API needs to get a session running, and lets players host
+/// their own servers with no extra tooling.
+inline void Multiplayer(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Multiplayer");
+
+    GameObject* camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->orthographicSize = 6.0f;
+    cam->main = true;
+
+    GameObject* player = scene.CreateGameObject("Player");
+    player->AddComponent<SpriteRenderer>()->color = Color::FromBytes(90, 170, 240);
+    auto* sc = player->AddComponent<ScriptComponent>("okayscript");
+    sc->LoadSource(
+        "# Press H to host a server, J to join 127.0.0.1. Move with WASD.\n"
+        "var started = 0;\n"
+        "function update(d) {\n"
+        "  if (started == 0) {\n"
+        "    if (key_down(\"h\")) { net_host(45000); started = 1; }\n"
+        "    if (key_down(\"j\")) { net_join(\"127.0.0.1\", 45000); started = 1; }\n"
+        "  }\n"
+        "  var speed = 5;\n"
+        "  move(axis_x() * speed * d, axis_y() * speed * d);\n"
+        "}\n");
+
+    GameObject* hud = scene.CreateGameObject("Help");
+    auto* tr = hud->AddComponent<TextRenderer>();
+    tr->text = "H = host   J = join 127.0.0.1   WASD = move";
+    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 2.0f;
 }
 
 /// A complete little game: drive the player with WASD to collect spinning
@@ -166,11 +248,18 @@ inline void MainMenu(Scene& scene) {
     cam->main = true;
     cam->backgroundColor = Color::FromBytes(18, 20, 28);
 
+    // Unity-style UI root: a Canvas holding the widgets, plus an Event System.
+    GameObject* canvas = scene.CreateGameObject("Canvas");
+    auto* cv = canvas->AddComponent<Canvas>();
+    cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+    scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
+
     GameObject* panel = scene.CreateGameObject("Panel");
     auto* pn = panel->AddComponent<UIPanel>();
     pn->position = {40, 40};
     pn->size = {360, 240};
     pn->color = Color::FromBytes(30, 36, 52, 220);
+    panel->transform->SetParent(canvas->transform, false);
 
     GameObject* title = scene.CreateGameObject("Title");
     auto* tr = title->AddComponent<TextRenderer>();
@@ -178,6 +267,7 @@ inline void MainMenu(Scene& scene) {
     tr->screenSpace = true;
     tr->screenPos = {70, 70};
     tr->pixelSize = 5.0f;
+    title->transform->SetParent(canvas->transform, false);
 
     GameObject* start = scene.CreateGameObject("StartButton");
     auto* b = start->AddComponent<UIButton>();
@@ -186,6 +276,7 @@ inline void MainMenu(Scene& scene) {
     b->size = {300, 60};
     start->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function on_click() { load_scene(\"game.okayscene\"); }\n");
+    start->transform->SetParent(canvas->transform, false);
 }
 
 /// A complete, playable game of Snake — written entirely in OkayScript on a

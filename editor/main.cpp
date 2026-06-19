@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -93,6 +94,7 @@ int main(int argc, char** argv) {
 // `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "AppIcon.hpp"
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "backends/imgui_impl_sdl2.h"
@@ -213,22 +215,37 @@ std::string SelfPath() {
 #endif
 }
 
+// Append a unique cache-busting query parameter. raw.githubusercontent.com is
+// fronted by a CDN that caches files for minutes, so a plain request can hand
+// back a stale VERSION.txt or an old .exe right after a release — the cause of
+// "it didn't update". Varying the URL per request forces a fresh fetch.
+std::string BustCache(const std::string& url) {
+    static unsigned counter = 0;
+    auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::string sep = url.find('?') == std::string::npos ? "?" : "&";
+    return url + sep + "okaycb=" + std::to_string(now) + "_" + std::to_string(counter++);
+}
+
 // Download a URL to a file using whatever HTTP client is on the system. Tries
 // curl first (ships on Win10+/macOS/Linux), then a platform fallback. -f makes
 // curl fail (non-zero) on a 404 so we don't cache an error page as a binary.
+// No-cache headers + a unique query string defeat the GitHub raw CDN cache.
 bool Download(const std::string& url, const std::string& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
+    std::string u = BustCache(url);
+    const char* noCache = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" ";
 #if defined(_WIN32)
-    std::string c1 = "curl -L -s -f -o \"" + outPath + "\" \"" + url + "\"";
+    std::string c1 = "curl -L -s -f " + std::string(noCache) + "-o \"" + outPath + "\" \"" + u + "\"";
     if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
     std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
-                     "-UseBasicParsing -Uri '" + url + "' -OutFile '" + outPath +
+                     "-Headers @{'Cache-Control'='no-cache'} "
+                     "-UseBasicParsing -Uri '" + u + "' -OutFile '" + outPath +
                      "' } catch { exit 1 }\"";
     return std::system(c2.c_str()) == 0 && fs::exists(outPath);
 #else
-    std::string c1 = "curl -L -s -f -o \"" + outPath + "\" \"" + url + "\" 2>/dev/null";
+    std::string c1 = "curl -L -s -f " + std::string(noCache) + "-o \"" + outPath + "\" \"" + u + "\" 2>/dev/null";
     if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
-    std::string c2 = "wget -q -O \"" + outPath + "\" \"" + url + "\" 2>/dev/null";
+    std::string c2 = "wget -q --no-cache -O \"" + outPath + "\" \"" + u + "\" 2>/dev/null";
     return std::system(c2.c_str()) == 0 && fs::exists(outPath);
 #endif
 }
@@ -347,7 +364,6 @@ bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
-bool g_skybox = true;            // draw the default sky gradient in 3D views
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
@@ -384,6 +400,7 @@ char g_pathBuf[256] = "scene.okayscene";
 
 // Extra panels / tools.
 bool  g_showStats = true;
+bool  g_showScenes = false;
 bool  g_showInstPrefab = false;
 char  g_prefabBuf[256] = "Prefab.okayprefab";
 bool  g_showBuildGame = false;
@@ -391,6 +408,19 @@ char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
 bool  g_openBuildResult = false;
+
+// Unity-style Build Settings: window + player options written into the build's
+// game.okayconfig, plus which scenes to include.
+struct BuildSettings {
+    char  company[128] = "OkaySpace";
+    int   width = 1280, height = 720;
+    bool  fullscreen = false;
+    bool  resizable = true;
+    bool  vsync = true;
+    bool  includeAllProjectScenes = false; // else just the current scene
+    bool  developmentBuild = false;
+};
+BuildSettings g_build;
 bool  g_snap = false;
 float g_snapSize = 1.0f;
 // Active transform tool for the Scene view (Unity's W/E/R).
@@ -398,6 +428,9 @@ enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
 int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
+bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
+int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
 
 // First connected game controller (opened in main); fed into Input during Play.
 SDL_GameController* g_pad = nullptr;
@@ -556,17 +589,56 @@ std::string EnsurePlayer(std::string* note) {
     return dest.string();
 }
 
+// Options forwarded from the Build Settings dialog into the build.
+struct Options {
+    std::string company = "OkaySpace";
+    int  width = 1280, height = 720;
+    bool fullscreen = false, resizable = true, vsync = true;
+    bool includeAllProjectScenes = false, developmentBuild = false;
+};
+
 // Build the game into outDir. Returns a human-readable status string.
 std::string Build(EditorState& ed, const std::string& outDir,
-                  const std::string& gameName) {
+                  const std::string& gameName, const Options& opt = {}) {
     std::error_code ec;
     fs::path dir(outDir);
     fs::create_directories(dir, ec);
     if (ec) return "Couldn't create folder: " + ec.message();
 
-    // 1) Write the scene next to the player as game.okayscene.
+    // 1) Write the active scene next to the player as game.okayscene (the
+    // startup scene), and gather the scene list for the config.
     if (!SceneSerializer::SaveToFile(ed.scene(), (dir / "game.okayscene").string()))
         return "Failed to write game.okayscene.";
+
+    std::vector<std::string> sceneFiles; // filenames placed in the build folder
+    sceneFiles.push_back("game.okayscene");
+    int extraScenes = 0;
+    if (opt.includeAllProjectScenes && !ed.projectDir().empty()) {
+        fs::path assets = fs::path(ed.projectDir()) / "Assets";
+        if (fs::exists(assets, ec))
+            for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                if (!e.is_regular_file() || e.path().extension() != ".okayscene") continue;
+                std::string fn = e.path().filename().string();
+                if (fn == "game.okayscene") continue;
+                fs::copy_file(e.path(), dir / fn, fs::copy_options::overwrite_existing, ec);
+                if (!ec) { sceneFiles.push_back(fn); ++extraScenes; }
+            }
+    }
+
+    // 1b) Write game.okayconfig (window + scene list) read by the player.
+    {
+        std::ofstream cf((dir / "game.okayconfig").string());
+        cf << "title=" << gameName << "\n";
+        cf << "company=" << opt.company << "\n";
+        cf << "width=" << opt.width << "\n";
+        cf << "height=" << opt.height << "\n";
+        cf << "fullscreen=" << (opt.fullscreen ? 1 : 0) << "\n";
+        cf << "resizable=" << (opt.resizable ? 1 : 0) << "\n";
+        cf << "vsync=" << (opt.vsync ? 1 : 0) << "\n";
+        cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
+        cf << "startup=game.okayscene\n";
+        for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
+    }
 
     // 2) Copy the player runtime, renamed to <Game>.exe. If it isn't beside the
     // editor, fetch it from GitHub so the build is self-contained.
@@ -606,6 +678,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
                       " — run " + exeName + " to play.";
     if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0)
         msg += "  (runtime fetched from GitHub)";
+    if (extraScenes) msg += "  (" + std::to_string(extraScenes + 1) + " scenes)";
     if (copied)  msg += "  (" + std::to_string(copied) + " asset(s) copied)";
     if (missing) msg += "  WARNING: " + std::to_string(missing) +
                         " referenced asset(s) not found and not copied.";
@@ -713,6 +786,28 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderFinish(dockId);
 }
 
+// Unity's UI rule: every widget lives under a Canvas, and a scene needs one
+// Event System to route pointer input. Ensure both exist and return the Canvas
+// GameObject so a freshly created widget can be parented to it.
+GameObject* EnsureUIRoot(EditorState& ed) {
+    GameObject* canvas = nullptr;
+    bool hasEvent = false;
+    for (const auto& up : ed.scene().Objects()) {
+        if (!canvas && up->GetComponent<Canvas>()) canvas = up.get();
+        if (up->GetComponent<EventSystem>()) hasEvent = true;
+    }
+    if (!canvas) {
+        canvas = ed.scene().CreateGameObject("Canvas");
+        auto* cv = canvas->AddComponent<Canvas>();
+        cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+    }
+    if (!hasEvent) {
+        GameObject* es = ed.scene().CreateGameObject("EventSystem");
+        es->AddComponent<EventSystem>();
+    }
+    return canvas;
+}
+
 void DrawMenuAndToolbar(EditorState& ed) {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
@@ -764,9 +859,10 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
+        ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
         ImGui::Separator();
         ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
-        ImGui::MenuItem("Skybox", nullptr, &g_skybox);
+        if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
         ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);
         ImGui::Separator();
         if (ImGui::BeginMenu("Theme")) {
@@ -821,13 +917,37 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         ImGui::Separator();
         if (ImGui::BeginMenu("UI")) {   // each UI element is its own GameObject
-            if (ImGui::MenuItem("Button"))       { ed.Select(ed.CreateEmpty("Button"));   ed.selected()->AddComponent<UIButton>();      ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Panel"))        { ed.Select(ed.CreateEmpty("Panel"));    ed.selected()->AddComponent<UIPanel>();       ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Image"))        { ed.Select(ed.CreateEmpty("Image"));    ed.selected()->AddComponent<UIImage>();       ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Text"))         { ed.Select(ed.CreateEmpty("Text"));     auto* t = ed.selected()->AddComponent<TextRenderer>(); t->screenSpace = true; ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Progress Bar")) { ed.Select(ed.CreateEmpty("ProgressBar")); ed.selected()->AddComponent<UIProgressBar>(); ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Slider"))       { ed.Select(ed.CreateEmpty("Slider"));   ed.selected()->AddComponent<UISlider>();      ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Toggle"))       { ed.Select(ed.CreateEmpty("Toggle"));   ed.selected()->AddComponent<UIToggle>();      ed.dirty = true; created = true; }
+            // Create a widget under the scene's Canvas (making one — plus an
+            // Event System — if missing), exactly like Unity.
+            auto addUI = [&](const char* nm, auto build) {
+                GameObject* root = EnsureUIRoot(ed);
+                GameObject* g = ed.CreateEmpty(nm);
+                build(g);
+                if (root) g->transform->SetParent(root->transform, /*worldPositionStays=*/false);
+                ed.Select(g); ed.dirty = true; created = true;
+            };
+            if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>();        ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("UI Document"))  {
+                GameObject* root = EnsureUIRoot(ed);
+                GameObject* g = ed.CreateEmpty("UIDocument");
+                auto* doc = g->AddComponent<UIDocument>();
+                doc->markup =
+                    "panel pos=40,40 size=360,240 color=30,36,52,220\n"
+                    "  text \"MY GAME\" pos=70,70 size=5\n"
+                    "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
+                if (root) g->transform->SetParent(root->transform, false);
+                doc->Rebuild(); ed.scene().Update(0.0f);
+                ed.Select(g); ed.dirty = true; created = true;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Button"))       addUI("Button",      [](GameObject* g){ g->AddComponent<UIButton>(); });
+            if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
+            if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
+            if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ g->AddComponent<TextRenderer>()->screenSpace = true; });
+            if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
+            if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
+            if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
             ImGui::EndMenu();
         }
         if (created) ed.Achievement("FIRST_OBJECT");
@@ -1286,7 +1406,7 @@ void DrawProject(EditorState& ed) {
     ImGui::End();
 }
 
-// The online services that ship inside the engine: Steam, PlayFab, Multiplayer.
+// The online services that ship inside the engine: Steam and Multiplayer.
 void DrawServices(EditorState& ed) {
     if (!ImGui::Begin("Services", &g_showServices)) { ImGui::End(); return; }
 
@@ -1295,42 +1415,63 @@ void DrawServices(EditorState& ed) {
         if (auto* s = ed.steam()) {
             ImGui::Text("Backend: %s%s", s->BackendName(),
                         s->IsAvailable() ? " (live)" : " (simulation)");
-            ImGui::Text("User: %s", s->UserName().c_str());
+            ImGui::Text("User: %s    Friends: %d", s->UserName().c_str(), s->FriendCount());
+
+            ImGui::SeparatorText("Achievements");
             static char ach[64] = "MY_ACHIEVEMENT";
             ImGui::SetNextItemWidth(180);
             ImGui::InputText("##ach", ach, sizeof(ach));
             ImGui::SameLine();
-            if (ImGui::Button("Unlock")) s->UnlockAchievement(ach);
+            if (ImGui::Button("Unlock")) { s->UnlockAchievement(ach); s->StoreStats(); }
             ImGui::SameLine();
             if (ImGui::Button("Clear")) s->ClearAchievement(ach);
             const char* known[] = {"FIRST_OBJECT", "FIRST_SAVE", "HIT_PLAY"};
             for (const char* a : known)
                 ImGui::BulletText("%s: %s", a,
                     s->IsAchievementUnlocked(a) ? "unlocked" : "locked");
-        } else ImGui::TextDisabled("unavailable");
-    }
 
-    // ---- PlayFab ----
-    if (ImGui::CollapsingHeader("PlayFab", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (auto* p = ed.playfab()) {
-            ImGui::Text("Backend: %s%s", p->BackendName(),
-                        p->IsRealBackend() ? " (live)" : " (simulation)");
-            static char customId[64] = "editor-user";
-            ImGui::SetNextItemWidth(180);
-            ImGui::InputText("Custom Id", customId, sizeof(customId));
+            ImGui::SeparatorText("Stats");
+            static char stat[64] = "kills";
+            ImGui::SetNextItemWidth(140);
+            ImGui::InputText("##stat", stat, sizeof(stat));
             ImGui::SameLine();
-            if (ImGui::Button("Login")) p->LoginWithCustomId(customId);
-            if (p->IsLoggedIn()) ImGui::Text("Logged in as %s", p->PlayFabId().c_str());
-            else ImGui::TextDisabled("not logged in");
+            if (ImGui::Button("+1")) { s->IncrementStat(stat, 1.0f); s->StoreStats(); }
+            ImGui::SameLine();
+            ImGui::Text("= %.0f", s->GetStat(stat));
 
-            static int score = 100;
+            ImGui::SeparatorText("Leaderboard");
+            static char board[64] = "high_score";
+            static int  lbScore = 100;
+            ImGui::SetNextItemWidth(140);
+            ImGui::InputText("##board", board, sizeof(board));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90);
+            ImGui::InputInt("##lbscore", &lbScore);
+            ImGui::SameLine();
+            if (ImGui::Button("Submit##lb")) s->UploadLeaderboardScore(board, lbScore);
+            for (const auto& e : s->DownloadLeaderboardTop(board, 5))
+                ImGui::BulletText("#%d  %s  %d", e.rank, e.name.c_str(), e.score);
+
+            ImGui::SeparatorText("Steam Cloud");
+            static char cloudFile[64] = "save.dat";
+            static char cloudData[128] = "level=3";
             ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("high_score", &score);
+            ImGui::InputText("File##cf", cloudFile, sizeof(cloudFile));
+            ImGui::SetNextItemWidth(200);
+            ImGui::InputText("Data##cd", cloudData, sizeof(cloudData));
+            if (ImGui::Button("Write##cloud")) s->CloudWrite(cloudFile, cloudData);
             ImGui::SameLine();
-            if (ImGui::Button("Submit") && p->IsLoggedIn())
-                p->UpdateStatistic("high_score", score);
-            if (p->IsLoggedIn())
-                ImGui::Text("stored high_score: %d", p->GetStatistic("high_score"));
+            if (ImGui::Button("Read##cloud")) {
+                std::string d = s->CloudRead(cloudFile);
+                std::strncpy(cloudData, d.c_str(), sizeof(cloudData) - 1);
+                cloudData[sizeof(cloudData) - 1] = '\0';
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Delete##cloud")) s->CloudDelete(cloudFile);
+            ImGui::SameLine();
+            ImGui::TextDisabled(s->CloudHasFile(cloudFile) ? "(exists)" : "(none)");
+
+            if (ImGui::Button("Open Overlay")) s->ActivateOverlay("friends");
         } else ImGui::TextDisabled("unavailable");
     }
 
@@ -1338,20 +1479,40 @@ void DrawServices(EditorState& ed) {
     if (ImGui::CollapsingHeader("Multiplayer", ImGuiTreeNodeFlags_DefaultOpen)) {
         static int port = 45000;
         static char host[64] = "127.0.0.1";
+        static char pname[48] = "Player";
         ImGui::SetNextItemWidth(120);
         ImGui::InputInt("Port", &port);
-        if (ImGui::Button("Host")) ed.StartHost((std::uint16_t)port);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120);
+        ImGui::InputText("Name", pname, sizeof(pname));
+        if (ImGui::Button("Host")) { ed.StartHost((std::uint16_t)port); if (ed.net()) ed.net()->SetLocalName(pname); }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(140);
         ImGui::InputText("##host", host, sizeof(host));
         ImGui::SameLine();
-        if (ImGui::Button("Join")) ed.StartJoin(host, (std::uint16_t)port);
+        if (ImGui::Button("Join")) { ed.StartJoin(host, (std::uint16_t)port); if (ed.net()) ed.net()->SetLocalName(pname); }
         ImGui::SameLine();
         if (ImGui::Button("Disconnect")) ed.StopNetwork();
         if (auto* n = ed.net()) {
             const char* mode = n->IsServer() ? "Server" : n->IsClient() ? "Client" : "Offline";
             ImGui::Text("Mode: %s   Peers: %d   LocalId: %u",
                         mode, (int)n->PeerCount(), n->LocalId());
+            // Chat: broadcast a line to every peer; show what arrives.
+            static char chat[128] = "";
+            static std::vector<std::string> log;
+            n->SetMessageHandler([&](const NetworkManager::NetMessage& m) {
+                if (m.channel == "chat")
+                    log.push_back("#" + std::to_string(m.from) + ": " + m.data);
+            });
+            ImGui::SetNextItemWidth(220);
+            ImGui::InputText("##chat", chat, sizeof(chat));
+            ImGui::SameLine();
+            if (ImGui::Button("Send") && chat[0]) { n->Send("chat", chat); chat[0] = '\0'; }
+            if (n->IsServer())
+                for (const auto& pi : n->Peers())
+                    ImGui::BulletText("peer %u  '%s'", pi.id, pi.name.c_str());
+            for (std::size_t i = log.size() > 6 ? log.size() - 6 : 0; i < log.size(); ++i)
+                ImGui::TextWrapped("%s", log[i].c_str());
         } else ImGui::TextDisabled("not connected");
     }
 
@@ -1372,6 +1533,82 @@ void DrawStats(EditorState& ed) {
     ImGui::Text("Sprites: %d", (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size());
     ImGui::Text("Meshes: %d", (int)ed.scene().FindObjectsOfType<MeshRenderer>().size());
     ImGui::Text("Colliders: %d", (int)ed.scene().FindObjectsOfType<Collider2D>().size());
+
+    // Environment: the scene's skybox + ambient, saved with the scene so the
+    // built game renders the same sky and base light.
+    if (ImGui::CollapsingHeader("Environment (Sky & Light)")) {
+        auto& rs = ed.scene().renderSettings;
+        if (ImGui::Checkbox("Skybox", &rs.skybox)) ed.dirty = true;
+        float t[3] = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
+        if (ImGui::ColorEdit3("Sky Top", t)) { rs.skyTop = {t[0], t[1], t[2], 1}; ed.dirty = true; }
+        float hz[3] = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
+        if (ImGui::ColorEdit3("Horizon", hz)) { rs.skyHorizon = {hz[0], hz[1], hz[2], 1}; ed.dirty = true; }
+        float bo[3] = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+        if (ImGui::ColorEdit3("Sky Bottom", bo)) { rs.skyBottom = {bo[0], bo[1], bo[2], 1}; ed.dirty = true; }
+        if (ImGui::SliderFloat("Ambient", &rs.ambient, 0.0f, 1.0f)) ed.dirty = true;
+    }
+    ImGui::End();
+}
+
+// The Scene Manager panel: the project's scenes (Unity's Build Settings list).
+// Lists the .okayscene files in the project, opens them, and manages a build
+// order with a startup scene the player loads first. The build list is fed into
+// the engine SceneManager so scripts can load_scene_index / load_next_scene.
+void DrawScenes(EditorState& ed) {
+    if (!ImGui::Begin("Scenes", &g_showScenes)) { ImGui::End(); return; }
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
+                                           : fs::path(ed.projectDir()) / "Assets";
+    ImGui::TextDisabled("%s", dir.string().c_str());
+
+    // Rescan the folder for scene files (cheap; refresh button forces it).
+    static std::vector<std::string> scenes;
+    static std::string lastDir;
+    auto rescan = [&]() {
+        scenes.clear();
+        if (fs::exists(dir, ec))
+            for (auto& e : fs::recursive_directory_iterator(dir, ec)) {
+                if (e.is_regular_file() && e.path().extension() == ".okayscene")
+                    scenes.push_back(e.path().string());
+            }
+        std::sort(scenes.begin(), scenes.end());
+        // Mirror into the engine SceneManager build list.
+        SceneManager::ClearScenes();
+        for (auto& s : scenes) SceneManager::AddScene(s);
+        lastDir = dir.string();
+    };
+    if (lastDir != dir.string()) rescan();
+    if (ImGui::Button("Refresh")) rescan();
+    ImGui::SameLine();
+    if (ImGui::Button("Save Current As...")) g_showSaveAs = true;
+    ImGui::Separator();
+
+    if (scenes.empty()) ImGui::TextDisabled("No .okayscene files in the project yet.");
+    for (int i = 0; i < (int)scenes.size(); ++i) {
+        const std::string& path = scenes[i];
+        std::string name = fs::path(path).stem().string();
+        bool isCurrent = (path == ed.path());
+        ImGui::PushID(i);
+        ImGui::Text("%d", i);                 // build index
+        ImGui::SameLine();
+        if (ImGui::Selectable(name.c_str(), isCurrent, ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::IsMouseDoubleClicked(0)) {
+                std::string err;
+                if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
+                else ConsoleLog("Open failed: " + err);
+            }
+        }
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70);
+        if (ImGui::SmallButton("Open")) {
+            std::string err;
+            if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
+            else ConsoleLog("Open failed: " + err);
+        }
+        ImGui::PopID();
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("double-click to open; the build order is the index shown");
     ImGui::End();
 }
 
@@ -1775,14 +2012,44 @@ void DrawFileDialogs(EditorState& ed) {
     if (g_showBuildGame) { ImGui::OpenPopup("Build Game"); g_showBuildGame = false; }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Build Game", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Export this scene as a standalone game.");
-        ImGui::TextDisabled("Creates <Name>.exe + game.okayscene in the output folder.");
+        ImGui::Text("Build Settings — export a standalone game.");
+        ImGui::TextDisabled("Creates <Name>.exe + game.okayscene + game.okayconfig.");
         ImGui::Separator();
-        ImGui::InputText("Game name", g_buildNameBuf, sizeof(g_buildNameBuf));
+
+        ImGui::SeparatorText("Player");
+        ImGui::InputText("Product name", g_buildNameBuf, sizeof(g_buildNameBuf));
+        ImGui::InputText("Company", g_build.company, sizeof(g_build.company));
         ImGui::InputText("Output folder", g_buildDirBuf, sizeof(g_buildDirBuf));
+
+        ImGui::SeparatorText("Window");
+        ImGui::SetNextItemWidth(90); ImGui::InputInt("Width", &g_build.width); ImGui::SameLine();
+        ImGui::SetNextItemWidth(90); ImGui::InputInt("Height", &g_build.height);
+        const char* presets[] = {"1280 x 720", "1920 x 1080", "960 x 600", "800 x 600"};
+        static int presetSel = 0;
+        ImGui::SetNextItemWidth(140);
+        if (ImGui::Combo("Preset", &presetSel, presets, IM_ARRAYSIZE(presets))) {
+            const int dims[][2] = {{1280,720},{1920,1080},{960,600},{800,600}};
+            g_build.width = dims[presetSel][0]; g_build.height = dims[presetSel][1];
+        }
+        ImGui::Checkbox("Fullscreen", &g_build.fullscreen); ImGui::SameLine();
+        ImGui::Checkbox("Resizable", &g_build.resizable);   ImGui::SameLine();
+        ImGui::Checkbox("VSync", &g_build.vsync);
+
+        ImGui::SeparatorText("Scenes & Options");
+        ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
+        ImGui::Checkbox("Development build", &g_build.developmentBuild);
+        if (g_build.width  < 320) g_build.width  = 320;
+        if (g_build.height < 240) g_build.height = 240;
+
         ImGui::Separator();
         if (ImGui::Button("Build", ImVec2(120, 0))) {
-            g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf);
+            builder::Options o;
+            o.company = g_build.company;
+            o.width = g_build.width; o.height = g_build.height;
+            o.fullscreen = g_build.fullscreen; o.resizable = g_build.resizable; o.vsync = g_build.vsync;
+            o.includeAllProjectScenes = g_build.includeAllProjectScenes;
+            o.developmentBuild = g_build.developmentBuild;
+            g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);
             ImGui::CloseCurrentPopup();
@@ -1842,6 +2109,8 @@ void DrawNewProjectPopup(EditorState& ed) {
         if (ImGui::Button("Platformer", ImVec2(160, 44))) { ed.NewPlatformer(); finishProject(); }
         ImGui::SameLine();
         if (ImGui::Button("Top-Down", ImVec2(160, 44)))   { ed.NewTopDown(); finishProject(); }
+        if (ImGui::Button("3D Platformer (physics)", ImVec2(-1, 44))) { ed.NewPlatformer3D(); finishProject(); }
+        if (ImGui::Button("Multiplayer (host/join)", ImVec2(-1, 44))) { ed.NewMultiplayer(); finishProject(); }
         if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 36))) { ed.NewCoinCollector(); finishProject(); }
         if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 36)))            { ed.NewMainMenu(); finishProject(); }
         if (ImGui::Button("Snake (full game)", ImVec2(-1, 36)))         { ed.NewSnake(); finishProject(); }
@@ -1933,6 +2202,8 @@ static const char* ObjectKind(GameObject* go) {
 static char g_hierFilter[96] = "";
 static GameObject* g_hierRename = nullptr;   // object being renamed inline
 static char g_hierRenameBuf[128] = "";
+static GameObject* g_prefabSaveTarget = nullptr; // object being saved as a prefab
+static char g_prefabNameBuf[128] = "";
 
 void DrawHierarchy(EditorState& ed) {
     ImGui::Begin("Hierarchy", &g_showHierarchy);
@@ -1946,7 +2217,7 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Camera")) ed.Select(ed.CreateCamera());
         if (ImGui::MenuItem("Cube"))   ed.Select(ed.CreateCube());
         ImGui::Separator();
-        if (ImGui::MenuItem("UI Button")) { GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); ed.Select(g); }
+        if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
         if (ImGui::MenuItem("UI Text"))   { GameObject* g = ed.CreateEmpty("Text"); g->AddComponent<TextRenderer>()->screenSpace = true; ed.Select(g); }
         ImGui::EndPopup();
     }
@@ -2015,20 +2286,55 @@ void DrawHierarchy(EditorState& ed) {
             // Right-click context menu per item.
             if (ImGui::BeginPopupContextItem()) {
                 ed.Select(node);
-                if (ImGui::MenuItem("Rename")) {
+                if (ImGui::MenuItem("Rename", "F2")) {
                     g_hierRename = node;
                     std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
                     g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
                 }
                 if (ImGui::MenuItem(node->active ? "Deactivate" : "Activate"))
                     { node->active = !node->active; ed.dirty = true; }
-                if (ImGui::MenuItem("Duplicate")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
-                if (ImGui::MenuItem("Delete"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Add Child")) {
+                if (ImGui::MenuItem("Copy", "Ctrl+C"))
+                    g_clipboard = SceneSerializer::SerializeObject(*node);
+                if (ImGui::MenuItem("Paste As Sibling", "Ctrl+V", false, !g_clipboard.empty())) {
+                    ed.PushUndo();
+                    if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
+                        if (node->transform->Parent()) p->transform->SetParent(node->transform->Parent(), false);
+                        ed.Select(p); ed.dirty = true;
+                    }
+                }
+                if (ImGui::MenuItem("Paste As Child", nullptr, false, !g_clipboard.empty())) {
+                    ed.PushUndo();
+                    if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
+                        p->transform->SetParent(node->transform, false);
+                        ed.Select(p); ed.dirty = true;
+                    }
+                }
+                if (ImGui::MenuItem("Duplicate", "Ctrl+D")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
+                if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Create Empty Child")) {
                     GameObject* child = ed.scene().CreateGameObject("Child");
                     child->transform->SetParent(node->transform, false);
-                    ed.Select(child);
+                    ed.Select(child); ed.dirty = true;
+                }
+                if (ImGui::BeginMenu("Create Child")) {
+                    auto childOf = [&](GameObject* g) { if (g) { g->transform->SetParent(node->transform, false); ed.Select(g); ed.dirty = true; } };
+                    if (ImGui::MenuItem("Cube"))   childOf(ed.CreateCube("Cube"));
+                    if (ImGui::MenuItem("Sprite")) childOf(ed.CreateSprite("Sprite"));
+                    if (ImGui::MenuItem("Camera")) childOf(ed.CreateCamera("Camera"));
+                    if (ImGui::MenuItem("Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); childOf(g); }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Focus (frame)")) {
+                    ed.camTarget = node->transform->Position();
+                    ed.cameraPos = {node->transform->Position().x, node->transform->Position().y};
+                }
+                if (ImGui::MenuItem("Save As Prefab...")) {
+                    g_prefabSaveTarget = node;
+                    std::strncpy(g_prefabNameBuf, node->name.c_str(), sizeof(g_prefabNameBuf) - 1);
+                    g_prefabNameBuf[sizeof(g_prefabNameBuf) - 1] = '\0';
                 }
                 ImGui::EndPopup();
             }
@@ -2046,6 +2352,21 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Create Empty"))  ed.CreateEmpty();
         if (ImGui::MenuItem("Create Sprite")) ed.CreateSprite();
         if (ImGui::MenuItem("Create Cube"))   ed.CreateCube();
+        if (ImGui::MenuItem("Create Camera")) ed.CreateCamera();
+        if (ImGui::MenuItem("Create Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); ed.Select(g); }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("3D Object")) {
+            if (ImGui::MenuItem("Cube"))     ed.CreateCube();
+            if (ImGui::MenuItem("Sphere"))   ed.CreateMesh("Sphere");
+            if (ImGui::MenuItem("Cylinder")) ed.CreateMesh("Cylinder");
+            if (ImGui::MenuItem("Plane"))    ed.CreateMesh("Plane");
+            if (ImGui::MenuItem("Pyramid"))  ed.CreatePyramid();
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
+            ed.PushUndo();
+            if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) { ed.Select(p); ed.dirty = true; }
+        }
         ImGui::EndPopup();
     }
 
@@ -2099,6 +2420,41 @@ void DrawHierarchy(EditorState& ed) {
             }
             ImGui::SameLine();
             if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_hierRename = nullptr; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
+    }
+
+    // Save-as-Prefab modal: writes a .okayprefab into the project's Assets so it
+    // can be dragged back in / instantiated anywhere.
+    if (g_prefabSaveTarget) {
+        bool alive = false;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g_prefabSaveTarget) { alive = true; break; }
+        if (!alive) g_prefabSaveTarget = nullptr;
+    }
+    if (g_prefabSaveTarget) {
+        ImGui::OpenPopup("Save As Prefab");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Save As Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
+                                                   : fs::path(ed.projectDir()) / "Assets";
+            ImGui::Text("Folder: %s", dir.string().c_str());
+            ImGui::SetKeyboardFocusHere();
+            bool enter = ImGui::InputText("Name", g_prefabNameBuf, sizeof(g_prefabNameBuf),
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+            if (enter || ImGui::Button("Save", ImVec2(110, 0))) {
+                if (g_prefabNameBuf[0]) {
+                    fs::create_directories(dir, ec);
+                    fs::path out = dir / (std::string(g_prefabNameBuf) + ".okayprefab");
+                    if (SceneSerializer::SaveObjectToFile(*g_prefabSaveTarget, out.string()))
+                        ConsoleLog("Saved prefab " + out.string());
+                    else ConsoleLog("Prefab save failed");
+                }
+                g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
     }
@@ -2621,15 +2977,20 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
 
-            static const char* condOps[] = {"always", "key", "key_down", "mouse",
-                "chance", "var_eq", "var_gt", "var_lt", "has_tag", "is_active",
+            static const char* condOps[] = {"always", "key", "key_down", "key_up", "mouse",
+                "mouse_down", "chance", "var_eq", "var_neq", "var_gt", "var_lt",
+                "prefs_eq", "prefs_gt", "has_tag", "is_active",
                 "dist_lt", "dist_gt", "exists"};
             static const char* instOps[] = {"move", "set_pos", "rotate", "set_scale",
                 "set_scale3", "move_toward", "look_at", "wait", "goto", "stop",
-                "set_var", "add_var", "set_active", "set_text", "set_color", "velocity",
+                "set_var", "add_var", "mul_var", "div_var", "copy_var", "rand_var",
+                "set_active", "set_text", "set_color", "velocity",
                 "impulse", "emit", "play_anim", "play_sound", "set_cam", "set_bg",
                 "set_light", "set_ambient", "set_timescale", "send", "spawn", "spawn3",
-                "destroy", "destroy_obj", "activate", "deactivate", "load_scene", "log"};
+                "destroy", "destroy_obj", "activate", "deactivate", "set_tag",
+                "set_prefs", "add_prefs", "save_prefs",
+                "net_host", "net_join", "net_send", "net_disconnect",
+                "load_scene", "load_scene_index", "load_next_scene", "log"};
 
             ImGui::SeparatorText("Conditions (all must pass)");
             for (std::size_t i = 0; i < al->conditions.size();) {
@@ -2735,6 +3096,61 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
+        }
+    }
+    if (auto* cv = go->GetComponent<Canvas>()) {
+        if (ImGui::CollapsingHeader("Canvas", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* modes[] = {"Constant Pixel Size", "Scale With Screen Size"};
+            int m = (int)cv->scaleMode;
+            if (ImGui::Combo("UI Scale Mode##cv", &m, modes, 2)) { cv->scaleMode = (Canvas::ScaleMode)m; ed.dirty = true; }
+            if (cv->scaleMode == Canvas::ScaleMode::ConstantPixelSize) {
+                if (ImGui::DragFloat("Scale Factor##cv", &cv->scaleFactor, 0.01f, 0.1f, 10.0f)) ed.dirty = true;
+            } else {
+                float ref[2] = {cv->referenceResolution.x, cv->referenceResolution.y};
+                if (ImGui::DragFloat2("Reference Res##cv", ref, 1.0f, 1.0f, 8000.0f)) { cv->referenceResolution = {ref[0], ref[1]}; ed.dirty = true; }
+                if (ImGui::SliderFloat("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f)) ed.dirty = true;
+            }
+            if (ImGui::DragInt("Sort Order##cv", &cv->sortOrder)) ed.dirty = true;
+            ImGui::TextDisabled("scales screen-space UI to the window (Unity CanvasScaler)");
+            if (ImGui::SmallButton("Remove##cv")) toRemove = cv;
+        }
+    }
+    if (auto* es = go->GetComponent<EventSystem>()) {
+        if (ImGui::CollapsingHeader("Event System", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextDisabled("Routes pointer input to UI widgets.");
+            GameObject* h = es->Hovered();
+            ImGui::Text("Hovered: %s", h ? h->name.c_str() : "(none)");
+            GameObject* s = es->Selected();
+            ImGui::Text("Selected: %s", s ? s->name.c_str() : "(none)");
+            if (ImGui::SmallButton("Remove##es")) toRemove = es;
+        }
+    }
+    if (auto* doc = go->GetComponent<UIDocument>()) {
+        if (ImGui::CollapsingHeader("UI Document", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextDisabled("OkayUI markup -> widgets. One widget per line; indent to nest.");
+            // Edit the markup in a resizable multiline box. A static buffer big
+            // enough for sizeable documents keeps this dependency-free.
+            static char buf[1 << 14];
+            static UIDocument* s_bound = nullptr;
+            if (s_bound != doc) {
+                std::strncpy(buf, doc->markup.c_str(), sizeof(buf) - 1);
+                buf[sizeof(buf) - 1] = '\0';
+                s_bound = doc;
+            }
+            if (ImGui::InputTextMultiline("##uidoc", buf, sizeof(buf),
+                    ImVec2(-1, 180), ImGuiInputTextFlags_AllowTabInput)) {
+                doc->markup = buf; ed.dirty = true;
+            }
+            if (ImGui::Button("Rebuild UI##uidoc")) {
+                doc->markup = buf;
+                doc->Rebuild();
+                ed.scene().Update(0.0f);   // flush the created/destroyed widgets
+                ed.dirty = true;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%d widgets)", (int)doc->Generated().size());
+            ImGui::TextDisabled("types: panel text button image slider toggle progress");
+            if (ImGui::SmallButton("Remove##uidoc")) toRemove = doc;
         }
     }
     if (auto* btn = go->GetComponent<UIButton>()) {
@@ -2974,6 +3390,12 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<Lifetime>(); ed.dirty = true; }
 
         Hdr("UI");
+        if (!go->GetComponent<Canvas>() && F("Canvas") && ImGui::Selectable("Canvas"))
+            { go->AddComponent<Canvas>(); ed.dirty = true; }
+        if (!go->GetComponent<EventSystem>() && F("Event System") && ImGui::Selectable("Event System"))
+            { go->AddComponent<EventSystem>(); ed.dirty = true; }
+        if (!go->GetComponent<UIDocument>() && F("UI Document") && ImGui::Selectable("UI Document"))
+            { go->AddComponent<UIDocument>(); ed.dirty = true; }
         if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
             { go->AddComponent<UIButton>(); ed.dirty = true; }
         if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))
@@ -3011,6 +3433,15 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
     }
 }
 
+// The 8 resize handles of a screen rect, in order:
+// 0=TL 1=T(op) 2=TR 3=R(ight) 4=BR 5=B(ottom) 6=BL 7=L(eft).
+static void UIHandlePositions(ImVec2 a, ImVec2 b, ImVec2 out[8]) {
+    float mx = (a.x + b.x) * 0.5f, my = (a.y + b.y) * 0.5f;
+    out[0] = ImVec2(a.x, a.y); out[1] = ImVec2(mx, a.y); out[2] = ImVec2(b.x, a.y);
+    out[3] = ImVec2(b.x, my);  out[4] = ImVec2(b.x, b.y); out[5] = ImVec2(mx, b.y);
+    out[6] = ImVec2(a.x, b.y); out[7] = ImVec2(a.x, my);
+}
+
 // The camera to frame the Game view through: the scene's main camera if one is
 // active (set on Play), else the first Camera component found (edit mode).
 static Camera* SceneCamera(Scene& s) {
@@ -3034,27 +3465,35 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // against the same dimensions the preview uses.
     UICanvas::Set(canvasSize.x, canvasSize.y);
 
+    // Each widget's pixels are scaled by its owning Canvas (Unity's CanvasScaler):
+    // ScaleWithScreenSize grows/shrinks the whole HUD with the window. Widgets not
+    // parented to a Canvas fall back to scale 1.
+    auto uiScale = [&](GameObject* go) { return UIScaleFor(go, canvasSize.x, canvasSize.y); };
+
     // Screen-space text (world-anchored text stays with the 2D scene draw).
     for (const auto& up : objs) {
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active || !tr->screenSpace) continue;
+        float s = uiScale(up.get());
         ImU32 col = ToColor(tr->color);
         ImU32 sh = ToColor(tr->shadowColor);
-        Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y);
+        Vec2 sz{(float)tr->PixelWidth() * tr->pixelSize * s, (float)tr->PixelHeight() * tr->pixelSize * s};
+        Vec2 o = ResolveAnchor(tr->anchor, tr->screenPos * s, sz, canvasSize.x, canvasSize.y);
+        float px = tr->pixelSize * s;
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
         if (tr->shadow)
-            DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * tr->pixelSize,
-                           by + tr->shadowOffset.y * tr->pixelSize, tr->pixelSize, sh);
-        DrawBitmapText(dl, tr->text, bx, by, tr->pixelSize, col);
+            DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * px,
+                           by + tr->shadowOffset.y * px, px, sh);
+        DrawBitmapText(dl, tr->text, bx, by, px, col);
     }
 
     // UI images (logos/icons): preview as a tinted rect with the path centered.
     for (const auto& up : objs) {
         auto* im = up->GetComponent<UIImage>();
         if (!im || !up->active) continue;
-        Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, canvasSize.x, canvasSize.y);
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        ImVec2 b(a.x + im->size.x, a.y + im->size.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
         dl->AddRectFilled(a, b, ToColor(im->color), 3.0f);
         dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), 3.0f);
         if (!im->texture.empty())
@@ -3065,17 +3504,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     for (const auto& up : objs) {
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active) continue;
-        Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, canvasSize.x, canvasSize.y);
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + pn->size.x, a.y + pn->size.y), ToColor(pn->color), 4.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pn->color), 4.0f);
     }
     for (const auto& up : objs) {
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active) continue;
-        Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, canvasSize.x, canvasSize.y);
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x, a.y + pb->size.y), ToColor(pb->background), 3.0f);
-        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x * pb->Fraction(), a.y + pb->size.y),
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pb->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x * pb->Fraction(), a.y + sz.y),
                           ToColor(pb->fill), 3.0f);
     }
 
@@ -3083,49 +3522,149 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     for (const auto& up : objs) {
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active) continue;
-        Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, canvasSize.x, canvasSize.y);
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x, a.y + sl->size.y), ToColor(sl->background), 3.0f);
-        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x * sl->Fraction(), a.y + sl->size.y),
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(sl->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x * sl->Fraction(), a.y + sz.y),
                           ToColor(sl->fill), 3.0f);
-        float kx = a.x + sl->size.x * sl->Fraction(), kw = sl->size.y * 0.6f;
-        dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sl->size.y + 2),
+        float kx = a.x + sz.x * sl->Fraction(), kw = sz.y * 0.6f;
+        dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sz.y + 2),
                           ToColor(sl->knob), 2.0f);
     }
     // UI toggles: box (+ inset check when on) and a label.
     for (const auto& up : objs) {
         auto* tg = up->GetComponent<UIToggle>();
         if (!tg || !up->active) continue;
-        Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, canvasSize.x, canvasSize.y);
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        ImVec2 b(a.x + tg->size.x, a.y + tg->size.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
         dl->AddRectFilled(a, b, ToColor(tg->boxColor), 3.0f);
         if (tg->on) {
-            float pad = tg->size.x * 0.22f;
+            float pad = sz.x * 0.22f;
             dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
                               ToColor(tg->checkColor), 2.0f);
         }
-        float px = 2.0f;
-        DrawBitmapText(dl, tg->label, b.x + 8.0f,
-                       a.y + (tg->size.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
+        float px = 2.0f * s;
+        DrawBitmapText(dl, tg->label, b.x + 8.0f * s,
+                       a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
     }
 
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
     for (const auto& up : objs) {
         auto* btn = up->GetComponent<UIButton>();
         if (!btn || !up->active) continue;
-        Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, canvasSize.x, canvasSize.y);
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        ImVec2 b(a.x + btn->size.x, a.y + btn->size.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
         dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), 4.0f);
-        float px = 2.0f;
+        float px = 2.0f * s;
         float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-        DrawBitmapText(dl, btn->label, a.x + (btn->size.x - tw) * 0.5f,
-                       a.y + (btn->size.y - Font8x8::Height * px) * 0.5f, px,
+        DrawBitmapText(dl, btn->label, a.x + (sz.x - tw) * 0.5f,
+                       a.y + (sz.y - Font8x8::Height * px) * 0.5f, px,
                        ToColor(btn->textColor));
-        if (!gameView && up.get() == ed.selected())
+    }
+
+    // Selection highlight for the selected widget — works for every UI type and
+    // in both the 2D and 3D Scene views (the Game view stays clean). Drag the
+    // body to move; drag a handle to resize (handles only on sizable widgets).
+    if (!gameView && ed.selected()) {
+        UIRect r = GetUIRect(ed.selected());
+        Vec2 o, sz;
+        if (GetUIScreenRect(ed.selected(), canvasSize.x, canvasSize.y, o, sz)) {
+            ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+            ImVec2 b(a.x + sz.x, a.y + sz.y);
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
-                        IM_COL32(255, 200, 0, 255), 4.0f, 0, 2.0f);
+                        IM_COL32(255, 200, 0, 255), 2.0f, 0, 2.0f);
+            if (r.sizePtr) {   // resizable: draw the 8 grab handles
+                ImVec2 h[8]; UIHandlePositions(a, b, h);
+                for (int i = 0; i < 8; ++i)
+                    dl->AddRectFilled(ImVec2(h[i].x - 4, h[i].y - 4),
+                                      ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 200, 0, 255));
+            }
+        }
+    }
+}
+
+// Click-to-select and drag-to-reposition for screen-space UI in the Scene view.
+// Runs in both 2D and 3D modes (UI is an overlay, identical in either), and
+// takes priority over the world picking below it — clicking a HUD button selects
+// the button, dragging it edits its pixel offset. Sets g_uiHandled so the 2D/3D
+// world pickers skip a click the UI already consumed.
+void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
+                   bool hovered, ImGuiIO& io) {
+    g_uiHandled = false;
+    UICanvas::Set(canvasSize.x, canvasSize.y);
+    Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
+
+    // Continue an in-progress move/resize of the grabbed widget. Mouse pixels are
+    // divided by the owning Canvas's scale so the widget tracks the cursor 1:1
+    // even when the canvas is scaling the UI.
+    if (g_uiDragTarget) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            UIRect r = GetUIRect(g_uiDragTarget);
+            if (r.valid && r.position) {
+                float s = UIScaleFor(g_uiDragTarget, canvasSize.x, canvasSize.y);
+                if (s < 1e-3f) s = 1.0f;
+                float dx = io.MouseDelta.x / s, dy = io.MouseDelta.y / s;
+                if (g_uiResizeHandle >= 0 && r.sizePtr) {
+                    int hdl = g_uiResizeHandle;
+                    bool left  = (hdl == 0 || hdl == 6 || hdl == 7);
+                    bool right = (hdl == 2 || hdl == 3 || hdl == 4);
+                    bool top   = (hdl == 0 || hdl == 1 || hdl == 2);
+                    bool bottom= (hdl == 4 || hdl == 5 || hdl == 6);
+                    if (right)  r.sizePtr->x += dx;
+                    if (bottom) r.sizePtr->y += dy;
+                    if (left)  { r.position->x += dx; r.sizePtr->x -= dx; }
+                    if (top)   { r.position->y += dy; r.sizePtr->y -= dy; }
+                    r.sizePtr->x = Mathf::Max(8.0f, r.sizePtr->x);
+                    r.sizePtr->y = Mathf::Max(8.0f, r.sizePtr->y);
+                } else {
+                    r.position->x += dx;
+                    r.position->y += dy;
+                }
+                ed.dirty = true;
+            }
+            g_uiHandled = true;
+            return;
+        }
+        g_uiDragTarget = nullptr;
+        g_uiResizeHandle = -1;
+    }
+
+    // Press: first try a resize handle on the current selection, then fall back
+    // to picking a widget to select + move.
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        // Resize handles of the selected, sizable widget take priority.
+        if (ed.selected()) {
+            UIRect sr = GetUIRect(ed.selected());
+            Vec2 o, sz;
+            if (sr.sizePtr && GetUIScreenRect(ed.selected(), canvasSize.x, canvasSize.y, o, sz)) {
+                ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+                ImVec2 b(a.x + sz.x, a.y + sz.y);
+                ImVec2 h[8]; UIHandlePositions(a, b, h);
+                for (int i = 0; i < 8; ++i) {
+                    float dx = io.MousePos.x - h[i].x, dy = io.MousePos.y - h[i].y;
+                    if (dx * dx + dy * dy <= 7.0f * 7.0f) {
+                        g_uiDragTarget = ed.selected();
+                        g_uiResizeHandle = i;
+                        g_uiHandled = true;
+                        break;
+                    }
+                }
+            }
+        }
+        // Otherwise pick a widget under the cursor and start moving it.
+        if (!g_uiHandled) {
+            GameObject* hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
+            if (hit) {
+                ed.Select(hit);
+                g_uiDragTarget = hit;
+                g_uiResizeHandle = -1;
+                g_uiHandled = true;
+            }
+        }
     }
 }
 
@@ -3295,7 +3834,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     if (gameView) return;   // the Game view is non-interactive
 
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         Vec2 world = screenToWorld(io.MousePos);
         GameObject* hit = nullptr;
         for (const auto& up : objs) {
@@ -3312,7 +3851,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ed.Select(hit);
     }
     // Selecting and dragging work in Play too (edits revert on Stop, like Unity).
-    if (ed.selected() && hovered &&
+    // Skipped while a UI widget is being dragged (it owns the drag this frame).
+    if (ed.selected() && hovered && !g_uiHandled && !IsUIElement(ed.selected()) &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         Transform* t = ed.selected()->transform;
         if (g_tool == Tool::Move) {
@@ -3391,13 +3931,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     dl->PushClipRect(canvasPos, canvasEnd, true);
 
-    // Default skybox: a vertical sky gradient behind everything (sky blue up
-    // top, hazy near the horizon). Drawn first so the grid and the transparent
-    // mesh layer sit on top of it.
-    if (g_skybox) {
-        ImU32 top = IM_COL32(70, 120, 200, 255);    // zenith blue
-        ImU32 mid = IM_COL32(150, 185, 225, 255);   // horizon haze
-        ImU32 bot = IM_COL32(120, 120, 130, 255);   // ground-ish grey
+    // Skybox: a vertical sky gradient behind everything, using the scene's
+    // render settings (these save with the scene, so the built game matches).
+    // Drawn first so the grid and the transparent mesh layer sit on top of it.
+    const auto& rs = ed.scene().renderSettings;
+    if (rs.skybox) {
+        ImU32 top = ToColor(rs.skyTop);
+        ImU32 mid = ToColor(rs.skyHorizon);
+        ImU32 bot = ToColor(rs.skyBottom);
         ImVec2 cmid(canvasEnd.x, (canvasPos.y + canvasEnd.y) * 0.5f);
         dl->AddRectFilledMultiColor(canvasPos, cmid, top, top, mid, mid);
         dl->AddRectFilledMultiColor(ImVec2(canvasPos.x, cmid.y), canvasEnd, mid, mid, bot, bot);
@@ -3598,7 +4139,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
 
         // Grab the closest handle on mouse-press.
-        if (hovered && oOk && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (hovered && oOk && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             float best = 11.0f; int pick = -1;
             for (int i = 0; i < 3; ++i)
                 if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
@@ -3637,7 +4178,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Click-select (skipped when a gizmo handle was just grabbed): pick the
     // nearest mesh whose projected bounding box contains the cursor.
-    if (hovered && !g_gizmoGrab && !grabbedThisClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = nullptr;
         float bestDepth = 1e30f;
         for (const auto& up : objs) {
@@ -3719,6 +4260,10 @@ void DrawViewport(EditorState& ed) {
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     bool hovered = ImGui::IsItemHovered();
     ImGuiIO& io = ImGui::GetIO();
+
+    // UI editing (pick/drag screen-space widgets) runs first and may consume the
+    // click so the world pickers below leave the selection alone.
+    EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
 
     if (ed.view3D) DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     else           DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
@@ -3830,6 +4375,7 @@ int main(int argc, char** argv) {
         "OkaySpace Editor", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { std::cerr << "CreateWindow failed: " << SDL_GetError() << "\n"; return 1; }
+    okay::SetAppIcon(window);   // placeholder OkaySpace logo
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
     SDL_Renderer* renderer = SDL_CreateRenderer(
@@ -3978,6 +4524,7 @@ int main(int argc, char** argv) {
         if (g_showScriptEditor) DrawScriptEditor(ed);
         DrawScriptDocs();
         if (g_showStats)     DrawStats(ed);
+        if (g_showScenes)    DrawScenes(ed);
 
         // Play-mode tint: a colored border around the whole window so it's
         // obvious the game is running (green) or paused (amber) — like Unity.

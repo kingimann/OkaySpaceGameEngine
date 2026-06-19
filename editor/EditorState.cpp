@@ -3,15 +3,11 @@
 namespace okay::editor {
 
 EditorState::EditorState() : m_scene("Untitled") {
-    // Online services are part of the engine: simulation backends by default,
-    // real Steamworks / PlayFab when the engine is built with those flags.
+    // Online services are part of the engine: a Steam simulation backend by
+    // default, the real Steamworks backend when built with -DOKAY_WITH_STEAM.
     m_steam = CreateSteamService();
     SteamConfig sc; sc.appId = 480; // Spacewar test app id
     if (m_steam) m_steam->Initialize(sc);
-
-    m_playfab = CreatePlayFabService();
-    PlayFabConfig pf; pf.titleId = "OKAYDEMO";
-    if (m_playfab) m_playfab->Initialize(pf);
 }
 
 bool EditorState::StartHost(std::uint16_t port) {
@@ -225,6 +221,28 @@ void EditorState::NewPlatformer() {
     NewScene();
     m_suppressUndo = true;
     Templates::Platformer(m_scene);
+    m_suppressUndo = false;
+    view3D = false;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
+void EditorState::NewPlatformer3D() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Platformer3D(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 1, 0};
+    camDist = 14.0f;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
+void EditorState::NewMultiplayer() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Multiplayer(m_scene);
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Player");

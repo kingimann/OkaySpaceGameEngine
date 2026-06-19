@@ -35,6 +35,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/SceneManager.hpp"
 
 // Graphics assets
 #include "okay/Graphics/Image.hpp"
@@ -74,6 +75,10 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UIElement.hpp"
+#include "okay/Components/Canvas.hpp"
+#include "okay/Components/EventSystem.hpp"
+#include "okay/Components/UIDocument.hpp"
 
 // Gameplay behaviours (no-scripting motion/lifetime helpers)
 #include "okay/Components/Mover.hpp"
@@ -115,7 +120,3 @@
 // Steam platform integration (simulation backend by default)
 #include "okay/Platform/Steam/SteamService.hpp"
 #include "okay/Components/SteamManager.hpp"
-
-// PlayFab LiveOps integration (simulation backend by default)
-#include "okay/Platform/PlayFab/PlayFabService.hpp"
-#include "okay/Components/PlayFabManager.hpp"

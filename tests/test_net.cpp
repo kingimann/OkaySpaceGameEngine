@@ -21,6 +21,11 @@ int main() {
     server->SetRemoteFactory([&](std::uint32_t id, char) {
         return serverScene.CreateGameObject("Remote" + std::to_string(id));
     });
+    std::string joinedName; std::uint32_t joinedId = 0; int leftCount = 0;
+    server->SetPeerJoinedHandler([&](std::uint32_t id, const std::string& nm) {
+        joinedId = id; joinedName = nm;
+    });
+    server->SetPeerLeftHandler([&](std::uint32_t) { ++leftCount; });
     CHECK(server->StartServer(0)); // ephemeral port
     serverScene.Start();
     std::uint16_t port = server->ServerPort();
@@ -33,6 +38,7 @@ int main() {
     GameObject* player = clientScene.CreateGameObject("PlayerAvatar");
     player->transform->localPosition = {7.0f, -3.0f, 0.0f};
     client->SetLocalAvatar(player->transform, 'P');
+    client->SetLocalName("Alice");
     client->SetRemoteFactory([&](std::uint32_t id, char) {
         return clientScene.CreateGameObject("Remote" + std::to_string(id));
     });
@@ -71,7 +77,62 @@ int main() {
         CHECK_NEAR(p.y, 2.0f, 0.01f);
     }
 
-    server->Stop();
+    // --- Custom message channel: client -> server, and server -> client ---
+    {
+        std::string fromClient, fromServer;
+        std::uint32_t clientMsgSender = 999, serverMsgSender = 999;
+        server->SetMessageHandler([&](const NetworkManager::NetMessage& m) {
+            if (m.channel == "chat") { fromClient = m.data; clientMsgSender = m.from; }
+        });
+        client->SetMessageHandler([&](const NetworkManager::NetMessage& m) {
+            if (m.channel == "evt") { fromServer = m.data; serverMsgSender = m.from; }
+        });
+
+        client->Send("chat", "hello server");
+        server->Send("evt", "world tick");
+
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f);
+            clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (!fromClient.empty() && !fromServer.empty()) break;
+        }
+
+        CHECK(fromClient == "hello server");
+        CHECK(clientMsgSender == client->LocalId());  // stamped with the real sender
+        CHECK(fromServer == "world tick");
+        CHECK(serverMsgSender == 0);                  // server avatar id is 0
+    }
+
+    // --- Roster + join callback: the server knows the client by name ---
+    CHECK(joinedId == client->LocalId());
+    CHECK(joinedName == "Alice");
+    {
+        auto peers = server->Peers();
+        CHECK(peers.size() == 1);
+        CHECK(server->PeerName(client->LocalId()) == "Alice");
+    }
+
+    // --- Targeted send: server -> one client by id ---
+    {
+        std::string direct;
+        client->SetMessageHandler([&](const NetworkManager::NetMessage& m) {
+            if (m.channel == "dm") direct = m.data;
+        });
+        server->SendTo(client->LocalId(), "dm", "just for you");
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (!direct.empty()) break;
+        }
+        CHECK(direct == "just for you");
+    }
+
+    // --- Client leaving fires the server's peer-left callback ---
     client->Stop();
+    for (int i = 0; i < 50; ++i) { serverScene.Update(0.02f); std::this_thread::sleep_for(std::chrono::milliseconds(2)); if (leftCount > 0) break; }
+    CHECK(leftCount >= 1);
+
+    server->Stop();
     TEST_MAIN_RESULT();
 }

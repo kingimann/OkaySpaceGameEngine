@@ -1,5 +1,107 @@
 OkaySpace Game Engine — Changelog
 
+v1.40.0
+  - Multiplayer made easy: a full net_* OkayScript API — net_host(port) /
+    net_join(ip, port) let any player host or join their own server, plus
+    net_send / net_send_to / net_poll (+ net_msg_channel/data/from),
+    net_is_server / net_id / net_peers / net_name. The same actions are
+    no-code ActionList ops (net_host, net_join, net_send, net_disconnect).
+  - New Project > Multiplayer template: press H to host, J to join, WASD to
+    move — a complete runnable example.
+  - Updated README + docs with a "Multiplayer in ~5 lines" guide, the net and
+    Scene Manager script tables, and an ActionList op reference.
+
+v1.39.0
+  - Unity-like Build Settings: the Build dialog now has product/company names,
+    window width/height (with presets), fullscreen / resizable / vsync, "include
+    all project scenes", and a development-build flag. Builds write a
+    game.okayconfig the player reads for the window + scene list, and can bundle
+    every project scene (so load_scene_index works in the shipped game).
+
+v1.38.0
+  - Added a placeholder OkaySpace logo (a ringed planet over a starfield), drawn
+    procedurally and set as the window icon for both the editor and the launcher.
+
+v1.37.0
+  - Expanded scripting: SceneManager from OkayScript — load_scene_index(i),
+    load_scene_name(n), load_next_scene(), reload_scene(), scene_count(),
+    scene_index(), scene_name().
+  - Expanded visual scripting (ActionList): new instructions mul_var, div_var,
+    copy_var, rand_var, set_prefs, add_prefs, save_prefs, set_tag,
+    load_scene_index, load_next_scene; new conditions var_neq, key_up,
+    mouse_down, prefs_eq, prefs_gt. All selectable in the visual editor.
+
+v1.36.0
+  - New Scene Manager (engine + a Scenes panel): a build list of the project's
+    scenes with by-index / by-name loading, Load Next and Reload — the engine
+    analogue of Unity's SceneManager + Build Settings. The Scenes panel lists
+    and opens project scenes and feeds the build order.
+  - Prefabs from the Hierarchy: right-click an object > Save As Prefab... writes
+    a .okayprefab into the project (drag it back in to instantiate).
+  - Expanded Hierarchy right-click: Copy / Paste As Sibling / Paste As Child,
+    Duplicate, Create Empty Child, Create Child (Cube/Sprite/Camera/Light),
+    Focus, Rename, Activate, Delete; the empty-space menu adds Camera, Light,
+    a 3D Object submenu and Paste.
+
+v1.35.0
+  - Build everything with the skybox and lighting: the sky gradient and a base
+    ambient level are now per-scene render settings saved with the scene, so a
+    built game (the player) renders the same sky + lighting the editor shows —
+    not just an editor preview. Edit them under Stats > Environment (Sky &
+    Light); the menu Skybox toggle is now per-scene too.
+
+v1.34.0
+  - Fixed the updater "doesn't always update": the GitHub raw CDN was serving a
+    cached VERSION.txt / .exe. Every download now sends no-cache headers and a
+    unique query string so you always get the freshly published build (editor
+    self-update and the launcher both).
+  - Removed PlayFab. Online services are now Steam + Multiplayer.
+  - Expanded the Steam SDK surface: stat increment, achievement progress
+    (auto-unlocks at the max), leaderboards (submit + ranked Top-N), Steam
+    Cloud (write/read/has/delete), friend count and overlay. The Services panel
+    exposes all of it; the simulation backend implements it in memory.
+  - Expanded multiplayer: player names in the join handshake, a server-side
+    roster (Peers()/PeerName()), peer joined/left callbacks, and SendTo(id, ..)
+    targeted messages (private/RPC) alongside the existing broadcast. The
+    Multiplayer panel gains a name field, roster and a simple chat box.
+
+v1.33.0
+  - Scene view: resize UI as well as move it. A selected widget shows 8 grab
+    handles — drag a corner/edge to resize (respecting the Canvas scale), drag
+    the body to move. Works in the 2D and 3D Scene views.
+  - UIDocument is now a real little UI toolkit: reusable styles and custom
+    widgets. `style name color=.. size=..` defines a USS-style class a widget
+    pulls in with `class=name` (its own keys win); `define name` + an indented
+    block defines a custom control that `name pos=x,y` instances and shifts.
+
+v1.32.0
+  - UI now works the Unity way: widgets created from GameObject > UI are
+    automatically parented under a Canvas (created if missing) and the scene
+    gets one Event System. Each Canvas scales its child widgets to the window
+    (Constant Pixel Size or Scale With Screen Size), so a HUD designed at one
+    resolution adapts to others. Click-to-select and drag respect that scale.
+  - New "UI Toolkit"-style UIDocument: author a whole menu/HUD as OkayUI markup
+    (one widget per line, indent to nest) and the engine builds the widget tree
+    for you. Edit the markup + Rebuild live from the Inspector. Types: panel,
+    text, button, image, slider, toggle, progress; keys: pos, size, color,
+    anchor, value, on, onclick. Add via GameObject > UI > UI Document.
+
+v1.31.0
+  - Scene view: click any UI widget to select it, then drag to reposition it —
+    works in BOTH the 2D and 3D Scene views (UI used to only be selectable in
+    2D). World picking yields to UI so a HUD click selects the HUD.
+  - New Canvas component (Unity-style CanvasScaler): Constant Pixel Size or
+    Scale With Screen Size with a reference resolution and width/height match.
+  - New Event System component: central UI pointer dispatch — tracks the
+    hovered / pressed / selected widget and exposes IsPointerOverUI(). Added
+    UIRaycast() and a uniform UIRect view of every widget.
+  - New 3D Platformer starter template: perspective camera, directional light,
+    a physics ground and a Character Controller 3D player (New Project > 3D
+    Platformer).
+  - Networking: a custom message channel (RPC / events / chat). Send(channel,
+    data) fans out to every peer; receive via a handler or TakeMessages().
+    The server relays client messages to all other peers.
+
 v1.30.0
   - New Follow Target 2D component: no-code chase AI — moves toward a named
     object at a set speed and stops within a distance (enemies, homing).

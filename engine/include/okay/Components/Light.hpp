@@ -30,6 +30,10 @@ inline void ApplySceneLight(const Scene& scene) {
             return;
         }
     }
+    // No Light object: fall back to the scene's ambient render setting so a
+    // built game still has the base lighting the author chose.
+    SceneLight::SetDirection(DefaultLightDir());
+    SceneLight::SetAmbient(scene.renderSettings.ambient);
 }
 
 } // namespace okay

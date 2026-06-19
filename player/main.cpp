@@ -110,8 +110,9 @@ int main(int argc, char** argv) {
         std::string title = "OkaySpace Game";
         int  width = 960, height = 600;
         bool fullscreen = false, borderless = false, resizable = true, vsync = true;
-        bool showCursor = true;
+        bool showCursor = true, quitOnEscape = true, showFps = false;
         int  fpsCap = 0;
+        float volume = 1.0f;
         std::string startup;
         std::vector<std::string> scenes;
     } cfg;
@@ -132,6 +133,9 @@ int main(int argc, char** argv) {
             else if (k == "vsync")      cfg.vsync = std::atoi(v.c_str()) != 0;
             else if (k == "cursor")     cfg.showCursor = std::atoi(v.c_str()) != 0;
             else if (k == "fps_cap")    cfg.fpsCap = std::atoi(v.c_str());
+            else if (k == "quit_on_escape") cfg.quitOnEscape = std::atoi(v.c_str()) != 0;
+            else if (k == "volume")     cfg.volume = (float)std::atof(v.c_str());
+            else if (k == "show_fps")   cfg.showFps = std::atoi(v.c_str()) != 0;
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
         }
@@ -176,6 +180,7 @@ int main(int argc, char** argv) {
     want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
     SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
     if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
+    AudioMixer::masterVolume = cfg.volume;   // global mix scale from build settings
 
     // baseDir (resolved above) is where the game files live, for relative paths.
     std::unordered_map<std::string, SDL_Texture*> textureCache;
@@ -228,7 +233,7 @@ int main(int argc, char** argv) {
                 bool typing = false;
                 for (const auto& up : scene.Objects())
                     if (auto* f = up->GetComponent<UIInputField>()) if (f->focused) typing = true;
-                if (!typing) running = false;
+                if (!typing && cfg.quitOnEscape) running = false;
             }
         }
 
@@ -880,6 +885,20 @@ int main(int argc, char** argv) {
             SDL_Color tc{(Uint8)(tt->textColor.r * 255), (Uint8)(tt->textColor.g * 255),
                          (Uint8)(tt->textColor.b * 255), (Uint8)(tt->textColor.a * 255)};
             DrawText(renderer, tt->text, m.x + 20, m.y + 19, px, tc);
+        }
+
+        // Optional FPS overlay (top-left) when enabled in build settings.
+        if (cfg.showFps) {
+            static float fpsSmooth = 0.0f;
+            float inst = dt > 0.0001f ? 1.0f / dt : 0.0f;
+            fpsSmooth = fpsSmooth <= 0.0f ? inst : fpsSmooth * 0.9f + inst * 0.1f;
+            char buf[32]; std::snprintf(buf, sizeof(buf), "FPS %d", (int)(fpsSmooth + 0.5f));
+            float px = 2.0f;
+            float tw = (float)std::char_traits<char>::length(buf) * (Font8x8::Width + 1) * px;
+            SDL_Rect bg{4, 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
+            SDL_RenderFillRect(renderer, &bg);
+            DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
         }
         SDL_RenderPresent(renderer);
 

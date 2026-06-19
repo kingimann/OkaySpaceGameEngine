@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.12.0
+  - New Project Settings window (Edit > Project Settings...): set your game's
+    company and version, default resolution, 2D/3D gravity, and ambient/skybox
+    rendering defaults in one place. Settings persist to project.okayproj, can
+    be applied to the open scene live, and "Use in Build" pushes them straight
+    into the build dialog.
+  - More build settings — a new "Gameplay" section in Build lets you control
+    how the finished game behaves: Quit on Escape (toggle whether Esc closes the
+    game), Master Volume (scale all audio 0–100%), and Show FPS overlay (a small
+    on-screen frame-rate readout). These are written into game.okayconfig and
+    honored by the player, so each built game can be customized without code.
+
 v2.11.1
   - UI looked bloated/"weird": v2.10's spacing bump was too aggressive (very tall
     fields and toolbar). Restored balanced, professional metrics (close to the

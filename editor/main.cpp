@@ -436,10 +436,59 @@ struct BuildSettings {
     bool  vsync = true;
     bool  hideCursor = false;
     int   fpsCap = 0;                      // 0 = uncapped (vsync paces)
+    bool  quitOnEscape = true;
+    float masterVolume = 1.0f;
+    bool  showFps = false;
     bool  includeAllProjectScenes = false; // else just the current scene
     bool  developmentBuild = false;
 };
 BuildSettings g_build;
+
+// Project-wide settings (persisted to project.okayproj): defaults a build/scene
+// inherits, edited via Edit > Project Settings.
+struct ProjectSettings {
+    char  company[128]  = "OkaySpace";
+    char  version[32]   = "1.0.0";
+    int   defaultWidth  = 1280, defaultHeight = 720;
+    float gravity2D[2]  = {0.0f, -9.81f};
+    float gravity3D[3]  = {0.0f, -9.81f, 0.0f};
+    float ambient       = 0.30f;
+    bool  skybox        = true;
+};
+ProjectSettings g_project;
+bool g_showProjectSettings = false;
+
+void SaveProjectSettings() {
+    std::ofstream f("project.okayproj");
+    if (!f) return;
+    f << "company=" << g_project.company << "\n";
+    f << "version=" << g_project.version << "\n";
+    f << "width=" << g_project.defaultWidth << "\n";
+    f << "height=" << g_project.defaultHeight << "\n";
+    f << "gravity2d=" << g_project.gravity2D[0] << " " << g_project.gravity2D[1] << "\n";
+    f << "gravity3d=" << g_project.gravity3D[0] << " " << g_project.gravity3D[1] << " " << g_project.gravity3D[2] << "\n";
+    f << "ambient=" << g_project.ambient << "\n";
+    f << "skybox=" << (g_project.skybox ? 1 : 0) << "\n";
+}
+
+void LoadProjectSettings() {
+    std::ifstream f("project.okayproj");
+    if (!f) return;
+    std::string line;
+    while (std::getline(f, line)) {
+        std::size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        if      (k == "company") std::strncpy(g_project.company, v.c_str(), sizeof(g_project.company) - 1);
+        else if (k == "version") std::strncpy(g_project.version, v.c_str(), sizeof(g_project.version) - 1);
+        else if (k == "width")   g_project.defaultWidth = std::atoi(v.c_str());
+        else if (k == "height")  g_project.defaultHeight = std::atoi(v.c_str());
+        else if (k == "gravity2d") std::sscanf(v.c_str(), "%f %f", &g_project.gravity2D[0], &g_project.gravity2D[1]);
+        else if (k == "gravity3d") std::sscanf(v.c_str(), "%f %f %f", &g_project.gravity3D[0], &g_project.gravity3D[1], &g_project.gravity3D[2]);
+        else if (k == "ambient") g_project.ambient = (float)std::atof(v.c_str());
+        else if (k == "skybox")  g_project.skybox = std::atoi(v.c_str()) != 0;
+    }
+}
 bool  g_snap = false;
 float g_snapSize = 1.0f;
 int   g_uiGrid = 8;         // UI snap grid in pixels (Snap on)
@@ -634,6 +683,9 @@ struct Options {
     bool fullscreen = false, borderless = false, resizable = true, vsync = true;
     bool hideCursor = false;
     int  fpsCap = 0;
+    bool quitOnEscape = true;
+    float masterVolume = 1.0f;
+    bool showFps = false;
     bool includeAllProjectScenes = false, developmentBuild = false;
 };
 
@@ -679,6 +731,9 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "vsync=" << (opt.vsync ? 1 : 0) << "\n";
         cf << "cursor=" << (opt.hideCursor ? 0 : 1) << "\n";
         cf << "fps_cap=" << opt.fpsCap << "\n";
+        cf << "quit_on_escape=" << (opt.quitOnEscape ? 1 : 0) << "\n";
+        cf << "volume=" << opt.masterVolume << "\n";
+        cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
@@ -924,6 +979,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
     if (ImGui::BeginMenu("Edit")) {
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, ed.CanUndo())) { ed.Undo(); ConsoleLog("Undo"); }
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, ed.CanRedo())) { ed.Redo(); ConsoleLog("Redo"); }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Project Settings...")) g_showProjectSettings = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
@@ -2304,6 +2361,12 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SetNextItemWidth(150);
         if (ImGui::Combo("Frame rate cap", &fpsSel, fpsOpts, 5)) g_build.fpsCap = fpsVals[fpsSel];
 
+        ImGui::SeparatorText("Gameplay");
+        ImGui::Checkbox("Quit on Escape", &g_build.quitOnEscape); ImGui::SameLine();
+        ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
+        ImGui::SetNextItemWidth(200);
+        ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
+
         ImGui::SeparatorText("Scenes & Options");
         ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene_index works");
@@ -2321,6 +2384,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.fullscreen = g_build.fullscreen; o.borderless = g_build.borderless;
             o.resizable = g_build.resizable; o.vsync = g_build.vsync;
             o.hideCursor = g_build.hideCursor; o.fpsCap = g_build.fpsCap;
+            o.quitOnEscape = g_build.quitOnEscape; o.masterVolume = g_build.masterVolume; o.showFps = g_build.showFps;
             o.includeAllProjectScenes = g_build.includeAllProjectScenes;
             o.developmentBuild = g_build.developmentBuild;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
@@ -2413,6 +2477,51 @@ void DrawAboutPopup() {
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+}
+
+// Edit > Project Settings: project-wide defaults that builds inherit, plus
+// quick "apply to current scene" for physics/rendering.
+void DrawProjectSettings(EditorState& ed) {
+    if (!g_showProjectSettings) return;
+    ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Project Settings", &g_showProjectSettings)) {
+        ImGui::TextDisabled("Defaults a new build/scene inherits. Saved to project.okayproj.");
+        if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::InputText("Company##ps", g_project.company, sizeof(g_project.company));
+            ImGui::SetNextItemWidth(160);
+            ImGui::InputText("Version##ps", g_project.version, sizeof(g_project.version));
+            ImGui::SetNextItemWidth(110); ImGui::InputInt("Width##ps", &g_project.defaultWidth); ImGui::SameLine();
+            ImGui::SetNextItemWidth(110); ImGui::InputInt("Height##ps", &g_project.defaultHeight);
+        }
+        if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::DragFloat2("Gravity 2D##ps", g_project.gravity2D, 0.05f);
+            ImGui::DragFloat3("Gravity 3D##ps", g_project.gravity3D, 0.05f);
+            if (ImGui::Button("Apply to current scene##phys")) {
+                ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
+                ed.scene().physics3D().gravity = {g_project.gravity3D[0], g_project.gravity3D[1], g_project.gravity3D[2]};
+                ed.dirty = true; ConsoleLog("Applied project physics to the scene");
+            }
+        }
+        if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::SliderFloat("Ambient##ps", &g_project.ambient, 0.0f, 1.0f);
+            ImGui::Checkbox("Skybox##ps", &g_project.skybox);
+            if (ImGui::Button("Apply to current scene##rend")) {
+                ed.scene().renderSettings.ambient = g_project.ambient;
+                ed.scene().renderSettings.skybox = g_project.skybox;
+                ed.dirty = true; ConsoleLog("Applied project rendering to the scene");
+            }
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Save", ImVec2(110, 0))) { SaveProjectSettings(); ConsoleLog("Project settings saved"); }
+        ImGui::SameLine();
+        if (ImGui::Button("Use in Build", ImVec2(120, 0))) {
+            std::strncpy(g_build.company, g_project.company, sizeof(g_build.company) - 1);
+            std::strncpy(g_build.version, g_project.version, sizeof(g_build.version) - 1);
+            g_build.width = g_project.defaultWidth; g_build.height = g_project.defaultHeight;
+            ConsoleLog("Build settings set from project defaults");
+        }
+    }
+    ImGui::End();
 }
 
 void DrawUpdatePopup() {
@@ -5577,6 +5686,7 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    LoadProjectSettings();   // project.okayproj defaults (company/version/gravity/...)
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
@@ -5720,6 +5830,7 @@ int main(int argc, char** argv) {
         DrawQuitPrompt(ed, running);
         DrawUpdatePopup();
         DrawAboutPopup();
+        DrawProjectSettings(ed);
         if (g_showHierarchy) DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel (always shown)
         DrawDataAssetEditor();

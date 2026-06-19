@@ -333,6 +333,28 @@ int main() {
         CHECK(doc->Diagnostics()[0].rfind("line 2", 0) == 0);
     }
 
+    // --- Parameterized defines: $args substituted per instance ---------
+    {
+        Scene s("params"); s.physicsEnabled = false;
+        GameObject* docGo = s.CreateGameObject("Doc");
+        auto* doc = docGo->AddComponent<UIDocument>();
+        doc->markup =
+            "define card\n"
+            "  panel pos=0,0 size=200,80\n"
+            "  text \"$title\" pos=10,10 size=2\n"
+            "card title=\"Hello\" pos=40,40\n"
+            "card title=\"World\" pos=40,140\n";
+        doc->Rebuild(); s.Update(0.0f);
+
+        std::vector<std::string> texts;
+        for (GameObject* g : doc->Generated())
+            if (auto* tr = g->GetComponent<TextRenderer>()) texts.push_back(tr->text);
+        CHECK(texts.size() == 2);
+        bool hello = false, world = false;
+        for (auto& t : texts) { if (t == "Hello") hello = true; if (t == "World") world = true; }
+        CHECK(hello && world);
+    }
+
     // --- Percent sizing resolves against the canvas --------------------
     {
         UICanvas::Set(1000, 800);

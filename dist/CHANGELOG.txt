@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.66.0
+  - UI Toolkit parameterized custom widgets: a `define` body can use $args, and
+    each instance supplies them — define a `card` once with text "$title", then
+    `card title="Hello"` / `card title="World"` stamp out copies with their own
+    text. Longest-name-first substitution; works in labels and any value.
+
 v1.65.0
   - Data binding now works on buttons and input fields too (not just text):
     `button bind="Coins: {coins}"` keeps the label live. UITextBind updates

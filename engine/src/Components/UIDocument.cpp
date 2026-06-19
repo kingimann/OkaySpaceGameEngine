@@ -22,6 +22,7 @@
 #include <vector>
 #include <string>
 #include <cctype>
+#include <algorithm>
 
 namespace okay {
 namespace {
@@ -360,6 +361,40 @@ Vec2 TokenPos(const Token& t) {
     return t.Has("pos") ? ParsePair(t.Get("pos"), 0.0f) : Vec2{0.0f, 0.0f};
 }
 
+// Replace every `$name` occurrence in `s` with the matching instance argument
+// (longest names first so `$titlebar` isn't clobbered by `$title`).
+std::string SubstParams(std::string s, const std::vector<std::pair<std::string, std::string>>& params) {
+    std::vector<const std::pair<std::string, std::string>*> ordered;
+    for (auto& p : params) ordered.push_back(&p);
+    std::sort(ordered.begin(), ordered.end(),
+              [](auto* a, auto* b) { return a->first.size() > b->first.size(); });
+    for (auto* p : ordered) {
+        std::string needle = "$" + p->first;
+        std::size_t pos = 0;
+        while ((pos = s.find(needle, pos)) != std::string::npos) {
+            s.replace(pos, needle.size(), p->second);
+            pos += p->second.size();
+        }
+    }
+    return s;
+}
+
+// A copy of a define's body with `$param` placeholders substituted in every
+// token's label and property values, so custom widgets take arguments:
+//   define card
+//     panel ...
+//     text "$title" pos=10,10
+//   card title="Hello" pos=40,40
+std::vector<Line> InstantiateBody(const std::vector<Line>& body,
+                                  const std::vector<std::pair<std::string, std::string>>& params) {
+    std::vector<Line> out = body;
+    for (Line& ln : out) {
+        ln.tok.label = SubstParams(ln.tok.label, params);
+        for (auto& pr : ln.tok.props) pr.second = SubstParams(pr.second, params);
+    }
+    return out;
+}
+
 // Recursively build a forest of widget lines under `parentT`. `i` walks the
 // shared line list; everything with indent > parentIndent is a child here.
 // `offset` accumulates custom-widget instance positions.
@@ -379,8 +414,12 @@ void BuildForest(Scene& scene, const std::vector<Line>& lines, std::size_t& i,
             group->transform->SetParent(parentT, /*worldPositionStays=*/false);
             out.push_back(group);
             Vec2 instOffset = offset + TokenPos(tok);
+            // Instance args = every prop except pos, substituted as $name in body.
+            std::vector<std::pair<std::string, std::string>> params;
+            for (auto& p : tok.props) if (p.first != "pos") params.push_back(p);
+            std::vector<Line> body = InstantiateBody(def->body, params);
             std::size_t j = 0;
-            BuildForest(scene, def->body, j, /*parentIndent*/ def->body.empty() ? -1 : def->body.front().indent - 1,
+            BuildForest(scene, body, j, /*parentIndent*/ body.empty() ? -1 : body.front().indent - 1,
                         group->transform, instOffset, styles, defines, out);
             while (i < lines.size() && lines[i].indent > myIndent) ++i;
         } else {

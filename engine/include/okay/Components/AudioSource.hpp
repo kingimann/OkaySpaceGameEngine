@@ -16,6 +16,12 @@ public:
     float volume = 1.0f;
     bool  loop = false;
     bool  playOnAwake = false;
+    /// 3D positional audio: when true, the mixer attenuates the source by its
+    /// distance to the listener (set via AudioMixer::SetListener). Full volume
+    /// within minDistance, silent past maxDistance (linear rolloff between).
+    bool  spatial = false;
+    float minDistance = 1.0f;
+    float maxDistance = 25.0f;
 
     bool  IsPlaying() const { return m_playing; }
     std::size_t Playhead() const { return m_playhead; }

@@ -53,5 +53,33 @@ int main() {
     AudioMixer::Render(scene, buf4, 4); // 0.5 + 0.8 = 1.3 -> clamp 1.0
     CHECK_NEAR(buf4[0], 1.0f, 1e-4);
 
+    // 3D spatial attenuation: full within minDistance, silent past maxDistance.
+    {
+        Scene sp("Spatial");
+        sp.physicsEnabled = false;
+        GameObject* s = sp.CreateGameObject("Src3D");
+        auto* a = s->AddComponent<AudioSource>();
+        a->clip = AudioClip::Const(1.0f, 64);
+        a->spatial = true; a->minDistance = 1.0f; a->maxDistance = 11.0f;
+        sp.Start();
+
+        s->transform->localPosition = {0, 0, 0};
+        AudioMixer::SetListener({0, 0, 0});       // on top of the source -> full
+        float b[4] = {0}; a->Play();
+        AudioMixer::Render(sp, b, 4);
+        CHECK_NEAR(b[0], 1.0f, 1e-3);
+
+        s->transform->localPosition = {6, 0, 0};  // halfway in the rolloff -> ~0.5
+        AudioMixer::SetListener({0, 0, 0});
+        float b2[4] = {0}; a->Play();
+        AudioMixer::Render(sp, b2, 4);
+        CHECK_NEAR(b2[0], 0.5f, 0.05f);
+
+        s->transform->localPosition = {100, 0, 0}; // past maxDistance -> silent
+        float b3[4] = {0}; a->Play();
+        AudioMixer::Render(sp, b3, 4);
+        CHECK_NEAR(b3[0], 0.0f, 1e-3);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.18.0
+  - 3D positional audio: an Audio Source can be marked 3D (spatial) with Min/Max
+    Distance, and the mixer attenuates it by distance to the listener (the main
+    camera). Great for world sounds that fade as you move away.
+
 v1.17.0
   - Unity-style Project tab: a folder tree on the left, an icon grid on the
     right with type-colored thumbnails, a clickable breadcrumb, and search.

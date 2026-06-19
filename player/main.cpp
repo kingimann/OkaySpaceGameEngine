@@ -253,6 +253,8 @@ int main(int argc, char** argv) {
         if (audioDev) {
             int n = (int)(dt * 44100.0f); if (n > 8192) n = 8192;
             if (n > 0) {
+                if (scene.mainCamera)   // listener for 3D/spatial audio sources
+                    AudioMixer::SetListener(scene.mainCamera->gameObject->transform->Position());
                 std::vector<float> ab(n);
                 AudioMixer::Render(scene, ab.data(), n);
                 SDL_QueueAudio(audioDev, ab.data(), (Uint32)(n * sizeof(float)));

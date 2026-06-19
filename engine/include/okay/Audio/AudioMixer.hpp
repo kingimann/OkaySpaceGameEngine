@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Math/Vec3.hpp"
 
 namespace okay {
 
@@ -16,6 +17,11 @@ struct AudioMixer {
     /// Global output level [0..1] and mute, for settings menus.
     static inline float masterVolume = 1.0f;
     static inline bool  muted = false;
+
+    /// World-space listener position for 3D (spatial) sources — set this each
+    /// frame to the camera/player position so distance attenuation works.
+    static inline Vec3 listener = Vec3::Zero;
+    static void SetListener(const Vec3& p) { listener = p; }
 };
 
 } // namespace okay

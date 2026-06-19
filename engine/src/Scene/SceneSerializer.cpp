@@ -206,7 +206,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* au = go->GetComponent<AudioSource>()) {
         out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
-            << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << "\n";
+            << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
+            << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << "\n";
     }
     if (auto* tm = go->GetComponent<Tilemap>()) {
         out << "  tilemap " << tm->tileSize << " " << tm->Width() << " " << tm->Height();
@@ -527,6 +528,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* au = go->AddComponent<AudioSource>();
                     au->clipPath = cp; au->volume = vol;
                     au->loop = (loop != 0); au->playOnAwake = (poa != 0);
+                    in >> std::ws; // optional 3D fields: spatial min max
+                    if (std::isdigit(in.peek())) {
+                        int sp = 0; in >> sp >> au->minDistance >> au->maxDistance;
+                        au->spatial = (sp != 0);
+                    }
                 } else if (field == "tilemap") {
                     float ts = 1.0f; int tw = 0, th = 0;
                     in >> ts >> tw >> th;

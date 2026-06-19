@@ -2303,6 +2303,11 @@ void DrawInspector(EditorState& ed) {
             cb[sizeof(cb) - 1] = '\0';
             if (ImGui::InputText("WAV File##audio", cb, sizeof(cb))) { a->clipPath = cb; ed.dirty = true; }
             ImGui::TextDisabled("WAV path loads in the built game; %.2fs clip", a->clip.Duration());
+            if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
+            if (a->spatial) {
+                if (ImGui::DragFloat("Min Distance##audio", &a->minDistance, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Max Distance##audio", &a->maxDistance, 0.1f, 0.0f, 5000.0f)) ed.dirty = true;
+            }
             if (ImGui::SmallButton("Remove##audio")) toRemove = a;
         }
     }
@@ -3566,6 +3571,9 @@ int main(int argc, char** argv) {
                 int n = (int)(dt * 44100.0f);
                 if (n > 8192) n = 8192;
                 if (n > 0) {
+                    // Listener = the scene's main camera (for 3D/spatial sources).
+                    if (Camera* mc = SceneCamera(ed.scene()))
+                        AudioMixer::SetListener(mc->gameObject->transform->Position());
                     std::vector<float> ab(n);
                     AudioMixer::Render(ed.scene(), ab.data(), n);
                     SDL_QueueAudio(audioDev, ab.data(), (Uint32)(n * sizeof(float)));

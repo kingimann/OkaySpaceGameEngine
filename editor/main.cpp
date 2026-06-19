@@ -3397,6 +3397,15 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("(%d widgets)", (int)doc->Generated().size());
             ImGui::TextDisabled("types: panel text button image slider toggle progress input dropdown scroll layout");
             ImGui::TextDisabled("keys: name corner border gradient font hover align outline tooltip options bind on*=...");
+            // Live validation: list any warnings from the last rebuild in red.
+            const auto& diag = doc->Diagnostics();
+            if (diag.empty()) {
+                ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.5f, 1.0f), "No problems.");
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%d problem(s):", (int)diag.size());
+                for (const auto& d : diag)
+                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "  %s", d.c_str());
+            }
             if (ImGui::SmallButton("Remove##uidoc")) toRemove = doc;
         }
     }

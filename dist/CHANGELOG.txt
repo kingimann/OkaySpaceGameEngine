@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.63.0
+  - UI Toolkit live validation: the UI Document now reports markup problems —
+    unknown widget types and unrecognized keys (typos) — each with its line
+    number. The inspector shows "No problems." when clean, or a red list to fix.
+    Available in code via UIDocument::Diagnostics().
+
 v1.62.0
   - UI data binding: a text widget can bind to live values —
     `text bind="Score: {score}"` shows the current `score` Prefs value and

@@ -276,8 +276,30 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
     return go;
 }
 
-// One parsed markup line: its indentation depth and its token.
-struct Line { int indent; Token tok; };
+// One parsed markup line: its indentation depth, source line number, and token.
+struct Line { int indent; int lineNo; Token tok; };
+
+// The widget types the toolkit understands (besides `style`/`define`/instances).
+bool KnownType(const std::string& t) {
+    static const char* k[] = {"panel","text","button","image","slider","toggle",
+        "progress","input","dropdown","scroll","layout"};
+    for (auto* s : k) if (t == s) return true;
+    return false;
+}
+
+// Every property key the parser reads (across all widget types). A key outside
+// this set on a widget line is almost certainly a typo, so it's reported.
+bool KnownKey(const std::string& k) {
+    static const char* keys[] = {
+        "pos","size","color","anchor","class","corner","tooltip","tipdelay","name","active",
+        "border","bordercolor","gradient","hover","pressed","textcolor","font",
+        "align","outline","shadow","bind","value","min","max","fill","knob","knobsize",
+        "showvalue","on","check","percent","texture","nineslice","amount","placeholder",
+        "options","content","bar","dir","spacing","padding",
+        "onclick","onchange","ontoggle","onsubmit"};
+    for (auto* s : keys) if (k == s) return true;
+    return false;
+}
 
 // The name of a style/define line is its first bare word (e.g. `style primary`
 // or `define card`) — the first prop key that carries no value.
@@ -384,14 +406,16 @@ void UIDocument::Rebuild() {
     std::stringstream ss(markup);
     std::string line;
     std::vector<Line> all;
+    int lineNo = 0;
     while (std::getline(ss, line)) {
+        ++lineNo;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         int indent = IndentOf(line);
         std::string body = line.substr(indent);
         if (body.empty() || body[0] == '#') continue;   // blank or comment
         Token t = Lex(body);
         if (t.type.empty()) continue;
-        all.push_back({indent, t});
+        all.push_back({indent, lineNo, t});
     }
 
     for (std::size_t k = 0; k < all.size();) {
@@ -413,6 +437,26 @@ void UIDocument::Rebuild() {
             build.push_back(ln);
             ++k;
         }
+    }
+
+    // Validation: flag unknown widget types and unrecognized keys (typos) with
+    // line numbers, so the editor can surface them. Declarations (style/define)
+    // and custom-widget instances are exempt from the widget checks.
+    m_diagnostics.clear();
+    for (const Line& ln : all) {
+        const std::string& ty = ln.tok.type;
+        if (ty == "style" || ty == "define") continue;
+        bool instance = FindDefine(defines, ty) != nullptr;
+        if (!instance && !KnownType(ty)) {
+            m_diagnostics.push_back("line " + std::to_string(ln.lineNo) +
+                                    ": unknown widget '" + ty + "'");
+            continue;   // keys are meaningless without a known type
+        }
+        if (instance) continue;   // instance lines only use pos
+        for (const auto& p : ln.tok.props)
+            if (!KnownKey(p.first))
+                m_diagnostics.push_back("line " + std::to_string(ln.lineNo) +
+                                        ": unknown key '" + p.first + "' on " + ty);
     }
 
     // Pass 2: build the remaining widgets as a nested forest.

@@ -293,5 +293,33 @@ int main() {
         Prefs::Clear();
     }
 
+    // --- Diagnostics: unknown types + keys are reported with line nums --
+    {
+        Scene s("diag"); s.physicsEnabled = false;
+        GameObject* docGo = s.CreateGameObject("Doc");
+        auto* doc = docGo->AddComponent<UIDocument>();
+
+        // Clean markup -> no diagnostics.
+        doc->markup = "panel pos=0,0 size=100,100 corner=4\n  button \"Ok\" pos=4,4\n";
+        doc->Rebuild(); s.Update(0.0f);
+        CHECK(doc->Diagnostics().empty());
+
+        // A bogus widget type and a typo'd key are both flagged.
+        doc->markup =
+            "panel pos=0,0 size=100,100\n"
+            "  buton \"Typo\" pos=4,4\n"          // unknown type (line 2)
+            "  text \"Hi\" colour=255,0,0\n";     // unknown key  (line 3)
+        doc->Rebuild(); s.Update(0.0f);
+        CHECK(doc->Diagnostics().size() == 2);
+        bool sawType = false, sawKey = false;
+        for (const auto& d : doc->Diagnostics()) {
+            if (d.find("unknown widget 'buton'") != std::string::npos) sawType = true;
+            if (d.find("unknown key 'colour'")   != std::string::npos) sawKey = true;
+        }
+        CHECK(sawType && sawKey);
+        // Line numbers are 1-based and present.
+        CHECK(doc->Diagnostics()[0].rfind("line 2", 0) == 0);
+    }
+
     TEST_MAIN_RESULT();
 }

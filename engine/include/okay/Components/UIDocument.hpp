@@ -60,11 +60,17 @@ public:
     /// The widget GameObjects produced by the last Rebuild().
     const std::vector<GameObject*>& Generated() const { return m_generated; }
 
+    /// Human-readable warnings from the last Rebuild() — unknown widget types or
+    /// unrecognized keys, each prefixed with its 1-based line number. Empty when
+    /// the markup is clean. The editor surfaces these so you can fix typos.
+    const std::vector<std::string>& Diagnostics() const { return m_diagnostics; }
+
     void Start() override { Rebuild(); }
     void OnDestroy() override { ClearGenerated(); }
 
 private:
     std::vector<GameObject*> m_generated;
+    std::vector<std::string> m_diagnostics;
     void ClearGenerated();
 };
 

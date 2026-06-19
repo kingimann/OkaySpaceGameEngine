@@ -119,7 +119,3 @@
 // Steam platform integration (simulation backend by default)
 #include "okay/Platform/Steam/SteamService.hpp"
 #include "okay/Components/SteamManager.hpp"
-
-// PlayFab LiveOps integration (simulation backend by default)
-#include "okay/Platform/PlayFab/PlayFabService.hpp"
-#include "okay/Components/PlayFabManager.hpp"

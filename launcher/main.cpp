@@ -12,6 +12,7 @@
 #include "imgui_impl_sdlrenderer2.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -64,20 +65,32 @@ std::string GetUpMsg() {
     return m;
 }
 
+// Defeat the GitHub raw CDN cache (which can serve a stale VERSION.txt or .exe
+// for minutes after a release) with a unique query string per request.
+std::string BustCache(const std::string& url) {
+    static unsigned counter = 0;
+    auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::string sep = url.find('?') == std::string::npos ? "?" : "&";
+    return url + sep + "okaycb=" + std::to_string(now) + "_" + std::to_string(counter++);
+}
+
 // Download a URL to a file using whatever HTTP client is on the system.
 bool Download(const std::string& url, const std::string& out) {
     std::error_code ec; fs::remove(out, ec);
+    std::string u = BustCache(url);
+    const char* nc = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" ";
 #if defined(_WIN32)
-    std::string c1 = "curl -L -s -f -o \"" + out + "\" \"" + url + "\"";
+    std::string c1 = "curl -L -s -f " + std::string(nc) + "-o \"" + out + "\" \"" + u + "\"";
     if (std::system(c1.c_str()) == 0 && fs::exists(out)) return true;
     std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
-                     "-UseBasicParsing -Uri '" + url + "' -OutFile '" + out +
+                     "-Headers @{'Cache-Control'='no-cache'} "
+                     "-UseBasicParsing -Uri '" + u + "' -OutFile '" + out +
                      "' } catch { exit 1 }\"";
     return std::system(c2.c_str()) == 0 && fs::exists(out);
 #else
-    std::string c1 = "curl -L -s -f -o \"" + out + "\" \"" + url + "\" 2>/dev/null";
+    std::string c1 = "curl -L -s -f " + std::string(nc) + "-o \"" + out + "\" \"" + u + "\" 2>/dev/null";
     if (std::system(c1.c_str()) == 0 && fs::exists(out)) return true;
-    std::string c2 = "wget -q -O \"" + out + "\" \"" + url + "\" 2>/dev/null";
+    std::string c2 = "wget -q --no-cache -O \"" + out + "\" \"" + u + "\" 2>/dev/null";
     return std::system(c2.c_str()) == 0 && fs::exists(out);
 #endif
 }

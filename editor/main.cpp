@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -213,22 +214,37 @@ std::string SelfPath() {
 #endif
 }
 
+// Append a unique cache-busting query parameter. raw.githubusercontent.com is
+// fronted by a CDN that caches files for minutes, so a plain request can hand
+// back a stale VERSION.txt or an old .exe right after a release — the cause of
+// "it didn't update". Varying the URL per request forces a fresh fetch.
+std::string BustCache(const std::string& url) {
+    static unsigned counter = 0;
+    auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::string sep = url.find('?') == std::string::npos ? "?" : "&";
+    return url + sep + "okaycb=" + std::to_string(now) + "_" + std::to_string(counter++);
+}
+
 // Download a URL to a file using whatever HTTP client is on the system. Tries
 // curl first (ships on Win10+/macOS/Linux), then a platform fallback. -f makes
 // curl fail (non-zero) on a 404 so we don't cache an error page as a binary.
+// No-cache headers + a unique query string defeat the GitHub raw CDN cache.
 bool Download(const std::string& url, const std::string& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
+    std::string u = BustCache(url);
+    const char* noCache = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" ";
 #if defined(_WIN32)
-    std::string c1 = "curl -L -s -f -o \"" + outPath + "\" \"" + url + "\"";
+    std::string c1 = "curl -L -s -f " + std::string(noCache) + "-o \"" + outPath + "\" \"" + u + "\"";
     if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
     std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
-                     "-UseBasicParsing -Uri '" + url + "' -OutFile '" + outPath +
+                     "-Headers @{'Cache-Control'='no-cache'} "
+                     "-UseBasicParsing -Uri '" + u + "' -OutFile '" + outPath +
                      "' } catch { exit 1 }\"";
     return std::system(c2.c_str()) == 0 && fs::exists(outPath);
 #else
-    std::string c1 = "curl -L -s -f -o \"" + outPath + "\" \"" + url + "\" 2>/dev/null";
+    std::string c1 = "curl -L -s -f " + std::string(noCache) + "-o \"" + outPath + "\" \"" + u + "\" 2>/dev/null";
     if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
-    std::string c2 = "wget -q -O \"" + outPath + "\" \"" + url + "\" 2>/dev/null";
+    std::string c2 = "wget -q --no-cache -O \"" + outPath + "\" \"" + u + "\" 2>/dev/null";
     return std::system(c2.c_str()) == 0 && fs::exists(outPath);
 #endif
 }
@@ -1335,7 +1351,7 @@ void DrawProject(EditorState& ed) {
     ImGui::End();
 }
 
-// The online services that ship inside the engine: Steam, PlayFab, Multiplayer.
+// The online services that ship inside the engine: Steam and Multiplayer.
 void DrawServices(EditorState& ed) {
     if (!ImGui::Begin("Services", &g_showServices)) { ImGui::End(); return; }
 
@@ -1344,42 +1360,63 @@ void DrawServices(EditorState& ed) {
         if (auto* s = ed.steam()) {
             ImGui::Text("Backend: %s%s", s->BackendName(),
                         s->IsAvailable() ? " (live)" : " (simulation)");
-            ImGui::Text("User: %s", s->UserName().c_str());
+            ImGui::Text("User: %s    Friends: %d", s->UserName().c_str(), s->FriendCount());
+
+            ImGui::SeparatorText("Achievements");
             static char ach[64] = "MY_ACHIEVEMENT";
             ImGui::SetNextItemWidth(180);
             ImGui::InputText("##ach", ach, sizeof(ach));
             ImGui::SameLine();
-            if (ImGui::Button("Unlock")) s->UnlockAchievement(ach);
+            if (ImGui::Button("Unlock")) { s->UnlockAchievement(ach); s->StoreStats(); }
             ImGui::SameLine();
             if (ImGui::Button("Clear")) s->ClearAchievement(ach);
             const char* known[] = {"FIRST_OBJECT", "FIRST_SAVE", "HIT_PLAY"};
             for (const char* a : known)
                 ImGui::BulletText("%s: %s", a,
                     s->IsAchievementUnlocked(a) ? "unlocked" : "locked");
-        } else ImGui::TextDisabled("unavailable");
-    }
 
-    // ---- PlayFab ----
-    if (ImGui::CollapsingHeader("PlayFab", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (auto* p = ed.playfab()) {
-            ImGui::Text("Backend: %s%s", p->BackendName(),
-                        p->IsRealBackend() ? " (live)" : " (simulation)");
-            static char customId[64] = "editor-user";
-            ImGui::SetNextItemWidth(180);
-            ImGui::InputText("Custom Id", customId, sizeof(customId));
+            ImGui::SeparatorText("Stats");
+            static char stat[64] = "kills";
+            ImGui::SetNextItemWidth(140);
+            ImGui::InputText("##stat", stat, sizeof(stat));
             ImGui::SameLine();
-            if (ImGui::Button("Login")) p->LoginWithCustomId(customId);
-            if (p->IsLoggedIn()) ImGui::Text("Logged in as %s", p->PlayFabId().c_str());
-            else ImGui::TextDisabled("not logged in");
+            if (ImGui::Button("+1")) { s->IncrementStat(stat, 1.0f); s->StoreStats(); }
+            ImGui::SameLine();
+            ImGui::Text("= %.0f", s->GetStat(stat));
 
-            static int score = 100;
+            ImGui::SeparatorText("Leaderboard");
+            static char board[64] = "high_score";
+            static int  lbScore = 100;
+            ImGui::SetNextItemWidth(140);
+            ImGui::InputText("##board", board, sizeof(board));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90);
+            ImGui::InputInt("##lbscore", &lbScore);
+            ImGui::SameLine();
+            if (ImGui::Button("Submit##lb")) s->UploadLeaderboardScore(board, lbScore);
+            for (const auto& e : s->DownloadLeaderboardTop(board, 5))
+                ImGui::BulletText("#%d  %s  %d", e.rank, e.name.c_str(), e.score);
+
+            ImGui::SeparatorText("Steam Cloud");
+            static char cloudFile[64] = "save.dat";
+            static char cloudData[128] = "level=3";
             ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("high_score", &score);
+            ImGui::InputText("File##cf", cloudFile, sizeof(cloudFile));
+            ImGui::SetNextItemWidth(200);
+            ImGui::InputText("Data##cd", cloudData, sizeof(cloudData));
+            if (ImGui::Button("Write##cloud")) s->CloudWrite(cloudFile, cloudData);
             ImGui::SameLine();
-            if (ImGui::Button("Submit") && p->IsLoggedIn())
-                p->UpdateStatistic("high_score", score);
-            if (p->IsLoggedIn())
-                ImGui::Text("stored high_score: %d", p->GetStatistic("high_score"));
+            if (ImGui::Button("Read##cloud")) {
+                std::string d = s->CloudRead(cloudFile);
+                std::strncpy(cloudData, d.c_str(), sizeof(cloudData) - 1);
+                cloudData[sizeof(cloudData) - 1] = '\0';
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Delete##cloud")) s->CloudDelete(cloudFile);
+            ImGui::SameLine();
+            ImGui::TextDisabled(s->CloudHasFile(cloudFile) ? "(exists)" : "(none)");
+
+            if (ImGui::Button("Open Overlay")) s->ActivateOverlay("friends");
         } else ImGui::TextDisabled("unavailable");
     }
 
@@ -1387,20 +1424,40 @@ void DrawServices(EditorState& ed) {
     if (ImGui::CollapsingHeader("Multiplayer", ImGuiTreeNodeFlags_DefaultOpen)) {
         static int port = 45000;
         static char host[64] = "127.0.0.1";
+        static char pname[48] = "Player";
         ImGui::SetNextItemWidth(120);
         ImGui::InputInt("Port", &port);
-        if (ImGui::Button("Host")) ed.StartHost((std::uint16_t)port);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120);
+        ImGui::InputText("Name", pname, sizeof(pname));
+        if (ImGui::Button("Host")) { ed.StartHost((std::uint16_t)port); if (ed.net()) ed.net()->SetLocalName(pname); }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(140);
         ImGui::InputText("##host", host, sizeof(host));
         ImGui::SameLine();
-        if (ImGui::Button("Join")) ed.StartJoin(host, (std::uint16_t)port);
+        if (ImGui::Button("Join")) { ed.StartJoin(host, (std::uint16_t)port); if (ed.net()) ed.net()->SetLocalName(pname); }
         ImGui::SameLine();
         if (ImGui::Button("Disconnect")) ed.StopNetwork();
         if (auto* n = ed.net()) {
             const char* mode = n->IsServer() ? "Server" : n->IsClient() ? "Client" : "Offline";
             ImGui::Text("Mode: %s   Peers: %d   LocalId: %u",
                         mode, (int)n->PeerCount(), n->LocalId());
+            // Chat: broadcast a line to every peer; show what arrives.
+            static char chat[128] = "";
+            static std::vector<std::string> log;
+            n->SetMessageHandler([&](const NetworkManager::NetMessage& m) {
+                if (m.channel == "chat")
+                    log.push_back("#" + std::to_string(m.from) + ": " + m.data);
+            });
+            ImGui::SetNextItemWidth(220);
+            ImGui::InputText("##chat", chat, sizeof(chat));
+            ImGui::SameLine();
+            if (ImGui::Button("Send") && chat[0]) { n->Send("chat", chat); chat[0] = '\0'; }
+            if (n->IsServer())
+                for (const auto& pi : n->Peers())
+                    ImGui::BulletText("peer %u  '%s'", pi.id, pi.name.c_str());
+            for (std::size_t i = log.size() > 6 ? log.size() - 6 : 0; i < log.size(); ++i)
+                ImGui::TextWrapped("%s", log[i].c_str());
         } else ImGui::TextDisabled("not connected");
     }
 

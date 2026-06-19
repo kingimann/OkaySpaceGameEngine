@@ -48,6 +48,11 @@ public:
     void SetLocalAvatar(Transform* t, char glyph = '@') {
         m_localAvatar = t; m_localGlyph = glyph;
     }
+
+    /// This peer's display name, sent to the server on join and shown in the
+    /// roster (defaults to "Player").
+    void SetLocalName(const std::string& name) { m_localName = name; }
+    const std::string& LocalName() const { return m_localName; }
     /// Called when a new remote peer appears; return a GameObject to represent
     /// it (its Transform will be driven by incoming snapshots).
     void SetRemoteFactory(std::function<GameObject*(std::uint32_t id, char glyph)> f) {
@@ -69,9 +74,30 @@ public:
     /// general-purpose channel games build chat, events and spawn requests on.
     void Send(const std::string& channel, const std::string& data);
 
+    /// Send a custom message to a single peer by id (0 = the server/host). The
+    /// server routes it; a client relays through the server. Use it for private
+    /// messages, targeted RPCs, or replying to one player.
+    void SendTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+
+    /// A connected peer in the session roster.
+    struct PeerInfo { std::uint32_t id; std::string name; char glyph; };
+    /// The current roster the server knows about (server only): every connected
+    /// client. Empty on a client.
+    std::vector<PeerInfo> Peers() const;
+    /// The display name a peer joined with (server only), or "" if unknown.
+    std::string PeerName(std::uint32_t id) const;
+
     /// Register a callback fired the moment a custom message arrives.
     void SetMessageHandler(std::function<void(const NetMessage&)> f) {
         m_msgHandler = std::move(f);
+    }
+    /// Fired on the server when a client joins (with its id + chosen name).
+    void SetPeerJoinedHandler(std::function<void(std::uint32_t, const std::string&)> f) {
+        m_peerJoined = std::move(f);
+    }
+    /// Fired on the server when a client leaves or times out.
+    void SetPeerLeftHandler(std::function<void(std::uint32_t)> f) {
+        m_peerLeft = std::move(f);
     }
     /// Drain the queue of messages received since the last call (for polling
     /// code and scripts that don't use a callback).
@@ -91,6 +117,7 @@ private:
         std::uint32_t id;
         PeerState state;
         float lastSeen;
+        std::string name;
     };
 
     void ServerTick(float dt);
@@ -108,6 +135,7 @@ private:
     Transform* m_localAvatar = nullptr;
     char       m_localGlyph  = '@';
     std::uint32_t m_localId  = 0;
+    std::string m_localName  = "Player";
 
     // Client-only
     net::Endpoint m_serverEp{};
@@ -127,6 +155,8 @@ private:
     // Custom message channel
     std::function<void(const NetMessage&)> m_msgHandler;
     std::vector<NetMessage> m_inbox;
+    std::function<void(std::uint32_t, const std::string&)> m_peerJoined;
+    std::function<void(std::uint32_t)> m_peerLeft;
 };
 
 } // namespace okay

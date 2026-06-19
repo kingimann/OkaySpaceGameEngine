@@ -22,10 +22,42 @@ int main() {
     CHECK(svc->ClearAchievement("FIRST_FLIGHT"));
     CHECK(!svc->IsAchievementUnlocked("FIRST_FLIGHT"));
 
-    // Stats
+    // Stats (+ increment)
     svc->SetStat("kills", 7.0f);
     CHECK_NEAR(svc->GetStat("kills"), 7.0f, 0.001f);
+    CHECK_NEAR(svc->IncrementStat("kills", 3.0f), 10.0f, 0.001f);
+    CHECK_NEAR(svc->GetStat("kills"), 10.0f, 0.001f);
     CHECK(svc->StoreStats());
+
+    // Achievement progress auto-unlocks when it reaches the max.
+    CHECK(!svc->IsAchievementUnlocked("MARATHON"));
+    svc->IndicateAchievementProgress("MARATHON", 50, 100);
+    CHECK(!svc->IsAchievementUnlocked("MARATHON"));
+    svc->IndicateAchievementProgress("MARATHON", 100, 100);
+    CHECK(svc->IsAchievementUnlocked("MARATHON"));
+
+    // Leaderboards: best score is kept, Top-N is ranked high-to-low.
+    CHECK(svc->UploadLeaderboardScore("high_score", 100));
+    CHECK(svc->UploadLeaderboardScore("high_score", 250));
+    CHECK(svc->UploadLeaderboardScore("high_score", 175));  // not a new best
+    {
+        auto top = svc->DownloadLeaderboardTop("high_score", 5);
+        CHECK(top.size() == 1);                 // one player in simulation
+        CHECK(top[0].score == 250);             // kept the best
+        CHECK(top[0].rank == 1);
+    }
+
+    // Steam Cloud: write / read / has / delete.
+    CHECK(!svc->CloudHasFile("save.dat"));
+    CHECK(svc->CloudWrite("save.dat", "level=3;coins=12"));
+    CHECK(svc->CloudHasFile("save.dat"));
+    CHECK(svc->CloudRead("save.dat") == "level=3;coins=12");
+    CHECK(svc->CloudDelete("save.dat"));
+    CHECK(!svc->CloudHasFile("save.dat"));
+    CHECK(svc->CloudRead("missing.dat").empty());
+
+    svc->ActivateOverlay("achievements");   // no-op in sim, just shouldn't crash
+    CHECK(svc->FriendCount() == 0);
 
     svc->SetRichPresence("status", "In the asteroid belt");
     svc->RunCallbacks();

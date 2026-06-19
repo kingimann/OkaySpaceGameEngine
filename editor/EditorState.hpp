@@ -54,7 +54,6 @@ public:
 
     // ---- Online services (built into the engine) ----------------------
     ISteamService*   steam()   { return m_steam.get(); }
-    IPlayFabService* playfab() { return m_playfab.get(); }
     NetworkManager*  net()     { return m_net; }
 
     /// Host a multiplayer session on the given port (creates a NetworkManager).
@@ -107,7 +106,6 @@ private:
     std::string m_snapshot;
 
     std::unique_ptr<ISteamService>   m_steam;
-    std::unique_ptr<IPlayFabService> m_playfab;
     NetworkManager* m_net = nullptr; // component on a scene GameObject
 
     std::vector<std::string> m_undo, m_redo;

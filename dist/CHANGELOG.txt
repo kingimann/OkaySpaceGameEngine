@@ -1,5 +1,20 @@
 OkaySpace Game Engine — Changelog
 
+v1.34.0
+  - Fixed the updater "doesn't always update": the GitHub raw CDN was serving a
+    cached VERSION.txt / .exe. Every download now sends no-cache headers and a
+    unique query string so you always get the freshly published build (editor
+    self-update and the launcher both).
+  - Removed PlayFab. Online services are now Steam + Multiplayer.
+  - Expanded the Steam SDK surface: stat increment, achievement progress
+    (auto-unlocks at the max), leaderboards (submit + ranked Top-N), Steam
+    Cloud (write/read/has/delete), friend count and overlay. The Services panel
+    exposes all of it; the simulation backend implements it in memory.
+  - Expanded multiplayer: player names in the join handshake, a server-side
+    roster (Peers()/PeerName()), peer joined/left callbacks, and SendTo(id, ..)
+    targeted messages (private/RPC) alongside the existing broadcast. The
+    Multiplayer panel gains a name field, roster and a simple chat box.
+
 v1.33.0
   - Scene view: resize UI as well as move it. A selected widget shows 8 grab
     handles — drag a corner/edge to resize (respecting the Canvas scale), drag

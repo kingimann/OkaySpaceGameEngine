@@ -2807,6 +2807,23 @@ void DrawInspector(EditorState& ed) {
                 }
             }
         }
+        // Stretch helpers for resizable widgets: fill the canvas on an axis.
+        if (ar.sizePtr && ar.position) {
+            float cw = UICanvas::Width(), ch = UICanvas::Height();
+            auto fill = [&](bool x, bool y) {
+                if (x) ar.sizePtr->x = cw;
+                if (y) ar.sizePtr->y = ch;
+                Vec2 term = ResolveAnchor(*ar.anchorPtr, Vec2{0, 0}, *ar.sizePtr, cw, ch);
+                if (x) ar.position->x = -term.x;   // resolved left -> 0
+                if (y) ar.position->y = -term.y;   // resolved top  -> 0
+                ed.dirty = true;
+            };
+            if (ImGui::Button("Fill Width"))  fill(true, false);
+            ImGui::SameLine();
+            if (ImGui::Button("Fill Height")) fill(false, true);
+            ImGui::SameLine();
+            if (ImGui::Button("Fill Canvas")) fill(true, true);
+        }
         ImGui::Spacing();
     }
 

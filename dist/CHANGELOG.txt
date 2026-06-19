@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.76.0
+  - Stretch helpers: a selected resizable UI widget's inspector gains Fill Width
+    / Fill Height / Fill Canvas buttons that size it to the canvas on that axis
+    and align it to the edge (respecting its anchor) — quick full-bleed panels
+    and bars.
+
 v1.75.0
   - Anchor presets (Unity-style 3x3 grid) in a selected UI widget's inspector:
     click a corner/edge/center to set the anchor. The widget keeps its on-screen

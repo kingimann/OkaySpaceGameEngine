@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v1.32.0
+  - UI now works the Unity way: widgets created from GameObject > UI are
+    automatically parented under a Canvas (created if missing) and the scene
+    gets one Event System. Each Canvas scales its child widgets to the window
+    (Constant Pixel Size or Scale With Screen Size), so a HUD designed at one
+    resolution adapts to others. Click-to-select and drag respect that scale.
+  - New "UI Toolkit"-style UIDocument: author a whole menu/HUD as OkayUI markup
+    (one widget per line, indent to nest) and the engine builds the widget tree
+    for you. Edit the markup + Rebuild live from the Inspector. Types: panel,
+    text, button, image, slider, toggle, progress; keys: pos, size, color,
+    anchor, value, on, onclick. Add via GameObject > UI > UI Document.
+
 v1.31.0
   - Scene view: click any UI widget to select it, then drag to reposition it —
     works in BOTH the 2D and 3D Scene views (UI used to only be selectable in

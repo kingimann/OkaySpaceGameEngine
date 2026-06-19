@@ -715,6 +715,28 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderFinish(dockId);
 }
 
+// Unity's UI rule: every widget lives under a Canvas, and a scene needs one
+// Event System to route pointer input. Ensure both exist and return the Canvas
+// GameObject so a freshly created widget can be parented to it.
+GameObject* EnsureUIRoot(EditorState& ed) {
+    GameObject* canvas = nullptr;
+    bool hasEvent = false;
+    for (const auto& up : ed.scene().Objects()) {
+        if (!canvas && up->GetComponent<Canvas>()) canvas = up.get();
+        if (up->GetComponent<EventSystem>()) hasEvent = true;
+    }
+    if (!canvas) {
+        canvas = ed.scene().CreateGameObject("Canvas");
+        auto* cv = canvas->AddComponent<Canvas>();
+        cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+    }
+    if (!hasEvent) {
+        GameObject* es = ed.scene().CreateGameObject("EventSystem");
+        es->AddComponent<EventSystem>();
+    }
+    return canvas;
+}
+
 void DrawMenuAndToolbar(EditorState& ed) {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
@@ -823,16 +845,37 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         ImGui::Separator();
         if (ImGui::BeginMenu("UI")) {   // each UI element is its own GameObject
+            // Create a widget under the scene's Canvas (making one — plus an
+            // Event System — if missing), exactly like Unity.
+            auto addUI = [&](const char* nm, auto build) {
+                GameObject* root = EnsureUIRoot(ed);
+                GameObject* g = ed.CreateEmpty(nm);
+                build(g);
+                if (root) g->transform->SetParent(root->transform, /*worldPositionStays=*/false);
+                ed.Select(g); ed.dirty = true; created = true;
+            };
             if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>();        ed.dirty = true; created = true; }
             if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("UI Document"))  {
+                GameObject* root = EnsureUIRoot(ed);
+                GameObject* g = ed.CreateEmpty("UIDocument");
+                auto* doc = g->AddComponent<UIDocument>();
+                doc->markup =
+                    "panel pos=40,40 size=360,240 color=30,36,52,220\n"
+                    "  text \"MY GAME\" pos=70,70 size=5\n"
+                    "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
+                if (root) g->transform->SetParent(root->transform, false);
+                doc->Rebuild(); ed.scene().Update(0.0f);
+                ed.Select(g); ed.dirty = true; created = true;
+            }
             ImGui::Separator();
-            if (ImGui::MenuItem("Button"))       { ed.Select(ed.CreateEmpty("Button"));   ed.selected()->AddComponent<UIButton>();      ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Panel"))        { ed.Select(ed.CreateEmpty("Panel"));    ed.selected()->AddComponent<UIPanel>();       ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Image"))        { ed.Select(ed.CreateEmpty("Image"));    ed.selected()->AddComponent<UIImage>();       ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Text"))         { ed.Select(ed.CreateEmpty("Text"));     auto* t = ed.selected()->AddComponent<TextRenderer>(); t->screenSpace = true; ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Progress Bar")) { ed.Select(ed.CreateEmpty("ProgressBar")); ed.selected()->AddComponent<UIProgressBar>(); ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Slider"))       { ed.Select(ed.CreateEmpty("Slider"));   ed.selected()->AddComponent<UISlider>();      ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Toggle"))       { ed.Select(ed.CreateEmpty("Toggle"));   ed.selected()->AddComponent<UIToggle>();      ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("Button"))       addUI("Button",      [](GameObject* g){ g->AddComponent<UIButton>(); });
+            if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
+            if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
+            if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ g->AddComponent<TextRenderer>()->screenSpace = true; });
+            if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
+            if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
+            if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
             ImGui::EndMenu();
         }
         if (created) ed.Achievement("FIRST_OBJECT");
@@ -1952,7 +1995,7 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Camera")) ed.Select(ed.CreateCamera());
         if (ImGui::MenuItem("Cube"))   ed.Select(ed.CreateCube());
         ImGui::Separator();
-        if (ImGui::MenuItem("UI Button")) { GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); ed.Select(g); }
+        if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
         if (ImGui::MenuItem("UI Text"))   { GameObject* g = ed.CreateEmpty("Text"); g->AddComponent<TextRenderer>()->screenSpace = true; ed.Select(g); }
         ImGui::EndPopup();
     }
@@ -2770,6 +2813,34 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##es")) toRemove = es;
         }
     }
+    if (auto* doc = go->GetComponent<UIDocument>()) {
+        if (ImGui::CollapsingHeader("UI Document", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextDisabled("OkayUI markup -> widgets. One widget per line; indent to nest.");
+            // Edit the markup in a resizable multiline box. A static buffer big
+            // enough for sizeable documents keeps this dependency-free.
+            static char buf[1 << 14];
+            static UIDocument* s_bound = nullptr;
+            if (s_bound != doc) {
+                std::strncpy(buf, doc->markup.c_str(), sizeof(buf) - 1);
+                buf[sizeof(buf) - 1] = '\0';
+                s_bound = doc;
+            }
+            if (ImGui::InputTextMultiline("##uidoc", buf, sizeof(buf),
+                    ImVec2(-1, 180), ImGuiInputTextFlags_AllowTabInput)) {
+                doc->markup = buf; ed.dirty = true;
+            }
+            if (ImGui::Button("Rebuild UI##uidoc")) {
+                doc->markup = buf;
+                doc->Rebuild();
+                ed.scene().Update(0.0f);   // flush the created/destroyed widgets
+                ed.dirty = true;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%d widgets)", (int)doc->Generated().size());
+            ImGui::TextDisabled("types: panel text button image slider toggle progress");
+            if (ImGui::SmallButton("Remove##uidoc")) toRemove = doc;
+        }
+    }
     if (auto* btn = go->GetComponent<UIButton>()) {
         if (ImGui::CollapsingHeader("UI Button", ImGuiTreeNodeFlags_DefaultOpen)) {
             char lb[128];
@@ -3011,6 +3082,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<Canvas>(); ed.dirty = true; }
         if (!go->GetComponent<EventSystem>() && F("Event System") && ImGui::Selectable("Event System"))
             { go->AddComponent<EventSystem>(); ed.dirty = true; }
+        if (!go->GetComponent<UIDocument>() && F("UI Document") && ImGui::Selectable("UI Document"))
+            { go->AddComponent<UIDocument>(); ed.dirty = true; }
         if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
             { go->AddComponent<UIButton>(); ed.dirty = true; }
         if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))
@@ -3071,27 +3144,35 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // against the same dimensions the preview uses.
     UICanvas::Set(canvasSize.x, canvasSize.y);
 
+    // Each widget's pixels are scaled by its owning Canvas (Unity's CanvasScaler):
+    // ScaleWithScreenSize grows/shrinks the whole HUD with the window. Widgets not
+    // parented to a Canvas fall back to scale 1.
+    auto uiScale = [&](GameObject* go) { return UIScaleFor(go, canvasSize.x, canvasSize.y); };
+
     // Screen-space text (world-anchored text stays with the 2D scene draw).
     for (const auto& up : objs) {
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active || !tr->screenSpace) continue;
+        float s = uiScale(up.get());
         ImU32 col = ToColor(tr->color);
         ImU32 sh = ToColor(tr->shadowColor);
-        Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y);
+        Vec2 sz{(float)tr->PixelWidth() * tr->pixelSize * s, (float)tr->PixelHeight() * tr->pixelSize * s};
+        Vec2 o = ResolveAnchor(tr->anchor, tr->screenPos * s, sz, canvasSize.x, canvasSize.y);
+        float px = tr->pixelSize * s;
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
         if (tr->shadow)
-            DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * tr->pixelSize,
-                           by + tr->shadowOffset.y * tr->pixelSize, tr->pixelSize, sh);
-        DrawBitmapText(dl, tr->text, bx, by, tr->pixelSize, col);
+            DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * px,
+                           by + tr->shadowOffset.y * px, px, sh);
+        DrawBitmapText(dl, tr->text, bx, by, px, col);
     }
 
     // UI images (logos/icons): preview as a tinted rect with the path centered.
     for (const auto& up : objs) {
         auto* im = up->GetComponent<UIImage>();
         if (!im || !up->active) continue;
-        Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, canvasSize.x, canvasSize.y);
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        ImVec2 b(a.x + im->size.x, a.y + im->size.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
         dl->AddRectFilled(a, b, ToColor(im->color), 3.0f);
         dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), 3.0f);
         if (!im->texture.empty())
@@ -3102,17 +3183,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     for (const auto& up : objs) {
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active) continue;
-        Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, canvasSize.x, canvasSize.y);
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + pn->size.x, a.y + pn->size.y), ToColor(pn->color), 4.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pn->color), 4.0f);
     }
     for (const auto& up : objs) {
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active) continue;
-        Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, canvasSize.x, canvasSize.y);
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x, a.y + pb->size.y), ToColor(pb->background), 3.0f);
-        dl->AddRectFilled(a, ImVec2(a.x + pb->size.x * pb->Fraction(), a.y + pb->size.y),
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pb->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x * pb->Fraction(), a.y + sz.y),
                           ToColor(pb->fill), 3.0f);
     }
 
@@ -3120,45 +3201,47 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     for (const auto& up : objs) {
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active) continue;
-        Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, canvasSize.x, canvasSize.y);
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x, a.y + sl->size.y), ToColor(sl->background), 3.0f);
-        dl->AddRectFilled(a, ImVec2(a.x + sl->size.x * sl->Fraction(), a.y + sl->size.y),
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(sl->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x * sl->Fraction(), a.y + sz.y),
                           ToColor(sl->fill), 3.0f);
-        float kx = a.x + sl->size.x * sl->Fraction(), kw = sl->size.y * 0.6f;
-        dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sl->size.y + 2),
+        float kx = a.x + sz.x * sl->Fraction(), kw = sz.y * 0.6f;
+        dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sz.y + 2),
                           ToColor(sl->knob), 2.0f);
     }
     // UI toggles: box (+ inset check when on) and a label.
     for (const auto& up : objs) {
         auto* tg = up->GetComponent<UIToggle>();
         if (!tg || !up->active) continue;
-        Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, canvasSize.x, canvasSize.y);
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        ImVec2 b(a.x + tg->size.x, a.y + tg->size.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
         dl->AddRectFilled(a, b, ToColor(tg->boxColor), 3.0f);
         if (tg->on) {
-            float pad = tg->size.x * 0.22f;
+            float pad = sz.x * 0.22f;
             dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
                               ToColor(tg->checkColor), 2.0f);
         }
-        float px = 2.0f;
-        DrawBitmapText(dl, tg->label, b.x + 8.0f,
-                       a.y + (tg->size.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
+        float px = 2.0f * s;
+        DrawBitmapText(dl, tg->label, b.x + 8.0f * s,
+                       a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
     }
 
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
     for (const auto& up : objs) {
         auto* btn = up->GetComponent<UIButton>();
         if (!btn || !up->active) continue;
-        Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, canvasSize.x, canvasSize.y);
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        ImVec2 b(a.x + btn->size.x, a.y + btn->size.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
         dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), 4.0f);
-        float px = 2.0f;
+        float px = 2.0f * s;
         float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-        DrawBitmapText(dl, btn->label, a.x + (btn->size.x - tw) * 0.5f,
-                       a.y + (btn->size.y - Font8x8::Height * px) * 0.5f, px,
+        DrawBitmapText(dl, btn->label, a.x + (sz.x - tw) * 0.5f,
+                       a.y + (sz.y - Font8x8::Height * px) * 0.5f, px,
                        ToColor(btn->textColor));
     }
 
@@ -3166,11 +3249,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // in both the 2D and 3D Scene views (the Game view stays clean). A small
     // corner handle hints that it can be dragged to reposition.
     if (!gameView && ed.selected()) {
-        UIRect r = GetUIRect(ed.selected());
-        if (r.valid) {
-            Vec2 o = r.Origin(canvasSize.x, canvasSize.y);
+        Vec2 o, sz;
+        if (GetUIScreenRect(ed.selected(), canvasSize.x, canvasSize.y, o, sz)) {
             ImVec2 a(canvasPos.x + o.x - 1, canvasPos.y + o.y - 1);
-            ImVec2 b(a.x + r.size.x + 2, a.y + r.size.y + 2);
+            ImVec2 b(a.x + sz.x + 2, a.y + sz.y + 2);
             dl->AddRect(a, b, IM_COL32(255, 200, 0, 255), 3.0f, 0, 2.0f);
             dl->AddRectFilled(ImVec2(b.x - 6, b.y - 6), ImVec2(b.x + 2, b.y + 2),
                               IM_COL32(255, 200, 0, 255));
@@ -3189,13 +3271,17 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
     UICanvas::Set(canvasSize.x, canvasSize.y);
     Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
 
-    // Continue an in-progress drag of the grabbed widget.
+    // Continue an in-progress drag of the grabbed widget. Mouse pixels are
+    // divided by the owning Canvas's scale so the widget tracks the cursor 1:1
+    // even when the canvas is scaling the UI.
     if (g_uiDragTarget) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             UIRect r = GetUIRect(g_uiDragTarget);
             if (r.valid && r.position) {
-                r.position->x += io.MouseDelta.x;
-                r.position->y += io.MouseDelta.y;
+                float s = UIScaleFor(g_uiDragTarget, canvasSize.x, canvasSize.y);
+                if (s < 1e-3f) s = 1.0f;
+                r.position->x += io.MouseDelta.x / s;
+                r.position->y += io.MouseDelta.y / s;
                 ed.dirty = true;
             }
             g_uiHandled = true;

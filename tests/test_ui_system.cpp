@@ -133,5 +133,68 @@ int main() {
         CHECK(g2->GetComponent<EventSystem>() != nullptr);
     }
 
+    // --- Owning Canvas + scaling: widgets follow their parent Canvas --------
+    {
+        Scene s("canvas-parent"); s.physicsEnabled = false;
+        GameObject* canvas = s.CreateGameObject("Canvas");
+        auto* cv = canvas->AddComponent<Canvas>();
+        cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+        cv->referenceResolution = {1280, 720};
+        cv->matchWidthOrHeight = 0.0f;   // follow width
+
+        GameObject* btn = s.CreateGameObject("Btn");
+        auto* b = btn->AddComponent<UIButton>();
+        b->anchor = UIAnchor::TopLeft; b->position = {100, 50}; b->size = {200, 60};
+        btn->transform->SetParent(canvas->transform, false);
+
+        // Unparented widget reports no canvas; parented one finds it.
+        GameObject* loose = s.CreateGameObject("Loose");
+        loose->AddComponent<UIPanel>();
+        CHECK(OwningCanvas(loose) == nullptr);
+        CHECK(OwningCanvas(btn) == cv);
+        CHECK_NEAR(UIScaleFor(loose, 2560, 720), 1.0f, 1e-4f);  // no canvas -> 1
+
+        // At reference width the scale is 1; at double width it is 2.
+        CHECK_NEAR(UIScaleFor(btn, 1280, 720), 1.0f, 1e-3f);
+        CHECK_NEAR(UIScaleFor(btn, 2560, 720), 2.0f, 1e-3f);
+
+        // The resolved screen rect scales position and size together.
+        Vec2 o, sz;
+        CHECK(GetUIScreenRect(btn, 2560, 720, o, sz));
+        CHECK_NEAR(sz.x, 400.0f, 0.5f);   // 200 * 2
+        CHECK_NEAR(sz.y, 120.0f, 0.5f);   // 60 * 2
+        CHECK_NEAR(o.x, 200.0f, 0.5f);    // pos 100 * 2 from top-left anchor
+        CHECK_NEAR(o.y, 100.0f, 0.5f);
+
+        // Hit-testing uses the scaled rect: (400,150) is inside at 2x (rect
+        // x[200,600] y[100,220]) but outside at 1x (rect x[100,300] y[50,110]).
+        CHECK(UIScreenContains(btn, {400, 150}, 2560, 720));
+        CHECK(!UIScreenContains(btn, {400, 150}, 1280, 720));
+    }
+
+    // --- SceneEventSystem finds the scene's event system ----------------
+    {
+        Scene s("es-find"); s.physicsEnabled = false;
+        CHECK(SceneEventSystem(s) == nullptr);
+        CHECK(!SceneHasEventSystem(s));
+        GameObject* go = s.CreateGameObject("EventSystem");
+        auto* es = go->AddComponent<EventSystem>();
+        CHECK(SceneEventSystem(s) == es);
+        CHECK(SceneHasEventSystem(s));
+    }
+
+    // --- The Main Menu template builds the Unity UI structure -----------
+    {
+        Scene s("mm");
+        Templates::MainMenu(s);
+        CHECK(SceneHasEventSystem(s));
+        GameObject* canvas = s.Find("Canvas");
+        CHECK(canvas != nullptr);
+        CHECK(canvas->GetComponent<Canvas>() != nullptr);
+        GameObject* start = s.Find("StartButton");
+        CHECK(start != nullptr);
+        CHECK(OwningCanvas(start) == canvas->GetComponent<Canvas>());  // parented to it
+    }
+
     TEST_MAIN_RESULT();
 }

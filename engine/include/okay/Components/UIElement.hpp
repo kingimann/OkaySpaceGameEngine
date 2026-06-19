@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Transform.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
@@ -8,6 +9,7 @@
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/Canvas.hpp"
 #include "okay/Math/Vec2.hpp"
 
 namespace okay {
@@ -59,5 +61,44 @@ inline UIRect GetUIRect(GameObject* go) {
 
 /// Does this GameObject carry any screen-space UI widget?
 inline bool IsUIElement(GameObject* go) { return GetUIRect(go).valid; }
+
+/// The Canvas a widget belongs to: the nearest Canvas on itself or an ancestor
+/// (Unity's rule that UI lives under a Canvas). nullptr if it isn't parented to
+/// one — legacy UI then renders against the raw screen at scale 1.
+inline Canvas* OwningCanvas(GameObject* go) {
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
+        if (t->gameObject)
+            if (auto* cv = t->gameObject->GetComponent<Canvas>()) return cv;
+    return nullptr;
+}
+
+/// The pixel scale a widget is drawn at: its owning Canvas's scale factor for
+/// the current screen, or 1 if it has no Canvas.
+inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
+    Canvas* cv = OwningCanvas(go);
+    return cv ? cv->ScaleFactor(screenW, screenH) : 1.0f;
+}
+
+/// Resolve a widget to its final screen rect, accounting for the owning Canvas's
+/// scale: offsets and sizes scale by the canvas factor, then anchor against the
+/// screen. This is the single source of truth shared by rendering, hit-testing
+/// and the editor's pick/drag so they always agree.
+inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
+                            Vec2& origin, Vec2& size, float* outScale = nullptr) {
+    UIRect r = GetUIRect(go);
+    if (!r.valid) return false;
+    float s = UIScaleFor(go, screenW, screenH);
+    size = r.size * s;
+    origin = ResolveAnchor(r.anchor, *r.position * s, size, screenW, screenH);
+    if (outScale) *outScale = s;
+    return true;
+}
+
+/// Whether a point (screen pixels) falls inside a widget's scaled rect.
+inline bool UIScreenContains(GameObject* go, const Vec2& p, float screenW, float screenH) {
+    Vec2 o, sz;
+    if (!GetUIScreenRect(go, screenW, screenH, o, sz)) return false;
+    return p.x >= o.x && p.y >= o.y && p.x <= o.x + sz.x && p.y <= o.y + sz.y;
+}
 
 } // namespace okay

@@ -19,11 +19,17 @@ inline GameObject* UIRaycast(Scene& scene, const Vec2& point,
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
         if (!go->active) continue;
-        UIRect r = GetUIRect(go);
-        if (r.valid && r.Contains(point, canvasW, canvasH)) hit = go;
+        if (UIScreenContains(go, point, canvasW, canvasH)) hit = go;
     }
     return hit;
 }
+
+class EventSystem; // defined below
+
+/// The EventSystem governing a scene's UI (Unity requires exactly one). Returns
+/// the first active EventSystem found, or nullptr.
+EventSystem* SceneEventSystem(Scene& scene);
+inline bool SceneHasEventSystem(Scene& scene) { return SceneEventSystem(scene) != nullptr; }
 
 /// The single place pointer input meets the UI, mirroring Unity's EventSystem.
 /// Each frame it raycasts the cursor against the scene's widgets and tracks what
@@ -68,5 +74,12 @@ private:
     GameObject* m_pressed  = nullptr;
     GameObject* m_selected = nullptr;
 };
+
+inline EventSystem* SceneEventSystem(Scene& scene) {
+    for (const auto& up : scene.Objects())
+        if (up->active)
+            if (auto* es = up->GetComponent<EventSystem>()) return es;
+    return nullptr;
+}
 
 } // namespace okay

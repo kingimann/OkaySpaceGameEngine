@@ -20,6 +20,7 @@ add_library(okay_engine
     src/Scripting/ScriptVM.cpp
     src/Components/ScriptComponent.cpp
     src/Components/ActionList.cpp
+    src/Components/UIDocument.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Components/SteamManager.cpp
     src/Platform/PlayFab/NullPlayFabService.cpp

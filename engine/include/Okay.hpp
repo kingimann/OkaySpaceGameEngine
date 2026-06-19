@@ -77,6 +77,7 @@
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
+#include "okay/Components/UIDocument.hpp"
 
 // Gameplay behaviours (no-scripting motion/lifetime helpers)
 #include "okay/Components/Mover.hpp"

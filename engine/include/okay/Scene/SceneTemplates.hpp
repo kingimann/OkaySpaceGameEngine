@@ -17,6 +17,8 @@
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
+#include "okay/Components/Canvas.hpp"
+#include "okay/Components/EventSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
 
 namespace okay {
@@ -209,11 +211,18 @@ inline void MainMenu(Scene& scene) {
     cam->main = true;
     cam->backgroundColor = Color::FromBytes(18, 20, 28);
 
+    // Unity-style UI root: a Canvas holding the widgets, plus an Event System.
+    GameObject* canvas = scene.CreateGameObject("Canvas");
+    auto* cv = canvas->AddComponent<Canvas>();
+    cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+    scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
+
     GameObject* panel = scene.CreateGameObject("Panel");
     auto* pn = panel->AddComponent<UIPanel>();
     pn->position = {40, 40};
     pn->size = {360, 240};
     pn->color = Color::FromBytes(30, 36, 52, 220);
+    panel->transform->SetParent(canvas->transform, false);
 
     GameObject* title = scene.CreateGameObject("Title");
     auto* tr = title->AddComponent<TextRenderer>();
@@ -221,6 +230,7 @@ inline void MainMenu(Scene& scene) {
     tr->screenSpace = true;
     tr->screenPos = {70, 70};
     tr->pixelSize = 5.0f;
+    title->transform->SetParent(canvas->transform, false);
 
     GameObject* start = scene.CreateGameObject("StartButton");
     auto* b = start->AddComponent<UIButton>();
@@ -229,6 +239,7 @@ inline void MainMenu(Scene& scene) {
     b->size = {300, 60};
     start->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function on_click() { load_scene(\"game.okayscene\"); }\n");
+    start->transform->SetParent(canvas->transform, false);
 }
 
 /// A complete, playable game of Snake — written entirely in OkayScript on a

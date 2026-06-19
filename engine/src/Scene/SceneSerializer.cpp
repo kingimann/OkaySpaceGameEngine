@@ -30,6 +30,7 @@
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
+#include "okay/Components/UIDocument.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -250,6 +251,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pn->size.x << " " << pn->size.y << " "
             << pn->color.r << " " << pn->color.g << " " << pn->color.b << " " << pn->color.a
             << " " << (int)pn->anchor << "\n";
+    }
+    if (auto* doc = go->GetComponent<UIDocument>()) {
+        out << "  uidocument " << Quote(doc->markup) << "\n";
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
@@ -615,6 +619,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> c.r >> c.g >> c.b >> c.a;
                     pn->color = c;
                     ReadAnchor(in, pn->anchor);
+                } else if (field == "uidocument") {
+                    auto* doc = go->AddComponent<UIDocument>();
+                    doc->markup = ReadQuoted(in);
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;

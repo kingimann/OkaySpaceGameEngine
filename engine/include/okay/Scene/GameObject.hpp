@@ -17,6 +17,9 @@ public:
     bool active = true;
     /// Optional tag for lookups (see Scene::FindWithTag).
     std::string tag;
+    /// Marked non-moving (Unity-style). A hint for tools/builds; objects flagged
+    /// static are not expected to move at runtime.
+    bool isStatic = false;
 
     /// Every GameObject has a Transform from birth.
     Transform* transform = nullptr;

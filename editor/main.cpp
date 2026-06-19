@@ -1490,6 +1490,17 @@ void DrawProject(EditorState& ed) {
         std::ofstream(p) << extide::StarterScript("okayscript");
         ConsoleLog("Created " + p.string());
     }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Material")) {
+        fs::path p = uniquePath("New Material", ".okaymat");
+        if (Material{}.SaveToFile(p.string())) ConsoleLog("Created " + p.string());
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Scene")) {
+        fs::path p = uniquePath("New Scene", ".okayscene");
+        okay::Scene empty("New Scene");
+        if (SceneSerializer::SaveToFile(empty, p.string())) ConsoleLog("Created " + p.string());
+    }
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("(right-click an item for Rename / Delete)");
@@ -1621,6 +1632,15 @@ void DrawProject(EditorState& ed) {
                                     "name = Item\n"
                                     "value = 10\n";
                 ConsoleLog("Created " + p.string());
+            }
+            if (ImGui::MenuItem("New Material")) {
+                fs::path p = uniquePath("New Material", ".okaymat");
+                if (Material{}.SaveToFile(p.string())) ConsoleLog("Created " + p.string());
+            }
+            if (ImGui::MenuItem("New Scene")) {
+                fs::path p = uniquePath("New Scene", ".okayscene");
+                okay::Scene empty("New Scene");
+                if (SceneSerializer::SaveToFile(empty, p.string())) ConsoleLog("Created " + p.string());
             }
             ImGui::Separator();
         }
@@ -2639,8 +2659,12 @@ void DrawHierarchy(EditorState& ed) {
                                        ImGuiTreeNodeFlags_SpanAvailWidth;
             if (node == ed.selected()) flags |= ImGuiTreeNodeFlags_Selected;
             if (node->transform->ChildCount() == 0) flags |= ImGuiTreeNodeFlags_Leaf;
+            // Unity dims inactive objects; grey the whole row (and its subtree label).
+            bool dim = !node->active;
+            if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
             bool open = ImGui::TreeNodeEx(node, flags, "%s%s%s", ObjectKind(node),
                                           node->name.c_str(), node->active ? "" : "  (off)");
+            if (dim) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
             if (ImGui::IsItemClicked()) ed.Select(node);
             // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
@@ -2726,6 +2750,17 @@ void DrawHierarchy(EditorState& ed) {
                     if (ImGui::MenuItem("Camera")) childOf(ed.CreateCamera("Camera"));
                     if (ImGui::MenuItem("Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); childOf(g); }
                     ImGui::EndMenu();
+                }
+                // Wrap this object in a new empty parent (Unity's "Create Parent"),
+                // keeping its on-screen transform unchanged.
+                if (ImGui::MenuItem("Create Parent")) {
+                    ed.PushUndo();
+                    GameObject* parent = ed.scene().CreateGameObject(node->name + " Group");
+                    parent->transform->SetPosition(node->transform->Position());
+                    if (Transform* op = node->transform->Parent())
+                        parent->transform->SetParent(op, true);
+                    node->transform->SetParent(parent->transform, true);  // keep world pose
+                    ed.Select(parent); ed.dirty = true;
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Focus (frame)")) {
@@ -2954,6 +2989,27 @@ static bool AcceptAssetPathField(std::string& field) {
     return changed;
 }
 
+// Unity-style component header: an enable/disable checkbox, the collapsing
+// header title, and a right-click context menu offering "Remove Component"
+// (which sets *toRemove, removed safely after the inspector finishes drawing).
+// Returns whether the component body should be drawn.
+static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
+                       bool removable = true) {
+    ImGui::PushID(comp);
+    bool en = comp->enabled;
+    if (ImGui::Checkbox("##enabled", &en)) comp->enabled = en;
+    ImGui::SameLine();
+    bool open = ImGui::CollapsingHeader(label,
+                    ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+    if (ImGui::BeginPopupContextItem("##compctx")) {
+        if (removable && ImGui::MenuItem("Remove Component")) *toRemove = comp;
+        if (!removable) ImGui::TextDisabled("(required component)");
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return open;
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
 
@@ -2999,15 +3055,37 @@ void DrawInspector(EditorState& ed) {
     char nameBuf[128];
     std::strncpy(nameBuf, go->name.c_str(), sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
-    ImGui::SetNextItemWidth(-1);
+    // Leave room on the right for the Static toggle (Unity places it here).
+    float staticW = ImGui::CalcTextSize("Static").x + ImGui::GetFrameHeight() +
+                    ImGui::GetStyle().ItemInnerSpacing.x + ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - staticW);
     if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Static", &go->isStatic)) ed.dirty = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Marks the object as non-moving (saved with the scene)");
 
-    // Row 2: Tag field + Save-as-Prefab, right-aligned.
-    char tagBuf[64];
-    std::strncpy(tagBuf, go->tag.c_str(), sizeof(tagBuf) - 1);
-    tagBuf[sizeof(tagBuf) - 1] = '\0';
+    // Row 2: Tag dropdown (Unity-style presets + custom) + Save-as-Prefab.
+    static const char* kTagPresets[] = {"Untagged", "Player", "MainCamera", "Enemy",
+                                        "Respawn", "Finish", "GameController", "UI"};
+    std::string curTag = go->tag.empty() ? "Untagged" : go->tag;
     ImGui::SetNextItemWidth(150);
-    if (ImGui::InputText("Tag", tagBuf, sizeof(tagBuf))) { go->tag = tagBuf; ed.dirty = true; }
+    if (ImGui::BeginCombo("Tag", curTag.c_str())) {
+        for (const char* t : kTagPresets) {
+            bool sel = (curTag == t);
+            if (ImGui::Selectable(t, sel)) {
+                go->tag = (std::strcmp(t, "Untagged") == 0) ? "" : t; ed.dirty = true;
+            }
+        }
+        ImGui::Separator();
+        static char customTag[64] = "";
+        ImGui::SetNextItemWidth(130);
+        if (ImGui::InputTextWithHint("##customtag", "custom tag...", customTag, sizeof(customTag),
+                                     ImGuiInputTextFlags_EnterReturnsTrue) && customTag[0]) {
+            go->tag = customTag; ed.dirty = true; customTag[0] = '\0';
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndCombo();
+    }
     ImGui::SameLine();
     float btnW = ImGui::CalcTextSize("Save as Prefab").x + ImGui::GetStyle().FramePadding.x * 2;
     float avail = ImGui::GetContentRegionAvail().x;
@@ -3121,7 +3199,7 @@ void DrawInspector(EditorState& ed) {
     }
 
     if (auto* sr = go->GetComponent<SpriteRenderer>()) {
-        if (ImGui::CollapsingHeader("Sprite Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Sprite Renderer", sr, &toRemove)) {
             float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
             if (ImGui::ColorEdit4("Color##sprite", col)) {
                 sr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
@@ -3144,7 +3222,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* mr = go->GetComponent<MeshRenderer>()) {
-        if (ImGui::CollapsingHeader("Mesh Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Mesh Renderer", mr, &toRemove)) {
             float col[4] = {mr->color.r, mr->color.g, mr->color.b, mr->color.a};
             if (ImGui::ColorEdit4("Color##mesh", col)) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
@@ -3255,7 +3333,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
-        if (ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Terrain", tr, &toRemove)) {
             float c[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##terr", c)) { tr->color = {c[0],c[1],c[2],c[3]}; tr->Apply(); ed.dirty = true; }
             int res = tr->resolution;
@@ -3282,7 +3360,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* li = go->GetComponent<Light>()) {
-        if (ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Light", li, &toRemove)) {
             const char* types[] = {"Directional", "Point", "Spot"};
             int ty = (int)li->type;
             if (ImGui::Combo("Type##light", &ty, types, 3)) { li->type = (Light::Type)ty; ed.dirty = true; }
@@ -3304,7 +3382,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cam = go->GetComponent<Camera>()) {
-        if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Camera", cam, &toRemove)) {
             int proj = (int)cam->projection;
             const char* projs[] = {"Orthographic", "Perspective"};
             if (ImGui::Combo("Projection", &proj, projs, 2))
@@ -3317,8 +3395,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cam")) toRemove = cam;
         }
     }
-    if (go->GetComponent<Rigidbody2D>())
-        if (ImGui::CollapsingHeader("Rigidbody2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (auto* rb2 = go->GetComponent<Rigidbody2D>())
+        if (CompHeader("Rigidbody2D", rb2, &toRemove)) {
             auto* rb = go->GetComponent<Rigidbody2D>();
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
@@ -3329,7 +3407,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
-        if (ImGui::CollapsingHeader("Box Collider 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Box Collider 2D", bc, &toRemove)) {
             float sz[2] = {bc->size.x, bc->size.y};
             if (ImGui::DragFloat2("Size##bc", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1]}; ed.dirty = true; }
             float off[2] = {bc->offset.x, bc->offset.y};
@@ -3341,7 +3419,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = go->GetComponent<CircleCollider2D>()) {
-        if (ImGui::CollapsingHeader("Circle Collider 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Circle Collider 2D", cc, &toRemove)) {
             ImGui::DragFloat("Radius##cc", &cc->radius, 0.05f, 0.0f, 1000.0f);
             float off[2] = {cc->offset.x, cc->offset.y};
             if (ImGui::DragFloat2("Offset##cc", off, 0.05f)) { cc->offset = {off[0], off[1]}; ed.dirty = true; }
@@ -3352,7 +3430,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cap = go->GetComponent<CapsuleCollider2D>()) {
-        if (ImGui::CollapsingHeader("Capsule Collider 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Capsule Collider 2D", cap, &toRemove)) {
             float sz[2] = {cap->size.x, cap->size.y};
             if (ImGui::DragFloat2("Size##cap2", sz, 0.05f, 0.0f, 1000.0f)) { cap->size = {sz[0], sz[1]}; ed.dirty = true; }
             int dir = (int)cap->direction;
@@ -3366,8 +3444,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cap2")) toRemove = cap;
         }
     }
-    if (go->GetComponent<Rigidbody3D>())
-        if (ImGui::CollapsingHeader("Rigidbody3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (auto* rb3 = go->GetComponent<Rigidbody3D>())
+        if (CompHeader("Rigidbody3D", rb3, &toRemove)) {
             auto* rb = go->GetComponent<Rigidbody3D>();
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
@@ -3383,7 +3461,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
         }
     if (auto* bc = go->GetComponent<BoxCollider3D>()) {
-        if (ImGui::CollapsingHeader("Box Collider 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Box Collider 3D", bc, &toRemove)) {
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
             if (ImGui::DragFloat3("Size##bc3", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
             float off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
@@ -3399,7 +3477,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sc = go->GetComponent<SphereCollider3D>()) {
-        if (ImGui::CollapsingHeader("Sphere Collider 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Sphere Collider 3D", sc, &toRemove)) {
             ImGui::DragFloat("Radius##sc3", &sc->radius, 0.05f, 0.0f, 1000.0f);
             float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
             if (ImGui::DragFloat3("Offset##sc3", off, 0.05f)) { sc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
@@ -3414,7 +3492,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cap = go->GetComponent<CapsuleCollider3D>()) {
-        if (ImGui::CollapsingHeader("Capsule Collider 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Capsule Collider 3D", cap, &toRemove)) {
             ImGui::DragFloat("Radius##cap3", &cap->radius, 0.05f, 0.0f, 1000.0f);
             ImGui::DragFloat("Height##cap3", &cap->height, 0.05f, 0.0f, 1000.0f);
             const char* axes[] = {"X", "Y", "Z"};
@@ -3432,7 +3510,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sc = go->GetComponent<ScriptComponent>()) {
-        if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Script", sc, &toRemove)) {
             static std::vector<std::string> avail = AvailableScriptLanguages();
             std::vector<const char*> items; items.reserve(avail.size());
             for (auto& s : avail) items.push_back(s.c_str());
@@ -3448,7 +3526,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = go->GetComponent<CharacterController2D>()) {
-        if (ImGui::CollapsingHeader("Character Controller 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Character Controller 2D", cc, &toRemove)) {
             int m = (int)cc->mode;
             const char* modes[] = {"Top-Down", "Platformer"};
             if (ImGui::Combo("Mode##cc2", &m, modes, 2)) { cc->mode = (CharacterController2D::Mode)m; ed.dirty = true; }
@@ -3460,7 +3538,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = go->GetComponent<CharacterController3D>()) {
-        if (ImGui::CollapsingHeader("Character Controller 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Character Controller 3D", cc, &toRemove)) {
             if (ImGui::DragFloat("Speed##cc3", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##cc3", &cc->canJump)) ed.dirty = true;
             if (cc->canJump)
@@ -3470,7 +3548,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
-        if (ImGui::CollapsingHeader("Follow Target 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Follow Target 2D", ft, &toRemove)) {
             char tb[64];
             std::strncpy(tb, ft->target.c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';
             if (ImGui::InputText("Target##ft", tb, sizeof(tb))) { ft->target = tb; ed.dirty = true; }
@@ -3481,7 +3559,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* al = go->GetComponent<ActionList>()) {
-        if (ImGui::CollapsingHeader("Actions (Visual Script)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Actions (Visual Script)", al, &toRemove)) {
             // Trigger -> Conditions -> Instructions, Game-Creator style.
             const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision",
                                    "On Click", "On Key Up", "On Message"};
@@ -3541,7 +3619,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* a = go->GetComponent<AudioSource>()) {
-        if (ImGui::CollapsingHeader("Audio Source", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Audio Source", a, &toRemove)) {
             ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f);
             ImGui::Checkbox("Loop", &a->loop);
             ImGui::SameLine();
@@ -3567,7 +3645,7 @@ void DrawInspector(EditorState& ed) {
     }
 
     if (auto* mv = go->GetComponent<Mover>()) {
-        if (ImGui::CollapsingHeader("Mover", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Mover", mv, &toRemove)) {
             float v[3] = {mv->velocity.x, mv->velocity.y, mv->velocity.z};
             if (ImGui::DragFloat3("Velocity##mv", v, 0.05f)) { mv->velocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             ImGui::TextDisabled("units / second");
@@ -3575,7 +3653,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sp = go->GetComponent<Spinner>()) {
-        if (ImGui::CollapsingHeader("Spinner", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Spinner", sp, &toRemove)) {
             float v[3] = {sp->angularVelocity.x, sp->angularVelocity.y, sp->angularVelocity.z};
             if (ImGui::DragFloat3("Angular Vel##sp", v, 0.5f)) { sp->angularVelocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             ImGui::TextDisabled("degrees / second (X, Y, Z)");
@@ -3583,14 +3661,14 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* lt = go->GetComponent<Lifetime>()) {
-        if (ImGui::CollapsingHeader("Lifetime", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Lifetime", lt, &toRemove)) {
             if (ImGui::DragFloat("Seconds##lt", &lt->seconds, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
             ImGui::TextDisabled("destroys this object after N seconds of play");
             if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
         }
     }
     if (auto* cf = go->GetComponent<CameraFollow>()) {
-        if (ImGui::CollapsingHeader("Camera Follow", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Camera Follow", cf, &toRemove)) {
             char buf[128];
             std::strncpy(buf, cf->targetName.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
@@ -3603,7 +3681,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
-        if (ImGui::CollapsingHeader("Text", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Text", tr, &toRemove)) {
             char buf[512];
             std::strncpy(buf, tr->text.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
@@ -3660,7 +3738,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
-        if (ImGui::CollapsingHeader("Canvas", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Canvas", cv, &toRemove)) {
             const char* modes[] = {"Constant Pixel Size", "Scale With Screen Size"};
             int m = (int)cv->scaleMode;
             if (ImGui::Combo("UI Scale Mode##cv", &m, modes, 2)) { cv->scaleMode = (Canvas::ScaleMode)m; ed.dirty = true; }
@@ -3677,7 +3755,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* es = go->GetComponent<EventSystem>()) {
-        if (ImGui::CollapsingHeader("Event System", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Event System", es, &toRemove)) {
             ImGui::TextDisabled("Routes pointer input to UI widgets.");
             GameObject* h = es->Hovered();
             ImGui::Text("Hovered: %s", h ? h->name.c_str() : "(none)");
@@ -3687,7 +3765,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* nm = go->GetComponent<NetworkManager>()) {
-        if (ImGui::CollapsingHeader("Network Manager", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Network Manager", nm, &toRemove)) {
             const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play"};
             int m = (int)nm->autoStart;
             if (ImGui::Combo("Auto Start##nm", &m, modes, 3)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
@@ -3728,7 +3806,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
-        if (ImGui::CollapsingHeader("UI Document", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Document", doc, &toRemove)) {
             ImGui::TextDisabled("OkayUI markup -> widgets. One widget per line; indent to nest.");
             // Edit the markup in a resizable multiline box. A static buffer big
             // enough for sizeable documents keeps this dependency-free.
@@ -3779,7 +3857,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* btn = go->GetComponent<UIButton>()) {
-        if (ImGui::CollapsingHeader("UI Button", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Button", btn, &toRemove)) {
             char lb[128];
             std::strncpy(lb, btn->label.c_str(), sizeof(lb) - 1);
             lb[sizeof(lb) - 1] = '\0';
@@ -3835,7 +3913,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
-        if (ImGui::CollapsingHeader("UI Panel", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Panel", pn, &toRemove)) {
             float pos[2] = {pn->position.x, pn->position.y};
             if (ImGui::DragFloat2("Pos (px)##uip", pos, 1.0f)) { pn->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {pn->size.x, pn->size.y};
@@ -3867,7 +3945,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* in = go->GetComponent<UIInputField>()) {
-        if (ImGui::CollapsingHeader("UI Input Field", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Input Field", in, &toRemove)) {
             char tb[128]; std::strncpy(tb, in->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Text##uif", tb, sizeof(tb))) { in->text = tb; ed.dirty = true; }
             char ph[96]; std::strncpy(ph, in->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
@@ -3888,7 +3966,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
-        if (ImGui::CollapsingHeader("UI Dropdown", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Dropdown", dd, &toRemove)) {
             float pos[2] = {dd->position.x, dd->position.y};
             if (ImGui::DragFloat2("Pos (px)##udd", pos, 1.0f)) { dd->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {dd->size.x, dd->size.y};
@@ -3936,7 +4014,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tt = go->GetComponent<UITooltip>()) {
-        if (ImGui::CollapsingHeader("UI Tooltip", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Tooltip", tt, &toRemove)) {
             char tb[256]; std::strncpy(tb, tt->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Text##utt", tb, sizeof(tb))) { tt->text = tb; ed.dirty = true; }
             if (ImGui::DragFloat("Delay (s)##utt", &tt->delay, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
@@ -3949,7 +4027,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dg = go->GetComponent<UIDraggable>()) {
-        if (ImGui::CollapsingHeader("UI Draggable", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Draggable", dg, &toRemove)) {
             if (ImGui::Checkbox("Return to Start##udg", &dg->returnToStart)) ed.dirty = true;
             if (ImGui::Checkbox("Any widget is a target##udg", &dg->anyTarget)) ed.dirty = true;
             if (ImGui::Checkbox("Snap into slot##udg", &dg->snapToSlot)) ed.dirty = true;
@@ -3966,7 +4044,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dt = go->GetComponent<UIDropTarget>()) {
-        if (ImGui::CollapsingHeader("UI Drop Target", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Drop Target", dt, &toRemove)) {
             char tb[64]; std::strncpy(tb, dt->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Accept Tag##udt", tb, sizeof(tb))) { dt->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
@@ -3978,7 +4056,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dg = go->GetComponent<Draggable>()) {
-        if (ImGui::CollapsingHeader("Draggable (item)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Draggable (item)", dg, &toRemove)) {
             if (ImGui::Checkbox("Return to Start##dg", &dg->returnToStart)) ed.dirty = true;
             if (ImGui::Checkbox("Any sprite is a target##dg", &dg->anyTarget)) ed.dirty = true;
             if (ImGui::Checkbox("Snap onto zone##dg", &dg->snapToZone)) ed.dirty = true;
@@ -4001,7 +4079,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dz = go->GetComponent<DropZone>()) {
-        if (ImGui::CollapsingHeader("Drop Zone (item)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Drop Zone (item)", dz, &toRemove)) {
             char tb[64]; std::strncpy(tb, dz->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Accept Tag##dz", tb, sizeof(tb))) { dz->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
@@ -4010,7 +4088,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
-        if (ImGui::CollapsingHeader("UI Layout Group", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Layout Group", lg, &toRemove)) {
             const char* dirs[] = {"Vertical", "Horizontal"};
             int d = (int)lg->direction;
             if (ImGui::Combo("Direction##lg", &d, dirs, 2)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
@@ -4026,7 +4104,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sv = go->GetComponent<UIScrollView>()) {
-        if (ImGui::CollapsingHeader("UI Scroll View", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Scroll View", sv, &toRemove)) {
             float pos[2] = {sv->position.x, sv->position.y};
             if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sv->size.x, sv->size.y};
@@ -4041,7 +4119,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pb = go->GetComponent<UIProgressBar>()) {
-        if (ImGui::CollapsingHeader("UI Progress Bar", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Progress Bar", pb, &toRemove)) {
             float pos[2] = {pb->position.x, pb->position.y};
             if (ImGui::DragFloat2("Pos (px)##upb", pos, 1.0f)) { pb->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {pb->size.x, pb->size.y};
@@ -4066,7 +4144,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* im = go->GetComponent<UIImage>()) {
-        if (ImGui::CollapsingHeader("UI Image", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Image", im, &toRemove)) {
             float pos[2] = {im->position.x, im->position.y};
             if (ImGui::DragFloat2("Pos (px)##uim", pos, 1.0f)) { im->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {im->size.x, im->size.y};
@@ -4097,7 +4175,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
-        if (ImGui::CollapsingHeader("UI Slider", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Slider", sl, &toRemove)) {
             float pos[2] = {sl->position.x, sl->position.y};
             if (ImGui::DragFloat2("Pos (px)##usl", pos, 1.0f)) { sl->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sl->size.x, sl->size.y};
@@ -4130,7 +4208,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
-        if (ImGui::CollapsingHeader("UI Toggle", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Toggle", tg, &toRemove)) {
             char lb[128];
             std::strncpy(lb, tg->label.c_str(), sizeof(lb) - 1);
             lb[sizeof(lb) - 1] = '\0';
@@ -4157,7 +4235,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
-        if (ImGui::CollapsingHeader("Sprite Animator", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Sprite Animator", an, &toRemove)) {
             if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Loop##anim", &an->loop)) ed.dirty = true;
             ImGui::SameLine();
@@ -4263,6 +4341,21 @@ void DrawInspector(EditorState& ed) {
         Hdr("Scripting");
         if (!go->GetComponent<ScriptComponent>() && F("Script (OkayScript)") && ImGui::Selectable("Script (OkayScript)"))
             { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
+        // Unity's "New Script": create a fresh .okay file under Assets and attach it.
+        if (!go->GetComponent<ScriptComponent>() && F("New Script...") && ImGui::Selectable("New Script...")) {
+            namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path(".")
+                                                      : fs::path(ed.projectDir()) / "Assets";
+            std::error_code se; fs::create_directories(assets, se);
+            fs::path p = assets / (go->name + "Script.okay");
+            for (int n = 1; fs::exists(p, se); ++n)
+                p = assets / (go->name + "Script" + std::to_string(n) + ".okay");
+            std::ofstream(p) << extide::StarterScript("okayscript");
+            auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
+            std::string err; nsc->LoadFile(p.string(), &err); nsc->SetPath(p.string());
+            ConsoleLog("Created + attached " + p.string());
+            ed.dirty = true;
+        }
         if (!go->GetComponent<ActionList>() && F("Actions (Visual Script)") && ImGui::Selectable("Actions (Visual Script)"))
             { go->AddComponent<ActionList>(); ed.dirty = true; }
 
@@ -5545,6 +5638,52 @@ void DrawViewport(EditorState& ed) {
 
     ImGui::InvisibleButton("canvas", canvasSize,
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+
+    // Drag an asset from the Project panel straight onto the Scene to place it
+    // (Unity-style): prefabs instantiate, scenes open, images become sprites,
+    // OBJ models become 3D objects. New objects land at the camera's focus.
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::string path((const char*)p->Data);
+            std::string ext;
+            if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            Vec3 drop = ed.view3D ? ed.camTarget
+                                  : Vec3{ed.cameraPos.x, ed.cameraPos.y, 0.0f};
+            GameObject* placed = nullptr;
+            if (ext == ".okayprefab") {
+                ed.PushUndo();
+                std::string err;
+                placed = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
+                if (!placed) ConsoleLog("Prefab load failed: " + err);
+            } else if (ext == ".okayscene") {
+                std::string err;
+                if (ed.Load(path, &err)) ConsoleLog("Opened " + path);
+                else ConsoleLog("Open failed: " + err);
+            } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                ed.PushUndo();
+                std::filesystem::path fp(path);
+                placed = ed.CreateSprite(fp.stem().string());
+                if (auto* sr = placed->GetComponent<SpriteRenderer>()) sr->texture = path;
+            } else if (ext == ".obj") {
+                ed.PushUndo();
+                std::filesystem::path fp(path);
+                placed = ed.CreateMesh("Cube");
+                if (auto* mr = placed->GetComponent<MeshRenderer>()) {
+                    bool ok = false;
+                    Mesh m = Mesh::LoadOBJ(path, &ok);
+                    if (ok && !m.vertices.empty()) { mr->mesh = m; mr->meshPath = path; }
+                    placed->name = fp.stem().string();
+                }
+            }
+            if (placed) {
+                placed->transform->SetPosition(drop);
+                ed.Select(placed); ed.dirty = true;
+                ConsoleLog("Placed " + placed->name);
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
     ImGuiIO& io = ImGui::GetIO();
     // Treat the canvas as hovered when the pointer is over it. IsItemHovered()
     // alone can read false in some docking/overlap states (and while the canvas

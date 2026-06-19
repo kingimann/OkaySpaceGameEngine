@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.13.0
+  - Inspector parity with Unity: every component header now has an enable/disable
+    checkbox and a right-click > Remove Component menu. The Tag field became a
+    dropdown (Untagged/Player/MainCamera/Enemy/... plus custom), and the object
+    header gained a Static toggle that's saved with the scene.
+  - Drag & drop into the Scene view: drag an asset from the Project panel onto the
+    viewport to place it — prefabs instantiate, scenes open, images become
+    sprites, and .obj models become 3D objects (dropped at the camera's focus).
+  - Hierarchy: inactive objects are dimmed (Unity-style), and a new right-click
+    "Create Parent" wraps an object in a fresh empty parent without moving it.
+  - Add Component > "New Script..." creates a starter .okay file under Assets and
+    attaches it in one step. Project panel gained "+ Material" and "+ Scene"
+    create buttons (and matching right-click entries).
+
 v2.12.0
   - New Project Settings window (Edit > Project Settings...): set your game's
     company and version, default resolution, 2D/3D gravity, and ambient/skybox

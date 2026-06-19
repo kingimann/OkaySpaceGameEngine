@@ -363,7 +363,6 @@ bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
-bool g_skybox = true;            // draw the default sky gradient in 3D views
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
@@ -807,7 +806,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::Separator();
         ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
-        ImGui::MenuItem("Skybox", nullptr, &g_skybox);
+        if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
         ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);
         ImGui::Separator();
         if (ImGui::BeginMenu("Theme")) {
@@ -1478,6 +1477,20 @@ void DrawStats(EditorState& ed) {
     ImGui::Text("Sprites: %d", (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size());
     ImGui::Text("Meshes: %d", (int)ed.scene().FindObjectsOfType<MeshRenderer>().size());
     ImGui::Text("Colliders: %d", (int)ed.scene().FindObjectsOfType<Collider2D>().size());
+
+    // Environment: the scene's skybox + ambient, saved with the scene so the
+    // built game renders the same sky and base light.
+    if (ImGui::CollapsingHeader("Environment (Sky & Light)")) {
+        auto& rs = ed.scene().renderSettings;
+        if (ImGui::Checkbox("Skybox", &rs.skybox)) ed.dirty = true;
+        float t[3] = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
+        if (ImGui::ColorEdit3("Sky Top", t)) { rs.skyTop = {t[0], t[1], t[2], 1}; ed.dirty = true; }
+        float hz[3] = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
+        if (ImGui::ColorEdit3("Horizon", hz)) { rs.skyHorizon = {hz[0], hz[1], hz[2], 1}; ed.dirty = true; }
+        float bo[3] = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+        if (ImGui::ColorEdit3("Sky Bottom", bo)) { rs.skyBottom = {bo[0], bo[1], bo[2], 1}; ed.dirty = true; }
+        if (ImGui::SliderFloat("Ambient", &rs.ambient, 0.0f, 1.0f)) ed.dirty = true;
+    }
     ImGui::End();
 }
 
@@ -3677,13 +3690,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     dl->PushClipRect(canvasPos, canvasEnd, true);
 
-    // Default skybox: a vertical sky gradient behind everything (sky blue up
-    // top, hazy near the horizon). Drawn first so the grid and the transparent
-    // mesh layer sit on top of it.
-    if (g_skybox) {
-        ImU32 top = IM_COL32(70, 120, 200, 255);    // zenith blue
-        ImU32 mid = IM_COL32(150, 185, 225, 255);   // horizon haze
-        ImU32 bot = IM_COL32(120, 120, 130, 255);   // ground-ish grey
+    // Skybox: a vertical sky gradient behind everything, using the scene's
+    // render settings (these save with the scene, so the built game matches).
+    // Drawn first so the grid and the transparent mesh layer sit on top of it.
+    const auto& rs = ed.scene().renderSettings;
+    if (rs.skybox) {
+        ImU32 top = ToColor(rs.skyTop);
+        ImU32 mid = ToColor(rs.skyHorizon);
+        ImU32 bot = ToColor(rs.skyBottom);
         ImVec2 cmid(canvasEnd.x, (canvasPos.y + canvasEnd.y) * 0.5f);
         dl->AddRectFilledMultiColor(canvasPos, cmid, top, top, mid, mid);
         dl->AddRectFilledMultiColor(ImVec2(canvasPos.x, cmid.y), canvasEnd, mid, mid, bot, bot);

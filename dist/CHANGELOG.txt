@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.35.0
+  - Build everything with the skybox and lighting: the sky gradient and a base
+    ambient level are now per-scene render settings saved with the scene, so a
+    built game (the player) renders the same sky + lighting the editor shows —
+    not just an editor preview. Edit them under Stats > Environment (Sky &
+    Light); the menu Skybox toggle is now per-scene too.
+
 v1.34.0
   - Fixed the updater "doesn't always update": the GitHub raw CDN was serving a
     cached VERSION.txt / .exe. Every download now sends no-cache headers and a

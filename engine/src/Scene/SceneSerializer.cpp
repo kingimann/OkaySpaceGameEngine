@@ -311,6 +311,14 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     out << "okayscene 1\n";
     out << "name " << Quote(scene.Name()) << "\n";
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
+    {
+        const auto& rs = scene.renderSettings;
+        out << "rendersettings " << (rs.skybox ? 1 : 0) << " "
+            << rs.skyTop.r << " " << rs.skyTop.g << " " << rs.skyTop.b << " "
+            << rs.skyHorizon.r << " " << rs.skyHorizon.g << " " << rs.skyHorizon.b << " "
+            << rs.skyBottom.r << " " << rs.skyBottom.g << " " << rs.skyBottom.b << " "
+            << rs.ambient << "\n";
+    }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
         GameObject* go = objs[i].get();
@@ -357,6 +365,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
             scene.physics().gravity = g;
+        } else if (token == "rendersettings") {
+            auto& rs = scene.renderSettings;
+            int sky = 1;
+            in >> sky >> rs.skyTop.r >> rs.skyTop.g >> rs.skyTop.b
+               >> rs.skyHorizon.r >> rs.skyHorizon.g >> rs.skyHorizon.b
+               >> rs.skyBottom.r >> rs.skyBottom.g >> rs.skyBottom.b >> rs.ambient;
+            rs.skybox = (sky != 0);
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;

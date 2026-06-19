@@ -37,6 +37,7 @@ void Scene::Clear() {
     m_physics.Clear();
     mainCamera = nullptr;
     m_objects.clear();
+    renderSettings = RenderSettings{};   // back to default sky/ambient
 }
 
 void Scene::QueuePending(Component* component) {

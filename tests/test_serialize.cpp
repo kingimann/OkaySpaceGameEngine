@@ -62,5 +62,22 @@ int main() {
         if (cc) CHECK_NEAR(cc->orthographicSize, 9.0f, 0.001f);
     }
 
+    // Per-scene render settings (skybox + ambient) save and load with the scene.
+    {
+        Scene s("env");
+        s.renderSettings.skybox = false;
+        s.renderSettings.skyTop = Color::FromBytes(10, 20, 30);
+        s.renderSettings.ambient = 0.42f;
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        CHECK(s2.renderSettings.skybox == false);
+        CHECK_NEAR(s2.renderSettings.skyTop.r, 10.0f / 255.0f, 0.01f);
+        CHECK_NEAR(s2.renderSettings.ambient, 0.42f, 1e-4f);
+
+        // A scene file without the line keeps defaults (skybox on) after Clear.
+        Scene s3("y"); SceneSerializer::Deserialize(s3, "name \"NoEnv\"\n");
+        CHECK(s3.renderSettings.skybox == true);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -3,6 +3,7 @@
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Physics3D.hpp"
+#include "okay/Render/Color.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -80,6 +81,17 @@ public:
     const Physics3D& physics3D() const { return m_physics3d; }
     /// Set false to skip the physics step (e.g. for pure-UI scenes).
     bool physicsEnabled = true;
+
+    /// Per-scene rendering settings, saved with the scene so a built game shows
+    /// the same sky and base lighting the editor previews (skybox + ambient).
+    struct RenderSettings {
+        bool  skybox     = true;
+        Color skyTop     = Color::FromBytes(70, 120, 200);   // zenith
+        Color skyHorizon = Color::FromBytes(150, 185, 225);  // horizon haze
+        Color skyBottom  = Color::FromBytes(120, 120, 130);  // ground-ish
+        float ambient    = 0.15f;                            // base light (0..1)
+    };
+    RenderSettings renderSettings;
 
     // ---- Lifecycle (driven by the Application) ------------------------
     /// Run Awake/Start on all components created so far.

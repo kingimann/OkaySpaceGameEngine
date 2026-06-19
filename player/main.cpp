@@ -269,6 +269,30 @@ int main(int argc, char** argv) {
         SDL_RenderClear(renderer);
 
         bool perspective = cam && cam->projection == Camera::Projection::Perspective;
+
+        // Skybox: the same vertical sky gradient the editor previews, baked into
+        // the scene's render settings so a built game looks identical. Drawn
+        // first (behind everything) for 3D/perspective scenes.
+        if (perspective && scene.renderSettings.skybox && w > 0 && h > 0) {
+            const auto& rs = scene.renderSettings;
+            auto sc = [](const Color& c) {
+                SDL_Color o; o.r = (Uint8)(c.r * 255); o.g = (Uint8)(c.g * 255);
+                o.b = (Uint8)(c.b * 255); o.a = 255; return o;
+            };
+            SDL_Color top = sc(rs.skyTop), mid = sc(rs.skyHorizon), bot = sc(rs.skyBottom);
+            float my = h * 0.5f;
+            auto band = [&](float y0, float y1, SDL_Color c0, SDL_Color c1) {
+                SDL_Vertex v[4] = {
+                    {{0.0f, y0}, c0, {0, 0}}, {{(float)w, y0}, c0, {0, 0}},
+                    {{(float)w, y1}, c1, {0, 0}}, {{0.0f, y1}, c1, {0, 0}},
+                };
+                int idx[6] = {0, 1, 2, 0, 2, 3};
+                SDL_RenderGeometry(renderer, nullptr, v, 4, idx, 6);
+            };
+            band(0.0f, my, top, mid);
+            band(my, (float)h, mid, bot);
+        }
+
         if (perspective) {
             // Z-buffered software render so overlapping faces occlude correctly,
             // then blit it under the 2D/UI layers (transparent where no geometry).

@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.83.0
+  - UI Toggle gains a Style: classic Checkbox or a modern on/off Switch (a pill
+    track with a sliding knob, with its own knob color) — pick it in the
+    inspector. Saves with the scene and renders in editor + built game.
+
 v1.82.0
   - More UI polish settings: UI Button gets a "Hover Grow" (scales up when
     hovered/focused — tactile menus), and UI Panel gets a "Drop Shadow"

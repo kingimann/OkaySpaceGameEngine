@@ -375,7 +375,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tg->boxColor.r << " " << tg->boxColor.g << " " << tg->boxColor.b << " " << tg->boxColor.a << " "
             << tg->checkColor.r << " " << tg->checkColor.g << " " << tg->checkColor.b << " " << tg->checkColor.a << " "
             << tg->textColor.r << " " << tg->textColor.g << " " << tg->textColor.b << " " << tg->textColor.a
-            << " " << (int)tg->anchor << " " << tg->cornerRadius << "\n";
+            << " " << (int)tg->anchor << " " << tg->cornerRadius
+            << " " << (int)tg->style << " "
+            << tg->knobColor.r << " " << tg->knobColor.g << " " << tg->knobColor.b << " " << tg->knobColor.a << "\n";
     }
     if (auto* ps = go->GetComponent<ParticleSystem>()) {
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
@@ -909,6 +911,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ReadAnchor(in, tg->anchor);
                     in >> std::ws; // optional corner radius (added later)
                     if (std::isdigit(in.peek())) in >> tg->cornerRadius;
+                    in >> std::ws; // optional switch style + knob color (added later)
+                    if (std::isdigit(in.peek())) {
+                        int st = 0; Color kc;
+                        in >> st >> kc.r >> kc.g >> kc.b >> kc.a;
+                        tg->style = (UIToggle::Style)st; tg->knobColor = kc;
+                    }
                 } else if (field == "particles") {
                     auto* ps = go->AddComponent<ParticleSystem>();
                     int playing = 1, fade = 1;

@@ -3757,6 +3757,13 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("click in the built game; calls script on_toggle()");
             AnchorCombo("Anchor##utg", tg->anchor, ed);
             if (ImGui::DragFloat("Corner Radius##utg", &tg->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            const char* styles[] = {"Checkbox", "Switch"};
+            int st = (int)tg->style;
+            if (ImGui::Combo("Style##utg", &st, styles, 2)) { tg->style = (UIToggle::Style)st; ed.dirty = true; }
+            if (tg->style == UIToggle::Style::Switch) {
+                float kc[4] = {tg->knobColor.r, tg->knobColor.g, tg->knobColor.b, tg->knobColor.a};
+                if (ImGui::ColorEdit4("Knob##utg", kc)) { tg->knobColor = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
+            }
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }
     }
@@ -4113,14 +4120,24 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
-        dl->AddRectFilled(a, b, ToColor(tg->boxColor), tg->cornerRadius);
-        if (tg->on) {
-            float pad = sz.x * 0.22f;
-            dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
-                              ToColor(tg->checkColor), 2.0f);
+        float labelX = b.x + 8.0f * s;
+        if (tg->style == UIToggle::Style::Switch) {
+            // Pill track (full when on) + a sliding knob.
+            float r = sz.y * 0.5f;
+            dl->AddRectFilled(a, b, ToColor(tg->on ? tg->checkColor : tg->boxColor), r);
+            float kr = r - 2.0f;
+            float kx = tg->on ? (b.x - r) : (a.x + r);
+            dl->AddCircleFilled(ImVec2(kx, a.y + r), kr, ToColor(tg->knobColor));
+        } else {
+            dl->AddRectFilled(a, b, ToColor(tg->boxColor), tg->cornerRadius);
+            if (tg->on) {
+                float pad = sz.x * 0.22f;
+                dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
+                                  ToColor(tg->checkColor), 2.0f);
+            }
         }
         float px = 2.0f * s;
-        DrawBitmapText(dl, tg->label, b.x + 8.0f * s,
+        DrawBitmapText(dl, tg->label, labelX,
                        a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
     }
 

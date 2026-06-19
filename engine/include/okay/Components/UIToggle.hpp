@@ -25,6 +25,10 @@ public:
     Color textColor  = Color::White;
     UIAnchor anchor = UIAnchor::TopLeft;
     float cornerRadius = 3.0f;                        // rounded box corners
+    /// Checkbox (inset tick) or a sliding on/off Switch (pill + knob).
+    enum class Style { Checkbox, Switch };
+    Style style = Style::Checkbox;
+    Color knobColor = Color::FromBytes(235, 235, 240);  // switch knob
 
     bool IsHovered() const { return m_hover; }
 

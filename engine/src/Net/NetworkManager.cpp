@@ -15,7 +15,7 @@ namespace {
     enum Msg : std::uint8_t {
         Join = 1, Welcome = 2, State = 3, Snapshot = 4, Leave = 5,
         Message = 6, DirectMessage = 7, SyncVar = 8, Ping = 9, Pong = 10,
-        Ready = 11
+        Ready = 11, Reject = 12
     };
     constexpr float kClientTimeout = 5.0f;
 }
@@ -31,7 +31,9 @@ bool NetworkManager::StartServer(std::uint16_t port) {
     }
     m_mode = Mode::Server;
     m_localId = 0;
-    OKAY_INFO("net: server listening on UDP ", port);
+    if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
+    OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
+              " (max ", maxPlayers, ")");
     return true;
 }
 
@@ -67,6 +69,8 @@ void NetworkManager::Stop() {
     m_rtt = 0.0f;
     m_ready = false;
     m_matchStarted = false;
+    m_serverName.clear();
+    m_joinRejected = false;
     m_mode = Mode::Offline;
     m_joined = false;
 }
@@ -274,6 +278,19 @@ void NetworkManager::ServerTick(float dt) {
         if (type == Join) {
             std::string name = p.ReadString();           // display name (may be empty)
             std::string room = p.ReadString();           // lobby room (may be empty)
+            std::string pass = p.ReadString();           // password (may be empty)
+            bool existed = m_clients.count(from) != 0;
+            if (!existed) {
+                // Gate new joins on capacity and password; refuse politely.
+                const char* why = nullptr;
+                if ((int)m_clients.size() >= maxPlayers) why = "server is full";
+                else if (!password.empty() && pass != password) why = "wrong password";
+                if (why) {
+                    net::Packet r(Reject); r.Write(std::string(why));
+                    m_socket.SendTo(from, r.Data(), r.Size());
+                    continue;
+                }
+            }
             auto& c = m_clients[from];
             bool isNew = (c.id == 0);
             if (isNew) {
@@ -286,6 +303,7 @@ void NetworkManager::ServerTick(float dt) {
             c.lastSeen = 0.0f;
             net::Packet w(Welcome);
             w.Write(c.id);
+            w.Write(serverName);
             m_socket.SendTo(from, w.Data(), w.Size());
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
@@ -432,6 +450,7 @@ void NetworkManager::ClientTick(float dt) {
             net::Packet p(Join);
             p.Write(m_localName);
             p.Write(m_localRoom);
+            p.Write(password);          // matched against the server's password
             m_socket.SendTo(m_serverEp, p.Data(), p.Size());
             m_joinTimer = 0.5f;
         }
@@ -453,8 +472,15 @@ void NetworkManager::ClientTick(float dt) {
         std::uint8_t type = p.ReadU8();
         if (type == Welcome) {
             m_localId = p.ReadU32();
+            m_serverName = p.ReadString();
             m_joined = true;
-            OKAY_INFO("net: joined server as peer ", m_localId);
+            m_joinRejected = false;
+            OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);
+        } else if (type == Reject) {
+            std::string why = p.ReadString();
+            m_joinRejected = true;
+            m_joinTimer = 1e9f;      // stop retrying
+            OKAY_WARN("net: join refused: ", why);
         } else if (type == Snapshot) {
             std::uint32_t count = p.ReadU32();
             for (std::uint32_t i = 0; i < count && p.Ok(); ++i) {

@@ -141,6 +141,7 @@ function update(dt) {
 | `net_ping()` | Round-trip time to the server in ms (clients) |
 | `net_name("name")` | Set/get this peer's display name |
 | `net_room("name")` | Set the lobby room (before host/join) — rooms are isolated |
+| (host settings) | Set `serverName` / `password` / `maxPlayers` / `snapshotRate` on the Network Manager (inspector or Services panel) |
 | `net_ready(1/0)` | Mark this peer ready in the lobby |
 | `net_ready_count()` / `net_all_ready()` | (host) ready clients in the room / all ready? |
 | `net_start_match()` / `net_match_started()` | (host) begin the match / has it begun? |

@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -690,10 +691,37 @@ std::string Build(EditorState& ed, const std::string& outDir,
 } // namespace builder
 
 // ---- Console log -------------------------------------------------------
-std::vector<std::string> g_console;
-void ConsoleLog(const std::string& msg) {
-    g_console.push_back(msg);
-    if (g_console.size() > 300) g_console.erase(g_console.begin());
+// A Unity-style console entry: severity, text, a short timestamp, and a repeat
+// count (incremented when the same line is logged twice in a row).
+struct ConsoleEntry {
+    int level = 0;            // 0 = info, 1 = warning, 2 = error
+    std::string text;
+    std::string time;
+    int count = 1;
+};
+std::vector<ConsoleEntry> g_console;
+int g_consoleCounts[3] = {0, 0, 0};   // running totals per level (for the toggles)
+
+void ConsoleLog(const std::string& msg, int level = 0) {
+    if (level < 0) level = 0;
+    if (level > 2) level = 2;
+    // Collapse an immediate repeat of the same message into a count.
+    if (!g_console.empty() && g_console.back().text == msg && g_console.back().level == level) {
+        g_console.back().count++;
+        g_consoleCounts[level]++;
+        return;
+    }
+    char ts[16];
+    std::time_t t = std::time(nullptr);
+    std::tm* lt = std::localtime(&t);
+    std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d", lt ? lt->tm_hour : 0, lt ? lt->tm_min : 0, lt ? lt->tm_sec : 0);
+    g_console.push_back({level, msg, ts, 1});
+    g_consoleCounts[level]++;
+    if (g_console.size() > 500) g_console.erase(g_console.begin());
+}
+void ConsoleClear() {
+    g_console.clear();
+    g_consoleCounts[0] = g_consoleCounts[1] = g_consoleCounts[2] = 0;
 }
 
 // ---- A dark, Unity-ish theme ------------------------------------------
@@ -1011,7 +1039,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         if (ImGui::Button(">  Play", ImVec2(btnW, 0))) {
-            if (g_clearConsoleOnPlay) g_console.clear();
+            if (g_clearConsoleOnPlay) ConsoleClear();
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -1088,41 +1116,102 @@ void DrawDockSpace(EditorState& ed) {
     ImGui::End();
 }
 
+// A Unity-style console: severity icons + colors, Collapse, per-level filter
+// toggles with counts, search, a selectable list, and a details pane.
 void DrawConsole() {
     static char filter[96] = "";
     static bool autoScroll = true;
+    static bool collapse = false;
+    static bool showInfo = true, showWarn = true, showError = true;
+    static int  selected = -1;
+
     if (ImGui::Begin("Console", &g_showConsole)) {
-        if (ImGui::Button("Clear")) g_console.clear();
+        if (ImGui::Button("Clear")) { ConsoleClear(); selected = -1; }
+        ImGui::SameLine();
+        ImGui::Checkbox("Collapse", &collapse);
+        ImGui::SameLine();
+        ImGui::Checkbox("Clear on Play", &g_clearConsoleOnPlay);
         ImGui::SameLine();
         ImGui::Checkbox("Auto-scroll", &autoScroll);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(180);
-        ImGui::InputTextWithHint("##cfilter", "filter", filter, sizeof(filter));
-        ImGui::SameLine();
-        ImGui::TextDisabled("%zu", g_console.size());
+        ImGui::SetNextItemWidth(160);
+        ImGui::InputTextWithHint("##cfilter", "Search", filter, sizeof(filter));
+
+        // Right-aligned per-level toggle buttons with counts (like Unity).
+        const ImVec4 cInfo(0.82f, 0.84f, 0.88f, 1.0f);
+        const ImVec4 cWarn(0.95f, 0.80f, 0.35f, 1.0f);
+        const ImVec4 cErr (0.96f, 0.45f, 0.42f, 1.0f);
+        auto toggle = [](const char* label, bool& on, const ImVec4& col, int count) {
+            char buf[32]; std::snprintf(buf, sizeof(buf), "%s %d", label, count);
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImVec4 bg = ImGui::GetStyleColorVec4(on ? ImGuiCol_ButtonActive : ImGuiCol_FrameBg);
+            ImGui::PushStyleColor(ImGuiCol_Button, bg);
+            if (ImGui::Button(buf)) on = !on;
+            ImGui::PopStyleColor(2);
+        };
+        float btnW = 168.0f;
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - btnW);
+        toggle("i", showInfo, cInfo, g_consoleCounts[0]); ImGui::SameLine();
+        toggle("!", showWarn, cWarn, g_consoleCounts[1]); ImGui::SameLine();
+        toggle("x", showError, cErr, g_consoleCounts[2]);
         ImGui::Separator();
-        ImGui::BeginChild("log");
+
         std::string needle = filter;
         for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
-        for (const auto& line : g_console) {
+        const ImVec4 levelCol[3] = {cInfo, cWarn, cErr};
+        const char*  levelIcon[3] = {"[i]", "[!]", "[x]"};
+        const bool   levelShow[3] = {showInfo, showWarn, showError};
+
+        // Details pane reserves the bottom; the list fills the rest.
+        float detailsH = 90.0f;
+        ImGui::BeginChild("log", ImVec2(0, -detailsH));
+        // Optional collapse: merge identical (level,text) lines, summing counts.
+        std::vector<int> order;          // indices into g_console to display
+        std::vector<int> mergedCount;    // parallel display counts
+        if (collapse) {
+            std::vector<int> firstAt;    // first display index for a (level|text)
+            std::unordered_map<std::string, int> seen;
+            for (int i = 0; i < (int)g_console.size(); ++i) {
+                const auto& e = g_console[i];
+                std::string key = std::to_string(e.level) + "|" + e.text;
+                auto it = seen.find(key);
+                if (it == seen.end()) { seen[key] = (int)order.size(); order.push_back(i); mergedCount.push_back(e.count); }
+                else mergedCount[it->second] += e.count;
+            }
+        } else {
+            for (int i = 0; i < (int)g_console.size(); ++i) { order.push_back(i); mergedCount.push_back(g_console[i].count); }
+        }
+
+        for (std::size_t row = 0; row < order.size(); ++row) {
+            int i = order[row];
+            const ConsoleEntry& e = g_console[i];
+            if (!levelShow[e.level]) continue;
             if (!needle.empty()) {
-                std::string low = line;
+                std::string low = e.text;
                 for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
                 if (low.find(needle) == std::string::npos) continue;
             }
-            // Tint by severity heuristics so problems stand out.
-            ImVec4 col(0.82f, 0.84f, 0.88f, 1.0f);
-            if (line.find("fail") != std::string::npos || line.find("error") != std::string::npos ||
-                line.find("Error") != std::string::npos)
-                col = ImVec4(0.96f, 0.45f, 0.42f, 1.0f);
-            else if (line.find("Saved") != std::string::npos || line.find("Built") != std::string::npos ||
-                     line.find("Updated") != std::string::npos)
-                col = ImVec4(0.55f, 0.86f, 0.55f, 1.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, col);
-            ImGui::TextUnformatted(line.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, levelCol[e.level]);
+            std::string label = std::string(levelIcon[e.level]) + " " + e.time + "  " + e.text;
+            if (mergedCount[row] > 1) label += "  (" + std::to_string(mergedCount[row]) + ")";
+            label += "##c" + std::to_string(i);
+            if (ImGui::Selectable(label.c_str(), selected == i)) selected = i;
             ImGui::PopStyleColor();
         }
         if (autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+        ImGui::EndChild();
+
+        ImGui::Separator();
+        ImGui::BeginChild("details", ImVec2(0, 0));
+        if (selected >= 0 && selected < (int)g_console.size()) {
+            const ConsoleEntry& e = g_console[selected];
+            ImGui::PushStyleColor(ImGuiCol_Text, levelCol[e.level]);
+            ImGui::TextWrapped("%s", e.text.c_str());
+            ImGui::PopStyleColor();
+            ImGui::TextDisabled("%s at %s", e.level == 2 ? "Error" : e.level == 1 ? "Warning" : "Info", e.time.c_str());
+        } else {
+            ImGui::TextDisabled("Select a log entry to see details.");
+        }
         ImGui::EndChild();
     }
     ImGui::End();
@@ -1493,17 +1582,37 @@ void DrawServices(EditorState& ed) {
         static int port = 45000;
         static char host[64] = "127.0.0.1";
         static char pname[48] = "Player";
-        ImGui::SetNextItemWidth(120);
+        static char srvName[64] = "My Server";
+        static char srvPass[48] = "";
+        static int  maxP = 8;
+        static float tick = 20.0f;
+        // Apply the host settings to the live NetworkManager (used on Host).
+        auto applyHostSettings = [&]() {
+            if (auto* n = ed.net()) {
+                n->SetLocalName(pname);
+                n->serverName = srvName; n->password = srvPass;
+                n->maxPlayers = maxP; n->snapshotRate = tick;
+            }
+        };
+        ImGui::SetNextItemWidth(110);
         ImGui::InputInt("Port", &port);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(120);
         ImGui::InputText("Name", pname, sizeof(pname));
-        if (ImGui::Button("Host")) { ed.StartHost((std::uint16_t)port); if (ed.net()) ed.net()->SetLocalName(pname); }
+
+        ImGui::SeparatorText("Host a game");
+        ImGui::SetNextItemWidth(160); ImGui::InputText("Server##srv", srvName, sizeof(srvName));
+        ImGui::SameLine(); ImGui::SetNextItemWidth(120);
+        ImGui::InputText("Password##srv", srvPass, sizeof(srvPass), ImGuiInputTextFlags_Password);
+        ImGui::SetNextItemWidth(120); ImGui::SliderInt("Max##srv", &maxP, 1, 64);
+        ImGui::SameLine(); ImGui::SetNextItemWidth(140); ImGui::SliderFloat("Tick##srv", &tick, 5.0f, 60.0f, "%.0f/s");
+        if (ImGui::Button("Host Game", ImVec2(-1, 0))) { ed.StartHost((std::uint16_t)port); applyHostSettings(); }
+
+        ImGui::SeparatorText("Join a game");
+        ImGui::SetNextItemWidth(180);
+        ImGui::InputText("Address##host", host, sizeof(host));
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(140);
-        ImGui::InputText("##host", host, sizeof(host));
-        ImGui::SameLine();
-        if (ImGui::Button("Join")) { ed.StartJoin(host, (std::uint16_t)port); if (ed.net()) ed.net()->SetLocalName(pname); }
+        if (ImGui::Button("Join")) { ed.StartJoin(host, (std::uint16_t)port); if (ed.net()) { ed.net()->SetLocalName(pname); ed.net()->password = srvPass; } }
         ImGui::SameLine();
         if (ImGui::Button("Disconnect")) ed.StopNetwork();
         if (auto* n = ed.net()) {
@@ -1971,7 +2080,7 @@ void HandleShortcuts(EditorState& ed) {
     if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
         if (ed.isPlaying()) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         else {
-            if (g_clearConsoleOnPlay) g_console.clear();
+            if (g_clearConsoleOnPlay) ConsoleClear();
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -3216,9 +3325,23 @@ void DrawInspector(EditorState& ed) {
             if (rbound != nm) { std::strncpy(roomBuf, nm->startRoom.c_str(), sizeof(roomBuf) - 1); roomBuf[sizeof(roomBuf)-1]='\0'; rbound = nm; }
             if (ImGui::InputText("Room (lobby)##nm", roomBuf, sizeof(roomBuf))) { nm->startRoom = roomBuf; ed.dirty = true; }
             ImGui::SliderFloat("Smoothing##nm", &nm->interpolationRate, 0.0f, 30.0f, "%.0f /s");
+
+            ImGui::SeparatorText("Host settings");
+            static char srvBuf[64]; static NetworkManager* sbound = nullptr;
+            if (sbound != nm) { std::strncpy(srvBuf, nm->serverName.c_str(), sizeof(srvBuf)-1); srvBuf[sizeof(srvBuf)-1]='\0'; sbound = nm; }
+            if (ImGui::InputText("Server Name##nm", srvBuf, sizeof(srvBuf))) { nm->serverName = srvBuf; ed.dirty = true; }
+            static char passBuf[48]; static NetworkManager* pbound = nullptr;
+            if (pbound != nm) { std::strncpy(passBuf, nm->password.c_str(), sizeof(passBuf)-1); passBuf[sizeof(passBuf)-1]='\0'; pbound = nm; }
+            if (ImGui::InputText("Password##nm", passBuf, sizeof(passBuf), ImGuiInputTextFlags_Password)) { nm->password = passBuf; ed.dirty = true; }
+            if (ImGui::SliderInt("Max Players##nm", &nm->maxPlayers, 1, 64)) ed.dirty = true;
+            if (ImGui::SliderFloat("Tick Rate##nm", &nm->snapshotRate, 5.0f, 60.0f, "%.0f /s")) ed.dirty = true;
+
             const char* mode = nm->IsServer() ? "Server" : nm->IsClient() ? "Client" : "Offline";
-            ImGui::Text("Live: %s   Peers: %d   Id: %u", mode, (int)nm->PeerCount(), nm->LocalId());
-            if (nm->IsClient()) ImGui::Text("Ping: %.0f ms", nm->RttMs());
+            ImGui::Text("Live: %s   Peers: %d / %d   Id: %u", mode, (int)nm->PeerCount(), nm->maxPlayers, nm->LocalId());
+            if (nm->IsClient()) {
+                ImGui::Text("Server: %s   Ping: %.0f ms", nm->ServerName().c_str(), nm->RttMs());
+                if (nm->JoinRejected()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f,0.45f,0.42f,1)); ImGui::TextUnformatted("Join refused (full / wrong password)"); ImGui::PopStyleColor(); }
+            }
             ImGui::TextDisabled("Add this, pick Host/Join, press Play — no code needed.");
             if (ImGui::SmallButton("Remove##nm")) toRemove = nm;
         }
@@ -4526,11 +4649,11 @@ int main(int argc, char** argv) {
     EditorState ed;
     LoadRecent();
 
-    // Route engine logs (and script print/log/debug output) into the Console.
+    // Route engine logs (and script print/log/debug output) into the Console
+    // with the matching severity (Unity-style info/warning/error).
     Log::sink = [](Log::Level lvl, const std::string& msg) {
-        const char* tag = lvl == Log::Level::Error ? "[error] "
-                        : lvl == Log::Level::Warning ? "[warn] " : "";
-        ConsoleLog(std::string(tag) + msg);
+        int level = lvl == Log::Level::Error ? 2 : lvl == Log::Level::Warning ? 1 : 0;
+        ConsoleLog(msg, level);
     };
 
     ConsoleLog("Welcome to OkaySpace v" OKAY_ENGINE_VERSION

@@ -77,6 +77,17 @@ public:
     std::string startName;          // local name to use on auto-start (optional)
     std::string startRoom;          // lobby room to join on auto-start (optional)
 
+    // ---- Host settings (used when this peer is the server) ------------
+    int         maxPlayers = 8;     // reject joins beyond this many clients
+    float       snapshotRate = 20.0f; // state broadcasts per second (tick rate)
+    std::string serverName;         // friendly server label, sent to clients
+    std::string password;           // clients must match to join ("" = open)
+
+    /// The server's friendly name (clients learn it from the join handshake).
+    const std::string& ServerName() const { return m_serverName; }
+    /// True on a client if the last join was refused (server full / bad password).
+    bool JoinRejected() const { return m_joinRejected; }
+
     /// On scene Start: act on `autoStart` (host or join) so multiplayer needs no
     /// script — add the component, pick Host/Join in the Inspector, press Play.
     void Start() override;
@@ -207,6 +218,8 @@ private:
     std::string m_localRoom;     // "" = default room
     bool m_ready = false;        // this peer's ready flag
     bool m_matchStarted = false; // set when StartMatch reaches this peer's room
+    std::string m_serverName;    // client: the server's friendly name
+    bool m_joinRejected = false; // client: server refused us (full / password)
 
     // Client-only
     net::Endpoint m_serverEp{};

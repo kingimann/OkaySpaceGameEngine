@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v1.49.0
+  - Unity-style Console: severity icons + colors (info/warning/error), a
+    Collapse toggle (groups repeats with a count), per-level filter buttons with
+    live counts, a search box, Clear-on-Play, timestamps, and a details pane for
+    the selected entry. Script/engine logs route in with the right severity.
+  - Easier hosting + more host options: the Network Manager and the Services
+    panel gain Server Name, Password, Max Players and Tick Rate. The server now
+    refuses joins when full or on a wrong password (clients see "join refused"),
+    and clients learn the server's name. All settings save with the scene.
+
 v1.48.0
   - Script debugging in the editor Console: engine + script logs now stream into
     the Console. New builtins print, debug_log, log_info, log_warn, log_error,

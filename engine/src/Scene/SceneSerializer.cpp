@@ -269,7 +269,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* nm = go->GetComponent<NetworkManager>()) {
         out << "  network " << (int)nm->autoStart << " " << nm->autoPort << " "
             << Quote(nm->autoHost) << " " << Quote(nm->startName) << " "
-            << Quote(nm->startRoom) << "\n";
+            << Quote(nm->startRoom) << " "
+            << nm->maxPlayers << " " << nm->snapshotRate << " "
+            << Quote(nm->serverName) << " " << Quote(nm->password) << "\n";
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
@@ -680,6 +682,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     nm->startName = ReadQuoted(in);
                     in >> std::ws;
                     if (in.peek() == '"') nm->startRoom = ReadQuoted(in);  // optional (newer)
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { in >> nm->maxPlayers >> nm->snapshotRate; } // host settings
+                    in >> std::ws;
+                    if (in.peek() == '"') nm->serverName = ReadQuoted(in);
+                    in >> std::ws;
+                    if (in.peek() == '"') nm->password = ReadQuoted(in);
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;

@@ -98,17 +98,63 @@ int main() {
         CHECK(!clientB->MatchStarted());     // room B is unaffected
     }
 
-    // startRoom serializes on the no-code component.
+    // startRoom + host settings serialize on the no-code component.
     {
         Scene s("cfg");
         auto* nm = s.CreateGameObject("N")->AddComponent<NetworkManager>();
         nm->startRoom = "main";
         nm->startName = "Hero";
+        nm->serverName = "Cool Server";
+        nm->password = "hunter2";
+        nm->maxPlayers = 16;
+        nm->snapshotRate = 30.0f;
         std::string txt = SceneSerializer::Serialize(s);
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
         auto* nm2 = s2.Find("N")->GetComponent<NetworkManager>();
         CHECK(nm2 && nm2->startRoom == "main");
         CHECK(nm2 && nm2->startName == "Hero");
+        CHECK(nm2 && nm2->serverName == "Cool Server");
+        CHECK(nm2 && nm2->password == "hunter2");
+        CHECK(nm2 && nm2->maxPlayers == 16);
+        CHECK(nm2 && (int)nm2->snapshotRate == 30);
+    }
+
+    // Host settings at runtime: password + capacity gate joins.
+    {
+        Scene srv("S"); auto* host2 = srv.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        host2->serverName = "Locked"; host2->password = "pw"; host2->maxPlayers = 1;
+        host2->SetLocalAvatar(srv.CreateGameObject("H")->transform, 'H');
+        host2->SetRemoteFactory([&](std::uint32_t id, char){ return srv.CreateGameObject("P"+std::to_string(id)); });
+        CHECK(host2->StartServer(0)); srv.Start();
+        std::uint16_t p2 = host2->ServerPort();
+
+        auto mkc = [&](Scene& sc, const char* pw){
+            auto* c = sc.CreateGameObject("Net")->AddComponent<NetworkManager>();
+            c->SetLocalAvatar(sc.CreateGameObject("Me")->transform, 'C');
+            c->SetRemoteFactory([&sc](std::uint32_t id, char){ return sc.CreateGameObject("R"+std::to_string(id)); });
+            c->password = pw; c->StartClient("127.0.0.1", p2); sc.Start(); return c;
+        };
+        Scene cBad("cb"); auto* bad = mkc(cBad, "wrong");   // wrong password -> rejected
+        Scene cGood("cg"); auto* good = mkc(cGood, "pw");   // ok -> joins (fills the 1 slot)
+
+        for (int i = 0; i < 150; ++i) {
+            srv.Update(0.02f); cBad.Update(0.02f); cGood.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (good->Joined() && bad->JoinRejected()) break;
+        }
+        CHECK(good->Joined());
+        CHECK(good->ServerName() == "Locked");      // learned the server name
+        CHECK(bad->JoinRejected());                 // wrong password refused
+        CHECK(!bad->Joined());
+
+        Scene cFull("cf"); auto* full = mkc(cFull, "pw"); // right password but server full
+        for (int i = 0; i < 150; ++i) {
+            srv.Update(0.02f); cFull.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (full->JoinRejected()) break;
+        }
+        CHECK(full->JoinRejected());                // capacity reached
+        good->Stop(); bad->Stop(); full->Stop(); host2->Stop();
     }
 
     clientA->Stop(); clientB->Stop(); server->Stop();

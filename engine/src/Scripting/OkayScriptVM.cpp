@@ -632,6 +632,16 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     if (name == "Vector3.zero" || name == "Vector2.zero") return Value{Vec3::Zero};
     if (name == "Vector3.one"  || name == "Vector2.one")  return Value{Vec3{1, 1, 1}};
     if (name == "Quaternion.identity") return Value{Vec3::Zero};   // euler (0,0,0)
+    // Color constants (RGB as a Vec3; pass to set_color/set_tint).
+    if (name == "Color.red")     return Value{Vec3{1, 0, 0}};
+    if (name == "Color.green")   return Value{Vec3{0, 1, 0}};
+    if (name == "Color.blue")    return Value{Vec3{0, 0, 1}};
+    if (name == "Color.white")   return Value{Vec3{1, 1, 1}};
+    if (name == "Color.black")   return Value{Vec3{0, 0, 0}};
+    if (name == "Color.yellow")  return Value{Vec3{1, 1, 0}};
+    if (name == "Color.cyan")    return Value{Vec3{0, 1, 1}};
+    if (name == "Color.magenta") return Value{Vec3{1, 0, 1}};
+    if (name == "Color.gray" || name == "Color.grey") return Value{Vec3{0.5f, 0.5f, 0.5f}};
     if (name == "Vector3.up")    return Value{Vec3{0, 1, 0}};
     if (name == "Vector3.down")  return Value{Vec3{0, -1, 0}};
     if (name == "Vector3.right") return Value{Vec3{1, 0, 0}};
@@ -1564,8 +1574,16 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["set_color"] = [go](std::vector<Value>& a) {
-            Color c{a.size() > 0 ? a[0].AsFloat() : 1.0f, a.size() > 1 ? a[1].AsFloat() : 1.0f,
-                    a.size() > 2 ? a[2].AsFloat() : 1.0f, a.size() > 3 ? a[3].AsFloat() : 1.0f};
+            // Accept either set_color(r, g, b[, a]) or a single Color/Vector3
+            // value: set_color(Color.red) / set_color(myColor [, alpha]).
+            Color c;
+            if (!a.empty() && a[0].IsVec3()) {
+                Vec3 v = a[0].AsVec3();
+                c = Color{v.x, v.y, v.z, a.size() > 1 ? a[1].AsFloat() : 1.0f};
+            } else {
+                c = Color{a.size() > 0 ? a[0].AsFloat() : 1.0f, a.size() > 1 ? a[1].AsFloat() : 1.0f,
+                          a.size() > 2 ? a[2].AsFloat() : 1.0f, a.size() > 3 ? a[3].AsFloat() : 1.0f};
+            }
             if (GameObject* g = go()) {
                 if (auto* sr = g->GetComponent<SpriteRenderer>()) sr->color = c;
                 if (auto* tr = g->GetComponent<TextRenderer>()) tr->color = c;
@@ -2347,6 +2365,51 @@ struct OkayScriptVM::Impl {
             std::string s = a[0].AsString(), out;
             int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
             for (int i = 0; i < n; ++i) out += s;
+            return Value{out};
+        };
+        // pad_left("7", 3)      -> "  7"   ;  pad_left("7", 3, "0") -> "007"
+        b["pad_left"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString();
+            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
+            while ((int)s.size() < width) s.insert(s.begin(), fill);
+            return Value{s};
+        };
+        b["pad_right"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString();
+            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
+            while ((int)s.size() < width) s += fill;
+            return Value{s};
+        };
+        // format("hp={} of {}", 7, 9) -> "hp=7 of 9" (sequential), and also
+        // C#-style positional placeholders: format("{0} / {1}", a, b).
+        b["format"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            const std::string tmpl = a[0].AsString();
+            std::string out; std::size_t seq = 1;
+            for (std::size_t i = 0; i < tmpl.size(); ++i) {
+                if (tmpl[i] == '{') {
+                    std::size_t close = tmpl.find('}', i);
+                    if (close != std::string::npos) {
+                        std::string inside = tmpl.substr(i + 1, close - i - 1);
+                        if (inside.empty()) {                 // {} -> next arg in order
+                            if (seq < a.size()) out += a[seq++].AsString();
+                        } else {
+                            bool num = !inside.empty();
+                            for (char ch : inside) if (!std::isdigit((unsigned char)ch)) num = false;
+                            if (num) { std::size_t idx = (std::size_t)std::stoi(inside) + 1;
+                                       if (idx < a.size()) out += a[idx].AsString(); }
+                            else { out += '{'; out += inside; out += '}'; }   // leave literal
+                        }
+                        i = close;
+                        continue;
+                    }
+                }
+                out += tmpl[i];
+            }
             return Value{out};
         };
         b["to_num"] = [](std::vector<Value>& a) {
@@ -3131,6 +3194,12 @@ struct OkayScriptVM::Impl {
             return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
                               a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f}};
         };
+        // Color(r, g, b) -> a Vec3 of RGB (pass to set_color / set_tint).
+        b["Color"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 1.0f,
+                              a.size() > 1 ? a[1].AsFloat() : 1.0f,
+                              a.size() > 2 ? a[2].AsFloat() : 1.0f}};
+        };
         // Vector math on Vec3 values (from Vector3(...)/new Vector3(...)). Read
         // components with v.x/v.y/v.z (see property access) or vec_x/y/z(v).
         b["vec_add"]   = [](std::vector<Value>& a) -> Value { return Value{(a.size() > 0 ? a[0].AsVec3() : Vec3::Zero) + (a.size() > 1 ? a[1].AsVec3() : Vec3::Zero)}; };
@@ -3192,6 +3261,8 @@ struct OkayScriptVM::Impl {
         alias("Vector3.Normalize", "vec_normalize");
         alias("Vector3.MoveTowards", "vec_move_towards");
         alias("Mathf.PerlinNoise", "noise");
+        alias("string.Format", "format");
+        alias("String.Format", "format");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
         // transform.rotation, which uses the Z component for 2D).
         b["Quaternion.Euler"] = [](std::vector<Value>& a) -> Value {

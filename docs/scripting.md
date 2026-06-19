@@ -81,6 +81,12 @@ What's supported:
   `transform.right` and `Input.mousePosition` return Vector3 values.
 - **`Mathf.PerlinNoise(x, y)`** — smooth 2D noise in `[0, 1]` (terrain, wobble,
   procedural motion).
+- **Color values**: `Color.red/green/blue/white/black/yellow/cyan/magenta/gray`
+  and `Color(r, g, b)` / `new Color(r, g, b)`; pass them to `set_color` /
+  `set_tint` (which also still take separate `r, g, b[, a]` numbers).
+- **String formatting**: `format("HP {0}/{1}", hp, max)` (positional) or
+  `format("HP {} / {}", hp, max)` (sequential), plus `pad_left(s, width[, ch])`
+  and `pad_right(s, width[, ch])` — also as `string.Format(...)`.
 - **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
   `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
   / BoxCollider2D at runtime).

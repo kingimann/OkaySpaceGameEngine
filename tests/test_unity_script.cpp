@@ -218,6 +218,25 @@ int main() {
         CHECK(go->transform->Position().z >= 0.0f && go->transform->Position().z <= 1.0f);
     }
 
+    // --- Color values drive set_color; string format & padding ---------
+    {
+        Scene s("UColor"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Col");
+        auto* sr = go->AddComponent<SpriteRenderer>();
+        auto* tr = go->AddComponent<TextRenderer>();
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    set_color(Color.red);\n"
+            "    set_text(format(\"HP {0}/{1}\", 3, 10) + \" #\" + pad_left(\"7\", 3, \"0\"));\n"
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(sr->color.r, 1.0f, 0.001f);
+        CHECK_NEAR(sr->color.g, 0.0f, 0.001f);
+        CHECK_NEAR(sr->color.b, 0.0f, 0.001f);
+        CHECK(tr->text == "HP 3/10 #007");
+    }
+
     // --- do-while runs at least once -----------------------------------
     {
         Scene s("UDo"); s.physicsEnabled = false;

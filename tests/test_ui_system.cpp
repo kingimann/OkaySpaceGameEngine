@@ -230,5 +230,24 @@ int main() {
         for (const char* n : names) CHECK(s2.Find(n) && IsUIElement(s2.Find(n)));
     }
 
+    // --- Draw-order: MoveToFront/Back reorder + topmost picks -----------
+    {
+        Scene s("order"); s.physicsEnabled = false;
+        UICanvas::Set(800, 600);
+        GameObject* a = s.CreateGameObject("A");
+        a->AddComponent<UIPanel>()->size = {200, 200};
+        GameObject* b = s.CreateGameObject("B");
+        b->AddComponent<UIPanel>()->size = {200, 200};   // overlaps A at (0,0)
+
+        // Both overlap the point; UIRaycast returns the last (topmost) = B.
+        CHECK(UIRaycast(s, {10, 10}, 800, 600) == b);
+        s.MoveToFront(a);                 // A now drawn last -> on top
+        CHECK(s.Objects().back().get() == a);
+        CHECK(UIRaycast(s, {10, 10}, 800, 600) == a);
+        s.MoveToBack(a);                  // A behind again
+        CHECK(s.Objects().front().get() == a);
+        CHECK(UIRaycast(s, {10, 10}, 800, 600) == b);
+    }
+
     TEST_MAIN_RESULT();
 }

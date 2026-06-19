@@ -50,6 +50,12 @@ public:
     GameObject* FindWithTag(const std::string& tag) const;
     const std::vector<std::unique_ptr<GameObject>>& Objects() const { return m_objects; }
 
+    /// Reorder an object in the draw/iteration list. Objects are drawn in list
+    /// order, so the last one is on top — MoveToFront draws it last (frontmost),
+    /// MoveToBack draws it first (behind). Used for UI layering in the editor.
+    void MoveToFront(GameObject* go);
+    void MoveToBack(GameObject* go);
+
     /// Collect every component of type T across all GameObjects in the scene.
     template <typename T>
     std::vector<T*> FindObjectsOfType() const {

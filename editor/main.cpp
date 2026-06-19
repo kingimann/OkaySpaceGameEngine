@@ -2762,6 +2762,27 @@ void DrawInspector(EditorState& ed) {
 
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
 
+    // UI layering + quick-center for any screen-space widget (draw order is the
+    // scene's object order; later = on top, which is also what picking selects).
+    if (IsUIElement(go)) {
+        if (ImGui::Button("Bring to Front")) { ed.scene().MoveToFront(go); ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Send to Back"))   { ed.scene().MoveToBack(go);  ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Center in Canvas")) {
+            UIRect r = GetUIRect(go);
+            if (r.position) {
+                // Center the resolved rect on the canvas for the widget's anchor.
+                float cw = UICanvas::Width(), ch = UICanvas::Height();
+                Vec2 term = ResolveAnchor(r.anchor, Vec2{0, 0}, r.size, cw, ch);
+                r.position->x = (cw - r.size.x) * 0.5f - term.x;
+                r.position->y = (ch - r.size.y) * 0.5f - term.y;
+                ed.dirty = true;
+            }
+        }
+        ImGui::Spacing();
+    }
+
     if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
         Transform* t = go->transform;
         float pos[3] = {t->localPosition.x, t->localPosition.y, t->localPosition.z};

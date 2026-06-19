@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.74.0
+  - UI layering + centering: a selected UI widget's inspector gains Bring to
+    Front / Send to Back (controls draw order and which overlapping widget gets
+    picked) and Center in Canvas (centers the widget for its anchor). Backed by
+    new Scene::MoveToFront/MoveToBack.
+
 v1.73.0
   - Arrow-key nudging: with a UI widget selected and the Scene focused, the
     arrow keys move it one pixel at a time (hold Shift to step by the UI snap

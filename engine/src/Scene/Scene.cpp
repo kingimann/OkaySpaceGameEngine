@@ -5,6 +5,8 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Render/Renderer.hpp"
 #include <algorithm>
+#include <functional>
+#include <vector>
 
 namespace okay {
 
@@ -45,8 +47,12 @@ void Scene::QueuePending(Component* component) {
 }
 
 void Scene::NotifyComponentRemoved(Component* component) {
-    m_active.erase(std::remove(m_active.begin(), m_active.end(), component), m_active.end());
-    m_pending.erase(std::remove(m_pending.begin(), m_pending.end(), component), m_pending.end());
+    // Null the slot instead of erasing, so removing a component from inside an
+    // m_active iteration (a component's Update/Render) can't invalidate the loop
+    // or shift elements. Null slots are skipped by every loop and compacted
+    // between frames.
+    for (auto& c : m_active)  if (c == component) c = nullptr;
+    for (auto& c : m_pending) if (c == component) c = nullptr;
     if (static_cast<Component*>(mainCamera) == component) mainCamera = nullptr;
 }
 
@@ -57,11 +63,12 @@ void Scene::FlushPending() {
     batch.swap(m_pending);
 
     for (Component* c : batch) {
+        if (!c) continue;                 // removed before it was flushed
         c->Awake();
         m_active.push_back(c);
     }
     for (Component* c : batch) {
-        if (!c->m_started && c->enabled) {
+        if (c && !c->m_started && c->enabled) {
             c->Start();
             c->m_started = true;
         }
@@ -74,18 +81,20 @@ void Scene::Start() {
 
 void Scene::Update(float deltaTime) {
     FlushPending(); // adopt anything created since last frame
+    // Drop any components removed last frame (their slots were nulled).
+    m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
 
     m_scheduler.Update(deltaTime);
 
     for (Component* c : m_active) {
-        if (c->enabled && c->gameObject && c->gameObject->active)
+        if (c && c->enabled && c->gameObject && c->gameObject->active)
             c->Update(deltaTime);
     }
 
     if (physicsEnabled) { m_physics.Step(*this, deltaTime); m_physics3d.Step(*this, deltaTime); }
 
     for (Component* c : m_active) {
-        if (c->enabled && c->gameObject && c->gameObject->active)
+        if (c && c->enabled && c->gameObject && c->gameObject->active)
             c->LateUpdate(deltaTime);
     }
 
@@ -95,10 +104,11 @@ void Scene::Update(float deltaTime) {
             for (auto& obj : m_objects) {
                 if (obj.get() != go) continue;
                 for (Component* c : m_active)
-                    if (c->gameObject == go) c->OnDestroy();
+                    if (c && c->gameObject == go) c->OnDestroy();
                 break;
             }
-            auto isOwned = [go](Component* c) { return c->gameObject == go; };
+            // Also drops any null slots (components removed this frame).
+            auto isOwned = [go](Component* c) { return !c || c->gameObject == go; };
             m_active.erase(std::remove_if(m_active.begin(), m_active.end(), isOwned),
                            m_active.end());
             m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(), isOwned),
@@ -137,7 +147,7 @@ void Scene::Render(IRenderer& renderer) {
     }
 
     for (Component* c : m_active) {
-        if (c->enabled && c->gameObject && c->gameObject->active)
+        if (c && c->enabled && c->gameObject && c->gameObject->active)
             c->OnRender(renderer);
     }
 
@@ -145,7 +155,25 @@ void Scene::Render(IRenderer& renderer) {
 }
 
 void Scene::Destroy(GameObject* go) {
-    if (go) m_destroyQueue.push_back(go);
+    if (!go) return;
+    // Detach from the parent first, so a surviving parent's child list isn't left
+    // with a dangling pointer to this freed object (deleting a child UI widget,
+    // hierarchy node, etc. — the #1 editor delete crash).
+    if (go->transform && go->transform->Parent())
+        go->transform->SetParent(nullptr, /*worldPositionStays=*/false);
+    // Queue the whole subtree: a child outliving its parent would itself be left
+    // with a dangling parent Transform pointer. (Detaching is only needed for the
+    // root — the descendants' parents are destroyed together with them.)
+    std::function<void(GameObject*)> queue = [&](GameObject* g) {
+        if (!g) return;
+        m_destroyQueue.push_back(g);
+        if (g->transform) {
+            std::vector<Transform*> kids = g->transform->Children();   // copy: recursion-safe
+            for (Transform* child : kids)
+                if (child && child->gameObject) queue(child->gameObject);
+        }
+    };
+    queue(go);
 }
 
 GameObject* Scene::Find(const std::string& name) const {

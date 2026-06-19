@@ -237,7 +237,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tr->shadowOffset.x << " " << tr->shadowOffset.y << " " << tr->align << " "
             << (tr->outline ? 1 : 0) << " "
             << tr->outlineColor.r << " " << tr->outlineColor.g << " " << tr->outlineColor.b << " " << tr->outlineColor.a
-            << " " << (tr->bold ? 1 : 0) << "\n";
+            << " " << (tr->bold ? 1 : 0)
+            << " " << tr->size.x << " " << tr->size.y << " " << (tr->vcenter ? 1 : 0)
+            << " " << (tr->background ? 1 : 0) << " "
+            << tr->backgroundColor.r << " " << tr->backgroundColor.g << " "
+            << tr->backgroundColor.b << " " << tr->backgroundColor.a << "\n";
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -704,6 +708,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     in >> std::ws; // optional bold flag (added later)
                     if (std::isdigit(in.peek())) { int bd = 0; in >> bd; tr->bold = (bd != 0); }
+                    in >> std::ws; // optional box size + vcenter + background (added later)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int vc = 1, bg = 0; Color bc;
+                        in >> tr->size.x >> tr->size.y >> vc >> bg >> bc.r >> bc.g >> bc.b >> bc.a;
+                        tr->vcenter = (vc != 0); tr->background = (bg != 0); tr->backgroundColor = bc;
+                    }
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;

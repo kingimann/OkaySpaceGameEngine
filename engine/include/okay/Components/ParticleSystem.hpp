@@ -38,10 +38,14 @@ public:
 
     std::uint64_t seed = 1234567u;
 
-    void Awake() override { m_rng.Seed(seed); m_particles.assign(maxParticles, Particle{}); }
+    /// Clamp the pool size so a malformed/hand-edited scene (negative or absurd
+    /// maxParticles) can't trigger length_error / bad_alloc.
+    int SafeMax() const { return maxParticles < 0 ? 0 : (maxParticles > 100000 ? 100000 : maxParticles); }
+
+    void Awake() override { m_rng.Seed(seed); m_particles.assign(SafeMax(), Particle{}); }
 
     void Update(float dt) override {
-        if ((int)m_particles.empty()) m_particles.assign(maxParticles, Particle{});
+        if (m_particles.empty()) m_particles.assign(SafeMax(), Particle{});
 
         // Emit.
         if (playing) {

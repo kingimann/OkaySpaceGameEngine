@@ -52,6 +52,29 @@ int main() {
     CHECK(scene.Find("Hero") == go);
     CHECK(scene.Find("Missing") == nullptr);
 
+    // Destroying a CHILD detaches it from the parent's child list (else the
+    // parent keeps a dangling Transform* — the editor's "delete any UI" crash).
+    {
+        GameObject* keepParent = scene.CreateGameObject("KeepParent");
+        GameObject* kid = scene.CreateGameObject("Kid");
+        kid->transform->SetParent(keepParent->transform);
+        CHECK(keepParent->transform->ChildCount() == 1);
+        scene.Destroy(kid);
+        scene.Update(0.016f);
+        CHECK(scene.Find("Kid") == nullptr);
+        CHECK(keepParent->transform->ChildCount() == 0);   // no dangling child ptr
+        // Walking the (now empty) child list must be safe.
+        for (Transform* c : keepParent->transform->Children()) CHECK(c != nullptr);
+    }
+
+    // Destroying a parent also destroys its children (no dangling parent ptr).
+    CHECK(scene.Find("Parent") != nullptr);
+    CHECK(scene.Find("Child") != nullptr);
+    scene.Destroy(parent);
+    scene.Update(0.016f);
+    CHECK(scene.Find("Parent") == nullptr);
+    CHECK(scene.Find("Child") == nullptr);   // the child went with its parent
+
     // Destroy removes the object and stops its updates.
     int before = probe->update;
     scene.Destroy(go);

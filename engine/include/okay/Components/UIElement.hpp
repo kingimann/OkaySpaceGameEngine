@@ -66,8 +66,7 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* tr = go->GetComponent<TextRenderer>()) {
         if (tr->screenSpace) {
             r.valid = true; r.anchor = tr->anchor; r.anchorPtr = &tr->anchor; r.position = &tr->screenPos;
-            r.size = {(float)tr->PixelWidth() * tr->pixelSize,
-                      (float)tr->PixelHeight() * tr->pixelSize};
+            r.sizePtr = &tr->size; r.size = tr->size;   // box: selectable + resizable
         }
     }
     return r;

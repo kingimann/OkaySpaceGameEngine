@@ -1,5 +1,32 @@
 OkaySpace Game Engine — Changelog
 
+v2.7.0
+  - Crash fixes:
+      * Deleting ANY UI widget (or any child object) no longer crashes. Destroying
+        a GameObject now detaches it from its parent's child list and destroys its
+        whole subtree, so no dangling Transform pointers are left behind.
+      * Removing a component mid-frame is now iterator-safe (active list nulls the
+        slot and compacts between frames).
+      * Hardened against malformed scene data: ParticleSystem clamps maxParticles,
+        Tilemap guards divide-by-zero on tileSize, and the script parser
+        bounds-checks generic-call lookahead (fixes a possible out-of-bounds read).
+  - Editor fixes:
+      * Rename popup (double-click a hierarchy row) now works — OK/Cancel register
+        and Enter confirms. Same fix applied to the asset Rename and Save-as-Prefab
+        dialogs (they were re-opening every frame, eating the button clicks).
+      * Ctrl+Z now undoes scene-view edits: moving/rotating/scaling with the gizmo
+        and moving/resizing UI widgets each record an undo step. Ctrl+Shift+Z redo
+        no longer cancels itself out.
+      * 3D scene view: clicking empty space (or a UI element) now deselects the
+        selected 3D object, matching the 2D view.
+  - UI / Text:
+      * New UI widgets spawn centered on screen instead of in the top-left corner.
+      * Text (UI) is reworked around a proper bounding box: it's now selectable and
+        resizable in the Scene view, no longer "glitchy" (stable rect, readable
+        default size), supports multi-line text, horizontal align + vertical
+        centering, and an optional background box. New Text starts at a sensible
+        size, centered.
+
 v2.6.0
   - More scripting:
       * Mathf: Clamp01, InverseLerp, Repeat, DeltaAngle, LerpAngle,

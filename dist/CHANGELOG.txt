@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.11.1
+  - UI looked bloated/"weird": v2.10's spacing bump was too aggressive (very tall
+    fields and toolbar). Restored balanced, professional metrics (close to the
+    long-proven values — comfortable but not bloated), and the global UI scale is
+    now applied after all metrics so everything scales together. View > UI Scale
+    still lets you size the whole interface up.
+
 v2.11.0
   - Lighting overhauled: multiple lights now contribute at once, in color, with
     three types — Directional (sun), Point (radiates to a Range), and Spot (a

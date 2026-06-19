@@ -3481,6 +3481,9 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {in->color.r, in->color.g, in->color.b, in->color.a};
             if (ImGui::ColorEdit4("Color##uif", c)) { in->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
             if (ImGui::DragInt("Max Length##uif", &in->maxLength, 1, 1, 1024)) ed.dirty = true;
+            const char* cts[] = {"Standard", "Integer", "Decimal", "Password"};
+            int ct = (int)in->contentType;
+            if (ImGui::Combo("Content Type##uif", &ct, cts, 4)) { in->contentType = (UIInputField::ContentType)ct; ed.dirty = true; }
             AnchorCombo("Anchor##uif", in->anchor, ed);
             ImGui::TextDisabled("Click to focus + type at runtime; Enter calls on_submit().");
             if (ImGui::SmallButton("Remove##uif")) toRemove = in;
@@ -4060,15 +4063,21 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         dl->AddRectFilled(a, b, ToColor(in->CurrentColor()), 4.0f);
         if (in->focused) dl->AddRect(a, b, IM_COL32(120, 170, 255, 255), 4.0f, 0, 1.5f);
         float px = 2.0f * s;
+        float pad = 6 * s;
         bool empty = in->text.empty();
-        const std::string& shown = empty ? in->placeholder : in->text;
+        // Horizontal scroll: show the tail that fits so the caret stays visible.
+        std::string full = empty ? in->placeholder : in->DisplayText();
+        float adv = (Font8x8::Width + 1) * px;
+        int fit = adv > 0 ? (int)((sz.x - pad * 2) / adv) : (int)full.size();
+        if (fit < 1) fit = 1;
+        std::string shown = ((int)full.size() > fit) ? full.substr(full.size() - fit) : full;
         float ty = a.y + (sz.y - Font8x8::Height * px) * 0.5f;
-        DrawBitmapText(dl, shown, a.x + 6 * s, ty, px,
+        DrawBitmapText(dl, shown, a.x + pad, ty, px,
                        ToColor(empty ? in->placeholderColor : in->textColor));
-        if (in->focused) {  // caret after the text
-            float cw = (empty ? 0 : in->text.size()) * (Font8x8::Width + 1) * px;
-            float cx = a.x + 6 * s + cw;
-            dl->AddLine(ImVec2(cx, ty), ImVec2(cx, ty + Font8x8::Height * px), IM_COL32(255, 255, 255, 200), 1.0f);
+        if (in->focused && in->CaretVisible()) {  // blinking caret after the visible text
+            float cw = shown.size() * adv;
+            float cx = a.x + pad + cw;
+            dl->AddLine(ImVec2(cx, ty), ImVec2(cx, ty + Font8x8::Height * px), IM_COL32(255, 255, 255, 220), 1.5f);
         }
     }
 
@@ -5051,6 +5060,7 @@ int main(int argc, char** argv) {
     std::string lastTitle;
     Uint64 last = SDL_GetPerformanceCounter();
     while (running) {
+        Input::ClearTypedText();   // collect this frame's typed characters
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
@@ -5058,6 +5068,10 @@ int main(int argc, char** argv) {
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
                 e.window.windowID == SDL_GetWindowID(window))
                 g_quitRequested = true;
+            // Route typed characters to the playing game's UI input fields (but not
+            // while an ImGui field — inspector/markup box — is capturing text).
+            if (e.type == SDL_TEXTINPUT && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
+                Input::FeedText(e.text.text);
         }
 
         Uint64 now = SDL_GetPerformanceCounter();
@@ -5077,6 +5091,9 @@ int main(int argc, char** argv) {
             for (char c = '0'; c <= '9'; ++c)
                 if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
             if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+            if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
+            if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
+            if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
             if (ks[SDL_SCANCODE_UP])    down.push_back('w'); // arrows -> WASD
             if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
             if (ks[SDL_SCANCODE_DOWN])  down.push_back('s');

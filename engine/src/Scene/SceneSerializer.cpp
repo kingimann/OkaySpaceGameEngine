@@ -291,7 +291,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  uiinput " << in->position.x << " " << in->position.y << " "
             << in->size.x << " " << in->size.y << " " << (int)in->anchor << " "
             << in->maxLength << " " << Quote(in->text) << " " << Quote(in->placeholder) << " "
-            << in->color.r << " " << in->color.g << " " << in->color.b << " " << in->color.a << "\n";
+            << in->color.r << " " << in->color.g << " " << in->color.b << " " << in->color.a << " "
+            << (int)in->contentType << "\n";
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
         out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
@@ -782,6 +783,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     inp->anchor = (UIAnchor)an;
                     inp->text = ReadQuoted(in); inp->placeholder = ReadQuoted(in);
                     in >> c.r >> c.g >> c.b >> c.a; inp->color = c;
+                    in >> std::ws; // optional content type (added later)
+                    if (std::isdigit(in.peek())) { int ct = 0; in >> ct; inp->contentType = (UIInputField::ContentType)ct; }
                 } else if (field == "uidropdown") {
                     auto* dd = go->AddComponent<UIDropdown>();
                     int an = 0; std::size_t count = 0;

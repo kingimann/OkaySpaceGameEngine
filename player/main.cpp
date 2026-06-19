@@ -162,6 +162,7 @@ int main(int argc, char** argv) {
     Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
 
     SDL_AudioSpec want{}, have{};
     want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
@@ -205,12 +206,20 @@ int main(int argc, char** argv) {
     bool running = true;
     Uint64 last = SDL_GetPerformanceCounter();
     auto frame = [&]() {
+        Input::ClearTypedText();                 // collect this frame's typed chars
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
             if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
                 pad = SDL_GameControllerOpen(e.cdevice.which);
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
+            if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
+            // Esc quits only when no input field is focused (otherwise it cancels it).
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                bool typing = false;
+                for (const auto& up : scene.Objects())
+                    if (auto* f = up->GetComponent<UIInputField>()) if (f->focused) typing = true;
+                if (!typing) running = false;
+            }
         }
 
         // Feed keyboard into the engine Input.
@@ -221,6 +230,10 @@ int main(int argc, char** argv) {
         for (char c = '0'; c <= '9'; ++c)
             if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
         if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+        // Editing keys for text fields (held-state; edge-detected by the field).
+        if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8);
+        if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
+        if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
         // Map arrow keys onto WASD so arrow-key movement just works.
         if (ks[SDL_SCANCODE_UP])    down.push_back('w');
         if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
@@ -729,17 +742,21 @@ int main(int argc, char** argv) {
                 SDL_SetRenderDrawColor(renderer, 120, 170, 255, 255);
                 SDL_RenderDrawRect(renderer, &box);
             }
-            float px = 2.0f;
+            float px = 2.0f, pad = 6.0f;
             bool empty = in->text.empty();
-            const std::string& shown = empty ? in->placeholder : in->text;
+            std::string full = empty ? in->placeholder : in->DisplayText();
             const Color& txc = empty ? in->placeholderColor : in->textColor;
+            // Horizontal scroll: show the tail that fits so the caret stays visible.
+            float adv = (Font8x8::Width + 1) * px;
+            int fit = adv > 0 ? (int)((in->size.x - pad * 2) / adv) : (int)full.size();
+            if (fit < 1) fit = 1;
+            std::string shown = ((int)full.size() > fit) ? full.substr(full.size() - fit) : full;
             float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(txc.r * 255), (Uint8)(txc.g * 255), (Uint8)(txc.b * 255), (Uint8)(txc.a * 255)};
-            DrawText(renderer, shown, o.x + 6.0f, ty, px, tc);
-            if (in->focused) {                              // caret after the text
-                float cw = (empty ? 0 : in->text.size()) * (Font8x8::Width + 1) * px;
-                int cx = (int)(o.x + 6.0f + cw);
-                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 200);
+            DrawText(renderer, shown, o.x + pad, ty, px, tc);
+            if (in->focused && in->CaretVisible()) {        // blinking caret after visible text
+                int cx = (int)(o.x + pad + shown.size() * adv);
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 220);
                 SDL_RenderDrawLine(renderer, cx, (int)ty, cx, (int)(ty + Font8x8::Height * px));
             }
         }

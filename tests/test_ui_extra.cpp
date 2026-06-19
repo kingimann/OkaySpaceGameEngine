@@ -116,16 +116,31 @@ int main() {
         s.Update(0.016f);
         CHECK(in->focused);
 
-        // Type "hi": feed each key as a down-edge.
+        // Type via the OS text channel — uppercase + symbols work now.
         Input::FeedMouse({20, 20}, 0);      // release
-        Input::FeedKeys({'h'}); s.Update(0.016f);
-        Input::FeedKeys({});    s.Update(0.016f);
-        Input::FeedKeys({'i'}); s.Update(0.016f);
-        CHECK(in->text == "hi");
+        Input::ClearTypedText(); Input::FeedText("H"); s.Update(0.016f);
+        Input::ClearTypedText(); Input::FeedText("i"); s.Update(0.016f);
+        Input::ClearTypedText(); Input::FeedText("!"); s.Update(0.016f);
+        CHECK(in->text == "Hi!");
 
-        // Backspace removes the last char.
+        // Backspace removes the last char (edge-detected from the key state).
+        Input::ClearTypedText();
+        Input::FeedKeys({}); s.Update(0.016f);
         Input::FeedKeys({(char)8}); s.Update(0.016f);
-        CHECK(in->text == "h");
+        CHECK(in->text == "Hi");
+
+        // Password mode masks the display but keeps the real text.
+        in->contentType = UIInputField::ContentType::Password;
+        CHECK(in->DisplayText() == "**");
+        CHECK(in->text == "Hi");
+
+        // Content type filters input: Integer rejects letters/symbols.
+        in->contentType = UIInputField::ContentType::Integer;
+        in->text.clear();
+        Input::FeedKeys({});   // release the backspace key from the edge state
+        Input::ClearTypedText(); Input::FeedText("4a2!"); s.Update(0.016f);
+        CHECK(in->text == "42");
+        in->contentType = UIInputField::ContentType::Standard;
 
         // Clicking outside removes focus.
         Input::FeedKeys({});

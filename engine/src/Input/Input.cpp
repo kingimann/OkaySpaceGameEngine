@@ -20,6 +20,7 @@ Vec2     Input::s_padAxis;
 unsigned Input::s_padCurrent = 0;
 unsigned Input::s_padPrevious = 0;
 unsigned Input::s_mousePrevious = 0;
+std::string Input::s_typedText;
 
 #if defined(__unix__) || defined(__APPLE__)
 namespace {
@@ -112,6 +113,10 @@ void Input::FeedGamepad(const Vec2& axis, unsigned buttonMask) {
     s_padPrevious = s_padCurrent;
     s_padCurrent = buttonMask;
 }
+const std::string& Input::TypedText() { return s_typedText; }
+void Input::FeedText(const std::string& utf8) { s_typedText += utf8; }
+void Input::ClearTypedText() { s_typedText.clear(); }
+
 Vec2 Input::GamepadAxis() { return s_padAxis; }
 bool Input::GetGamepadButton(int button) {
     if (button < 0 || button > 31) return false;

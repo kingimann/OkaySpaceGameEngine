@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v1.71.0
+  - Input Field overhaul: typing now comes from the OS text-input event, so
+    uppercase, punctuation and symbols all work (Shift / Caps respected) instead
+    of the old lowercase-only guesswork. A blinking caret, horizontal scrolling
+    (the caret stays visible in long text), Esc-to-cancel, and content types
+    (Standard / Integer / Decimal / Password, with a mask char) round it out.
+    Works the same in the editor and built games.
+
 v1.70.0
   - Everything displays in builds: the standalone player now renders UI Input
     Fields (box, text/placeholder, focus outline, caret) and Scroll Views

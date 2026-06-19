@@ -44,13 +44,16 @@ struct Mesh {
             {-h, -h, -h}, { h, -h, -h}, { h, h, -h}, {-h, h, -h}, // back
             {-h, -h,  h}, { h, -h,  h}, { h, h,  h}, {-h, h,  h}, // front
         };
+        // Counter-clockwise winding (when viewed from outside) so each face's
+        // normal = cross(e1, e2) points OUTWARD — required for backface culling
+        // and lighting to treat the camera-facing side as the front.
         m.triangles = {
-            0,1,2, 0,2,3,   // back
-            4,6,5, 4,7,6,   // front
-            4,5,1, 4,1,0,   // bottom
-            3,2,6, 3,6,7,   // top
-            4,0,3, 4,3,7,   // left
-            1,5,6, 1,6,2,   // right
+            0,2,1, 0,3,2,   // back   (-z)
+            4,5,6, 4,6,7,   // front  (+z)
+            4,1,5, 4,0,1,   // bottom (-y)
+            3,6,2, 3,7,6,   // top    (+y)
+            4,3,0, 4,7,3,   // left   (-x)
+            1,6,5, 1,2,6,   // right  (+x)
         };
         return m;
     }
@@ -65,12 +68,12 @@ struct Mesh {
             {-h, -h, -h}, { h, -h, -h}, { h, -h, h}, {-h, -h, h}, // base (y = -h)
             {-h,  h,  h}, { h,  h, h},                            // top edge (y = +h, z = +h)
         };
-        m.triangles = {
-            0,2,1, 0,3,2,        // base (y = -h)
-            3,4,5, 3,5,2,        // vertical front face (z = +h)
-            0,1,5, 0,5,4,        // sloped face (back-bottom up to front-top)
-            1,2,5,               // right side triangle (x = +h)
-            0,4,3,               // left side triangle (x = -h)
+        m.triangles = {                  // CCW / outward-facing winding
+            0,1,2, 0,2,3,        // base (y = -h)
+            3,5,4, 3,2,5,        // vertical front face (z = +h)
+            0,5,1, 0,4,5,        // sloped face (back-bottom up to front-top)
+            1,5,2,               // right side triangle (x = +h)
+            0,3,4,               // left side triangle (x = -h)
         };
         return m;
     }
@@ -83,10 +86,10 @@ struct Mesh {
             {-h, -h, -h}, { h, -h, -h}, { h, -h, h}, {-h, -h, h}, // base
             { 0,  h,  0},                                         // apex
         };
-        m.triangles = {
-            0,2,1, 0,3,2,        // base
-            0,1,4, 1,2,4,        // sides
-            2,3,4, 3,0,4,
+        m.triangles = {                  // CCW / outward-facing winding
+            0,1,2, 0,2,3,        // base (-y)
+            0,4,1, 1,4,2,        // sides
+            2,4,3, 3,4,0,
         };
         return m;
     }

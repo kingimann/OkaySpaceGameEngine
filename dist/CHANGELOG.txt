@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.1.0
+  - Easier-to-read scripting: ~90 plain-English aliases so you can usually guess
+    the right word — place_at / move_by / position_x / set_position_x / turn /
+    face, key_pressed / is_key_held / input_horizontal, create_object /
+    remove_object / show_object / hide_object / object_exists, call_later /
+    repeat_every / time_elapsed, set_tint / set_sprite / set_background_color /
+    emit_particles / play_sfx, apply_force / apply_impulse / is_overlapping /
+    cast_ray, set_camera / set_zoom, save_value / load_number / load_text,
+    random_float / random_chance, log, and more. Each maps onto an existing
+    builtin, so old scripts and the Unity-style names all keep working. New
+    "Plain-English names" table in docs/scripting.md.
+
 v2.0.0
   - Unity-style scripting, completed. Building on v1.99, OkayScript now also
     accepts:

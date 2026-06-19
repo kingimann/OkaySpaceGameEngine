@@ -144,7 +144,12 @@ name as its trailing argument(s).
 | `tween_scale(s, dur [, ease][, "done"])` | Animate uniform scale |
 | `tween_rotate(deg, dur [, ease][, "done"])` | Spin about Z |
 | `tween_color(r, g, b, dur [, ease][, "done"])` / `tween_fade(alpha, dur ...)` | Animate color / opacity |
-| `tween_loop_move(x, y, dur [, ease])` | Ping-pong forever (floaters, patrols) |
+| `tween_move_by(dx, dy, dur [, ease][, "done"])` | Move by a relative offset |
+| `tween_jump(x, y, height, dur [, "done"])` | Arc-jump to a target (coins, hops) |
+| `tween_path(dur, x1,y1, x2,y2, ...)` | Move through waypoints |
+| `tween_loop_move(x, y, dur [, ease])` / `tween_loop_scale(s, dur [, ease])` | Ping-pong forever (floaters, pulsing) |
+| `tween_loop_rotate(dur [, dir])` | Spin continuously (loaders, coins) |
+| `tween_number(from, to, dur [, "prefix"])` | Count a sibling text number (score ticks) |
 | `tween_punch_scale(amount, dur [, vib])` / `tween_punch_pos(dx, dy, dur [, vib])` | Punch & settle ("juice") |
 | `tween_shake(intensity, dur)` | Random shake that decays to a stop |
 | `save_game([slot])` / `load_game([slot])` | Snapshot / restore the scene |

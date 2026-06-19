@@ -182,7 +182,13 @@ its last argument(s).
 | `tween_rotate(deg, dur[, ease][, "done"])` | spin `deg` degrees about Z |
 | `tween_color(r, g, b, dur[, ease][, "done"])` | fade the sprite/mesh color |
 | `tween_fade(a, dur[, ease][, "done"])` | fade alpha to `a` |
+| `tween_move_by(dx, dy, dur[, ease][, "done"])` | move by a **relative** offset |
+| `tween_jump(x, y, height, dur[, "done"])` | arc-jump to (x, y) peaking `height` up (coins, hops) |
+| `tween_path(dur, x1, y1, x2, y2, ...)` | move through a list of waypoints |
 | `tween_loop_move(x, y, dur[, ease])` | **ping-pong** forever between here and (x, y) |
+| `tween_loop_scale(s, dur[, ease])` | ping-pong the scale forever (pulsing) |
+| `tween_loop_rotate(dur[, dir])` | spin continuously, a turn every `dur` (dir +1/-1) |
+| `tween_number(from, to, dur[, "prefix"])` | count a sibling text number up/down (score ticks) |
 | `tween_punch_scale(amount, dur[, vib])` | punch the scale and settle back ("juice") |
 | `tween_punch_pos(dx, dy, dur[, vib])` | punch the position and settle back |
 | `tween_shake(intensity, dur)` | random shake that decays to a stop (impact/camera) |

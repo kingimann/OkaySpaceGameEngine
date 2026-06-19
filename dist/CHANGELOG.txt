@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.97.0
+  - DOTween, even bigger: tween_move_by (relative glide), tween_jump (arc-jump
+    to a target peaking at a height — coins flying to the HUD, hops), tween_path
+    (move through a list of waypoints), tween_loop_scale (pulsing) and
+    tween_loop_rotate (continuous spin — loaders, coins), and tween_number
+    (count a sibling text number up/down with an optional prefix — score ticks,
+    damage popups). Joins the on-complete callbacks, ping-pong, punch and shake
+    added last update.
+
 v1.96.0
   - Raycasting from script: new raycast(ox,oy,dx,dy[,max]) returns the NAME of
     the object hit ("" = miss), with full details via ray_hit(), ray_object(),

@@ -34,6 +34,55 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.y, 9.0f, 0.001f);   // callback ran
     }
 
+    // --- tween_jump lands exactly on the target ------------------------
+    {
+        Scene s("TwJump"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Coin");
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() { tween_jump(4, 1, 3, 1.0); }\n");
+        s.Start();
+        for (int i = 0; i < 15; ++i) s.Update(0.1f);
+        CHECK_NEAR(go->transform->localPosition.x, 4.0f, 0.05f);
+        CHECK_NEAR(go->transform->localPosition.y, 1.0f, 0.05f);
+    }
+
+    // --- tween_path ends at the last waypoint --------------------------
+    {
+        Scene s("TwPath"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Walker");
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() { tween_path(1.0, 2, 0, 2, 2, 0, 2); }\n");
+        s.Start();
+        for (int i = 0; i < 15; ++i) s.Update(0.1f);
+        CHECK_NEAR(go->transform->localPosition.x, 0.0f, 0.05f);
+        CHECK_NEAR(go->transform->localPosition.y, 2.0f, 0.05f);
+    }
+
+    // --- tween_move_by glides by a relative offset ---------------------
+    {
+        Scene s("TwBy"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Slide");
+        go->transform->localPosition = {1, 1, 0};
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() { tween_move_by(3, 0, 1.0); }\n");
+        s.Start();
+        for (int i = 0; i < 15; ++i) s.Update(0.1f);
+        CHECK_NEAR(go->transform->localPosition.x, 4.0f, 0.05f);   // 1 + 3
+        CHECK_NEAR(go->transform->localPosition.y, 1.0f, 0.05f);
+    }
+
+    // --- tween_number counts a sibling TextRenderer up -----------------
+    {
+        Scene s("TwNum"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Score");
+        go->AddComponent<TextRenderer>();
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() { tween_number(0, 100, 1.0, \"Score: \"); }\n");
+        s.Start();
+        for (int i = 0; i < 15; ++i) s.Update(0.1f);
+        CHECK(go->GetComponent<TextRenderer>()->text == "Score: 100");
+    }
+
     // --- Tween shake settles back to the starting position --------------
     {
         Scene s("TwShake"); s.physicsEnabled = false;

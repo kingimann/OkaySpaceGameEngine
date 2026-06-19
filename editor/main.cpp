@@ -2110,6 +2110,7 @@ void DrawNewProjectPopup(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::Button("Top-Down", ImVec2(160, 44)))   { ed.NewTopDown(); finishProject(); }
         if (ImGui::Button("3D Platformer (physics)", ImVec2(-1, 44))) { ed.NewPlatformer3D(); finishProject(); }
+        if (ImGui::Button("Multiplayer (host/join)", ImVec2(-1, 44))) { ed.NewMultiplayer(); finishProject(); }
         if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 36))) { ed.NewCoinCollector(); finishProject(); }
         if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 36)))            { ed.NewMainMenu(); finishProject(); }
         if (ImGui::Button("Snake (full game)", ImVec2(-1, 36)))         { ed.NewSnake(); finishProject(); }
@@ -2988,6 +2989,7 @@ void DrawInspector(EditorState& ed) {
                 "set_light", "set_ambient", "set_timescale", "send", "spawn", "spawn3",
                 "destroy", "destroy_obj", "activate", "deactivate", "set_tag",
                 "set_prefs", "add_prefs", "save_prefs",
+                "net_host", "net_join", "net_send", "net_disconnect",
                 "load_scene", "load_scene_index", "load_next_scene", "log"};
 
             ImGui::SeparatorText("Conditions (all must pass)");

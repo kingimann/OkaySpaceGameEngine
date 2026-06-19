@@ -106,6 +106,16 @@ public:
         out.swap(m_inbox);
         return out;
     }
+    /// Pop the oldest unread message into `out`; false if the inbox is empty.
+    /// Lets scripts drain one message at a time in a while-loop.
+    bool PopMessage(NetMessage& out) {
+        if (m_inbox.empty()) return false;
+        out = m_inbox.front();
+        m_inbox.erase(m_inbox.begin());
+        return true;
+    }
+    bool HasMessages() const { return !m_inbox.empty(); }
+    bool IsConnected() const { return m_mode != Mode::Offline; }
 
     void Update(float dt) override;
     void OnDestroy() override { Stop(); }

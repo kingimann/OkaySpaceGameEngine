@@ -249,6 +249,10 @@ add_executable(test_scenemanager test_scenemanager.cpp)
 target_link_libraries(test_scenemanager PRIVATE okay::engine)
 add_test(NAME scenemanager COMMAND test_scenemanager)
 
+add_executable(test_script_net test_script_net.cpp)
+target_link_libraries(test_script_net PRIVATE okay::engine)
+add_test(NAME script_net COMMAND test_script_net)
+
 add_executable(test_uidocument test_uidocument.cpp)
 target_link_libraries(test_uidocument PRIVATE okay::engine)
 add_test(NAME uidocument COMMAND test_uidocument)

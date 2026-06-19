@@ -239,6 +239,16 @@ void EditorState::NewPlatformer3D() {
     dirty = false;
 }
 
+void EditorState::NewMultiplayer() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Multiplayer(m_scene);
+    m_suppressUndo = false;
+    view3D = false;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
 void EditorState::NewTopDown() {
     NewScene();
     m_suppressUndo = true;

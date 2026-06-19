@@ -143,6 +143,43 @@ inline void TopDown(Scene& scene) {
     }
 }
 
+/// The simplest possible multiplayer: one player object whose script hosts (or
+/// joins) a server and broadcasts its position, plus a HUD line of help. Drop
+/// two copies of the built game on a LAN — one presses H to host, the other
+/// presses J to join — and they see each other move. Shows how few lines the
+/// net_* OkayScript API needs to get a session running, and lets players host
+/// their own servers with no extra tooling.
+inline void Multiplayer(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Multiplayer");
+
+    GameObject* camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->orthographicSize = 6.0f;
+    cam->main = true;
+
+    GameObject* player = scene.CreateGameObject("Player");
+    player->AddComponent<SpriteRenderer>()->color = Color::FromBytes(90, 170, 240);
+    auto* sc = player->AddComponent<ScriptComponent>("okayscript");
+    sc->LoadSource(
+        "# Press H to host a server, J to join 127.0.0.1. Move with WASD.\n"
+        "var started = 0;\n"
+        "function update(d) {\n"
+        "  if (started == 0) {\n"
+        "    if (key_down(\"h\")) { net_host(45000); started = 1; }\n"
+        "    if (key_down(\"j\")) { net_join(\"127.0.0.1\", 45000); started = 1; }\n"
+        "  }\n"
+        "  var speed = 5;\n"
+        "  move(axis_x() * speed * d, axis_y() * speed * d);\n"
+        "}\n");
+
+    GameObject* hud = scene.CreateGameObject("Help");
+    auto* tr = hud->AddComponent<TextRenderer>();
+    tr->text = "H = host   J = join 127.0.0.1   WASD = move";
+    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 2.0f;
+}
+
 /// A complete little game: drive the player with WASD to collect spinning
 /// coins; a HUD counts the score. Shows off sprites, triggers, script events,
 /// shared state (prefs), camera-follow, and text — a working sample to learn

@@ -17,6 +17,7 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -729,6 +730,32 @@ struct OkayScriptVM::Impl {
     std::vector<StmtPtr> topLevel;
     bool loaded = false;
 
+    // Last network message popped by net_poll(), exposed via net_msg_* builtins.
+    std::string netMsgChannel, netMsgData;
+    float       netMsgFrom = 0.0f;
+
+    // The scene's NetworkManager, if any (multiplayer is opt-in per scene).
+    NetworkManager* Net() {
+        Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+        return s ? s->FindObjectOfType<NetworkManager>() : nullptr;
+    }
+    // Find or create the scene's NetworkManager, wiring the host object as the
+    // broadcast avatar and a default factory that mirrors remote peers as sprites.
+    NetworkManager* EnsureNet() {
+        if (NetworkManager* n = Net()) return n;
+        if (!rt.host || !rt.host->gameObject || !rt.host->gameObject->scene()) return nullptr;
+        Scene* s = rt.host->gameObject->scene();
+        GameObject* netObj = s->CreateGameObject("__Network");
+        NetworkManager* n = netObj->AddComponent<NetworkManager>();
+        if (rt.host->transform) n->SetLocalAvatar(rt.host->transform, '@');
+        n->SetRemoteFactory([s](std::uint32_t id, char) {
+            GameObject* g = s->CreateGameObject("Peer" + std::to_string(id));
+            g->AddComponent<SpriteRenderer>()->color = Color::FromBytes(230, 120, 90);
+            return g;
+        });
+        return n;
+    }
+
     void RegisterBuiltins() {
         auto& b = rt.builtins;
         auto tf = [this]() -> Transform* { return rt.host ? rt.host->transform : nullptr; };
@@ -1254,6 +1281,57 @@ struct OkayScriptVM::Impl {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             return Value{s ? s->Name() : std::string{}};
         };
+        // ---- Multiplayer (NetworkManager) -----------------------------
+        // Start hosting / join from a script; both wire the host object as the
+        // broadcast avatar and mirror remote peers as sprites.
+        b["net_host"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            std::uint16_t port = (std::uint16_t)(a.empty() ? 45000 : (int)a[0].AsFloat());
+            return Value{(n && n->StartServer(port)) ? 1.0f : 0.0f};
+        };
+        b["net_join"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            std::string host = a.empty() ? "127.0.0.1" : a[0].AsString();
+            std::uint16_t port = (std::uint16_t)(a.size() < 2 ? 45000 : (int)a[1].AsFloat());
+            return Value{(n && n->StartClient(host, port)) ? 1.0f : 0.0f};
+        };
+        b["net_disconnect"] = [this](std::vector<Value>&) {
+            if (NetworkManager* n = Net()) n->Stop();
+            return Value{};
+        };
+        b["net_connected"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->IsConnected()) ? 1.0f : 0.0f}; };
+        b["net_is_server"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->IsServer()) ? 1.0f : 0.0f}; };
+        b["net_is_client"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->IsClient()) ? 1.0f : 0.0f}; };
+        b["net_id"]    = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->LocalId() : 0.0f}; };
+        b["net_peers"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->PeerCount() : 0.0f}; };
+        b["net_name"]  = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net()) { if (!a.empty()) n->SetLocalName(a[0].AsString()); return Value{n->LocalName()}; }
+            return Value{std::string{}};
+        };
+        // Send a message to everyone, or to one peer id.
+        b["net_send"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && a.size() >= 2) n->Send(a[0].AsString(), a[1].AsString());
+            return Value{};
+        };
+        b["net_send_to"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
+            return Value{};
+        };
+        // Drain one received message into net_msg_* accessors; returns 1 if one
+        // was popped (use in a while-loop), 0 when the inbox is empty.
+        b["net_poll"] = [this](std::vector<Value>&) {
+            NetworkManager* n = Net();
+            NetworkManager::NetMessage m;
+            if (n && n->PopMessage(m)) {
+                netMsgChannel = m.channel; netMsgData = m.data; netMsgFrom = (float)m.from;
+                return Value{1.0f};
+            }
+            netMsgChannel.clear(); netMsgData.clear(); netMsgFrom = 0.0f;
+            return Value{0.0f};
+        };
+        b["net_msg_channel"] = [this](std::vector<Value>&) { return Value{netMsgChannel}; };
+        b["net_msg_data"]    = [this](std::vector<Value>&) { return Value{netMsgData}; };
+        b["net_msg_from"]    = [this](std::vector<Value>&) { return Value{netMsgFrom}; };
         // Persistent prefs (high scores, settings) — survive across runs.
         b["prefs_set"] = [](std::vector<Value>& a) {
             if (a.size() >= 2) {

@@ -14,6 +14,8 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneManager.hpp"
+#include "okay/Net/NetworkManager.hpp"
+#include "okay/Render/Color.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -271,6 +273,28 @@ void ActionList::Update(float dt) {
             if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform) g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
+            }
+        }
+        else if (op == "net_host" || op == "net_join" || op == "net_send" || op == "net_disconnect") {
+            if (scene) {
+                NetworkManager* n = scene->FindObjectOfType<NetworkManager>();
+                if (!n && op != "net_disconnect") {
+                    GameObject* netObj = scene->CreateGameObject("__Network");
+                    n = netObj->AddComponent<NetworkManager>();
+                    if (gameObject) n->SetLocalAvatar(gameObject->transform, '@');
+                    Scene* sc = scene;
+                    n->SetRemoteFactory([sc](std::uint32_t id, char) {
+                        GameObject* g = sc->CreateGameObject("Peer" + std::to_string(id));
+                        g->AddComponent<SpriteRenderer>()->color = Color::FromBytes(230, 120, 90);
+                        return g;
+                    });
+                }
+                if (n) {
+                    if (op == "net_host") n->StartServer((std::uint16_t)Num(it, 0));
+                    else if (op == "net_join") n->StartClient(Str(it, 0).empty() ? "127.0.0.1" : Str(it, 0), (std::uint16_t)Num(it, 1));
+                    else if (op == "net_send") n->Send(Str(it, 0), Rest(it, 1));
+                    else if (op == "net_disconnect") n->Stop();
+                }
             }
         }
         else if (op == "load_scene") { if (scene) scene->RequestLoad(Str(it, 0)); return; }

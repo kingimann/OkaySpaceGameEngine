@@ -85,29 +85,42 @@ planet, `A` player ship.)*
   build component-wired scenes from the New Project flow.
 - **Utilities** — seedable `Random`, a typed `EventBus`, `Rect`/`Bounds`, extra
   `Mathf` (InverseLerp, SmoothDamp, LerpAngle…), and `Scene::FindObjectsOfType<T>`.
-- **Multiplayer** — cross-platform UDP networking (`NetworkManager`) with a
-  client/server join handshake and snapshot state sync.
-- **Visual scripting** — a node-graph runtime (events, math, branches,
-  variables, transform actions) you build in code or load from text.
-- **Text scripting** — a built-in language (works everywhere) plus optional
-  **Lua** and **C#** backends behind the same `IScriptVM` interface. OkayScript
-  has `if`/`while`/`for`/**foreach**/`break`/`continue`, functions, the
-  **ternary** `?:`, **arrays** and **maps**, a full **string** library, and a
-  deep builtin set: input (keyboard+mouse), 2D/3D transform control,
-  `spawn`/`destroy`, `load_scene`, physics `raycast_hit`/`overlap`,
-  component control (`set_text`/`set_color`/`set_texture`/`play_sound`/`set_progress`),
+- **Multiplayer — host your own server, in ~5 lines** — cross-platform UDP
+  networking (`NetworkManager`): a client/server join handshake, snapshot state
+  sync, player **names** + a server **roster**, peer **joined/left** callbacks,
+  **broadcast** and **targeted** (`SendTo`) custom messages, and a script API so
+  any player can host (`net_host(port)`) or join (`net_join(ip, port)`) and
+  exchange events (`net_send` / `net_poll`). There's a **Multiplayer starter
+  template** (press **H** to host, **J** to join). See the API below.
+- **Visual scripting** — an `ActionList` (Game-Creator-2 style:
+  Trigger → Conditions → Instructions) with ~60 ops including variables/math,
+  transform/physics, prefs, scene loading, **and networking** (`net_host`,
+  `net_join`, `net_send`), plus a node-graph runtime you build in code or text.
+- **Text scripting (OkayScript)** — a built-in language (works everywhere; an
+  optional **C#** backend sits behind the same `IScriptVM`). Has
+  `if`/`while`/`for`/**foreach**/`break`/`continue`, functions, the **ternary**
+  `?:`, **arrays** and **maps**, a full **string** library, and a deep builtin
+  set: input (keyboard+mouse), 2D/3D transform control, `spawn`/`destroy`,
+  `load_scene` + **Scene Manager** (`load_scene_index`/`load_next_scene`),
+  **networking** (`net_*`), physics `raycast_hit`/`overlap`, component control
+  (`set_text`/`set_color`/`set_texture`/`play_sound`/`set_progress`),
   audio/gravity/time-scale, `prefs_*` save data, and
-  `on_trigger()`/`on_collision()`/`on_click()` event handlers.
+  `on_trigger()`/`on_collision()`/`on_click()` handlers.
   See [`docs/scripting.md`](docs/scripting.md).
-- **In-game UI** — screen-space `UIButton` (fires `on_click()`), `UIPanel`
-  (backgrounds), and `UIProgressBar` (health/mana bars), rendered in both the
-  editor and the built game.
+- **In-game UI like Unity** — a **Canvas** (CanvasScaler: constant-pixel or
+  scale-with-screen) parents the widgets, with one **Event System** routing
+  pointer input. Widgets: `UIButton` (`on_click()`), `UIPanel`, `UIImage`,
+  `UISlider`, `UIToggle`, `UIProgressBar`, screen-space text — selectable and
+  drag/resizable in the Scene view. A **UIDocument** builds whole HUDs/menus
+  from OkayUI markup (with reusable styles + custom widgets).
 - **Build for desktop, web & mobile** — one project, every target: a
   self-contained Windows `.exe`, a **WebAssembly** build via Emscripten
   (`scripts/build-web.sh`), and Android/iOS via SDL2.
   See [`docs/web_mobile.md`](docs/web_mobile.md).
-- **Steam** and **PlayFab** integrations — full API surfaces with in-memory
-  simulation backends by default; real Steamworks/REST backends behind flags.
+- **Steam** integration — a broad API surface (achievements + **progress**,
+  stats + **increment**, **leaderboards**, **Steam Cloud**, friends, overlay)
+  with an in-memory simulation backend by default and the real Steamworks
+  backend behind `-DOKAY_WITH_STEAM`.
 - **Self-updating launcher** that pulls the latest from GitHub, rebuilds, runs.
 - **Desktop GUI editor** (Dear ImGui docking + SDL2) — Unity-style **docked**
   Hierarchy / Scene / Inspector / Console / **Services** / **Script Editor**
@@ -118,15 +131,24 @@ planet, `A` player ship.)*
   Add Component / Inspector for every component, scene save/load, **Build Game**,
   and an in-app self-updater. Ships as a single self-contained `.exe`
   (`dist/OkaySpaceEngine.exe`). See [`docs/editor.md`](docs/editor.md).
-- **Online services built into the engine & editor** — Steam (achievements/stats),
-  PlayFab (login/leaderboards), and multiplayer (host/join) live in the editor's
-  **Services** panel. Ship on Steam via [`docs/steam_release.md`](docs/steam_release.md).
-- **Scene serialization** — save/load scenes (and the hierarchy) to readable
-  `.okayscene` text files via `SceneSerializer`.
-- **Build games to a standalone `.exe`** — the editor's **Build Game** (Ctrl+B)
-  writes your scene next to a tiny SDL2 **player runtime** (`player/`), renamed
-  `<Game>.exe`. The result is a double-clickable game (sprites in 2D, shaded
-  meshes in 3D, audio, input) you can ship — see [`docs/editor.md`](docs/editor.md).
+- **Online services built into the engine & editor** — Steam (achievements,
+  stats, leaderboards, cloud) and multiplayer (host/join, roster, chat) live in
+  the editor's **Services** panel. Ship on Steam via
+  [`docs/steam_release.md`](docs/steam_release.md).
+- **Scene Manager + Scenes panel** — a build list of the project's scenes with
+  by-index / by-name loading, Load Next and Reload (Unity's SceneManager +
+  Build Settings).
+- **Prefabs** — save any GameObject (and children) as a `.okayprefab` from the
+  Hierarchy right-click, drag it back in to instantiate.
+- **Scene serialization** — save/load scenes (and the hierarchy, plus per-scene
+  sky/ambient render settings) to readable `.okayscene` text files.
+- **Unity-like Build Settings** — the editor's **Build Game** (Ctrl+B) dialog
+  has product/company names, window size (+ presets), fullscreen/resizable/
+  vsync, "include all project scenes", and a development-build flag. It writes
+  your scene(s) + a `game.okayconfig` next to a tiny SDL2 **player runtime**,
+  renamed `<Game>.exe` — a double-clickable game (2D sprites, shaded 3D meshes
+  with **skybox + lighting**, audio, input) you can ship.
+  See [`docs/editor.md`](docs/editor.md).
 - **Core has no external dependencies** — just a C++17 compiler, CMake, threads.
   Optional backends (Lua, C#/Mono, Steam, PlayFab/libcurl) and the editor
   (SDL2/OpenGL) are opt-in.
@@ -252,6 +274,38 @@ int main() {
     app.Run(scene); // pumps Time, Input, Update, and Render every frame
 }
 ```
+
+## Multiplayer in ~5 lines (host your own server)
+
+Multiplayer is built in — no external service, no account. Any player can host
+a server on a port; others join by IP. From OkayScript:
+
+```c
+// Press H to host, J to join the machine at 127.0.0.1.
+function update(d) {
+  if (key_down("h")) net_host(45000);            // start a server on this PC
+  if (key_down("j")) net_join("127.0.0.1", 45000); // connect to a host
+
+  // Send your position to everyone, ~10x/sec.
+  net_send("pos", x() + "," + y());
+
+  // Receive whatever peers sent this frame.
+  while (net_poll()) {
+    if (net_msg_channel() == "pos") { /* net_msg_data(), net_msg_from() */ }
+  }
+}
+```
+
+Full script API: `net_host(port)`, `net_join(ip, port)`, `net_disconnect()`,
+`net_connected()`, `net_is_server()`, `net_is_client()`, `net_id()`,
+`net_peers()`, `net_name(name)`, `net_send(channel, data)`,
+`net_send_to(id, channel, data)`, `net_poll()` + `net_msg_channel/data/from()`.
+The same actions exist as **visual-scripting** ops (`net_host`, `net_join`,
+`net_send`) and in the editor's **Services → Multiplayer** panel (host/join,
+roster, chat). The **New Project → Multiplayer** template is a ready-to-run
+example. Each peer broadcasts its avatar Transform; the server relays messages
+and keeps the roster. Build the game and share `<Game>.exe` — one player hosts,
+the rest join over LAN or a forwarded port.
 
 ## Documentation
 

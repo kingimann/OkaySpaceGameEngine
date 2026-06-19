@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v1.40.0
+  - Multiplayer made easy: a full net_* OkayScript API — net_host(port) /
+    net_join(ip, port) let any player host or join their own server, plus
+    net_send / net_send_to / net_poll (+ net_msg_channel/data/from),
+    net_is_server / net_id / net_peers / net_name. The same actions are
+    no-code ActionList ops (net_host, net_join, net_send, net_disconnect).
+  - New Project > Multiplayer template: press H to host, J to join, WASD to
+    move — a complete runnable example.
+  - Updated README + docs with a "Multiplayer in ~5 lines" guide, the net and
+    Scene Manager script tables, and an ActionList op reference.
+
 v1.39.0
   - Unity-like Build Settings: the Build dialog now has product/company names,
     window width/height (with presets), fullscreen / resizable / vsync, "include

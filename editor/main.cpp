@@ -3396,7 +3396,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             ImGui::TextDisabled("(%d widgets)", (int)doc->Generated().size());
             ImGui::TextDisabled("types: panel text button image slider toggle progress input dropdown scroll layout");
-            ImGui::TextDisabled("keys: name corner border gradient font hover align outline tooltip options on*=...");
+            ImGui::TextDisabled("keys: name corner border gradient font hover align outline tooltip options bind on*=...");
             if (ImGui::SmallButton("Remove##uidoc")) toRemove = doc;
         }
     }

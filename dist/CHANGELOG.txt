@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.62.0
+  - UI data binding: a text widget can bind to live values —
+    `text bind="Score: {score}"` shows the current `score` Prefs value and
+    updates every frame as it changes (set it from script with prefs_set).
+    Multiple {keys} per label; {{ }} emit literal braces. Backed by a new
+    UITextBind component that also serializes for hand-placed text.
+
 v1.61.0
   - UI Toolkit containers: author `scroll` (clipped, scrollable region with
     content= height) and `layout` (dir=vertical|horizontal, spacing=, padding=)

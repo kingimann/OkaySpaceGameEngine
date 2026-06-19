@@ -34,6 +34,7 @@
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UITextBind.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
@@ -304,6 +305,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << dd->options.size();
         for (const auto& opt : dd->options) out << " " << Quote(opt);
         out << "\n";
+    }
+    if (auto* tb = go->GetComponent<UITextBind>()) {
+        out << "  uibind " << Quote(tb->format) << "\n";
     }
     if (auto* tt = go->GetComponent<UITooltip>()) {
         out << "  uitooltip " << Quote(tt->text) << " " << tt->delay << " "
@@ -792,6 +796,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     dd->textColor = t; dd->borderColor = b;
                     dd->options.clear();
                     for (std::size_t k = 0; k < count; ++k) dd->options.push_back(ReadQuoted(in));
+                } else if (field == "uibind") {
+                    auto* tb = go->AddComponent<UITextBind>();
+                    tb->format = ReadQuoted(in);
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
                     tt->text = ReadQuoted(in);

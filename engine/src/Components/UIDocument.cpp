@@ -13,6 +13,7 @@
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UITextBind.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -253,6 +254,13 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         if (t.Has("outline")){ c->outline = true; c->outlineColor = ParseColor(t.Get("outline")); }
         if (t.Has("shadow")) { c->shadow = true; c->shadowColor = ParseColor(t.Get("shadow")); }
         c->screenPos = c->screenPos + offset;
+        // Data binding: `bind="Score: {score}"` keeps the label in sync with the
+        // named Prefs values each frame (set them with prefs_set from script).
+        if (t.Has("bind")) {
+            auto* bind = go->AddComponent<UITextBind>();
+            bind->format = t.Get("bind");
+            if (t.label.empty()) c->text = UITextBind::Resolve(bind->format);
+        }
     }
 
     // Any widget can carry a hover tooltip via `tooltip="..."`.

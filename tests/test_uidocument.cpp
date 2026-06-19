@@ -255,5 +255,43 @@ int main() {
         CHECK(ys[0] != ys[1]);   // stacked, not overlapping
     }
 
+    // --- Data binding: text bind="{key}" follows Prefs ------------------
+    {
+        Prefs::Clear();
+        Prefs::SetInt("score", 0);
+        Scene s("bind"); s.physicsEnabled = false;
+        GameObject* docGo = s.CreateGameObject("Doc");
+        auto* doc = docGo->AddComponent<UIDocument>();
+        doc->markup = "text pos=10,10 size=2 bind=\"Score: {score}\"\n";
+        doc->Rebuild();
+        s.Start(); s.Update(0.0f);
+
+        TextRenderer* tr = nullptr;
+        for (GameObject* g : doc->Generated())
+            if (auto* x = g->GetComponent<TextRenderer>()) tr = x;
+        CHECK(tr != nullptr);
+        CHECK(tr->text == "Score: 0");
+
+        // Change the pref; the next update reflects it.
+        Prefs::SetInt("score", 42);
+        s.Update(0.016f);
+        CHECK(tr->text == "Score: 42");
+
+        // Literal braces survive: "{{" / "}}".
+        CHECK(UITextBind::Resolve("a {{b}} c") == "a {b} c");
+
+        // Round-trips: the binding restores and re-applies.
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        GameObject* d2 = s2.Find("Doc");
+        d2->GetComponent<UIDocument>()->Rebuild();
+        s2.Start(); s2.Update(0.0f);
+        TextRenderer* tr2 = nullptr;
+        for (GameObject* g : d2->GetComponent<UIDocument>()->Generated())
+            if (auto* x = g->GetComponent<TextRenderer>()) tr2 = x;
+        CHECK(tr2 && tr2->text == "Score: 42");
+        Prefs::Clear();
+    }
+
     TEST_MAIN_RESULT();
 }

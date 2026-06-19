@@ -22,10 +22,22 @@ class GameObject;
 ///       toggle "Sound" pos=30,270 size=28,28 on=1
 ///
 /// Indentation nests a widget under the one above it (a button inside a panel).
-/// Widget types: panel, text, button, image, slider, toggle, progress. Keys:
-/// pos=x,y  size=x,y (or one number for text px)  color=r,g,b[,a] (0-255)
-/// anchor=topleft|topcenter|topright|middleleft|center|middleright|bottomleft|
-/// bottomcenter|bottomright  value=f  on=0|1  onclick=<okayscript>.
+/// Widget types: panel, text, button, image, slider, toggle, progress, input,
+/// dropdown. Common keys:
+///   pos=x,y  size=x,y (or one number for text px)  color=r,g,b[,a] (0-255)
+///   anchor=topleft|topcenter|topright|middleleft|center|middleright|bottomleft|
+///   bottomcenter|bottomright  corner=<radius>  tooltip="hint" [tipdelay=s]
+/// Per-type keys:
+///   panel:    border=w bordercolor=r,g,b,a gradient=r,g,b,a
+///   button:   hover= pressed= textcolor= font=<scale> border= onclick=<script>
+///   text:     align=left|center|right  outline=r,g,b,a  shadow=r,g,b,a
+///   slider:   value= min= max= fill= knob= showvalue=1 onchange=<script>
+///   toggle:   on=1 check=r,g,b,a ontoggle=<script>
+///   progress: value= fill= percent=1
+///   image:    texture=path nineslice=1 border=px fill=left|right|up|down amount=f
+///   input:    placeholder="..." max=N onsubmit=<script>  (label = initial text)
+///   dropdown: options=A|B|C value=i onchange=<script>
+/// Event handlers (on*) take the rest of the line, so put them last.
 ///
 /// Two "advanced" constructs make UIs reusable (UI-Toolkit-like):
 ///   * style <name> <keys...>   — a USS-style class. A widget pulls it in with

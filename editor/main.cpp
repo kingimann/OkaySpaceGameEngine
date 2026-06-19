@@ -3381,8 +3381,22 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             ImGui::SameLine();
+            if (ImGui::Button("Insert Example##uidoc")) {
+                const char* tmpl =
+                    "style card color=30,36,52,235 corner=10 border=1\n"
+                    "panel pos=40,40 size=380,280 class=card gradient=12,14,22,235\n"
+                    "  text \"SETTINGS\" pos=70,64 size=4 align=left outline=0,0,0,255\n"
+                    "  button \"Play\" pos=70,110 size=300,52 corner=8 font=3 tooltip=\"Start the game\" onclick=load_scene(\"game\")\n"
+                    "  slider pos=70,180 size=300,16 value=0.7 showvalue=1\n"
+                    "  toggle \"Fullscreen\" pos=70,220 size=26,26 on=0\n"
+                    "  dropdown pos=70,260 size=200,30 options=Low|Medium|High value=1\n";
+                std::strncpy(buf, tmpl, sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+                doc->markup = buf; doc->Rebuild(); ed.scene().Update(0.0f); ed.dirty = true;
+            }
+            ImGui::SameLine();
             ImGui::TextDisabled("(%d widgets)", (int)doc->Generated().size());
-            ImGui::TextDisabled("types: panel text button image slider toggle progress");
+            ImGui::TextDisabled("types: panel text button image slider toggle progress input dropdown");
+            ImGui::TextDisabled("keys: corner border gradient font hover align outline tooltip options on*=...");
             if (ImGui::SmallButton("Remove##uidoc")) toRemove = doc;
         }
     }

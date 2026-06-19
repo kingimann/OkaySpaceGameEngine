@@ -8,6 +8,9 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UITooltip.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -98,7 +101,10 @@ Token Lex(const std::string& line) {
         std::string val;
         if (i < n && line[i] == '=') {
             ++i;
-            if (key == "onclick") {       // rest of line, verbatim
+            // Event handlers (onclick/onchange/ontoggle/onsubmit) take the rest of
+            // the line verbatim so script snippets keep their spaces/quotes — so a
+            // callback must be the last key on its line.
+            if (key.size() > 2 && key[0] == 'o' && key[1] == 'n') {
                 val = line.substr(i);
                 i = n;
             } else if (i < n && line[i] == '"') {
@@ -112,6 +118,29 @@ Token Lex(const std::string& line) {
         t.props.emplace_back(key, val);
     }
     return t;
+}
+
+bool  ParseBool(const std::string& v)  { return v == "1" || v == "true" || v == "yes" || v == "on"; }
+float ParseF(const std::string& v, float def = 0.0f) { return v.empty() ? def : (float)std::atof(v.c_str()); }
+
+// Split a `|`-separated list (used for dropdown options, which may contain
+// spaces: options=Low|Medium|High).
+std::vector<std::string> SplitPipes(const std::string& v) {
+    std::vector<std::string> out; std::string cur;
+    for (char ch : v) { if (ch == '|') { out.push_back(cur); cur.clear(); } else cur += ch; }
+    if (!cur.empty() || !v.empty()) out.push_back(cur);
+    return out;
+}
+
+// Wire a `<event>=<okayscript>` handler onto the GameObject's script component
+// (creating it if needed) as `function <fn>() { ... }`.
+void Handler(GameObject* go, const Token& t, const char* key, const char* fn) {
+    if (!t.Has(key)) return;
+    auto* sc = go->GetComponent<ScriptComponent>();
+    if (!sc) sc = go->AddComponent<ScriptComponent>("okayscript");
+    std::string src = sc->Source();
+    src += "function " + std::string(fn) + "() { " + t.Get(key) + " }\n";
+    sc->LoadSource(src);
 }
 
 // Build the widget GameObject for one token. `offset` shifts the widget's pixel
@@ -130,31 +159,73 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
     if (t.type == "panel") {
         auto* c = go->AddComponent<UIPanel>();
         applyBox(c->position, c->size, c->anchor, &c->color);
+        if (t.Has("corner")) c->cornerRadius = ParseF(t.Get("corner"));
+        if (t.Has("border")) c->borderWidth  = ParseF(t.Get("border"));
+        if (t.Has("bordercolor")) c->borderColor = ParseColor(t.Get("bordercolor"));
+        if (t.Has("gradient")) { c->useGradient = true; c->colorBottom = ParseColor(t.Get("gradient")); }
     } else if (t.type == "button") {
         auto* c = go->AddComponent<UIButton>();
         if (!t.label.empty()) c->label = t.label;
         applyBox(c->position, c->size, c->anchor, &c->color);
-        if (t.Has("onclick")) {
-            auto* sc = go->AddComponent<ScriptComponent>("okayscript");
-            sc->LoadSource("function on_click() { " + t.Get("onclick") + " }\n");
-        }
+        if (t.Has("hover"))     c->hoverColor   = ParseColor(t.Get("hover"));
+        if (t.Has("pressed"))   c->pressedColor = ParseColor(t.Get("pressed"));
+        if (t.Has("textcolor")) c->textColor    = ParseColor(t.Get("textcolor"));
+        if (t.Has("corner"))    c->cornerRadius = ParseF(t.Get("corner"));
+        if (t.Has("font"))      c->fontScale    = ParseF(t.Get("font"), 2.0f);
+        if (t.Has("border"))    c->borderWidth  = ParseF(t.Get("border"));
+        if (t.Has("bordercolor")) c->borderColor = ParseColor(t.Get("bordercolor"));
+        Handler(go, t, "onclick", "on_click");
     } else if (t.type == "image") {
         auto* c = go->AddComponent<UIImage>();
         applyBox(c->position, c->size, c->anchor, &c->color);
-        if (t.Has("texture")) c->texture = t.Get("texture");
+        if (t.Has("texture"))  c->texture = t.Get("texture");
+        if (t.Has("corner"))   c->cornerRadius = ParseF(t.Get("corner"));
+        if (t.Has("nineslice")){ c->nineSlice = ParseBool(t.Get("nineslice")); if (t.Has("border")) c->border = ParseF(t.Get("border")); }
+        if (t.Has("fill")) {     // fill=right|left|up|down
+            std::string f = t.Get("fill");
+            c->fillMode = f == "left" ? UIImage::FillMode::Left : f == "up" ? UIImage::FillMode::Up
+                        : f == "down" ? UIImage::FillMode::Down : UIImage::FillMode::Right;
+            if (t.Has("amount")) c->fillAmount = ParseF(t.Get("amount"), 1.0f);
+        }
     } else if (t.type == "slider") {
         auto* c = go->AddComponent<UISlider>();
         applyBox(c->position, c->size, c->anchor, nullptr);
-        if (t.Has("value")) c->value = (float)std::atof(t.Get("value").c_str());
+        if (t.Has("value")) c->value = ParseF(t.Get("value"), 0.5f);
+        if (t.Has("min"))   c->minValue = ParseF(t.Get("min"));
+        if (t.Has("max"))   c->maxValue = ParseF(t.Get("max"), 1.0f);
+        if (t.Has("fill"))  c->fill = ParseColor(t.Get("fill"));
+        if (t.Has("knob"))  c->knob = ParseColor(t.Get("knob"));
+        if (t.Has("corner")) c->cornerRadius = ParseF(t.Get("corner"));
+        if (t.Has("showvalue")) c->showValue = ParseBool(t.Get("showvalue"));
+        Handler(go, t, "onchange", "on_change");
     } else if (t.type == "toggle") {
         auto* c = go->AddComponent<UIToggle>();
         if (!t.label.empty()) c->label = t.label;
         applyBox(c->position, c->size, c->anchor, nullptr);
-        if (t.Has("on")) c->on = std::atoi(t.Get("on").c_str()) != 0;
+        if (t.Has("on")) c->on = ParseBool(t.Get("on"));
+        if (t.Has("corner")) c->cornerRadius = ParseF(t.Get("corner"));
+        if (t.Has("check"))  c->checkColor = ParseColor(t.Get("check"));
+        Handler(go, t, "ontoggle", "on_toggle");
     } else if (t.type == "progress") {
         auto* c = go->AddComponent<UIProgressBar>();
         applyBox(c->position, c->size, c->anchor, nullptr);
-        if (t.Has("value")) c->value = (float)std::atof(t.Get("value").c_str());
+        if (t.Has("value")) c->value = ParseF(t.Get("value"), 1.0f);
+        if (t.Has("fill"))  c->fill = ParseColor(t.Get("fill"));
+        if (t.Has("corner")) c->cornerRadius = ParseF(t.Get("corner"));
+        if (t.Has("percent")) c->showPercent = ParseBool(t.Get("percent"));
+    } else if (t.type == "input") {
+        auto* c = go->AddComponent<UIInputField>();
+        applyBox(c->position, c->size, c->anchor, &c->color);
+        if (!t.label.empty()) c->text = t.label;
+        if (t.Has("placeholder")) c->placeholder = t.Get("placeholder");
+        if (t.Has("max")) c->maxLength = std::atoi(t.Get("max").c_str());
+        Handler(go, t, "onsubmit", "on_submit");
+    } else if (t.type == "dropdown") {
+        auto* c = go->AddComponent<UIDropdown>();
+        applyBox(c->position, c->size, c->anchor, &c->color);
+        if (t.Has("options")) c->options = SplitPipes(t.Get("options"));
+        if (t.Has("value")) c->value = std::atoi(t.Get("value").c_str());
+        Handler(go, t, "onchange", "on_change");
     } else { // text (default)
         auto* c = go->AddComponent<TextRenderer>();
         c->screenSpace = true;
@@ -163,7 +234,17 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         if (t.Has("size"))   c->pixelSize = ParsePair(t.Get("size"), 0).x;
         if (t.Has("anchor")) c->anchor = ParseAnchor(t.Get("anchor"));
         if (t.Has("color"))  c->color = ParseColor(t.Get("color"));
+        if (t.Has("align"))  { std::string a = t.Get("align"); c->align = a == "center" ? 1 : a == "right" ? 2 : 0; }
+        if (t.Has("outline")){ c->outline = true; c->outlineColor = ParseColor(t.Get("outline")); }
+        if (t.Has("shadow")) { c->shadow = true; c->shadowColor = ParseColor(t.Get("shadow")); }
         c->screenPos = c->screenPos + offset;
+    }
+
+    // Any widget can carry a hover tooltip via `tooltip="..."`.
+    if (t.Has("tooltip")) {
+        auto* tip = go->AddComponent<UITooltip>();
+        tip->text = t.Get("tooltip");
+        if (t.Has("tipdelay")) tip->delay = ParseF(t.Get("tipdelay"), 0.5f);
     }
     return go;
 }

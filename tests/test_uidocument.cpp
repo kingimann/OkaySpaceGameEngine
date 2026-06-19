@@ -179,5 +179,43 @@ int main() {
         CHECK(d2->Generated().size() == 2);
     }
 
+    // --- Expanded widgets: input, dropdown, tooltip + customization keys --
+    {
+        Scene s("toolkit"); s.physicsEnabled = false;
+        GameObject* docGo = s.CreateGameObject("Doc");
+        auto* doc = docGo->AddComponent<UIDocument>();
+        doc->markup =
+            "panel pos=0,0 size=400,300 corner=12 border=2 gradient=10,10,20,255 tooltip=\"the frame\"\n"
+            "  button \"Go\" pos=10,10 size=120,40 corner=8 font=3 tooltip=\"start\" onclick=set(\"x\",1)\n"
+            "  input \"hi\" pos=10,60 size=200,32 placeholder=\"name\" max=12\n"
+            "  dropdown pos=10,110 size=180,32 options=Low|Medium|High value=2\n"
+            "  text \"Title\" pos=10,160 size=3 align=center outline=0,0,0,255\n";
+        doc->Rebuild(); s.Update(0.0f);
+
+        UIPanel* pn = nullptr; UIButton* bt = nullptr; UIInputField* in = nullptr;
+        UIDropdown* dd = nullptr; TextRenderer* tx = nullptr;
+        int tooltips = 0;
+        for (GameObject* g : doc->Generated()) {
+            if (auto* x = g->GetComponent<UIPanel>())      pn = x;
+            if (auto* x = g->GetComponent<UIButton>())     bt = x;
+            if (auto* x = g->GetComponent<UIInputField>()) in = x;
+            if (auto* x = g->GetComponent<UIDropdown>())   dd = x;
+            if (auto* x = g->GetComponent<TextRenderer>()) tx = x;
+            if (g->GetComponent<UITooltip>())              ++tooltips;
+        }
+        CHECK(pn && pn->useGradient);
+        CHECK_NEAR(pn->cornerRadius, 12.0f, 1e-4f);
+        CHECK_NEAR(pn->borderWidth, 2.0f, 1e-4f);
+        CHECK(bt && bt->label == "Go");
+        CHECK_NEAR(bt->cornerRadius, 8.0f, 1e-4f);
+        CHECK_NEAR(bt->fontScale, 3.0f, 1e-4f);
+        CHECK(bt->gameObject->GetComponent<ScriptComponent>() != nullptr);
+        CHECK(in && in->text == "hi" && in->placeholder == "name" && in->maxLength == 12);
+        CHECK(dd && dd->options.size() == 3 && dd->value == 2);
+        CHECK(dd->options[1] == "Medium");
+        CHECK(tx && tx->align == 1 && tx->outline);
+        CHECK(tooltips == 2);   // panel + button
+    }
+
     TEST_MAIN_RESULT();
 }

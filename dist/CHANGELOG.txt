@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v1.60.0
+  - UI Toolkit (OkayUI markup) greatly expanded: the UI Document now authors the
+    full widget set — added `input` and `dropdown` to panel/text/button/image/
+    slider/toggle/progress — plus a `tooltip="..."` key on ANY widget.
+  - New customization keys in markup: corner=, border=/bordercolor=, gradient=,
+    font=, hover=/pressed=/textcolor=, align=, outline=, shadow=, fill=/amount=,
+    showvalue=, percent=, check=, options=A|B|C, min=/max=.
+  - New event handlers: onchange= (slider/dropdown), ontoggle= (toggle),
+    onsubmit= (input) — alongside onclick=. Handlers take the rest of the line.
+  - Inspector: an "Insert Example" button drops in a styled settings menu so you
+    can see the toolkit in action immediately.
+
 v1.59.0
   - UI Tooltips (GameObject > UI > Tooltip): add a UI Tooltip to any widget and
     a hint box appears next to the cursor after hovering it for a short delay.

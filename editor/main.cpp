@@ -3571,6 +3571,15 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("corners stay fixed; edges/center stretch to size");
             }
             AnchorCombo("Anchor##uim", im->anchor, ed);
+            ImGui::SeparatorText("Fill & shape");
+            const char* fills[] = {"None", "Left", "Right", "Up", "Down"};
+            int fm = (int)im->fillMode;
+            if (ImGui::Combo("Fill Mode##uim", &fm, fills, 5)) { im->fillMode = (UIImage::FillMode)fm; ed.dirty = true; }
+            if (im->fillMode != UIImage::FillMode::None) {
+                if (ImGui::SliderFloat("Fill Amount##uim", &im->fillAmount, 0.0f, 1.0f)) ed.dirty = true;
+                ImGui::TextDisabled("for cooldowns / health bars; drive with ui_set_progress-style scripts");
+            }
+            if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -3883,8 +3892,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
-        dl->AddRectFilled(a, b, ToColor(im->color), 3.0f);
-        dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), 3.0f);
+        float fox, foy, fw, fh;
+        im->FilledRect(sz.x, sz.y, fox, foy, fw, fh);
+        ImVec2 fa(a.x + fox, a.y + foy), fb(fa.x + fw, fa.y + fh);
+        dl->AddRectFilled(fa, fb, ToColor(im->color), im->cornerRadius);
+        dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), im->cornerRadius);
         if (!im->texture.empty())
             DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
     }

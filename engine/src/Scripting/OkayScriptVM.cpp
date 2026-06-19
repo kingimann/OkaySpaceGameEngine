@@ -1186,6 +1186,11 @@ struct OkayScriptVM::Impl {
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
         };
+        b["ui_set_fill"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* im = g->GetComponent<UIImage>()) im->fillAmount = a[1].AsFloat();
+            return Value{};
+        };
         b["set_texture"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* sr = g->GetComponent<SpriteRenderer>())

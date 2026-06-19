@@ -334,7 +334,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << im->size.x << " " << im->size.y << " "
             << im->color.r << " " << im->color.g << " " << im->color.b << " " << im->color.a << " "
             << Quote(im->texture) << " " << (int)im->anchor << " "
-            << (im->nineSlice ? 1 : 0) << " " << im->border << "\n";
+            << (im->nineSlice ? 1 : 0) << " " << im->border << " "
+            << (int)im->fillMode << " " << im->fillAmount << " " << im->cornerRadius << "\n";
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
         out << "  uislider " << sl->position.x << " " << sl->position.y << " "
@@ -820,6 +821,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int nk = in.peek();
                     if (nk >= '0' && nk <= '9') {
                         int ns = 0; in >> ns >> im->border; im->nineSlice = (ns != 0);
+                    }
+                    in >> std::ws; // optional fill block (added later)
+                    if (std::isdigit(in.peek())) {
+                        int fm = 0; in >> fm >> im->fillAmount >> im->cornerRadius;
+                        im->fillMode = (UIImage::FillMode)fm;
                     }
                 } else if (field == "uislider") {
                     auto* sl = go->AddComponent<UISlider>();

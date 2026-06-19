@@ -463,6 +463,11 @@ int main(int argc, char** argv) {
             if (!im || !up->active) continue;
             Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, (float)w, (float)h);
             SDL_Rect r{(int)o.x, (int)o.y, (int)im->size.x, (int)im->size.y};
+            // Radial/linear fill: shrink the drawn rect to fillAmount along an axis.
+            float fox, foy, fw, fh;
+            im->FilledRect(im->size.x, im->size.y, fox, foy, fw, fh);
+            SDL_Rect fr{(int)(o.x + fox), (int)(o.y + foy), (int)fw, (int)fh};
+            bool filled = im->fillMode != UIImage::FillMode::None;
             SDL_Texture* tex = GetTexture(renderer, im->texture, baseDir, textureCache);
             if (tex) {
                 SDL_SetTextureColorMod(tex, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
@@ -486,13 +491,21 @@ int main(int argc, char** argv) {
                             if (s.w > 0 && s.h > 0 && d.w > 0 && d.h > 0)
                                 SDL_RenderCopy(renderer, tex, &s, &d);
                         }
+                } else if (filled) {                        // reveal a proportional slice
+                    int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+                    SDL_Rect src{
+                        (int)(im->size.x > 0 ? fox / im->size.x * tw : 0),
+                        (int)(im->size.y > 0 ? foy / im->size.y * th : 0),
+                        (int)(im->size.x > 0 ? fw  / im->size.x * tw : tw),
+                        (int)(im->size.y > 0 ? fh  / im->size.y * th : th)};
+                    SDL_RenderCopy(renderer, tex, &src, &fr);
                 } else {
                     SDL_RenderCopy(renderer, tex, nullptr, &r);
                 }
             } else {                                        // no image -> colored fill
                 SDL_SetRenderDrawColor(renderer, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
                                        (Uint8)(im->color.b * 255), (Uint8)(im->color.a * 255));
-                SDL_RenderFillRect(renderer, &r);
+                SDL_RenderFillRect(renderer, filled ? &fr : &r);
             }
         }
         for (const auto& up : scene.Objects()) {           // panels (backgrounds) first

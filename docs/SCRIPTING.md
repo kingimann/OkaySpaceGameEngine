@@ -132,6 +132,7 @@ function update(dt) {
 | `ui_dropdown_value("n")` / `ui_dropdown_text("n")` | Selected index / option text |
 | `ui_set_dropdown("n", i)` | Select a dropdown option (fires on_change) |
 | `ui_set_progress("n", v)` | Set a progress bar's fill (0..1) |
+| `ui_set_fill("n", v)` | Set a filled UI Image's amount (cooldowns/health) |
 
 ### Tweening & saves
 | Function | Description |

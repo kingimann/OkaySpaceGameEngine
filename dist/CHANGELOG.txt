@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.57.0
+  - UI Image fill (like Unity's Filled image): set Fill Mode to Left/Right/Up/
+    Down and a Fill Amount (0..1) to reveal only part of the image — perfect for
+    cooldown sweeps, health/mana bars and loading fills. Drive it from script
+    with ui_set_fill("name", v). Works on textured images (reveals a slice) and
+    on plain colored rects.
+  - UI Image rounded corners (Corner Radius) for the colored-rect fallback.
+  - All of it saves with the scene and renders in the built game.
+
 v1.56.0
   - UI scripting API: drive any widget from OkayScript by name —
     ui_set_text / ui_get_text, ui_clicked, ui_set_interactable,

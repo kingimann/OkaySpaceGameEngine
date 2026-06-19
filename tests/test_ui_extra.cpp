@@ -252,5 +252,34 @@ int main() {
         CHECK(ctrl->VM()->GetGlobal("pick").AsString() == "High");
     }
 
+    // --- UIImage fill: FilledRect geometry + serialization -------------
+    {
+        Scene s("Fill"); s.physicsEnabled = false;
+        auto* im = s.CreateGameObject("Bar")->AddComponent<UIImage>();
+        im->size = {100, 20};
+        im->cornerRadius = 6.0f;
+
+        float ox, oy, fw, fh;
+        // Right fill at 0.25 -> left quarter visible.
+        im->fillMode = UIImage::FillMode::Right; im->fillAmount = 0.25f;
+        im->FilledRect(100, 20, ox, oy, fw, fh);
+        CHECK_NEAR(ox, 0.0f, 1e-4f); CHECK_NEAR(fw, 25.0f, 1e-4f);
+        // Left fill at 0.25 -> right quarter visible (origin shifts).
+        im->fillMode = UIImage::FillMode::Left;
+        im->FilledRect(100, 20, ox, oy, fw, fh);
+        CHECK_NEAR(ox, 75.0f, 1e-4f); CHECK_NEAR(fw, 25.0f, 1e-4f);
+        // Up fill at 0.5 -> bottom half visible.
+        im->fillMode = UIImage::FillMode::Up; im->fillAmount = 0.5f;
+        im->FilledRect(100, 20, ox, oy, fw, fh);
+        CHECK_NEAR(oy, 10.0f, 1e-4f); CHECK_NEAR(fh, 10.0f, 1e-4f);
+
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        auto* im2 = s2.Find("Bar")->GetComponent<UIImage>();
+        CHECK(im2 && im2->fillMode == UIImage::FillMode::Up);
+        CHECK_NEAR(im2->fillAmount, 0.5f, 1e-4f);
+        CHECK_NEAR(im2->cornerRadius, 6.0f, 1e-4f);
+    }
+
     TEST_MAIN_RESULT();
 }

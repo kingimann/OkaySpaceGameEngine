@@ -204,6 +204,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                         else if (ay >= ax && ay >= az) { uu = p.x + 0.5f; vt = p.z + 0.5f; }
                         else { uu = p.x + 0.5f; vt = p.y + 0.5f; }
                     }
+                    uu *= mr->tiling.x; vt *= mr->tiling.y;   // texture repeat
                     u[k] = uu * iw[k]; vv[k] = vt * iw[k];   // perspective-correct
                 }
                 r.TriangleTex(sx, sy, sd, iw, u, vv, *tex, mr->color, shade, spec,

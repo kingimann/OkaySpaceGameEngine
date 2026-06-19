@@ -18,6 +18,7 @@ int main() {
         mr->shininess = 48.0f;
         mr->unlit = true;
         mr->texture = "assets/brick.png";
+        mr->tiling = {3.0f, 2.0f};
 
         std::string text = SceneSerializer::Serialize(s);
         Scene s2("x");
@@ -31,7 +32,19 @@ int main() {
             CHECK_NEAR(m2->shininess, 48.0f, 1e-4f);
             CHECK(m2->unlit);
             CHECK(m2->texture == "assets/brick.png");
+            CHECK_NEAR(m2->tiling.x, 3.0f, 1e-5f);
+            CHECK_NEAR(m2->tiling.y, 2.0f, 1e-5f);
         }
+    }
+
+    // Curved primitives now carry real per-vertex UVs (parallel to vertices).
+    {
+        Mesh sph = Mesh::Sphere();
+        CHECK(sph.uvs.size() == sph.vertices.size());
+        Mesh cyl = Mesh::Cylinder();
+        CHECK(cyl.uvs.size() == cyl.vertices.size());
+        Mesh cube = Mesh::Cube();   // no UVs -> planar fallback in the renderer
+        CHECK(cube.uvs.empty());
     }
 
     // Older scenes without a "material" record still load (defaults applied).

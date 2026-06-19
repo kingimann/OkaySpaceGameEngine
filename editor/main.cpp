@@ -1945,6 +1945,10 @@ void DrawInspector(EditorState& ed) {
             if (!mr->texture.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##tex")) { mr->texture.clear(); ed.dirty = true; }
+                float til[2] = {mr->tiling.x, mr->tiling.y};
+                if (ImGui::DragFloat2("Tiling##mesh", til, 0.05f, 0.01f, 64.0f)) {
+                    mr->tiling = {til[0], til[1]}; ed.dirty = true;
+                }
             }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());

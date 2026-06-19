@@ -134,6 +134,7 @@ struct Mesh {
                 m.vertices.push_back({radius * std::sin(phi) * std::cos(theta),
                                       radius * std::cos(phi),
                                       radius * std::sin(phi) * std::sin(theta)});
+                m.uvs.push_back({(float)s / sectors, 1.0f - (float)r / rings});
             }
         }
         int stride = sectors + 1;
@@ -154,15 +155,16 @@ struct Mesh {
         for (int s = 0; s <= sectors; ++s) {            // interleaved top/bottom ring
             float th = 2.0f * kPi * (float)s / sectors;
             float x = radius * std::cos(th), z = radius * std::sin(th);
-            m.vertices.push_back({x, h, z});
-            m.vertices.push_back({x, -h, z});
+            float u = (float)s / sectors;
+            m.vertices.push_back({x, h, z});  m.uvs.push_back({u, 1.0f});
+            m.vertices.push_back({x, -h, z}); m.uvs.push_back({u, 0.0f});
         }
         for (int s = 0; s < sectors; ++s) {             // side quads
             int t0 = s * 2, b0 = s * 2 + 1, t1 = (s + 1) * 2, b1 = (s + 1) * 2 + 1;
             m.triangles.insert(m.triangles.end(), {t0, b0, t1, t1, b0, b1});
         }
-        int topC = (int)m.vertices.size(); m.vertices.push_back({0, h, 0});
-        int botC = (int)m.vertices.size(); m.vertices.push_back({0, -h, 0});
+        int topC = (int)m.vertices.size(); m.vertices.push_back({0, h, 0});  m.uvs.push_back({0.5f, 0.5f});
+        int botC = (int)m.vertices.size(); m.vertices.push_back({0, -h, 0}); m.uvs.push_back({0.5f, 0.5f});
         for (int s = 0; s < sectors; ++s) {             // caps
             m.triangles.insert(m.triangles.end(), {topC, s * 2, (s + 1) * 2});
             m.triangles.insert(m.triangles.end(), {botC, (s + 1) * 2 + 1, s * 2 + 1});

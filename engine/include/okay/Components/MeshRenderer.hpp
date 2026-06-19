@@ -30,6 +30,8 @@ public:
     /// onto the mesh (planar/box projection) tinted by `color`. Build Game
     /// bundles the file alongside the exe.
     std::string texture;
+    /// Texture repeat across the surface (UVs are multiplied by this).
+    Vec2 tiling = {1.0f, 1.0f};
 
     /// Optional .OBJ model file. When set, the scene loader replaces `mesh` with
     /// the loaded geometry (and Build Game bundles the file alongside the exe).

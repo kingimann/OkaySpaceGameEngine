@@ -120,7 +120,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // so older scenes without it still load.
         out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
             << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
-            << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << "\n";
+            << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << " "
+            << mr->tiling.x << " " << mr->tiling.y << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
@@ -405,6 +406,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         mr->unlit = (unlit != 0);
                         in >> std::ws; // optional texture path (quoted)
                         if (in.peek() == '"') mr->texture = ReadQuoted(in);
+                        in >> std::ws; // optional texture tiling (u v)
+                        int p = in.peek();
+                        if (std::isdigit(p) || p == '-' || p == '.')
+                            in >> mr->tiling.x >> mr->tiling.y;
                     }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();

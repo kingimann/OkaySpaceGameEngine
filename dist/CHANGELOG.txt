@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.16.0
+  - Proper UV wrapping on Sphere and Cylinder primitives, so textures wrap
+    around them cleanly instead of using the planar decal fallback.
+  - Texture tiling: a per-object Tiling (U, V) control repeats the texture
+    across the surface (Mesh Renderer inspector; saved with the scene).
+
 v1.15.0
   - Textured 3D meshes: set a Texture image on a Mesh Renderer and it's mapped
     onto the mesh (planar/box projection — exact on cube/plane/quad faces),

@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.25.0
+  - New Character Controller 2D component: no-code Top-Down or Platformer
+    movement (WASD/arrows, jump). Drives a Rigidbody2D if present.
+  - Removed the old node-graph Visual Script from the editor — the no-code
+    Actions system replaces it (old scenes still load).
+
 v1.24.0
   - Visual scripting: reorder conditions and instructions with the ^ / v
     buttons on each row.

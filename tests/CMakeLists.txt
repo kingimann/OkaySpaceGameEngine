@@ -42,6 +42,10 @@ add_executable(test_actionlist test_actionlist.cpp)
 target_link_libraries(test_actionlist PRIVATE okay::engine)
 add_test(NAME actionlist COMMAND test_actionlist)
 
+add_executable(test_charctrl test_charctrl.cpp)
+target_link_libraries(test_charctrl PRIVATE okay::engine)
+add_test(NAME charctrl COMMAND test_charctrl)
+
 add_executable(test_transform_input test_transform_input.cpp)
 target_link_libraries(test_transform_input PRIVATE okay::engine)
 add_test(NAME transform_input COMMAND test_transform_input)

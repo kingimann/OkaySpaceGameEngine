@@ -9,6 +9,7 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
+#include "okay/Components/CharacterController2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -180,6 +181,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* mv = go->GetComponent<Mover>()) {
         out << "  mover " << mv->velocity.x << " " << mv->velocity.y << " " << mv->velocity.z << "\n";
+    }
+    if (auto* cc = go->GetComponent<CharacterController2D>()) {
+        out << "  charctrl2d " << (int)cc->mode << " " << cc->speed << " " << cc->jumpForce << "\n";
     }
     if (auto* sp = go->GetComponent<Spinner>()) {
         out << "  spinner " << sp->angularVelocity.x << " " << sp->angularVelocity.y
@@ -487,6 +491,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     vsc->LoadFromText(src);
                 } else if (field == "actions") {
                     go->AddComponent<ActionList>()->FromText(ReadQuoted(in));
+                } else if (field == "charctrl2d") {
+                    int m = 0; float sp = 5, jf = 9;
+                    in >> m >> sp >> jf;
+                    auto* cc = go->AddComponent<CharacterController2D>();
+                    cc->mode = (CharacterController2D::Mode)m; cc->speed = sp; cc->jumpForce = jf;
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
                     go->AddComponent<Mover>()->velocity = v;

@@ -91,6 +91,7 @@
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/ActionList.hpp"
+#include "okay/Components/CharacterController2D.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 
 // Multiplayer networking

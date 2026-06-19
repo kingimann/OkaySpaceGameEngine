@@ -1551,16 +1551,15 @@ void DrawScriptEditor(EditorState& ed) {
     if (!ImGui::Begin("Script Editor", &g_showScriptEditor)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
     ScriptComponent* sc = go ? go->GetComponent<ScriptComponent>() : nullptr;
-    VisualScriptComponent* vsc = go ? go->GetComponent<VisualScriptComponent>() : nullptr;
 
-    if (!sc && !vsc) {
-        ImGui::TextDisabled("Select an object with a Script or Visual Script.");
-        ImGui::TextDisabled("Add one via Inspector > Add Component.");
+    if (!sc) {
+        ImGui::TextDisabled("Select an object with a Script component.");
+        ImGui::TextDisabled("Add one via Inspector > Add Component > Scripting.");
         ImGui::End();
         return;
     }
 
-    if (sc) {
+    {
         ImGui::Text("Script  -  %s", go->name.c_str());
 
         auto& buf = CodeBuffer(sc, sc->Source().empty()
@@ -1625,36 +1624,6 @@ void DrawScriptEditor(EditorState& ed) {
                 std::string e; sc->LoadSource(src, &e);
                 ConsoleLog("Reloaded " + sc->Path());
             } else ConsoleLog("No file to reload (Save File first)");
-        }
-    } else {
-        ImGui::Text("Visual Script  -  %s", go->name.c_str());
-        auto& buf = CodeBuffer(vsc, vsc->Source().empty()
-            ? "# Move right at 2 units/sec\nnode 0 OnUpdate\nnode 1 Const 2\n"
-              "node 2 DeltaTime\nnode 3 Mul\nnode 4 Const 0\nnode 5 Translate\n"
-              "data 3 0 1 0\ndata 3 1 2 0\ndata 5 0 3 0\ndata 5 1 4 0\n"
-              "exec 0 0 5\nentry OnUpdate 0\n"
-            : vsc->Source());
-        ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= 34.0f; if (av.y < 60) av.y = 60;
-        ImGui::InputTextMultiline("##vseditor", buf.data(), buf.size(), av);
-        std::string p = go->name + ".okayvs";
-        if (ImGui::Button("Apply Graph")) {
-            std::string e;
-            ConsoleLog(vsc->LoadFromText(buf.data(), &e) ? "Graph applied" : "Error: " + e);
-            ed.dirty = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Open in IDE")) {
-            extide::WriteFile(p, buf.data()); extide::OpenExternal(p);
-            ConsoleLog("Opened " + p + " in external IDE");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Reload")) {
-            if (extide::fs::exists(p)) {
-                std::string src = extide::ReadFile(p);
-                SetCodeBuffer(vsc, src);
-                std::string e; vsc->LoadFromText(src, &e);
-                ConsoleLog("Reloaded " + p);
-            } else ConsoleLog("No file to reload");
         }
     }
     ImGui::End();
@@ -2447,10 +2416,16 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##script")) toRemove = sc;
         }
     }
-    if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
-        if (ImGui::CollapsingHeader("Visual Script", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::TextWrapped("Edit the node graph in the Script Editor panel.");
-            if (ImGui::SmallButton("Remove##vs")) toRemove = vsc;
+    if (auto* cc = go->GetComponent<CharacterController2D>()) {
+        if (ImGui::CollapsingHeader("Character Controller 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            int m = (int)cc->mode;
+            const char* modes[] = {"Top-Down", "Platformer"};
+            if (ImGui::Combo("Mode##cc2", &m, modes, 2)) { cc->mode = (CharacterController2D::Mode)m; ed.dirty = true; }
+            if (ImGui::DragFloat("Speed##cc2", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            if (cc->mode == CharacterController2D::Mode::Platformer)
+                if (ImGui::DragFloat("Jump Force##cc2", &cc->jumpForce, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            ImGui::TextDisabled("WASD / arrows. Uses a Rigidbody2D if present.");
+            if (ImGui::SmallButton("Remove##cc2")) toRemove = cc;
         }
     }
     if (auto* al = go->GetComponent<ActionList>()) {
@@ -2808,8 +2783,6 @@ void DrawInspector(EditorState& ed) {
         Hdr("Scripting");
         if (!go->GetComponent<ScriptComponent>() && F("Script (OkayScript)") && ImGui::Selectable("Script (OkayScript)"))
             { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
-        if (!go->GetComponent<VisualScriptComponent>() && F("Visual Script") && ImGui::Selectable("Visual Script"))
-            { go->AddComponent<VisualScriptComponent>(); ed.dirty = true; }
         if (!go->GetComponent<ActionList>() && F("Actions (Visual Script)") && ImGui::Selectable("Actions (Visual Script)"))
             { go->AddComponent<ActionList>(); ed.dirty = true; }
 
@@ -2818,6 +2791,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
 
         Hdr("Gameplay");
+        if (!go->GetComponent<CharacterController2D>() && F("Character Controller 2D") && ImGui::Selectable("Character Controller 2D"))
+            { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
         if (!go->GetComponent<Mover>() && F("Mover") && ImGui::Selectable("Mover"))
             { go->AddComponent<Mover>(); ed.dirty = true; }
         if (!go->GetComponent<Spinner>() && F("Spinner") && ImGui::Selectable("Spinner"))

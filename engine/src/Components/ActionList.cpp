@@ -182,6 +182,10 @@ void ActionList::Update(float dt) {
             }
         }
         else if (op == "set_timescale") { Time::SetTimeScale(Num(it, 0)); }
+        else if (op == "send") {
+            if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>())
+                a->ReceiveMessage(Str(it, 0));
+        }
         else if (op == "move") { if (t) t->Translate({Num(it, 0), Num(it, 1), Num(it, 2)}); }
         else if (op == "set_pos") { if (t) t->localPosition = {Num(it, 0), Num(it, 1), Num(it, 2)}; }
         else if (op == "rotate") { if (t) t->Rotate({Num(it, 1), Num(it, 2), Num(it, 0)}); }

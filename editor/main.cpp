@@ -2445,7 +2445,7 @@ void DrawInspector(EditorState& ed) {
         if (ImGui::CollapsingHeader("Actions (Visual Script)", ImGuiTreeNodeFlags_DefaultOpen)) {
             // Trigger -> Conditions -> Instructions, Game-Creator style.
             const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision",
-                                   "On Click", "On Key Up"};
+                                   "On Click", "On Key Up", "On Message"};
             int ti = (int)al->trigger;
             ImGui::SetNextItemWidth(150);
             if (ImGui::Combo("Trigger", &ti, trigs, IM_ARRAYSIZE(trigs))) { al->trigger = (ActionList::Trigger)ti; ed.dirty = true; }
@@ -2456,6 +2456,12 @@ void DrawInspector(EditorState& ed) {
                 std::strncpy(kb, al->triggerKey.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
                 ImGui::SetNextItemWidth(50);
                 if (ImGui::InputText("Key##al", kb, sizeof(kb))) { al->triggerKey = kb; ed.dirty = true; }
+            } else if (al->trigger == ActionList::Trigger::OnMessage) {
+                ImGui::SameLine();
+                char mb[64];
+                std::strncpy(mb, al->triggerKey.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::InputText("Message##al", mb, sizeof(mb))) { al->triggerKey = mb; ed.dirty = true; }
             }
             ImGui::SameLine();
             if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
@@ -2467,7 +2473,7 @@ void DrawInspector(EditorState& ed) {
                 "set_scale3", "move_toward", "look_at", "wait", "goto", "stop",
                 "set_var", "add_var", "set_active", "set_text", "set_color", "velocity",
                 "impulse", "emit", "play_anim", "play_sound", "set_cam", "set_bg",
-                "set_light", "set_ambient", "set_timescale", "spawn", "spawn3",
+                "set_light", "set_ambient", "set_timescale", "send", "spawn", "spawn3",
                 "destroy", "destroy_obj", "activate", "deactivate", "load_scene", "log"};
 
             ImGui::SeparatorText("Conditions (all must pass)");

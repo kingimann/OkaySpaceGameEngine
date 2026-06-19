@@ -16,7 +16,7 @@ struct Collision2D;
 class ActionList : public Behaviour {
 public:
     // Appended in order — existing values must stay stable for serialization.
-    enum class Trigger { OnStart, OnUpdate, OnKey, OnCollision, OnClick, OnKeyUp };
+    enum class Trigger { OnStart, OnUpdate, OnKey, OnCollision, OnClick, OnKeyUp, OnMessage };
 
     /// One condition or instruction: an op name + string args (numbers parsed
     /// on use, so the data stays uniform and easy to edit/serialize).
@@ -38,6 +38,12 @@ public:
     void OnCollisionEnter2D(const Collision2D& c) override;
 
     bool IsRunning() const { return m_running; }
+
+    /// Deliver a named signal: fires this list if it's an OnMessage trigger
+    /// listening for `msg`. Sent by the `send` instruction or send_message().
+    void ReceiveMessage(const std::string& msg) {
+        if (trigger == Trigger::OnMessage && triggerKey == msg) Fire();
+    }
 
     /// Compact text form (one line per trigger / condition / instruction), for
     /// serialization and the editor. Round-trips through FromText().

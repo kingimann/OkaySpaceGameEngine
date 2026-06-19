@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.23.0
+  - Signals (Game Creator-style): an Actions list can use the On Message
+    trigger and the `send` instruction to broadcast/react to named events.
+    OkayScript can broadcast too via send_message("name"), so scripts and
+    visual scripts talk to each other.
+
 v1.22.0
   - Inspector Lock: pin the inspector to one object so it stays put while you
     click around the scene/hierarchy.

@@ -1814,6 +1814,13 @@ struct OkayScriptVM::Impl {
             auto it = m.find(a[0].AsString());
             return Value{it != m.end() ? it->second : 0.0f};
         };
+        // Broadcast a named signal to every Actions (OnMessage) list in the scene.
+        b["send_message"] = [this](std::vector<Value>& a) {
+            if (!a.empty() && rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                for (ActionList* al : rt.host->gameObject->scene()->FindObjectsOfType<ActionList>())
+                    al->ReceiveMessage(a[0].AsString());
+            return Value{};
+        };
 
         // --- Sprite glyph/size on a sibling SpriteRenderer ---
         b["set_glyph"] = [go](std::vector<Value>& a) {

@@ -100,6 +100,24 @@ int main() {
         CHECK(b.instructions[1].args.size() == 2);   // "Hi" + "there"
     }
 
+    // Signals: one list sends a message, another (OnMessage) reacts.
+    {
+        ActionList::ResetVars();
+        Scene s("M"); s.physicsEnabled = false;
+        GameObject* sender = s.CreateGameObject("Sender");
+        auto* sa = sender->AddComponent<ActionList>();
+        sa->trigger = ActionList::Trigger::OnStart;
+        sa->instructions = { I("send", {"door_open"}) };
+
+        GameObject* door = s.CreateGameObject("Door");
+        auto* da = door->AddComponent<ActionList>();
+        da->trigger = ActionList::Trigger::OnMessage; da->triggerKey = "door_open";
+        da->instructions = { I("set_var", {"opened", "1"}) };
+
+        s.Start(); s.Update(0.016f);
+        CHECK_NEAR(ActionList::Vars()["opened"], 1.0f, 1e-4f);
+    }
+
     // `stop` ends the list early; later instructions don't run.
     {
         ActionList::ResetVars();

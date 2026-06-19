@@ -205,6 +205,11 @@ int main() {
         auto* dd = go->AddComponent<UIDropdown>();
         dd->anchor = UIAnchor::TopLeft; dd->position = {0, 0}; dd->size = {200, 40};
         dd->options = {"A", "B", "C"}; dd->value = 0;
+        dd->placeholder = "Pick one";
+        // value = -1 shows the placeholder, not an option.
+        dd->value = -1;
+        CHECK(!dd->HasSelection() && dd->HeaderText() == "Pick one");
+        dd->value = 0;
         s.Start();
 
         // Clear any leftover button state from earlier blocks, then click.
@@ -231,6 +236,7 @@ int main() {
         CHECK(dd2 && dd2->value == 2);
         CHECK(dd2 && dd2->options.size() == 3);
         CHECK(dd2 && dd2->options[1] == "B");
+        CHECK(dd2 && dd2->placeholder == "Pick one");
         Input::FeedMouse({0, 0}, 0);
     }
 

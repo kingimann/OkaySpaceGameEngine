@@ -310,7 +310,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << dd->borderColor.r << " " << dd->borderColor.g << " " << dd->borderColor.b << " " << dd->borderColor.a << " "
             << dd->options.size();
         for (const auto& opt : dd->options) out << " " << Quote(opt);
-        out << " " << (dd->interactable ? 1 : 0) << "\n";
+        out << " " << (dd->interactable ? 1 : 0) << " " << Quote(dd->placeholder) << "\n";
     }
     if (auto* tb = go->GetComponent<UITextBind>()) {
         out << "  uibind " << Quote(tb->format) << "\n";
@@ -823,6 +823,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (std::size_t k = 0; k < count; ++k) dd->options.push_back(ReadQuoted(in));
                     in >> std::ws; // optional interactable (added later)
                     if (std::isdigit(in.peek())) { int it = 1; in >> it; dd->interactable = (it != 0); }
+                    in >> std::ws; // optional placeholder (added later)
+                    if (in.peek() == '"') dd->placeholder = ReadQuoted(in);
                 } else if (field == "uibind") {
                     auto* tb = go->AddComponent<UITextBind>();
                     tb->format = ReadQuoted(in);

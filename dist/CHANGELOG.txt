@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.87.0
+  - Dropdown placeholder: set a placeholder string and a value of -1 ("Clear
+    selection" in the inspector) to show dimmed prompt text until the player
+    picks an option. Authorable in OkayUI markup (placeholder="..."); saves with
+    the scene and renders in the editor and built game.
+
 v1.86.0
   - UI Slider can be Vertical: drag bottom-to-top and the fill/knob run
     vertically — for volume columns, mixers and meters. Toggle "Vertical" in the

@@ -3576,6 +3576,10 @@ void DrawInspector(EditorState& ed) {
             float sz[2] = {dd->size.x, dd->size.y};
             if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##udd", dd->anchor, ed);
+            char ph[96]; std::strncpy(ph, dd->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
+            if (ImGui::InputText("Placeholder##udd", ph, sizeof(ph))) { dd->placeholder = ph; ed.dirty = true; }
+            if (ImGui::Button("Clear selection##udd")) { dd->value = -1; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("value = -1 shows the placeholder");
             ImGui::SeparatorText("Options");
             int toErase = -1;
             for (int i = 0; i < (int)dd->options.size(); ++i) {
@@ -4228,7 +4232,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float ty = a.y + (sz.y - Font8x8::Height * px) * 0.5f;
         dl->AddRectFilled(a, b, ToColor(dd->color), 4.0f);
         dl->AddRect(a, b, ToColor(dd->borderColor), 4.0f, 0, 1.0f);
-        DrawBitmapText(dl, dd->Selected(), a.x + 8 * s, ty, px, ToColor(dd->textColor));
+        ImU32 hcol = dd->HasSelection() ? ToColor(dd->textColor) : IM_COL32(150, 152, 158, 255);
+        DrawBitmapText(dl, dd->HeaderText(), a.x + 8 * s, ty, px, hcol);
         // Down-caret on the right.
         float cx = b.x - 14 * s, cy = a.y + sz.y * 0.5f;
         dl->AddTriangleFilled(ImVec2(cx - 5 * s, cy - 3 * s), ImVec2(cx + 5 * s, cy - 3 * s),

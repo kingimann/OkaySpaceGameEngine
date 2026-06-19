@@ -750,7 +750,8 @@ int main(int argc, char** argv) {
             float ty = o.y + (dd->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(dd->textColor.r * 255), (Uint8)(dd->textColor.g * 255),
                          (Uint8)(dd->textColor.b * 255), (Uint8)(dd->textColor.a * 255)};
-            DrawText(renderer, dd->Selected(), o.x + 8.0f, ty, px, tc);
+            SDL_Color htc = dd->HasSelection() ? tc : SDL_Color{150, 152, 158, 255};
+            DrawText(renderer, dd->HeaderText(), o.x + 8.0f, ty, px, htc);
             if (dd->open) {
                 float top = o.y + dd->size.y;
                 for (int i = 0; i < (int)dd->options.size(); ++i) {

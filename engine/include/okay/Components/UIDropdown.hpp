@@ -29,6 +29,8 @@ public:
     Color textColor   = Color::White;
     Color borderColor = Color::FromBytes(255, 255, 255, 60);
     UIAnchor anchor = UIAnchor::TopLeft;
+    /// Shown in the header (dimmed) when nothing is chosen (value < 0).
+    std::string placeholder = "Select...";
 
     /// The currently selected option text (empty if none).
     const std::string& Selected() const {
@@ -36,6 +38,12 @@ public:
         if (value >= 0 && value < (int)options.size()) return options[value];
         return empty;
     }
+
+    /// Header text: the selection, or the placeholder when none is chosen.
+    const std::string& HeaderText() const {
+        return (value >= 0 && value < (int)options.size()) ? options[value] : placeholder;
+    }
+    bool HasSelection() const { return value >= 0 && value < (int)options.size(); }
 
     /// Set the selection by index, firing on_change if it actually changed.
     void SetValue(int v) {

@@ -248,6 +248,7 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         applyBox(c->position, c->size, c->anchor, &c->color);
         if (t.Has("options")) c->options = SplitPipes(t.Get("options"));
         if (t.Has("value")) c->value = std::atoi(t.Get("value").c_str());
+        if (t.Has("placeholder")) c->placeholder = t.Get("placeholder");
         Handler(go, t, "onchange", "on_change");
     } else if (t.type == "scroll") {
         auto* c = go->AddComponent<UIScrollView>();

@@ -330,7 +330,31 @@ bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
+bool g_autosave = false;         // periodically save the open scene
+double g_lastAutosave = 0.0;     // seconds since last autosave
+bool g_quitRequested = false;    // quit pending (may prompt to save first)
+std::vector<std::string> g_recent; // recently opened/saved scene paths
 std::string g_clipboard;         // serialized GameObject for copy/paste
+
+// Recently-used scenes, persisted to a small file beside the working dir.
+void LoadRecent() {
+    g_recent.clear();
+    std::ifstream f("okay_recent.txt");
+    std::string line;
+    while (std::getline(f, line) && g_recent.size() < 10)
+        if (!line.empty()) g_recent.push_back(line);
+}
+void SaveRecent() {
+    std::ofstream f("okay_recent.txt");
+    for (const auto& p : g_recent) f << p << "\n";
+}
+void AddRecent(const std::string& path) {
+    if (path.empty()) return;
+    g_recent.erase(std::remove(g_recent.begin(), g_recent.end(), path), g_recent.end());
+    g_recent.insert(g_recent.begin(), path);
+    if (g_recent.size() > 10) g_recent.resize(10);
+    SaveRecent();
+}
 
 // File dialogs.
 bool g_showSaveAs = false, g_showOpen = false;
@@ -644,7 +668,7 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderFinish(dockId);
 }
 
-void DrawMenuAndToolbar(EditorState& ed, bool& running) {
+void DrawMenuAndToolbar(EditorState& ed) {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Project...", "Ctrl+N")) g_showNewProject = true;
@@ -652,9 +676,21 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         if (ImGui::MenuItem("New 3D Scene")) { ed.NewScene3D(); ConsoleLog("New 3D project"); }
         ImGui::Separator();
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
+        if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
+            for (const std::string& p : g_recent) {
+                if (ImGui::MenuItem(p.c_str())) {
+                    std::string err;
+                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                    else ConsoleLog("Open failed: " + err);
+                }
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Clear")) { g_recent.clear(); SaveRecent(); }
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Save", "Ctrl+S")) {
             std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-            if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE"); }
+            if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); ed.Achievement("FIRST_SAVE"); }
             else ConsoleLog("Save failed");
         }
         if (ImGui::MenuItem("Save As...")) {
@@ -663,9 +699,10 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
             g_showSaveAs = true;
         }
         ImGui::Separator();
+        ImGui::MenuItem("Autosave", nullptr, &g_autosave);
         if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
         ImGui::Separator();
-        if (ImGui::MenuItem("Exit")) running = false;
+        if (ImGui::MenuItem("Exit")) g_quitRequested = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
@@ -835,7 +872,7 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
 }
 
 // Full-window host that hosts the dockspace + menu/toolbar.
-void DrawDockSpace(EditorState& ed, bool& running) {
+void DrawDockSpace(EditorState& ed) {
     static bool first = true;
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
@@ -864,7 +901,7 @@ void DrawDockSpace(EditorState& ed, bool& running) {
     }
     ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
 
-    DrawMenuAndToolbar(ed, running);
+    DrawMenuAndToolbar(ed);
     ImGui::End();
 }
 
@@ -1102,6 +1139,41 @@ void DrawStats(EditorState& ed) {
 
 // A dedicated code/graph editor panel (separate from the Inspector), with
 // external-IDE round-tripping.
+// Prompt to save unsaved work before quitting. Routed through g_quitRequested
+// (set by Exit, the window close button, or SDL_QUIT) so closing never silently
+// discards changes.
+void DrawQuitPrompt(EditorState& ed, bool& running) {
+    static bool open = false;
+    if (g_quitRequested && !open) {
+        if (!ed.dirty) { running = false; g_quitRequested = false; return; }
+        ImGui::OpenPopup("Unsaved Changes");
+        open = true;
+    }
+    ImVec2 c = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("You have unsaved changes. Save before quitting?");
+        ImGui::Separator();
+        if (ImGui::Button("Save", ImVec2(110, 0))) {
+            std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
+            if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); }
+            running = false; g_quitRequested = false; open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Don't Save", ImVec2(110, 0))) {
+            running = false; g_quitRequested = false; open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) {
+            g_quitRequested = false; open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 // In-editor OkayScript reference, so scripting is documented without leaving
 // the app. Opened from Help > Scripting Reference or the Script Editor's Docs.
 void DrawScriptDocs() {
@@ -1402,7 +1474,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::InputText("Path", g_pathBuf, sizeof(g_pathBuf));
         if (ImGui::Button("Open", ImVec2(120, 0))) {
             std::string err;
-            if (ed.Load(g_pathBuf, &err)) ConsoleLog("Opened " + std::string(g_pathBuf));
+            if (ed.Load(g_pathBuf, &err)) { ConsoleLog("Opened " + std::string(g_pathBuf)); AddRecent(g_pathBuf); }
             else ConsoleLog("Open failed: " + err);
             ImGui::CloseCurrentPopup();
         }
@@ -1415,7 +1487,7 @@ void DrawFileDialogs(EditorState& ed) {
     if (ImGui::BeginPopupModal("Save Scene As", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::InputText("Path", g_pathBuf, sizeof(g_pathBuf));
         if (ImGui::Button("Save", ImVec2(120, 0))) {
-            if (ed.Save(g_pathBuf)) { ConsoleLog("Saved " + std::string(g_pathBuf)); ed.Achievement("FIRST_SAVE"); }
+            if (ed.Save(g_pathBuf)) { ConsoleLog("Saved " + std::string(g_pathBuf)); AddRecent(g_pathBuf); ed.Achievement("FIRST_SAVE"); }
             else ConsoleLog("Save failed");
             ImGui::CloseCurrentPopup();
         }
@@ -3222,6 +3294,7 @@ int main(int argc, char** argv) {
 
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
+    LoadRecent();
     ConsoleLog("Welcome to OkaySpace v" OKAY_ENGINE_VERSION
                ". Choose a 2D or 3D project to begin.");
 
@@ -3232,10 +3305,10 @@ int main(int argc, char** argv) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
-            if (e.type == SDL_QUIT) running = false;
+            if (e.type == SDL_QUIT) g_quitRequested = true;
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
                 e.window.windowID == SDL_GetWindowID(window))
-                running = false;
+                g_quitRequested = true;
         }
 
         Uint64 now = SDL_GetPerformanceCounter();
@@ -3297,6 +3370,15 @@ int main(int argc, char** argv) {
         if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
+        // Autosave the open scene every 60s while editing (never mid-Play).
+        if (g_autosave && !ed.isPlaying() && ed.dirty && !ed.path().empty()) {
+            double t = SDL_GetTicks64() / 1000.0;
+            if (t - g_lastAutosave > 60.0) {
+                g_lastAutosave = t;
+                if (ed.Save(ed.path())) ConsoleLog("Autosaved " + ed.path());
+            }
+        }
+
         // Pump audio while playing (mono float, queued).
         if (audioDev) {
             if (ed.isPlaying()) {
@@ -3322,9 +3404,10 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
 
         HandleShortcuts(ed);
-        DrawDockSpace(ed, running);
+        DrawDockSpace(ed);
         DrawNewProjectPopup(ed);
         DrawFileDialogs(ed);
+        DrawQuitPrompt(ed, running);
         DrawUpdatePopup();
         DrawAboutPopup();
         if (g_showHierarchy) DrawHierarchy(ed);

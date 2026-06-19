@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.13.0
+  - File > Open Recent: quick access to recently opened/saved scenes (persisted
+    between sessions).
+  - File > Autosave: saves the open scene every 60s while editing.
+  - Unsaved-changes guard: closing the window or choosing Exit with unsaved work
+    now prompts to Save / Don't Save / Cancel instead of losing changes.
+
 v1.12.0
   - Pause / Resume while playing (Step now pauses then advances one frame).
   - Play-mode tint: a colored border frames the window while playing (green) or

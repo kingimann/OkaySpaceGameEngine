@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.88.0
+  - Button icons: a UI Button can show an image (PNG/JPG) left of its label —
+    set Icon + Icon Size in the inspector (or icon=/iconsize= in OkayUI markup).
+    The label shifts to make room, the icon is bundled by Build Game, and it
+    renders in the built game (the editor shows a placeholder box).
+
 v1.87.0
   - Dropdown placeholder: set a placeholder string and a value of -1 ("Clear
     selection" in the inspector) to show dimmed prompt text until the player

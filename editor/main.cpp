@@ -3513,6 +3513,10 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Hover Grow##uib", &btn->hoverScale, 0.01f, 1.0f, 2.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale when hovered/focused (1 = none)");
+            char ic[256]; std::strncpy(ic, btn->icon.c_str(), sizeof(ic) - 1); ic[sizeof(ic)-1] = '\0';
+            if (ImGui::InputText("Icon##uib", ic, sizeof(ic))) { btn->icon = ic; ed.dirty = true; }
+            if (ImGui::DragFloat("Icon Size##uib", &btn->iconSize, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("PNG/JPG drawn left of the label; 0 = none");
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
     }
@@ -4180,9 +4184,19 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), btn->cornerRadius);
         if (btn->borderWidth > 0.0f)
             dl->AddRect(a, b, ToColor(btn->borderColor), btn->cornerRadius, 0, btn->borderWidth);
+        // Icon placeholder (the editor overlay doesn't load textures) + label
+        // shifted right to match the built game's layout.
+        float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize * s : 0.0f;
+        if (isz > 0.0f) {
+            ImVec2 ia(a.x + 8 * s, a.y + ((b.y - a.y) - isz) * 0.5f);
+            dl->AddRectFilled(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 40), 3.0f);
+            dl->AddRect(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 110), 3.0f);
+        }
         float px = btn->fontScale * s;
         float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-        DrawBitmapText(dl, btn->label, a.x + ((b.x - a.x) - tw) * 0.5f,
+        float left = a.x + (isz > 0.0f ? isz + 12 * s : 0.0f);
+        float avail = b.x - left;
+        DrawBitmapText(dl, btn->label, left + (avail - tw) * 0.5f,
                        a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f, px,
                        ToColor(btn->textColor));
     }

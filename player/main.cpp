@@ -725,10 +725,21 @@ int main(int argc, char** argv) {
                     SDL_RenderDrawRect(renderer, &br);
                 }
             }
-            // Center the label (8px glyphs, ~1px gap) at the button's font scale.
+            // Optional icon at the left; the label shifts right to make room.
+            float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize : 0.0f;
+            if (isz > 0.0f) {
+                SDL_Texture* itex = GetTexture(renderer, btn->icon, baseDir, textureCache);
+                SDL_Rect ir{(int)(o.x + 8), (int)(o.y + (btn->size.y - isz) * 0.5f), (int)isz, (int)isz};
+                if (itex) { SDL_SetTextureColorMod(itex, 255, 255, 255); SDL_SetTextureAlphaMod(itex, 255);
+                            SDL_RenderCopy(renderer, itex, nullptr, &ir); }
+            }
+            // Center the label (8px glyphs, ~1px gap) at the button's font scale,
+            // within the area right of the icon.
             float px = btn->fontScale;
             float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-            float tx = o.x + (btn->size.x - tw) * 0.5f;
+            float left = o.x + (isz > 0.0f ? isz + 12.0f : 0.0f);
+            float avail = (o.x + btn->size.x) - left;
+            float tx = left + (avail - tw) * 0.5f;
             float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(btn->textColor.r * 255), (Uint8)(btn->textColor.g * 255),
                          (Uint8)(btn->textColor.b * 255), (Uint8)(btn->textColor.a * 255)};

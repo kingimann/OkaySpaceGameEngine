@@ -267,7 +267,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (btn->interactable ? 1 : 0) << " " << (btn->focusable ? 1 : 0) << " "
             << btn->cornerRadius << " " << btn->fontScale << " " << btn->borderWidth << " "
             << btn->borderColor.r << " " << btn->borderColor.g << " " << btn->borderColor.b << " " << btn->borderColor.a
-            << " " << btn->hoverScale << "\n";
+            << " " << btn->hoverScale
+            << " " << Quote(btn->icon) << " " << btn->iconSize << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -743,6 +744,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         btn->borderColor = bc;
                         in >> std::ws; // optional hover scale (added later)
                         if (std::isdigit(in.peek())) in >> btn->hoverScale;
+                        in >> std::ws; // optional icon path + size (added later)
+                        if (in.peek() == '"') { btn->icon = ReadQuoted(in); in >> btn->iconSize; }
                     }
                 } else if (field == "uipanel") {
                     auto* pn = go->AddComponent<UIPanel>();
@@ -1045,6 +1048,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
         if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); }
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
+        if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
         if (auto* an = go->GetComponent<SpriteAnimator>())
             for (const auto& f : an->frames) add(f);
     }

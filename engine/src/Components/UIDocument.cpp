@@ -188,6 +188,8 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         if (t.Has("font"))      c->fontScale    = ParseF(t.Get("font"), 2.0f);
         if (t.Has("border"))    c->borderWidth  = ParseF(t.Get("border"));
         if (t.Has("bordercolor")) c->borderColor = ParseColor(t.Get("bordercolor"));
+        if (t.Has("icon"))     { c->icon = t.Get("icon"); if (!t.Has("iconsize")) c->iconSize = 24.0f; }
+        if (t.Has("iconsize"))   c->iconSize = ParseF(t.Get("iconsize"));
         if (t.Has("bind")) { auto* bd = go->AddComponent<UITextBind>(); bd->format = t.Get("bind"); c->label = UITextBind::Resolve(bd->format); }
         Handler(go, t, "onclick", "on_click");
     } else if (t.type == "image") {
@@ -317,7 +319,7 @@ bool KnownKey(const std::string& k) {
         "border","bordercolor","gradient","hover","pressed","textcolor","font",
         "align","outline","shadow","bold","bind","value","min","max","fill","knob","knobsize",
         "showvalue","on","check","percent","texture","nineslice","amount","placeholder",
-        "options","content","bar","dir","spacing","padding","type",
+        "options","content","bar","dir","spacing","padding","type","icon","iconsize",
         "onclick","onchange","ontoggle","onsubmit"};
     for (auto* s : keys) if (k == s) return true;
     return false;

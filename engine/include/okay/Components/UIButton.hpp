@@ -19,6 +19,11 @@ public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{160.0f, 48.0f};
     std::string label = "Button";
+    /// Optional icon image drawn inside the button, left of the label (PNG/JPG;
+    /// bundled by Build Game). `iconSize` is its square size in pixels (0 hides
+    /// it); the label shifts right to make room.
+    std::string icon;
+    float iconSize = 0.0f;
     Color color = Color::FromBytes(60, 90, 150);
     Color hoverColor = Color::FromBytes(80, 120, 200);
     Color pressedColor = Color::FromBytes(45, 70, 120);  // shown while held down

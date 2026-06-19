@@ -3280,6 +3280,11 @@ void DrawInspector(EditorState& ed) {
                 float so[2] = {tr->shadowOffset.x, tr->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##txt", so, 0.1f)) { tr->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
             }
+            if (ImGui::Checkbox("Outline##txt", &tr->outline)) ed.dirty = true;
+            if (tr->outline) {
+                float ocol[4] = {tr->outlineColor.r, tr->outlineColor.g, tr->outlineColor.b, tr->outlineColor.a};
+                if (ImGui::ColorEdit4("Outline Color##txt", ocol)) { tr->outlineColor = {ocol[0], ocol[1], ocol[2], ocol[3]}; ed.dirty = true; }
+            }
             ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
@@ -3429,6 +3434,12 @@ void DrawInspector(EditorState& ed) {
             if (pn->borderWidth > 0.0f) {
                 float bc[4] = {pn->borderColor.r, pn->borderColor.g, pn->borderColor.b, pn->borderColor.a};
                 if (ImGui::ColorEdit4("Border Color##uip", bc)) { pn->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Gradient##uip", &pn->useGradient)) ed.dirty = true;
+            if (pn->useGradient) {
+                float gb[4] = {pn->colorBottom.r, pn->colorBottom.g, pn->colorBottom.b, pn->colorBottom.a};
+                if (ImGui::ColorEdit4("Bottom Color##uip", gb)) { pn->colorBottom = {gb[0], gb[1], gb[2], gb[3]}; ed.dirty = true; }
+                ImGui::TextDisabled("Color is the top; gradient ignores corner rounding.");
             }
             if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
         }
@@ -3854,6 +3865,13 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * px,
                            by + tr->shadowOffset.y * px, px, sh);
+        if (tr->outline) {                            // 4-direction outline
+            ImU32 oc = ToColor(tr->outlineColor);
+            DrawBitmapText(dl, tr->text, bx - px, by, px, oc);
+            DrawBitmapText(dl, tr->text, bx + px, by, px, oc);
+            DrawBitmapText(dl, tr->text, bx, by - px, px, oc);
+            DrawBitmapText(dl, tr->text, bx, by + px, px, oc);
+        }
         DrawBitmapText(dl, tr->text, bx, by, px, col);
     }
 
@@ -3879,7 +3897,12 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 pb2(a.x + sz.x, a.y + sz.y);
-        dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+        if (pn->useGradient) {   // vertical top->bottom fade (no rounding)
+            dl->AddRectFilledMultiColor(a, pb2, ToColor(pn->color), ToColor(pn->color),
+                                        ToColor(pn->colorBottom), ToColor(pn->colorBottom));
+        } else {
+            dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+        }
         if (pn->borderWidth > 0.0f)
             dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
     }

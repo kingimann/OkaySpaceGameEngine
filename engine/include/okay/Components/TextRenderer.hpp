@@ -33,6 +33,10 @@ public:
     bool  shadow = false;
     Color shadowColor = Color::FromBytes(0, 0, 0, 200);
     Vec2  shadowOffset{1.0f, 1.0f};
+    /// Outline: the text is also drawn offset by 1 font-pixel in all 4 (or 8)
+    /// directions in `outlineColor`, so it reads on any background.
+    bool  outline = false;
+    Color outlineColor = Color::FromBytes(0, 0, 0, 230);
 
     /// Width/height of the current text at native font size (8 px per glyph).
     int PixelWidth() const { return Font8x8::MeasureWidth(text.c_str()); }

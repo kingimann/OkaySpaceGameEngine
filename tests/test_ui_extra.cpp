@@ -154,9 +154,13 @@ int main() {
         btn->fontScale = 3.5f;
         btn->borderWidth = 2.0f;
         btn->borderColor = Color::FromBytes(200, 100, 50, 255);
+        pn->useGradient = true;
+        pn->colorBottom = Color::FromBytes(5, 6, 7, 8);
         auto* tr = s.CreateGameObject("Txt")->AddComponent<TextRenderer>();
         tr->screenSpace = true;
         tr->align = 2;
+        tr->outline = true;
+        tr->outlineColor = Color::FromBytes(1, 2, 3, 4);
 
         std::string txt = SceneSerializer::Serialize(s);
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
@@ -164,12 +168,16 @@ int main() {
         CHECK_NEAR(pn2->cornerRadius, 12.0f, 1e-4f);
         CHECK_NEAR(pn2->borderWidth, 3.0f, 1e-4f);
         CHECK_NEAR(pn2->borderColor.r, Color::FromBytes(10, 20, 30, 40).r, 1e-3f);
+        CHECK(pn2->useGradient);
+        CHECK_NEAR(pn2->colorBottom.a, Color::FromBytes(5, 6, 7, 8).a, 1e-3f);
         auto* btn2 = s2.Find("Btn")->GetComponent<UIButton>();
         CHECK_NEAR(btn2->cornerRadius, 8.0f, 1e-4f);
         CHECK_NEAR(btn2->fontScale, 3.5f, 1e-4f);
         CHECK_NEAR(btn2->borderWidth, 2.0f, 1e-4f);
         auto* tr2 = s2.Find("Txt")->GetComponent<TextRenderer>();
         CHECK(tr2->align == 2);
+        CHECK(tr2->outline);
+        CHECK_NEAR(tr2->outlineColor.g, Color::FromBytes(1, 2, 3, 4).g, 1e-3f);
     }
 
     // --- Dropdown: open on click, pick an option, fire on_change --------

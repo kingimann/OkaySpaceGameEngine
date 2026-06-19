@@ -421,21 +421,36 @@ int main(int argc, char** argv) {
                               (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255)};
                 SDL_Color sh{(Uint8)(tr->shadowColor.r * 255), (Uint8)(tr->shadowColor.g * 255),
                              (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255)};
+                SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
+                             (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255)};
                 if (tr->screenSpace) {
                     Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);
                     float tw = tr->PixelWidth() * tr->pixelSize;
                     if (tr->align == 1)      o.x -= tw * 0.5f;
                     else if (tr->align == 2) o.x -= tw;
+                    float p = tr->pixelSize;
                     if (tr->shadow)
-                        DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * tr->pixelSize,
-                                 o.y + tr->shadowOffset.y * tr->pixelSize, tr->pixelSize, sh);
-                    DrawText(renderer, tr->text, o.x, o.y, tr->pixelSize, col);
+                        DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * p,
+                                 o.y + tr->shadowOffset.y * p, p, sh);
+                    if (tr->outline) {
+                        DrawText(renderer, tr->text, o.x - p, o.y, p, ol);
+                        DrawText(renderer, tr->text, o.x + p, o.y, p, ol);
+                        DrawText(renderer, tr->text, o.x, o.y - p, p, ol);
+                        DrawText(renderer, tr->text, o.x, o.y + p, p, ol);
+                    }
+                    DrawText(renderer, tr->text, o.x, o.y, p, col);
                 } else {
                     SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
                     float px = tr->pixelSize * scale;
                     if (tr->shadow)
                         DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
                                  o.y + tr->shadowOffset.y * px, px, sh);
+                    if (tr->outline) {
+                        DrawText(renderer, tr->text, o.x - px, o.y, px, ol);
+                        DrawText(renderer, tr->text, o.x + px, o.y, px, ol);
+                        DrawText(renderer, tr->text, o.x, o.y - px, px, ol);
+                        DrawText(renderer, tr->text, o.x, o.y + px, px, ol);
+                    }
                     DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col);
                 }
             }
@@ -485,9 +500,25 @@ int main(int argc, char** argv) {
             if (!pn || !up->active) continue;
             Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, (float)w, (float)h);
             SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(pn->color.r * 255), (Uint8)(pn->color.g * 255),
-                                   (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255));
-            SDL_RenderFillRect(renderer, &r);
+            if (pn->useGradient) {                          // top->bottom fade in bands
+                int bands = r.h > 0 ? (r.h < 64 ? r.h : 64) : 1;
+                for (int i = 0; i < bands; ++i) {
+                    float t = bands > 1 ? (float)i / (bands - 1) : 0.0f;
+                    Color cc{pn->color.r + (pn->colorBottom.r - pn->color.r) * t,
+                             pn->color.g + (pn->colorBottom.g - pn->color.g) * t,
+                             pn->color.b + (pn->colorBottom.b - pn->color.b) * t,
+                             pn->color.a + (pn->colorBottom.a - pn->color.a) * t};
+                    SDL_Rect band{r.x, r.y + i * r.h / bands, r.w,
+                                  (r.h / bands) + 1};
+                    SDL_SetRenderDrawColor(renderer, (Uint8)(cc.r * 255), (Uint8)(cc.g * 255),
+                                           (Uint8)(cc.b * 255), (Uint8)(cc.a * 255));
+                    SDL_RenderFillRect(renderer, &band);
+                }
+            } else {
+                SDL_SetRenderDrawColor(renderer, (Uint8)(pn->color.r * 255), (Uint8)(pn->color.g * 255),
+                                       (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255));
+                SDL_RenderFillRect(renderer, &r);
+            }
             if (pn->borderWidth > 0.0f) {                   // outline (N nested rects)
                 SDL_SetRenderDrawColor(renderer, (Uint8)(pn->borderColor.r * 255), (Uint8)(pn->borderColor.g * 255),
                                        (Uint8)(pn->borderColor.b * 255), (Uint8)(pn->borderColor.a * 255));

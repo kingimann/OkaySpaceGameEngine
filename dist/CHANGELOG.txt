@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v1.55.0
+  - Panel gradients: a UI Panel can fade top-to-bottom — turn on "Gradient" and
+    set a Bottom Color (Color is the top). Great for headers and backdrops.
+  - Text outline: screen-space and world Text gets an "Outline" option (a
+    1-pixel surround in an Outline Color) so labels read on any background —
+    stacks with the existing drop shadow.
+  - Both save with the scene and render the same in the built game.
+
 v1.54.0
   - UI Dropdown (GameObject > UI > Dropdown): an option selector like Unity's
     Dropdown. Click to open the list, pick an option to set the value and call

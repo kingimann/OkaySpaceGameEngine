@@ -230,7 +230,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tr->screenPos.x << " " << tr->screenPos.y << " " << (int)tr->anchor << " "
             << (tr->shadow ? 1 : 0) << " "
             << tr->shadowColor.r << " " << tr->shadowColor.g << " " << tr->shadowColor.b << " " << tr->shadowColor.a << " "
-            << tr->shadowOffset.x << " " << tr->shadowOffset.y << " " << tr->align << "\n";
+            << tr->shadowOffset.x << " " << tr->shadowOffset.y << " " << tr->align << " "
+            << (tr->outline ? 1 : 0) << " "
+            << tr->outlineColor.r << " " << tr->outlineColor.g << " " << tr->outlineColor.b << " " << tr->outlineColor.a << "\n";
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -269,7 +271,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pn->color.r << " " << pn->color.g << " " << pn->color.b << " " << pn->color.a
             << " " << (int)pn->anchor << " "
             << pn->cornerRadius << " " << pn->borderWidth << " "
-            << pn->borderColor.r << " " << pn->borderColor.g << " " << pn->borderColor.b << " " << pn->borderColor.a << "\n";
+            << pn->borderColor.r << " " << pn->borderColor.g << " " << pn->borderColor.b << " " << pn->borderColor.a << " "
+            << (pn->useGradient ? 1 : 0) << " "
+            << pn->colorBottom.r << " " << pn->colorBottom.g << " " << pn->colorBottom.b << " " << pn->colorBottom.a << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
@@ -640,6 +644,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     in >> std::ws; // optional alignment (added later)
                     if (std::isdigit(in.peek())) in >> tr->align;
+                    in >> std::ws; // optional outline (added later still)
+                    if (std::isdigit(in.peek())) {
+                        int ol = 0; Color oc;
+                        in >> ol >> oc.r >> oc.g >> oc.b >> oc.a;
+                        tr->outline = (ol != 0); tr->outlineColor = oc;
+                    }
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;
@@ -715,6 +725,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> pn->cornerRadius >> pn->borderWidth
                            >> bc.r >> bc.g >> bc.b >> bc.a;
                         pn->borderColor = bc;
+                    }
+                    in >> std::ws; // optional gradient (added later)
+                    if (std::isdigit(in.peek())) {
+                        int g = 0; Color gb;
+                        in >> g >> gb.r >> gb.g >> gb.b >> gb.a;
+                        pn->useGradient = (g != 0); pn->colorBottom = gb;
                     }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();

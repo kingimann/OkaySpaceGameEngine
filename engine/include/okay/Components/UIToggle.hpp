@@ -28,6 +28,18 @@ public:
 
     bool IsHovered() const { return m_hover; }
 
+    // Keyboard/gamepad menu focus (driven by NavigateUI).
+    bool focusable = true;
+    bool IsFocused() const { return m_focused; }
+    void SetFocused(bool f) { m_focused = f; }
+    /// Flip the toggle and fire on_toggle — used by activation (Enter/A).
+    void Toggle() {
+        on = !on;
+        if (gameObject)
+            if (auto* sc = gameObject->GetComponent<ScriptComponent>())
+                if (sc->VM()) sc->VM()->CallEvent("on_toggle");
+    }
+
     bool Contains(const Vec2& p) const {
         Vec2 o = ResolveAnchor(anchor, position, size);
         return p.x >= o.x && p.y >= o.y &&
@@ -37,16 +49,12 @@ public:
     void Update(float) override {
         Vec2 m = Input::MousePosition();
         m_hover = Contains(m);
-        if (m_hover && Input::GetMouseButtonDown(0)) {
-            on = !on;
-            if (gameObject)
-                if (auto* sc = gameObject->GetComponent<ScriptComponent>())
-                    if (sc->VM()) sc->VM()->CallEvent("on_toggle");
-        }
+        if (m_hover && Input::GetMouseButtonDown(0)) Toggle();
     }
 
 private:
     bool m_hover = false;
+    bool m_focused = false;
 };
 
 } // namespace okay

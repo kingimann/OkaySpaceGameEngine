@@ -37,8 +37,20 @@ public:
         float span = maxValue - minValue;
         return span > 0.0f ? Mathf::Clamp01((value - minValue) / span) : 0.0f;
     }
-    void SetValue(float v) { value = Mathf::Clamp(v, minValue, maxValue); }
+    void SetValue(float v) {
+        float nv = Mathf::Clamp(v, minValue, maxValue);
+        if (nv == value) return;
+        value = nv;
+        if (gameObject)
+            if (auto* sc = gameObject->GetComponent<ScriptComponent>())
+                if (sc->VM()) sc->VM()->CallEvent("on_change");
+    }
     bool IsDragging() const { return m_dragging; }
+
+    // Keyboard/gamepad menu focus (driven by NavigateUI).
+    bool focusable = true;
+    bool IsFocused() const { return m_focused; }
+    void SetFocused(bool f) { m_focused = f; }
 
     bool Contains(const Vec2& p) const {
         Vec2 o = ResolveAnchor(anchor, position, size);
@@ -65,6 +77,7 @@ public:
 
 private:
     bool m_dragging = false;
+    bool m_focused = false;
 };
 
 } // namespace okay

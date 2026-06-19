@@ -76,6 +76,16 @@ inline UIRect GetUIRect(GameObject* go) {
 /// Does this GameObject carry any screen-space UI widget?
 inline bool IsUIElement(GameObject* go) { return GetUIRect(go).valid; }
 
+/// Whether a widget currently holds keyboard/gamepad menu focus (NavigateUI).
+inline bool IsUIFocused(GameObject* go) {
+    if (!go) return false;
+    if (auto* b = go->GetComponent<UIButton>())   return b->IsFocused();
+    if (auto* t = go->GetComponent<UIToggle>())   return t->IsFocused();
+    if (auto* s = go->GetComponent<UISlider>())   return s->IsFocused();
+    if (auto* d = go->GetComponent<UIDropdown>()) return d->IsFocused();
+    return false;
+}
+
 /// The Canvas a widget belongs to: the nearest Canvas on itself or an ancestor
 /// (Unity's rule that UI lives under a Canvas). nullptr if it isn't parented to
 /// one — legacy UI then renders against the raw screen at scale 1.

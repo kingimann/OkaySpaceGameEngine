@@ -354,5 +354,28 @@ int main() {
         CHECK(tt2 && tt2->delay > 0.29f && tt2->delay < 0.31f);
     }
 
+    // --- Menu navigation reaches toggles, sliders, dropdowns -----------
+    {
+        Scene s("nav"); s.physicsEnabled = false;
+        auto* bt = s.CreateGameObject("B")->AddComponent<UIButton>();
+        bt->position = {0, 0};
+        auto* tg = s.CreateGameObject("T")->AddComponent<UIToggle>();
+        tg->position = {0, 50}; tg->on = false;
+        auto* sl = s.CreateGameObject("S")->AddComponent<UISlider>();
+        sl->position = {0, 100}; sl->minValue = 0; sl->maxValue = 1; sl->value = 0.5f;
+
+        Input::FeedKeys({}); NavigateUI(s);           // focus the first (button)
+        CHECK(bt->IsFocused());
+        Input::FeedKeys({'s'}); NavigateUI(s);        // down -> toggle
+        CHECK(tg->IsFocused() && !bt->IsFocused());
+        Input::FeedKeys({}); Input::FeedKeys({' '}); NavigateUI(s);  // activate toggle
+        CHECK(tg->on);
+        Input::FeedKeys({}); Input::FeedKeys({'s'}); NavigateUI(s);  // down -> slider
+        CHECK(sl->IsFocused());
+        Input::FeedKeys({}); Input::FeedKeys({'d'}); NavigateUI(s);  // right -> +5%
+        CHECK(sl->value > 0.5f);
+        Input::FeedKeys({});
+    }
+
     TEST_MAIN_RESULT();
 }

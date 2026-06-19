@@ -47,6 +47,18 @@ public:
     bool IsHovered() const { return m_hover; }
     int  HoveredOption() const { return m_hoverOption; }   // -1 = none
 
+    // Keyboard/gamepad menu focus (driven by NavigateUI).
+    bool focusable = true;
+    bool IsFocused() const { return m_focused; }
+    void SetFocused(bool f) { m_focused = f; }
+    /// Move the selection by `dir` (-1/+1), clamped, firing on_change.
+    void Cycle(int dir) {
+        int v = value + dir;
+        if (v < 0) v = 0;
+        if (v > (int)options.size() - 1) v = (int)options.size() - 1;
+        SetValue(v);
+    }
+
     /// Header rectangle origin (resolved against the anchor).
     Vec2 Origin() const { return ResolveAnchor(anchor, position, size); }
 
@@ -92,6 +104,7 @@ private:
                 if (sc->VM()) sc->VM()->CallEvent("on_change");
     }
     bool m_hover = false;
+    bool m_focused = false;
     int  m_hoverOption = -1;
 };
 

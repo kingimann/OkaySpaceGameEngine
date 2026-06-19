@@ -761,6 +761,17 @@ int main(int argc, char** argv) {
             }
         }
         SDL_RenderSetClipRect(renderer, nullptr);   // end scroll clipping
+        for (const auto& up : scene.Objects()) {           // keyboard/gamepad focus ring
+            if (!up->active || !IsUIFocused(up.get())) continue;
+            UIRect r = GetUIRect(up.get());
+            if (!r.valid || !r.position) continue;
+            Vec2 o = ResolveAnchor(r.anchor, *r.position, r.size, (float)w, (float)h);
+            SDL_Rect ring{(int)o.x - 2, (int)o.y - 2, (int)r.size.x + 4, (int)r.size.y + 4};
+            SDL_SetRenderDrawColor(renderer, 255, 210, 90, 255);
+            SDL_RenderDrawRect(renderer, &ring);
+            SDL_Rect ring2{ring.x - 1, ring.y - 1, ring.w + 2, ring.h + 2};
+            SDL_RenderDrawRect(renderer, &ring2);
+        }
         for (const auto& up : scene.Objects()) {           // tooltips (hover hints)
             auto* tt = up->GetComponent<UITooltip>();
             if (!tt || !up->active || !tt->Ready()) continue;

@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.80.0
+  - Full controller/keyboard menu navigation: focus now moves across Buttons,
+    Toggles, Sliders and Dropdowns (not just buttons). Up/Down change focus;
+    Enter/Space/A activate a button, flip a toggle, or open a dropdown; Left/
+    Right change a dropdown selection or nudge a slider by 5%. The focused
+    widget shows a highlight ring in the built game.
+
 v1.79.0
   - The Main Menu project template now showcases the modern UI: a rounded,
     gradient card with an outlined title, a styled Start button (with tooltip),

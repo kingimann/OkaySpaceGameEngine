@@ -368,7 +368,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sl->cornerRadius << " " << sl->knobSize << " " << (sl->showValue ? 1 : 0) << " "
             << sl->textColor.r << " " << sl->textColor.g << " " << sl->textColor.b << " " << sl->textColor.a
             << " " << (sl->wholeNumbers ? 1 : 0)
-            << " " << (sl->interactable ? 1 : 0) << "\n";
+            << " " << (sl->interactable ? 1 : 0)
+            << " " << (sl->vertical ? 1 : 0) << "\n";
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
         out << "  uitoggle " << Quote(tg->label) << " "
@@ -906,6 +907,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) { int wn = 0; in >> wn; sl->wholeNumbers = (wn != 0); }
                         in >> std::ws;
                         if (std::isdigit(in.peek())) { int it = 1; in >> it; sl->interactable = (it != 0); }
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { int vt = 0; in >> vt; sl->vertical = (vt != 0); }
                     }
                 } else if (field == "uitoggle") {
                     auto* tg = go->AddComponent<UIToggle>();

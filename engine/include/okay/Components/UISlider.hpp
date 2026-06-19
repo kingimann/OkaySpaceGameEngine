@@ -31,6 +31,7 @@ public:
     float knobSize = 0.6f;                           // knob width = size.y * this
     bool  showValue = false;
     bool  wholeNumbers = false;                      // snap the value to integers
+    bool  vertical = false;                          // drag/fill bottom->top
     Color textColor = Color::White;
 
     /// 0..1 position of the handle along the track (for rendering).
@@ -67,9 +68,11 @@ public:
         Vec2 m = Input::MousePosition();
         if (Input::GetMouseButtonDown(0) && Contains(m)) m_dragging = true;
         if (!Input::GetMouseButton(0)) m_dragging = false;
-        if (m_dragging && size.x > 0.0f) {
+        if (m_dragging && size.x > 0.0f && size.y > 0.0f) {
             Vec2 o = ResolveAnchor(anchor, position, size);
-            float frac = Mathf::Clamp01((m.x - o.x) / size.x);
+            // Horizontal: left->right. Vertical: bottom->top (natural for volume).
+            float frac = vertical ? Mathf::Clamp01((o.y + size.y - m.y) / size.y)
+                                  : Mathf::Clamp01((m.x - o.x) / size.x);
             float nv = minValue + frac * (maxValue - minValue);
             if (wholeNumbers) nv = Mathf::Round(nv);
             if (nv != value) {

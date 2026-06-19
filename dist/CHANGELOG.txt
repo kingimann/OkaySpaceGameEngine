@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.86.0
+  - UI Slider can be Vertical: drag bottom-to-top and the fill/knob run
+    vertically — for volume columns, mixers and meters. Toggle "Vertical" in the
+    inspector; saves with the scene and works in the editor and built game.
+
 v1.85.0
   - Interactable (disabled) state for UI Toggle, Slider and Dropdown (Button
     already had it): toggle it off to grey the widget out and have it ignore

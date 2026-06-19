@@ -636,14 +636,20 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->background.r * 255), (Uint8)(sl->background.g * 255),
                                    (Uint8)(sl->background.b * 255), (Uint8)(sl->background.a * 255));
             SDL_RenderFillRect(renderer, &bg);
-            SDL_Rect fl{(int)o.x, (int)o.y,
-                        (int)(sl->size.x * sl->Fraction()), (int)sl->size.y};
+            float f = sl->Fraction();
+            SDL_Rect fl, kn;
+            if (sl->vertical) {
+                fl = {(int)o.x, (int)(o.y + sl->size.y * (1.0f - f)), (int)sl->size.x, (int)(sl->size.y * f)};
+                int kh = (int)(sl->size.x * sl->knobSize);
+                kn = {(int)o.x - 2, (int)(o.y + sl->size.y * (1.0f - f)) - kh / 2, (int)sl->size.x + 4, kh};
+            } else {
+                fl = {(int)o.x, (int)o.y, (int)(sl->size.x * f), (int)sl->size.y};
+                int kw = (int)(sl->size.y * sl->knobSize);
+                kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
+            }
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->fill.r * 255), (Uint8)(sl->fill.g * 255),
                                    (Uint8)(sl->fill.b * 255), (Uint8)(sl->fill.a * 255));
             SDL_RenderFillRect(renderer, &fl);
-            int kw = (int)(sl->size.y * sl->knobSize);
-            SDL_Rect kn{(int)(o.x + sl->size.x * sl->Fraction()) - kw / 2,
-                        (int)o.y - 2, kw, (int)sl->size.y + 4};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->knob.r * 255), (Uint8)(sl->knob.g * 255),
                                    (Uint8)(sl->knob.b * 255), (Uint8)(sl->knob.a * 255));
             SDL_RenderFillRect(renderer, &kn);

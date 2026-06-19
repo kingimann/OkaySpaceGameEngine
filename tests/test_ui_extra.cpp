@@ -360,7 +360,7 @@ int main() {
     {
         Scene s("set"); s.physicsEnabled = false;
         auto* sl = s.CreateGameObject("S")->AddComponent<UISlider>();
-        sl->minValue = 0; sl->maxValue = 10; sl->wholeNumbers = true;
+        sl->minValue = 0; sl->maxValue = 10; sl->wholeNumbers = true; sl->vertical = true;
         sl->SetValue(3.7f);
         CHECK_NEAR(sl->value, 4.0f, 1e-4f);    // snapped to integer
 
@@ -379,6 +379,7 @@ int main() {
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
         auto* sl2 = s2.Find("S")->GetComponent<UISlider>();
         CHECK(sl2->wholeNumbers);
+        CHECK(sl2->vertical);
         auto* pb2 = s2.Find("P")->GetComponent<UIProgressBar>();
         CHECK(pb2->fillDir == UIProgressBar::FillDir::BottomTop);
         auto* bn2 = s2.Find("Bn")->GetComponent<UIButton>();

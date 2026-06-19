@@ -3741,6 +3741,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Text Color##usl", tc)) { sl->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
             }
             if (ImGui::Checkbox("Interactable##usl", &sl->interactable)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Vertical##usl", &sl->vertical)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
         }
     }
@@ -4104,11 +4106,19 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(sl->background), sl->cornerRadius);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x * sl->Fraction(), a.y + sz.y),
-                          ToColor(sl->fill), sl->cornerRadius);
-        float kx = a.x + sz.x * sl->Fraction(), kw = sz.y * sl->knobSize;
-        dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sz.y + 2),
-                          ToColor(sl->knob), 2.0f);
+        float f = sl->Fraction();
+        if (sl->vertical) {
+            dl->AddRectFilled(ImVec2(a.x, a.y + sz.y * (1.0f - f)), ImVec2(a.x + sz.x, a.y + sz.y),
+                              ToColor(sl->fill), sl->cornerRadius);
+            float ky = a.y + sz.y * (1.0f - f), kh = sz.x * sl->knobSize;
+            dl->AddRectFilled(ImVec2(a.x - 2, ky - kh * 0.5f), ImVec2(a.x + sz.x + 2, ky + kh * 0.5f),
+                              ToColor(sl->knob), 2.0f);
+        } else {
+            dl->AddRectFilled(a, ImVec2(a.x + sz.x * f, a.y + sz.y), ToColor(sl->fill), sl->cornerRadius);
+            float kx = a.x + sz.x * f, kw = sz.y * sl->knobSize;
+            dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sz.y + 2),
+                              ToColor(sl->knob), 2.0f);
+        }
         if (sl->showValue) {
             char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
             float px = 2.0f * s;

@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v1.45.0
+  - Lobbies / rooms: peers in different rooms are fully isolated — they only see
+    avatars and receive broadcast messages from others in the same room, so one
+    server can host many independent matches. Set it with net_room("name")
+    before host/join, or the "Room (lobby)" field on the Network Manager.
+  - Steam leaderboard reads: steam_leaderboard_top("board", n) returns the
+    ranked Top-N as an array of "rank,name,score" strings.
+
 v1.44.0
   - Smoother multiplayer: remote avatars are now interpolated toward their latest
     networked position instead of snapping (tunable "Smoothing" on the Network

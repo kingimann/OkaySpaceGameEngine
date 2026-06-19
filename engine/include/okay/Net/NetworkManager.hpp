@@ -63,12 +63,19 @@ public:
     void SetLocalName(const std::string& name) { m_localName = name; }
     const std::string& LocalName() const { return m_localName; }
 
+    /// The "room" (lobby) this peer is in. Peers only see avatars and receive
+    /// broadcast messages from others in the *same* room, so one server can host
+    /// many independent matches. Set it before joining. Default room is "".
+    void SetRoom(const std::string& room) { m_localRoom = room; }
+    const std::string& Room() const { return m_localRoom; }
+
     // ---- No-code setup: start automatically when the scene plays ------
     enum class AutoStart { None, Host, Join };
     AutoStart   autoStart = AutoStart::None;
     std::uint16_t autoPort = 45000;
     std::string autoHost = "127.0.0.1";
     std::string startName;          // local name to use on auto-start (optional)
+    std::string startRoom;          // lobby room to join on auto-start (optional)
 
     /// On scene Start: act on `autoStart` (host or join) so multiplayer needs no
     /// script — add the component, pick Host/Join in the Inspector, press Play.
@@ -161,6 +168,7 @@ private:
         PeerState state;
         float lastSeen;
         std::string name;
+        std::string room;
     };
 
     void ServerTick(float dt);
@@ -179,6 +187,7 @@ private:
     char       m_localGlyph  = '@';
     std::uint32_t m_localId  = 0;
     std::string m_localName  = "Player";
+    std::string m_localRoom;     // "" = default room
 
     // Client-only
     net::Endpoint m_serverEp{};

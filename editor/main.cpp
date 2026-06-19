@@ -3151,6 +3151,9 @@ void DrawInspector(EditorState& ed) {
             static char nameBuf[48]; static NetworkManager* nbound = nullptr;
             if (nbound != nm) { std::strncpy(nameBuf, nm->startName.c_str(), sizeof(nameBuf) - 1); nameBuf[sizeof(nameBuf)-1]='\0'; nbound = nm; }
             if (ImGui::InputText("Player Name##nm", nameBuf, sizeof(nameBuf))) { nm->startName = nameBuf; ed.dirty = true; }
+            static char roomBuf[48]; static NetworkManager* rbound = nullptr;
+            if (rbound != nm) { std::strncpy(roomBuf, nm->startRoom.c_str(), sizeof(roomBuf) - 1); roomBuf[sizeof(roomBuf)-1]='\0'; rbound = nm; }
+            if (ImGui::InputText("Room (lobby)##nm", roomBuf, sizeof(roomBuf))) { nm->startRoom = roomBuf; ed.dirty = true; }
             ImGui::SliderFloat("Smoothing##nm", &nm->interpolationRate, 0.0f, 30.0f, "%.0f /s");
             const char* mode = nm->IsServer() ? "Server" : nm->IsClient() ? "Client" : "Offline";
             ImGui::Text("Live: %s   Peers: %d   Id: %u", mode, (int)nm->PeerCount(), nm->LocalId());

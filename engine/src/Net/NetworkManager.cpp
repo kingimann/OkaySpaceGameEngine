@@ -145,6 +145,7 @@ void NetworkManager::Spawn(const std::string& prefabPath, const Vec3& position) 
 
 void NetworkManager::Start() {
     if (!startName.empty()) m_localName = startName;
+    if (!startRoom.empty()) m_localRoom = startRoom;
     // Default the broadcast avatar + remote factory so auto-start works with no
     // extra wiring (the component's own object is the avatar; peers show as sprites).
     if (!m_localAvatar && gameObject && gameObject->transform)
@@ -212,13 +213,15 @@ std::string NetworkManager::PeerName(std::uint32_t id) const {
 
 void NetworkManager::Send(const std::string& channel, const std::string& data) {
     if (m_mode == Mode::Server) {
-        // Server originates a message: stamp it with our id (0) and fan out.
+        // Server originates a message: stamp it with our id (0) and fan out to
+        // the clients in the host's room.
         net::Packet p(Message);
         p.Write(m_localId);
         p.Write(channel);
         p.Write(data);
         for (auto& [ep, c] : m_clients)
-            m_socket.SendTo(c.endpoint, p.Data(), p.Size());
+            if (c.room == m_localRoom)
+                m_socket.SendTo(c.endpoint, p.Data(), p.Size());
     } else if (m_mode == Mode::Client && m_joined) {
         net::Packet p(Message);
         p.Write(m_localId);
@@ -237,6 +240,7 @@ void NetworkManager::ServerTick(float dt) {
         std::uint8_t type = p.ReadU8();
         if (type == Join) {
             std::string name = p.ReadString();           // display name (may be empty)
+            std::string room = p.ReadString();           // lobby room (may be empty)
             auto& c = m_clients[from];
             bool isNew = (c.id == 0);
             if (isNew) {
@@ -244,6 +248,7 @@ void NetworkManager::ServerTick(float dt) {
                 c.id = m_nextId++;
                 c.state = {c.id, 0, 0, 0, '@'};
                 c.name = name.empty() ? ("Player" + std::to_string(c.id)) : name;
+                c.room = room;
             }
             c.lastSeen = 0.0f;
             net::Packet w(Welcome);
@@ -317,17 +322,19 @@ void NetworkManager::ServerTick(float dt) {
             auto it = m_clients.find(from);
             if (it != m_clients.end()) {
                 std::uint32_t sender = it->second.id;   // endpoint is the source of truth
+                const std::string senderRoom = it->second.room;
                 p.ReadU32();                            // sender-reported id (ignored)
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
-                Deliver(sender, channel, data);         // the host sees it too
-                // Relay to every other client, stamped with the real sender id.
+                if (m_localRoom == senderRoom)          // host only sees its room
+                    Deliver(sender, channel, data);
+                // Relay to every other client in the sender's room.
                 net::Packet relay(Message);
                 relay.Write(sender);
                 relay.Write(channel);
                 relay.Write(data);
                 for (auto& [ep, c] : m_clients)
-                    if (c.id != sender)
+                    if (c.id != sender && c.room == senderRoom)
                         m_socket.SendTo(c.endpoint, relay.Data(), relay.Size());
             }
         }
@@ -349,24 +356,34 @@ void NetworkManager::ServerTick(float dt) {
         }
     }
 
-    // Broadcast a snapshot of everyone (server avatar id 0 + all clients).
+    // Send each client a snapshot of just its own room: the host (id 0) if the
+    // host shares that room, plus every client in the same room. This is what
+    // makes lobbies work — separate rooms never see each other.
     m_snapshotTimer += dt;
     if (m_snapshotTimer >= m_snapshotInterval && !m_clients.empty()) {
         m_snapshotTimer = 0.0f;
-        net::Packet snap(Snapshot);
-        std::uint32_t count = 1 + static_cast<std::uint32_t>(m_clients.size());
-        snap.Write(count);
         Vec3 lp = m_localAvatar ? m_localAvatar->localPosition : Vec3::Zero;
-        snap.Write(std::uint32_t(0));
-        snap.Write(lp.x); snap.Write(lp.y); snap.Write(lp.z);
-        snap.Write(std::uint8_t(m_localGlyph));
-        for (auto& [ep, c] : m_clients) {
-            snap.Write(c.id);
-            snap.Write(c.state.x); snap.Write(c.state.y); snap.Write(c.state.z);
-            snap.Write(std::uint8_t(c.state.glyph));
+        for (auto& [ep, recipient] : m_clients) {
+            const std::string& room = recipient.room;
+            bool hostHere = (m_localRoom == room);
+            std::uint32_t count = hostHere ? 1 : 0;
+            for (auto& [ep2, c] : m_clients) if (c.room == room) ++count;
+
+            net::Packet snap(Snapshot);
+            snap.Write(count);
+            if (hostHere) {
+                snap.Write(std::uint32_t(0));
+                snap.Write(lp.x); snap.Write(lp.y); snap.Write(lp.z);
+                snap.Write(std::uint8_t(m_localGlyph));
+            }
+            for (auto& [ep2, c] : m_clients) {
+                if (c.room != room) continue;
+                snap.Write(c.id);
+                snap.Write(c.state.x); snap.Write(c.state.y); snap.Write(c.state.z);
+                snap.Write(std::uint8_t(c.state.glyph));
+            }
+            m_socket.SendTo(recipient.endpoint, snap.Data(), snap.Size());
         }
-        for (auto& [ep, c] : m_clients)
-            m_socket.SendTo(c.endpoint, snap.Data(), snap.Size());
     }
 }
 
@@ -377,6 +394,7 @@ void NetworkManager::ClientTick(float dt) {
         if (m_joinTimer <= 0.0f) {
             net::Packet p(Join);
             p.Write(m_localName);
+            p.Write(m_localRoom);
             m_socket.SendTo(m_serverEp, p.Data(), p.Size());
             m_joinTimer = 0.5f;
         }

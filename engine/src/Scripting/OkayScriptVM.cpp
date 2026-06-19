@@ -1306,6 +1306,12 @@ struct OkayScriptVM::Impl {
         b["net_id"]    = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->LocalId() : 0.0f}; };
         b["net_peers"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->PeerCount() : 0.0f}; };
         b["net_ping"]  = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->RttMs() : 0.0f}; };
+        // Lobby room: set before net_host/net_join so peers only see their room.
+        b["net_room"]  = [this](std::vector<Value>& a) {
+            if (!a.empty()) { if (NetworkManager* n = EnsureNet()) n->SetRoom(a[0].AsString()); return Value{a[0].AsString()}; }
+            NetworkManager* n = Net();
+            return Value{n ? n->Room() : std::string{}};
+        };
         b["net_name"]  = [this](std::vector<Value>& a) {
             if (NetworkManager* n = Net()) { if (!a.empty()) n->SetLocalName(a[0].AsString()); return Value{n->LocalName()}; }
             return Value{std::string{}};
@@ -1397,6 +1403,17 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["steam_friends"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().FriendCount()}; };
+        // Top-N leaderboard entries as an array of "rank,name,score" strings.
+        b["steam_leaderboard_top"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeArray();
+            auto arr = v.AsArray();
+            if (!a.empty() && arr) {
+                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                for (auto& e : Steam::Get().DownloadLeaderboardTop(a[0].AsString(), n))
+                    arr->push_back(Value{std::to_string(e.rank) + "," + e.name + "," + std::to_string(e.score)});
+            }
+            return v;
+        };
         b["steam_overlay"] = [](std::vector<Value>& a) {
             Steam::Get().ActivateOverlay(a.empty() ? "friends" : a[0].AsString());
             return Value{};

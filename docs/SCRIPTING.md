@@ -140,6 +140,7 @@ function update(dt) {
 | `net_id()` / `net_peers()` | Your peer id / connected peer count |
 | `net_ping()` | Round-trip time to the server in ms (clients) |
 | `net_name("name")` | Set/get this peer's display name |
+| `net_room("name")` | Set the lobby room (before host/join) — rooms are isolated |
 | `net_send("channel", "data")` | Broadcast a message to all peers |
 | `net_send_to(id, "channel", "data")` | Message one peer |
 | `net_poll()` | Pop one received message (use in a `while`) |
@@ -157,6 +158,7 @@ function update(dt) {
 | `steam_store()` | Flush stats/achievements to Steam |
 | `steam_progress("ID", cur, max)` | Show achievement progress (auto-unlocks at max) |
 | `steam_leaderboard("board", score)` | Submit a leaderboard score |
+| `steam_leaderboard_top("board", n)` | Top-N as an array of `"rank,name,score"` |
 | `steam_cloud_write("file", "data")` / `steam_cloud_read("file")` | Steam Cloud |
 | `steam_presence("key", "value")` | Rich presence |
 | `steam_friends()` / `steam_overlay("page")` | Friend count / open the overlay |

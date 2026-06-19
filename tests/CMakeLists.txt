@@ -257,6 +257,10 @@ add_executable(test_steam_script test_steam_script.cpp)
 target_link_libraries(test_steam_script PRIVATE okay::engine)
 add_test(NAME steam_script COMMAND test_steam_script)
 
+add_executable(test_net_rooms test_net_rooms.cpp)
+target_link_libraries(test_net_rooms PRIVATE okay::engine)
+add_test(NAME net_rooms COMMAND test_net_rooms)
+
 add_executable(test_uidocument test_uidocument.cpp)
 target_link_libraries(test_uidocument PRIVATE okay::engine)
 add_test(NAME uidocument COMMAND test_uidocument)

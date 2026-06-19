@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.3.0
+  - Even more scripting:
+      * Vector3 values you can actually work with: var v = new Vector3(3,4,0);
+        read/write v.x / v.y / v.z directly, plus vec_add / vec_sub / vec_scale /
+        vec_length / vec_dot / vec_distance / vec_normalize / vec_lerp / vec_x/y/z
+        (and Vector3.Lerp / Dot / Normalize / Distance).
+      * do { ... } while (cond); loops (run the body at least once).
+    Fully backward compatible.
+
 v2.2.0
   - More scripting power, still Unity-flavored:
       * String interpolation: $"Score: {score}  next={score + 1}" — embed any

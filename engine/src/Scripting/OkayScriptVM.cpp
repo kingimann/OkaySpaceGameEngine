@@ -300,6 +300,11 @@ struct Runtime {
         }
         return Value{}; // undefined reads as 0/false/empty
     }
+    bool Has(const std::string& n) {
+        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
+            if (it->vars.count(n)) return true;
+        return false;
+    }
 
     Value Call(const std::string& name, std::vector<Value>& args);
 
@@ -516,6 +521,19 @@ struct SwitchStmt : Stmt {
         } catch (BreakSignal&) {}
     }
 };
+// do { body } while (cond); — runs the body at least once.
+struct DoWhileStmt : Stmt {
+    ExprPtr cond; std::vector<StmtPtr> body;
+    void Exec(Runtime& r) override {
+        int guard = 0;
+        do {
+            try { for (auto& s : body) s->Exec(r); }
+            catch (ContinueSignal&) {}
+            catch (BreakSignal&) { break; }
+            if (++guard > 1000000) throw ScriptError("do-while loop exceeded iteration limit");
+        } while (cond->Eval(r).AsBool());
+    }
+};
 struct ForStmt : Stmt {
     // Function-level scoping (like the rest of the language): the init runs in
     // the current scope, so `return` inside the body can't corrupt the stack.
@@ -640,6 +658,18 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
         if (name == "gameObject.activeSelf" || name == "gameObject.active") return Value{g->active};
         if (name == "gameObject.tag")  return Value{g->tag};
     }
+    // Generic: <var>.x/.y/.z where <var> is a local/global holding a Vector3
+    // (e.g. var v = new Vector3(1,2,3); v.x).
+    {
+        auto dot = name.rfind('.');
+        if (dot != std::string::npos && dot + 2 == name.size()) {
+            std::string base = name.substr(0, dot); char comp = name[dot + 1];
+            if (base.find('.') == std::string::npos && (comp == 'x' || comp == 'y' || comp == 'z') && Has(base)) {
+                Vec3 v = Get(base).AsVec3();
+                return Value{comp == 'x' ? v.x : comp == 'y' ? v.y : v.z};
+            }
+        }
+    }
     ok = false;
     return Value{};
 }
@@ -673,6 +703,19 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
         if (name == "gameObject.name")       { g->name = v.AsString(); return true; }
         if (name == "gameObject.activeSelf" || name == "gameObject.active") { g->active = v.AsBool(); return true; }
         if (name == "gameObject.tag")        { g->tag = v.AsString(); return true; }
+    }
+    // Generic: <var>.x/.y/.z = value, for a variable holding a Vector3.
+    {
+        auto dot = name.rfind('.');
+        if (dot != std::string::npos && dot + 2 == name.size()) {
+            std::string base = name.substr(0, dot); char comp = name[dot + 1];
+            if (base.find('.') == std::string::npos && (comp == 'x' || comp == 'y' || comp == 'z') && Has(base)) {
+                Vec3 vec = Get(base).AsVec3();
+                if (comp == 'x') vec.x = v.AsFloat(); else if (comp == 'y') vec.y = v.AsFloat(); else vec.z = v.AsFloat();
+                Assign(base, Value{vec});
+                return true;
+            }
+        }
     }
     return false;
 }
@@ -818,6 +861,20 @@ private:
             Expect(Tok::RParen, "')'");
             fe->body = ParseBlock();
             return fe;
+        }
+        // do { body } while (cond);
+        if (Check(Tok::Ident) && Peek().text == "do") {
+            ++m_pos;
+            auto st = std::make_unique<DoWhileStmt>();
+            st->body = ParseBlock();
+            if (!(Check(Tok::While) || (Check(Tok::Ident) && Peek().text == "while")))
+                throw ScriptError("parse error: expected 'while' after do-block");
+            ++m_pos;   // 'while'
+            Expect(Tok::LParen, "'('");
+            st->cond = ParseExpression();
+            Expect(Tok::RParen, "')'");
+            Match(Tok::Semicolon);
+            return st;
         }
         // C#-style: switch (expr) { case A: ...; break; default: ...; }
         if (Check(Tok::Ident) && Peek().text == "switch") {
@@ -3065,6 +3122,40 @@ struct OkayScriptVM::Impl {
             return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
                               a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f}};
         };
+        // Vector math on Vec3 values (from Vector3(...)/new Vector3(...)). Read
+        // components with v.x/v.y/v.z (see property access) or vec_x/y/z(v).
+        b["vec_add"]   = [](std::vector<Value>& a) -> Value { return Value{(a.size() > 0 ? a[0].AsVec3() : Vec3::Zero) + (a.size() > 1 ? a[1].AsVec3() : Vec3::Zero)}; };
+        b["vec_sub"]   = [](std::vector<Value>& a) -> Value { return Value{(a.size() > 0 ? a[0].AsVec3() : Vec3::Zero) - (a.size() > 1 ? a[1].AsVec3() : Vec3::Zero)}; };
+        b["vec_scale"] = [](std::vector<Value>& a) -> Value { return Value{(a.size() > 0 ? a[0].AsVec3() : Vec3::Zero) * (a.size() > 1 ? a[1].AsFloat() : 1.0f)}; };
+        b["vec_length"]= [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().Magnitude()}; };
+        b["vec_dot"]   = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{0.0f};
+            Vec3 u = a[0].AsVec3(), v = a[1].AsVec3();
+            return Value{u.x * v.x + u.y * v.y + u.z * v.z};
+        };
+        b["vec_distance"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{0.0f};
+            return Value{(a[0].AsVec3() - a[1].AsVec3()).Magnitude()};
+        };
+        b["vec_normalize"] = [](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{Vec3::Zero};
+            Vec3 v = a[0].AsVec3(); float m = v.Magnitude();
+            return Value{m > 1e-6f ? v * (1.0f / m) : Vec3::Zero};
+        };
+        b["vec_lerp"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 3) return Value{Vec3::Zero};
+            Vec3 u = a[0].AsVec3(), v = a[1].AsVec3(); float t = a[2].AsFloat();
+            t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+            return Value{u + (v - u) * t};
+        };
+        b["vec_x"] = [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().x}; };
+        b["vec_y"] = [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().y}; };
+        b["vec_z"] = [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().z}; };
+        alias("vec3", "Vector3");
+        alias("vec2", "Vector2");
+        alias("Vector3.Lerp", "vec_lerp");
+        alias("Vector3.Dot", "vec_dot");
+        alias("Vector3.Normalize", "vec_normalize");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
         // transform.rotation, which uses the Z component for 2D).
         b["Quaternion.Euler"] = [](std::vector<Value>& a) -> Value {
@@ -3157,7 +3248,7 @@ struct OkayScriptVM::Impl {
         alias("Mathf.PingPong", "ping_pong"); alias("Mathf.SmoothStep", "smoothstep");
         alias("Mathf.MoveTowards", "move_toward");
         alias("Random.Range", "rand");
-        alias("Vector3.Distance", "dist3"); alias("Vector2.Distance", "dist");
+        alias("Vector3.Distance", "vec_distance"); alias("Vector2.Distance", "vec_distance");
         alias("transform.Translate", "move"); alias("transform.Rotate", "rotate");
         alias("transform.LookAt", "look_at3");
         alias("Instantiate", "spawn"); alias("Object.Instantiate", "spawn");

@@ -179,6 +179,41 @@ int main() {
         CHECK_NEAR(go->transform->Position().z, 0.4f, 0.001f);
     }
 
+    // --- Vector3 variables: component access + vector math -------------
+    {
+        Scene s("UVec"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("V");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    var v = new Vector3(3, 4, 0);\n"
+            "    v.x = v.x + 1;\n"                       // 4
+            "    var w = vec_add(v, new Vector3(0, 1, 0));\n"  // (4,5,0)
+            "    transform.position.x = v.x;\n"          // 4
+            "    transform.position.y = w.y;\n"          // 5
+            "    transform.position.z = vec_length(new Vector3(3, 4, 0));\n"  // 5
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 4.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().y, 5.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().z, 5.0f, 0.001f);
+    }
+
+    // --- do-while runs at least once -----------------------------------
+    {
+        Scene s("UDo"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("D");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    int n = 0;\n"
+            "    do { n = n + 1; } while (n < 5);\n"
+            "    transform.position.x = n;\n"            // 5
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 5.0f, 0.001f);
+    }
+
     // --- Legacy lowercase still works (backward compatible) ------------
     {
         Scene s("ULegacy"); s.physicsEnabled = false;

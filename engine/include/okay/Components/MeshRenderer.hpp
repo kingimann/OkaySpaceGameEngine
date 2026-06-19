@@ -12,11 +12,21 @@ namespace okay {
 class MeshRenderer : public Component {
 public:
     Mesh  mesh;
-    Color color = Color::White;
+    Color color = Color::White;        // base (albedo) color
     bool  wireframe = false;   // solid by default (Unity-like); true = edges only
     /// Render both faces of each triangle (no back-face culling) — for planes,
     /// flags, foliage cards, and the insides of open meshes like Tube.
     bool  doubleSided = false;
+
+    // ---- Material (honored by the software renderer) ------------------
+    /// Self-illumination added on top of lighting (glowing screens, lava, neon).
+    Color emissive = Color::Black;
+    /// Blinn-Phong specular highlight: intensity [0,1] and tightness (exponent).
+    float specular  = 0.0f;
+    float shininess = 16.0f;
+    /// Skip lighting entirely and draw the flat base color.
+    bool  unlit = false;
+
     /// Optional .OBJ model file. When set, the scene loader replaces `mesh` with
     /// the loaded geometry (and Build Game bundles the file alongside the exe).
     std::string meshPath;

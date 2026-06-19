@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.14.0
+  - Materials on 3D objects: the Mesh Renderer now has Emissive (self-glow),
+    Specular + Shininess (Blinn-Phong highlights), and an Unlit toggle, all
+    honored by the solid renderer in both the editor and the player. Tune them
+    in the inspector; they save with the scene.
+
 v1.13.0
   - File > Open Recent: quick access to recently opened/saved scenes (persisted
     between sessions).

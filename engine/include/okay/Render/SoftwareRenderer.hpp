@@ -42,6 +42,11 @@ public:
         auto b = [](float v) { v = v < 0 ? 0 : (v > 1 ? 1 : v); return (std::uint32_t)(v * 255.0f + 0.5f); };
         return (0xFFu << 24) | (b(c.b * shade) << 16) | (b(c.g * shade) << 8) | b(c.r * shade);
     }
+    /// Pack already-computed linear RGB (each clamped to [0,1]).
+    static std::uint32_t PackRGB(float r, float g, float bl) {
+        auto b = [](float v) { v = v < 0 ? 0 : (v > 1 ? 1 : v); return (std::uint32_t)(v * 255.0f + 0.5f); };
+        return (0xFFu << 24) | (b(bl) << 16) | (b(g) << 8) | b(r);
+    }
 
     std::uint32_t Get(int x, int y) const { return color[(std::size_t)y * width + x]; }
     float Depth(int x, int y) const { return depth[(std::size_t)y * width + x]; }
@@ -107,7 +112,21 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 sd[k] = c.z / c.w;
             }
             if (!ok) continue;
-            std::uint32_t abgr = Raster::Pack(mr->color, SceneLight::Shade(normal));
+            // Material: diffuse (Lambert, or flat when unlit) + Blinn-Phong
+            // specular highlight + self-illuminating emissive.
+            float shade = mr->unlit ? 1.0f : SceneLight::Shade(normal);
+            float spec = 0.0f;
+            if (!mr->unlit && mr->specular > 0.0f) {
+                Vec3 toLight = SceneLight::Direction() * -1.0f;
+                Vec3 toEye = (eye - centroid).Normalized();
+                Vec3 h = (toLight.Normalized() + toEye).Normalized();
+                float nh = Vec3::Dot(normal, h);
+                if (nh > 0.0f) spec = std::pow(nh, mr->shininess) * mr->specular;
+            }
+            std::uint32_t abgr = Raster::PackRGB(
+                mr->color.r * shade + spec + mr->emissive.r,
+                mr->color.g * shade + spec + mr->emissive.g,
+                mr->color.b * shade + spec + mr->emissive.b);
             r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1], sx[2], sy[2], sd[2], abgr);
         }
     }

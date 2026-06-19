@@ -116,6 +116,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
             << Quote(mr->meshPath) << " " << (mr->doubleSided ? 1 : 0) << "\n";
+        // Material (emissive rgb, specular, shininess, unlit) — separate record
+        // so older scenes without it still load.
+        out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
+            << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
+            << (mr->unlit ? 1 : 0) << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
@@ -392,6 +397,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     in >> std::ws; // optional double-sided flag
                     if (std::isdigit(in.peek())) { int ds = 0; in >> ds; mr->doubleSided = (ds != 0); }
+                } else if (field == "material") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        Color e; float spec = 0, shin = 16; int unlit = 0;
+                        in >> e.r >> e.g >> e.b >> spec >> shin >> unlit;
+                        mr->emissive = e; mr->specular = spec; mr->shininess = shin;
+                        mr->unlit = (unlit != 0);
+                    }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();
                     Color c;

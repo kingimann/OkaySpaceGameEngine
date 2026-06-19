@@ -1904,6 +1904,16 @@ void DrawInspector(EditorState& ed) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Unlit", &mr->unlit)) ed.dirty = true;
+            // Material: emissive glow + specular highlight.
+            float em[3] = {mr->emissive.r, mr->emissive.g, mr->emissive.b};
+            if (ImGui::ColorEdit3("Emissive##mesh", em)) {
+                mr->emissive = {em[0], em[1], em[2], 1.0f}; ed.dirty = true;
+            }
+            if (ImGui::SliderFloat("Specular##mesh", &mr->specular, 0.0f, 1.0f)) ed.dirty = true;
+            if (mr->specular > 0.0f)
+                if (ImGui::SliderFloat("Shininess##mesh", &mr->shininess, 1.0f, 128.0f)) ed.dirty = true;
             const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
                                     "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid"};
             const int kShapeCount = 13;

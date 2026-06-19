@@ -26,6 +26,15 @@ GameObject* PickOther(Scene& scene, GameObject* self, const Vec2& p, float w, fl
     return hit;
 }
 
+// Is `target` a valid drop for a draggable `self` (tag/anyTarget rules)?
+GameObject* ValidTarget(GameObject* target, GameObject* self, bool anyTarget) {
+    if (!target) return nullptr;
+    auto* dt = target->GetComponent<UIDropTarget>();
+    if (!anyTarget && !dt) return nullptr;
+    if (dt && !dt->acceptTag.empty() && dt->acceptTag != self->tag) return nullptr;
+    return target;
+}
+
 } // namespace
 
 void UIDraggable::Update(float) {
@@ -60,16 +69,17 @@ void UIDraggable::Update(float) {
         if (axis != Axis::Vertical)   r.position->x += (m.x - m_prevMouse.x) / s;
         if (axis != Axis::Horizontal) r.position->y += (m.y - m_prevMouse.y) / s;
         m_prevMouse = m;
+        // Highlight the slot we're currently hovering (clear the rest).
+        GameObject* hover = ValidTarget(PickOther(scene, gameObject, m, w, h), gameObject, anyTarget);
+        for (const auto& up : scene.Objects())
+            if (auto* dt = up->GetComponent<UIDropTarget>())
+                dt->SetHovered(up.get() == hover);
         Fire(gameObject, "on_drag");
     } else {                                   // released: resolve a drop
         m_dragging = false;
-        GameObject* target = PickOther(scene, gameObject, m, w, h);
-        if (target) {
-            auto* dt = target->GetComponent<UIDropTarget>();
-            if (!anyTarget && !dt) target = nullptr;            // only UIDropTargets count
-            else if (dt && !dt->acceptTag.empty() && dt->acceptTag != gameObject->tag)
-                target = nullptr;                                // tag filter rejects it
-        }
+        for (const auto& up : scene.Objects())                  // clear all highlights
+            if (auto* dt = up->GetComponent<UIDropTarget>()) dt->SetHovered(false);
+        GameObject* target = ValidTarget(PickOther(scene, gameObject, m, w, h), gameObject, anyTarget);
         m_dropTarget = target;
         if (target) {
             // Snap-to-slot: center this item in the slot (zero-script inventory).

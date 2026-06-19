@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Math/Vec2.hpp"
+#include "okay/Render/Color.hpp"
 #include <string>
 
 namespace okay {
@@ -48,10 +49,20 @@ private:
 
 /// A widget that can receive dropped UIDraggables (gets on_receive()). With a
 /// non-empty `acceptTag`, only draggables whose GameObject tag matches are
-/// accepted (e.g. a weapon slot that takes only "weapon" items).
+/// accepted (e.g. a weapon slot that takes only "weapon" items). While a
+/// compatible draggable hovers over it during a drag, `highlight` is painted
+/// over the slot for feedback (enable with `showHighlight`).
 class UIDropTarget : public Component {
 public:
     std::string acceptTag;
+    bool  showHighlight = true;                  // tint the slot while a valid item hovers
+    Color highlight = {1.0f, 1.0f, 1.0f, 0.25f}; // overlay color
+
+    bool IsHovered() const { return m_hover; }
+    void SetHovered(bool v) { m_hover = v; }
+
+private:
+    bool m_hover = false;
 };
 
 } // namespace okay

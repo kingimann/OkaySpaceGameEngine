@@ -323,7 +323,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)dg->axis << " " << dg->dragThreshold << " " << (dg->bringToFront ? 1 : 0) << "\n";
     }
     if (auto* dt = go->GetComponent<UIDropTarget>()) {
-        out << "  uidroptarget " << Quote(dt->acceptTag) << "\n";
+        out << "  uidroptarget " << Quote(dt->acceptTag)
+            << " " << (dt->showHighlight ? 1 : 0)
+            << " " << dt->highlight.r << " " << dt->highlight.g
+            << " " << dt->highlight.b << " " << dt->highlight.a << "\n";
     }
     if (auto* tt = go->GetComponent<UITooltip>()) {
         out << "  uitooltip " << Quote(tt->text) << " " << tt->delay << " "
@@ -855,6 +858,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* dt = go->AddComponent<UIDropTarget>();
                     in >> std::ws;
                     if (in.peek() == '"') dt->acceptTag = ReadQuoted(in);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        int sh = 1; in >> sh; dt->showHighlight = (sh != 0);
+                        in >> dt->highlight.r >> dt->highlight.g
+                           >> dt->highlight.b >> dt->highlight.a;
+                    }
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
                     tt->text = ReadQuoted(in);

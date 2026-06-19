@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.94.0
+  - Drop-target feedback: UI Drop Target now highlights itself while a valid
+    draggable hovers over it during a drag (toggle "Highlight on hover" and pick
+    the overlay color in the inspector). Makes inventory slots feel responsive —
+    you can see exactly where an item will land before you let go.
+
 v1.93.0
   - UI drag & drop, much more customizable: UI Draggable now has a "Lock axis"
     option (Both/Horizontal/Vertical) for sliders & rails, a "Drag threshold"

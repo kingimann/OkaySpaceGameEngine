@@ -583,6 +583,16 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        for (const auto& up : scene.Objects()) {           // drop-target highlight (drag feedback)
+            auto* dt = up->GetComponent<UIDropTarget>();
+            if (!dt || !up->active || !dt->showHighlight || !dt->IsHovered()) continue;
+            Vec2 o, sz;
+            if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
+            SDL_Rect hr{(int)o.x, (int)o.y, (int)sz.x, (int)sz.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(dt->highlight.r * 255), (Uint8)(dt->highlight.g * 255),
+                                   (Uint8)(dt->highlight.b * 255), (Uint8)(dt->highlight.a * 255));
+            SDL_RenderFillRect(renderer, &hr);
+        }
         for (const auto& up : scene.Objects()) {           // scroll-view backgrounds + scrollbar
             auto* sv = up->GetComponent<UIScrollView>();
             if (!sv || !up->active) continue;

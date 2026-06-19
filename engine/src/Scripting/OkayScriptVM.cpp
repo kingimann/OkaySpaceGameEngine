@@ -1173,8 +1173,10 @@ private:
             // C#-style `new Vector3(...)` — drop `new`, the T(...) is just a call.
             if (name == "new") return ParsePrimary();
             // Generic call `GetComponent<Type>(args)` — pass the type name as the
-            // first argument so builtins can dispatch on it.
-            if (Check(Tok::Lt) && m_toks[m_pos + 1].type == Tok::Ident &&
+            // first argument so builtins can dispatch on it. (Bounds-checked: the
+            // token stream has a single End sentinel, so peeking +3 can run off.)
+            if (Check(Tok::Lt) && m_pos + 3 < m_toks.size() &&
+                m_toks[m_pos + 1].type == Tok::Ident &&
                 m_toks[m_pos + 2].type == Tok::Gt && m_toks[m_pos + 3].type == Tok::LParen) {
                 std::string typeName = m_toks[m_pos + 1].text;
                 m_pos += 4;   // consume  < Type > (

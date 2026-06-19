@@ -468,10 +468,15 @@ int main(int argc, char** argv) {
                 SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
                              (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255)};
                 if (tr->screenSpace) {
-                    Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);
-                    float tw = tr->PixelWidth() * tr->pixelSize;
-                    if (tr->align == 1)      o.x -= tw * 0.5f;
-                    else if (tr->align == 2) o.x -= tw;
+                    if (tr->background) {                       // label background box
+                        Vec2 b = tr->BoxTopLeft((float)w, (float)h);
+                        SDL_Rect br{(int)b.x, (int)b.y, (int)tr->size.x, (int)tr->size.y};
+                        SDL_SetRenderDrawColor(renderer, (Uint8)(tr->backgroundColor.r * 255),
+                                               (Uint8)(tr->backgroundColor.g * 255), (Uint8)(tr->backgroundColor.b * 255),
+                                               (Uint8)(tr->backgroundColor.a * 255));
+                        SDL_RenderFillRect(renderer, &br);
+                    }
+                    Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);   // align handled inside
                     float p = tr->pixelSize;
                     if (tr->shadow)
                         DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * p,

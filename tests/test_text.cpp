@@ -77,9 +77,11 @@ int main() {
         tr->pixelSize = 2.0f;            // rendered glyph width = 2 * 8 = 16 px each
         tr->screenSpace = true;
         tr->screenPos = {0, 0};
+        tr->align = 0; tr->vcenter = false;            // top-left inside the box
 
         float tw = tr->PixelWidth() * tr->pixelSize;   // 2*8*2 = 32
         float th = tr->PixelHeight() * tr->pixelSize;  // 8*2  = 16
+        tr->size = {tw, th};             // box == text, so anchoring uses that size
 
         // TopLeft: offset unchanged.
         tr->anchor = UIAnchor::TopLeft;
@@ -150,6 +152,29 @@ int main() {
         std::string err;
         CHECK(SceneSerializer::Deserialize(loaded, text, &err));
         CHECK(loaded.Find("HUD")->GetComponent<TextRenderer>()->anchor == UIAnchor::BottomCenter);
+    }
+
+    // --- Screen-space text is a resizable UI rect (the box); box fields save ---
+    {
+        Scene scene("Box");
+        GameObject* go = scene.CreateGameObject("Label");
+        auto* tr = go->AddComponent<TextRenderer>();
+        tr->screenSpace = true;
+        tr->size = {300.0f, 64.0f};
+        tr->background = true;
+        tr->backgroundColor = Color(0.1f, 0.2f, 0.3f, 0.8f);
+        UIRect r = GetUIRect(go);
+        CHECK(r.valid);
+        CHECK(r.sizePtr == &tr->size);          // resize handles edit the box
+        CHECK_NEAR(r.size.x, 300.0f, 0.001f);
+        CHECK_NEAR(r.size.y, 64.0f, 0.001f);
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* rr = loaded.Find("Label")->GetComponent<TextRenderer>();
+        CHECK_NEAR(rr->size.x, 300.0f, 0.001f);
+        CHECK(rr->background == true);
+        CHECK_NEAR(rr->backgroundColor.b, 0.3f, 0.01f);
     }
 
     TEST_MAIN_RESULT();

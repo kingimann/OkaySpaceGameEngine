@@ -984,6 +984,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 GameObject* g = ed.CreateEmpty(nm);
                 build(g);
                 if (root) g->transform->SetParent(root->transform, /*worldPositionStays=*/false);
+                // Spawn centered on screen (not the top-left corner) so it's visible.
+                UIRect r = GetUIRect(g);
+                if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
                 ed.Select(g); ed.dirty = true; created = true;
             };
             if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>();        ed.dirty = true; created = true; }
@@ -1004,7 +1007,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Button"))       addUI("Button",      [](GameObject* g){ g->AddComponent<UIButton>(); });
             if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
             if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
-            if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ g->AddComponent<TextRenderer>()->screenSpace = true; });
+            if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; });
             if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
             if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
             if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
@@ -1520,8 +1523,9 @@ void DrawProject(EditorState& ed) {
         ImGui::EndPopup();
     }
 
-    // Rename modal (opened from an item's context menu).
-    if (!renameTarget.empty()) ImGui::OpenPopup("Rename Asset");
+    // Rename modal (opened from an item's context menu). Only open once — calling
+    // OpenPopup every frame resets the popup so its buttons never register.
+    if (!renameTarget.empty() && !ImGui::IsPopupOpen("Rename Asset")) ImGui::OpenPopup("Rename Asset");
     if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::InputText("New name", renameBuf, sizeof(renameBuf));
         bool ok = ImGui::Button("Rename", ImVec2(110, 0));
@@ -2113,7 +2117,9 @@ void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput) return;
     bool ctrl = io.KeyCtrl;
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) { if (ed.Undo()) ConsoleLog("Undo"); }
+    // Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo. (Guard the undo with !Shift
+    // so Ctrl+Shift+Z doesn't undo and redo in the same frame.)
+    if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) { if (ed.Undo()) ConsoleLog("Undo"); }
     if (ctrl && (ImGui::IsKeyPressed(ImGuiKey_Y, false) ||
                  (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
         if (ed.Redo()) ConsoleLog("Redo");
@@ -2401,6 +2407,7 @@ static const char* ObjectKind(GameObject* go) {
 
 static char g_hierFilter[96] = "";
 static GameObject* g_hierRename = nullptr;   // object being renamed inline
+static bool        g_hierRenameOpen = false; // request to open the rename popup (once)
 static char g_hierRenameBuf[128] = "";
 static GameObject* g_prefabSaveTarget = nullptr; // object being saved as a prefab
 static char g_prefabNameBuf[128] = "";
@@ -2418,7 +2425,7 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Cube"))   ed.Select(ed.CreateCube());
         ImGui::Separator();
         if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
-        if (ImGui::MenuItem("UI Text"))   { GameObject* g = ed.CreateEmpty("Text"); g->AddComponent<TextRenderer>()->screenSpace = true; ed.Select(g); }
+        if (ImGui::MenuItem("UI Text"))   { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Text"); auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
         ImGui::EndPopup();
     }
     ImGui::SameLine();
@@ -2479,7 +2486,7 @@ void DrawHierarchy(EditorState& ed) {
             }
             // Double-click a row to rename it inline.
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                g_hierRename = node;
+                g_hierRename = node; g_hierRenameOpen = true;
                 std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
                 g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
             }
@@ -2487,7 +2494,7 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::BeginPopupContextItem()) {
                 ed.Select(node);
                 if (ImGui::MenuItem("Rename", "F2")) {
-                    g_hierRename = node;
+                    g_hierRename = node; g_hierRenameOpen = true;
                     std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
                     g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
                 }
@@ -2608,10 +2615,12 @@ void DrawHierarchy(EditorState& ed) {
         if (!alive) g_hierRename = nullptr;
     }
     if (g_hierRename) {
-        ImGui::OpenPopup("Rename Object");
+        // OpenPopup must be called once (on request) — calling it every frame
+        // resets the popup's active-id each frame, so OK/Cancel never register.
+        if (g_hierRenameOpen) { ImGui::OpenPopup("Rename Object"); g_hierRenameOpen = false; }
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Rename Object", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::SetKeyboardFocusHere();
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();   // focus once, not every frame
             bool enter = ImGui::InputText("Name", g_hierRenameBuf, sizeof(g_hierRenameBuf),
                                           ImGuiInputTextFlags_EnterReturnsTrue);
             if (enter || ImGui::Button("OK", ImVec2(110, 0))) {
@@ -2632,7 +2641,7 @@ void DrawHierarchy(EditorState& ed) {
         if (!alive) g_prefabSaveTarget = nullptr;
     }
     if (g_prefabSaveTarget) {
-        ImGui::OpenPopup("Save As Prefab");
+        if (!ImGui::IsPopupOpen("Save As Prefab")) ImGui::OpenPopup("Save As Prefab");   // open once
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Save As Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             namespace fs = std::filesystem;
@@ -3388,20 +3397,38 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
         if (ImGui::CollapsingHeader("Text", ImGuiTreeNodeFlags_DefaultOpen)) {
-            char buf[256];
+            char buf[512];
             std::strncpy(buf, tr->text.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
-            if (ImGui::InputText("Text##txt", buf, sizeof(buf))) { tr->text = buf; ed.dirty = true; }
+            // Multi-line box so '\n' / Enter make several lines.
+            if (ImGui::InputTextMultiline("Text##txt", buf, sizeof(buf),
+                    ImVec2(-1.0f, ImGui::GetTextLineHeight() * 3.0f))) { tr->text = buf; ed.dirty = true; }
             float col[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##txt", col)) { tr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true; }
-            if (ImGui::DragFloat("Pixel Size##txt", &tr->pixelSize, 0.005f, 0.001f, 100.0f)) ed.dirty = true;
-            if (ImGui::Checkbox("Screen Space##txt", &tr->screenSpace)) ed.dirty = true;
+            if (ImGui::DragFloat("Font Size##txt", &tr->pixelSize, tr->screenSpace ? 0.1f : 0.005f, 0.001f, 100.0f))
+                ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr->screenSpace ? "Window pixels per font pixel (screen UI: try 2-6)"
+                                                                          : "World units per font pixel");
+            if (ImGui::Checkbox("Screen Space (UI)##txt", &tr->screenSpace)) ed.dirty = true;
             if (tr->screenSpace) {
+                float bs[2] = {tr->size.x, tr->size.y};
+                if (ImGui::DragFloat2("Box Size##txt", bs, 1.0f, 1.0f, 4000.0f)) { tr->size = {bs[0], bs[1]}; ed.dirty = true; }
+                if (ImGui::SmallButton("Fit to Text##txt")) {
+                    tr->size = {(float)tr->PixelWidth() * tr->pixelSize + 8.0f,
+                                (float)tr->PixelHeight() * tr->pixelSize + 8.0f};
+                    ed.dirty = true;
+                }
                 float sp[2] = {tr->screenPos.x, tr->screenPos.y};
-                if (ImGui::DragFloat2("Screen Pos##txt", sp, 1.0f)) { tr->screenPos = {sp[0], sp[1]}; ed.dirty = true; }
+                if (ImGui::DragFloat2("Offset##txt", sp, 1.0f)) { tr->screenPos = {sp[0], sp[1]}; ed.dirty = true; }
                 AnchorCombo("Anchor##txt", tr->anchor, ed);
                 const char* aligns[] = {"Left", "Center", "Right"};
                 if (ImGui::Combo("Align##txt", &tr->align, aligns, 3)) ed.dirty = true;
+                if (ImGui::Checkbox("Vertical Center##txt", &tr->vcenter)) ed.dirty = true;
+                if (ImGui::Checkbox("Background##txt", &tr->background)) ed.dirty = true;
+                if (tr->background) {
+                    float bg[4] = {tr->backgroundColor.r, tr->backgroundColor.g, tr->backgroundColor.b, tr->backgroundColor.a};
+                    if (ImGui::ColorEdit4("BG Color##txt", bg)) { tr->backgroundColor = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
+                }
             }
             if (ImGui::Checkbox("Shadow##txt", &tr->shadow)) ed.dirty = true;
             if (tr->shadow) {
@@ -4153,14 +4180,18 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float s = uiScale(up.get());
         ImU32 col = ToColor(tr->color);
         ImU32 sh = ToColor(tr->shadowColor);
-        Vec2 sz{(float)tr->PixelWidth() * tr->pixelSize * s, (float)tr->PixelHeight() * tr->pixelSize * s};
-        Vec2 o = ResolveAnchor(tr->anchor, tr->screenPos * s, sz, canvasSize.x, canvasSize.y);
+        Vec2 box = tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);   // box top-left
+        Vec2 boxSz{tr->size.x * s, tr->size.y * s};
+        if (UIScrollView* sv = OwningScrollView(up.get())) box.y -= sv->scroll * s;
+        if (svCull(up.get(), box, boxSz)) continue;
+        if (tr->background)
+            dl->AddRectFilled(ImVec2(canvasPos.x + box.x, canvasPos.y + box.y),
+                              ImVec2(canvasPos.x + box.x + boxSz.x, canvasPos.y + box.y + boxSz.y),
+                              ToColor(tr->backgroundColor), 4.0f);
+        Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s);   // text inside box
         if (UIScrollView* sv = OwningScrollView(up.get())) o.y -= sv->scroll * s;
-        if (svCull(up.get(), o, sz)) continue;
         float px = tr->pixelSize * s;
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
-        if (tr->align == 1)      bx -= sz.x * 0.5f;   // center on screenPos
-        else if (tr->align == 2) bx -= sz.x;          // right-align to screenPos
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * px,
                            by + tr->shadowOffset.y * px, px, sh);
@@ -4607,6 +4638,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 for (int i = 0; i < 8; ++i) {
                     float dx = io.MousePos.x - h[i].x, dy = io.MousePos.y - h[i].y;
                     if (dx * dx + dy * dy <= 9.0f * 9.0f) {
+                        ed.PushUndo();                     // checkpoint before a resize
                         g_uiDragTarget = ed.selected();
                         g_uiResizeHandle = i;
                         g_uiHandled = true;
@@ -4620,6 +4652,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
             GameObject* hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
             if (hit) {
                 ed.Select(hit);
+                ed.PushUndo();                             // checkpoint before a move
                 g_uiDragTarget = hit;
                 g_uiResizeHandle = -1;
                 g_uiHandled = true;
@@ -5133,7 +5166,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             float best = 11.0f; int pick = -1;
             for (int i = 0; i < 3; ++i)
                 if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
-            if (pick >= 0) { g_gizmoAxis = pick; g_gizmoGrab = true; grabbedThisClick = true; }
+            if (pick >= 0) { ed.PushUndo(); g_gizmoAxis = pick; g_gizmoGrab = true; grabbedThisClick = true; }
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_gizmoGrab = false; g_gizmoAxis = -1; }
 
@@ -5194,7 +5227,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (depth < bestDepth) { bestDepth = depth; hit = go; }
             }
         }
-        if (hit) ed.Select(hit);
+        ed.Select(hit);   // hit may be null -> clicking empty space deselects (matches 2D)
     }
 }
 

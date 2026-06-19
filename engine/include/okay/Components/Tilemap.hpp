@@ -38,6 +38,7 @@ public:
     }
     /// Cell containing the given world position.
     void WorldToCell(const Vec3& world, int& x, int& y) const {
+        if (tileSize == 0.0f) { x = y = 0; return; }   // avoid divide-by-zero
         Vec3 o = transform ? transform->Position() : Vec3::Zero;
         x = static_cast<int>(Mathf::Floor((world.x - o.x) / tileSize));
         y = static_cast<int>(Mathf::Floor((world.y - o.y) / tileSize));

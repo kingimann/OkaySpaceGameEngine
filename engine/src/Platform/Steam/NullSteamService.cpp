@@ -97,6 +97,18 @@ public:
         OKAY_TRACE("Steam(sim): overlay '", page, "' (no-op in simulation)");
     }
 
+    // The simulation grants ownership so the owned/DLC code paths are testable.
+    bool IsDlcInstalled(std::uint32_t) const override { return true; }
+    bool OwnsApp(std::uint32_t) const override { return true; }
+    int  AchievementCount() const override { return (int)m_achievements.size(); }
+    std::string AchievementName(int index) const override {
+        if (index < 0) return {};
+        int i = 0;
+        for (const auto& a : m_achievements) { if (i == index) return a; ++i; }
+        return {};
+    }
+    std::string Language() const override { return "english"; }
+
     void SetRichPresence(const std::string& key, const std::string& value) override {
         OKAY_TRACE("Steam(sim): presence ", key, " = ", value);
     }

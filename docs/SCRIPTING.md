@@ -147,6 +147,8 @@ function update(dt) {
 | `net_start_match()` / `net_match_started()` | (host) begin the match / has it begun? |
 | `net_send("channel", "data")` | Broadcast a message to all peers |
 | `net_send_to(id, "channel", "data")` | Message one peer |
+| `net_send_reliable("channel", "data")` | Like net_send but resent until acked + de-duped |
+| `net_kick(id [, "reason"])` / `net_was_kicked()` | Host kicks a peer / client check |
 | `net_poll()` | Pop one received message (use in a `while`) |
 | `net_msg_channel()` / `net_msg_data()` / `net_msg_from()` | The popped message |
 | `net_set("key", "value")` | Set a server-authoritative **synced variable** |
@@ -166,6 +168,8 @@ function update(dt) {
 | `steam_cloud_write("file", "data")` / `steam_cloud_read("file")` | Steam Cloud |
 | `steam_presence("key", "value")` | Rich presence |
 | `steam_friends()` / `steam_overlay("page")` | Friend count / open the overlay |
+| `steam_owns(appId)` / `steam_owns_dlc(appId)` | Ownership / DLC checks |
+| `steam_achievement_count()` / `steam_language()` | Achievement count / client language |
 
 ### Debugging
 All of these print into the editor's **Console**.

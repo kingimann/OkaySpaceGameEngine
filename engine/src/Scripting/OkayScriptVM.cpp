@@ -1367,6 +1367,22 @@ struct OkayScriptVM::Impl {
             if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
             return Value{};
         };
+        // Reliable (resent until acked) variants for events you can't drop.
+        b["net_send_reliable"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && a.size() >= 2) n->SendReliable(a[0].AsString(), a[1].AsString());
+            return Value{};
+        };
+        b["net_send_reliable_to"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendReliableTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
+            return Value{};
+        };
+        // Moderation: host kicks a peer; clients can check if they were kicked.
+        b["net_kick"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && !a.empty()) n->Kick((std::uint32_t)a[0].AsFloat(), a.size() > 1 ? a[1].AsString() : std::string{});
+            return Value{};
+        };
+        b["net_was_kicked"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->WasKicked()) ? 1.0f : 0.0f}; };
+        b["net_server_name"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->ServerName() : std::string{}}; };
         // Drain one received message into net_msg_* accessors; returns 1 if one
         // was popped (use in a while-loop), 0 when the inbox is empty.
         b["net_poll"] = [this](std::vector<Value>&) {
@@ -1445,6 +1461,10 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["steam_friends"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().FriendCount()}; };
+        b["steam_owns"] = [](std::vector<Value>& a) { return Value{Steam::Get().OwnsApp(a.empty() ? 0u : (std::uint32_t)a[0].AsFloat()) ? 1.0f : 0.0f}; };
+        b["steam_owns_dlc"] = [](std::vector<Value>& a) { return Value{Steam::Get().IsDlcInstalled(a.empty() ? 0u : (std::uint32_t)a[0].AsFloat()) ? 1.0f : 0.0f}; };
+        b["steam_achievement_count"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().AchievementCount()}; };
+        b["steam_language"] = [](std::vector<Value>&) { return Value{Steam::Get().Language()}; };
         // Top-N leaderboard entries as an array of "rank,name,score" strings.
         b["steam_leaderboard_top"] = [](std::vector<Value>& a) {
             Value v = Value::MakeArray();

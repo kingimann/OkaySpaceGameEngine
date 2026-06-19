@@ -15,9 +15,17 @@ namespace {
     enum Msg : std::uint8_t {
         Join = 1, Welcome = 2, State = 3, Snapshot = 4, Leave = 5,
         Message = 6, DirectMessage = 7, SyncVar = 8, Ping = 9, Pong = 10,
-        Ready = 11, Reject = 12
+        Ready = 11, Reject = 12, Kicked = 13, ReliableMsg = 14, ReliableAck = 15
     };
     constexpr float kClientTimeout = 5.0f;
+    constexpr float kReliableResend = 0.25f;   // resend an unacked message this often
+
+    std::vector<std::uint8_t> BuildReliable(std::uint32_t seq, const std::string& channel,
+                                            const std::string& data) {
+        net::Packet p(ReliableMsg);
+        p.Write(seq); p.Write(channel); p.Write(data);
+        return std::vector<std::uint8_t>(p.Data(), p.Data() + p.Size());
+    }
 }
 
 bool NetworkManager::StartServer(std::uint16_t port) {
@@ -31,6 +39,7 @@ bool NetworkManager::StartServer(std::uint16_t port) {
     }
     m_mode = Mode::Server;
     m_localId = 0;
+    m_kicked = false; m_kickReason.clear();
     if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
     OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
               " (max ", maxPlayers, ")");
@@ -49,6 +58,7 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     }
     m_mode = Mode::Client;
     m_joined = false;
+    m_kicked = false; m_kickReason.clear();
     OKAY_INFO("net: client connecting to ", m_serverEp.ToString());
     return true;
 }
@@ -71,6 +81,11 @@ void NetworkManager::Stop() {
     m_matchStarted = false;
     m_serverName.clear();
     m_joinRejected = false;
+    m_relOut.clear();
+    m_relSeen.clear();
+    m_relSeq = 0;
+    // m_kicked / m_kickReason persist so WasKicked() can be read after the
+    // disconnect; they're cleared when a new session starts.
     m_mode = Mode::Offline;
     m_joined = false;
 }
@@ -237,6 +252,63 @@ void NetworkManager::SendTo(std::uint32_t targetId, const std::string& channel,
     }
 }
 
+void NetworkManager::SendReliableTo(std::uint32_t targetId, const std::string& channel,
+                                    const std::string& data) {
+    if (m_mode == Mode::Server) {
+        for (auto& [ep, c] : m_clients)
+            if (c.id == targetId) {
+                std::uint32_t seq = c.relSeq++;
+                auto bytes = BuildReliable(seq, channel, data);
+                c.relOut[seq] = {bytes, 0.0f};
+                m_socket.SendTo(c.endpoint, bytes.data(), bytes.size());
+                return;
+            }
+    } else if (m_mode == Mode::Client && m_joined) {
+        // Clients can only address the server reliably (id 0).
+        std::uint32_t seq = m_relSeq++;
+        auto bytes = BuildReliable(seq, channel, data);
+        m_relOut[seq] = {bytes, 0.0f};
+        m_socket.SendTo(m_serverEp, bytes.data(), bytes.size());
+    }
+}
+
+void NetworkManager::SendReliable(const std::string& channel, const std::string& data) {
+    if (m_mode == Mode::Server) {
+        for (auto& [ep, c] : m_clients) SendReliableTo(c.id, channel, data);
+    } else {
+        SendReliableTo(0, channel, data);
+    }
+}
+
+void NetworkManager::ResendReliable(
+        std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& out,
+        const net::Endpoint& to, float dt) {
+    for (auto& [seq, item] : out) {
+        item.second += dt;
+        if (item.second >= kReliableResend) {
+            item.second = 0.0f;
+            m_socket.SendTo(to, item.first.data(), item.first.size());
+        }
+    }
+}
+
+void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
+    if (m_mode != Mode::Server) return;
+    for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+        if (it->second.id != id) continue;
+        net::Packet p(Kicked); p.Write(reason);
+        m_socket.SendTo(it->second.endpoint, p.Data(), p.Size());
+        if (auto r = m_remotes.find(id); r != m_remotes.end()) {
+            if (GetScene() && r->second) GetScene()->Destroy(r->second);
+            m_remotes.erase(r);
+        }
+        m_clients.erase(it);
+        if (m_peerLeft) m_peerLeft(id);
+        OKAY_INFO("net: kicked peer ", id, reason.empty() ? "" : (" (" + reason + ")"));
+        return;
+    }
+}
+
 std::vector<NetworkManager::PeerInfo> NetworkManager::Peers() const {
     std::vector<PeerInfo> out;
     for (auto& [ep, c] : m_clients) out.push_back({c.id, c.name, c.state.glyph});
@@ -330,6 +402,20 @@ void NetworkManager::ServerTick(float dt) {
             std::uint8_t r = p.ReadU8();
             auto it = m_clients.find(from);
             if (it != m_clients.end()) it->second.ready = (r != 0);
+        } else if (type == ReliableMsg) {
+            auto it = m_clients.find(from);
+            if (it != m_clients.end()) {
+                std::uint32_t seq = p.ReadU32();
+                std::string channel = p.ReadString();
+                std::string data    = p.ReadString();
+                net::Packet ack(ReliableAck); ack.Write(seq);
+                m_socket.SendTo(from, ack.Data(), ack.Size());
+                if (it->second.relSeen.insert(seq).second)   // first time -> deliver
+                    Deliver(it->second.id, channel, data);
+            }
+        } else if (type == ReliableAck) {
+            auto it = m_clients.find(from);
+            if (it != m_clients.end()) it->second.relOut.erase(p.ReadU32());
         } else if (type == DirectMessage) {
             auto it = m_clients.find(from);
             if (it != m_clients.end()) {
@@ -440,6 +526,9 @@ void NetworkManager::ServerTick(float dt) {
             m_socket.SendTo(recipient.endpoint, snap.Data(), snap.Size());
         }
     }
+
+    // Resend any unacked reliable messages to each client.
+    for (auto& [ep, c] : m_clients) ResendReliable(c.relOut, c.endpoint, dt);
 }
 
 void NetworkManager::ClientTick(float dt) {
@@ -462,6 +551,7 @@ void NetworkManager::ClientTick(float dt) {
             m_socket.SendTo(m_serverEp, p.Data(), p.Size());
             m_pingTimer = 1.0f;
         }
+        ResendReliable(m_relOut, m_serverEp, dt);   // keep retrying unacked messages
     }
 
     std::uint8_t buf[1024];
@@ -481,6 +571,21 @@ void NetworkManager::ClientTick(float dt) {
             m_joinRejected = true;
             m_joinTimer = 1e9f;      // stop retrying
             OKAY_WARN("net: join refused: ", why);
+        } else if (type == Kicked) {
+            m_kickReason = p.ReadString();
+            m_kicked = true;
+            OKAY_WARN("net: kicked by server: ", m_kickReason);
+            Stop();
+            return;
+        } else if (type == ReliableMsg) {
+            std::uint32_t seq = p.ReadU32();
+            std::string channel = p.ReadString();
+            std::string data    = p.ReadString();
+            net::Packet ack(ReliableAck); ack.Write(seq);
+            m_socket.SendTo(m_serverEp, ack.Data(), ack.Size());
+            if (m_relSeen.insert(seq).second) Deliver(0, channel, data);
+        } else if (type == ReliableAck) {
+            m_relOut.erase(p.ReadU32());
         } else if (type == Snapshot) {
             std::uint32_t count = p.ReadU32();
             for (std::uint32_t i = 0; i < count && p.Ok(); ++i) {

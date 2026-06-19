@@ -200,6 +200,41 @@ int main() {
         CHECK(direct == "just for you");
     }
 
+    // --- Reliable messages: delivered exactly once each way ------------
+    {
+        int gotAtHost = 0, gotAtClient = 0;
+        server->SetMessageHandler([&](const NetworkManager::NetMessage& m){ if (m.channel == "rel") ++gotAtHost; });
+        client->SetMessageHandler([&](const NetworkManager::NetMessage& m){ if (m.channel == "srel") ++gotAtClient; });
+        client->SendReliable("rel", "c2s");
+        server->SendReliable("srel", "s2c");
+        for (int i = 0; i < 120; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (gotAtHost >= 1 && gotAtClient >= 1) break;
+        }
+        // Pump a while longer to ensure resends don't duplicate the delivery.
+        for (int i = 0; i < 60; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        CHECK(gotAtHost == 1);      // delivered once despite acks/resends
+        CHECK(gotAtClient == 1);
+    }
+
+    // --- Kick: the server disconnects a client, which learns it was kicked ---
+    {
+        std::uint32_t cid = client->LocalId();
+        server->Kick(cid, "bye");
+        for (int i = 0; i < 80; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (client->WasKicked()) break;
+        }
+        CHECK(client->WasKicked());
+        CHECK(client->KickReason() == "bye");
+        CHECK(!client->IsConnected());
+    }
+
     // --- Client leaving fires the server's peer-left callback ---
     client->Stop();
     for (int i = 0; i < 50; ++i) { serverScene.Update(0.02f); std::this_thread::sleep_for(std::chrono::milliseconds(2)); if (leftCount > 0) break; }

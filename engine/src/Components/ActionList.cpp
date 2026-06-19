@@ -312,6 +312,12 @@ void ActionList::Update(float dt) {
         else if (op == "net_start_match") {
             if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->StartMatch();
         }
+        else if (op == "net_send_reliable") {
+            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->SendReliable(Str(it, 0), Rest(it, 1));
+        }
+        else if (op == "net_kick") {
+            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->Kick((std::uint32_t)Num(it, 0), Rest(it, 1));
+        }
         else if (op == "steam_unlock")   { Steam::Get().UnlockAchievement(Str(it, 0)); Steam::Get().StoreStats(); }
         else if (op == "steam_set_stat") { Steam::Get().SetStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
         else if (op == "steam_inc_stat") { Steam::Get().IncrementStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }

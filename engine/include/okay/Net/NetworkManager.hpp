@@ -7,6 +7,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace okay {
@@ -146,6 +147,22 @@ public:
     /// same position — replicated object creation with one call.
     void Spawn(const std::string& prefabPath, const Vec3& position = Vec3::Zero);
 
+    // ---- Reliable messaging (guaranteed delivery + de-dup over UDP) ----
+    /// Like Send(), but resent until the other end acknowledges it and de-duped
+    /// on arrival — for events you can't afford to drop (deaths, score, "go!").
+    /// On a client it targets the server; on the server it reliably reaches every
+    /// client.
+    void SendReliable(const std::string& channel, const std::string& data);
+    /// Reliable message to a single peer id (server routes; 0 = the host).
+    void SendReliableTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+
+    // ---- Moderation ----------------------------------------------------
+    /// Server: disconnect a client by id (with an optional reason it's told).
+    void Kick(std::uint32_t id, const std::string& reason = "");
+    /// Client: true if the server kicked this peer, plus the reason it gave.
+    bool WasKicked() const { return m_kicked; }
+    const std::string& KickReason() const { return m_kickReason; }
+
     /// A connected peer in the session roster.
     struct PeerInfo { std::uint32_t id; std::string name; char glyph; };
     /// The current roster the server knows about (server only): every connected
@@ -197,7 +214,14 @@ private:
         std::string name;
         std::string room;
         bool ready = false;
+        // Per-client reliable channel (server side).
+        std::uint32_t relSeq = 0;   // next outgoing sequence to this client
+        std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> relOut; // unacked
+        std::unordered_set<std::uint32_t> relSeen;  // delivered seqs (de-dup)
     };
+
+    void ResendReliable(std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& out,
+                        const net::Endpoint& to, float dt);
 
     void ServerTick(float dt);
     void ClientTick(float dt);
@@ -220,6 +244,12 @@ private:
     bool m_matchStarted = false; // set when StartMatch reaches this peer's room
     std::string m_serverName;    // client: the server's friendly name
     bool m_joinRejected = false; // client: server refused us (full / password)
+    bool m_kicked = false;       // client: kicked by the server
+    std::string m_kickReason;
+    // Client-side reliable channel (to the server).
+    std::uint32_t m_relSeq = 0;
+    std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;
+    std::unordered_set<std::uint32_t> m_relSeen;
 
     // Client-only
     net::Endpoint m_serverEp{};

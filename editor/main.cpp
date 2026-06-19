@@ -3167,8 +3167,8 @@ void DrawInspector(EditorState& ed) {
                 "set_light", "set_ambient", "set_timescale", "send", "spawn", "spawn3",
                 "destroy", "destroy_obj", "activate", "deactivate", "set_tag",
                 "set_prefs", "add_prefs", "save_prefs",
-                "net_host", "net_join", "net_send", "net_set", "net_spawn",
-                "net_ready", "net_start_match", "net_disconnect",
+                "net_host", "net_join", "net_send", "net_send_reliable", "net_set", "net_spawn",
+                "net_ready", "net_start_match", "net_kick", "net_disconnect",
                 "steam_unlock", "steam_set_stat", "steam_inc_stat",
                 "load_scene", "load_scene_index", "load_next_scene", "log"};
 

@@ -378,7 +378,7 @@ bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
-float g_uiScale = 1.10f;         // global UI scale (font + implicit spacing feel)
+float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool g_autosave = false;         // periodically save the open scene
 double g_lastAutosave = 0.0;     // seconds since last autosave
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
@@ -994,6 +994,19 @@ void DrawMenuAndToolbar(EditorState& ed) {
             go->AddComponent<Light>();
             go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
             ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
+        }
+        if (ImGui::MenuItem("Create Point Light")) {
+            GameObject* go = ed.CreateEmpty("Point Light");
+            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
+            go->transform->localPosition = {0, 3, 0};
+            ed.Select(go); ConsoleLog("Created Point Light"); created = true;
+        }
+        if (ImGui::MenuItem("Create Spot Light")) {
+            GameObject* go = ed.CreateEmpty("Spot Light");
+            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
+            go->transform->localPosition = {0, 5, 0};
+            go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
+            ed.Select(go); ConsoleLog("Created Spot Light"); created = true;
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Create Particle System")) {
@@ -3160,11 +3173,24 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* li = go->GetComponent<Light>()) {
-        if (ImGui::CollapsingHeader("Light (Directional)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* types[] = {"Directional", "Point", "Spot"};
+            int ty = (int)li->type;
+            if (ImGui::Combo("Type##light", &ty, types, 3)) { li->type = (Light::Type)ty; ed.dirty = true; }
             float c[4] = {li->color.r, li->color.g, li->color.b, li->color.a};
             if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
             if (ImGui::SliderFloat("Ambient##light", &li->ambient, 0.0f, 1.0f)) ed.dirty = true;
-            ImGui::TextDisabled("Rotate this object to aim the light (its +Z is the direction).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unlit floor brightness (taken from the first light)");
+            if (li->type != Light::Type::Directional) {
+                if (ImGui::DragFloat("Range##light", &li->range, 0.2f, 0.1f, 500.0f)) ed.dirty = true;
+            }
+            if (li->type == Light::Type::Spot) {
+                if (ImGui::SliderFloat("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f)) ed.dirty = true;
+            }
+            ImGui::TextDisabled(li->type == Light::Type::Point
+                ? "Radiates from this object's position out to Range."
+                : "Rotate this object to aim the light (its +Z is the direction).");
             if (ImGui::SmallButton("Remove##light")) toRemove = li;
         }
     }

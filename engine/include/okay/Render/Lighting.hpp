@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include <vector>
 
 namespace okay {
 
@@ -30,6 +31,69 @@ struct SceneLight {
     static void Reset() { Direction() = DefaultLightDir(); Ambient() = 0.25f; }
     /// Shade a normal with the current global light + ambient.
     static float Shade(const Vec3& normal) { return LambertShade(normal, Direction(), Ambient()); }
+};
+
+/// One light gathered for a frame: directional, point, or spot. `dir` points
+/// *from* the light (the direction it shines); `color` already folds in intensity.
+struct LightSample {
+    int   type = 0;             // 0 = directional, 1 = point, 2 = spot
+    Vec3  dir{0, -1, 0};
+    Vec3  pos{0, 0, 0};         // world position (point / spot)
+    Vec3  color{1, 1, 1};       // rgb * intensity
+    float range = 10.0f;        // point / spot falloff distance
+    float cosOuter = 0.7071f;   // cos(half spot angle)
+};
+
+/// Multi-light shading: the player/editor fill this list from the scene's Light
+/// components each frame, then the software renderer accumulates colored diffuse
+/// from every light (directional + point + spot) plus an ambient floor.
+struct SceneLights {
+    static std::vector<LightSample>& List() { static std::vector<LightSample> v; return v; }
+    static float& Ambient() { static float a = 0.25f; return a; }
+    static void Clear() { List().clear(); }
+    static void Add(const LightSample& s) { List().push_back(s); }
+    static void SetAmbient(float a) { Ambient() = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a); }
+
+    /// Accumulated light color (RGB multipliers, clamped to 1) at a world point
+    /// with the given surface normal. When no lights were gathered, falls back to
+    /// the single global SceneLight so scripts' set_light still works.
+    static Vec3 ShadeColor(const Vec3& p, const Vec3& n) {
+        Vec3 nn = n.Normalized();
+        const auto& lights = List();
+        float amb = Ambient();
+        Vec3 acc{amb, amb, amb};
+        if (lights.empty()) {
+            float s = LambertShade(nn, SceneLight::Direction(), SceneLight::Ambient());
+            return Vec3{s, s, s};
+        }
+        for (const auto& L : lights) {
+            float ndl, atten = 1.0f;
+            if (L.type == 0) {
+                ndl = Vec3::Dot(nn, L.dir.Normalized() * -1.0f);
+            } else {
+                Vec3 toL = L.pos - p; float d = toL.Magnitude();
+                Vec3 ld = d > 1e-5f ? toL * (1.0f / d) : Vec3{0, 1, 0};
+                ndl = Vec3::Dot(nn, ld);
+                atten = (L.range > 0.0f) ? (1.0f - d / L.range) : 0.0f;
+                if (atten < 0.0f) atten = 0.0f;
+                atten *= atten;                                  // smooth falloff
+                if (L.type == 2) {                               // spot cone
+                    float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
+                    float denom = 1.0f - L.cosOuter;
+                    float spot = denom > 1e-4f ? (cs - L.cosOuter) / denom : (cs >= L.cosOuter ? 1.0f : 0.0f);
+                    if (spot < 0.0f) spot = 0.0f; else if (spot > 1.0f) spot = 1.0f;
+                    atten *= spot;
+                }
+            }
+            if (ndl < 0.0f) ndl = 0.0f;
+            float k = ndl * atten;
+            acc.x += L.color.x * k; acc.y += L.color.y * k; acc.z += L.color.z * k;
+        }
+        if (acc.x > 1.0f) acc.x = 1.0f;
+        if (acc.y > 1.0f) acc.y = 1.0f;
+        if (acc.z > 1.0f) acc.z = 1.0f;
+        return acc;
+    }
 };
 
 } // namespace okay

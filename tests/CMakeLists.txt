@@ -273,6 +273,10 @@ add_executable(test_ui_extra test_ui_extra.cpp)
 target_link_libraries(test_ui_extra PRIVATE okay::engine)
 add_test(NAME ui_extra COMMAND test_ui_extra)
 
+add_executable(test_lighting test_lighting.cpp)
+target_link_libraries(test_lighting PRIVATE okay::engine)
+add_test(NAME lighting COMMAND test_lighting)
+
 add_executable(test_dataasset test_dataasset.cpp)
 target_link_libraries(test_dataasset PRIVATE okay::engine)
 add_test(NAME dataasset COMMAND test_dataasset)

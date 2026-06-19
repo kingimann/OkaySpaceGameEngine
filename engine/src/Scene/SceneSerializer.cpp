@@ -332,7 +332,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* dg = go->GetComponent<Draggable>()) {
         out << "  draggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
             << " " << (dg->snapToZone ? 1 : 0)
-            << " " << (int)dg->axis << " " << dg->dragThreshold << " " << (dg->bringToFront ? 1 : 0) << "\n";
+            << " " << (int)dg->axis << " " << dg->dragThreshold << " " << (dg->bringToFront ? 1 : 0)
+            << " " << dg->gridX << " " << dg->gridY << " " << dg->dragScale << "\n";
     }
     if (auto* dz = go->GetComponent<DropZone>()) {
         out << "  dropzone " << Quote(dz->acceptTag) << "\n";
@@ -880,6 +881,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     dg->returnToStart = (rs != 0); dg->anyTarget = (at != 0);
                     dg->snapToZone = (sn != 0); dg->axis = (Draggable::Axis)ax;
                     dg->bringToFront = (bf != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-')
+                        in >> dg->gridX >> dg->gridY >> dg->dragScale;
                 } else if (field == "dropzone") {
                     auto* dz = go->AddComponent<DropZone>();
                     in >> std::ws;

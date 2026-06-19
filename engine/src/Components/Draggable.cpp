@@ -8,6 +8,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Core/Prefs.hpp"
+#include <cmath>
 
 namespace okay {
 namespace {
@@ -95,6 +96,10 @@ void Draggable::Update(float) {
                 if (auto* sr = gameObject->GetComponent<SpriteRenderer>()) {
                     m_savedOrder = sr->sortOrder; sr->sortOrder = 100000;
                 }
+            if (dragScale != 1.0f && gameObject->transform) {
+                m_savedScale = gameObject->transform->localScale;
+                gameObject->transform->localScale = m_savedScale * dragScale;
+            }
             Fire(gameObject, "on_drag_start");
         } else {
             return;
@@ -107,17 +112,26 @@ void Draggable::Update(float) {
         Vec3 p = gameObject->transform->Position();
         if (axis != Axis::Vertical)   p.x = target.x;
         if (axis != Axis::Horizontal) p.y = target.y;
+        if (gridX > 1e-4f) p.x = std::round(p.x / gridX) * gridX;   // snap to grid
+        if (gridY > 1e-4f) p.y = std::round(p.y / gridY) * gridY;
         gameObject->transform->SetPosition(p);
         GameObject* hover = ValidTarget(PickOther(scene, gameObject, world), gameObject, anyTarget);
         for (const auto& up : scene.Objects())
-            if (auto* dz = up->GetComponent<DropZone>()) dz->SetHovered(up.get() == hover);
+            if (auto* dz = up->GetComponent<DropZone>()) {
+                bool changed = dz->SetHovered(up.get() == hover);
+                if (changed) Fire(up.get(), dz->IsHovered() ? "on_hover_enter" : "on_hover_exit");
+            }
         Fire(gameObject, "on_drag");
     } else {                                   // released: resolve a drop
         m_dragging = false;
         if (bringToFront)
             if (auto* sr = gameObject->GetComponent<SpriteRenderer>()) sr->sortOrder = m_savedOrder;
+        if (dragScale != 1.0f && gameObject->transform)
+            gameObject->transform->localScale = m_savedScale;
         for (const auto& up : scene.Objects())
-            if (auto* dz = up->GetComponent<DropZone>()) dz->SetHovered(false);
+            if (auto* dz = up->GetComponent<DropZone>()) {
+                if (dz->SetHovered(false)) Fire(up.get(), "on_hover_exit");
+            }
         GameObject* target = ValidTarget(PickOther(scene, gameObject, world), gameObject, anyTarget);
         m_dropTarget = target;
         if (target) {

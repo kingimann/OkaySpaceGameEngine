@@ -215,6 +215,18 @@ struct Runtime {
     std::unordered_map<std::string, std::function<Value(std::vector<Value>&)>> builtins;
     ScriptHost* host = nullptr;
 
+    // Details of the most recent raycast()/raycast3() call, exposed to scripts
+    // through ray_object()/ray_x()/ray_dist()/... accessors.
+    struct LastHit {
+        bool hit = false;
+        std::string object;
+        float px = 0, py = 0, pz = 0;   // hit point
+        float nx = 0, ny = 0, nz = 0;   // surface normal
+        float dist = 0;
+    };
+    LastHit lastHit2D;
+    LastHit lastHit3D;
+
     // Scheduled callbacks (after / every). interval == 0 means fire once.
     struct Timer { float remaining; float interval; std::string fn; bool dead; };
     std::vector<Timer> timers;
@@ -1376,6 +1388,34 @@ struct OkayScriptVM::Impl {
             float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
             return Value{sc->physics().Raycast(*sc, origin, dir, maxDist).hit};
         };
+        // raycast(ox, oy, dx, dy [, maxDist]) casts a ray and returns the name of
+        // the object hit (empty string = nothing). Hit details are then available
+        // via ray_hit()/ray_object()/ray_x()/ray_y()/ray_dist()/ray_nx()/ray_ny().
+        b["raycast"] = [this](std::vector<Value>& a) -> Value {
+            rt.lastHit2D = Runtime::LastHit{};
+            if (a.size() < 4 || !rt.host || !rt.host->gameObject) return Value{std::string{}};
+            Scene* sc = rt.host->gameObject->scene();
+            if (!sc) return Value{std::string{}};
+            Vec2 origin{a[0].AsFloat(), a[1].AsFloat()};
+            Vec2 dir{a[2].AsFloat(), a[3].AsFloat()};
+            float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
+            RaycastHit2D h = sc->physics().Raycast(*sc, origin, dir, maxDist);
+            if (h.hit) {
+                rt.lastHit2D.hit = true;
+                rt.lastHit2D.object = h.gameObject ? h.gameObject->name : std::string{};
+                rt.lastHit2D.px = h.point.x;   rt.lastHit2D.py = h.point.y;
+                rt.lastHit2D.nx = h.normal.x;  rt.lastHit2D.ny = h.normal.y;
+                rt.lastHit2D.dist = h.distance;
+            }
+            return Value{rt.lastHit2D.object};
+        };
+        b["ray_hit"]    = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.hit}; };
+        b["ray_object"] = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.object}; };
+        b["ray_x"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.px}; };
+        b["ray_y"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.py}; };
+        b["ray_nx"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.nx}; };
+        b["ray_ny"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.ny}; };
+        b["ray_dist"]   = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.dist}; };
         b["overlap"] = [this](std::vector<Value>& a) {
             if (a.size() < 2 || !rt.host || !rt.host->gameObject) return Value{false};
             Scene* sc = rt.host->gameObject->scene();
@@ -2146,6 +2186,34 @@ struct OkayScriptVM::Impl {
             float maxDist = a.size() > 6 ? a[6].AsFloat() : 1e9f;
             return Value{sc->physics3D().Raycast(*sc, o, d, maxDist).hit};
         };
+        // raycast3(ox,oy,oz, dx,dy,dz [, maxDist]) returns the hit object's name
+        // ("" = miss); details via ray3_hit/ray3_object/ray3_x/y/z/dist/nx/ny/nz.
+        b["raycast3"] = [this](std::vector<Value>& a) -> Value {
+            rt.lastHit3D = Runtime::LastHit{};
+            if (a.size() < 6 || !rt.host || !rt.host->gameObject) return Value{std::string{}};
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value{std::string{}};
+            Vec3 o{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            Vec3 d{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            float maxDist = a.size() > 6 ? a[6].AsFloat() : 1e9f;
+            RaycastHit3D h = sc->physics3D().Raycast(*sc, o, d, maxDist);
+            if (h.hit) {
+                rt.lastHit3D.hit = true;
+                rt.lastHit3D.object = h.gameObject ? h.gameObject->name : std::string{};
+                rt.lastHit3D.px = h.point.x;  rt.lastHit3D.py = h.point.y;  rt.lastHit3D.pz = h.point.z;
+                rt.lastHit3D.nx = h.normal.x; rt.lastHit3D.ny = h.normal.y; rt.lastHit3D.nz = h.normal.z;
+                rt.lastHit3D.dist = h.distance;
+            }
+            return Value{rt.lastHit3D.object};
+        };
+        b["ray3_hit"]    = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.hit}; };
+        b["ray3_object"] = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.object}; };
+        b["ray3_x"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.px}; };
+        b["ray3_y"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.py}; };
+        b["ray3_z"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.pz}; };
+        b["ray3_nx"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.nx}; };
+        b["ray3_ny"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.ny}; };
+        b["ray3_nz"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.nz}; };
+        b["ray3_dist"]   = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.dist}; };
         b["set_gravity3"] = [this](std::vector<Value>& a) {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 rt.host->gameObject->scene()->physics3D().gravity =
@@ -2290,36 +2358,99 @@ struct OkayScriptVM::Impl {
                 return &rt.host->gameObject->scene()->scheduler();
             return nullptr;
         };
-        b["tween_move"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+        // Optional trailing on-complete: if arg `i` is the name of a script
+        // function, returns a callback that invokes it when the tween finishes
+        // (DOTween's OnComplete). Anything else yields an empty callback.
+        auto onDoneFromArg = [this](std::vector<Value>& a, std::size_t i) -> std::function<void()> {
+            if (i >= a.size() || !a[i].IsString()) return {};
+            std::string fn = a[i].AsString();
+            if (!rt.functions.count(fn)) return {};
+            return [this, fn]() { std::vector<Value> none; rt.Call(fn, none); };
+        };
+        b["tween_move"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
             Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
             if (!t || !s || a.size() < 3) return Value{};
             Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
             Ease e = easeFromArg(a, 3);
-            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; });
+            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; }, onDoneFromArg(a, 4));
             return Value{};
         };
-        b["tween_move3"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+        b["tween_move3"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
             Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
             if (!t || !s || a.size() < 4) return Value{};
             Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
             Ease e = easeFromArg(a, 4);
-            s->Tween(a[3].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; });
+            s->Tween(a[3].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; }, onDoneFromArg(a, 5));
             return Value{};
         };
-        b["tween_scale"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+        b["tween_scale"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
             Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
             if (!t || !s || a.size() < 2) return Value{};
             Vec3 start = t->localScale; float v = a[0].AsFloat(); Vec3 target{v, v, v};
             Ease e = easeFromArg(a, 2);
-            s->Tween(a[1].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = start + (target - start) * k; });
+            s->Tween(a[1].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = start + (target - start) * k; }, onDoneFromArg(a, 3));
             return Value{};
         };
         // Spin by `deg` degrees about Z over `dur` seconds.
-        b["tween_rotate"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+        b["tween_rotate"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
             Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
             if (!t || !s || a.size() < 2) return Value{};
             Quat start = t->localRotation; float deg = a[0].AsFloat(); Ease e = easeFromArg(a, 2);
-            s->Tween(a[1].AsFloat(), [t, start, deg, e](float u) { float k = Easing::Evaluate(e, u); t->localRotation = start * Quat::Euler({0, 0, deg * k}); });
+            s->Tween(a[1].AsFloat(), [t, start, deg, e](float u) { float k = Easing::Evaluate(e, u); t->localRotation = start * Quat::Euler({0, 0, deg * k}); }, onDoneFromArg(a, 3));
+            return Value{};
+        };
+        // Ping-pong move forever between the current spot and (x, y) — great for
+        // floating pickups, patrolling platforms, hovering UI. Each leg eases.
+        b["tween_loop_move"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
+            float dur = a[2].AsFloat(); Ease e = easeFromArg(a, 3);
+            auto step = std::make_shared<std::function<void(bool)>>();
+            *step = [s, t, start, target, e, dur, step](bool fwd) {
+                Vec3 from = fwd ? start : target, to = fwd ? target : start;
+                s->Tween(dur, [t, from, to, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = from + (to - from) * k; },
+                         [step, fwd]() { (*step)(!fwd); });
+            };
+            (*step)(true);
+            return Value{};
+        };
+        // Punch the scale outward and settle back (DOTween's DOPunchScale) —
+        // perfect for button presses, pickups, "juice". `amount` is the bulge.
+        b["tween_punch_scale"] = [this, sched](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Vec3 start = t->localScale; float amount = a[0].AsFloat(); float dur = a[1].AsFloat();
+            float vib = a.size() > 2 ? a[2].AsFloat() : 6.0f;
+            s->Tween(dur, [t, start, amount, vib](float u) {
+                float osc = Mathf::Sin(u * Mathf::PI * vib) * amount * (1.0f - u);
+                t->localScale = start + Vec3{osc, osc, osc};
+            }, [t, start]() { t->localScale = start; });
+            return Value{};
+        };
+        // Punch the position toward (dx, dy) and settle back.
+        b["tween_punch_pos"] = [this, sched](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            Vec3 start = t->localPosition; Vec2 dir{a[0].AsFloat(), a[1].AsFloat()}; float dur = a[2].AsFloat();
+            float vib = a.size() > 3 ? a[3].AsFloat() : 6.0f;
+            s->Tween(dur, [t, start, dir, vib](float u) {
+                float osc = Mathf::Sin(u * Mathf::PI * vib) * (1.0f - u);
+                t->localPosition = start + Vec3{dir.x * osc, dir.y * osc, 0.0f};
+            }, [t, start]() { t->localPosition = start; });
+            return Value{};
+        };
+        // Shake the position randomly, decaying to a stop (camera/impact shake).
+        b["tween_shake"] = [this, sched](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Vec3 start = t->localPosition; float intensity = a[0].AsFloat(); float dur = a[1].AsFloat();
+            s->Tween(dur, [t, start, intensity](float u) {
+                float decay = (1.0f - u) * intensity;
+                float ox = Random::Shared().Range(-1.0f, 1.0f) * decay;
+                float oy = Random::Shared().Range(-1.0f, 1.0f) * decay;
+                t->localPosition = start + Vec3{ox, oy, 0.0f};
+            }, [t, start]() { t->localPosition = start; });
             return Value{};
         };
         // Returns the host's tweenable albedo color, if any (sprite then mesh).
@@ -2329,7 +2460,7 @@ struct OkayScriptVM::Impl {
             if (auto* mr = rt.host->gameObject->GetComponent<MeshRenderer>()) return &mr->color;
             return nullptr;
         };
-        b["tween_color"] = [this, sched, easeFromArg, colorPtr](std::vector<Value>& a) {
+        b["tween_color"] = [this, sched, easeFromArg, colorPtr, onDoneFromArg](std::vector<Value>& a) {
             Scheduler* s = sched(); Color* c = colorPtr();
             if (!s || !c || a.size() < 4) return Value{};
             Color start = *c, target{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), start.a};
@@ -2339,14 +2470,14 @@ struct OkayScriptVM::Impl {
                 c->r = start.r + (target.r - start.r) * k;
                 c->g = start.g + (target.g - start.g) * k;
                 c->b = start.b + (target.b - start.b) * k;
-            });
+            }, onDoneFromArg(a, 5));
             return Value{};
         };
-        b["tween_fade"] = [this, sched, easeFromArg, colorPtr](std::vector<Value>& a) {
+        b["tween_fade"] = [this, sched, easeFromArg, colorPtr, onDoneFromArg](std::vector<Value>& a) {
             Scheduler* s = sched(); Color* c = colorPtr();
             if (!s || !c || a.size() < 2) return Value{};
             float start = c->a, target = a[0].AsFloat(); Ease e = easeFromArg(a, 2);
-            s->Tween(a[1].AsFloat(), [c, start, target, e](float u) { float k = Easing::Evaluate(e, u); c->a = start + (target - start) * k; });
+            s->Tween(a[1].AsFloat(), [c, start, target, e](float u) { float k = Easing::Evaluate(e, u); c->a = start + (target - start) * k; }, onDoneFromArg(a, 3));
             return Value{};
         };
         // ---- Save system: snapshot the whole scene to a slot file ------

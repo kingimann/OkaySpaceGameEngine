@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v1.96.0
+  - Raycasting from script: new raycast(ox,oy,dx,dy[,max]) returns the NAME of
+    the object hit ("" = miss), with full details via ray_hit(), ray_object(),
+    ray_x()/ray_y() (hit point), ray_nx()/ray_ny() (surface normal) and
+    ray_dist(). 3D mirror: raycast3(ox,oy,oz,dx,dy,dz[,max]) + ray3_*(). Great
+    for shooting, line-of-sight, ground checks, and click-to-select. (The old
+    boolean raycast_hit()/raycast_hit3() still work.)
+  - DOTween, expanded: every tween (tween_move/move3/scale/rotate/color/fade)
+    now takes an optional on-complete callback (a function name) as the last
+    argument. New tween_loop_move(x,y,dur[,ease]) ping-pongs forever (floaters,
+    patrols), tween_punch_scale(amount,dur) / tween_punch_pos(dx,dy,dur) add
+    "juice" to buttons & pickups, and tween_shake(intensity,dur) does impact /
+    camera shake — all settle cleanly back to where they started.
+  - Drag & drop, expanded: world Draggables gain Grid Snap (snap to a world grid
+    for board / tile games) and Drag Scale (lift the item visually while
+    dragging). Drop Zones now fire on_hover_enter() / on_hover_exit() on a
+    dragged item entering/leaving them, so slots can react during the drag.
+
 v1.95.0
   - Drag & drop for world items (not just UI): add a "Draggable (item)" component
     to a sprite to pick it up and move it around the scene at runtime, and a

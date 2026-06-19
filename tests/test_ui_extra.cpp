@@ -20,6 +20,33 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.y, 3.0f, 0.05f);
     }
 
+    // --- Tween on-complete: a named callback fires when the tween ends ---
+    {
+        Scene s("TwDone"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Mover");
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() { tween_move(5, 0, 1.0, \"linear\", \"done\"); }\n"
+            "function done() { set_y(9); }\n");
+        s.Start();
+        s.Update(0.1f);
+        CHECK_NEAR(go->transform->localPosition.y, 0.0f, 0.001f);   // not done yet
+        for (int i = 0; i < 15; ++i) s.Update(0.1f);               // past the tween
+        CHECK_NEAR(go->transform->localPosition.y, 9.0f, 0.001f);   // callback ran
+    }
+
+    // --- Tween shake settles back to the starting position --------------
+    {
+        Scene s("TwShake"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Shaker");
+        go->transform->localPosition = {2, 2, 0};
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() { tween_shake(1.0, 0.5); }\n");
+        s.Start();
+        for (int i = 0; i < 10; ++i) s.Update(0.1f);   // past the 0.5s shake
+        CHECK_NEAR(go->transform->localPosition.x, 2.0f, 0.001f);
+        CHECK_NEAR(go->transform->localPosition.y, 2.0f, 0.001f);
+    }
+
     // --- Save system: save_game writes a slot file; exists/delete work --
     {
         std::remove("saves/utest.okaysave");

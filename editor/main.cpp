@@ -3724,8 +3724,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Drag Threshold##dg", &dg->dragThreshold, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units before a drag starts (0 = instant)");
             if (ImGui::Checkbox("Bring to Front while dragging##dg", &dg->bringToFront)) ed.dirty = true;
+            float grid[2] = {dg->gridX, dg->gridY};
+            if (ImGui::DragFloat2("Grid Snap##dg", grid, 0.05f, 0.0f, 100.0f)) { dg->gridX = grid[0]; dg->gridY = grid[1]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap drag to a world grid (0 = off) — board/tile games");
+            if (ImGui::DragFloat("Drag Scale##dg", &dg->dragScale, 0.01f, 0.1f, 4.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale the item while dragging for a lifted look (1 = off)");
             ImGui::TextDisabled("Drag the sprite at runtime; dropping on a Drop Zone");
             ImGui::TextDisabled("fires on_drop() here + on_receive() on the zone.");
+            ImGui::TextDisabled("Zones also get on_hover_enter/exit() during a drag.");
             if (ImGui::SmallButton("Remove##dg")) toRemove = dg;
         }
     }

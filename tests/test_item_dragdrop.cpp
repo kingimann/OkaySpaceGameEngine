@@ -75,5 +75,24 @@ int main() {
         Prefs::Clear(); Input::FeedMouse({0, 0}, 0);
     }
 
+    // --- Grid snap quantizes the dragged position ----------------------
+    {
+        Scene s("grid");
+        makeScene(s);
+        auto* item = s.CreateGameObject("Tile");
+        item->AddComponent<SpriteRenderer>()->size = {1, 1};
+        auto* d = item->AddComponent<Draggable>();
+        d->gridX = 1.0f; d->gridY = 1.0f;       // snap to whole world units
+        s.Start();
+
+        Input::FeedMouse({400, 300}, 0);        s.Update(0.016f);
+        Input::FeedMouse({400, 300}, 1u << 0);  s.Update(0.016f);   // grab at (0,0)
+        // Move ~1.3 units right (78px) -> snaps to 1.0
+        Input::FeedMouse({478, 300}, 1u << 0);  s.Update(0.016f);
+        CHECK_NEAR(item->transform->Position().x, 1.0f, 0.001f);
+        Input::FeedMouse({478, 300}, 0);        s.Update(0.016f);
+        Input::FeedMouse({0, 0}, 0);
+    }
+
     TEST_MAIN_RESULT();
 }

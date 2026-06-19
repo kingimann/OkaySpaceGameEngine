@@ -32,6 +32,12 @@ public:
     float dragThreshold = 0.0f;
     /// Raise sortOrder while dragging so the item draws above the rest.
     bool  bringToFront = false;
+    /// Snap the dragged position to a grid (world units). 0 = no snap on that
+    /// axis. Great for board / tile / strategy games.
+    float gridX = 0.0f;
+    float gridY = 0.0f;
+    /// Multiply the sprite's scale while dragging for a "lifted" look (1 = off).
+    float dragScale = 1.0f;
 
     bool IsDragging() const { return m_dragging; }
     GameObject* LastDropTarget() const { return m_dropTarget; }
@@ -45,6 +51,7 @@ private:
     Vec2 m_press{};         // screen pixels where the press began
     Vec3 m_grab{};          // world offset from item center to cursor at grab
     int  m_savedOrder = 0;
+    Vec3 m_savedScale{1, 1, 1};
     GameObject* m_dropTarget = nullptr;
 };
 
@@ -56,7 +63,9 @@ public:
     std::string acceptTag;
 
     bool IsHovered() const { return m_hover; }
-    void SetHovered(bool v) { m_hover = v; }
+    /// Set the hover state; returns true if it changed (so the driver can fire
+    /// on_hover_enter() / on_hover_exit() exactly on the transitions).
+    bool SetHovered(bool v) { bool changed = (v != m_hover); m_hover = v; return changed; }
 
 private:
     bool m_hover = false;

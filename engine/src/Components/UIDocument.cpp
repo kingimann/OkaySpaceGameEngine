@@ -114,8 +114,9 @@ Token Lex(const std::string& line) {
     return t;
 }
 
-// Build the widget GameObject for one token (no parenting/positioning yet).
-GameObject* Spawn(Scene& scene, const Token& t) {
+// Build the widget GameObject for one token. `offset` shifts the widget's pixel
+// position (used so a custom-widget instance moves as a whole).
+GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
     GameObject* go = scene.CreateGameObject(t.type.empty() ? "UIElement" : t.type);
 
     auto applyBox = [&](Vec2& pos, Vec2& size, UIAnchor& anchor, Color* color) {
@@ -123,6 +124,7 @@ GameObject* Spawn(Scene& scene, const Token& t) {
         if (t.Has("size"))   size   = ParsePair(t.Get("size"), size.y);
         if (t.Has("anchor")) anchor = ParseAnchor(t.Get("anchor"));
         if (color && t.Has("color")) *color = ParseColor(t.Get("color"));
+        pos = pos + offset;
     };
 
     if (t.type == "panel") {
@@ -161,8 +163,92 @@ GameObject* Spawn(Scene& scene, const Token& t) {
         if (t.Has("size"))   c->pixelSize = ParsePair(t.Get("size"), 0).x;
         if (t.Has("anchor")) c->anchor = ParseAnchor(t.Get("anchor"));
         if (t.Has("color"))  c->color = ParseColor(t.Get("color"));
+        c->screenPos = c->screenPos + offset;
     }
     return go;
+}
+
+// One parsed markup line: its indentation depth and its token.
+struct Line { int indent; Token tok; };
+
+// The name of a style/define line is its first bare word (e.g. `style primary`
+// or `define card`) — the first prop key that carries no value.
+std::string DeclName(const Token& t) {
+    if (!t.label.empty()) return t.label;
+    for (auto& p : t.props) if (p.second.empty()) return p.first;
+    return "";
+}
+
+// A reusable style (USS-like): a named bag of properties widgets pull in via
+// `class=<name>`. A custom widget (`define`): a captured block of lines that an
+// instance line expands, shifted to the instance's position.
+using StyleMap  = std::vector<std::pair<std::string, std::vector<std::pair<std::string, std::string>>>>;
+struct Define   { std::vector<Line> body; };
+using DefineMap = std::vector<std::pair<std::string, Define>>;
+
+const std::vector<std::pair<std::string, std::string>>*
+FindStyle(const StyleMap& m, const std::string& name) {
+    for (auto& p : m) if (p.first == name) return &p.second;
+    return nullptr;
+}
+const Define* FindDefine(const DefineMap& m, const std::string& name) {
+    for (auto& p : m) if (p.first == name) return &p.second;
+    return nullptr;
+}
+
+// Merge a style's props under a widget's own props (the widget wins), so
+// `class=primary color=red` overrides just the color of the `primary` style.
+Token ApplyClass(const Token& t, const StyleMap& styles) {
+    if (!t.Has("class")) return t;
+    const auto* sp = FindStyle(styles, t.Get("class"));
+    if (!sp) return t;
+    Token out;
+    out.type = t.type; out.label = t.label;
+    out.props = *sp;                          // style defaults first
+    for (auto& p : t.props) {                 // widget overrides
+        if (p.first == "class") continue;
+        bool replaced = false;
+        for (auto& q : out.props) if (q.first == p.first) { q.second = p.second; replaced = true; break; }
+        if (!replaced) out.props.push_back(p);
+    }
+    return out;
+}
+
+Vec2 TokenPos(const Token& t) {
+    return t.Has("pos") ? ParsePair(t.Get("pos"), 0.0f) : Vec2{0.0f, 0.0f};
+}
+
+// Recursively build a forest of widget lines under `parentT`. `i` walks the
+// shared line list; everything with indent > parentIndent is a child here.
+// `offset` accumulates custom-widget instance positions.
+void BuildForest(Scene& scene, const std::vector<Line>& lines, std::size_t& i,
+                 int parentIndent, Transform* parentT, Vec2 offset,
+                 const StyleMap& styles, const DefineMap& defines,
+                 std::vector<GameObject*>& out) {
+    while (i < lines.size() && lines[i].indent > parentIndent) {
+        int myIndent = lines[i].indent;
+        Token tok = lines[i].tok;
+        ++i;
+
+        if (const Define* def = FindDefine(defines, tok.type)) {
+            // Instantiate a custom widget: a group holding a shifted copy of its
+            // defined body. Any children on the instance line are ignored.
+            GameObject* group = scene.CreateGameObject(tok.type);
+            group->transform->SetParent(parentT, /*worldPositionStays=*/false);
+            out.push_back(group);
+            Vec2 instOffset = offset + TokenPos(tok);
+            std::size_t j = 0;
+            BuildForest(scene, def->body, j, /*parentIndent*/ def->body.empty() ? -1 : def->body.front().indent - 1,
+                        group->transform, instOffset, styles, defines, out);
+            while (i < lines.size() && lines[i].indent > myIndent) ++i;
+        } else {
+            Token eff = ApplyClass(tok, styles);
+            GameObject* go = Spawn(scene, eff, offset);
+            go->transform->SetParent(parentT, /*worldPositionStays=*/false);
+            out.push_back(go);
+            BuildForest(scene, lines, i, myIndent, go->transform, offset, styles, defines, out);
+        }
+    }
 }
 
 } // namespace
@@ -179,31 +265,50 @@ void UIDocument::Rebuild() {
     Scene& scene = *gameObject->scene();
     ClearGenerated();
 
-    // Parse line by line, using indentation to nest widgets. The document's own
-    // GameObject is the root parent; deeper indents parent under the prior line.
+    // Pass 1: lex every line, pulling out top-level `style` rules and `define`
+    // blocks (USS-like classes + reusable custom widgets) into lookup tables.
+    StyleMap  styles;
+    DefineMap defines;
+    std::vector<Line> build;   // the widget lines left to build
+
     std::stringstream ss(markup);
     std::string line;
-    // Stack of (indent, transform-to-parent-under).
-    std::vector<std::pair<int, Transform*>> stack;
-    stack.push_back({-1, gameObject->transform});
-
+    std::vector<Line> all;
     while (std::getline(ss, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         int indent = IndentOf(line);
         std::string body = line.substr(indent);
         if (body.empty() || body[0] == '#') continue;   // blank or comment
-
         Token t = Lex(body);
         if (t.type.empty()) continue;
-
-        while (stack.size() > 1 && indent <= stack.back().first) stack.pop_back();
-        Transform* parent = stack.back().second;
-
-        GameObject* go = Spawn(scene, t);
-        go->transform->SetParent(parent, /*worldPositionStays=*/false);
-        m_generated.push_back(go);
-        stack.push_back({indent, go->transform});
+        all.push_back({indent, t});
     }
+
+    for (std::size_t k = 0; k < all.size();) {
+        const Line& ln = all[k];
+        if (ln.tok.type == "style") {
+            std::string nm = DeclName(ln.tok);
+            std::vector<std::pair<std::string, std::string>> props;
+            for (auto& p : ln.tok.props) if (p.first != nm) props.push_back(p);
+            if (!nm.empty()) styles.push_back({nm, props});
+            ++k;
+        } else if (ln.tok.type == "define") {
+            std::string nm = DeclName(ln.tok);
+            Define def;
+            std::size_t j = k + 1;
+            while (j < all.size() && all[j].indent > ln.indent) { def.body.push_back(all[j]); ++j; }
+            if (!nm.empty()) defines.push_back({nm, std::move(def)});
+            k = j;
+        } else {
+            build.push_back(ln);
+            ++k;
+        }
+    }
+
+    // Pass 2: build the remaining widgets as a nested forest.
+    std::size_t i = 0;
+    BuildForest(scene, build, i, /*parentIndent*/ -1, gameObject->transform,
+                Vec2{0.0f, 0.0f}, styles, defines, m_generated);
 }
 
 } // namespace okay

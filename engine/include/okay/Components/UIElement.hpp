@@ -24,6 +24,7 @@ struct UIRect {
     bool      valid = false;
     UIAnchor  anchor = UIAnchor::TopLeft;
     Vec2*     position = nullptr;   // the widget's editable offset (pixels)
+    Vec2*     sizePtr  = nullptr;   // the widget's editable size, or null (text)
     Vec2      size{0.0f, 0.0f};
 
     /// Absolute top-left pixel of the widget on a canvas of the given size.
@@ -43,12 +44,12 @@ struct UIRect {
 inline UIRect GetUIRect(GameObject* go) {
     UIRect r;
     if (!go) return r;
-    if (auto* b = go->GetComponent<UIButton>())          { r.valid = true; r.anchor = b->anchor;  r.position = &b->position;  r.size = b->size; }
-    else if (auto* p = go->GetComponent<UIPanel>())       { r.valid = true; r.anchor = p->anchor;  r.position = &p->position;  r.size = p->size; }
-    else if (auto* im = go->GetComponent<UIImage>())      { r.valid = true; r.anchor = im->anchor; r.position = &im->position; r.size = im->size; }
-    else if (auto* sl = go->GetComponent<UISlider>())     { r.valid = true; r.anchor = sl->anchor; r.position = &sl->position; r.size = sl->size; }
-    else if (auto* tg = go->GetComponent<UIToggle>())     { r.valid = true; r.anchor = tg->anchor; r.position = &tg->position; r.size = tg->size; }
-    else if (auto* pb = go->GetComponent<UIProgressBar>()){ r.valid = true; r.anchor = pb->anchor; r.position = &pb->position; r.size = pb->size; }
+    if (auto* b = go->GetComponent<UIButton>())          { r.valid = true; r.anchor = b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
+    else if (auto* p = go->GetComponent<UIPanel>())       { r.valid = true; r.anchor = p->anchor;  r.position = &p->position;  r.sizePtr = &p->size;  r.size = p->size; }
+    else if (auto* im = go->GetComponent<UIImage>())      { r.valid = true; r.anchor = im->anchor; r.position = &im->position; r.sizePtr = &im->size; r.size = im->size; }
+    else if (auto* sl = go->GetComponent<UISlider>())     { r.valid = true; r.anchor = sl->anchor; r.position = &sl->position; r.sizePtr = &sl->size; r.size = sl->size; }
+    else if (auto* tg = go->GetComponent<UIToggle>())     { r.valid = true; r.anchor = tg->anchor; r.position = &tg->position; r.sizePtr = &tg->size; r.size = tg->size; }
+    else if (auto* pb = go->GetComponent<UIProgressBar>()){ r.valid = true; r.anchor = pb->anchor; r.position = &pb->position; r.sizePtr = &pb->size; r.size = pb->size; }
     else if (auto* tr = go->GetComponent<TextRenderer>()) {
         if (tr->screenSpace) {
             r.valid = true; r.anchor = tr->anchor; r.position = &tr->screenPos;

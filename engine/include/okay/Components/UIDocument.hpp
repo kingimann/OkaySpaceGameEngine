@@ -26,6 +26,13 @@ class GameObject;
 /// pos=x,y  size=x,y (or one number for text px)  color=r,g,b[,a] (0-255)
 /// anchor=topleft|topcenter|topright|middleleft|center|middleright|bottomleft|
 /// bottomcenter|bottomright  value=f  on=0|1  onclick=<okayscript>.
+///
+/// Two "advanced" constructs make UIs reusable (UI-Toolkit-like):
+///   * style <name> <keys...>   — a USS-style class. A widget pulls it in with
+///     `class=<name>`; the widget's own keys override the style.
+///   * define <name>            — a custom widget. Its indented block is a
+///     template; an instance line `<name> pos=x,y` expands a copy of the block
+///     shifted to that position. Build your own controls once, reuse them.
 class UIDocument : public Behaviour {
 public:
     std::string markup;

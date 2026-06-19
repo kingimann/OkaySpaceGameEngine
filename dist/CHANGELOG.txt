@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.33.0
+  - Scene view: resize UI as well as move it. A selected widget shows 8 grab
+    handles — drag a corner/edge to resize (respecting the Canvas scale), drag
+    the body to move. Works in the 2D and 3D Scene views.
+  - UIDocument is now a real little UI toolkit: reusable styles and custom
+    widgets. `style name color=.. size=..` defines a USS-style class a widget
+    pulls in with `class=name` (its own keys win); `define name` + an indented
+    block defines a custom control that `name pos=x,y` instances and shifts.
+
 v1.32.0
   - UI now works the Unity way: widgets created from GameObject > UI are
     automatically parented under a Canvas (created if missing) and the scene

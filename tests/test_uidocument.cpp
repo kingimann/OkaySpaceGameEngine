@@ -101,6 +101,65 @@ int main() {
         CHECK(doc->Generated().size() == 1);
     }
 
+    // --- Styles (USS-like classes): defaults pulled in via class= ------
+    {
+        Scene s("styles"); s.physicsEnabled = false;
+        GameObject* docGo = s.CreateGameObject("Doc");
+        auto* doc = docGo->AddComponent<UIDocument>();
+        doc->markup =
+            "style primary color=60,90,150 size=300,60 anchor=center\n"
+            "button \"Play\" class=primary pos=70,170\n"
+            "button \"Quit\" class=primary pos=70,250 size=200,40\n";  // override size
+        doc->Rebuild(); s.Update(0.0f);
+
+        // Style lines don't create widgets; the two buttons do.
+        CHECK(doc->Generated().size() == 2);
+        UIButton* play = nullptr; UIButton* quit = nullptr;
+        for (GameObject* g : doc->Generated()) {
+            auto* b = g->GetComponent<UIButton>();
+            if (!b) continue;
+            if (b->label == "Play") play = b; else if (b->label == "Quit") quit = b;
+        }
+        CHECK(play && quit);
+        CHECK(play->anchor == UIAnchor::Center);            // from the style
+        CHECK_NEAR(play->size.x, 300.0f, 1e-4f);            // from the style
+        CHECK_NEAR(quit->size.x, 200.0f, 1e-4f);            // widget overrides style
+        CHECK(quit->anchor == UIAnchor::Center);            // still inherits anchor
+    }
+
+    // --- Custom widgets (define): reusable controls, instanced + shifted ---
+    {
+        Scene s("define"); s.physicsEnabled = false;
+        GameObject* docGo = s.CreateGameObject("Doc");
+        auto* doc = docGo->AddComponent<UIDocument>();
+        doc->markup =
+            "define card\n"
+            "  panel pos=0,0 size=200,120 color=40,40,60\n"
+            "  text \"Title\" pos=10,10 size=2\n"
+            "card pos=40,40\n"
+            "card pos=300,40\n";
+        doc->Rebuild(); s.Update(0.0f);
+
+        // Two instances: each makes a group + panel + text = 3 objects -> 6 total.
+        int groups = 0, panels = 0, texts = 0;
+        for (GameObject* g : doc->Generated()) {
+            if (g->GetComponent<UIPanel>()) ++panels;
+            else if (g->GetComponent<TextRenderer>()) ++texts;
+            else ++groups;   // empty group node
+        }
+        CHECK(panels == 2);
+        CHECK(texts == 2);
+        CHECK(groups == 2);
+
+        // The instances are shifted to their pos: panels at x=40 and x=300.
+        std::vector<float> xs;
+        for (GameObject* g : doc->Generated())
+            if (auto* p = g->GetComponent<UIPanel>()) xs.push_back(p->position.x);
+        bool has40 = false, has300 = false;
+        for (float x : xs) { if (x > 39 && x < 41) has40 = true; if (x > 299 && x < 301) has300 = true; }
+        CHECK(has40 && has300);
+    }
+
     // --- Markup survives a serialization round-trip (Build Game) --------
     {
         Scene s("ser"); s.physicsEnabled = false;

@@ -400,6 +400,7 @@ int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
+int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
 
 // First connected game controller (opened in main); fed into Input during Play.
 SDL_GameController* g_pad = nullptr;
@@ -3121,6 +3122,15 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
     }
 }
 
+// The 8 resize handles of a screen rect, in order:
+// 0=TL 1=T(op) 2=TR 3=R(ight) 4=BR 5=B(ottom) 6=BL 7=L(eft).
+static void UIHandlePositions(ImVec2 a, ImVec2 b, ImVec2 out[8]) {
+    float mx = (a.x + b.x) * 0.5f, my = (a.y + b.y) * 0.5f;
+    out[0] = ImVec2(a.x, a.y); out[1] = ImVec2(mx, a.y); out[2] = ImVec2(b.x, a.y);
+    out[3] = ImVec2(b.x, my);  out[4] = ImVec2(b.x, b.y); out[5] = ImVec2(mx, b.y);
+    out[6] = ImVec2(a.x, b.y); out[7] = ImVec2(a.x, my);
+}
+
 // The camera to frame the Game view through: the scene's main camera if one is
 // active (set on Play), else the first Camera component found (edit mode).
 static Camera* SceneCamera(Scene& s) {
@@ -3246,16 +3256,22 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // Selection highlight for the selected widget — works for every UI type and
-    // in both the 2D and 3D Scene views (the Game view stays clean). A small
-    // corner handle hints that it can be dragged to reposition.
+    // in both the 2D and 3D Scene views (the Game view stays clean). Drag the
+    // body to move; drag a handle to resize (handles only on sizable widgets).
     if (!gameView && ed.selected()) {
+        UIRect r = GetUIRect(ed.selected());
         Vec2 o, sz;
         if (GetUIScreenRect(ed.selected(), canvasSize.x, canvasSize.y, o, sz)) {
-            ImVec2 a(canvasPos.x + o.x - 1, canvasPos.y + o.y - 1);
-            ImVec2 b(a.x + sz.x + 2, a.y + sz.y + 2);
-            dl->AddRect(a, b, IM_COL32(255, 200, 0, 255), 3.0f, 0, 2.0f);
-            dl->AddRectFilled(ImVec2(b.x - 6, b.y - 6), ImVec2(b.x + 2, b.y + 2),
-                              IM_COL32(255, 200, 0, 255));
+            ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+            ImVec2 b(a.x + sz.x, a.y + sz.y);
+            dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
+                        IM_COL32(255, 200, 0, 255), 2.0f, 0, 2.0f);
+            if (r.sizePtr) {   // resizable: draw the 8 grab handles
+                ImVec2 h[8]; UIHandlePositions(a, b, h);
+                for (int i = 0; i < 8; ++i)
+                    dl->AddRectFilled(ImVec2(h[i].x - 4, h[i].y - 4),
+                                      ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 200, 0, 255));
+            }
         }
     }
 }
@@ -3271,7 +3287,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
     UICanvas::Set(canvasSize.x, canvasSize.y);
     Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
 
-    // Continue an in-progress drag of the grabbed widget. Mouse pixels are
+    // Continue an in-progress move/resize of the grabbed widget. Mouse pixels are
     // divided by the owning Canvas's scale so the widget tracks the cursor 1:1
     // even when the canvas is scaling the UI.
     if (g_uiDragTarget) {
@@ -3280,23 +3296,63 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
             if (r.valid && r.position) {
                 float s = UIScaleFor(g_uiDragTarget, canvasSize.x, canvasSize.y);
                 if (s < 1e-3f) s = 1.0f;
-                r.position->x += io.MouseDelta.x / s;
-                r.position->y += io.MouseDelta.y / s;
+                float dx = io.MouseDelta.x / s, dy = io.MouseDelta.y / s;
+                if (g_uiResizeHandle >= 0 && r.sizePtr) {
+                    int hdl = g_uiResizeHandle;
+                    bool left  = (hdl == 0 || hdl == 6 || hdl == 7);
+                    bool right = (hdl == 2 || hdl == 3 || hdl == 4);
+                    bool top   = (hdl == 0 || hdl == 1 || hdl == 2);
+                    bool bottom= (hdl == 4 || hdl == 5 || hdl == 6);
+                    if (right)  r.sizePtr->x += dx;
+                    if (bottom) r.sizePtr->y += dy;
+                    if (left)  { r.position->x += dx; r.sizePtr->x -= dx; }
+                    if (top)   { r.position->y += dy; r.sizePtr->y -= dy; }
+                    r.sizePtr->x = Mathf::Max(8.0f, r.sizePtr->x);
+                    r.sizePtr->y = Mathf::Max(8.0f, r.sizePtr->y);
+                } else {
+                    r.position->x += dx;
+                    r.position->y += dy;
+                }
                 ed.dirty = true;
             }
             g_uiHandled = true;
             return;
         }
         g_uiDragTarget = nullptr;
+        g_uiResizeHandle = -1;
     }
 
-    // Press on a widget: select it and begin dragging.
+    // Press: first try a resize handle on the current selection, then fall back
+    // to picking a widget to select + move.
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        GameObject* hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
-        if (hit) {
-            ed.Select(hit);
-            g_uiDragTarget = hit;
-            g_uiHandled = true;
+        // Resize handles of the selected, sizable widget take priority.
+        if (ed.selected()) {
+            UIRect sr = GetUIRect(ed.selected());
+            Vec2 o, sz;
+            if (sr.sizePtr && GetUIScreenRect(ed.selected(), canvasSize.x, canvasSize.y, o, sz)) {
+                ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+                ImVec2 b(a.x + sz.x, a.y + sz.y);
+                ImVec2 h[8]; UIHandlePositions(a, b, h);
+                for (int i = 0; i < 8; ++i) {
+                    float dx = io.MousePos.x - h[i].x, dy = io.MousePos.y - h[i].y;
+                    if (dx * dx + dy * dy <= 7.0f * 7.0f) {
+                        g_uiDragTarget = ed.selected();
+                        g_uiResizeHandle = i;
+                        g_uiHandled = true;
+                        break;
+                    }
+                }
+            }
+        }
+        // Otherwise pick a widget under the cursor and start moving it.
+        if (!g_uiHandled) {
+            GameObject* hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
+            if (hit) {
+                ed.Select(hit);
+                g_uiDragTarget = hit;
+                g_uiResizeHandle = -1;
+                g_uiHandled = true;
+            }
         }
     }
 }

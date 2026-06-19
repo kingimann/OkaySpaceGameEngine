@@ -211,6 +211,15 @@ int main() {
         CHECK_NEAR(bt->fontScale, 3.0f, 1e-4f);
         CHECK(bt->gameObject->GetComponent<ScriptComponent>() != nullptr);
         CHECK(in && in->text == "hi" && in->placeholder == "name" && in->maxLength == 12);
+        // `type=` sets the content type.
+        {
+            auto* d2 = s.CreateGameObject("Doc2")->AddComponent<UIDocument>();
+            d2->markup = "input pos=0,0 size=120,30 type=password\n";
+            d2->Rebuild(); s.Update(0.0f);
+            UIInputField* pw = nullptr;
+            for (GameObject* g : d2->Generated()) if (auto* x = g->GetComponent<UIInputField>()) pw = x;
+            CHECK(pw && pw->contentType == UIInputField::ContentType::Password);
+        }
         CHECK(dd && dd->options.size() == 3 && dd->value == 2);
         CHECK(dd->options[1] == "Medium");
         CHECK(tx && tx->align == 1 && tx->outline);

@@ -234,6 +234,13 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         if (!t.label.empty()) c->text = t.label;
         if (t.Has("placeholder")) c->placeholder = t.Get("placeholder");
         if (t.Has("max")) c->maxLength = std::atoi(t.Get("max").c_str());
+        if (t.Has("type")) {   // content type: integer|decimal|password
+            std::string ct = t.Get("type");
+            c->contentType = ct == "integer" ? UIInputField::ContentType::Integer
+                           : ct == "decimal" ? UIInputField::ContentType::Decimal
+                           : ct == "password" ? UIInputField::ContentType::Password
+                           : UIInputField::ContentType::Standard;
+        }
         if (t.Has("bind")) { auto* bd = go->AddComponent<UITextBind>(); bd->format = t.Get("bind"); c->text = UITextBind::Resolve(bd->format); }
         Handler(go, t, "onsubmit", "on_submit");
     } else if (t.type == "dropdown") {
@@ -308,7 +315,7 @@ bool KnownKey(const std::string& k) {
         "border","bordercolor","gradient","hover","pressed","textcolor","font",
         "align","outline","shadow","bind","value","min","max","fill","knob","knobsize",
         "showvalue","on","check","percent","texture","nineslice","amount","placeholder",
-        "options","content","bar","dir","spacing","padding",
+        "options","content","bar","dir","spacing","padding","type",
         "onclick","onchange","ontoggle","onsubmit"};
     for (auto* s : keys) if (k == s) return true;
     return false;

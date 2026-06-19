@@ -40,7 +40,8 @@ class GameObject;
 ///   toggle:   on=1 check=r,g,b,a ontoggle=<script>
 ///   progress: value= fill= percent=1
 ///   image:    texture=path nineslice=1 border=px fill=left|right|up|down amount=f
-///   input:    placeholder="..." max=N onsubmit=<script>  (label = initial text)
+///   input:    placeholder="..." max=N type=integer|decimal|password
+///             onsubmit=<script>  (label = initial text)
 ///   dropdown: options=A|B|C value=i onchange=<script>
 ///   scroll:   content=<px> bar=r,g,b,a   (parent widgets to it to clip+scroll)
 ///   layout:   dir=vertical|horizontal spacing= padding=  (auto-arranges kids)

@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.79.0
+  - The Main Menu project template now showcases the modern UI: a rounded,
+    gradient card with an outlined title, a styled Start button (with tooltip),
+    a volume Slider with a live value bound to a pref, a Fullscreen toggle, a
+    Quality dropdown, and a Quit button — a ready-made settings menu to learn
+    from or build on.
+
 v1.78.0
   - UI Toolkit: input fields in OkayUI markup support type=integer|decimal|
     password (e.g. `input type=password placeholder="PIN"`), matching the

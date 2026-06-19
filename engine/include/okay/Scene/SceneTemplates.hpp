@@ -17,6 +17,10 @@
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
+#include "okay/Components/UISlider.hpp"
+#include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UITooltip.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
@@ -254,11 +258,16 @@ inline void MainMenu(Scene& scene) {
     cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
     scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
 
+    // A styled card panel (rounded, subtle border, vertical gradient).
     GameObject* panel = scene.CreateGameObject("Panel");
     auto* pn = panel->AddComponent<UIPanel>();
     pn->position = {40, 40};
-    pn->size = {360, 240};
-    pn->color = Color::FromBytes(30, 36, 52, 220);
+    pn->size = {360, 380};
+    pn->color = Color::FromBytes(34, 40, 58, 235);
+    pn->cornerRadius = 14.0f;
+    pn->borderWidth = 1.0f;
+    pn->useGradient = true;
+    pn->colorBottom = Color::FromBytes(20, 24, 38, 235);
     panel->transform->SetParent(canvas->transform, false);
 
     GameObject* title = scene.CreateGameObject("Title");
@@ -267,16 +276,51 @@ inline void MainMenu(Scene& scene) {
     tr->screenSpace = true;
     tr->screenPos = {70, 70};
     tr->pixelSize = 5.0f;
+    tr->outline = true;                       // reads on any background
     title->transform->SetParent(canvas->transform, false);
 
     GameObject* start = scene.CreateGameObject("StartButton");
     auto* b = start->AddComponent<UIButton>();
     b->label = "Start";
-    b->position = {70, 170};
-    b->size = {300, 60};
+    b->position = {70, 150};
+    b->size = {300, 56};
+    b->cornerRadius = 10.0f;
+    b->fontScale = 3.0f;
     start->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function on_click() { load_scene(\"game.okayscene\"); }\n");
+    start->AddComponent<UITooltip>()->text = "Begin the game";
     start->transform->SetParent(canvas->transform, false);
+
+    // Volume slider with a live value readout, bound to a pref.
+    GameObject* vol = scene.CreateGameObject("Volume");
+    auto* sl = vol->AddComponent<UISlider>();
+    sl->position = {70, 230}; sl->size = {300, 18};
+    sl->value = 0.8f; sl->showValue = true; sl->cornerRadius = 6.0f;
+    vol->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function on_change() { prefs_set(\"volume\", ui_slider_value(\"Volume\")); }\n");
+    vol->transform->SetParent(canvas->transform, false);
+
+    // Fullscreen toggle.
+    GameObject* fs = scene.CreateGameObject("Fullscreen");
+    auto* tg = fs->AddComponent<UIToggle>();
+    tg->position = {70, 270}; tg->size = {26, 26};
+    tg->label = "Fullscreen"; tg->cornerRadius = 5.0f;
+    fs->transform->SetParent(canvas->transform, false);
+
+    // Quality dropdown.
+    GameObject* q = scene.CreateGameObject("Quality");
+    auto* dd = q->AddComponent<UIDropdown>();
+    dd->position = {70, 310}; dd->size = {200, 30};
+    dd->options = {"Low", "Medium", "High"}; dd->value = 2;
+    q->transform->SetParent(canvas->transform, false);
+
+    // Quit button.
+    GameObject* quit = scene.CreateGameObject("QuitButton");
+    auto* qb = quit->AddComponent<UIButton>();
+    qb->label = "Quit"; qb->position = {70, 350}; qb->size = {300, 44};
+    qb->cornerRadius = 10.0f;
+    qb->color = Color::FromBytes(110, 60, 70);
+    quit->transform->SetParent(canvas->transform, false);
 }
 
 /// A complete, playable game of Snake — written entirely in OkayScript on a

@@ -60,7 +60,10 @@ public:
                p.x <= o.x + size.x && p.y <= o.y + size.y;
     }
 
+    bool interactable = true;   // when false: greyed out, ignores drag
+
     void Update(float) override {
+        if (!interactable) { m_dragging = false; return; }
         Vec2 m = Input::MousePosition();
         if (Input::GetMouseButtonDown(0) && Contains(m)) m_dragging = true;
         if (!Input::GetMouseButton(0)) m_dragging = false;

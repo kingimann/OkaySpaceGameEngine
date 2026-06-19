@@ -81,7 +81,10 @@ public:
         return -1;
     }
 
+    bool interactable = true;   // when false: greyed out, ignores clicks
+
     void Update(float) override {
+        if (!interactable) { m_hover = false; m_hoverOption = -1; open = false; return; }
         Vec2 m = Input::MousePosition();
         m_hover = HeaderContains(m);
         m_hoverOption = OptionAt(m);

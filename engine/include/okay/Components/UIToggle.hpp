@@ -50,7 +50,10 @@ public:
                p.x <= o.x + size.x && p.y <= o.y + size.y;
     }
 
+    bool interactable = true;   // when false: greyed out, ignores clicks
+
     void Update(float) override {
+        if (!interactable) { m_hover = false; return; }
         Vec2 m = Input::MousePosition();
         m_hover = Contains(m);
         if (m_hover && Input::GetMouseButtonDown(0)) Toggle();

@@ -387,6 +387,23 @@ int main() {
         CHECK(pl2->shadow && pl2->shadowOffset.x > 6.9f && pl2->shadowOffset.y > 8.9f);
     }
 
+    // --- Disabled widgets ignore input ---------------------------------
+    {
+        Scene s("dis"); s.physicsEnabled = false;
+        UICanvas::Set(1280, 720);
+        auto* tg = s.CreateGameObject("T")->AddComponent<UIToggle>();
+        tg->position = {0, 0}; tg->size = {30, 30}; tg->interactable = false;
+        s.Start();
+        Input::FeedMouse({10, 10}, 0); s.Update(0.016f);
+        Input::FeedMouse({10, 10}, 1u << 0); s.Update(0.016f);
+        CHECK(!tg->on);   // disabled toggle ignored the click
+        // Round-trips.
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        CHECK(!s2.Find("T")->GetComponent<UIToggle>()->interactable);
+        Input::FeedMouse({0, 0}, 0);
+    }
+
     // --- Menu navigation reaches toggles, sliders, dropdowns -----------
     {
         Scene s("nav"); s.physicsEnabled = false;

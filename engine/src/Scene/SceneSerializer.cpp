@@ -310,7 +310,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << dd->borderColor.r << " " << dd->borderColor.g << " " << dd->borderColor.b << " " << dd->borderColor.a << " "
             << dd->options.size();
         for (const auto& opt : dd->options) out << " " << Quote(opt);
-        out << "\n";
+        out << " " << (dd->interactable ? 1 : 0) << "\n";
     }
     if (auto* tb = go->GetComponent<UITextBind>()) {
         out << "  uibind " << Quote(tb->format) << "\n";
@@ -367,7 +367,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)sl->anchor << " "
             << sl->cornerRadius << " " << sl->knobSize << " " << (sl->showValue ? 1 : 0) << " "
             << sl->textColor.r << " " << sl->textColor.g << " " << sl->textColor.b << " " << sl->textColor.a
-            << " " << (sl->wholeNumbers ? 1 : 0) << "\n";
+            << " " << (sl->wholeNumbers ? 1 : 0)
+            << " " << (sl->interactable ? 1 : 0) << "\n";
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
         out << "  uitoggle " << Quote(tg->label) << " "
@@ -378,7 +379,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tg->textColor.r << " " << tg->textColor.g << " " << tg->textColor.b << " " << tg->textColor.a
             << " " << (int)tg->anchor << " " << tg->cornerRadius
             << " " << (int)tg->style << " "
-            << tg->knobColor.r << " " << tg->knobColor.g << " " << tg->knobColor.b << " " << tg->knobColor.a << "\n";
+            << tg->knobColor.r << " " << tg->knobColor.g << " " << tg->knobColor.b << " " << tg->knobColor.a
+            << " " << (tg->interactable ? 1 : 0) << "\n";
     }
     if (auto* ps = go->GetComponent<ParticleSystem>()) {
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
@@ -818,6 +820,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     dd->textColor = t; dd->borderColor = b;
                     dd->options.clear();
                     for (std::size_t k = 0; k < count; ++k) dd->options.push_back(ReadQuoted(in));
+                    in >> std::ws; // optional interactable (added later)
+                    if (std::isdigit(in.peek())) { int it = 1; in >> it; dd->interactable = (it != 0); }
                 } else if (field == "uibind") {
                     auto* tb = go->AddComponent<UITextBind>();
                     tb->format = ReadQuoted(in);
@@ -900,6 +904,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         sl->showValue = (sv != 0); sl->textColor = tc;
                         in >> std::ws; // optional whole-numbers flag (added later)
                         if (std::isdigit(in.peek())) { int wn = 0; in >> wn; sl->wholeNumbers = (wn != 0); }
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { int it = 1; in >> it; sl->interactable = (it != 0); }
                     }
                 } else if (field == "uitoggle") {
                     auto* tg = go->AddComponent<UIToggle>();
@@ -919,6 +925,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int st = 0; Color kc;
                         in >> st >> kc.r >> kc.g >> kc.b >> kc.a;
                         tg->style = (UIToggle::Style)st; tg->knobColor = kc;
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { int it = 1; in >> it; tg->interactable = (it != 0); }
                     }
                 } else if (field == "particles") {
                     auto* ps = go->AddComponent<ParticleSystem>();

@@ -3609,6 +3609,7 @@ void DrawInspector(EditorState& ed) {
             float b[4]  = {dd->borderColor.r, dd->borderColor.g, dd->borderColor.b, dd->borderColor.a};
             if (ImGui::ColorEdit4("Border##udd", b)) { dd->borderColor = {b[0],b[1],b[2],b[3]}; ed.dirty = true; }
             ImGui::TextDisabled("Click to open; picking an option calls on_change().");
+            if (ImGui::Checkbox("Interactable##udd", &dd->interactable)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##udd")) toRemove = dd;
         }
     }
@@ -3739,6 +3740,7 @@ void DrawInspector(EditorState& ed) {
                 float tc[4] = {sl->textColor.r, sl->textColor.g, sl->textColor.b, sl->textColor.a};
                 if (ImGui::ColorEdit4("Text Color##usl", tc)) { sl->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
             }
+            if (ImGui::Checkbox("Interactable##usl", &sl->interactable)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
         }
     }
@@ -3765,6 +3767,7 @@ void DrawInspector(EditorState& ed) {
                 float kc[4] = {tg->knobColor.r, tg->knobColor.g, tg->knobColor.b, tg->knobColor.a};
                 if (ImGui::ColorEdit4("Knob##utg", kc)) { tg->knobColor = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             }
+            if (ImGui::Checkbox("Interactable##utg", &tg->interactable)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }
     }
@@ -4112,6 +4115,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             DrawBitmapText(dl, vbuf, a.x + sz.x + 8 * s,
                            a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(sl->textColor));
         }
+        if (!sl->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), sl->cornerRadius);
     }
     // UI toggles: box (+ inset check when on) and a label.
     for (const auto& up : objs) {
@@ -4141,6 +4145,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float px = 2.0f * s;
         DrawBitmapText(dl, tg->label, labelX,
                        a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
+        if (!tg->interactable) dl->AddRectFilled(a, b, IM_COL32(30, 30, 35, 150), tg->cornerRadius);
     }
 
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
@@ -4232,6 +4237,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRect(ImVec2(a.x, top), ImVec2(b.x, top + sz.y * dd->options.size()),
                         ToColor(dd->borderColor), 0.0f, 0, 1.0f);
         }
+        if (!dd->interactable) dl->AddRectFilled(a, b, IM_COL32(30, 30, 35, 150), 4.0f);
     }
 
     // UI tooltips: when a sibling widget has been hovered long enough (Ready),

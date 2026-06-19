@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.85.0
+  - Interactable (disabled) state for UI Toggle, Slider and Dropdown (Button
+    already had it): toggle it off to grey the widget out and have it ignore
+    input — for settings that depend on others. Saves with the scene; the
+    disabled look renders in the editor and built game.
+
 v1.84.0
   - Text gets a Bold option (faux-bold by double-striking the glyphs) for
     headings and emphasis — in the Inspector, OkayUI markup (bold=1), saved with

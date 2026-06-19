@@ -655,6 +655,8 @@ int main(int argc, char** argv) {
                 DrawText(renderer, vbuf, o.x + sl->size.x + 8.0f,
                          o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
             }
+            if (!sl->interactable) { SDL_Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
+                SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
         for (const auto& up : scene.Objects()) {           // toggles (checkboxes)
             auto* tg = up->GetComponent<UIToggle>();
@@ -691,6 +693,8 @@ int main(int argc, char** argv) {
             SDL_Color tc{(Uint8)(tg->textColor.r * 255), (Uint8)(tg->textColor.g * 255),
                          (Uint8)(tg->textColor.b * 255), (Uint8)(tg->textColor.a * 255)};
             DrawText(renderer, tg->label, tx, ty, px, tc);
+            if (!tg->interactable) { SDL_Rect dr{box.x, box.y, box.w, box.h};
+                SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
         for (const auto& up : scene.Objects()) {
             auto* btn = up->GetComponent<UIButton>();
@@ -753,6 +757,8 @@ int main(int argc, char** argv) {
                              orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, tc);
                 }
             }
+            if (!dd->interactable) { SDL_Rect dr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
+                SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
         for (const auto& up : scene.Objects()) {           // input fields (box + text + caret)
             auto* in = up->GetComponent<UIInputField>();

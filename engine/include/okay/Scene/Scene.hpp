@@ -58,6 +58,10 @@ public:
     /// Reorder `go` among its siblings (same parent) by `dir` (-1 = up/earlier,
     /// +1 = down/later) — drives hierarchy reordering and UI draw order.
     void MoveSibling(GameObject* go, int dir);
+    /// Move `go` to the first (toFront) or last sibling position.
+    void MoveSiblingToEdge(GameObject* go, bool toFront);
+    /// Make `go` a sibling of `anchor` placed just before/after it (drag-reorder).
+    void ReorderSibling(GameObject* go, GameObject* anchor, bool after);
 
     /// Collect every component of type T across all GameObjects in the scene.
     template <typename T>

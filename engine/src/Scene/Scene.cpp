@@ -230,4 +230,45 @@ void Scene::MoveSibling(GameObject* go, int dir) {
         std::swap(m_objects[roots[selfPos]], m_objects[roots[other]]);
 }
 
+void Scene::MoveSiblingToEdge(GameObject* go, bool toFront) {
+    if (!go) return;
+    if (go->transform && go->transform->Parent()) {
+        go->transform->Parent()->MoveChildToEdge(go->transform, toFront);
+        return;
+    }
+    // Root: a root's hierarchy position is the order of its entry in m_objects
+    // (children draw under their parents regardless), so moving the entry to the
+    // front/back of m_objects puts it first/last among roots.
+    for (std::size_t i = 0; i < m_objects.size(); ++i)
+        if (m_objects[i].get() == go) {
+            auto held = std::move(m_objects[i]);
+            m_objects.erase(m_objects.begin() + i);
+            if (toFront) m_objects.insert(m_objects.begin(), std::move(held));
+            else         m_objects.push_back(std::move(held));
+            return;
+        }
+}
+
+void Scene::ReorderSibling(GameObject* go, GameObject* anchor, bool after) {
+    if (!go || !anchor || go == anchor) return;
+    Transform* ap = anchor->transform ? anchor->transform->Parent() : nullptr;
+    // Reparent into the anchor's parent (keeping world pose) if needed.
+    if (go->transform && go->transform->Parent() != ap)
+        go->transform->SetParent(ap, /*worldPositionStays=*/true);
+    if (ap) {
+        ap->ReorderChild(go->transform, anchor->transform, after);
+        return;
+    }
+    // Both roots: move go's m_objects entry adjacent to the anchor's.
+    int gi = -1;
+    for (int i = 0; i < (int)m_objects.size(); ++i) if (m_objects[i].get() == go) { gi = i; break; }
+    if (gi < 0) return;
+    auto held = std::move(m_objects[gi]);
+    m_objects.erase(m_objects.begin() + gi);
+    int ai = -1;
+    for (int i = 0; i < (int)m_objects.size(); ++i) if (m_objects[i].get() == anchor) { ai = i; break; }
+    if (ai < 0) { m_objects.push_back(std::move(held)); return; }
+    m_objects.insert(m_objects.begin() + (after ? ai + 1 : ai), std::move(held));
+}
+
 } // namespace okay

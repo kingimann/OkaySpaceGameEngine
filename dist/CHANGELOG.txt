@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.9.0
+  - Hierarchy rearranging (Unity-style): DRAG a row and drop near another row's
+    top/bottom edge to reorder it as a sibling (a blue insert line shows where),
+    or drop onto the middle to re-parent. Right-click adds Move Up / Move Down /
+    Move to Top / Move to Bottom, and Ctrl+Up / Ctrl+Down reorder the selection.
+  - You can now select the Camera (and Lights / empty objects) in the Scene view
+    by clicking their gizmo — non-visual objects no longer need a renderer to be
+    picked.
+
 v2.8.2
   - Fixed the in-app updater "doesn't update": the published editor binary was
     built one version behind VERSION.txt, so after updating the version never

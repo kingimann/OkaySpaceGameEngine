@@ -2479,14 +2479,23 @@ void DrawHierarchy(EditorState& ed) {
             if (node->transform->ChildCount() == 0) flags |= ImGuiTreeNodeFlags_Leaf;
             bool open = ImGui::TreeNodeEx(node, flags, "%s%s%s", ObjectKind(node),
                                           node->name.c_str(), node->active ? "" : "  (off)");
+            ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
             if (ImGui::IsItemClicked()) ed.Select(node);
-            // Drag a row onto another to re-parent it (Unity-style hierarchy).
+            // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
+            // it as a sibling (above/below), or onto the middle to RE-PARENT it.
             if (ImGui::BeginDragDropSource()) {
                 ImGui::SetDragDropPayload("GO_PTR", &node, sizeof(GameObject*));
                 ImGui::TextUnformatted(node->name.c_str());
                 ImGui::EndDragDropSource();
             }
             if (ImGui::BeginDragDropTarget()) {
+                // Preview line for an edge (reorder) drop.
+                float ty = (ImGui::GetIO().MousePos.y - rowMin.y) / (rowMax.y - rowMin.y);
+                if (ty < 0.30f || ty > 0.70f) {
+                    float ly = ty < 0.30f ? rowMin.y : rowMax.y;
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(rowMin.x, ly), ImVec2(rowMax.x, ly),
+                                                        IM_COL32(120, 190, 255, 255), 2.0f);
+                }
                 if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
                     GameObject* dragged = *(GameObject**)p->Data;
                     bool cycle = false;
@@ -2494,7 +2503,9 @@ void DrawHierarchy(EditorState& ed) {
                         if (dragged && t == dragged->transform) { cycle = true; break; }
                     if (dragged && dragged != node && !cycle) {
                         ed.PushUndo();
-                        dragged->transform->SetParent(node->transform, true);
+                        if (ty < 0.30f)      ed.scene().ReorderSibling(dragged, node, /*after=*/false);
+                        else if (ty > 0.70f) ed.scene().ReorderSibling(dragged, node, /*after=*/true);
+                        else                 dragged->transform->SetParent(node->transform, true);
                         ed.dirty = true;
                     }
                 }
@@ -2538,6 +2549,8 @@ void DrawHierarchy(EditorState& ed) {
                 ImGui::Separator();
                 if (ImGui::MenuItem("Move Up", "Ctrl+Up"))     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
                 if (ImGui::MenuItem("Move Down", "Ctrl+Down")) { ed.PushUndo(); ed.scene().MoveSibling(node, +1); ed.dirty = true; }
+                if (ImGui::MenuItem("Move to Top"))    { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, true);  ed.dirty = true; }
+                if (ImGui::MenuItem("Move to Bottom")) { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, false); ed.dirty = true; }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Create Empty Child")) {
                     GameObject* child = ed.scene().CreateGameObject("Child");
@@ -5268,6 +5281,20 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 io.MousePos.y >= miny && io.MousePos.y <= maxy) {
                 float depth = (go->transform->Position() - eye).SqrMagnitude();
                 if (depth < bestDepth) { bestDepth = depth; hit = go; }
+            }
+        }
+        // Non-visual objects (Camera, Light, empties) have no mesh to box-pick, so
+        // when nothing solid is under the cursor, select the nearest one whose
+        // gizmo/origin is within a small pixel radius of the click.
+        if (!hit) {
+            float best = 16.0f * 16.0f;
+            for (const auto& up : objs) {
+                GameObject* go = up.get();
+                if (!go->active || go->GetComponent<MeshRenderer>()) continue;
+                ImVec2 sp;
+                if (!toScreen(vp * Vec4{go->transform->Position(), 1}, sp)) continue;
+                float dx = io.MousePos.x - sp.x, dy = io.MousePos.y - sp.y, d2 = dx * dx + dy * dy;
+                if (d2 < best) { best = d2; hit = go; }
             }
         }
         ed.Select(hit);   // hit may be null -> clicking empty space deselects (matches 2D)

@@ -1,5 +1,9 @@
 OkaySpace Game Engine — Changelog
 
+v1.30.0
+  - New Follow Target 2D component: no-code chase AI — moves toward a named
+    object at a set speed and stops within a distance (enemies, homing).
+
 v1.29.0
   - Inspector: drag an asset from the Project onto a Texture or WAV field to
     set it (Mesh Renderer texture, Sprite texture, Audio Source clip).

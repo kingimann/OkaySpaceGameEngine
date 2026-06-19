@@ -239,3 +239,7 @@ if(OKAY_WITH_CSHARP)
     target_link_libraries(test_csharp PRIVATE okay::engine)
     add_test(NAME csharp COMMAND test_csharp)
 endif()
+
+add_executable(test_follow test_follow.cpp)
+target_link_libraries(test_follow PRIVATE okay::engine)
+add_test(NAME follow COMMAND test_follow)

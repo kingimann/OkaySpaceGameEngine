@@ -93,6 +93,7 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
+#include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 
 // Multiplayer networking

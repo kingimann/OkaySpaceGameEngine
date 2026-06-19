@@ -11,6 +11,7 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
+#include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -188,6 +189,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* cc = go->GetComponent<CharacterController3D>()) {
         out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0) << "\n";
+    }
+    if (auto* ft = go->GetComponent<FollowTarget2D>()) {
+        out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
     }
     if (auto* sp = go->GetComponent<Spinner>()) {
         out << "  spinner " << sp->angularVelocity.x << " " << sp->angularVelocity.y
@@ -500,6 +504,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> m >> sp >> jf;
                     auto* cc = go->AddComponent<CharacterController2D>();
                     cc->mode = (CharacterController2D::Mode)m; cc->speed = sp; cc->jumpForce = jf;
+                } else if (field == "follow2d") {
+                    std::string tn = ReadQuoted(in);
+                    float sp = 3, sd = 0; in >> sp >> sd;
+                    auto* ft = go->AddComponent<FollowTarget2D>();
+                    ft->target = tn; ft->speed = sp; ft->stopDistance = sd;
                 } else if (field == "charctrl3d") {
                     float sp = 5, jf = 6; int cj = 1;
                     in >> sp >> jf >> cj;

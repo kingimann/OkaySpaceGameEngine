@@ -2585,6 +2585,17 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cc3")) toRemove = cc;
         }
     }
+    if (auto* ft = go->GetComponent<FollowTarget2D>()) {
+        if (ImGui::CollapsingHeader("Follow Target 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char tb[64];
+            std::strncpy(tb, ft->target.c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';
+            if (ImGui::InputText("Target##ft", tb, sizeof(tb))) { ft->target = tb; ed.dirty = true; }
+            if (ImGui::DragFloat("Speed##ft", &ft->speed, 0.05f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Stop Distance##ft", &ft->stopDistance, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
+            ImGui::TextDisabled("Chases the named object (enemy AI / homing).");
+            if (ImGui::SmallButton("Remove##ft")) toRemove = ft;
+        }
+    }
     if (auto* al = go->GetComponent<ActionList>()) {
         if (ImGui::CollapsingHeader("Actions (Visual Script)", ImGuiTreeNodeFlags_DefaultOpen)) {
             // Trigger -> Conditions -> Instructions, Game-Creator style.
@@ -2953,6 +2964,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
         if (!go->GetComponent<CharacterController3D>() && F("Character Controller 3D") && ImGui::Selectable("Character Controller 3D"))
             { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
+        if (!go->GetComponent<FollowTarget2D>() && F("Follow Target 2D") && ImGui::Selectable("Follow Target 2D"))
+            { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
         if (!go->GetComponent<Mover>() && F("Mover") && ImGui::Selectable("Mover"))
             { go->AddComponent<Mover>(); ed.dirty = true; }
         if (!go->GetComponent<Spinner>() && F("Spinner") && ImGui::Selectable("Spinner"))

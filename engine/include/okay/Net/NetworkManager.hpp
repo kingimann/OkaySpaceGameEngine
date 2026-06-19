@@ -53,6 +53,25 @@ public:
     /// roster (defaults to "Player").
     void SetLocalName(const std::string& name) { m_localName = name; }
     const std::string& LocalName() const { return m_localName; }
+
+    // ---- No-code setup: start automatically when the scene plays ------
+    enum class AutoStart { None, Host, Join };
+    AutoStart   autoStart = AutoStart::None;
+    std::uint16_t autoPort = 45000;
+    std::string autoHost = "127.0.0.1";
+    std::string startName;          // local name to use on auto-start (optional)
+
+    /// On scene Start: act on `autoStart` (host or join) so multiplayer needs no
+    /// script — add the component, pick Host/Join in the Inspector, press Play.
+    void Start() override;
+
+    // ---- Synced variables (server-authoritative shared state) ---------
+    /// Set a shared variable. On the server it applies and broadcasts to every
+    /// client; on a client it asks the server, which applies and re-broadcasts.
+    /// Great for scores, game phase, who's turn it is — one source of truth.
+    void SetVar(const std::string& key, const std::string& value);
+    /// Read the local copy of a synced variable ("" if unset).
+    std::string GetVar(const std::string& key) const;
     /// Called when a new remote peer appears; return a GameObject to represent
     /// it (its Transform will be driven by incoming snapshots).
     void SetRemoteFactory(std::function<GameObject*(std::uint32_t id, char glyph)> f) {
@@ -167,6 +186,10 @@ private:
     std::vector<NetMessage> m_inbox;
     std::function<void(std::uint32_t, const std::string&)> m_peerJoined;
     std::function<void(std::uint32_t)> m_peerLeft;
+
+    // Server-authoritative synced variables
+    std::unordered_map<std::string, std::string> m_syncVars;
+    void ApplySyncVar(const std::string& key, const std::string& value);
 };
 
 } // namespace okay

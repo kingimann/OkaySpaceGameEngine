@@ -119,4 +119,5 @@
 
 // Steam platform integration (simulation backend by default)
 #include "okay/Platform/Steam/SteamService.hpp"
+#include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Components/SteamManager.hpp"

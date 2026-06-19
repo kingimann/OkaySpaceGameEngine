@@ -3,6 +3,8 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
 
 namespace okay {
@@ -10,7 +12,7 @@ namespace okay {
 namespace {
     enum Msg : std::uint8_t {
         Join = 1, Welcome = 2, State = 3, Snapshot = 4, Leave = 5,
-        Message = 6, DirectMessage = 7
+        Message = 6, DirectMessage = 7, SyncVar = 8
     };
     constexpr float kClientTimeout = 5.0f;
 }
@@ -57,6 +59,7 @@ void NetworkManager::Stop() {
     m_clients.clear();
     m_remotes.clear();
     m_inbox.clear();
+    m_syncVars.clear();
     m_mode = Mode::Offline;
     m_joined = false;
 }
@@ -85,6 +88,44 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     NetMessage m{from, channel, data};
     if (m_msgHandler) m_msgHandler(m);
     m_inbox.push_back(std::move(m));
+}
+
+void NetworkManager::Start() {
+    if (!startName.empty()) m_localName = startName;
+    // Default the broadcast avatar + remote factory so auto-start works with no
+    // extra wiring (the component's own object is the avatar; peers show as sprites).
+    if (!m_localAvatar && gameObject && gameObject->transform)
+        m_localAvatar = gameObject->transform;
+    if (!m_spawnRemote && gameObject && gameObject->scene()) {
+        Scene* s = gameObject->scene();
+        m_spawnRemote = [s](std::uint32_t id, char) {
+            GameObject* g = s->CreateGameObject("Peer" + std::to_string(id));
+            g->AddComponent<SpriteRenderer>()->color = Color::FromBytes(230, 120, 90);
+            return g;
+        };
+    }
+    if (autoStart == AutoStart::Host) StartServer(autoPort);
+    else if (autoStart == AutoStart::Join) StartClient(autoHost, autoPort);
+}
+
+void NetworkManager::ApplySyncVar(const std::string& key, const std::string& value) {
+    m_syncVars[key] = value;
+}
+
+std::string NetworkManager::GetVar(const std::string& key) const {
+    auto it = m_syncVars.find(key);
+    return it != m_syncVars.end() ? it->second : std::string{};
+}
+
+void NetworkManager::SetVar(const std::string& key, const std::string& value) {
+    ApplySyncVar(key, value);                 // optimistic / offline local apply
+    if (m_mode == Mode::Server) {
+        net::Packet p(SyncVar); p.Write(key); p.Write(value);
+        for (auto& [ep, c] : m_clients) m_socket.SendTo(c.endpoint, p.Data(), p.Size());
+    } else if (m_mode == Mode::Client && m_joined) {
+        net::Packet p(SyncVar); p.Write(key); p.Write(value);
+        m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+    }
 }
 
 void NetworkManager::SendTo(std::uint32_t targetId, const std::string& channel,
@@ -158,7 +199,19 @@ void NetworkManager::ServerTick(float dt) {
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
                 if (m_peerJoined) m_peerJoined(c.id, c.name);
+                // Full sync: send every current synced variable to the newcomer.
+                for (auto& [k, v] : m_syncVars) {
+                    net::Packet sv(SyncVar); sv.Write(k); sv.Write(v);
+                    m_socket.SendTo(from, sv.Data(), sv.Size());
+                }
             }
+        } else if (type == SyncVar) {
+            // A client requested a variable change; apply it and fan out to all.
+            std::string key = p.ReadString();
+            std::string value = p.ReadString();
+            ApplySyncVar(key, value);
+            net::Packet out(SyncVar); out.Write(key); out.Write(value);
+            for (auto& [ep, c] : m_clients) m_socket.SendTo(c.endpoint, out.Data(), out.Size());
         } else if (type == DirectMessage) {
             auto it = m_clients.find(from);
             if (it != m_clients.end()) {
@@ -294,6 +347,10 @@ void NetworkManager::ClientTick(float dt) {
             std::string channel = p.ReadString();
             std::string data    = p.ReadString();
             if (sender != m_localId) Deliver(sender, channel, data);
+        } else if (type == SyncVar) {
+            std::string key = p.ReadString();
+            std::string value = p.ReadString();
+            ApplySyncVar(key, value);
         }
     }
 

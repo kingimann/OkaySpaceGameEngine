@@ -15,6 +15,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Input/Input.hpp"
@@ -297,6 +298,12 @@ void ActionList::Update(float dt) {
                 }
             }
         }
+        else if (op == "net_set") {
+            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->SetVar(Str(it, 0), Rest(it, 1));
+        }
+        else if (op == "steam_unlock")   { Steam::Get().UnlockAchievement(Str(it, 0)); Steam::Get().StoreStats(); }
+        else if (op == "steam_set_stat") { Steam::Get().SetStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
+        else if (op == "steam_inc_stat") { Steam::Get().IncrementStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
         else if (op == "load_scene") { if (scene) scene->RequestLoad(Str(it, 0)); return; }
         else if (op == "load_scene_index") { if (scene) SceneManager::LoadScene(*scene, (int)Num(it, 0)); return; }
         else if (op == "load_next_scene")  { if (scene) SceneManager::LoadNextScene(*scene); return; }

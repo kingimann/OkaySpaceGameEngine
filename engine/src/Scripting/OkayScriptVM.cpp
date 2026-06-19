@@ -18,6 +18,7 @@
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -1332,6 +1333,52 @@ struct OkayScriptVM::Impl {
         b["net_msg_channel"] = [this](std::vector<Value>&) { return Value{netMsgChannel}; };
         b["net_msg_data"]    = [this](std::vector<Value>&) { return Value{netMsgData}; };
         b["net_msg_from"]    = [this](std::vector<Value>&) { return Value{netMsgFrom}; };
+        // Server-authoritative synced variables: net_set on the server (or a
+        // client request) propagates to every peer; net_get reads the local copy.
+        b["net_set"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && a.size() >= 2) n->SetVar(a[0].AsString(), a[1].AsString());
+            return Value{};
+        };
+        b["net_get"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            return Value{(n && !a.empty()) ? n->GetVar(a[0].AsString()) : std::string{}};
+        };
+        // ---- Steam (shared process-wide service) ----------------------
+        b["steam_name"]   = [](std::vector<Value>&) { return Value{Steam::Get().UserName()}; };
+        b["steam_unlock"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            bool ok = Steam::Get().UnlockAchievement(a[0].AsString());
+            Steam::Get().StoreStats();
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["steam_is_unlocked"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Steam::Get().IsAchievementUnlocked(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["steam_clear"] = [](std::vector<Value>& a) {
+            if (!a.empty()) Steam::Get().ClearAchievement(a[0].AsString());
+            return Value{};
+        };
+        b["steam_set_stat"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Steam::Get().SetStat(a[0].AsString(), a[1].AsFloat());
+            return Value{};
+        };
+        b["steam_get_stat"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? 0.0f : Steam::Get().GetStat(a[0].AsString())};
+        };
+        b["steam_inc_stat"] = [](std::vector<Value>& a) {
+            return Value{a.size() < 2 ? 0.0f : Steam::Get().IncrementStat(a[0].AsString(), a[1].AsFloat())};
+        };
+        b["steam_store"] = [](std::vector<Value>&) { return Value{Steam::Get().StoreStats() ? 1.0f : 0.0f}; };
+        b["steam_leaderboard"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Steam::Get().UploadLeaderboardScore(a[0].AsString(), (std::int32_t)a[1].AsFloat());
+            return Value{};
+        };
+        b["steam_cloud_write"] = [](std::vector<Value>& a) {
+            return Value{(a.size() >= 2 && Steam::Get().CloudWrite(a[0].AsString(), a[1].AsString())) ? 1.0f : 0.0f};
+        };
+        b["steam_cloud_read"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? std::string{} : Steam::Get().CloudRead(a[0].AsString())};
+        };
         // Persistent prefs (high scores, settings) — survive across runs.
         b["prefs_set"] = [](std::vector<Value>& a) {
             if (a.size() >= 2) {

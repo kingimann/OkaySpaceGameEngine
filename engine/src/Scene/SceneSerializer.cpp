@@ -31,6 +31,7 @@
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/UIDocument.hpp"
+#include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -254,6 +255,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
+    }
+    if (auto* nm = go->GetComponent<NetworkManager>()) {
+        out << "  network " << (int)nm->autoStart << " " << nm->autoPort << " "
+            << Quote(nm->autoHost) << " " << Quote(nm->startName) << "\n";
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
@@ -646,6 +651,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();
                     doc->markup = ReadQuoted(in);
+                } else if (field == "network") {
+                    auto* nm = go->AddComponent<NetworkManager>();
+                    int as = 0, port = 45000;
+                    in >> as >> port;
+                    nm->autoStart = (NetworkManager::AutoStart)as;
+                    nm->autoPort = (std::uint16_t)port;
+                    nm->autoHost = ReadQuoted(in);
+                    nm->startName = ReadQuoted(in);
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;

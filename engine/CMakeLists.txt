@@ -23,6 +23,7 @@ add_library(okay_engine
     src/Components/ActionList.cpp
     src/Components/UIDocument.cpp
     src/Platform/Steam/NullSteamService.cpp
+    src/Platform/Steam/Steam.cpp
     src/Components/SteamManager.cpp
     src/Physics/Physics2D.cpp
     src/Physics/Physics3D.cpp

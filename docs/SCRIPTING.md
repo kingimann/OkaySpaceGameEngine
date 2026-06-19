@@ -143,6 +143,18 @@ function update(dt) {
 | `net_send_to(id, "channel", "data")` | Message one peer |
 | `net_poll()` | Pop one received message (use in a `while`) |
 | `net_msg_channel()` / `net_msg_data()` / `net_msg_from()` | The popped message |
+| `net_set("key", "value")` | Set a server-authoritative **synced variable** |
+| `net_get("key")` | Read a synced variable (same value on every peer) |
+
+### Steam (achievements, stats, leaderboards, cloud)
+| Function | Description |
+|---|---|
+| `steam_name()` | The player's Steam name |
+| `steam_unlock("ID")` / `steam_is_unlocked("ID")` / `steam_clear("ID")` | Achievements |
+| `steam_set_stat("n", v)` / `steam_get_stat("n")` / `steam_inc_stat("n", by)` | Stats |
+| `steam_store()` | Flush stats/achievements to Steam |
+| `steam_leaderboard("board", score)` | Submit a leaderboard score |
+| `steam_cloud_write("file", "data")` / `steam_cloud_read("file")` | Steam Cloud |
 
 ### State, math & data
 | Function | Description |

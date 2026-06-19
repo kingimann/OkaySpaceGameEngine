@@ -2997,7 +2997,8 @@ void DrawInspector(EditorState& ed) {
                 "set_light", "set_ambient", "set_timescale", "send", "spawn", "spawn3",
                 "destroy", "destroy_obj", "activate", "deactivate", "set_tag",
                 "set_prefs", "add_prefs", "save_prefs",
-                "net_host", "net_join", "net_send", "net_disconnect",
+                "net_host", "net_join", "net_send", "net_set", "net_disconnect",
+                "steam_unlock", "steam_set_stat", "steam_inc_stat",
                 "load_scene", "load_scene_index", "load_next_scene", "log"};
 
             ImGui::SeparatorText("Conditions (all must pass)");
@@ -3131,6 +3132,28 @@ void DrawInspector(EditorState& ed) {
             GameObject* s = es->Selected();
             ImGui::Text("Selected: %s", s ? s->name.c_str() : "(none)");
             if (ImGui::SmallButton("Remove##es")) toRemove = es;
+        }
+    }
+    if (auto* nm = go->GetComponent<NetworkManager>()) {
+        if (ImGui::CollapsingHeader("Network Manager", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play"};
+            int m = (int)nm->autoStart;
+            if (ImGui::Combo("Auto Start##nm", &m, modes, 3)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
+            int port = nm->autoPort;
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputInt("Port##nm", &port)) { nm->autoPort = (std::uint16_t)(port < 0 ? 0 : port); ed.dirty = true; }
+            if (nm->autoStart == NetworkManager::AutoStart::Join) {
+                static char hostBuf[64]; static NetworkManager* bound = nullptr;
+                if (bound != nm) { std::strncpy(hostBuf, nm->autoHost.c_str(), sizeof(hostBuf) - 1); hostBuf[sizeof(hostBuf)-1]='\0'; bound = nm; }
+                if (ImGui::InputText("Host IP##nm", hostBuf, sizeof(hostBuf))) { nm->autoHost = hostBuf; ed.dirty = true; }
+            }
+            static char nameBuf[48]; static NetworkManager* nbound = nullptr;
+            if (nbound != nm) { std::strncpy(nameBuf, nm->startName.c_str(), sizeof(nameBuf) - 1); nameBuf[sizeof(nameBuf)-1]='\0'; nbound = nm; }
+            if (ImGui::InputText("Player Name##nm", nameBuf, sizeof(nameBuf))) { nm->startName = nameBuf; ed.dirty = true; }
+            const char* mode = nm->IsServer() ? "Server" : nm->IsClient() ? "Client" : "Offline";
+            ImGui::Text("Live: %s   Peers: %d   Id: %u", mode, (int)nm->PeerCount(), nm->LocalId());
+            ImGui::TextDisabled("Add this, pick Host/Join, press Play — no code needed.");
+            if (ImGui::SmallButton("Remove##nm")) toRemove = nm;
         }
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
@@ -3404,6 +3427,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<EventSystem>(); ed.dirty = true; }
         if (!go->GetComponent<UIDocument>() && F("UI Document") && ImGui::Selectable("UI Document"))
             { go->AddComponent<UIDocument>(); ed.dirty = true; }
+        if (!go->GetComponent<NetworkManager>() && F("Network Manager") && ImGui::Selectable("Network Manager"))
+            { go->AddComponent<NetworkManager>(); ed.dirty = true; }
         if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
             { go->AddComponent<UIButton>(); ed.dirty = true; }
         if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))

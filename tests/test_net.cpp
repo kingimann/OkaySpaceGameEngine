@@ -113,6 +113,31 @@ int main() {
         CHECK(server->PeerName(client->LocalId()) == "Alice");
     }
 
+    // --- Synced variables: server sets, client receives the same value ---
+    {
+        server->SetVar("phase", "play");
+        server->SetVar("score", "10");
+        std::string clientPhase;
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            clientPhase = client->GetVar("phase");
+            if (clientPhase == "play" && client->GetVar("score") == "10") break;
+        }
+        CHECK(client->GetVar("phase") == "play");
+        CHECK(client->GetVar("score") == "10");
+        CHECK(server->GetVar("phase") == "play");
+
+        // A client SetVar routes through the server and comes back to everyone.
+        client->SetVar("ready", "1");
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (server->GetVar("ready") == "1") break;
+        }
+        CHECK(server->GetVar("ready") == "1");
+    }
+
     // --- Targeted send: server -> one client by id ---
     {
         std::string direct;

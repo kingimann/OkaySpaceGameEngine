@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v1.42.0
+  - No-code multiplayer: a Network Manager component with Auto Start = Host/Join
+    on Play (port, host IP, player name) in the Inspector — add it, pick a mode,
+    press Play. It defaults its own object as the broadcast avatar and mirrors
+    peers as sprites; settings save with the scene.
+  - Synced variables: net_set(key, value) / net_get(key) — a server-authoritative
+    shared store every peer sees, auto-synced to new joiners. Also a no-code
+    ActionList op (net_set).
+  - Steam from scripts: a process-wide shared Steam service plus steam_* builtins
+    (name, unlock/is_unlocked/clear, set/get/inc stat, store, leaderboard,
+    cloud read/write). No-code ActionList ops too (steam_unlock, steam_set_stat,
+    steam_inc_stat). Docs updated.
+
 v1.41.0
   - Better performance: backface culling (solid meshes skip triangles facing
     away — about half the triangles of a closed mesh, for free) and a per-mesh

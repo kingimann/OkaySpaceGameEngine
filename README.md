@@ -299,12 +299,18 @@ function update(d) {
 Full script API: `net_host(port)`, `net_join(ip, port)`, `net_disconnect()`,
 `net_connected()`, `net_is_server()`, `net_is_client()`, `net_id()`,
 `net_peers()`, `net_name(name)`, `net_send(channel, data)`,
-`net_send_to(id, channel, data)`, `net_poll()` + `net_msg_channel/data/from()`.
-The same actions exist as **visual-scripting** ops (`net_host`, `net_join`,
-`net_send`) and in the editor's **Services → Multiplayer** panel (host/join,
-roster, chat). The **New Project → Multiplayer** template is a ready-to-run
-example. Each peer broadcasts its avatar Transform; the server relays messages
-and keeps the roster. Build the game and share `<Game>.exe` — one player hosts,
+`net_send_to(id, channel, data)`, `net_poll()` + `net_msg_channel/data/from()`,
+and **synced variables** `net_set(key, value)` / `net_get(key)` — a
+server-authoritative shared store (scores, game phase) that every peer sees,
+auto-synced to new joiners.
+
+**No code at all?** Add a **Network Manager** component, set **Auto Start =
+Host on Play** (or **Join**) with a port/name in the Inspector, and press Play —
+the component hosts/joins on its own, broadcasting its object's Transform. The
+same actions are also **visual-scripting** ops (`net_host`, `net_join`,
+`net_send`, `net_set`), and the editor's **Services → Multiplayer** panel does
+host/join + roster + chat. The **New Project → Multiplayer** template is a
+ready-to-run example. Build the game and share `<Game>.exe` — one player hosts,
 the rest join over LAN or a forwarded port.
 
 ## Documentation

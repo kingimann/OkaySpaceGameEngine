@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v1.70.0
+  - Everything displays in builds: the standalone player now renders UI Input
+    Fields (box, text/placeholder, focus outline, caret) and Scroll Views
+    (background + scrollbar) — previously these showed only in the editor.
+  - Scroll View contents now scroll and clip correctly in built games: child
+    widgets are offset by the scroll position and clipped to the viewport, so
+    lists hide off-view rows just like in the editor preview.
+  - Verified every UI widget type (panel, text, button, image, slider, toggle,
+    progress, input, dropdown, scroll view, tooltip) renders in the build;
+    Layout Group arranges its children on start.
+
 v1.69.0
   - Better UI resizing: handles now resize in screen space, so the grabbed edge
     follows the cursor correctly for ANY anchor (previously right/center/bottom-

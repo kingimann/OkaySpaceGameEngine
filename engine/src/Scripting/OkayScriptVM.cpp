@@ -1814,6 +1814,29 @@ struct OkayScriptVM::Impl {
             auto it = m.find(a[0].AsString());
             return Value{it != m.end() ? it->second : 0.0f};
         };
+
+        // --- Sprite glyph/size on a sibling SpriteRenderer ---
+        b["set_glyph"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* sr = g->GetComponent<SpriteRenderer>()) {
+                std::string s = a.empty() ? std::string{} : a[0].AsString();
+                if (!s.empty()) sr->glyph = s[0];
+            }
+            return Value{};
+        };
+        b["sprite_size"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* sr = g->GetComponent<SpriteRenderer>())
+                sr->size = {a.size() > 0 ? a[0].AsFloat() : 1.0f, a.size() > 1 ? a[1].AsFloat() : 1.0f};
+            return Value{};
+        };
+        // --- Call one of this script's own functions by name (dynamic dispatch:
+        //     state machines, command tables, "call the handler for this state"). ---
+        b["call"] = [this](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{};
+            std::string fn = a[0].AsString();
+            std::vector<Value> none;
+            if (rt.functions.count(fn)) return rt.Call(fn, none);
+            return Value{};
+        };
     }
 };
 

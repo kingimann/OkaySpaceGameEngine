@@ -15,7 +15,8 @@ struct Collision2D;
 /// from dropdowns in the editor.
 class ActionList : public Behaviour {
 public:
-    enum class Trigger { OnStart, OnUpdate, OnKey, OnCollision, OnClick };
+    // Appended in order — existing values must stay stable for serialization.
+    enum class Trigger { OnStart, OnUpdate, OnKey, OnCollision, OnClick, OnKeyUp };
 
     /// One condition or instruction: an op name + string args (numbers parsed
     /// on use, so the data stays uniform and easy to edit/serialize).

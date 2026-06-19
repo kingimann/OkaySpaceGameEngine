@@ -100,5 +100,17 @@ int main() {
         CHECK(b.instructions[1].args.size() == 2);   // "Hi" + "there"
     }
 
+    // `stop` ends the list early; later instructions don't run.
+    {
+        ActionList::ResetVars();
+        Scene s("E"); s.physicsEnabled = false;
+        GameObject* o = s.CreateGameObject("Stopper");
+        auto* al = o->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        al->instructions = { I("move", {"1", "0", "0"}), I("stop"), I("move", {"9", "0", "0"}) };
+        s.Start(); s.Update(0.016f);
+        CHECK_NEAR(o->transform->localPosition.x, 1.0f, 1e-4f);
+    }
+
     TEST_MAIN_RESULT();
 }

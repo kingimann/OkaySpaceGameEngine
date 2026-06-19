@@ -17,6 +17,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Time.hpp"
 
 #include <cctype>
 #include <cmath>
@@ -146,6 +147,7 @@ void ActionList::Update(float dt) {
     if (!m_running) {
         if (trigger == Trigger::OnUpdate) Fire();
         else if (trigger == Trigger::OnKey && !triggerKey.empty() && Input::GetKeyDown(triggerKey[0])) Fire();
+        else if (trigger == Trigger::OnKeyUp && !triggerKey.empty() && Input::GetKeyUp(triggerKey[0])) Fire();
         else if (trigger == Trigger::OnCollision && m_collided) { m_collided = false; Fire(); }
         else if (trigger == Trigger::OnClick) {
             if (auto* b = gameObject ? gameObject->GetComponent<UIButton>() : nullptr)
@@ -159,12 +161,27 @@ void ActionList::Update(float dt) {
 
     Scene* scene = GetScene();
     Transform* t = transform;
+    int guard = 0;   // cap steps per frame so a goto-loop without a wait can't hang
     while (m_ip < instructions.size()) {
+        if (++guard > 10000) break;
         const Item& it = instructions[m_ip];
         const std::string& op = it.op;
         ++m_ip;
 
         if (op == "wait") { m_wait = Num(it, 0); if (m_wait > 0.0f) return; }
+        else if (op == "stop") { m_ip = instructions.size(); }
+        else if (op == "goto") {
+            int target = (int)Num(it, 0);
+            if (target >= 0 && target < (int)instructions.size()) m_ip = (std::size_t)target;
+        }
+        else if (op == "spawn3") {
+            if (scene) {
+                GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
+                if (g && g->transform)
+                    g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
+            }
+        }
+        else if (op == "set_timescale") { Time::SetTimeScale(Num(it, 0)); }
         else if (op == "move") { if (t) t->Translate({Num(it, 0), Num(it, 1), Num(it, 2)}); }
         else if (op == "set_pos") { if (t) t->localPosition = {Num(it, 0), Num(it, 1), Num(it, 2)}; }
         else if (op == "rotate") { if (t) t->Rotate({Num(it, 1), Num(it, 2), Num(it, 0)}); }

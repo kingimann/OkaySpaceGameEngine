@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v1.20.0
+  - Scripting Reference now teaches OkayScript from scratch: a "Learn the basics"
+    tutorial (variables, math, if/else, loops, start()/update(dt), functions)
+    with runnable examples — open it from Help > Scripting Reference.
+  - Visual scripting (Actions) expanded: On Key Up trigger; goto / stop for loops
+    and early-out; spawn3 (3D), set_timescale, and more condition ops (key_down,
+    mouse, has_tag, is_active, dist_gt, exists).
+  - OkayScript expanded: set_emissive / set_unlit / set_specular / set_tiling /
+    set_mesh_texture, set_glyph / sprite_size, call("fn") for dynamic dispatch,
+    and gc_get / gc_set to share variables with the Actions visual scripting.
+  - Inspector: Reset Pos / Rot / Scale buttons on Transform.
+  - Project: right-click > Show in Explorer.
+
 v1.19.0
   - No-code visual scripting (Game Creator-style): a new "Actions" component
     with a Trigger (On Start / Update / Key / Collision / Click), a list of

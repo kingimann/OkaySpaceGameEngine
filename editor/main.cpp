@@ -1132,6 +1132,8 @@ void DrawProject(EditorState& ed) {
                 std::strncpy(renameBuf, name.c_str(), sizeof(renameBuf) - 1);
                 renameBuf[sizeof(renameBuf) - 1] = '\0';
             }
+            if (ImGui::MenuItem("Show in Explorer"))
+                extide::OpenExternal(fs::path(full).parent_path().string());
             if (ImGui::MenuItem("Delete")) {
                 std::error_code re; fs::remove_all(full, re);
                 ConsoleLog((re ? "Delete failed: " : "Deleted ") + full);
@@ -1331,6 +1333,58 @@ void DrawScriptDocs() {
         ImGui::BulletText("%s", sig);
         ImGui::SameLine(230); ImGui::TextDisabled("%s", desc);
     };
+    auto code = [](const char* c) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.74f, 0.88f, 0.70f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.25f));
+        ImVec2 sz(-1.0f, ImGui::GetTextLineHeightWithSpacing() *
+                  (float)(std::count(c, c + std::strlen(c), '\n') + 1) + 8);
+        ImGui::BeginChild(ImGui::GetID(c), sz, true);
+        ImGui::TextUnformatted(c);
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+    };
+
+    // ---- Tutorial: teach the language from scratch ----
+    if (ImGui::CollapsingHeader("Learn the basics", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextWrapped("OkayScript is a small, friendly language for game logic. "
+            "You write two functions: start() runs once, update(dt) runs every frame "
+            "(dt = seconds since the last frame). Everything below is just those two "
+            "plus values, math, and the built-in commands.");
+
+        ImGui::SeparatorText("1. Variables");
+        ImGui::TextWrapped("Make a value with 'var'. Values are numbers, text (in "
+            "quotes), or true/false. End each statement with a semicolon ;");
+        code("var speed = 5;\nvar name = \"Hero\";\nvar alive = true;");
+
+        ImGui::SeparatorText("2. Math & comparisons");
+        ImGui::TextWrapped("%s", "Use + - * / % for math, and == != < > <= >= to compare. "
+            "Combine conditions with && (and), || (or), ! (not).");
+        code("var hp = 100 - 25;        // 75\nvar low = hp < 50;       // false");
+
+        ImGui::SeparatorText("3. Making decisions: if / else");
+        code("if (key(\"space\")) {\n    move(0, 5 * dt);   // jump while held\n} else {\n    move(0, -1 * dt);  // gently fall\n}");
+
+        ImGui::SeparatorText("4. Repeating: while / for");
+        code("for (var i = 0; i < 3; i = i + 1) {\n    spawn(\"Coin\", i, 0);\n}");
+
+        ImGui::SeparatorText("5. The two lifecycle functions");
+        ImGui::TextWrapped("start() sets things up once; update(dt) drives behaviour "
+            "every frame. Multiply movement by dt so it's the same speed on any PC.");
+        code("function start() {\n    set_pos(0, 0);\n    set(\"score\", 0);\n}\n\n"
+             "function update(dt) {\n    // move with the WASD / arrow keys\n"
+             "    move(axis_x() * 5 * dt, axis_y() * 5 * dt);\n}");
+
+        ImGui::SeparatorText("6. Your own functions");
+        ImGui::TextWrapped("Group steps into a function and call it by name (or with "
+            "call(\"name\") for state machines).");
+        code("function hurt() {\n    set(\"score\", get(\"score\") - 1);\n}\n\n"
+             "function update(dt) {\n    if (key_down(\"x\")) { hurt(); }\n}");
+
+        ImGui::TextWrapped("That's the whole language. The rest is the built-in "
+            "commands below (move, key, spawn, set/get, …). Hit Compile & Run in the "
+            "Script Editor to try it live.");
+        ImGui::Spacing();
+    }
 
     ImGui::TextWrapped("OkaySpace scripts are written in OkayScript — a small "
         "C-style language. Attach a Script component, then edit it in the Script "
@@ -2043,6 +2097,12 @@ void DrawInspector(EditorState& ed) {
         }
         if (ImGui::IsItemActivated()) ed.PushUndo();
         if (isCam) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
+        // Quick resets (Unity's right-click-component conveniences).
+        if (ImGui::SmallButton("Reset Pos")) { ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset Rot")) { ed.PushUndo(); g_euler[go] = {0, 0, 0}; t->localRotation = Quat::Euler({0, 0, 0}); ed.dirty = true; }
+        ImGui::SameLine();
+        if (!isCam && ImGui::SmallButton("Reset Scale")) { ed.PushUndo(); t->localScale = {1, 1, 1}; ed.dirty = true; }
     }
 
     if (auto* sr = go->GetComponent<SpriteRenderer>()) {
@@ -2319,11 +2379,13 @@ void DrawInspector(EditorState& ed) {
     if (auto* al = go->GetComponent<ActionList>()) {
         if (ImGui::CollapsingHeader("Actions (Visual Script)", ImGuiTreeNodeFlags_DefaultOpen)) {
             // Trigger -> Conditions -> Instructions, Game-Creator style.
-            const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision", "On Click"};
+            const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision",
+                                   "On Click", "On Key Up"};
             int ti = (int)al->trigger;
             ImGui::SetNextItemWidth(150);
-            if (ImGui::Combo("Trigger", &ti, trigs, 5)) { al->trigger = (ActionList::Trigger)ti; ed.dirty = true; }
-            if (al->trigger == ActionList::Trigger::OnKey) {
+            if (ImGui::Combo("Trigger", &ti, trigs, IM_ARRAYSIZE(trigs))) { al->trigger = (ActionList::Trigger)ti; ed.dirty = true; }
+            if (al->trigger == ActionList::Trigger::OnKey ||
+                al->trigger == ActionList::Trigger::OnKeyUp) {
                 ImGui::SameLine();
                 char kb[16];
                 std::strncpy(kb, al->triggerKey.c_str(), sizeof(kb) - 1); kb[sizeof(kb) - 1] = '\0';
@@ -2337,10 +2399,11 @@ void DrawInspector(EditorState& ed) {
                 "chance", "var_eq", "var_gt", "var_lt", "has_tag", "is_active",
                 "dist_lt", "dist_gt", "exists"};
             static const char* instOps[] = {"move", "set_pos", "rotate", "set_scale",
-                "set_scale3", "move_toward", "look_at", "wait", "set_var", "add_var",
-                "set_active", "set_text", "set_color", "velocity", "impulse", "emit",
-                "play_anim", "play_sound", "set_cam", "set_bg", "set_light", "set_ambient",
-                "destroy", "destroy_obj", "activate", "deactivate", "spawn", "load_scene", "log"};
+                "set_scale3", "move_toward", "look_at", "wait", "goto", "stop",
+                "set_var", "add_var", "set_active", "set_text", "set_color", "velocity",
+                "impulse", "emit", "play_anim", "play_sound", "set_cam", "set_bg",
+                "set_light", "set_ambient", "set_timescale", "spawn", "spawn3",
+                "destroy", "destroy_obj", "activate", "deactivate", "load_scene", "log"};
 
             ImGui::SeparatorText("Conditions (all must pass)");
             for (std::size_t i = 0; i < al->conditions.size();) {

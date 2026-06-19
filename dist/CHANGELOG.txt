@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.93.0
+  - UI drag & drop, much more customizable: UI Draggable now has a "Lock axis"
+    option (Both/Horizontal/Vertical) for sliders & rails, a "Drag threshold"
+    (pixels the pointer must move before a drag starts, so a click stays a
+    click), and "Bring to front" to draw the item above its siblings while
+    dragging. UI Drop Target gains an "Accept tag" filter so a slot only takes
+    matching items (e.g. a weapon slot that accepts only "weapon" items). All
+    exposed in the inspector and saved with the scene.
+
 v1.92.0
   - Scriptable Objects (Data Assets): reusable data files (.okaydata) of named
     fields for item/enemy/level definitions and config — Unity's ScriptableObject

@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Math/Vec2.hpp"
+#include <string>
 
 namespace okay {
 
@@ -22,6 +23,14 @@ public:
     bool anyTarget = false;       // any widget is a drop target (not just UIDropTarget)
     bool snapToSlot = false;      // center the item in the slot it's dropped on
                                   // (a one-checkbox inventory — no script needed)
+    /// Restrict movement to one axis (Both = free).
+    enum class Axis { Both, Horizontal, Vertical };
+    Axis axis = Axis::Both;
+    /// Pixels the pointer must move before a drag begins (so a click that barely
+    /// moves doesn't drag). 0 = start immediately.
+    float dragThreshold = 0.0f;
+    /// Draw on top of its siblings while being dragged.
+    bool bringToFront = false;
 
     bool IsDragging() const { return m_dragging; }
     GameObject* LastDropTarget() const { return m_dropTarget; }
@@ -30,12 +39,19 @@ public:
 
 private:
     bool m_dragging = false;
+    bool m_armed = false;      // pressed, waiting to pass the drag threshold
     Vec2 m_start{};
+    Vec2 m_press{};
     Vec2 m_prevMouse{};
     GameObject* m_dropTarget = nullptr;
 };
 
-/// A marker that a widget can receive dropped UIDraggables (gets on_receive()).
-class UIDropTarget : public Component {};
+/// A widget that can receive dropped UIDraggables (gets on_receive()). With a
+/// non-empty `acceptTag`, only draggables whose GameObject tag matches are
+/// accepted (e.g. a weapon slot that takes only "weapon" items).
+class UIDropTarget : public Component {
+public:
+    std::string acceptTag;
+};
 
 } // namespace okay

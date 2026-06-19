@@ -319,10 +319,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* dg = go->GetComponent<UIDraggable>()) {
         out << "  uidraggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
-            << " " << (dg->snapToSlot ? 1 : 0) << "\n";
+            << " " << (dg->snapToSlot ? 1 : 0)
+            << " " << (int)dg->axis << " " << dg->dragThreshold << " " << (dg->bringToFront ? 1 : 0) << "\n";
     }
-    if (go->GetComponent<UIDropTarget>()) {
-        out << "  uidroptarget\n";
+    if (auto* dt = go->GetComponent<UIDropTarget>()) {
+        out << "  uidroptarget " << Quote(dt->acceptTag) << "\n";
     }
     if (auto* tt = go->GetComponent<UITooltip>()) {
         out << "  uitooltip " << Quote(tt->text) << " " << tt->delay << " "
@@ -845,8 +846,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     dg->returnToStart = (rs != 0); dg->anyTarget = (at != 0);
                     in >> std::ws;
                     if (std::isdigit(in.peek())) { int sn = 0; in >> sn; dg->snapToSlot = (sn != 0); }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        int ax = 0, bf = 0; in >> ax >> dg->dragThreshold >> bf;
+                        dg->axis = (UIDraggable::Axis)ax; dg->bringToFront = (bf != 0);
+                    }
                 } else if (field == "uidroptarget") {
-                    go->AddComponent<UIDropTarget>();
+                    auto* dt = go->AddComponent<UIDropTarget>();
+                    in >> std::ws;
+                    if (in.peek() == '"') dt->acceptTag = ReadQuoted(in);
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
                     tt->text = ReadQuoted(in);

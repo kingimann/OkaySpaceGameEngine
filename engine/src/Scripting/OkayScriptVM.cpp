@@ -33,10 +33,14 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Math/Easing.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -2130,6 +2134,83 @@ struct OkayScriptVM::Impl {
         b["str_repeat"] = [](std::vector<Value>& a) {
             std::string s = a.empty() ? "" : a[0].AsString(); int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
             std::string out; for (int i = 0; i < n; ++i) out += s; return Value{out};
+        };
+
+        // ---- Tweening (DOTween-style) ----------------------------------
+        // Smoothly animate the object's transform over time via the scene's
+        // scheduler, with an optional easing name ("out_quad", "in_out_sine"...).
+        auto easeFromArg = [](std::vector<Value>& a, std::size_t i) -> Ease {
+            if (i >= a.size() || !a[i].IsString()) return Ease::Linear;
+            std::string s = a[i].AsString();
+            if (s == "in_quad") return Ease::QuadIn;
+            if (s == "out_quad") return Ease::QuadOut;
+            if (s == "in_out_quad") return Ease::QuadInOut;
+            if (s == "in_cubic") return Ease::CubicIn;
+            if (s == "out_cubic") return Ease::CubicOut;
+            if (s == "in_out_cubic") return Ease::CubicInOut;
+            if (s == "in_sine") return Ease::SineIn;
+            if (s == "out_sine") return Ease::SineOut;
+            if (s == "in_out_sine") return Ease::SineInOut;
+            if (s == "in_expo") return Ease::ExpoIn;
+            if (s == "out_expo") return Ease::ExpoOut;
+            if (s == "in_out_expo") return Ease::ExpoInOut;
+            if (s == "out_back") return Ease::BackOut;
+            if (s == "in_back") return Ease::BackIn;
+            if (s == "out_elastic") return Ease::ElasticOut;
+            if (s == "out_bounce") return Ease::BounceOut;
+            return Ease::Linear;
+        };
+        auto sched = [this]() -> Scheduler* {
+            if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                return &rt.host->gameObject->scene()->scheduler();
+            return nullptr;
+        };
+        b["tween_move"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
+            Ease e = easeFromArg(a, 3);
+            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; });
+            return Value{};
+        };
+        b["tween_move3"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 4) return Value{};
+            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            Ease e = easeFromArg(a, 4);
+            s->Tween(a[3].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; });
+            return Value{};
+        };
+        b["tween_scale"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Vec3 start = t->localScale; float v = a[0].AsFloat(); Vec3 target{v, v, v};
+            Ease e = easeFromArg(a, 2);
+            s->Tween(a[1].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = start + (target - start) * k; });
+            return Value{};
+        };
+        // ---- Save system: snapshot the whole scene to a slot file ------
+        b["save_game"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            if (!s) return Value{0.0f};
+            std::string slot = a.empty() ? "save1" : a[0].AsString();
+            std::error_code ec; std::filesystem::create_directories("saves", ec);
+            return Value{SceneSerializer::SaveToFile(*s, "saves/" + slot + ".okaysave") ? 1.0f : 0.0f};
+        };
+        b["load_game"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            std::string slot = a.empty() ? "save1" : a[0].AsString();
+            std::string path = "saves/" + slot + ".okaysave";
+            if (s && std::ifstream(path).good()) { s->RequestLoad(path); return Value{1.0f}; }
+            return Value{0.0f};
+        };
+        b["save_exists"] = [](std::vector<Value>& a) {
+            std::string slot = a.empty() ? "save1" : a[0].AsString();
+            return Value{std::ifstream("saves/" + slot + ".okaysave").good() ? 1.0f : 0.0f};
+        };
+        b["delete_save"] = [](std::vector<Value>& a) {
+            std::string slot = a.empty() ? "save1" : a[0].AsString();
+            return Value{std::remove(("saves/" + slot + ".okaysave").c_str()) == 0 ? 1.0f : 0.0f};
         };
 
         // ---- Friendly aliases: intuitive names for common builtins so games

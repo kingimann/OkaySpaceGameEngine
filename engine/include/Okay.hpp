@@ -77,6 +77,8 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"

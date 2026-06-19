@@ -989,6 +989,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
             if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
             if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
+            if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
+            if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
             ImGui::EndMenu();
         }
         if (created) ed.Achievement("FIRST_OBJECT");
@@ -3412,6 +3414,37 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
         }
     }
+    if (auto* lg = go->GetComponent<UILayoutGroup>()) {
+        if (ImGui::CollapsingHeader("UI Layout Group", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* dirs[] = {"Vertical", "Horizontal"};
+            int d = (int)lg->direction;
+            if (ImGui::Combo("Direction##lg", &d, dirs, 2)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            float orig[2] = {lg->origin.x, lg->origin.y};
+            if (ImGui::DragFloat2("Origin##lg", orig, 1.0f)) { lg->origin = {orig[0], orig[1]}; lg->Arrange(); ed.dirty = true; }
+            if (ImGui::DragFloat("Spacing##lg", &lg->spacing, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
+            if (ImGui::DragFloat("Padding##lg", &lg->padding, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
+            AnchorCombo("Anchor##lg", lg->anchor, ed);
+            if (ImGui::SmallButton("Arrange Now##lg")) { lg->Arrange(); ed.dirty = true; }
+            ImGui::SameLine();
+            ImGui::TextDisabled("content: %.0f px", lg->ContentSize());
+            if (ImGui::SmallButton("Remove##lg")) toRemove = lg;
+        }
+    }
+    if (auto* sv = go->GetComponent<UIScrollView>()) {
+        if (ImGui::CollapsingHeader("UI Scroll View", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float pos[2] = {sv->position.x, sv->position.y};
+            if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {sv->size.x, sv->size.y};
+            if (ImGui::DragFloat2("Viewport (px)##usv", sz, 1.0f, 16.0f, 8000.0f)) { sv->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Content Height##usv", &sv->contentHeight, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Scroll##usv", &sv->scroll, 0.0f, sv->ScrollMax())) ed.dirty = true;
+            float c[4] = {sv->background.r, sv->background.g, sv->background.b, sv->background.a};
+            if (ImGui::ColorEdit4("Background##usv", c)) { sv->background = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            AnchorCombo("Anchor##usv", sv->anchor, ed);
+            ImGui::TextDisabled("Parent UI widgets to this; the wheel scrolls them.");
+            if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
+        }
+    }
     if (auto* pb = go->GetComponent<UIProgressBar>()) {
         if (ImGui::CollapsingHeader("UI Progress Bar", ImGuiTreeNodeFlags_DefaultOpen)) {
             float pos[2] = {pb->position.x, pb->position.y};
@@ -3693,6 +3726,36 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // parented to a Canvas fall back to scale 1.
     auto uiScale = [&](GameObject* go) { return UIScaleFor(go, canvasSize.x, canvasSize.y); };
 
+    // Hide a scroll-view child when it falls outside the viewport (cheap clip).
+    auto svCull = [&](GameObject* go, const Vec2& o, const Vec2& sz) -> bool {
+        UIScrollView* sv = OwningScrollView(go);
+        if (!sv) return false;
+        float s = uiScale(go);
+        Vec2 vo = ResolveAnchor(sv->anchor, sv->position * s, sv->size * s, canvasSize.x, canvasSize.y);
+        return (o.y + sz.y < vo.y) || (o.y > vo.y + sv->size.y * s);
+    };
+
+    // Scroll View backgrounds (drawn behind their content) + a scrollbar.
+    for (const auto& up : objs) {
+        auto* sv = up->GetComponent<UIScrollView>();
+        if (!sv || !up->active) continue;
+        float s = uiScale(up.get());
+        Vec2 o = ResolveAnchor(sv->anchor, sv->position * s, sv->size * s, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 b(a.x + sv->size.x * s, a.y + sv->size.y * s);
+        dl->AddRectFilled(a, b, ToColor(sv->background), 4.0f);
+        // Scrollbar track + thumb on the right edge.
+        if (sv->ScrollMax() > 0.0f) {
+            float barW = 6.0f * s;
+            ImVec2 ta(b.x - barW - 2, a.y + 2), tb(b.x - 2, b.y - 2);
+            dl->AddRectFilled(ta, tb, IM_COL32(255, 255, 255, 30), 3.0f);
+            float viewFrac = (sv->size.y) / sv->contentHeight; if (viewFrac > 1) viewFrac = 1;
+            float thumbH = (tb.y - ta.y) * viewFrac;
+            float thumbY = ta.y + (tb.y - ta.y - thumbH) * sv->Fraction();
+            dl->AddRectFilled(ImVec2(ta.x, thumbY), ImVec2(tb.x, thumbY + thumbH), ToColor(sv->barColor), 3.0f);
+        }
+    }
+
     // Screen-space text (world-anchored text stays with the 2D scene draw).
     for (const auto& up : objs) {
         auto* tr = up->GetComponent<TextRenderer>();
@@ -3702,6 +3765,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         ImU32 sh = ToColor(tr->shadowColor);
         Vec2 sz{(float)tr->PixelWidth() * tr->pixelSize * s, (float)tr->PixelHeight() * tr->pixelSize * s};
         Vec2 o = ResolveAnchor(tr->anchor, tr->screenPos * s, sz, canvasSize.x, canvasSize.y);
+        if (UIScrollView* sv = OwningScrollView(up.get())) o.y -= sv->scroll * s;
+        if (svCull(up.get(), o, sz)) continue;
         float px = tr->pixelSize * s;
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
         if (tr->shadow)
@@ -3715,6 +3780,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto* im = up->GetComponent<UIImage>();
         if (!im || !up->active) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
         dl->AddRectFilled(a, b, ToColor(im->color), 3.0f);
@@ -3728,6 +3794,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pn->color), 4.0f);
     }
@@ -3735,6 +3802,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pb->background), 3.0f);
         dl->AddRectFilled(a, ImVec2(a.x + sz.x * pb->Fraction(), a.y + sz.y),
@@ -3746,6 +3814,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(sl->background), 3.0f);
         dl->AddRectFilled(a, ImVec2(a.x + sz.x * sl->Fraction(), a.y + sz.y),
@@ -3760,6 +3829,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!tg || !up->active) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
         dl->AddRectFilled(a, b, ToColor(tg->boxColor), 3.0f);
@@ -3779,6 +3849,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!btn || !up->active) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
         dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), 4.0f);
@@ -3820,6 +3891,22 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
     g_uiHandled = false;
     UICanvas::Set(canvasSize.x, canvasSize.y);
     Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
+
+    // Mouse wheel over a Scroll View's viewport scrolls it (preview authoring).
+    if (hovered && io.MouseWheel != 0.0f) {
+        for (const auto& up : ed.scene().Objects()) {
+            auto* sv = up->GetComponent<UIScrollView>();
+            if (!sv || !up->active) continue;
+            float s = UIScaleFor(up.get(), canvasSize.x, canvasSize.y);
+            Vec2 o = ResolveAnchor(sv->anchor, sv->position * s, sv->size * s, canvasSize.x, canvasSize.y);
+            if (mouseCanvas.x >= o.x && mouseCanvas.x <= o.x + sv->size.x * s &&
+                mouseCanvas.y >= o.y && mouseCanvas.y <= o.y + sv->size.y * s) {
+                sv->ScrollBy(-io.MouseWheel * 30.0f);
+                g_uiHandled = true;
+                break;
+            }
+        }
+    }
 
     // Continue an in-progress move/resize of the grabbed widget. Mouse pixels are
     // divided by the owning Canvas's scale so the widget tracks the cursor 1:1

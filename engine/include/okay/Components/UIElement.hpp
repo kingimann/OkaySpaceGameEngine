@@ -10,6 +10,7 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
+#include "okay/Components/UIScrollView.hpp"
 #include "okay/Math/Vec2.hpp"
 
 namespace okay {
@@ -80,6 +81,16 @@ inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
     return cv ? cv->ScaleFactor(screenW, screenH) : 1.0f;
 }
 
+/// The Scroll View a widget lives in (nearest ancestor), or nullptr — used to
+/// offset and clip the widget so it scrolls with its container.
+inline UIScrollView* OwningScrollView(GameObject* go) {
+    if (!go) return nullptr;
+    for (Transform* t = go->transform ? go->transform->Parent() : nullptr; t; t = t->Parent())
+        if (t->gameObject)
+            if (auto* sv = t->gameObject->GetComponent<UIScrollView>()) return sv;
+    return nullptr;
+}
+
 /// Resolve a widget to its final screen rect, accounting for the owning Canvas's
 /// scale: offsets and sizes scale by the canvas factor, then anchor against the
 /// screen. This is the single source of truth shared by rendering, hit-testing
@@ -91,6 +102,8 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
     float s = UIScaleFor(go, screenW, screenH);
     size = r.size * s;
     origin = ResolveAnchor(r.anchor, *r.position * s, size, screenW, screenH);
+    // Widgets inside a Scroll View move up as it scrolls.
+    if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll * s;
     if (outScale) *outScale = s;
     return true;
 }

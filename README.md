@@ -119,7 +119,11 @@ planet, `A` player ship.)*
   pointer input. Widgets: `UIButton` (`on_click()`), `UIPanel`, `UIImage`,
   `UISlider`, `UIToggle`, `UIProgressBar`, screen-space text — selectable and
   drag/resizable in the Scene view. A **UIDocument** builds whole HUDs/menus
-  from OkayUI markup (with reusable styles + custom widgets).
+  from OkayUI markup (with reusable styles + custom widgets). A **Scroll View**
+  (wheel-scrollable, clipped) and a **Layout Group** (vertical/horizontal
+  auto-layout) make scrollable lists/menus without hand-placing elements.
+- **Tweening & saves** — DOTween-style `tween_move`/`tween_scale` (with easings)
+  and a save system (`save_game`/`load_game`/`save_exists` slots) from OkayScript.
 - **Build for desktop, web & mobile** — one project, every target: a
   self-contained Windows `.exe`, a **WebAssembly** build via Emscripten
   (`scripts/build-web.sh`), and Android/iOS via SDL2.

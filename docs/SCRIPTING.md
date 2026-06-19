@@ -121,6 +121,17 @@ function update(dt) {
 | `load_scene("file")` | Switch to another scene |
 | `screen_w()` / `screen_h()` | Viewport size in pixels |
 
+### Tweening & saves
+| Function | Description |
+|---|---|
+| `tween_move(x, y, dur [, ease])` / `tween_move3(x,y,z,dur)` | Animate position |
+| `tween_scale(s, dur [, ease])` | Animate uniform scale |
+| `save_game([slot])` / `load_game([slot])` | Snapshot / restore the scene |
+| `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
+
+Easings: `linear`, `in/out/in_out_quad`, `..._cubic`, `..._sine`, `..._expo`,
+`in_back`/`out_back`, `out_elastic`, `out_bounce`.
+
 ### Scene Manager (build list)
 | Function | Description |
 |---|---|

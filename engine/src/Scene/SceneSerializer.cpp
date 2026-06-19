@@ -29,6 +29,8 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/Canvas.hpp"
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
@@ -272,6 +274,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << Quote(nm->startRoom) << " "
             << nm->maxPlayers << " " << nm->snapshotRate << " "
             << Quote(nm->serverName) << " " << Quote(nm->password) << "\n";
+    }
+    if (auto* lg = go->GetComponent<UILayoutGroup>()) {
+        out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
+            << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding << "\n";
+    }
+    if (auto* sv = go->GetComponent<UIScrollView>()) {
+        out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
+            << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
+            << sv->contentHeight << " "
+            << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a << "\n";
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
@@ -688,6 +700,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (in.peek() == '"') nm->serverName = ReadQuoted(in);
                     in >> std::ws;
                     if (in.peek() == '"') nm->password = ReadQuoted(in);
+                } else if (field == "uilayout") {
+                    auto* lg = go->AddComponent<UILayoutGroup>();
+                    int dir = 0, an = 0;
+                    in >> dir >> an >> lg->origin.x >> lg->origin.y >> lg->spacing >> lg->padding;
+                    lg->direction = (UILayoutGroup::Direction)dir; lg->anchor = (UIAnchor)an;
+                    lg->Arrange();
+                } else if (field == "uiscroll") {
+                    auto* sv = go->AddComponent<UIScrollView>();
+                    int an = 0; Color c;
+                    in >> sv->position.x >> sv->position.y >> sv->size.x >> sv->size.y
+                       >> an >> sv->contentHeight >> c.r >> c.g >> c.b >> c.a;
+                    sv->anchor = (UIAnchor)an; sv->background = c;
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;

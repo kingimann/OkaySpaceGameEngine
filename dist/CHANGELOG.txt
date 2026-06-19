@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v1.51.0
+  - UI Scroll View: a wheel-scrollable, clipped region (GameObject > UI > Scroll
+    View). Parent widgets to it; set Content Height; the mouse wheel scrolls and
+    off-view children are hidden, with a scrollbar.
+  - UI Layout Group: vertical/horizontal auto-layout (GameObject > UI > Layout
+    Group) that stacks child widgets by size + spacing — scroll view + layout =
+    scrollable lists with no hand-placing.
+  - Tweening (DOTween-style): tween_move / tween_move3 / tween_scale with easings
+    (out_quad, in_out_sine, out_back, out_bounce, ...).
+  - Save system: save_game / load_game / save_exists / delete_save snapshot the
+    scene to named slots.
+
 v1.50.0
   - Reliable networking: net_send_reliable / net_send_reliable_to resend until
     the other end acks and de-dupe on arrival — for events you can't drop

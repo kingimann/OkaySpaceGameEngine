@@ -269,6 +269,10 @@ add_executable(test_script_debug test_script_debug.cpp)
 target_link_libraries(test_script_debug PRIVATE okay::engine)
 add_test(NAME script_debug COMMAND test_script_debug)
 
+add_executable(test_ui_extra test_ui_extra.cpp)
+target_link_libraries(test_ui_extra PRIVATE okay::engine)
+add_test(NAME ui_extra COMMAND test_ui_extra)
+
 add_executable(test_uidocument test_uidocument.cpp)
 target_link_libraries(test_uidocument PRIVATE okay::engine)
 add_test(NAME uidocument COMMAND test_uidocument)

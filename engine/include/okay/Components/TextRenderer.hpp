@@ -26,6 +26,8 @@ public:
     /// centered title or a bottom-right score adapts to the window size. The
     /// text's own width/height is used so it stays inside the anchored corner.
     UIAnchor anchor = UIAnchor::TopLeft;
+    /// Screen-space horizontal alignment: 0 = left, 1 = center, 2 = right.
+    int align = 0;
     /// Drop shadow: a second copy drawn behind the text, offset by `shadowOffset`
     /// font-pixels, in `shadowColor` — keeps HUD text legible over any backdrop.
     bool  shadow = false;

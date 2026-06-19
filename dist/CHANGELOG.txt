@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v1.53.0
+  - UI customization: panels and buttons now have a Corner Radius, an optional
+    Border (width + color), and buttons have a Font Scale for the label size.
+    Edit them in the Inspector; all of it saves with the scene and renders in
+    the built game.
+  - Text alignment: screen-space Text has a Left/Center/Right Align option,
+    measured from its anchored Screen Pos.
+
 v1.52.0
   - UI Input Field (GameObject > UI > Input Field): click to focus and type;
     Backspace deletes, Enter calls on_submit(). Placeholder + max length; saves.

@@ -3269,6 +3269,8 @@ void DrawInspector(EditorState& ed) {
                 float sp[2] = {tr->screenPos.x, tr->screenPos.y};
                 if (ImGui::DragFloat2("Screen Pos##txt", sp, 1.0f)) { tr->screenPos = {sp[0], sp[1]}; ed.dirty = true; }
                 AnchorCombo("Anchor##txt", tr->anchor, ed);
+                const char* aligns[] = {"Left", "Center", "Right"};
+                if (ImGui::Combo("Align##txt", &tr->align, aligns, 3)) ed.dirty = true;
             }
             if (ImGui::Checkbox("Shadow##txt", &tr->shadow)) ed.dirty = true;
             if (tr->shadow) {
@@ -3400,6 +3402,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Focusable##uib", &btn->focusable)) ed.dirty = true;
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
             AnchorCombo("Anchor##uib", btn->anchor, ed);
+            ImGui::SeparatorText("Style");
+            if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Border Width##uib", &btn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            if (btn->borderWidth > 0.0f) {
+                float bc[4] = {btn->borderColor.r, btn->borderColor.g, btn->borderColor.b, btn->borderColor.a};
+                if (ImGui::ColorEdit4("Border Color##uib", bc)) { btn->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
     }
@@ -3412,6 +3422,13 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {pn->color.r, pn->color.g, pn->color.b, pn->color.a};
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##uip", pn->anchor, ed);
+            ImGui::SeparatorText("Style");
+            if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            if (pn->borderWidth > 0.0f) {
+                float bc[4] = {pn->borderColor.r, pn->borderColor.g, pn->borderColor.b, pn->borderColor.a};
+                if (ImGui::ColorEdit4("Border Color##uip", bc)) { pn->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
             if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
         }
     }
@@ -3788,6 +3805,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         float px = tr->pixelSize * s;
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
+        if (tr->align == 1)      bx -= sz.x * 0.5f;   // center on screenPos
+        else if (tr->align == 2) bx -= sz.x;          // right-align to screenPos
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * px,
                            by + tr->shadowOffset.y * px, px, sh);
@@ -3815,7 +3834,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pn->color), 4.0f);
+        ImVec2 pb2(a.x + sz.x, a.y + sz.y);
+        dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+        if (pn->borderWidth > 0.0f)
+            dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
     }
     for (const auto& up : objs) {
         auto* pb = up->GetComponent<UIProgressBar>();
@@ -3871,8 +3893,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
-        dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), 4.0f);
-        float px = 2.0f * s;
+        dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), btn->cornerRadius);
+        if (btn->borderWidth > 0.0f)
+            dl->AddRect(a, b, ToColor(btn->borderColor), btn->cornerRadius, 0, btn->borderWidth);
+        float px = btn->fontScale * s;
         float tw = btn->label.size() * (Font8x8::Width + 1) * px;
         DrawBitmapText(dl, btn->label, a.x + (sz.x - tw) * 0.5f,
                        a.y + (sz.y - Font8x8::Height * px) * 0.5f, px,

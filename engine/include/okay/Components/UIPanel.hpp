@@ -15,6 +15,10 @@ public:
     Vec2 size{200.0f, 120.0f};
     Color color = Color::FromBytes(20, 24, 34, 200);
     UIAnchor anchor = UIAnchor::TopLeft;
+    // Customization: rounded corners and an optional border.
+    float cornerRadius = 4.0f;
+    float borderWidth = 0.0f;                      // 0 = no border
+    Color borderColor = Color::FromBytes(255, 255, 255, 60);
 };
 
 } // namespace okay

@@ -423,6 +423,9 @@ int main(int argc, char** argv) {
                              (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255)};
                 if (tr->screenSpace) {
                     Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);
+                    float tw = tr->PixelWidth() * tr->pixelSize;
+                    if (tr->align == 1)      o.x -= tw * 0.5f;
+                    else if (tr->align == 2) o.x -= tw;
                     if (tr->shadow)
                         DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * tr->pixelSize,
                                  o.y + tr->shadowOffset.y * tr->pixelSize, tr->pixelSize, sh);
@@ -485,6 +488,14 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawColor(renderer, (Uint8)(pn->color.r * 255), (Uint8)(pn->color.g * 255),
                                    (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255));
             SDL_RenderFillRect(renderer, &r);
+            if (pn->borderWidth > 0.0f) {                   // outline (N nested rects)
+                SDL_SetRenderDrawColor(renderer, (Uint8)(pn->borderColor.r * 255), (Uint8)(pn->borderColor.g * 255),
+                                       (Uint8)(pn->borderColor.b * 255), (Uint8)(pn->borderColor.a * 255));
+                for (int bw = 0; bw < (int)pn->borderWidth; ++bw) {
+                    SDL_Rect br{r.x + bw, r.y + bw, r.w - 2 * bw, r.h - 2 * bw};
+                    SDL_RenderDrawRect(renderer, &br);
+                }
+            }
         }
         for (const auto& up : scene.Objects()) {           // progress bars
             auto* pb = up->GetComponent<UIProgressBar>();
@@ -551,8 +562,16 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
                                    (Uint8)(bg.b * 255), (Uint8)(bg.a * 255));
             SDL_RenderFillRect(renderer, &r);
-            // Center the label (8px glyphs, ~1px gap) at pixel size 2.
-            float px = 2.0f;
+            if (btn->borderWidth > 0.0f) {                  // outline (N nested rects)
+                SDL_SetRenderDrawColor(renderer, (Uint8)(btn->borderColor.r * 255), (Uint8)(btn->borderColor.g * 255),
+                                       (Uint8)(btn->borderColor.b * 255), (Uint8)(btn->borderColor.a * 255));
+                for (int bw = 0; bw < (int)btn->borderWidth; ++bw) {
+                    SDL_Rect br{r.x + bw, r.y + bw, r.w - 2 * bw, r.h - 2 * bw};
+                    SDL_RenderDrawRect(renderer, &br);
+                }
+            }
+            // Center the label (8px glyphs, ~1px gap) at the button's font scale.
+            float px = btn->fontScale;
             float tw = btn->label.size() * (Font8x8::Width + 1) * px;
             float tx = o.x + (btn->size.x - tw) * 0.5f;
             float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f;

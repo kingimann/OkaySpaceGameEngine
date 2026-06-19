@@ -142,5 +142,35 @@ int main() {
         CHECK(in2 && in2->placeholder == "name");
     }
 
+    // --- UI style customization round-trips through serialization -------
+    {
+        Scene s("style"); s.physicsEnabled = false;
+        auto* pn = s.CreateGameObject("Panel")->AddComponent<UIPanel>();
+        pn->cornerRadius = 12.0f;
+        pn->borderWidth = 3.0f;
+        pn->borderColor = Color::FromBytes(10, 20, 30, 40);
+        auto* btn = s.CreateGameObject("Btn")->AddComponent<UIButton>();
+        btn->cornerRadius = 8.0f;
+        btn->fontScale = 3.5f;
+        btn->borderWidth = 2.0f;
+        btn->borderColor = Color::FromBytes(200, 100, 50, 255);
+        auto* tr = s.CreateGameObject("Txt")->AddComponent<TextRenderer>();
+        tr->screenSpace = true;
+        tr->align = 2;
+
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        auto* pn2 = s2.Find("Panel")->GetComponent<UIPanel>();
+        CHECK_NEAR(pn2->cornerRadius, 12.0f, 1e-4f);
+        CHECK_NEAR(pn2->borderWidth, 3.0f, 1e-4f);
+        CHECK_NEAR(pn2->borderColor.r, Color::FromBytes(10, 20, 30, 40).r, 1e-3f);
+        auto* btn2 = s2.Find("Btn")->GetComponent<UIButton>();
+        CHECK_NEAR(btn2->cornerRadius, 8.0f, 1e-4f);
+        CHECK_NEAR(btn2->fontScale, 3.5f, 1e-4f);
+        CHECK_NEAR(btn2->borderWidth, 2.0f, 1e-4f);
+        auto* tr2 = s2.Find("Txt")->GetComponent<TextRenderer>();
+        CHECK(tr2->align == 2);
+    }
+
     TEST_MAIN_RESULT();
 }

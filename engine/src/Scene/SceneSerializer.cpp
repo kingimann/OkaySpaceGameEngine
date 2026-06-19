@@ -229,7 +229,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tr->screenPos.x << " " << tr->screenPos.y << " " << (int)tr->anchor << " "
             << (tr->shadow ? 1 : 0) << " "
             << tr->shadowColor.r << " " << tr->shadowColor.g << " " << tr->shadowColor.b << " " << tr->shadowColor.a << " "
-            << tr->shadowOffset.x << " " << tr->shadowOffset.y << "\n";
+            << tr->shadowOffset.x << " " << tr->shadowOffset.y << " " << tr->align << "\n";
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -258,13 +258,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)btn->anchor << " "
             << btn->pressedColor.r << " " << btn->pressedColor.g << " " << btn->pressedColor.b << " " << btn->pressedColor.a << " "
             << btn->disabledColor.r << " " << btn->disabledColor.g << " " << btn->disabledColor.b << " " << btn->disabledColor.a << " "
-            << (btn->interactable ? 1 : 0) << " " << (btn->focusable ? 1 : 0) << "\n";
+            << (btn->interactable ? 1 : 0) << " " << (btn->focusable ? 1 : 0) << " "
+            << btn->cornerRadius << " " << btn->fontScale << " " << btn->borderWidth << " "
+            << btn->borderColor.r << " " << btn->borderColor.g << " " << btn->borderColor.b << " " << btn->borderColor.a << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
             << pn->size.x << " " << pn->size.y << " "
             << pn->color.r << " " << pn->color.g << " " << pn->color.b << " " << pn->color.a
-            << " " << (int)pn->anchor << "\n";
+            << " " << (int)pn->anchor << " "
+            << pn->cornerRadius << " " << pn->borderWidth << " "
+            << pn->borderColor.r << " " << pn->borderColor.g << " " << pn->borderColor.b << " " << pn->borderColor.a << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
@@ -620,6 +624,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> sh >> sc.r >> sc.g >> sc.b >> sc.a >> so.x >> so.y;
                         tr->shadow = (sh != 0); tr->shadowColor = sc; tr->shadowOffset = so;
                     }
+                    in >> std::ws; // optional alignment (added later)
+                    if (std::isdigit(in.peek())) in >> tr->align;
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;
@@ -673,6 +679,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int fk = in.peek();
                         if (fk >= '0' && fk <= '9') { int foc = 1; in >> foc; btn->focusable = (foc != 0); }
                     }
+                    // Optional customization block (corner/font/border, added later).
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        Color bc;
+                        in >> btn->cornerRadius >> btn->fontScale >> btn->borderWidth
+                           >> bc.r >> bc.g >> bc.b >> bc.a;
+                        btn->borderColor = bc;
+                    }
                 } else if (field == "uipanel") {
                     auto* pn = go->AddComponent<UIPanel>();
                     Color c;
@@ -680,6 +694,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> c.r >> c.g >> c.b >> c.a;
                     pn->color = c;
                     ReadAnchor(in, pn->anchor);
+                    // Optional customization block (corner/border, added later).
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        Color bc;
+                        in >> pn->cornerRadius >> pn->borderWidth
+                           >> bc.r >> bc.g >> bc.b >> bc.a;
+                        pn->borderColor = bc;
+                    }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();
                     doc->markup = ReadQuoted(in);

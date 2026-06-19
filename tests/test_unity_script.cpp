@@ -129,6 +129,56 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.y, 10.0f, 0.001f);
     }
 
+    // --- String interpolation: $"...{expr}..." -------------------------
+    {
+        Scene s("UInterp"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Label");
+        go->AddComponent<TextRenderer>();
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    int score = 42;\n"
+            "    set_text($\"Score: {score} ({score + 8})\");\n"
+            "}\n"));
+        s.Start();
+        CHECK(go->GetComponent<TextRenderer>()->text == "Score: 42 (50)");
+    }
+
+    // --- switch / case / default ---------------------------------------
+    {
+        Scene s("USwitch"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Sw");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    int kind = 2;\n"
+            "    switch (kind) {\n"
+            "        case 1: transform.position.x = 10; break;\n"
+            "        case 2: transform.position.x = 20; break;\n"
+            "        default: transform.position.x = 99; break;\n"
+            "    }\n"
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 20.0f, 0.001f);
+    }
+
+    // --- More Mathf: clamp01, repeat, inverse_lerp ---------------------
+    {
+        Scene s("UMath2"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("M");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    transform.position.x = Mathf.Clamp01(2.5);\n"        // 1
+            "    transform.position.y = Mathf.Repeat(7, 3);\n"        // 1
+            "    transform.position.z = Mathf.InverseLerp(0, 10, 4);\n"  // 0.4
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 1.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().y, 1.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().z, 0.4f, 0.001f);
+    }
+
     // --- Legacy lowercase still works (backward compatible) ------------
     {
         Scene s("ULegacy"); s.physicsEnabled = false;

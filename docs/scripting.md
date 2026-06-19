@@ -64,6 +64,12 @@ What's supported:
   `f`/`d` numeric suffixes), plus `i++` / `++i` / `i--`.
 - **`foreach (var item in list) { ... }`** (C# foreach), alongside the classic
   `for x in list { }`.
+- **`switch (x) { case 1: ...; break; default: ...; }`** (C-style fall-through
+  until `break`; `case` labels can be numbers or strings).
+- **String interpolation** `$"Score: {score}  next={score + 1}"` — embed any
+  expression in `{ }` (use `{{`/`}}` for literal braces).
+- **More `Mathf`**: `Mathf.Clamp01`, `Mathf.Repeat`, `Mathf.InverseLerp`,
+  `Mathf.Approximately`, `Mathf.DeltaAngle`, `Mathf.LerpAngle`.
 - **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
   `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
   / BoxCollider2D at runtime).

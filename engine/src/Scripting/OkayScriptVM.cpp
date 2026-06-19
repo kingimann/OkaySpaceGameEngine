@@ -59,7 +59,7 @@ using Value = vs::VsValue;
 
 // ===================== Lexer =====================
 enum class Tok {
-    End, Number, String, Ident,
+    End, Number, String, InterpString, Ident,
     Var, If, Else, While, For, In, Function, Return, True, False, Break, Continue,
     Question, Colon,
     Plus, Minus, Star, Slash, Percent,
@@ -95,6 +95,8 @@ public:
                 out.push_back(Ident());
             else if (c == '"')
                 out.push_back(String());
+            else if (c == '$' && Peek(1) == '"')
+                out.push_back(InterpString());
             else
                 out.push_back(Operator());
         }
@@ -141,6 +143,27 @@ private:
         if (AtEnd()) throw ScriptError("unterminated string");
         Advance(); // closing quote
         return {Tok::String, s, 0, m_line};
+    }
+
+    // C#-style interpolated string: $"Score: {score}". The raw inner text (with
+    // {expr} markers preserved) is stored; the parser splits and compiles it.
+    Token InterpString() {
+        Advance(); // '$'
+        Advance(); // opening quote
+        std::string s;
+        while (!AtEnd() && Peek() != '"') {
+            char c = Advance();
+            if (c == '\\' && !AtEnd()) {
+                char e = Advance();
+                switch (e) { case 'n': c = '\n'; break; case 't': c = '\t'; break;
+                             case '"': c = '"'; break; case '\\': c = '\\'; break;
+                             default: c = e; }
+            }
+            s += c;
+        }
+        if (AtEnd()) throw ScriptError("unterminated string");
+        Advance(); // closing quote
+        return {Tok::InterpString, s, 0, m_line};
     }
 
     Token Ident() {
@@ -291,6 +314,19 @@ struct Runtime {
 struct NumberExpr : Expr { double v; explicit NumberExpr(double x) : v(x) {} Value Eval(Runtime&) override { return (float)v; } };
 struct StringExpr : Expr { std::string v; explicit StringExpr(std::string s) : v(std::move(s)) {} Value Eval(Runtime&) override { return v; } };
 struct BoolExpr   : Expr { bool v; explicit BoolExpr(bool b) : v(b) {} Value Eval(Runtime&) override { return v; } };
+
+// $"text {expr} more" — a list of literal/expression segments concatenated.
+struct InterpStringExpr : Expr {
+    struct Seg { bool isExpr; std::string lit; ExprPtr expr; };
+    std::vector<Seg> segs;
+    void AddLiteral(const std::string& s) { if (!s.empty()) segs.push_back({false, s, nullptr}); }
+    void AddExpr(ExprPtr e) { segs.push_back({true, "", std::move(e)}); }
+    Value Eval(Runtime& r) override {
+        std::string out;
+        for (auto& s : segs) out += s.isExpr ? s.expr->Eval(r).AsString() : s.lit;
+        return Value{out};
+    }
+};
 struct VarExpr    : Expr {
     std::string n; explicit VarExpr(std::string s) : n(std::move(s)) {}
     Value Eval(Runtime& r) override {
@@ -453,6 +489,31 @@ struct WhileStmt : Stmt {
             catch (BreakSignal&) { break; }
             if (++guard > 1000000) throw ScriptError("while loop exceeded iteration limit");
         }
+    }
+};
+// C#-style switch: matches the subject against case labels, runs from the first
+// match (with C-style fall-through) until a `break`. `default` runs if no match.
+struct SwitchStmt : Stmt {
+    struct Case { ExprPtr match; std::vector<StmtPtr> body; bool isDefault = false; };
+    ExprPtr subject;
+    std::vector<Case> cases;
+    static bool Eq(const Value& a, const Value& b) {
+        return (a.IsString() || b.IsString()) ? a.AsString() == b.AsString()
+                                              : a.AsFloat() == b.AsFloat();
+    }
+    void Exec(Runtime& r) override {
+        Value v = subject->Eval(r);
+        int start = -1;
+        for (std::size_t i = 0; i < cases.size(); ++i)
+            if (!cases[i].isDefault && Eq(v, cases[i].match->Eval(r))) { start = (int)i; break; }
+        if (start < 0)
+            for (std::size_t i = 0; i < cases.size(); ++i)
+                if (cases[i].isDefault) { start = (int)i; break; }
+        if (start < 0) return;
+        try {
+            for (std::size_t i = start; i < cases.size(); ++i)   // fall-through until break
+                for (auto& s : cases[i].body) s->Exec(r);
+        } catch (BreakSignal&) {}
     }
 };
 struct ForStmt : Stmt {
@@ -758,6 +819,31 @@ private:
             fe->body = ParseBlock();
             return fe;
         }
+        // C#-style: switch (expr) { case A: ...; break; default: ...; }
+        if (Check(Tok::Ident) && Peek().text == "switch") {
+            ++m_pos;
+            Expect(Tok::LParen, "'('");
+            auto sw = std::make_unique<SwitchStmt>();
+            sw->subject = ParseExpression();
+            Expect(Tok::RParen, "')'");
+            Expect(Tok::LBrace, "'{'");
+            while (!Check(Tok::RBrace) && !Check(Tok::End)) {
+                SwitchStmt::Case c;
+                if (Check(Tok::Ident) && Peek().text == "case") {
+                    ++m_pos; c.match = ParseExpression(); Expect(Tok::Colon, "':'");
+                } else if (Check(Tok::Ident) && Peek().text == "default") {
+                    ++m_pos; c.isDefault = true; Expect(Tok::Colon, "':'");
+                } else {
+                    throw ScriptError("parse error: expected 'case' or 'default' in switch");
+                }
+                while (!Check(Tok::RBrace) && !Check(Tok::End) &&
+                       !(Check(Tok::Ident) && (Peek().text == "case" || Peek().text == "default")))
+                    c.body.push_back(ParseStatement());
+                sw->cases.push_back(std::move(c));
+            }
+            Expect(Tok::RBrace, "'}'");
+            return sw;
+        }
         if (Match(Tok::Var) || IsTypedVarDeclAhead()) {
             // For a typed decl, drop the leading type/modifier idents, keep the last.
             std::string name = Expect(Tok::Ident, "variable name").text;
@@ -954,9 +1040,38 @@ private:
         }
         return e;
     }
+    // Split an interpolated-string template into literal + {expression} parts,
+    // compiling each embedded expression with a sub-parser. `{{`/`}}` are literals.
+    ExprPtr BuildInterp(const std::string& tpl) {
+        auto node = std::make_unique<InterpStringExpr>();
+        std::string lit;
+        for (std::size_t i = 0; i < tpl.size(); ++i) {
+            char c = tpl[i];
+            if (c == '{' && i + 1 < tpl.size() && tpl[i + 1] == '{') { lit += '{'; ++i; continue; }
+            if (c == '}' && i + 1 < tpl.size() && tpl[i + 1] == '}') { lit += '}'; ++i; continue; }
+            if (c == '{') {
+                node->AddLiteral(lit); lit.clear();
+                std::string expr; int depth = 1; ++i;
+                for (; i < tpl.size(); ++i) {
+                    if (tpl[i] == '{') ++depth;
+                    else if (tpl[i] == '}') { if (--depth == 0) break; }
+                    expr += tpl[i];
+                }
+                Lexer lx(expr);
+                Parser p(lx.Scan());
+                node->AddExpr(p.ParseExpression());
+            } else {
+                lit += c;
+            }
+        }
+        node->AddLiteral(lit);
+        return node;
+    }
+
     ExprPtr ParsePrimary() {
         if (Match(Tok::Number)) return std::make_unique<NumberExpr>(Prev().number);
         if (Match(Tok::String)) return std::make_unique<StringExpr>(Prev().text);
+        if (Match(Tok::InterpString)) return BuildInterp(Prev().text);
         if (Match(Tok::True))   return std::make_unique<BoolExpr>(true);
         if (Match(Tok::False))  return std::make_unique<BoolExpr>(false);
         if (Match(Tok::LParen)) { auto e = ParseExpression(); Expect(Tok::RParen, "')'"); return e; }
@@ -2990,6 +3105,40 @@ struct OkayScriptVM::Impl {
                     || (c == "TextRenderer"  && g->GetComponent<TextRenderer>());
             return Value{has};
         };
+        // A few more math helpers Unity scripts reach for (clamp01 / lerp_angle
+        // already exist; these are new and avoid clobbering string repeat()).
+        b["math_repeat"] = [](std::vector<Value>& a) -> Value {   // Mathf.Repeat: wrap into [0, len)
+            if (a.size() < 2) return Value{0.0f};
+            float t = a[0].AsFloat(), len = a[1].AsFloat();
+            if (len == 0.0f) return Value{0.0f};
+            float m = std::fmod(t, len); if (m < 0.0f) m += len;
+            return Value{m};
+        };
+        b["inverse_lerp"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 3) return Value{0.0f};
+            float lo = a[0].AsFloat(), hi = a[1].AsFloat(), v = a[2].AsFloat();
+            if (hi == lo) return Value{0.0f};
+            float t = (v - lo) / (hi - lo);
+            return Value{t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t)};
+        };
+        b["approximately"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{false};
+            return Value{Mathf::Abs(a[0].AsFloat() - a[1].AsFloat()) < 1e-4f};
+        };
+        b["delta_angle"] = [](std::vector<Value>& a) -> Value {   // shortest signed diff
+            if (a.size() < 2) return Value{0.0f};
+            float d = std::fmod(a[1].AsFloat() - a[0].AsFloat(), 360.0f);
+            if (d > 180.0f) d -= 360.0f; if (d < -180.0f) d += 360.0f;
+            return Value{d};
+        };
+        alias("Mathf.Clamp01", "clamp01");
+        alias("Mathf.Repeat", "math_repeat");
+        alias("Mathf.InverseLerp", "inverse_lerp");
+        alias("Mathf.Approximately", "approximately");
+        alias("Mathf.DeltaAngle", "delta_angle");
+        alias("Mathf.LerpAngle", "lerp_angle");
+        alias("inverse_lerp_value", "inverse_lerp");
+
         // Method-name aliases mapping Unity calls onto existing builtins.
         alias("Input.GetKey", "key");
         alias("Input.GetKeyDown", "key_down");

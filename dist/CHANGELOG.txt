@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.6.0
+  - More scripting:
+      * Mathf: Clamp01, InverseLerp, Repeat, DeltaAngle, LerpAngle,
+        Approximately (and plain clamp01 / inverse_lerp / delta_angle /
+        lerp_angle / approximately), plus Mathf.Log/Exp/Asin/Acos/Atan.
+      * Color.Lerp(a, b, t) (lerp_color) to blend colors for fades/flashes.
+      * C#-style .Length / .Count on string and array variables
+        (name.Length, items.Count).
+      * Vector3.Angle / Vector2.Angle (vec_angle), Vector2.Lerp /
+        Vector3.LerpUnclamped, and Input.GetButton/GetButtonDown/GetButtonUp.
+    Backward compatible.
+
 v2.5.0
   - More scripting:
       * Color values — Color.red/green/blue/white/black/yellow/cyan/magenta/gray

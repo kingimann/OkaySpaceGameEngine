@@ -318,7 +318,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  uibind " << Quote(tb->format) << "\n";
     }
     if (auto* dg = go->GetComponent<UIDraggable>()) {
-        out << "  uidraggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0) << "\n";
+        out << "  uidraggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
+            << " " << (dg->snapToSlot ? 1 : 0) << "\n";
     }
     if (go->GetComponent<UIDropTarget>()) {
         out << "  uidroptarget\n";
@@ -842,6 +843,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* dg = go->AddComponent<UIDraggable>();
                     int rs = 0, at = 0; in >> rs >> at;
                     dg->returnToStart = (rs != 0); dg->anyTarget = (at != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int sn = 0; in >> sn; dg->snapToSlot = (sn != 0); }
                 } else if (field == "uidroptarget") {
                     go->AddComponent<UIDropTarget>();
                 } else if (field == "uitooltip") {

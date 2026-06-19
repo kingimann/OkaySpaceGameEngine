@@ -289,6 +289,16 @@ void EditorState::NewSnake() {
     dirty = false;
 }
 
+void EditorState::NewInventory() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Inventory(m_scene);
+    m_suppressUndo = false;
+    view3D = false;
+    m_selected = m_scene.Find("Bag");
+    dirty = false;
+}
+
 bool EditorState::Save(const std::string& path) {
     if (!SceneSerializer::SaveToFile(m_scene, path)) return false;
     m_path = path;

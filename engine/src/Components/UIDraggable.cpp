@@ -59,6 +59,15 @@ void UIDraggable::Update(float) {
             target = nullptr;                  // only UIDropTargets count
         m_dropTarget = target;
         if (target) {
+            // Snap-to-slot: center this item in the slot (zero-script inventory).
+            if (snapToSlot) {
+                UIRect tr = GetUIRect(target);
+                if (tr.valid && tr.position && r.anchorPtr) {
+                    *r.anchorPtr = tr.anchor;
+                    r.position->x = tr.position->x + (tr.size.x - r.size.x) * 0.5f;
+                    r.position->y = tr.position->y + (tr.size.y - r.size.y) * 0.5f;
+                }
+            }
             Prefs::SetString("ui_drop_target", target->name);
             Prefs::SetString("ui_drop_source", gameObject->name);
             Fire(gameObject, "on_drop");

@@ -2254,6 +2254,7 @@ void DrawNewProjectPopup(EditorState& ed) {
         if (ImGui::Button("Multiplayer (host/join)", ImVec2(-1, 44))) { ed.NewMultiplayer(); finishProject(); }
         if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 36))) { ed.NewCoinCollector(); finishProject(); }
         if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 36)))            { ed.NewMainMenu(); finishProject(); }
+        if (ImGui::Button("Inventory (drag & drop)", ImVec2(-1, 36)))   { ed.NewInventory(); finishProject(); }
         if (ImGui::Button("Snake (full game)", ImVec2(-1, 36)))         { ed.NewSnake(); finishProject(); }
         ImGui::Spacing();
         if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) { ed.NewScene(); finishProject(); }
@@ -3638,6 +3639,8 @@ void DrawInspector(EditorState& ed) {
         if (ImGui::CollapsingHeader("UI Draggable", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (ImGui::Checkbox("Return to Start##udg", &dg->returnToStart)) ed.dirty = true;
             if (ImGui::Checkbox("Any widget is a target##udg", &dg->anyTarget)) ed.dirty = true;
+            if (ImGui::Checkbox("Snap into slot##udg", &dg->snapToSlot)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Centers the item in the drop target — instant inventory");
             ImGui::TextDisabled("Drag at runtime. Drop onto a UI Drop Target fires");
             ImGui::TextDisabled("on_drop() here + on_receive() on the target.");
             if (ImGui::SmallButton("Remove##udg")) toRemove = dg;

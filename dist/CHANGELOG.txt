@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.91.0
+  - Inventory made trivial: UI Draggable gets "Snap into slot" — drop an item on
+    a slot and it centers itself there, no scripting required. New Project >
+    "Inventory (drag & drop)" template stamps out a bag with slots + draggable
+    items you can rearrange immediately.
+
 v1.90.0
   - UI drag & drop: add a "UI Draggable" component to a widget to drag it at
     runtime; add "UI Drop Target" to widgets that can receive it. Dropping fires

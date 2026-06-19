@@ -20,6 +20,8 @@ class UIDraggable : public Behaviour {
 public:
     bool returnToStart = false;   // snap back if not dropped on a target
     bool anyTarget = false;       // any widget is a drop target (not just UIDropTarget)
+    bool snapToSlot = false;      // center the item in the slot it's dropped on
+                                  // (a one-checkbox inventory — no script needed)
 
     bool IsDragging() const { return m_dragging; }
     GameObject* LastDropTarget() const { return m_dropTarget; }

@@ -111,7 +111,7 @@ GameObject* EditorState::CreateCube(const std::string& name) {
     GameObject* go = m_scene.CreateGameObject(name);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Cube();
-    mr->color = Color::Cyan;
+    mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -123,7 +123,7 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     GameObject* go = m_scene.CreateGameObject(name);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Pyramid();
-    mr->color = Color::Yellow;
+    mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -135,7 +135,7 @@ GameObject* EditorState::CreateMesh(const std::string& meshName) {
     GameObject* go = m_scene.CreateGameObject(meshName);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::FromName(meshName);
-    mr->color = Color::Cyan;
+    mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -196,11 +196,10 @@ void EditorState::NewScene3D() {
     camObj->GetComponent<Camera>()->projection = Camera::Projection::Perspective;
     camObj->transform->localPosition = {0, 2, 10};
 
-    // A single cube on the grid (clean, Unity-like default). Add a ground/other
-    // objects from the GameObject menu as needed.
+    // A single cube on the grid (clean, Unity-like default — neutral gray). Add a
+    // ground/other objects from the GameObject menu as needed.
     GameObject* cube = CreateCube("Cube");
     cube->transform->localPosition = {0, 0, 0};
-    cube->GetComponent<MeshRenderer>()->color = Color::Cyan;
 
     // An angled directional light so the cube is shaded out of the box.
     GameObject* light = CreateEmpty("Directional Light");

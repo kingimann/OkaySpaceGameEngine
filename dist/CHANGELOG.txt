@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.8.1
+  - Fixed 3D primitives rendering "inside-out": the Cube, Pyramid and Wedge had
+    clockwise (inward-facing) winding, so backface culling dropped their front
+    faces and you saw the interior. Now wound counter-clockwise (outward) like
+    Plane/Sphere/Cylinder — they render solid in the Scene view and built game.
+  - 3D objects now default to a neutral light gray (like Unity/Blender) instead
+    of cyan/yellow, so new primitives look clean and shade naturally.
+
 v2.8.0
   - Text component expanded: letter spacing, line spacing, UPPERCASE, and word
     wrap (to the box), on top of the existing align / box / shadow / outline /

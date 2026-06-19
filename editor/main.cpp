@@ -1546,6 +1546,14 @@ void DrawStats(EditorState& ed) {
         float bo[3] = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
         if (ImGui::ColorEdit3("Sky Bottom", bo)) { rs.skyBottom = {bo[0], bo[1], bo[2], 1}; ed.dirty = true; }
         if (ImGui::SliderFloat("Ambient", &rs.ambient, 0.0f, 1.0f)) ed.dirty = true;
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Distance Fog", &rs.fog)) ed.dirty = true;
+        if (rs.fog) {
+            float fc[3] = {rs.fogColor.r, rs.fogColor.g, rs.fogColor.b};
+            if (ImGui::ColorEdit3("Fog Color", fc)) { rs.fogColor = {fc[0], fc[1], fc[2], 1}; ed.dirty = true; }
+            if (ImGui::DragFloat("Fog Start", &rs.fogStart, 0.5f, 0.0f, 4000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Fog End", &rs.fogEnd, 0.5f, 0.0f, 8000.0f)) ed.dirty = true;
+        }
     }
     ImGui::End();
 }

@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v1.41.0
+  - Better performance: backface culling (solid meshes skip triangles facing
+    away — about half the triangles of a closed mesh, for free) and a per-mesh
+    frustum cull (off-screen meshes are dropped before any per-triangle work).
+    Both apply in the editor's 3D view and the shipped player.
+  - Better graphics: optional distance fog (per scene) that fades far geometry
+    toward a fog color between a start/end distance — a depth cue that also
+    hides far-clip pop-in. Toggle + tune under Stats > Environment; it saves
+    with the scene and renders in the built game.
+
 v1.40.0
   - Multiplayer made easy: a full net_* OkayScript API — net_host(port) /
     net_join(ip, port) let any player host or join their own server, plus

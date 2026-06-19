@@ -149,6 +149,9 @@ inline Image* GetCachedTexture(const std::string& path) {
 /// global SceneLight; depth-tested so overlapping meshes occlude correctly.
 inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Vec3& eye) {
     const float W = (float)r.width, H = (float)r.height;
+    const auto& rs = scene.renderSettings;
+    const bool  fogOn = rs.fog && rs.fogEnd > rs.fogStart;
+    const float fogR = rs.fogColor.r, fogG = rs.fogColor.g, fogB = rs.fogColor.b;
     for (const auto& go : scene.Objects()) {
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || mr->wireframe) continue;   // wireframe drawn as lines
@@ -157,6 +160,25 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const auto& t = mr->mesh.triangles;
         const bool hasUV = mr->mesh.uvs.size() == v.size();
         Image* tex = mr->texture.empty() ? nullptr : GetCachedTexture(mr->texture);
+
+        // --- Per-mesh frustum cull: project the 8 AABB corners to clip space and
+        // skip the whole mesh when every corner is outside one frustum plane
+        // (all behind the near plane, or all off one screen edge). A cheap test
+        // that drops off-screen meshes before any per-triangle work. ---
+        {
+            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            int outL = 0, outR = 0, outB = 0, outT = 0, outN = 0;
+            for (int c = 0; c < 8; ++c) {
+                Vec3 corner{(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
+                Vec4 cp = vp * Vec4{model.MultiplyPoint(corner), 1.0f};
+                if (cp.w <= 1e-4f) { ++outN; continue; }
+                if (cp.x < -cp.w) ++outL;
+                if (cp.x >  cp.w) ++outR;
+                if (cp.y < -cp.w) ++outB;
+                if (cp.y >  cp.w) ++outT;
+            }
+            if (outN == 8 || outL == 8 || outR == 8 || outB == 8 || outT == 8) continue;
+        }
         // A clip-space vertex carrying its (unprojected) UV, for near-plane
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
@@ -167,7 +189,15 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[idx[k]]);
             Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
             Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
-            if (Vec3::Dot(normal, eye - centroid) < 0.0f) normal = normal * -1.0f; // two-sided
+            float facing = Vec3::Dot(normal, eye - centroid);
+            // Backface culling: for a solid (single-sided) mesh, skip triangles
+            // that face away from the camera — typically ~half the triangles of a
+            // closed mesh, for free. Double-sided meshes (planes, billboards) keep
+            // both faces and flip the normal so the lit side always shows.
+            if (facing < 0.0f) {
+                if (!mr->doubleSided) continue;
+                normal = normal * -1.0f;
+            }
 
             // Per-corner clip coords + UV (planar/box projection unless the mesh
             // carries its own UVs).
@@ -215,10 +245,20 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 float nh = Vec3::Dot(normal, h);
                 if (nh > 0.0f) spec = std::pow(nh, mr->shininess) * mr->specular;
             }
-            std::uint32_t abgr = Raster::PackRGB(
-                mr->color.r * shade + spec + mr->emissive.r,
-                mr->color.g * shade + spec + mr->emissive.g,
-                mr->color.b * shade + spec + mr->emissive.b);
+            float cr = mr->color.r * shade + spec + mr->emissive.r;
+            float cg = mr->color.g * shade + spec + mr->emissive.g;
+            float cb = mr->color.b * shade + spec + mr->emissive.b;
+            // Distance fog: blend the (flat-shaded) color toward the fog color by
+            // how far the triangle is, between fogStart and fogEnd.
+            if (fogOn) {
+                float dist = (centroid - eye).Magnitude();
+                float f = (dist - rs.fogStart) / (rs.fogEnd - rs.fogStart);
+                f = f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
+                cr = cr * (1.0f - f) + fogR * f;
+                cg = cg * (1.0f - f) + fogG * f;
+                cb = cb * (1.0f - f) + fogB * f;
+            }
+            std::uint32_t abgr = Raster::PackRGB(cr, cg, cb);
 
             // Fan-triangulate the (possibly clipped) polygon and rasterize.
             auto project = [&](const CV& c, float& sx, float& sy, float& sd, float& iw,

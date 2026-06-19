@@ -68,11 +68,17 @@ int main() {
         s.renderSettings.skybox = false;
         s.renderSettings.skyTop = Color::FromBytes(10, 20, 30);
         s.renderSettings.ambient = 0.42f;
+        s.renderSettings.fog = true;
+        s.renderSettings.fogStart = 12.0f;
+        s.renderSettings.fogEnd = 77.0f;
         std::string txt = SceneSerializer::Serialize(s);
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
         CHECK(s2.renderSettings.skybox == false);
         CHECK_NEAR(s2.renderSettings.skyTop.r, 10.0f / 255.0f, 0.01f);
         CHECK_NEAR(s2.renderSettings.ambient, 0.42f, 1e-4f);
+        CHECK(s2.renderSettings.fog == true);
+        CHECK_NEAR(s2.renderSettings.fogStart, 12.0f, 1e-3f);
+        CHECK_NEAR(s2.renderSettings.fogEnd, 77.0f, 1e-3f);
 
         // A scene file without the line keeps defaults (skybox on) after Clear.
         Scene s3("y"); SceneSerializer::Deserialize(s3, "name \"NoEnv\"\n");

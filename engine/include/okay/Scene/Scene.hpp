@@ -90,6 +90,13 @@ public:
         Color skyHorizon = Color::FromBytes(150, 185, 225);  // horizon haze
         Color skyBottom  = Color::FromBytes(120, 120, 130);  // ground-ish
         float ambient    = 0.15f;                            // base light (0..1)
+        // Distance fog: fades distant geometry toward `fogColor` between
+        // `fogStart` and `fogEnd` world units from the camera (depth cue + it
+        // hides the far clip / pop-in). Off by default.
+        bool  fog        = false;
+        Color fogColor   = Color::FromBytes(150, 185, 225);  // default = horizon
+        float fogStart   = 20.0f;
+        float fogEnd     = 90.0f;
     };
     RenderSettings renderSettings;
 

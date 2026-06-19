@@ -318,6 +318,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             << rs.skyHorizon.r << " " << rs.skyHorizon.g << " " << rs.skyHorizon.b << " "
             << rs.skyBottom.r << " " << rs.skyBottom.g << " " << rs.skyBottom.b << " "
             << rs.ambient << "\n";
+        out << "fog " << (rs.fog ? 1 : 0) << " "
+            << rs.fogColor.r << " " << rs.fogColor.g << " " << rs.fogColor.b << " "
+            << rs.fogStart << " " << rs.fogEnd << "\n";
     }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
@@ -372,6 +375,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                >> rs.skyHorizon.r >> rs.skyHorizon.g >> rs.skyHorizon.b
                >> rs.skyBottom.r >> rs.skyBottom.g >> rs.skyBottom.b >> rs.ambient;
             rs.skybox = (sky != 0);
+        } else if (token == "fog") {
+            auto& rs = scene.renderSettings;
+            int on = 0;
+            in >> on >> rs.fogColor.r >> rs.fogColor.g >> rs.fogColor.b
+               >> rs.fogStart >> rs.fogEnd;
+            rs.fog = (on != 0);
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;

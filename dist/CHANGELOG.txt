@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.43.0
+  - Replicated spawning: net_spawn("prefab", x, y[, z]) instantiates a prefab on
+    every peer with one call (bullets, pickups, effects) — the server relays it
+    so all clients make the same object. Also a no-code ActionList op (net_spawn).
+  - More Steam from scripts: steam_progress (achievement progress), steam_presence
+    (rich presence), steam_friends, steam_overlay. Docs updated.
+
 v1.42.0
   - No-code multiplayer: a Network Manager component with Auto Start = Host/Join
     on Play (port, host IP, player name) in the Inspector — add it, pick a mode,

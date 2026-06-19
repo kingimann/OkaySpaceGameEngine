@@ -4,8 +4,10 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
+#include <sstream>
 
 namespace okay {
 
@@ -85,9 +87,34 @@ void NetworkManager::Update(float dt) {
 
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                              const std::string& data) {
+    // The reserved "__spawn" channel instantiates a prefab on this peer instead
+    // of surfacing as a user message (replicated object creation).
+    if (channel == "__spawn") {
+        Scene* s = GetScene();
+        if (!s) return;
+        std::stringstream ss(data);
+        std::string path; float x = 0, y = 0, z = 0; char sep;
+        std::getline(ss, path, '|');
+        ss >> x >> sep >> y >> sep >> z;
+        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, path))
+            if (g->transform) g->transform->localPosition = {x, y, z};
+        return;
+    }
     NetMessage m{from, channel, data};
     if (m_msgHandler) m_msgHandler(m);
     m_inbox.push_back(std::move(m));
+}
+
+void NetworkManager::Spawn(const std::string& prefabPath, const Vec3& position) {
+    // Instantiate locally right away so the spawner sees it without a round trip.
+    if (Scene* s = GetScene()) {
+        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, prefabPath))
+            if (g->transform) g->transform->localPosition = position;
+    }
+    // Tell every other peer to make the same object (server relays for clients).
+    std::ostringstream os;
+    os << prefabPath << '|' << position.x << '|' << position.y << '|' << position.z;
+    Send("__spawn", os.str());
 }
 
 void NetworkManager::Start() {

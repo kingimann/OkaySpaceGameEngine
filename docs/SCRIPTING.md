@@ -145,6 +145,7 @@ function update(dt) {
 | `net_msg_channel()` / `net_msg_data()` / `net_msg_from()` | The popped message |
 | `net_set("key", "value")` | Set a server-authoritative **synced variable** |
 | `net_get("key")` | Read a synced variable (same value on every peer) |
+| `net_spawn("prefab", x, y[, z])` | **Replicated spawn** — instantiate a prefab on every peer |
 
 ### Steam (achievements, stats, leaderboards, cloud)
 | Function | Description |
@@ -153,8 +154,11 @@ function update(dt) {
 | `steam_unlock("ID")` / `steam_is_unlocked("ID")` / `steam_clear("ID")` | Achievements |
 | `steam_set_stat("n", v)` / `steam_get_stat("n")` / `steam_inc_stat("n", by)` | Stats |
 | `steam_store()` | Flush stats/achievements to Steam |
+| `steam_progress("ID", cur, max)` | Show achievement progress (auto-unlocks at max) |
 | `steam_leaderboard("board", score)` | Submit a leaderboard score |
 | `steam_cloud_write("file", "data")` / `steam_cloud_read("file")` | Steam Cloud |
+| `steam_presence("key", "value")` | Rich presence |
+| `steam_friends()` / `steam_overlay("page")` | Friend count / open the overlay |
 
 ### State, math & data
 | Function | Description |

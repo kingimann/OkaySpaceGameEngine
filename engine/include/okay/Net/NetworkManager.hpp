@@ -98,6 +98,11 @@ public:
     /// messages, targeted RPCs, or replying to one player.
     void SendTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
 
+    /// Spawn a prefab on **every** peer (bullets, pickups, effects). Instantiates
+    /// it locally now and tells the others to instantiate the same prefab at the
+    /// same position — replicated object creation with one call.
+    void Spawn(const std::string& prefabPath, const Vec3& position = Vec3::Zero);
+
     /// A connected peer in the session roster.
     struct PeerInfo { std::uint32_t id; std::string name; char glyph; };
     /// The current roster the server knows about (server only): every connected

@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <thread>
 
 using namespace okay;
@@ -136,6 +137,27 @@ int main() {
             if (server->GetVar("ready") == "1") break;
         }
         CHECK(server->GetVar("ready") == "1");
+    }
+
+    // --- Networked spawn: server spawns a prefab on every peer ---
+    {
+        // Write a small prefab file to instantiate.
+        Scene tmp("p");
+        GameObject* proto = tmp.CreateGameObject("Bullet");
+        proto->AddComponent<SpriteRenderer>();
+        CHECK(SceneSerializer::SaveObjectToFile(*proto, "bullet.okayprefab"));
+
+        server->Spawn("bullet.okayprefab", {3, 0, 0});
+        // The spawner has it immediately; the client gets it over the wire.
+        CHECK(serverScene.Find("Bullet") != nullptr);
+        bool onClient = false;
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (clientScene.Find("Bullet")) { onClient = true; break; }
+        }
+        CHECK(onClient);
+        std::remove("bullet.okayprefab");
     }
 
     // --- Targeted send: server -> one client by id ---

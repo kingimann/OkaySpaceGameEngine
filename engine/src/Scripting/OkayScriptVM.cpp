@@ -1339,6 +1339,14 @@ struct OkayScriptVM::Impl {
             if (NetworkManager* n = Net(); n && a.size() >= 2) n->SetVar(a[0].AsString(), a[1].AsString());
             return Value{};
         };
+        // Spawn a prefab on every peer (replicated): net_spawn("file", x, y[, z]).
+        b["net_spawn"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && !a.empty())
+                n->Spawn(a[0].AsString(), {a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                           a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                                           a.size() > 3 ? a[3].AsFloat() : 0.0f});
+            return Value{};
+        };
         b["net_get"] = [this](std::vector<Value>& a) {
             NetworkManager* n = Net();
             return Value{(n && !a.empty()) ? n->GetVar(a[0].AsString()) : std::string{}};
@@ -1378,6 +1386,19 @@ struct OkayScriptVM::Impl {
         };
         b["steam_cloud_read"] = [](std::vector<Value>& a) {
             return Value{a.empty() ? std::string{} : Steam::Get().CloudRead(a[0].AsString())};
+        };
+        b["steam_progress"] = [](std::vector<Value>& a) {
+            if (a.size() >= 3) Steam::Get().IndicateAchievementProgress(a[0].AsString(), (std::uint32_t)a[1].AsFloat(), (std::uint32_t)a[2].AsFloat());
+            return Value{};
+        };
+        b["steam_presence"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Steam::Get().SetRichPresence(a[0].AsString(), a[1].AsString());
+            return Value{};
+        };
+        b["steam_friends"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().FriendCount()}; };
+        b["steam_overlay"] = [](std::vector<Value>& a) {
+            Steam::Get().ActivateOverlay(a.empty() ? "friends" : a[0].AsString());
+            return Value{};
         };
         // Persistent prefs (high scores, settings) — survive across runs.
         b["prefs_set"] = [](std::vector<Value>& a) {

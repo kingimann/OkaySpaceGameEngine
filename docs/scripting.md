@@ -87,6 +87,18 @@ What's supported:
 - **String formatting**: `format("HP {0}/{1}", hp, max)` (positional) or
   `format("HP {} / {}", hp, max)` (sequential), plus `pad_left(s, width[, ch])`
   and `pad_right(s, width[, ch])` — also as `string.Format(...)`.
+- **More Mathf**: `Mathf.Clamp01(x)`, `Mathf.InverseLerp(a, b, v)`,
+  `Mathf.Repeat(t, len)`, `Mathf.DeltaAngle(a, b)`, `Mathf.LerpAngle(a, b, t)`,
+  `Mathf.Approximately(a, b)` (and `clamp01` / `inverse_lerp` / `delta_angle` /
+  `lerp_angle` / `approximately`).
+- **`Color.Lerp(a, b, t)`** (`lerp_color`) blends two colors; pair it with
+  `set_color` for fades and flashes.
+- **`.Length` / `.Count`**: read the length of a string (`name.Length`) or an
+  array (`items.Count` / `items.Length`) the C# way.
+- **`Vector3.Angle(a, b)`** (`vec_angle`) — angle in degrees between two vectors;
+  `Vector2.Lerp` / `Vector3.LerpUnclamped` map onto `vec_lerp`; and
+  `Input.GetButton/GetButtonDown/GetButtonUp` are accepted (same as the key
+  checks).
 - **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
   `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
   / BoxCollider2D at runtime).

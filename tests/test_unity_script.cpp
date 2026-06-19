@@ -237,6 +237,45 @@ int main() {
         CHECK(tr->text == "HP 3/10 #007");
     }
 
+    // --- Mathf helpers + Color.Lerp ------------------------------------
+    {
+        Scene s("UMathf"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Mf");
+        auto* sr = go->AddComponent<SpriteRenderer>();
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    transform.position.x = Mathf.InverseLerp(10, 20, 15);\n"   // 0.5
+            "    transform.position.y = Mathf.DeltaAngle(350, 10);\n"       // 20
+            "    transform.position.z = Mathf.Repeat(7, 3);\n"             // 1
+            "    set_color(Color.Lerp(Color.black, Color.white, 0.5));\n"  // gray 0.5
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 0.5f, 0.001f);
+        CHECK_NEAR(go->transform->Position().y, 20.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().z, 1.0f, 0.001f);
+        CHECK_NEAR(sr->color.r, 0.5f, 0.01f);
+    }
+
+    // --- .Length / .Count on strings & arrays; Vector3.Angle -----------
+    {
+        Scene s("ULen"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("L");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    var word = \"hello\";\n"
+            "    var items = [1, 2, 3, 4];\n"
+            "    transform.position.x = word.Length;\n"      // 5
+            "    transform.position.y = items.Count;\n"      // 4
+            "    transform.position.z = Vector3.Angle(new Vector3(1,0,0), new Vector3(0,1,0));\n" // 90
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 5.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().y, 4.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().z, 90.0f, 0.1f);
+    }
+
     // --- do-while runs at least once -----------------------------------
     {
         Scene s("UDo"); s.physicsEnabled = false;

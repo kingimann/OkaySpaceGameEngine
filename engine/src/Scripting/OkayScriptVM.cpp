@@ -672,20 +672,29 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
         if (name == "gameObject.activeSelf" || name == "gameObject.active") return Value{g->active};
         if (name == "gameObject.tag")  return Value{g->tag};
     }
-    // Generic vector properties on a variable holding a Vector3, e.g.
-    //   var v = new Vector3(1,2,3); v.x  v.magnitude  v.normalized
+    // Generic properties on a variable: Vector3 (.x/.magnitude/.normalized),
+    // strings (.Length), and arrays (.Length / .Count). e.g.  v.magnitude,
+    // name.Length, items.Count.
     {
         auto dot = name.rfind('.');
         if (dot != std::string::npos) {
             std::string base = name.substr(0, dot), prop = name.substr(dot + 1);
             if (base.find('.') == std::string::npos && Has(base)) {
-                Vec3 v = Get(base).AsVec3();
-                if (prop == "x") return Value{v.x};
-                if (prop == "y") return Value{v.y};
-                if (prop == "z") return Value{v.z};
-                if (prop == "magnitude")    return Value{v.Magnitude()};
-                if (prop == "sqrMagnitude") return Value{v.x * v.x + v.y * v.y + v.z * v.z};
-                if (prop == "normalized") { float m = v.Magnitude(); return Value{m > 1e-6f ? v * (1.0f / m) : Vec3::Zero}; }
+                Value bv = Get(base);
+                if (bv.IsString()) {
+                    if (prop == "Length" || prop == "length") return Value{(float)bv.AsString().size()};
+                } else if (bv.IsArray()) {
+                    if (prop == "Length" || prop == "length" || prop == "Count" || prop == "count")
+                        return Value{bv.AsArray() ? (float)bv.AsArray()->size() : 0.0f};
+                } else {
+                    Vec3 v = bv.AsVec3();
+                    if (prop == "x") return Value{v.x};
+                    if (prop == "y") return Value{v.y};
+                    if (prop == "z") return Value{v.z};
+                    if (prop == "magnitude")    return Value{v.Magnitude()};
+                    if (prop == "sqrMagnitude") return Value{v.x * v.x + v.y * v.y + v.z * v.z};
+                    if (prop == "normalized") { float m = v.Magnitude(); return Value{m > 1e-6f ? v * (1.0f / m) : Vec3::Zero}; }
+                }
             }
         }
     }
@@ -2183,6 +2192,50 @@ struct OkayScriptVM::Impl {
             t = t * t * (3.0f - 2.0f * t);
             return Value{Mathf::Lerp(x, y, t)};
         };
+        // Clamp to [0,1] (Mathf.Clamp01).
+        b["clamp01"] = [](std::vector<Value>& a) {
+            return Value{Mathf::Clamp01(a.empty() ? 0.0f : a[0].AsFloat())};
+        };
+        // Where v lies between a and b, as 0..1 (Mathf.InverseLerp).
+        b["inverse_lerp"] = [](std::vector<Value>& a) {
+            float lo = a.size() > 0 ? a[0].AsFloat() : 0, hi = a.size() > 1 ? a[1].AsFloat() : 1,
+                  v  = a.size() > 2 ? a[2].AsFloat() : 0;
+            if (hi - lo == 0.0f) return Value{0.0f};
+            return Value{Mathf::Clamp01((v - lo) / (hi - lo))};
+        };
+        // Loop t into [0,length) (Mathf.Repeat).
+        b["math_repeat"] = [](std::vector<Value>& a) {
+            float t = a.size() > 0 ? a[0].AsFloat() : 0, len = a.size() > 1 ? a[1].AsFloat() : 1;
+            if (len <= 0.0f) return Value{0.0f};
+            float r = std::fmod(t, len); if (r < 0) r += len;
+            return Value{r};
+        };
+        // Shortest signed difference between two angles, in degrees (Mathf.DeltaAngle).
+        b["delta_angle"] = [](std::vector<Value>& a) {
+            float from = a.size() > 0 ? a[0].AsFloat() : 0, to = a.size() > 1 ? a[1].AsFloat() : 0;
+            float d = std::fmod(to - from, 360.0f);
+            if (d < -180.0f) d += 360.0f; else if (d > 180.0f) d -= 360.0f;
+            return Value{d};
+        };
+        // Interpolate angles taking the shortest path (Mathf.LerpAngle).
+        b["lerp_angle"] = [](std::vector<Value>& a) {
+            float from = a.size() > 0 ? a[0].AsFloat() : 0, to = a.size() > 1 ? a[1].AsFloat() : 0,
+                  t = a.size() > 2 ? a[2].AsFloat() : 0;
+            float d = std::fmod(to - from, 360.0f);
+            if (d < -180.0f) d += 360.0f; else if (d > 180.0f) d -= 360.0f;
+            return Value{from + d * t};
+        };
+        // Nearly equal (Mathf.Approximately).
+        b["approximately"] = [](std::vector<Value>& a) {
+            float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0;
+            return Value{std::fabs(x - y) < 1e-4f};
+        };
+        // Blend two colors/vectors by t (Color.Lerp / Vector3.Lerp on whole values).
+        b["lerp_color"] = [](std::vector<Value>& a) {
+            if (a.size() < 3) return Value{Vec3::Zero};
+            Vec3 c1 = a[0].AsVec3(), c2 = a[1].AsVec3(); float t = Mathf::Clamp01(a[2].AsFloat());
+            return Value{c1 + (c2 - c1) * t};
+        };
         // Angle in degrees from (x1,y1) toward (x2,y2).
         b["angle_to"] = [](std::vector<Value>& a) {
             if (a.size() < 4) return Value{0.0f};
@@ -3220,6 +3273,15 @@ struct OkayScriptVM::Impl {
             Vec3 v = a[0].AsVec3(); float m = v.Magnitude();
             return Value{m > 1e-6f ? v * (1.0f / m) : Vec3::Zero};
         };
+        // Angle in degrees between two vectors (Vector3.Angle).
+        b["vec_angle"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{0.0f};
+            Vec3 u = a[0].AsVec3(), v = a[1].AsVec3();
+            float mu = u.Magnitude(), mv = v.Magnitude();
+            if (mu < 1e-6f || mv < 1e-6f) return Value{0.0f};
+            float c = (u.x * v.x + u.y * v.y + u.z * v.z) / (mu * mv);
+            return Value{std::acos(Mathf::Clamp(c, -1.0f, 1.0f)) * Mathf::Rad2Deg};
+        };
         b["vec_lerp"] = [](std::vector<Value>& a) -> Value {
             if (a.size() < 3) return Value{Vec3::Zero};
             Vec3 u = a[0].AsVec3(), v = a[1].AsVec3(); float t = a[2].AsFloat();
@@ -3261,6 +3323,22 @@ struct OkayScriptVM::Impl {
         alias("Vector3.Normalize", "vec_normalize");
         alias("Vector3.MoveTowards", "vec_move_towards");
         alias("Mathf.PerlinNoise", "noise");
+        alias("Mathf.Clamp01", "clamp01");
+        alias("Mathf.InverseLerp", "inverse_lerp");
+        alias("Mathf.Repeat", "math_repeat");
+        alias("Mathf.DeltaAngle", "delta_angle");
+        alias("Mathf.LerpAngle", "lerp_angle");
+        alias("Mathf.Approximately", "approximately");
+        alias("Mathf.Log", "log");   alias("Mathf.Exp", "exp");
+        alias("Mathf.Asin", "asin"); alias("Mathf.Acos", "acos"); alias("Mathf.Atan", "atan");
+        alias("Color.Lerp", "lerp_color");
+        alias("Vector3.LerpUnclamped", "vec_lerp");
+        alias("Vector2.Lerp", "vec_lerp");
+        alias("Vector3.Angle", "vec_angle");
+        alias("Vector2.Angle", "vec_angle");
+        alias("Input.GetButton", "key");
+        alias("Input.GetButtonDown", "key_down");
+        alias("Input.GetButtonUp", "key_up");
         alias("string.Format", "format");
         alias("String.Format", "format");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to

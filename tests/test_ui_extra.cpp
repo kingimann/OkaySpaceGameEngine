@@ -102,5 +102,45 @@ int main() {
         CHECK_NEAR(b1->position.x, 10.0f + 120 + 5, 1e-3f);
     }
 
+    // --- Input field: focus on click, type, backspace, submit ----------
+    {
+        Scene s("In"); s.physicsEnabled = false;
+        UICanvas::Set(1280, 720);
+        GameObject* go = s.CreateGameObject("Field");
+        auto* in = go->AddComponent<UIInputField>();
+        in->anchor = UIAnchor::TopLeft; in->position = {0, 0}; in->size = {200, 40};
+        s.Start();
+
+        // Click inside to focus.
+        Input::FeedMouse({20, 20}, 1u << 0);
+        s.Update(0.016f);
+        CHECK(in->focused);
+
+        // Type "hi": feed each key as a down-edge.
+        Input::FeedMouse({20, 20}, 0);      // release
+        Input::FeedKeys({'h'}); s.Update(0.016f);
+        Input::FeedKeys({});    s.Update(0.016f);
+        Input::FeedKeys({'i'}); s.Update(0.016f);
+        CHECK(in->text == "hi");
+
+        // Backspace removes the last char.
+        Input::FeedKeys({(char)8}); s.Update(0.016f);
+        CHECK(in->text == "h");
+
+        // Clicking outside removes focus.
+        Input::FeedKeys({});
+        Input::FeedMouse({500, 500}, 1u << 0);
+        s.Update(0.016f);
+        CHECK(!in->focused);
+
+        // Serializes its text + placeholder.
+        in->text = "saved"; in->placeholder = "name";
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        auto* in2 = s2.Find("Field")->GetComponent<UIInputField>();
+        CHECK(in2 && in2->text == "saved");
+        CHECK(in2 && in2->placeholder == "name");
+    }
+
     TEST_MAIN_RESULT();
 }

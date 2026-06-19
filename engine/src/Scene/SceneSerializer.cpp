@@ -31,6 +31,7 @@
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UIInputField.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
@@ -274,6 +275,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << Quote(nm->startRoom) << " "
             << nm->maxPlayers << " " << nm->snapshotRate << " "
             << Quote(nm->serverName) << " " << Quote(nm->password) << "\n";
+    }
+    if (auto* in = go->GetComponent<UIInputField>()) {
+        out << "  uiinput " << in->position.x << " " << in->position.y << " "
+            << in->size.x << " " << in->size.y << " " << (int)in->anchor << " "
+            << in->maxLength << " " << Quote(in->text) << " " << Quote(in->placeholder) << " "
+            << in->color.r << " " << in->color.g << " " << in->color.b << " " << in->color.a << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
@@ -700,6 +707,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (in.peek() == '"') nm->serverName = ReadQuoted(in);
                     in >> std::ws;
                     if (in.peek() == '"') nm->password = ReadQuoted(in);
+                } else if (field == "uiinput") {
+                    auto* inp = go->AddComponent<UIInputField>();
+                    int an = 0; Color c;
+                    in >> inp->position.x >> inp->position.y >> inp->size.x >> inp->size.y >> an >> inp->maxLength;
+                    inp->anchor = (UIAnchor)an;
+                    inp->text = ReadQuoted(in); inp->placeholder = ReadQuoted(in);
+                    in >> c.r >> c.g >> c.b >> c.a; inp->color = c;
                 } else if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     int dir = 0, an = 0;

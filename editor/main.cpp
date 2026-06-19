@@ -989,6 +989,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
             if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
             if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
+            if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
             if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
             if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
             ImGui::EndMenu();
@@ -3414,6 +3415,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
         }
     }
+    if (auto* in = go->GetComponent<UIInputField>()) {
+        if (ImGui::CollapsingHeader("UI Input Field", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char tb[128]; std::strncpy(tb, in->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
+            if (ImGui::InputText("Text##uif", tb, sizeof(tb))) { in->text = tb; ed.dirty = true; }
+            char ph[96]; std::strncpy(ph, in->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
+            if (ImGui::InputText("Placeholder##uif", ph, sizeof(ph))) { in->placeholder = ph; ed.dirty = true; }
+            float pos[2] = {in->position.x, in->position.y};
+            if (ImGui::DragFloat2("Pos (px)##uif", pos, 1.0f)) { in->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {in->size.x, in->size.y};
+            if (ImGui::DragFloat2("Size (px)##uif", sz, 1.0f, 8.0f, 4000.0f)) { in->size = {sz[0], sz[1]}; ed.dirty = true; }
+            float c[4] = {in->color.r, in->color.g, in->color.b, in->color.a};
+            if (ImGui::ColorEdit4("Color##uif", c)) { in->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
+            if (ImGui::DragInt("Max Length##uif", &in->maxLength, 1, 1, 1024)) ed.dirty = true;
+            AnchorCombo("Anchor##uif", in->anchor, ed);
+            ImGui::TextDisabled("Click to focus + type at runtime; Enter calls on_submit().");
+            if (ImGui::SmallButton("Remove##uif")) toRemove = in;
+        }
+    }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         if (ImGui::CollapsingHeader("UI Layout Group", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* dirs[] = {"Vertical", "Horizontal"};
@@ -3858,6 +3877,30 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         DrawBitmapText(dl, btn->label, a.x + (sz.x - tw) * 0.5f,
                        a.y + (sz.y - Font8x8::Height * px) * 0.5f, px,
                        ToColor(btn->textColor));
+    }
+
+    // UI input fields: box + the text (or placeholder) + a caret when focused.
+    for (const auto& up : objs) {
+        auto* in = up->GetComponent<UIInputField>();
+        if (!in || !up->active) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
+        dl->AddRectFilled(a, b, ToColor(in->CurrentColor()), 4.0f);
+        if (in->focused) dl->AddRect(a, b, IM_COL32(120, 170, 255, 255), 4.0f, 0, 1.5f);
+        float px = 2.0f * s;
+        bool empty = in->text.empty();
+        const std::string& shown = empty ? in->placeholder : in->text;
+        float ty = a.y + (sz.y - Font8x8::Height * px) * 0.5f;
+        DrawBitmapText(dl, shown, a.x + 6 * s, ty, px,
+                       ToColor(empty ? in->placeholderColor : in->textColor));
+        if (in->focused) {  // caret after the text
+            float cw = (empty ? 0 : in->text.size()) * (Font8x8::Width + 1) * px;
+            float cx = a.x + 6 * s + cw;
+            dl->AddLine(ImVec2(cx, ty), ImVec2(cx, ty + Font8x8::Height * px), IM_COL32(255, 255, 255, 200), 1.0f);
+        }
     }
 
     // Selection highlight for the selected widget — works for every UI type and

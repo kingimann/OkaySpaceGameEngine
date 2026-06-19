@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.52.0
+  - UI Input Field (GameObject > UI > Input Field): click to focus and type;
+    Backspace deletes, Enter calls on_submit(). Placeholder + max length; saves.
+  - More tweens: tween_rotate (spin about Z), tween_color and tween_fade
+    (animate a sprite/mesh albedo or opacity), all with easings.
+
 v1.51.0
   - UI Scroll View: a wheel-scrollable, clipped region (GameObject > UI > Scroll
     View). Parent widgets to it; set Content Height; the mouse wheel scrolls and

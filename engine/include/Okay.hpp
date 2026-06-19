@@ -79,6 +79,7 @@
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"

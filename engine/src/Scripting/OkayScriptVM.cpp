@@ -2189,6 +2189,41 @@ struct OkayScriptVM::Impl {
             s->Tween(a[1].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = start + (target - start) * k; });
             return Value{};
         };
+        // Spin by `deg` degrees about Z over `dur` seconds.
+        b["tween_rotate"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Quat start = t->localRotation; float deg = a[0].AsFloat(); Ease e = easeFromArg(a, 2);
+            s->Tween(a[1].AsFloat(), [t, start, deg, e](float u) { float k = Easing::Evaluate(e, u); t->localRotation = start * Quat::Euler({0, 0, deg * k}); });
+            return Value{};
+        };
+        // Returns the host's tweenable albedo color, if any (sprite then mesh).
+        auto colorPtr = [this]() -> Color* {
+            if (!rt.host || !rt.host->gameObject) return nullptr;
+            if (auto* sr = rt.host->gameObject->GetComponent<SpriteRenderer>()) return &sr->color;
+            if (auto* mr = rt.host->gameObject->GetComponent<MeshRenderer>()) return &mr->color;
+            return nullptr;
+        };
+        b["tween_color"] = [this, sched, easeFromArg, colorPtr](std::vector<Value>& a) {
+            Scheduler* s = sched(); Color* c = colorPtr();
+            if (!s || !c || a.size() < 4) return Value{};
+            Color start = *c, target{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), start.a};
+            Ease e = easeFromArg(a, 4);
+            s->Tween(a[3].AsFloat(), [c, start, target, e](float u) {
+                float k = Easing::Evaluate(e, u);
+                c->r = start.r + (target.r - start.r) * k;
+                c->g = start.g + (target.g - start.g) * k;
+                c->b = start.b + (target.b - start.b) * k;
+            });
+            return Value{};
+        };
+        b["tween_fade"] = [this, sched, easeFromArg, colorPtr](std::vector<Value>& a) {
+            Scheduler* s = sched(); Color* c = colorPtr();
+            if (!s || !c || a.size() < 2) return Value{};
+            float start = c->a, target = a[0].AsFloat(); Ease e = easeFromArg(a, 2);
+            s->Tween(a[1].AsFloat(), [c, start, target, e](float u) { float k = Easing::Evaluate(e, u); c->a = start + (target - start) * k; });
+            return Value{};
+        };
         // ---- Save system: snapshot the whole scene to a slot file ------
         b["save_game"] = [this](std::vector<Value>& a) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;

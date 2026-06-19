@@ -126,6 +126,8 @@ function update(dt) {
 |---|---|
 | `tween_move(x, y, dur [, ease])` / `tween_move3(x,y,z,dur)` | Animate position |
 | `tween_scale(s, dur [, ease])` | Animate uniform scale |
+| `tween_rotate(deg, dur [, ease])` | Spin about Z |
+| `tween_color(r, g, b, dur [, ease])` / `tween_fade(alpha, dur)` | Animate color / opacity |
 | `save_game([slot])` / `load_game([slot])` | Snapshot / restore the scene |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 

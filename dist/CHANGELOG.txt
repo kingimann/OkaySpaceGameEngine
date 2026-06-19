@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.73.0
+  - Arrow-key nudging: with a UI widget selected and the Scene focused, the
+    arrow keys move it one pixel at a time (hold Shift to step by the UI snap
+    grid) for precise placement. Keys repeat while held.
+
 v1.72.0
   - UI snapping (Unity-style): with Snap on, dragging/resizing a UI widget snaps
     to a pixel grid (set the "UI px" size in the Scene toolbar, default 8), and

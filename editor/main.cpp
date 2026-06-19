@@ -4923,6 +4923,21 @@ void DrawViewport(EditorState& ed) {
         if (ImGui::IsKeyPressed(ImGuiKey_W, false)) g_tool = Tool::Move;
         if (ImGui::IsKeyPressed(ImGuiKey_E, false)) g_tool = Tool::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) g_tool = Tool::Scale;
+        // Arrow keys nudge a selected UI widget: 1px, or a grid step with Shift.
+        if (ed.selected()) {
+            UIRect nr = GetUIRect(ed.selected());
+            if (nr.valid && nr.position) {
+                float step = ImGui::GetIO().KeyShift ? (float)(g_uiGrid > 0 ? g_uiGrid : 1) : 1.0f;
+                float nx = 0.0f, ny = 0.0f;
+                if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow,  true)) nx -= step;
+                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) nx += step;
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow,    true)) ny -= step;
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow,  true)) ny += step;
+                if (nx != 0.0f || ny != 0.0f) {
+                    nr.position->x += nx; nr.position->y += ny; ed.dirty = true;
+                }
+            }
+        }
     }
     ImGui::Checkbox("Snap", &g_snap);
     if (g_snap) {

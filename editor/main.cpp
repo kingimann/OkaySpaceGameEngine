@@ -325,6 +325,9 @@ bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
+bool g_skybox = true;            // draw the default sky gradient in 3D views
+bool g_resetLayout = false;      // request a dock-layout rebuild next frame
+std::string g_clipboard;         // serialized GameObject for copy/paste
 
 // File dialogs.
 bool g_showSaveAs = false, g_showOpen = false;
@@ -673,6 +676,9 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::Separator();
         ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
+        ImGui::MenuItem("Skybox", nullptr, &g_skybox);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
@@ -723,6 +729,17 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         if (ImGui::MenuItem("Instantiate Prefab...")) g_showInstPrefab = true;
         if (ImGui::MenuItem("Duplicate Selected", "Ctrl+D", false, ed.selected() != nullptr)) {
             ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
+        }
+        if (ImGui::MenuItem("Copy", "Ctrl+C", false, ed.selected() != nullptr)) {
+            g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
+            ConsoleLog("Copied " + ed.selected()->name);
+        }
+        if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
+            ed.PushUndo();
+            if (GameObject* go = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
+                go->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f};
+                ed.Select(go); ed.dirty = true; ConsoleLog("Pasted " + go->name);
+            }
         }
         if (ImGui::MenuItem("Delete Selected", "Del", false, ed.selected() != nullptr)) {
             ed.DeleteSelected(); ConsoleLog("Deleted selection");
@@ -801,7 +818,16 @@ void DrawDockSpace(EditorState& ed, bool& running) {
     ImGui::PopStyleVar(3);
 
     ImGuiID dockId = ImGui::GetID("OkayDockSpace");
-    if (first) { first = false; BuildDefaultLayout(dockId, vp->WorkSize); }
+    if (first || g_resetLayout) {
+        first = false;
+        BuildDefaultLayout(dockId, vp->WorkSize);
+        if (g_resetLayout) {
+            // Reopen every panel so a reset always restores the full workspace.
+            g_showHierarchy = g_showInspector = g_showConsole = g_showProject =
+                g_showServices = g_showScriptEditor = g_showStats = g_showGame = true;
+            g_resetLayout = false;
+        }
+    }
     ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
 
     DrawMenuAndToolbar(ed, running);
@@ -811,7 +837,7 @@ void DrawDockSpace(EditorState& ed, bool& running) {
 void DrawConsole() {
     static char filter[96] = "";
     static bool autoScroll = true;
-    if (ImGui::Begin("Console")) {
+    if (ImGui::Begin("Console", &g_showConsole)) {
         if (ImGui::Button("Clear")) g_console.clear();
         ImGui::SameLine();
         ImGui::Checkbox("Auto-scroll", &autoScroll);
@@ -864,7 +890,7 @@ void DrawProject(EditorState& ed) {
     static char dirBuf[512] = ".";
     static bool recursive = false;
     static std::string lastProject;   // re-home the browser when a project opens
-    if (ImGui::Begin("Project")) {
+    if (ImGui::Begin("Project", &g_showProject)) {
         // When a project is opened/created, point the browser at its Assets/.
         if (!ed.projectDir().empty() && ed.projectDir() != lastProject) {
             lastProject = ed.projectDir();
@@ -953,7 +979,7 @@ void DrawProject(EditorState& ed) {
 
 // The online services that ship inside the engine: Steam, PlayFab, Multiplayer.
 void DrawServices(EditorState& ed) {
-    if (!ImGui::Begin("Services")) { ImGui::End(); return; }
+    if (!ImGui::Begin("Services", &g_showServices)) { ImGui::End(); return; }
 
     // ---- Steam ----
     if (ImGui::CollapsingHeader("Steam", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1024,7 +1050,7 @@ void DrawServices(EditorState& ed) {
 }
 
 void DrawStats(EditorState& ed) {
-    if (!ImGui::Begin("Stats")) { ImGui::End(); return; }
+    if (!ImGui::Begin("Stats", &g_showStats)) { ImGui::End(); return; }
     ImGuiIO& io = ImGui::GetIO();
     static float hist[120] = {0};
     static int hi = 0;
@@ -1083,44 +1109,93 @@ void DrawScriptDocs() {
         "Has: var, if/else, while, for, return, break, continue, + - * / %, "
         "== != < > <= >=, && || !, and arrays a[i].");
 
-    header("Movement & Transform");
+    header("Movement & Transform (2D)");
     api("move(dx, dy)", "translate by (dx, dy)");
     api("set_pos(x, y)", "set local position");
-    api("rotate(deg)", "rotate around Z by degrees");
+    api("set_x(v) / set_y(v)", "set one position axis");
     api("pos_x() / pos_y()", "current local position");
+    api("rotate(deg)", "rotate around Z by degrees");
+    api("move_toward(x, y, step)", "step toward a point");
+    api("look_at(\"name\")", "face another object (2D)");
+
+    header("Transform & Physics (3D)");
+    api("move3(dx, dy, dz)", "translate in 3D");
+    api("set_pos3(x, y, z)", "set 3D position");
+    api("set_z(v) / pos_z()", "Z position");
+    api("rotate3(x, y, z)", "rotate by Euler degrees");
+    api("set_rot3 / set_scale3", "set rotation / scale (3D)");
+    api("scale_x/y/z()", "current scale");
+    api("move_forward(d) / move_right(d)", "move along facing");
+    api("forward_x/y/z()", "facing direction vector");
+    api("look_at3(\"name\")", "face an object in 3D");
+
+    header("Rigidbody (2D & 3D)");
+    api("set_velocity(x, y)", "set 2D velocity");
+    api("set_velocity3(x, y, z)", "set 3D velocity");
+    api("velocity_x/y/z()", "read velocity");
+    api("add_force / add_force3", "accumulate force");
+    api("add_impulse / add_impulse3", "instant velocity change");
+    api("jump(v)", "set upward velocity");
+    api("set_gravity / set_gravity3", "change world gravity");
 
     header("Input");
-    api("key(\"w\")", "true while a key is held");
-    api("key_down(\"w\")", "true the frame it's pressed");
+    api("key / key_down / key_up", "keyboard, by \"x\"");
     api("axis_x() / axis_y()", "WASD / arrows, -1..1");
     api("mouse_x() / mouse_y()", "cursor position");
-    api("mouse(btn) / mouse_down(btn)", "0=L 1=R 2=M");
+    api("mouse / mouse_down / mouse_up", "buttons 0=L 1=R 2=M");
     api("gamepad(btn) / gamepad_x()", "controller input");
 
-    header("State & Math");
+    header("This object");
+    api("name() / set_name(s)", "object name");
+    api("tag() / set_tag(s) / has_tag(s)", "object tag");
+    api("set_active(b) / self_active()", "enable/disable self");
+    api("destroy() / destroy_obj(\"n\")", "remove an object");
+    api("set_parent(\"n\") / detach()", "re-parent");
+    api("set_text / set_color / set_texture", "sibling renderers");
+    api("set_mesh(\"Sphere\")", "swap a 3D mesh");
+
+    header("Other objects & scene");
+    api("exists(\"n\") / is_active(\"n\")", "query by name");
+    api("obj_x/y/z(\"n\")", "another object's position");
+    api("dist_to(\"n\") / vel_toward(\"n\", s)", "chase / home");
+    api("count_tag(\"t\") / nearest_tag(\"t\")", "tag queries");
+    api("set_cam / move_cam / set_cam_zoom", "camera control");
+    api("set_bg / set_light / set_ambient", "background & lighting");
+    api("load_scene(\"file\")", "switch scenes");
+
+    header("State, math & data");
     api("set(\"k\", v) / get(\"k\")", "shared variables");
-    api("rand(lo, hi)", "random float in range");
-    api("dist(x1,y1,x2,y2)", "distance between points");
-    api("time() / dt()", "elapsed time / frame delta");
+    api("prefs_set / prefs_get / prefs_save", "save data across runs");
+    api("rand(lo,hi) / randi / chance(p)", "randomness");
+    api("dist(...) / dist3(...) / angle_to", "geometry");
+    api("sin cos tan sqrt pow abs min max", "math");
+    api("clamp clamp01 lerp smoothstep wrap", "interpolation");
+    api("array push pop count sort_num", "lists");
+    api("upper lower split join substr", "strings");
+    api("time() / dt() / fps()", "timing");
 
-    header("Timers & Spawning");
-    api("after(s, \"fn\")", "call fn once after s seconds");
-    api("every(s, \"fn\")", "call fn every s seconds");
-    api("cancel_timers()", "clear scheduled callbacks");
-    api("spawn(\"prefab\", x, y)", "instantiate a prefab (2D)");
-    api("spawn3(\"prefab\", x, y, z)", "instantiate a prefab (3D)");
+    header("Timers, spawning & FX");
+    api("after(s,\"fn\") / every(s,\"fn\")", "scheduled callbacks");
+    api("spawn(\"p\", x, y) / spawn3(...)", "instantiate prefabs");
+    api("emit(n) / particles_on(b)", "particle FX");
+    api("play_anim() / play_sound()", "animation & audio");
+    api("set_tile / get_tile / tile_resize", "tilemap editing");
 
-    header("Physics events");
-    ImGui::TextWrapped("Define on_collision() or on_trigger() and they fire when "
-        "this object's collider hits / overlaps another.");
+    header("Physics queries & events");
+    api("raycast_hit(ox,oy,dx,dy)", "2D ray test");
+    api("raycast_hit3(o.., d..)", "3D ray test");
+    api("overlap(x, y)", "point inside a 2D collider?");
+    ImGui::TextWrapped("Define on_collision() / on_trigger() (2D) — they fire when "
+        "this object's collider hits or overlaps another.");
 
     ImGui::Spacing();
+    ImGui::TextDisabled("This is a summary — see docs/SCRIPTING.md for the full list.");
     if (ImGui::Button("Close")) g_showScriptDocs = false;
     ImGui::End();
 }
 
 void DrawScriptEditor(EditorState& ed) {
-    if (!ImGui::Begin("Script Editor")) { ImGui::End(); return; }
+    if (!ImGui::Begin("Script Editor", &g_showScriptEditor)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
     ScriptComponent* sc = go ? go->GetComponent<ScriptComponent>() : nullptr;
     VisualScriptComponent* vsc = go ? go->GetComponent<VisualScriptComponent>() : nullptr;
@@ -1250,6 +1325,20 @@ void HandleShortcuts(EditorState& ed) {
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
         ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
+    }
+    // Copy / paste a GameObject via a serialized clipboard.
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && ed.selected()) {
+        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
+        ConsoleLog("Copied " + ed.selected()->name);
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V, false) && !g_clipboard.empty()) {
+        ed.PushUndo();
+        if (GameObject* go = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
+            go->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f}; // offset so it's visible
+            ed.Select(go);
+            ed.dirty = true;
+            ConsoleLog("Pasted " + go->name);
+        }
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_B, false)) g_showBuildGame = true;
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
@@ -1478,7 +1567,7 @@ static const char* ObjectKind(GameObject* go) {
 static char g_hierFilter[96] = "";
 
 void DrawHierarchy(EditorState& ed) {
-    ImGui::Begin("Hierarchy");
+    ImGui::Begin("Hierarchy", &g_showHierarchy);
     ImGui::TextDisabled("Scene: %s%s", ed.scene().Name().c_str(), ed.dirty ? " *" : "");
     ImGui::SameLine(ImGui::GetWindowWidth() - 70);
     ImGui::TextDisabled("%d obj", (int)ed.scene().Objects().size());
@@ -1571,7 +1660,7 @@ static void AnchorCombo(const char* id, okay::UIAnchor& anchor, EditorState& ed)
 }
 
 void DrawInspector(EditorState& ed) {
-    ImGui::Begin("Inspector");
+    ImGui::Begin("Inspector", &g_showInspector);
     GameObject* go = ed.selected();
     if (!go) {
         ImGui::Dummy(ImVec2(0, 8));
@@ -2526,7 +2615,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
         ed.Select(hit);
     }
-    if (!ed.isPlaying() && ed.selected() && hovered &&
+    // Selecting and dragging work in Play too (edits revert on Stop, like Unity).
+    if (ed.selected() && hovered &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         Transform* t = ed.selected()->transform;
         if (g_tool == Tool::Move) {
@@ -2587,6 +2677,18 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     };
 
     dl->PushClipRect(canvasPos, canvasEnd, true);
+
+    // Default skybox: a vertical sky gradient behind everything (sky blue up
+    // top, hazy near the horizon). Drawn first so the grid and the transparent
+    // mesh layer sit on top of it.
+    if (g_skybox) {
+        ImU32 top = IM_COL32(70, 120, 200, 255);    // zenith blue
+        ImU32 mid = IM_COL32(150, 185, 225, 255);   // horizon haze
+        ImU32 bot = IM_COL32(120, 120, 130, 255);   // ground-ish grey
+        ImVec2 cmid(canvasEnd.x, (canvasPos.y + canvasEnd.y) * 0.5f);
+        dl->AddRectFilledMultiColor(canvasPos, cmid, top, top, mid, mid);
+        dl->AddRectFilledMultiColor(ImVec2(canvasPos.x, cmid.y), canvasEnd, mid, mid, bot, bot);
+    }
 
     // Ground grid on the XZ plane (Scene view only; the Game view is clean).
     if (!gameView)
@@ -2751,7 +2853,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     //      axis. X=red, Y=green, Z=blue. ----
     GameObject* sel = ed.selected();
     bool grabbedThisClick = false;
-    if (sel && !ed.isPlaying()) {
+    // The transform gizmo works in Play too, so you can move/rotate/scale a
+    // selection live (edits revert on Stop, just like Unity).
+    if (sel) {
         Transform* t = sel->transform;
         // Cameras may be moved/rotated but not scaled (scaling a camera warps the
         // view and flickers the scene), so the Scale tool falls back to Move.
@@ -2924,7 +3028,7 @@ void DrawGameView(EditorState& ed) {
     // Pressing Play focuses this window so it comes forward if docked as a tab
     // behind the Scene view. SetWindowFocus() must be called before Begin().
     if (g_focusGameOnPlay) { ImGui::SetNextWindowFocus(); g_focusGameOnPlay = false; }
-    if (!ImGui::Begin("Game")) { ImGui::End(); return; }
+    if (!ImGui::Begin("Game", &g_showGame)) { ImGui::End(); return; }
 
     Camera* mc = SceneCamera(ed.scene());
     bool persp = mc && mc->projection == Camera::Projection::Perspective;

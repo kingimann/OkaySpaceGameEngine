@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v1.10.0
+  - Edit the scene while playing: select and Move/Rotate/Scale objects in the
+    Scene view during Play (changes revert on Stop, like Unity).
+  - Copy / Paste GameObjects with Ctrl+C / Ctrl+V (also in the GameObject menu).
+  - Default skybox: a sky gradient now fills the 3D view background (toggle:
+    View > Skybox).
+  - IDE: every panel tab now has a close button, and View > Reset Layout
+    restores the default docked workspace and reopens all panels.
+  - Scripting API expanded a lot: 3D rigidbody control (set_velocity3,
+    add_force3, jump…), facing helpers (forward_x/y/z, move_forward/right),
+    object identity (name/tag/set_active/destroy_obj), 3D raycast, fps(), and
+    more — see Help > Scripting Reference and docs/SCRIPTING.md (both expanded).
+
 v1.9.1
   - Fixed Scene/Game flicker when both 3D views are visible at once (split or
     docked, in or out of Play): the two views shared one render texture and

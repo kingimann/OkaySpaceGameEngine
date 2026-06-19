@@ -681,6 +681,13 @@ GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string
     return root;
 }
 
+GameObject* SceneSerializer::InstantiateFromText(Scene& scene, const std::string& text,
+                                                 std::string* error) {
+    GameObject* root = nullptr;
+    if (!ParseInto(scene, text, /*clear=*/false, &root, error)) return nullptr;
+    return root;
+}
+
 std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) {
     std::vector<std::string> out;
     auto add = [&](const std::string& p) {

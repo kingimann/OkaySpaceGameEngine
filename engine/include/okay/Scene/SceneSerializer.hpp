@@ -34,6 +34,9 @@ public:
     /// Instantiate a prefab file into `scene`; returns the new root (or nullptr).
     static GameObject* InstantiateFromFile(Scene& scene, const std::string& path,
                                            std::string* error = nullptr);
+    /// Instantiate an object from serialized text (e.g. an editor clipboard).
+    static GameObject* InstantiateFromText(Scene& scene, const std::string& text,
+                                           std::string* error = nullptr);
 
     /// Collect the unique external asset paths a scene references (sprite
     /// textures, audio WAVs, sprite-animator frames). Used by Build Game to copy

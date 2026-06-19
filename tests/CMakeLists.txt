@@ -30,6 +30,10 @@ add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
 
+add_executable(test_scriptapi test_scriptapi.cpp)
+target_link_libraries(test_scriptapi PRIVATE okay::engine)
+add_test(NAME scriptapi COMMAND test_scriptapi)
+
 add_executable(test_transform_input test_transform_input.cpp)
 target_link_libraries(test_transform_input PRIVATE okay::engine)
 add_test(NAME transform_input COMMAND test_transform_input)

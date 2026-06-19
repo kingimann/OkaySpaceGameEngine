@@ -5,6 +5,8 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/Physics3D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Render/Lighting.hpp"
@@ -1638,6 +1640,136 @@ struct OkayScriptVM::Impl {
             if (!a.empty() && rt.host && rt.host->gameObject)
                 if (auto* mr = rt.host->gameObject->GetComponent<MeshRenderer>())
                     mr->mesh = Mesh::FromName(a[0].AsString());
+            return Value{};
+        };
+
+        // ===== Expanded API ============================================
+
+        // --- 3D Rigidbody control (sibling Rigidbody3D) ---
+        b["velocity_z"] = [go](std::vector<Value>&) -> Value {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody3D>()) return Value{rb->velocity.z};
+            return Value{0.0f};
+        };
+        b["set_velocity3"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody3D>())
+                rb->velocity = {a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                                a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                a.size() > 2 ? a[2].AsFloat() : 0.0f};
+            return Value{};
+        };
+        b["set_vz"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody3D>())
+                rb->velocity.z = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["add_force3"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody3D>())
+                rb->AddForce({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                              a.size() > 2 ? a[2].AsFloat() : 0.0f});
+            return Value{};
+        };
+        b["add_impulse3"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody3D>())
+                rb->AddImpulse({a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                a.size() > 2 ? a[2].AsFloat() : 0.0f});
+            return Value{};
+        };
+        // Jump helper: set vertical velocity straight up (2D uses y, 3D uses y too).
+        b["jump"] = [go](std::vector<Value>& a) {
+            float v = a.empty() ? 5.0f : a[0].AsFloat();
+            if (GameObject* g = go()) {
+                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->velocity.y = v;
+                if (auto* rb3 = g->GetComponent<Rigidbody3D>()) rb3->velocity.y = v;
+            }
+            return Value{};
+        };
+
+        // --- This object's identity / state ---
+        b["name"] = [go](std::vector<Value>&) -> Value {
+            GameObject* g = go(); return Value{g ? g->name : std::string{}};
+        };
+        b["set_name"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) g->name = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["tag"] = [go](std::vector<Value>&) -> Value {
+            GameObject* g = go(); return Value{g ? g->tag : std::string{}};
+        };
+        b["set_tag"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) g->tag = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["has_tag"] = [go](std::vector<Value>& a) -> Value {
+            GameObject* g = go(); return Value{g && !a.empty() && g->tag == a[0].AsString()};
+        };
+        b["set_active"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go()) g->active = a.empty() || a[0].AsBool();
+            return Value{};
+        };
+        b["self_active"] = [go](std::vector<Value>&) -> Value {
+            GameObject* g = go(); return Value{g ? g->active : false};
+        };
+        // Destroy a named object (e.g. a collected pickup, a defeated enemy).
+        b["destroy_obj"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf())
+                if (GameObject* g = s->Find(a[0].AsString())) s->Destroy(g);
+            return Value{};
+        };
+
+        // --- Facing vectors (from this object's rotation) ---
+        b["forward_x"] = [tf](std::vector<Value>&) -> Value { Transform* t = tf(); return Value{t ? t->Forward().x : 0.0f}; };
+        b["forward_y"] = [tf](std::vector<Value>&) -> Value { Transform* t = tf(); return Value{t ? t->Forward().y : 0.0f}; };
+        b["forward_z"] = [tf](std::vector<Value>&) -> Value { Transform* t = tf(); return Value{t ? t->Forward().z : 1.0f}; };
+        b["right_x"]   = [tf](std::vector<Value>&) -> Value { Transform* t = tf(); return Value{t ? t->Right().x : 1.0f}; };
+        b["right_y"]   = [tf](std::vector<Value>&) -> Value { Transform* t = tf(); return Value{t ? t->Right().y : 0.0f}; };
+        b["right_z"]   = [tf](std::vector<Value>&) -> Value { Transform* t = tf(); return Value{t ? t->Right().z : 0.0f}; };
+        // Move along this object's own facing axes (forward / strafe), 3D.
+        b["move_forward"] = [tf](std::vector<Value>& a) {
+            if (Transform* t = tf()) t->localPosition = t->localPosition + t->Forward() * (a.empty() ? 0.0f : a[0].AsFloat());
+            return Value{};
+        };
+        b["move_right"] = [tf](std::vector<Value>& a) {
+            if (Transform* t = tf()) t->localPosition = t->localPosition + t->Right() * (a.empty() ? 0.0f : a[0].AsFloat());
+            return Value{};
+        };
+
+        // --- More input ---
+        b["key_up"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{false};
+            std::string s = a[0].AsString();
+            return Value{!s.empty() && Input::GetKeyUp(s[0])};
+        };
+        b["mouse_up"] = [](std::vector<Value>& a) {
+            return Value{Input::GetMouseButtonUp(a.empty() ? 0 : (int)a[0].AsFloat())};
+        };
+
+        // --- More math / utility ---
+        b["clamp01"] = [](std::vector<Value>& a) { return Value{Mathf::Clamp01(a.empty() ? 0.0f : a[0].AsFloat())}; };
+        b["dist3"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 6) return Value{0.0f};
+            float dx = a[3].AsFloat() - a[0].AsFloat(), dy = a[4].AsFloat() - a[1].AsFloat(),
+                  dz = a[5].AsFloat() - a[2].AsFloat();
+            return Value{Mathf::Sqrt(dx * dx + dy * dy + dz * dz)};
+        };
+        b["fps"] = [this](std::vector<Value>&) -> Value {
+            float d = rt.host ? rt.host->deltaTime : 0.0f;
+            return Value{d > 1e-6f ? 1.0f / d : 0.0f};
+        };
+        // 3D physics: ground/line-of-sight check via a 3D ray, and gravity.
+        b["raycast_hit3"] = [this](std::vector<Value>& a) -> Value {
+            if (a.size() < 6 || !rt.host || !rt.host->gameObject) return Value{false};
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value{false};
+            Vec3 o{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            Vec3 d{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            float maxDist = a.size() > 6 ? a[6].AsFloat() : 1e9f;
+            return Value{sc->physics3D().Raycast(*sc, o, d, maxDist).hit};
+        };
+        b["set_gravity3"] = [this](std::vector<Value>& a) {
+            if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                rt.host->gameObject->scene()->physics3D().gravity =
+                    Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                         a.size() > 1 ? a[1].AsFloat() : -9.81f,
+                         a.size() > 2 ? a[2].AsFloat() : 0.0f};
             return Value{};
         };
     }

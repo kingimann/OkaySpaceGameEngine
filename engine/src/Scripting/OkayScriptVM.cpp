@@ -5,6 +5,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -550,6 +551,7 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     // Vector constants
     if (name == "Vector3.zero" || name == "Vector2.zero") return Value{Vec3::Zero};
     if (name == "Vector3.one"  || name == "Vector2.one")  return Value{Vec3{1, 1, 1}};
+    if (name == "Quaternion.identity") return Value{Vec3::Zero};   // euler (0,0,0)
     if (name == "Vector3.up")    return Value{Vec3{0, 1, 0}};
     if (name == "Vector3.down")  return Value{Vec3{0, -1, 0}};
     if (name == "Vector3.right") return Value{Vec3{1, 0, 0}};
@@ -599,8 +601,12 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
         if (name == "transform.localScale.x")    { t->localScale.x = v.AsFloat(); return true; }
         if (name == "transform.localScale.y")    { t->localScale.y = v.AsFloat(); return true; }
         if (name == "transform.localScale.z")    { t->localScale.z = v.AsFloat(); return true; }
-        if (name == "transform.eulerAngles.z" || name == "transform.rotation")
+        if (name == "transform.eulerAngles.z")
             { t->localRotation = Quat::Euler({0, 0, v.AsFloat()}); return true; }
+        // transform.rotation accepts a Quaternion.Euler(...) (a Vec3 euler) or a
+        // bare Z angle; use the Z component either way.
+        if (name == "transform.rotation")
+            { t->localRotation = Quat::Euler({0, 0, v.AsVec3().z}); return true; }
     }
     if (g) {
         if (name == "gameObject.name")       { g->name = v.AsString(); return true; }
@@ -625,6 +631,7 @@ public:
     // a `[public] class Name : MonoBehaviour { ... }` wrapper (its methods/fields
     // are hoisted out, so real Unity scripts paste in), or a statement.
     void ParseMember(std::vector<StmtPtr>& top, std::unordered_map<std::string, FunctionDecl>& funcs) {
+        SkipAttributes();   // C# attributes: [SerializeField], [Header("..")], ...
         if (IsClassAhead()) {
             while (Check(Tok::Ident) && Peek().text != "class") ++m_pos;  // skip modifiers
             Expect(Tok::Ident, "'class'");                                // the 'class' keyword
@@ -643,6 +650,19 @@ public:
             funcs[name] = std::move(decl);
         } else {
             top.push_back(ParseStatement());
+        }
+    }
+
+    // Skip C# attributes like [SerializeField] or [Header("Stats")] that may
+    // precede a field/method. Balanced brackets, so [Range(0, 1)] works too.
+    void SkipAttributes() {
+        while (Check(Tok::LBracket)) {
+            int depth = 0;
+            do {
+                if (Check(Tok::LBracket)) ++depth;
+                else if (Check(Tok::RBracket)) --depth;
+                ++m_pos;
+            } while (depth > 0 && !Check(Tok::End));
         }
     }
 
@@ -723,6 +743,21 @@ private:
     }
 
     StmtPtr ParseStatement() {
+        // C#-style: foreach (var item in collection) { ... }
+        if (Check(Tok::Ident) && Peek().text == "foreach") {
+            ++m_pos;
+            Expect(Tok::LParen, "'('");
+            Match(Tok::Var);
+            std::string var = Expect(Tok::Ident, "loop variable").text;
+            if (Check(Tok::Ident)) var = m_toks[m_pos++].text;   // typed: `Type name`
+            Expect(Tok::In, "'in'");
+            auto fe = std::make_unique<ForEachStmt>();
+            fe->var = var;
+            fe->iterable = ParseExpression();
+            Expect(Tok::RParen, "')'");
+            fe->body = ParseBlock();
+            return fe;
+        }
         if (Match(Tok::Var) || IsTypedVarDeclAhead()) {
             // For a typed decl, drop the leading type/modifier idents, keep the last.
             std::string name = Expect(Tok::Ident, "variable name").text;
@@ -937,6 +972,20 @@ private:
             std::string name = m_toks[m_pos++].text;
             // C#-style `new Vector3(...)` — drop `new`, the T(...) is just a call.
             if (name == "new") return ParsePrimary();
+            // Generic call `GetComponent<Type>(args)` — pass the type name as the
+            // first argument so builtins can dispatch on it.
+            if (Check(Tok::Lt) && m_toks[m_pos + 1].type == Tok::Ident &&
+                m_toks[m_pos + 2].type == Tok::Gt && m_toks[m_pos + 3].type == Tok::LParen) {
+                std::string typeName = m_toks[m_pos + 1].text;
+                m_pos += 4;   // consume  < Type > (
+                auto call = std::make_unique<CallExpr>(name);
+                call->args.push_back(std::make_unique<StringExpr>(typeName));
+                if (!Check(Tok::RParen)) {
+                    do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
+                }
+                Expect(Tok::RParen, "')'");
+                return call;
+            }
             if (Match(Tok::LParen)) {
                 auto call = std::make_unique<CallExpr>(name);
                 if (!Check(Tok::RParen)) {
@@ -2900,6 +2949,24 @@ struct OkayScriptVM::Impl {
         b["Vector2"] = [](std::vector<Value>& a) -> Value {
             return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
                               a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f}};
+        };
+        // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
+        // transform.rotation, which uses the Z component for 2D).
+        b["Quaternion.Euler"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                              a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                              a.size() > 2 ? a[2].AsFloat() : 0.0f}};
+        };
+        // AddComponent<T>() / AddComponent("T") — add a known component at runtime.
+        b["AddComponent"] = [this](std::vector<Value>& a) -> Value {
+            if (!rt.host || !rt.host->gameObject || a.empty()) return Value{false};
+            const std::string& c = a[0].AsString();
+            GameObject* g = rt.host->gameObject;
+            if (c == "SpriteRenderer") { g->AddComponent<SpriteRenderer>(); return Value{true}; }
+            if (c == "Rigidbody2D")    { g->AddComponent<Rigidbody2D>();    return Value{true}; }
+            if (c == "TextRenderer")   { g->AddComponent<TextRenderer>();   return Value{true}; }
+            if (c == "BoxCollider2D")  { g->AddComponent<BoxCollider2D>();  return Value{true}; }
+            return Value{false};
         };
         // Input.GetAxis("Horizontal"/"Vertical") -> WASD/stick axis.
         b["Input.GetAxis"] = [](std::vector<Value>& a) -> Value {

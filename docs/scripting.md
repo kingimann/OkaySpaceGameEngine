@@ -62,6 +62,15 @@ What's supported:
 - **`new Vector3(x,y,z)`** / `new Vector2(x,y)` constructors.
 - **Typed declarations** `int x = 0;` `float speed = 5f;` `Vector3 v = ...;` (with
   `f`/`d` numeric suffixes), plus `i++` / `++i` / `i--`.
+- **`foreach (var item in list) { ... }`** (C# foreach), alongside the classic
+  `for x in list { }`.
+- **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
+  `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
+  / BoxCollider2D at runtime).
+- **`Quaternion.Euler(x, y, z)`** / `Quaternion.identity` — assign to
+  `transform.rotation` (the Z angle drives 2D rotation).
+- **C# attributes** like `[SerializeField]` and `[Header("Stats")]` are accepted
+  (and ignored) before fields and methods.
 - **Event handlers** the Unity way: `OnCollisionEnter()`, `OnTriggerEnter()`,
   `OnClick()`, `OnValueChanged()` (alongside the classic `on_collision` etc).
 

@@ -72,6 +72,47 @@ int main() {
         CHECK_NEAR(go->transform->Position().z, 9.0f, 0.001f);
     }
 
+    // --- [SerializeField] attributes, foreach, GetComponent<T> ---------
+    {
+        Scene s("UAdv"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Adv");
+        go->AddComponent<SpriteRenderer>();
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "public class Adv : MonoBehaviour {\n"
+            "    [SerializeField] float total = 0f;\n"
+            "    [Header(\"Stats\")]\n"
+            "    int hits = 0;\n"
+            "    void Start() {\n"
+            "        var nums = [10, 20, 30];\n"
+            "        foreach (var n in nums) { total = total + n; }\n"   // 60
+            "        if (GetComponent<SpriteRenderer>()) { hits = 1; }\n"
+            "        transform.position.x = total;\n"
+            "        transform.position.y = hits;\n"
+            "    }\n"
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 60.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().y, 1.0f, 0.001f);   // GetComponent found it
+    }
+
+    // --- Quaternion.Euler / transform.rotation + AddComponent ----------
+    {
+        Scene s("UQuat"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Q");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    transform.rotation = Quaternion.Euler(0, 0, 90);\n"
+            "    transform.position.y = transform.eulerAngles.z;\n"   // read it back
+            "    if (AddComponent<Rigidbody2D>()) { transform.position.x = 1; }\n"
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 1.0f, 0.001f);    // component added
+        CHECK(go->GetComponent<Rigidbody2D>() != nullptr);
+        CHECK_NEAR(go->transform->Position().y, 90.0f, 0.5f);     // rotation applied
+    }
+
     // --- Legacy lowercase still works (backward compatible) ------------
     {
         Scene s("ULegacy"); s.physicsEnabled = false;

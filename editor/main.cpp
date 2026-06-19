@@ -536,8 +536,18 @@ const char* StarterScript(const std::string& lang) {
     if (lang == "csharp")
         return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
                "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    return "function start() {\n    set_pos(0, 0);\n}\n\n"
-           "function update(dt) {\n    move(2 * dt, 0);\n}\n";
+    // OkayScript, written Unity-style (a MonoBehaviour) — this is the syntax
+    // most users expect. The classic function start()/update(dt) style still works.
+    return "public class NewScript : MonoBehaviour {\n"
+           "    float speed = 2f;\n\n"
+           "    void Start() {\n"
+           "        transform.position = new Vector3(0, 0, 0);\n"
+           "    }\n\n"
+           "    void Update() {\n"
+           "        transform.position.x += Input.GetAxis(\"Horizontal\") * speed * Time.deltaTime;\n"
+           "        transform.position.y += Input.GetAxis(\"Vertical\") * speed * Time.deltaTime;\n"
+           "    }\n"
+           "}\n";
 }
 } // namespace extide
 
@@ -2054,7 +2064,7 @@ void DrawScriptEditor(EditorState& ed) {
                 SetCodeBuffer(sc, extide::StarterScript(newLang));
         }
         ImGui::SameLine();
-        ImGui::TextDisabled(sc->Language() == "okayscript" ? "C-style: { } ;"
+        ImGui::TextDisabled(sc->Language() == "okayscript" ? "Unity-style C#"
                           : sc->Language() == "lua"        ? "Lua: function ... end"
                                                            : "");
         if (!sc->Path().empty()) { ImGui::SameLine(); ImGui::TextDisabled("(%s)", sc->Path().c_str()); }

@@ -1,5 +1,20 @@
 OkaySpace Game Engine — Changelog
 
+v2.0.0
+  - Unity-style scripting, completed. Building on v1.99, OkayScript now also
+    accepts:
+      * foreach (var item in list) { ... }  (C# foreach).
+      * Generic calls: GetComponent<Rigidbody2D>() (truthy if present) and
+        AddComponent<Rigidbody2D>() (adds SpriteRenderer / Rigidbody2D /
+        TextRenderer / BoxCollider2D at runtime).
+      * Quaternion.Euler(x, y, z) / Quaternion.identity, assignable to
+        transform.rotation.
+      * C# attributes like [SerializeField] and [Header("Stats")] are accepted
+        (ignored) before fields and methods.
+    The editor's "new script" template is now a Unity-style MonoBehaviour, and a
+    real Unity script frequently pastes in unchanged. Still fully backward
+    compatible with the classic function start()/update(dt) style.
+
 v1.99.0
   - Scripting now reads like Unity C#. You can write OkayScript almost exactly
     like a Unity MonoBehaviour, and a real Unity script often pastes in unchanged:

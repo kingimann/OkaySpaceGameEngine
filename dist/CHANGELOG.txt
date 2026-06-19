@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.81.0
+  - More widget settings: UI Slider gains "Whole Numbers" (snaps the value to
+    integers — great for difficulty/count pickers), and UI Progress Bar gains a
+    Fill Direction (Left→Right, Right→Left, Bottom→Top, Top→Bottom) for vertical
+    bars and right-anchored meters. Both save with the scene and render in the
+    built game.
+
 v1.80.0
   - Full controller/keyboard menu navigation: focus now moves across Buttons,
     Toggles, Sliders and Dropdowns (not just buttons). Up/Down change focus;

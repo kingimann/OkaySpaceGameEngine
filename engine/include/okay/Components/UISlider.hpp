@@ -30,6 +30,7 @@ public:
     float cornerRadius = 3.0f;
     float knobSize = 0.6f;                           // knob width = size.y * this
     bool  showValue = false;
+    bool  wholeNumbers = false;                      // snap the value to integers
     Color textColor = Color::White;
 
     /// 0..1 position of the handle along the track (for rendering).
@@ -39,6 +40,7 @@ public:
     }
     void SetValue(float v) {
         float nv = Mathf::Clamp(v, minValue, maxValue);
+        if (wholeNumbers) nv = Mathf::Round(nv);
         if (nv == value) return;
         value = nv;
         if (gameObject)
@@ -66,6 +68,7 @@ public:
             Vec2 o = ResolveAnchor(anchor, position, size);
             float frac = Mathf::Clamp01((m.x - o.x) / size.x);
             float nv = minValue + frac * (maxValue - minValue);
+            if (wholeNumbers) nv = Mathf::Round(nv);
             if (nv != value) {
                 value = nv;
                 if (gameObject)

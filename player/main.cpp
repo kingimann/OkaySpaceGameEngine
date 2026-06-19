@@ -604,8 +604,8 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawColor(renderer, (Uint8)(pb->background.r * 255), (Uint8)(pb->background.g * 255),
                                    (Uint8)(pb->background.b * 255), (Uint8)(pb->background.a * 255));
             SDL_RenderFillRect(renderer, &bg);
-            SDL_Rect fl{(int)o.x, (int)o.y,
-                        (int)(pb->size.x * pb->Fraction()), (int)pb->size.y};
+            float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+            SDL_Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
             SDL_SetRenderDrawColor(renderer, (Uint8)(pb->fill.r * 255), (Uint8)(pb->fill.g * 255),
                                    (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255));
             SDL_RenderFillRect(renderer, &fl);

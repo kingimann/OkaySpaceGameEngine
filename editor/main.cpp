@@ -3665,6 +3665,9 @@ void DrawInspector(EditorState& ed) {
                 float tc[4] = {pb->textColor.r, pb->textColor.g, pb->textColor.b, pb->textColor.a};
                 if (ImGui::ColorEdit4("Text Color##upb", tc)) { pb->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
             }
+            const char* fds[] = {"Left -> Right", "Right -> Left", "Bottom -> Top", "Top -> Bottom"};
+            int fd = (int)pb->fillDir;
+            if (ImGui::Combo("Fill Dir##upb", &fd, fds, 4)) { pb->fillDir = (UIProgressBar::FillDir)fd; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
         }
     }
@@ -3717,6 +3720,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Knob Size##usl", &sl->knobSize, 0.02f, 0.1f, 3.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Show Value##usl", &sl->showValue)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Whole Numbers##usl", &sl->wholeNumbers)) {
+                if (sl->wholeNumbers) sl->value = Mathf::Round(sl->value);
+                ed.dirty = true;
+            }
             if (sl->showValue) {
                 float tc[4] = {sl->textColor.r, sl->textColor.g, sl->textColor.b, sl->textColor.a};
                 if (ImGui::ColorEdit4("Text Color##usl", tc)) { sl->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
@@ -4050,8 +4058,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pb->background), pb->cornerRadius);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x * pb->Fraction(), a.y + sz.y),
-                          ToColor(pb->fill), pb->cornerRadius);
+        { float fox, foy, fw, fh; pb->FillRect(sz.x, sz.y, fox, foy, fw, fh);
+          dl->AddRectFilled(ImVec2(a.x + fox, a.y + foy), ImVec2(a.x + fox + fw, a.y + foy + fh),
+                            ToColor(pb->fill), pb->cornerRadius); }
         if (pb->showPercent) {
             char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
             float px = 2.0f * s;

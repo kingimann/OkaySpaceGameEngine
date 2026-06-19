@@ -354,6 +354,28 @@ int main() {
         CHECK(tt2 && tt2->delay > 0.29f && tt2->delay < 0.31f);
     }
 
+    // --- Slider whole-numbers + progress fill direction ----------------
+    {
+        Scene s("set"); s.physicsEnabled = false;
+        auto* sl = s.CreateGameObject("S")->AddComponent<UISlider>();
+        sl->minValue = 0; sl->maxValue = 10; sl->wholeNumbers = true;
+        sl->SetValue(3.7f);
+        CHECK_NEAR(sl->value, 4.0f, 1e-4f);    // snapped to integer
+
+        auto* pb = s.CreateGameObject("P")->AddComponent<UIProgressBar>();
+        pb->value = 0.25f; pb->fillDir = UIProgressBar::FillDir::BottomTop;
+        float ox, oy, fw, fh;
+        pb->FillRect(100, 80, ox, oy, fw, fh);
+        CHECK_NEAR(fh, 20.0f, 1e-4f); CHECK_NEAR(oy, 60.0f, 1e-4f);  // grows from bottom
+
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        auto* sl2 = s2.Find("S")->GetComponent<UISlider>();
+        CHECK(sl2->wholeNumbers);
+        auto* pb2 = s2.Find("P")->GetComponent<UIProgressBar>();
+        CHECK(pb2->fillDir == UIProgressBar::FillDir::BottomTop);
+    }
+
     // --- Menu navigation reaches toggles, sliders, dropdowns -----------
     {
         Scene s("nav"); s.physicsEnabled = false;

@@ -341,7 +341,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pb->fill.r << " " << pb->fill.g << " " << pb->fill.b << " " << pb->fill.a
             << " " << (int)pb->anchor << " "
             << pb->cornerRadius << " " << (pb->showPercent ? 1 : 0) << " "
-            << pb->textColor.r << " " << pb->textColor.g << " " << pb->textColor.b << " " << pb->textColor.a << "\n";
+            << pb->textColor.r << " " << pb->textColor.g << " " << pb->textColor.b << " " << pb->textColor.a
+            << " " << (int)pb->fillDir << "\n";
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -360,7 +361,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sl->knob.r << " " << sl->knob.g << " " << sl->knob.b << " " << sl->knob.a
             << " " << (int)sl->anchor << " "
             << sl->cornerRadius << " " << sl->knobSize << " " << (sl->showValue ? 1 : 0) << " "
-            << sl->textColor.r << " " << sl->textColor.g << " " << sl->textColor.b << " " << sl->textColor.a << "\n";
+            << sl->textColor.r << " " << sl->textColor.g << " " << sl->textColor.b << " " << sl->textColor.a
+            << " " << (sl->wholeNumbers ? 1 : 0) << "\n";
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
         out << "  uitoggle " << Quote(tg->label) << " "
@@ -843,6 +845,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int sp = 0; Color tc;
                         in >> pb->cornerRadius >> sp >> tc.r >> tc.g >> tc.b >> tc.a;
                         pb->showPercent = (sp != 0); pb->textColor = tc;
+                        in >> std::ws; // optional fill direction (added later)
+                        if (std::isdigit(in.peek())) { int fd = 0; in >> fd; pb->fillDir = (UIProgressBar::FillDir)fd; }
                     }
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
@@ -877,6 +881,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int sv = 0; Color tc;
                         in >> sl->cornerRadius >> sl->knobSize >> sv >> tc.r >> tc.g >> tc.b >> tc.a;
                         sl->showValue = (sv != 0); sl->textColor = tc;
+                        in >> std::ws; // optional whole-numbers flag (added later)
+                        if (std::isdigit(in.peek())) { int wn = 0; in >> wn; sl->wholeNumbers = (wn != 0); }
                     }
                 } else if (field == "uitoggle") {
                     auto* tg = go->AddComponent<UIToggle>();

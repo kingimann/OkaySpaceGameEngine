@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v1.69.0
+  - Better UI resizing: handles now resize in screen space, so the grabbed edge
+    follows the cursor correctly for ANY anchor (previously right/center/bottom-
+    anchored widgets drifted because changing size shifts the anchor). The
+    opposite edge stays pinned, with an 8px minimum; handles are easier to grab.
+  - Snap (toolbar) now rounds UI moves/resizes to whole pixels for tidy values.
+  - Anchoring is visible: a selected widget shows a marker at the canvas point
+    it's anchored to with a line to the widget, plus a live "W x H" size readout
+    above the selection box.
+
 v1.68.0
   - Fix: the newer UI widgets (Scroll View and Layout Group) couldn't be
     selected or resized in the Scene view because they weren't recognized as

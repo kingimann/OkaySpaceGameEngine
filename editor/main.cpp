@@ -4134,6 +4134,16 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (GetUIScreenRect(ed.selected(), canvasSize.x, canvasSize.y, o, sz)) {
             ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
             ImVec2 b(a.x + sz.x, a.y + sz.y);
+            // Anchor marker: a diamond at the canvas point this widget anchors to,
+            // with a thin line to the widget — so anchoring is visible at a glance.
+            int ai = (int)r.anchor;
+            float ax = (ai % 3 == 0) ? 0.0f : (ai % 3 == 1) ? canvasSize.x * 0.5f : canvasSize.x;
+            float ay = (ai / 3 == 0) ? 0.0f : (ai / 3 == 1) ? canvasSize.y * 0.5f : canvasSize.y;
+            ImVec2 ap(canvasPos.x + ax, canvasPos.y + ay);
+            ImVec2 wc((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+            dl->AddLine(ap, wc, IM_COL32(90, 170, 240, 150), 1.0f);
+            dl->AddNgonFilled(ap, 5.0f, IM_COL32(90, 170, 240, 230), 4);  // diamond
+            // Selection box.
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
                         IM_COL32(255, 200, 0, 255), 2.0f, 0, 2.0f);
             if (r.sizePtr) {   // resizable: draw the 8 grab handles
@@ -4142,6 +4152,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                     dl->AddRectFilled(ImVec2(h[i].x - 4, h[i].y - 4),
                                       ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 200, 0, 255));
             }
+            // Live size readout above the box (the unscaled pixel size you author).
+            char dims[48];
+            std::snprintf(dims, sizeof(dims), "%g x %g", r.size.x, r.size.y);
+            dl->AddText(ImVec2(a.x, a.y - 16), IM_COL32(255, 220, 120, 255), dims);
         }
     }
 }
@@ -4183,21 +4197,33 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 float s = UIScaleFor(g_uiDragTarget, canvasSize.x, canvasSize.y);
                 if (s < 1e-3f) s = 1.0f;
                 float dx = io.MouseDelta.x / s, dy = io.MouseDelta.y / s;
+                auto snap = [&](float v) { return g_snap ? (float)((int)(v + (v < 0 ? -0.5f : 0.5f))) : v; };
                 if (g_uiResizeHandle >= 0 && r.sizePtr) {
                     int hdl = g_uiResizeHandle;
                     bool left  = (hdl == 0 || hdl == 6 || hdl == 7);
                     bool right = (hdl == 2 || hdl == 3 || hdl == 4);
                     bool top   = (hdl == 0 || hdl == 1 || hdl == 2);
                     bool bottom= (hdl == 4 || hdl == 5 || hdl == 6);
-                    if (right)  r.sizePtr->x += dx;
-                    if (bottom) r.sizePtr->y += dy;
-                    if (left)  { r.position->x += dx; r.sizePtr->x -= dx; }
-                    if (top)   { r.position->y += dy; r.sizePtr->y -= dy; }
-                    r.sizePtr->x = Mathf::Max(8.0f, r.sizePtr->x);
-                    r.sizePtr->y = Mathf::Max(8.0f, r.sizePtr->y);
+                    // Resize in SCREEN space so the grabbed edge follows the cursor
+                    // for ANY anchor, then invert the anchor to recover position.
+                    Vec2 o, sz;
+                    GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o, sz);
+                    if (UIScrollView* sv = OwningScrollView(g_uiDragTarget)) o.y += sv->scroll * s; // undo scroll
+                    float l = o.x, t = o.y, rr = o.x + sz.x, bb = o.y + sz.y;
+                    float minPx = 8.0f * s;
+                    if (left)   l  = Mathf::Min(l + io.MouseDelta.x, rr - minPx);
+                    if (right)  rr = Mathf::Max(rr + io.MouseDelta.x, l + minPx);
+                    if (top)    t  = Mathf::Min(t + io.MouseDelta.y, bb - minPx);
+                    if (bottom) bb = Mathf::Max(bb + io.MouseDelta.y, t + minPx);
+                    Vec2 newScreen{rr - l, bb - t};
+                    Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, canvasSize.x, canvasSize.y);
+                    r.sizePtr->x = snap(newScreen.x / s);
+                    r.sizePtr->y = snap(newScreen.y / s);
+                    r.position->x = snap((l - term.x) / s);
+                    r.position->y = snap((t - term.y) / s);
                 } else {
-                    r.position->x += dx;
-                    r.position->y += dy;
+                    r.position->x = snap(r.position->x + dx);
+                    r.position->y = snap(r.position->y + dy);
                 }
                 ed.dirty = true;
             }
@@ -4221,7 +4247,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 ImVec2 h[8]; UIHandlePositions(a, b, h);
                 for (int i = 0; i < 8; ++i) {
                     float dx = io.MousePos.x - h[i].x, dy = io.MousePos.y - h[i].y;
-                    if (dx * dx + dy * dy <= 7.0f * 7.0f) {
+                    if (dx * dx + dy * dy <= 9.0f * 9.0f) {
                         g_uiDragTarget = ed.selected();
                         g_uiResizeHandle = i;
                         g_uiHandled = true;

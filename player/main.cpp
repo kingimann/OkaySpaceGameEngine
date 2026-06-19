@@ -579,6 +579,35 @@ int main(int argc, char** argv) {
                          (Uint8)(btn->textColor.b * 255), (Uint8)(btn->textColor.a * 255)};
             DrawText(renderer, btn->label, tx, ty, px, tc);
         }
+        for (const auto& up : scene.Objects()) {           // dropdowns (header + open list)
+            auto* dd = up->GetComponent<UIDropdown>();
+            if (!dd || !up->active) continue;
+            Vec2 o = ResolveAnchor(dd->anchor, dd->position, dd->size, (float)w, (float)h);
+            SDL_Rect hdr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(dd->color.r * 255), (Uint8)(dd->color.g * 255),
+                                   (Uint8)(dd->color.b * 255), (Uint8)(dd->color.a * 255));
+            SDL_RenderFillRect(renderer, &hdr);
+            SDL_SetRenderDrawColor(renderer, (Uint8)(dd->borderColor.r * 255), (Uint8)(dd->borderColor.g * 255),
+                                   (Uint8)(dd->borderColor.b * 255), (Uint8)(dd->borderColor.a * 255));
+            SDL_RenderDrawRect(renderer, &hdr);
+            float px = 2.0f;
+            float ty = o.y + (dd->size.y - Font8x8::Height * px) * 0.5f;
+            SDL_Color tc{(Uint8)(dd->textColor.r * 255), (Uint8)(dd->textColor.g * 255),
+                         (Uint8)(dd->textColor.b * 255), (Uint8)(dd->textColor.a * 255)};
+            DrawText(renderer, dd->Selected(), o.x + 8.0f, ty, px, tc);
+            if (dd->open) {
+                float top = o.y + dd->size.y;
+                for (int i = 0; i < (int)dd->options.size(); ++i) {
+                    SDL_Rect orow{(int)o.x, (int)(top + i * dd->size.y), (int)dd->size.x, (int)dd->size.y};
+                    const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
+                    SDL_SetRenderDrawColor(renderer, (Uint8)(rc.r * 255), (Uint8)(rc.g * 255),
+                                           (Uint8)(rc.b * 255), (Uint8)(rc.a * 255));
+                    SDL_RenderFillRect(renderer, &orow);
+                    DrawText(renderer, dd->options[i], o.x + 8.0f,
+                             orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+                }
+            }
+        }
         SDL_RenderPresent(renderer);
     };
 

@@ -9,6 +9,7 @@
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIScrollView.hpp"
@@ -53,6 +54,7 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* tg = go->GetComponent<UIToggle>())     { r.valid = true; r.anchor = tg->anchor; r.position = &tg->position; r.sizePtr = &tg->size; r.size = tg->size; }
     else if (auto* pb = go->GetComponent<UIProgressBar>()){ r.valid = true; r.anchor = pb->anchor; r.position = &pb->position; r.sizePtr = &pb->size; r.size = pb->size; }
     else if (auto* in = go->GetComponent<UIInputField>()) { r.valid = true; r.anchor = in->anchor; r.position = &in->position; r.sizePtr = &in->size; r.size = in->size; }
+    else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
     else if (auto* tr = go->GetComponent<TextRenderer>()) {
         if (tr->screenSpace) {
             r.valid = true; r.anchor = tr->anchor; r.position = &tr->screenPos;

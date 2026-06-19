@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.54.0
+  - UI Dropdown (GameObject > UI > Dropdown): an option selector like Unity's
+    Dropdown. Click to open the list, pick an option to set the value and call
+    the script's on_change(). Edit the option list, selection, and colors
+    (header / highlight / list / text / border) in the Inspector; everything
+    saves with the scene and renders in the built game.
+
 v1.53.0
   - UI customization: panels and buttons now have a Corner Radius, an optional
     Border (width + color), and buttons have a Font Scale for the label size.

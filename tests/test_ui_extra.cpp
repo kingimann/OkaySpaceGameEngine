@@ -172,5 +172,42 @@ int main() {
         CHECK(tr2->align == 2);
     }
 
+    // --- Dropdown: open on click, pick an option, fire on_change --------
+    {
+        Scene s("Dd"); s.physicsEnabled = false;
+        UICanvas::Set(1280, 720);
+        GameObject* go = s.CreateGameObject("Drop");
+        auto* dd = go->AddComponent<UIDropdown>();
+        dd->anchor = UIAnchor::TopLeft; dd->position = {0, 0}; dd->size = {200, 40};
+        dd->options = {"A", "B", "C"}; dd->value = 0;
+        s.Start();
+
+        // Clear any leftover button state from earlier blocks, then click.
+        Input::FeedMouse({10, 10}, 0);
+        s.Update(0.016f);
+        // Click the header to open.
+        Input::FeedMouse({10, 10}, 1u << 0);
+        s.Update(0.016f);
+        CHECK(dd->open);
+
+        // Release, then click the 3rd option (rows start at y=40, each 40 tall).
+        Input::FeedMouse({10, 10}, 0);
+        s.Update(0.016f);
+        Input::FeedMouse({10, 40 + 80 + 10}, 1u << 0);   // row index 2 -> "C"
+        s.Update(0.016f);
+        CHECK(dd->value == 2);
+        CHECK(!dd->open);
+        CHECK(dd->Selected() == "C");
+
+        // Round-trips options + selection through serialization.
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        auto* dd2 = s2.Find("Drop")->GetComponent<UIDropdown>();
+        CHECK(dd2 && dd2->value == 2);
+        CHECK(dd2 && dd2->options.size() == 3);
+        CHECK(dd2 && dd2->options[1] == "B");
+        Input::FeedMouse({0, 0}, 0);
+    }
+
     TEST_MAIN_RESULT();
 }

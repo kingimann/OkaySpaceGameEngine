@@ -32,6 +32,7 @@
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
@@ -285,6 +286,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << in->size.x << " " << in->size.y << " " << (int)in->anchor << " "
             << in->maxLength << " " << Quote(in->text) << " " << Quote(in->placeholder) << " "
             << in->color.r << " " << in->color.g << " " << in->color.b << " " << in->color.a << "\n";
+    }
+    if (auto* dd = go->GetComponent<UIDropdown>()) {
+        out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
+            << dd->size.x << " " << dd->size.y << " " << (int)dd->anchor << " "
+            << dd->value << " "
+            << dd->color.r << " " << dd->color.g << " " << dd->color.b << " " << dd->color.a << " "
+            << dd->hoverColor.r << " " << dd->hoverColor.g << " " << dd->hoverColor.b << " " << dd->hoverColor.a << " "
+            << dd->listColor.r << " " << dd->listColor.g << " " << dd->listColor.b << " " << dd->listColor.a << " "
+            << dd->textColor.r << " " << dd->textColor.g << " " << dd->textColor.b << " " << dd->textColor.a << " "
+            << dd->borderColor.r << " " << dd->borderColor.g << " " << dd->borderColor.b << " " << dd->borderColor.a << " "
+            << dd->options.size();
+        for (const auto& opt : dd->options) out << " " << Quote(opt);
+        out << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
@@ -736,6 +750,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     inp->anchor = (UIAnchor)an;
                     inp->text = ReadQuoted(in); inp->placeholder = ReadQuoted(in);
                     in >> c.r >> c.g >> c.b >> c.a; inp->color = c;
+                } else if (field == "uidropdown") {
+                    auto* dd = go->AddComponent<UIDropdown>();
+                    int an = 0; std::size_t count = 0;
+                    Color c, h, l, t, b;
+                    in >> dd->position.x >> dd->position.y >> dd->size.x >> dd->size.y
+                       >> an >> dd->value
+                       >> c.r >> c.g >> c.b >> c.a >> h.r >> h.g >> h.b >> h.a
+                       >> l.r >> l.g >> l.b >> l.a >> t.r >> t.g >> t.b >> t.a
+                       >> b.r >> b.g >> b.b >> b.a >> count;
+                    dd->anchor = (UIAnchor)an;
+                    dd->color = c; dd->hoverColor = h; dd->listColor = l;
+                    dd->textColor = t; dd->borderColor = b;
+                    dd->options.clear();
+                    for (std::size_t k = 0; k < count; ++k) dd->options.push_back(ReadQuoted(in));
                 } else if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     int dir = 0, an = 0;

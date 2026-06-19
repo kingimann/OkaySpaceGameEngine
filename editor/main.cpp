@@ -990,6 +990,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
             if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
             if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
+            if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
             if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
             if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
             ImGui::EndMenu();
@@ -3450,6 +3451,49 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uif")) toRemove = in;
         }
     }
+    if (auto* dd = go->GetComponent<UIDropdown>()) {
+        if (ImGui::CollapsingHeader("UI Dropdown", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float pos[2] = {dd->position.x, dd->position.y};
+            if (ImGui::DragFloat2("Pos (px)##udd", pos, 1.0f)) { dd->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {dd->size.x, dd->size.y};
+            if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
+            AnchorCombo("Anchor##udd", dd->anchor, ed);
+            ImGui::SeparatorText("Options");
+            int toErase = -1;
+            for (int i = 0; i < (int)dd->options.size(); ++i) {
+                ImGui::PushID(i);
+                char ob[96]; std::strncpy(ob, dd->options[i].c_str(), sizeof(ob) - 1); ob[sizeof(ob)-1] = '\0';
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("##opt", ob, sizeof(ob))) { dd->options[i] = ob; ed.dirty = true; }
+                ImGui::SameLine();
+                bool sel = (dd->value == i);
+                if (ImGui::RadioButton("##selopt", sel)) { dd->value = i; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) toErase = i;
+                ImGui::PopID();
+            }
+            if (toErase >= 0) {
+                dd->options.erase(dd->options.begin() + toErase);
+                if (dd->value >= (int)dd->options.size()) dd->value = (int)dd->options.size() - 1;
+                if (dd->value < 0) dd->value = 0;
+                ed.dirty = true;
+            }
+            if (ImGui::SmallButton("Add Option##udd")) { dd->options.push_back("Option"); ed.dirty = true; }
+            ImGui::SeparatorText("Style");
+            float c[4]  = {dd->color.r, dd->color.g, dd->color.b, dd->color.a};
+            if (ImGui::ColorEdit4("Header##udd", c)) { dd->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
+            float h[4]  = {dd->hoverColor.r, dd->hoverColor.g, dd->hoverColor.b, dd->hoverColor.a};
+            if (ImGui::ColorEdit4("Highlight##udd", h)) { dd->hoverColor = {h[0],h[1],h[2],h[3]}; ed.dirty = true; }
+            float l[4]  = {dd->listColor.r, dd->listColor.g, dd->listColor.b, dd->listColor.a};
+            if (ImGui::ColorEdit4("List BG##udd", l)) { dd->listColor = {l[0],l[1],l[2],l[3]}; ed.dirty = true; }
+            float t[4]  = {dd->textColor.r, dd->textColor.g, dd->textColor.b, dd->textColor.a};
+            if (ImGui::ColorEdit4("Text##udd", t)) { dd->textColor = {t[0],t[1],t[2],t[3]}; ed.dirty = true; }
+            float b[4]  = {dd->borderColor.r, dd->borderColor.g, dd->borderColor.b, dd->borderColor.a};
+            if (ImGui::ColorEdit4("Border##udd", b)) { dd->borderColor = {b[0],b[1],b[2],b[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("Click to open; picking an option calls on_change().");
+            if (ImGui::SmallButton("Remove##udd")) toRemove = dd;
+        }
+    }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         if (ImGui::CollapsingHeader("UI Layout Group", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* dirs[] = {"Vertical", "Horizontal"};
@@ -3924,6 +3968,42 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             float cw = (empty ? 0 : in->text.size()) * (Font8x8::Width + 1) * px;
             float cx = a.x + 6 * s + cw;
             dl->AddLine(ImVec2(cx, ty), ImVec2(cx, ty + Font8x8::Height * px), IM_COL32(255, 255, 255, 200), 1.0f);
+        }
+    }
+
+    // UI dropdowns: header (shows the selection + a caret); when open, the option
+    // list below with the hovered/selected option highlighted. Drawn last among
+    // widgets so an open list sits above its neighbours.
+    for (const auto& up : objs) {
+        auto* dd = up->GetComponent<UIDropdown>();
+        if (!dd || !up->active) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
+        float px = 2.0f * s;
+        float ty = a.y + (sz.y - Font8x8::Height * px) * 0.5f;
+        dl->AddRectFilled(a, b, ToColor(dd->color), 4.0f);
+        dl->AddRect(a, b, ToColor(dd->borderColor), 4.0f, 0, 1.0f);
+        DrawBitmapText(dl, dd->Selected(), a.x + 8 * s, ty, px, ToColor(dd->textColor));
+        // Down-caret on the right.
+        float cx = b.x - 14 * s, cy = a.y + sz.y * 0.5f;
+        dl->AddTriangleFilled(ImVec2(cx - 5 * s, cy - 3 * s), ImVec2(cx + 5 * s, cy - 3 * s),
+                              ImVec2(cx, cy + 4 * s), ToColor(dd->textColor));
+        if (dd->open) {
+            float top = b.y;
+            dl->AddRectFilled(ImVec2(a.x, top), ImVec2(b.x, top + sz.y * dd->options.size()),
+                              ToColor(dd->listColor), 0.0f);
+            for (int i = 0; i < (int)dd->options.size(); ++i) {
+                float oy = top + i * sz.y;
+                if (i == dd->HoveredOption())
+                    dl->AddRectFilled(ImVec2(a.x, oy), ImVec2(b.x, oy + sz.y), ToColor(dd->hoverColor), 0.0f);
+                DrawBitmapText(dl, dd->options[i], a.x + 8 * s,
+                               oy + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(dd->textColor));
+            }
+            dl->AddRect(ImVec2(a.x, top), ImVec2(b.x, top + sz.y * dd->options.size()),
+                        ToColor(dd->borderColor), 0.0f, 0, 1.0f);
         }
     }
 

@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.22.0
+  - Inspector Lock: pin the inspector to one object so it stays put while you
+    click around the scene/hierarchy.
+  - Toolbar tooltips on Play / Stop / Pause / Step / Build.
+
 v1.21.0
   - Project tab shows real image thumbnails for PNG/JPG/etc. assets.
   - Right-click empty space in Project for New Folder / New Script / Show in

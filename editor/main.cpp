@@ -871,11 +871,13 @@ void DrawMenuAndToolbar(EditorState& ed) {
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
         ImGui::PopStyleColor(2);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play (Space) — runs the scene in the Game view");
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
         if (ImGui::Button("[]  Stop", ImVec2(btnW, 0))) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         ImGui::PopStyleColor(2);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop (Space) — return to the edit state");
         ImGui::SameLine();
         if (g_paused) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.45f, 0.15f, 1.0f));
@@ -884,14 +886,17 @@ void DrawMenuAndToolbar(EditorState& ed) {
         } else {
             if (ImGui::Button("Pause", ImVec2(64, 0))) g_paused = true;
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause / Resume the simulation");
     }
     ImGui::SameLine();
     if (ImGui::Button("Step", ImVec2(50, 0))) { g_paused = true; ed.Tick(1.0f / 60.0f); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.34f, 0.62f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.52f, 0.42f, 0.75f, 1.0f));
     if (ImGui::Button("Build", ImVec2(54, 0))) g_showBuildGame = true;
     ImGui::PopStyleColor(2);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Build Game (Ctrl+B) — export a standalone exe");
 
     // Right-aligned status.
     char status[96];
@@ -2066,7 +2071,20 @@ static bool DrawActionItem(ActionList::Item& it, const char* const* ops, int nop
 
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
+
+    // Lock (pin) the inspector to the current object so it stays put while you
+    // click around the scene/hierarchy — Unity's inspector lock.
+    static bool s_locked = false;
+    static GameObject* s_pinned = nullptr;
+    if (ImGui::Checkbox("Lock", &s_locked)) s_pinned = s_locked ? ed.selected() : nullptr;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep showing this object while selecting others");
+
     GameObject* go = ed.selected();
+    if (s_locked && s_pinned) {
+        bool alive = false;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == s_pinned) { alive = true; break; }
+        if (alive) go = s_pinned; else { s_locked = false; s_pinned = nullptr; }
+    }
     if (!go) {
         ImGui::Dummy(ImVec2(0, 8));
         ImGui::TextDisabled("  Select an object in the Hierarchy");

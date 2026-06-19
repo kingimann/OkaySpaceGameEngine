@@ -4304,12 +4304,39 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     if (right)  rr = Mathf::Max(rr + io.MouseDelta.x, l + minPx);
                     if (top)    t  = Mathf::Min(t + io.MouseDelta.y, bb - minPx);
                     if (bottom) bb = Mathf::Max(bb + io.MouseDelta.y, t + minPx);
+                    // Snap the dragged edge to canvas/sibling guide lines.
+                    g_uiGuideX = g_uiGuideY = -1.0f;
+                    bool gxHit = false, gyHit = false;
+                    if (g_snap) {
+                        std::vector<float> cx{0.0f, canvasSize.x * 0.5f, canvasSize.x};
+                        std::vector<float> cy{0.0f, canvasSize.y * 0.5f, canvasSize.y};
+                        for (const auto& up2 : ed.scene().Objects()) {
+                            if (up2.get() == g_uiDragTarget) continue;
+                            Vec2 oo, ss;
+                            if (GetUIScreenRect(up2.get(), canvasSize.x, canvasSize.y, oo, ss)) {
+                                cx.push_back(oo.x); cx.push_back(oo.x + ss.x);
+                                cy.push_back(oo.y); cy.push_back(oo.y + ss.y);
+                            }
+                        }
+                        const float thr = 6.0f;
+                        auto edge = [&](float v, const std::vector<float>& cs, float& guide, bool& hit) {
+                            float best = thr, res = v;
+                            for (float c : cs) { float d = v > c ? v - c : c - v; if (d < best) { best = d; res = c; guide = c; hit = true; } }
+                            return res;
+                        };
+                        if (left)   l  = edge(l,  cx, g_uiGuideX, gxHit);
+                        if (right)  rr = edge(rr, cx, g_uiGuideX, gxHit);
+                        if (top)    t  = edge(t,  cy, g_uiGuideY, gyHit);
+                        if (bottom) bb = edge(bb, cy, g_uiGuideY, gyHit);
+                    }
                     Vec2 newScreen{rr - l, bb - t};
                     Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, canvasSize.x, canvasSize.y);
-                    r.sizePtr->x = snap(newScreen.x / s);
-                    r.sizePtr->y = snap(newScreen.y / s);
-                    r.position->x = snap((l - term.x) / s);
-                    r.position->y = snap((t - term.y) / s);
+                    // Grid-snap only on axes that didn't lock onto a guide.
+                    auto gsnap = [&](float v, bool guided) { return (g_snap && !guided) ? Mathf::Round(v / grid) * grid : v; };
+                    r.sizePtr->x  = gsnap(newScreen.x / s, gxHit);
+                    r.sizePtr->y  = gsnap(newScreen.y / s, gyHit);
+                    r.position->x = gsnap((l - term.x) / s, gxHit);
+                    r.position->y = gsnap((t - term.y) / s, gyHit);
                 } else {
                     r.position->x = snap(r.position->x + dx);
                     r.position->y = snap(r.position->y + dy);

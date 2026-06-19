@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.77.0
+  - Snapping now applies while resizing too: dragging a resize handle snaps the
+    grabbed edge to the canvas edges/center and to sibling widgets (with the
+    magenta guide), falling back to the pixel grid on axes that don't lock on.
+
 v1.76.0
   - Stretch helpers: a selected resizable UI widget's inspector gains Fill Width
     / Fill Height / Fill Canvas buttons that size it to the canvas on that axis

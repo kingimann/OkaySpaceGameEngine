@@ -134,18 +134,32 @@ function update(dt) {
 | `ui_set_progress("n", v)` | Set a progress bar's fill (0..1) |
 | `ui_set_fill("n", v)` | Set a filled UI Image's amount (cooldowns/health) |
 
-### Tweening & saves
+### Tweening (DOTween-style) & saves
+Every tween accepts an optional easing and an optional **on-complete** function
+name as its trailing argument(s).
+
 | Function | Description |
 |---|---|
-| `tween_move(x, y, dur [, ease])` / `tween_move3(x,y,z,dur)` | Animate position |
-| `tween_scale(s, dur [, ease])` | Animate uniform scale |
-| `tween_rotate(deg, dur [, ease])` | Spin about Z |
-| `tween_color(r, g, b, dur [, ease])` / `tween_fade(alpha, dur)` | Animate color / opacity |
+| `tween_move(x, y, dur [, ease][, "done"])` / `tween_move3(x,y,z,dur ...)` | Animate position |
+| `tween_scale(s, dur [, ease][, "done"])` | Animate uniform scale |
+| `tween_rotate(deg, dur [, ease][, "done"])` | Spin about Z |
+| `tween_color(r, g, b, dur [, ease][, "done"])` / `tween_fade(alpha, dur ...)` | Animate color / opacity |
+| `tween_loop_move(x, y, dur [, ease])` | Ping-pong forever (floaters, patrols) |
+| `tween_punch_scale(amount, dur [, vib])` / `tween_punch_pos(dx, dy, dur [, vib])` | Punch & settle ("juice") |
+| `tween_shake(intensity, dur)` | Random shake that decays to a stop |
 | `save_game([slot])` / `load_game([slot])` | Snapshot / restore the scene |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 
 Easings: `linear`, `in/out/in_out_quad`, `..._cubic`, `..._sine`, `..._expo`,
 `in_back`/`out_back`, `out_elastic`, `out_bounce`.
+
+### Drag & drop and Data Assets
+Add a **UI Draggable**/**Draggable** + **UI Drop Target**/**Drop Zone** in the
+editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
+`on_receive` and `on_hover_enter/on_hover_exit`. Read the pair with
+`ui_drop_source()/ui_drop_target()` (UI) or `drop_source()/drop_target()`
+(world). Scriptable Objects: `data_num/data_str/data_has(path, key)` to read and
+`data_set(path, key, v)` + `data_save(path)` to write `.okaydata` assets.
 
 ### Scene Manager (build list)
 | Function | Description |
@@ -248,8 +262,11 @@ Intuitive names for common builtins so code reads naturally:
 ### Physics queries
 | Function | Description |
 |---|---|
-| `raycast_hit(ox, oy, dx, dy [, maxDist])` | 2D ray hits a collider? |
-| `raycast_hit3(ox,oy,oz, dx,dy,dz [, maxDist])` | 3D ray hits a collider? |
+| `raycast_hit(ox, oy, dx, dy [, maxDist])` | 2D ray hits a collider? (boolean) |
+| `raycast(ox, oy, dx, dy [, maxDist])` | 2D ray; returns the **name** of the object hit ("" = miss) |
+| `ray_hit()` / `ray_object()` / `ray_x()` / `ray_y()` / `ray_nx()` / `ray_ny()` / `ray_dist()` | Details of the last `raycast()` |
+| `raycast_hit3(ox,oy,oz, dx,dy,dz [, maxDist])` | 3D ray hits a collider? (boolean) |
+| `raycast3(ox,oy,oz, dx,dy,dz [, maxDist])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
 | `overlap(x, y)` | A 2D collider contains this point? |
 
 ## Physics events

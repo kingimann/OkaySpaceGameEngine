@@ -105,6 +105,10 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `cam_zoom()` / `set_cam_zoom(z)` | read/set the main camera's orthographic size |
 | `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `raycast_hit(ox, oy, dx, dy[, dist])` | true if a ray hits a collider |
+| `raycast(ox, oy, dx, dy[, dist])` | cast a ray; returns the **name** of the object hit ("" = miss) |
+| `ray_hit()` / `ray_object()` | did the last `raycast()` hit, and what it hit |
+| `ray_x()` / `ray_y()` | last hit point; `ray_nx()`/`ray_ny()` surface normal; `ray_dist()` distance |
+| `raycast3(ox,oy,oz, dx,dy,dz[, dist])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
 | `overlap(x, y)` | true if a collider contains the point |
 | `set_gravity(x, y)` | set the scene's 2D gravity (0,0 for top-down) |
 | `set_text(string)` | set this object's TextRenderer text |
@@ -164,6 +168,72 @@ split(s, sep) join(arr, sep)` — plus `+` concatenation.
 ### Maps / dictionaries (string keys)
 `map() map_set(m, k, v) map_get(m, k[, default]) map_has(m, k) map_remove(m, k)
 map_keys(m) map_count(m)` — shared by reference, like arrays.
+
+### Tweening (DOTween-style)
+Smoothly animate this object over time via the scene scheduler. Every tween
+takes an optional easing name and an optional **on-complete** function name as
+its last argument(s).
+
+| Function | Effect |
+| --- | --- |
+| `tween_move(x, y, dur[, ease][, "done"])` | move to (x, y); `ease` e.g. `"out_quad"` |
+| `tween_move3(x, y, z, dur[, ease][, "done"])` | move in 3D |
+| `tween_scale(s, dur[, ease][, "done"])` | scale to uniform `s` |
+| `tween_rotate(deg, dur[, ease][, "done"])` | spin `deg` degrees about Z |
+| `tween_color(r, g, b, dur[, ease][, "done"])` | fade the sprite/mesh color |
+| `tween_fade(a, dur[, ease][, "done"])` | fade alpha to `a` |
+| `tween_loop_move(x, y, dur[, ease])` | **ping-pong** forever between here and (x, y) |
+| `tween_punch_scale(amount, dur[, vib])` | punch the scale and settle back ("juice") |
+| `tween_punch_pos(dx, dy, dur[, vib])` | punch the position and settle back |
+| `tween_shake(intensity, dur)` | random shake that decays to a stop (impact/camera) |
+
+Easings: `linear in_quad out_quad in_out_quad in_cubic out_cubic in_out_cubic
+in_sine out_sine in_out_sine in_expo out_expo in_out_expo in_back out_back
+out_elastic out_bounce`.
+
+```c
+function start() {
+  tween_move(5, 0, 1.0, "out_quad", "arrived");  // calls arrived() when done
+  tween_loop_move(0, 0.3, 0.8, "in_out_sine");   // bob forever
+}
+function arrived() { tween_punch_scale(0.3, 0.25); }   // pop on arrival
+```
+
+### Drag & drop
+Add a **UI Draggable** (UI widget) or **Draggable** (world sprite) component in
+the editor, and a **UI Drop Target** / **Drop Zone** to receivers. At runtime
+the item follows the cursor; on release over a valid target these handlers fire:
+
+| Handler | On |
+| --- | --- |
+| `on_drag_start()` / `on_drag()` | the dragged object, when a drag begins / each frame |
+| `on_drop()` | the dragged object, when it lands on a valid target |
+| `on_receive()` | the target, when an item lands on it |
+| `on_hover_enter()` / `on_hover_exit()` | a target, as an item enters/leaves during a drag |
+
+Read who was involved with `ui_drop_source()` / `ui_drop_target()` (UI) or
+`drop_source()` / `drop_target()` (world items). Options like snap-into-slot,
+accept-tag, grid snap and lock-axis are set in the inspector — no code needed for
+a basic inventory.
+
+### Scriptable Objects (Data Assets)
+Reusable `.okaydata` files of named fields (item/enemy/level definitions,
+config). Create with **Project → New Data Asset**.
+
+| Function | Effect |
+| --- | --- |
+| `data_num(path, key[, default])` | read a numeric field |
+| `data_str(path, key[, default])` | read a string field |
+| `data_has(path, key)` | does the field exist |
+| `data_set(path, key, value)` | set a field (in memory) |
+| `data_save(path)` | write the asset back to disk |
+
+```c
+function start() {
+  var hp = data_num("data/goblin.okaydata", "health", 10);
+  set_text(data_str("data/goblin.okaydata", "name", "?") + " HP:" + hp);
+}
+```
 
 ## Other backends
 

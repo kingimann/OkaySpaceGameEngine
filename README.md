@@ -81,8 +81,9 @@ planet, `A` player ship.)*
 - **Persistent save data** — `Prefs` (PlayerPrefs-style key/value) for high
   scores and settings; the player auto-loads/saves it.
 - **Starter templates** — `Platformer` / `TopDown` / **`CoinCollector`** (a
-  complete, playable game) / **`MainMenu`** (UI panel + title + Start button)
-  build component-wired scenes from the New Project flow.
+  complete, playable game) / **`MainMenu`** (UI panel + title + Start button) /
+  **`Inventory`** (drag-and-drop bag with slots) build component-wired scenes
+  from the New Project flow.
 - **Utilities** — seedable `Random`, a typed `EventBus`, `Rect`/`Bounds`, extra
   `Mathf` (InverseLerp, SmoothDamp, LerpAngle…), and `Scene::FindObjectsOfType<T>`.
 - **Multiplayer — host your own server, in ~5 lines** — cross-platform UDP
@@ -134,8 +135,30 @@ planet, `A` player ship.)*
   addressable), reusable `style` classes, parameterized `define` custom widgets,
   live data **binding** (`bind="Score: {score}"`), and inline validation with
   line numbers.
-- **Tweening & saves** — DOTween-style `tween_move`/`tween_scale` (with easings)
-  and a save system (`save_game`/`load_game`/`save_exists` slots) from OkayScript.
+- **Tweening (DOTween-style) & saves** — animate from OkayScript with
+  `tween_move`/`tween_move3`/`tween_scale`/`tween_rotate`/`tween_color`/
+  `tween_fade` (any easing), each with an optional **on-complete callback**;
+  plus **`tween_loop_move`** (ping-pong floaters/patrols), **`tween_punch_scale`**
+  / **`tween_punch_pos`** and **`tween_shake`** for game-feel "juice". And a save
+  system (`save_game`/`load_game`/`save_exists` slots).
+- **Drag & drop (UI *and* world items)** — make any UI widget draggable with a
+  **UI Draggable** component (drop onto a **UI Drop Target**), or any world
+  sprite draggable with **Draggable** (drop onto a **Drop Zone**). Both fire
+  `on_drop()` / `on_receive()` (scripts read `ui_drop_source/target()` and
+  `drop_source/target()`) and share rich options: lock-axis, drag threshold,
+  bring-to-front, **snap-into-slot/zone** (instant inventories), return-to-start,
+  **accept-tag** filtering, **grid snap** (board/tile games), drag-scale, and
+  hover highlight + `on_hover_enter/exit()`. The **Inventory** starter template
+  is a working drag-and-drop bag.
+- **Scriptable Objects (Data Assets)** — reusable `.okaydata` files of named
+  fields for item/enemy/level definitions and config (Unity's ScriptableObject).
+  Create via **Project → New Data Asset**, edit fields in the editor, read from
+  OkayScript with `data_num`/`data_str`/`data_has` and write with
+  `data_set`/`data_save`.
+- **Raycasting from script** — `raycast(ox,oy,dx,dy[,max])` (and 3D
+  `raycast3(...)`) return the **name of the object hit**, with detail accessors
+  `ray_hit()`, `ray_object()`, `ray_x/y()` (point), `ray_nx/ny()` (normal) and
+  `ray_dist()` — for shooting, line-of-sight, ground checks and click-to-select.
 - **Build for desktop, web & mobile** — one project, every target: a
   self-contained Windows `.exe`, a **WebAssembly** build via Emscripten
   (`scripts/build-web.sh`), and Android/iOS via SDL2.

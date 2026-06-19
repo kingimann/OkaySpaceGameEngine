@@ -199,6 +199,44 @@ int main() {
         CHECK_NEAR(go->transform->Position().z, 5.0f, 0.001f);
     }
 
+    // --- Vector properties: .magnitude / .normalized -------------------
+    {
+        Scene s("UVecProp"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("VP");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    var v = new Vector3(3, 4, 0);\n"
+            "    transform.position.x = v.magnitude;\n"      // 5
+            "    var n = v.normalized;\n"
+            "    transform.position.y = n.x;\n"              // 0.6
+            "    transform.position.z = Mathf.PerlinNoise(5, 5);\n"  // in [0,1]
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 5.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().y, 0.6f, 0.001f);
+        CHECK(go->transform->Position().z >= 0.0f && go->transform->Position().z <= 1.0f);
+    }
+
+    // --- Color values drive set_color; string format & padding ---------
+    {
+        Scene s("UColor"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Col");
+        auto* sr = go->AddComponent<SpriteRenderer>();
+        auto* tr = go->AddComponent<TextRenderer>();
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    set_color(Color.red);\n"
+            "    set_text(format(\"HP {0}/{1}\", 3, 10) + \" #\" + pad_left(\"7\", 3, \"0\"));\n"
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(sr->color.r, 1.0f, 0.001f);
+        CHECK_NEAR(sr->color.g, 0.0f, 0.001f);
+        CHECK_NEAR(sr->color.b, 0.0f, 0.001f);
+        CHECK(tr->text == "HP 3/10 #007");
+    }
+
     // --- do-while runs at least once -----------------------------------
     {
         Scene s("UDo"); s.physicsEnabled = false;

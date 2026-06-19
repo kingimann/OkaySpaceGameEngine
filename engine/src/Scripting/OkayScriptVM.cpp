@@ -627,10 +627,21 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     if (name == "Screen.height")       return Value{UICanvas::Height()};
     if (name == "Input.mousePosition.x") return Value{Input::MousePosition().x};
     if (name == "Input.mousePosition.y") return Value{Input::MousePosition().y};
+    if (name == "Input.mousePosition")   { Vec2 m = Input::MousePosition(); return Value{Vec3{m.x, m.y, 0.0f}}; }
     // Vector constants
     if (name == "Vector3.zero" || name == "Vector2.zero") return Value{Vec3::Zero};
     if (name == "Vector3.one"  || name == "Vector2.one")  return Value{Vec3{1, 1, 1}};
     if (name == "Quaternion.identity") return Value{Vec3::Zero};   // euler (0,0,0)
+    // Color constants (RGB as a Vec3; pass to set_color/set_tint).
+    if (name == "Color.red")     return Value{Vec3{1, 0, 0}};
+    if (name == "Color.green")   return Value{Vec3{0, 1, 0}};
+    if (name == "Color.blue")    return Value{Vec3{0, 0, 1}};
+    if (name == "Color.white")   return Value{Vec3{1, 1, 1}};
+    if (name == "Color.black")   return Value{Vec3{0, 0, 0}};
+    if (name == "Color.yellow")  return Value{Vec3{1, 1, 0}};
+    if (name == "Color.cyan")    return Value{Vec3{0, 1, 1}};
+    if (name == "Color.magenta") return Value{Vec3{1, 0, 1}};
+    if (name == "Color.gray" || name == "Color.grey") return Value{Vec3{0.5f, 0.5f, 0.5f}};
     if (name == "Vector3.up")    return Value{Vec3{0, 1, 0}};
     if (name == "Vector3.down")  return Value{Vec3{0, -1, 0}};
     if (name == "Vector3.right") return Value{Vec3{1, 0, 0}};
@@ -652,21 +663,29 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
         if (name == "transform.localScale.z") return Value{t->localScale.z};
         if (name == "transform.eulerAngles.z" || name == "transform.rotation")
             return Value{EulerZ(t->localRotation)};
+        if (name == "transform.forward") return Value{t->Forward()};
+        if (name == "transform.up")      return Value{t->Up()};
+        if (name == "transform.right")   return Value{t->Right()};
     }
     if (g) {
         if (name == "gameObject.name") return Value{g->name};
         if (name == "gameObject.activeSelf" || name == "gameObject.active") return Value{g->active};
         if (name == "gameObject.tag")  return Value{g->tag};
     }
-    // Generic: <var>.x/.y/.z where <var> is a local/global holding a Vector3
-    // (e.g. var v = new Vector3(1,2,3); v.x).
+    // Generic vector properties on a variable holding a Vector3, e.g.
+    //   var v = new Vector3(1,2,3); v.x  v.magnitude  v.normalized
     {
         auto dot = name.rfind('.');
-        if (dot != std::string::npos && dot + 2 == name.size()) {
-            std::string base = name.substr(0, dot); char comp = name[dot + 1];
-            if (base.find('.') == std::string::npos && (comp == 'x' || comp == 'y' || comp == 'z') && Has(base)) {
+        if (dot != std::string::npos) {
+            std::string base = name.substr(0, dot), prop = name.substr(dot + 1);
+            if (base.find('.') == std::string::npos && Has(base)) {
                 Vec3 v = Get(base).AsVec3();
-                return Value{comp == 'x' ? v.x : comp == 'y' ? v.y : v.z};
+                if (prop == "x") return Value{v.x};
+                if (prop == "y") return Value{v.y};
+                if (prop == "z") return Value{v.z};
+                if (prop == "magnitude")    return Value{v.Magnitude()};
+                if (prop == "sqrMagnitude") return Value{v.x * v.x + v.y * v.y + v.z * v.z};
+                if (prop == "normalized") { float m = v.Magnitude(); return Value{m > 1e-6f ? v * (1.0f / m) : Vec3::Zero}; }
             }
         }
     }
@@ -1555,8 +1574,16 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["set_color"] = [go](std::vector<Value>& a) {
-            Color c{a.size() > 0 ? a[0].AsFloat() : 1.0f, a.size() > 1 ? a[1].AsFloat() : 1.0f,
-                    a.size() > 2 ? a[2].AsFloat() : 1.0f, a.size() > 3 ? a[3].AsFloat() : 1.0f};
+            // Accept either set_color(r, g, b[, a]) or a single Color/Vector3
+            // value: set_color(Color.red) / set_color(myColor [, alpha]).
+            Color c;
+            if (!a.empty() && a[0].IsVec3()) {
+                Vec3 v = a[0].AsVec3();
+                c = Color{v.x, v.y, v.z, a.size() > 1 ? a[1].AsFloat() : 1.0f};
+            } else {
+                c = Color{a.size() > 0 ? a[0].AsFloat() : 1.0f, a.size() > 1 ? a[1].AsFloat() : 1.0f,
+                          a.size() > 2 ? a[2].AsFloat() : 1.0f, a.size() > 3 ? a[3].AsFloat() : 1.0f};
+            }
             if (GameObject* g = go()) {
                 if (auto* sr = g->GetComponent<SpriteRenderer>()) sr->color = c;
                 if (auto* tr = g->GetComponent<TextRenderer>()) tr->color = c;
@@ -2338,6 +2365,51 @@ struct OkayScriptVM::Impl {
             std::string s = a[0].AsString(), out;
             int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
             for (int i = 0; i < n; ++i) out += s;
+            return Value{out};
+        };
+        // pad_left("7", 3)      -> "  7"   ;  pad_left("7", 3, "0") -> "007"
+        b["pad_left"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString();
+            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
+            while ((int)s.size() < width) s.insert(s.begin(), fill);
+            return Value{s};
+        };
+        b["pad_right"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString();
+            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
+            while ((int)s.size() < width) s += fill;
+            return Value{s};
+        };
+        // format("hp={} of {}", 7, 9) -> "hp=7 of 9" (sequential), and also
+        // C#-style positional placeholders: format("{0} / {1}", a, b).
+        b["format"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            const std::string tmpl = a[0].AsString();
+            std::string out; std::size_t seq = 1;
+            for (std::size_t i = 0; i < tmpl.size(); ++i) {
+                if (tmpl[i] == '{') {
+                    std::size_t close = tmpl.find('}', i);
+                    if (close != std::string::npos) {
+                        std::string inside = tmpl.substr(i + 1, close - i - 1);
+                        if (inside.empty()) {                 // {} -> next arg in order
+                            if (seq < a.size()) out += a[seq++].AsString();
+                        } else {
+                            bool num = !inside.empty();
+                            for (char ch : inside) if (!std::isdigit((unsigned char)ch)) num = false;
+                            if (num) { std::size_t idx = (std::size_t)std::stoi(inside) + 1;
+                                       if (idx < a.size()) out += a[idx].AsString(); }
+                            else { out += '{'; out += inside; out += '}'; }   // leave literal
+                        }
+                        i = close;
+                        continue;
+                    }
+                }
+                out += tmpl[i];
+            }
             return Value{out};
         };
         b["to_num"] = [](std::vector<Value>& a) {
@@ -3122,6 +3194,12 @@ struct OkayScriptVM::Impl {
             return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
                               a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f}};
         };
+        // Color(r, g, b) -> a Vec3 of RGB (pass to set_color / set_tint).
+        b["Color"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 1.0f,
+                              a.size() > 1 ? a[1].AsFloat() : 1.0f,
+                              a.size() > 2 ? a[2].AsFloat() : 1.0f}};
+        };
         // Vector math on Vec3 values (from Vector3(...)/new Vector3(...)). Read
         // components with v.x/v.y/v.z (see property access) or vec_x/y/z(v).
         b["vec_add"]   = [](std::vector<Value>& a) -> Value { return Value{(a.size() > 0 ? a[0].AsVec3() : Vec3::Zero) + (a.size() > 1 ? a[1].AsVec3() : Vec3::Zero)}; };
@@ -3151,11 +3229,40 @@ struct OkayScriptVM::Impl {
         b["vec_x"] = [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().x}; };
         b["vec_y"] = [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().y}; };
         b["vec_z"] = [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().z}; };
+        b["vec_move_towards"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 3) return Value{Vec3::Zero};
+            Vec3 c = a[0].AsVec3(), t = a[1].AsVec3(); float md = a[2].AsFloat();
+            Vec3 d = t - c; float dist = d.Magnitude();
+            if (dist <= md || dist < 1e-6f) return Value{t};
+            return Value{c + d * (md / dist)};
+        };
+        // Smooth 2D value noise in [0,1] (a stand-in for Unity's Mathf.PerlinNoise).
+        b["noise"] = [](std::vector<Value>& a) -> Value {
+            float x = a.size() > 0 ? a[0].AsFloat() : 0.0f;
+            float y = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+            auto hash = [](int xi, int yi) {
+                unsigned h = (unsigned)(xi * 374761393 + yi * 668265263);
+                h = (h ^ (h >> 13)) * 1274126177u;
+                return (float)((h ^ (h >> 16)) & 0xFFFFFFu) / (float)0xFFFFFFu;
+            };
+            int x0 = (int)std::floor(x), y0 = (int)std::floor(y);
+            float fx = x - x0, fy = y - y0;
+            auto sm = [](float t) { return t * t * (3.0f - 2.0f * t); };
+            float sx = sm(fx), sy = sm(fy);
+            float n00 = hash(x0, y0), n10 = hash(x0 + 1, y0);
+            float n01 = hash(x0, y0 + 1), n11 = hash(x0 + 1, y0 + 1);
+            float nx0 = n00 + (n10 - n00) * sx, nx1 = n01 + (n11 - n01) * sx;
+            return Value{nx0 + (nx1 - nx0) * sy};
+        };
         alias("vec3", "Vector3");
         alias("vec2", "Vector2");
         alias("Vector3.Lerp", "vec_lerp");
         alias("Vector3.Dot", "vec_dot");
         alias("Vector3.Normalize", "vec_normalize");
+        alias("Vector3.MoveTowards", "vec_move_towards");
+        alias("Mathf.PerlinNoise", "noise");
+        alias("string.Format", "format");
+        alias("String.Format", "format");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
         // transform.rotation, which uses the Z component for 2D).
         b["Quaternion.Euler"] = [](std::vector<Value>& a) -> Value {

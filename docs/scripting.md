@@ -72,10 +72,21 @@ What's supported:
   `Mathf.Approximately`, `Mathf.DeltaAngle`, `Mathf.LerpAngle`.
 - **`do { ... } while (cond);`** loops (runs the body at least once).
 - **Vector3 values & math**: `var v = new Vector3(3, 4, 0);` then read/write
-  `v.x` / `v.y` / `v.z` directly, or use `vec_add`, `vec_sub`, `vec_scale`,
-  `vec_length`, `vec_dot`, `vec_distance`, `vec_normalize`, `vec_lerp`,
-  `vec_x/y/z` (and `Vector3.Lerp` / `Vector3.Dot` / `Vector3.Normalize` /
-  `Vector3.Distance`).
+  `v.x` / `v.y` / `v.z` and read `v.magnitude` / `v.sqrMagnitude` /
+  `v.normalized`; or use `vec_add`, `vec_sub`, `vec_scale`, `vec_length`,
+  `vec_dot`, `vec_distance`, `vec_normalize`, `vec_lerp`, `vec_move_towards`,
+  `vec_x/y/z` (and `Vector3.Lerp` / `Dot` / `Normalize` / `Distance` /
+  `MoveTowards`).
+- **Direction & input vectors**: `transform.forward` / `transform.up` /
+  `transform.right` and `Input.mousePosition` return Vector3 values.
+- **`Mathf.PerlinNoise(x, y)`** — smooth 2D noise in `[0, 1]` (terrain, wobble,
+  procedural motion).
+- **Color values**: `Color.red/green/blue/white/black/yellow/cyan/magenta/gray`
+  and `Color(r, g, b)` / `new Color(r, g, b)`; pass them to `set_color` /
+  `set_tint` (which also still take separate `r, g, b[, a]` numbers).
+- **String formatting**: `format("HP {0}/{1}", hp, max)` (positional) or
+  `format("HP {} / {}", hp, max)` (sequential), plus `pad_left(s, width[, ch])`
+  and `pad_right(s, width[, ch])` — also as `string.Format(...)`.
 - **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
   `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
   / BoxCollider2D at runtime).

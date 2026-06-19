@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.5.0
+  - More scripting:
+      * Color values — Color.red/green/blue/white/black/yellow/cyan/magenta/gray
+        and Color(r,g,b)/new Color(r,g,b); pass them to set_color / set_tint
+        (which still accept separate r,g,b[,a] numbers too).
+      * String formatting — format("HP {0}/{1}", a, b) positional and
+        format("HP {} / {}", a, b) sequential (also string.Format), plus
+        pad_left / pad_right.
+    Backward compatible.
+
+v2.4.0
+  - More scripting, vector-focused:
+      * Vector3 properties: v.magnitude, v.sqrMagnitude, v.normalized (plus the
+        existing v.x/v.y/v.z), and vec_move_towards / Vector3.MoveTowards.
+      * Direction & input vectors: transform.forward / up / right and
+        Input.mousePosition return Vector3 values.
+      * Mathf.PerlinNoise(x, y) — smooth 2D noise in [0,1].
+    Fully backward compatible.
+
 v2.3.0
   - Even more scripting:
       * Vector3 values you can actually work with: var v = new Vector3(3,4,0);

@@ -199,6 +199,25 @@ int main() {
         CHECK_NEAR(go->transform->Position().z, 5.0f, 0.001f);
     }
 
+    // --- Vector properties: .magnitude / .normalized -------------------
+    {
+        Scene s("UVecProp"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("VP");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    var v = new Vector3(3, 4, 0);\n"
+            "    transform.position.x = v.magnitude;\n"      // 5
+            "    var n = v.normalized;\n"
+            "    transform.position.y = n.x;\n"              // 0.6
+            "    transform.position.z = Mathf.PerlinNoise(5, 5);\n"  // in [0,1]
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 5.0f, 0.001f);
+        CHECK_NEAR(go->transform->Position().y, 0.6f, 0.001f);
+        CHECK(go->transform->Position().z >= 0.0f && go->transform->Position().z <= 1.0f);
+    }
+
     // --- do-while runs at least once -----------------------------------
     {
         Scene s("UDo"); s.physicsEnabled = false;

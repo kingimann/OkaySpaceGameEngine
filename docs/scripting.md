@@ -72,10 +72,15 @@ What's supported:
   `Mathf.Approximately`, `Mathf.DeltaAngle`, `Mathf.LerpAngle`.
 - **`do { ... } while (cond);`** loops (runs the body at least once).
 - **Vector3 values & math**: `var v = new Vector3(3, 4, 0);` then read/write
-  `v.x` / `v.y` / `v.z` directly, or use `vec_add`, `vec_sub`, `vec_scale`,
-  `vec_length`, `vec_dot`, `vec_distance`, `vec_normalize`, `vec_lerp`,
-  `vec_x/y/z` (and `Vector3.Lerp` / `Vector3.Dot` / `Vector3.Normalize` /
-  `Vector3.Distance`).
+  `v.x` / `v.y` / `v.z` and read `v.magnitude` / `v.sqrMagnitude` /
+  `v.normalized`; or use `vec_add`, `vec_sub`, `vec_scale`, `vec_length`,
+  `vec_dot`, `vec_distance`, `vec_normalize`, `vec_lerp`, `vec_move_towards`,
+  `vec_x/y/z` (and `Vector3.Lerp` / `Dot` / `Normalize` / `Distance` /
+  `MoveTowards`).
+- **Direction & input vectors**: `transform.forward` / `transform.up` /
+  `transform.right` and `Input.mousePosition` return Vector3 values.
+- **`Mathf.PerlinNoise(x, y)`** — smooth 2D noise in `[0, 1]` (terrain, wobble,
+  procedural motion).
 - **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
   `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
   / BoxCollider2D at runtime).

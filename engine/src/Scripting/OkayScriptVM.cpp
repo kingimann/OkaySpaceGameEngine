@@ -627,6 +627,7 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     if (name == "Screen.height")       return Value{UICanvas::Height()};
     if (name == "Input.mousePosition.x") return Value{Input::MousePosition().x};
     if (name == "Input.mousePosition.y") return Value{Input::MousePosition().y};
+    if (name == "Input.mousePosition")   { Vec2 m = Input::MousePosition(); return Value{Vec3{m.x, m.y, 0.0f}}; }
     // Vector constants
     if (name == "Vector3.zero" || name == "Vector2.zero") return Value{Vec3::Zero};
     if (name == "Vector3.one"  || name == "Vector2.one")  return Value{Vec3{1, 1, 1}};
@@ -652,21 +653,29 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
         if (name == "transform.localScale.z") return Value{t->localScale.z};
         if (name == "transform.eulerAngles.z" || name == "transform.rotation")
             return Value{EulerZ(t->localRotation)};
+        if (name == "transform.forward") return Value{t->Forward()};
+        if (name == "transform.up")      return Value{t->Up()};
+        if (name == "transform.right")   return Value{t->Right()};
     }
     if (g) {
         if (name == "gameObject.name") return Value{g->name};
         if (name == "gameObject.activeSelf" || name == "gameObject.active") return Value{g->active};
         if (name == "gameObject.tag")  return Value{g->tag};
     }
-    // Generic: <var>.x/.y/.z where <var> is a local/global holding a Vector3
-    // (e.g. var v = new Vector3(1,2,3); v.x).
+    // Generic vector properties on a variable holding a Vector3, e.g.
+    //   var v = new Vector3(1,2,3); v.x  v.magnitude  v.normalized
     {
         auto dot = name.rfind('.');
-        if (dot != std::string::npos && dot + 2 == name.size()) {
-            std::string base = name.substr(0, dot); char comp = name[dot + 1];
-            if (base.find('.') == std::string::npos && (comp == 'x' || comp == 'y' || comp == 'z') && Has(base)) {
+        if (dot != std::string::npos) {
+            std::string base = name.substr(0, dot), prop = name.substr(dot + 1);
+            if (base.find('.') == std::string::npos && Has(base)) {
                 Vec3 v = Get(base).AsVec3();
-                return Value{comp == 'x' ? v.x : comp == 'y' ? v.y : v.z};
+                if (prop == "x") return Value{v.x};
+                if (prop == "y") return Value{v.y};
+                if (prop == "z") return Value{v.z};
+                if (prop == "magnitude")    return Value{v.Magnitude()};
+                if (prop == "sqrMagnitude") return Value{v.x * v.x + v.y * v.y + v.z * v.z};
+                if (prop == "normalized") { float m = v.Magnitude(); return Value{m > 1e-6f ? v * (1.0f / m) : Vec3::Zero}; }
             }
         }
     }
@@ -3151,11 +3160,38 @@ struct OkayScriptVM::Impl {
         b["vec_x"] = [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().x}; };
         b["vec_y"] = [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().y}; };
         b["vec_z"] = [](std::vector<Value>& a) -> Value { return Value{a.empty() ? 0.0f : a[0].AsVec3().z}; };
+        b["vec_move_towards"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 3) return Value{Vec3::Zero};
+            Vec3 c = a[0].AsVec3(), t = a[1].AsVec3(); float md = a[2].AsFloat();
+            Vec3 d = t - c; float dist = d.Magnitude();
+            if (dist <= md || dist < 1e-6f) return Value{t};
+            return Value{c + d * (md / dist)};
+        };
+        // Smooth 2D value noise in [0,1] (a stand-in for Unity's Mathf.PerlinNoise).
+        b["noise"] = [](std::vector<Value>& a) -> Value {
+            float x = a.size() > 0 ? a[0].AsFloat() : 0.0f;
+            float y = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+            auto hash = [](int xi, int yi) {
+                unsigned h = (unsigned)(xi * 374761393 + yi * 668265263);
+                h = (h ^ (h >> 13)) * 1274126177u;
+                return (float)((h ^ (h >> 16)) & 0xFFFFFFu) / (float)0xFFFFFFu;
+            };
+            int x0 = (int)std::floor(x), y0 = (int)std::floor(y);
+            float fx = x - x0, fy = y - y0;
+            auto sm = [](float t) { return t * t * (3.0f - 2.0f * t); };
+            float sx = sm(fx), sy = sm(fy);
+            float n00 = hash(x0, y0), n10 = hash(x0 + 1, y0);
+            float n01 = hash(x0, y0 + 1), n11 = hash(x0 + 1, y0 + 1);
+            float nx0 = n00 + (n10 - n00) * sx, nx1 = n01 + (n11 - n01) * sx;
+            return Value{nx0 + (nx1 - nx0) * sy};
+        };
         alias("vec3", "Vector3");
         alias("vec2", "Vector2");
         alias("Vector3.Lerp", "vec_lerp");
         alias("Vector3.Dot", "vec_dot");
         alias("Vector3.Normalize", "vec_normalize");
+        alias("Vector3.MoveTowards", "vec_move_towards");
+        alias("Mathf.PerlinNoise", "noise");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
         // transform.rotation, which uses the Z component for 2D).
         b["Quaternion.Euler"] = [](std::vector<Value>& a) -> Value {

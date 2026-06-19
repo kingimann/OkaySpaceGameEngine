@@ -196,5 +196,39 @@ int main() {
         CHECK(OwningCanvas(start) == canvas->GetComponent<Canvas>());  // parented to it
     }
 
+    // --- Every UI widget is scene-selectable + survives save/load -------
+    // Guards the regression where new widgets (scroll view, layout group, …)
+    // weren't in GetUIRect and so couldn't be clicked/resized in the editor.
+    {
+        Scene s("allui"); s.physicsEnabled = false;
+        s.CreateGameObject("Btn")->AddComponent<UIButton>();
+        s.CreateGameObject("Pan")->AddComponent<UIPanel>();
+        s.CreateGameObject("Img")->AddComponent<UIImage>();
+        s.CreateGameObject("Sld")->AddComponent<UISlider>();
+        s.CreateGameObject("Tog")->AddComponent<UIToggle>();
+        s.CreateGameObject("Prg")->AddComponent<UIProgressBar>();
+        s.CreateGameObject("Inp")->AddComponent<UIInputField>();
+        s.CreateGameObject("Drp")->AddComponent<UIDropdown>();
+        s.CreateGameObject("Scr")->AddComponent<UIScrollView>();
+        s.CreateGameObject("Lay")->AddComponent<UILayoutGroup>();
+        { auto* t = s.CreateGameObject("Txt")->AddComponent<TextRenderer>(); t->screenSpace = true; }
+
+        // Every one reports as a selectable UI element (valid GetUIRect).
+        const char* names[] = {"Btn","Pan","Img","Sld","Tog","Prg","Inp","Drp","Scr","Lay","Txt"};
+        for (const char* n : names) CHECK(IsUIElement(s.Find(n)));
+
+        // Sizable widgets expose a size pointer (resize handles); the layout
+        // group is move-only (a controller, no size).
+        CHECK(GetUIRect(s.Find("Scr")).sizePtr != nullptr);
+        CHECK(GetUIRect(s.Find("Drp")).sizePtr != nullptr);
+        CHECK(GetUIRect(s.Find("Lay")).sizePtr == nullptr);
+        CHECK(GetUIRect(s.Find("Lay")).valid);   // still selectable/movable
+
+        // All of them round-trip through the serializer.
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        for (const char* n : names) CHECK(s2.Find(n) && IsUIElement(s2.Find(n)));
+    }
+
     TEST_MAIN_RESULT();
 }

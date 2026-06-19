@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v1.68.0
+  - Fix: the newer UI widgets (Scroll View and Layout Group) couldn't be
+    selected or resized in the Scene view because they weren't recognized as
+    UI elements. Scroll View is now fully selectable/resizable; the Layout Group
+    is selectable and movable by its origin (it's a controller, so no resize).
+  - Added a test that creates one of every UI widget and verifies all are
+    scene-selectable and survive save/load.
+
 v1.67.0
   - Fix: selecting and resizing screen-space UI in the Scene view was
     unreliable — the canvas "hovered" test could read false in some docking /

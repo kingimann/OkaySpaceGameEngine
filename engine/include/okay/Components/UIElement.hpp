@@ -13,6 +13,7 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Math/Vec2.hpp"
 
 namespace okay {
@@ -55,6 +56,12 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* pb = go->GetComponent<UIProgressBar>()){ r.valid = true; r.anchor = pb->anchor; r.position = &pb->position; r.sizePtr = &pb->size; r.size = pb->size; }
     else if (auto* in = go->GetComponent<UIInputField>()) { r.valid = true; r.anchor = in->anchor; r.position = &in->position; r.sizePtr = &in->size; r.size = in->size; }
     else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
+    else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
+    else if (auto* lg = go->GetComponent<UILayoutGroup>()){ // a controller (no size): movable by its origin, not resizable
+        r.valid = true; r.anchor = lg->anchor; r.position = &lg->origin; r.sizePtr = nullptr;
+        float ext = lg->ContentSize() > 24.0f ? lg->ContentSize() : 24.0f;
+        r.size = (lg->direction == UILayoutGroup::Direction::Vertical) ? Vec2{160.0f, ext} : Vec2{ext, 40.0f};
+    }
     else if (auto* tr = go->GetComponent<TextRenderer>()) {
         if (tr->screenSpace) {
             r.valid = true; r.anchor = tr->anchor; r.position = &tr->screenPos;

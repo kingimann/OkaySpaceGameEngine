@@ -7,10 +7,13 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Graphics/Image.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace okay {
@@ -81,7 +84,65 @@ public:
             }
         }
     }
+
+    /// Textured triangle: perspective-correct UVs (pass u/w, v/w and 1/w per
+    /// vertex). Samples `img` (wrapped), multiplies by `tint` and lighting
+    /// `shade`, adds `spec` + emissive `(er,eg,eb)`. Depth-tested per pixel.
+    void TriangleTex(const float* X, const float* Y, const float* D,
+                     const float* IW, const float* U, const float* V,
+                     const Image& img, const Color& tint,
+                     float shade, float spec, float er, float eg, float eb) {
+        int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
+        int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
+        int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
+        int maxY = (int)std::ceil (std::fmax(Y[0], std::fmax(Y[1], Y[2])));
+        if (minX < 0) minX = 0;
+        if (minY < 0) minY = 0;
+        if (maxX >= width) maxX = width - 1;
+        if (maxY >= height) maxY = height - 1;
+        float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
+        if (area == 0.0f) return;
+        float inv = 1.0f / area;
+        int tw = img.Width(), th = img.Height();
+        if (tw <= 0 || th <= 0) return;
+        for (int y = minY; y <= maxY; ++y) {
+            for (int x = minX; x <= maxX; ++x) {
+                float px = x + 0.5f, py = y + 0.5f;
+                float w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * inv;
+                float w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * inv;
+                float w2 = 1.0f - w0 - w1;
+                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
+                std::size_t i = (std::size_t)y * width + x;
+                if (d >= depth[i]) continue;
+                float iw = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                if (iw == 0.0f) continue;
+                float u = (w0 * U[0] + w1 * U[1] + w2 * U[2]) / iw;
+                float v = (w0 * V[0] + w1 * V[1] + w2 * V[2]) / iw;
+                int tx = (int)std::floor(u * tw) % tw; if (tx < 0) tx += tw;
+                int ty = (int)std::floor((1.0f - v) * th) % th; if (ty < 0) ty += th;
+                Color tc = img.GetPixel(tx, ty);
+                depth[i] = d;
+                color[i] = PackRGB(tc.r * tint.r * shade + spec + er,
+                                   tc.g * tint.g * shade + spec + eg,
+                                   tc.b * tint.b * shade + spec + eb);
+            }
+        }
+    }
 };
+
+// Process-wide texture cache for the software renderer (path -> RGBA image).
+// Loaded lazily; failed/empty paths cache an empty image so we don't retry.
+inline Image* GetCachedTexture(const std::string& path) {
+    static std::unordered_map<std::string, Image> cache;
+    auto it = cache.find(path);
+    if (it == cache.end()) {
+        Image img;
+        img.Load(path);   // leaves the image empty on failure
+        it = cache.emplace(path, std::move(img)).first;
+    }
+    return it->second.Width() > 0 ? &it->second : nullptr;
+}
 
 /// Render all active MeshRenderers in `scene` into `r` with the given
 /// view-projection matrix and camera position. Two-sided + flat-shaded via the
@@ -94,13 +155,16 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         Mat4 model = go->transform->LocalToWorldMatrix();
         const auto& v = mr->mesh.vertices;
         const auto& t = mr->mesh.triangles;
+        const bool hasUV = mr->mesh.uvs.size() == v.size();
+        Image* tex = mr->texture.empty() ? nullptr : GetCachedTexture(mr->texture);
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
+            int idx[3] = {t[i], t[i + 1], t[i + 2]};
             Vec3 wp[3];
-            for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[t[i + k]]);
+            for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[idx[k]]);
             Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
             Vec3 centroid = (wp[0] + wp[1] + wp[2]) * (1.0f / 3.0f);
             if (Vec3::Dot(normal, eye - centroid) < 0.0f) normal = normal * -1.0f; // two-sided
-            float sx[3], sy[3], sd[3]; bool ok = true;
+            float sx[3], sy[3], sd[3], iw[3]; bool ok = true;
             for (int k = 0; k < 3; ++k) {
                 Vec4 c = vp * Vec4{wp[k], 1.0f};
                 if (c.w <= 0.05f) { ok = false; break; }       // behind camera
@@ -110,6 +174,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 // is affine in screen space, so per-pixel barycentric interpolation
                 // gives the correct depth — fixes faces bleeding through at angles.
                 sd[k] = c.z / c.w;
+                iw[k] = 1.0f / c.w;
             }
             if (!ok) continue;
             // Material: diffuse (Lambert, or flat when unlit) + Blinn-Phong
@@ -123,11 +188,33 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 float nh = Vec3::Dot(normal, h);
                 if (nh > 0.0f) spec = std::pow(nh, mr->shininess) * mr->specular;
             }
-            std::uint32_t abgr = Raster::PackRGB(
-                mr->color.r * shade + spec + mr->emissive.r,
-                mr->color.g * shade + spec + mr->emissive.g,
-                mr->color.b * shade + spec + mr->emissive.b);
-            r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1], sx[2], sy[2], sd[2], abgr);
+            if (tex) {
+                // UVs: use the mesh's own if present, else planar/box-project
+                // from local position along the face's dominant axis (exact on
+                // axis-aligned faces like cubes/planes).
+                float u[3], vv[3];
+                Vec3 ln = Vec3::Cross(v[idx[1]] - v[idx[0]], v[idx[2]] - v[idx[0]]);
+                float ax = std::fabs(ln.x), ay = std::fabs(ln.y), az = std::fabs(ln.z);
+                for (int k = 0; k < 3; ++k) {
+                    float uu, vt;
+                    if (hasUV) { uu = mr->mesh.uvs[idx[k]].x; vt = mr->mesh.uvs[idx[k]].y; }
+                    else {
+                        const Vec3& p = v[idx[k]];
+                        if (ax >= ay && ax >= az) { uu = p.z + 0.5f; vt = p.y + 0.5f; }
+                        else if (ay >= ax && ay >= az) { uu = p.x + 0.5f; vt = p.z + 0.5f; }
+                        else { uu = p.x + 0.5f; vt = p.y + 0.5f; }
+                    }
+                    u[k] = uu * iw[k]; vv[k] = vt * iw[k];   // perspective-correct
+                }
+                r.TriangleTex(sx, sy, sd, iw, u, vv, *tex, mr->color, shade, spec,
+                              mr->emissive.r, mr->emissive.g, mr->emissive.b);
+            } else {
+                std::uint32_t abgr = Raster::PackRGB(
+                    mr->color.r * shade + spec + mr->emissive.r,
+                    mr->color.g * shade + spec + mr->emissive.g,
+                    mr->color.b * shade + spec + mr->emissive.b);
+                r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1], sx[2], sy[2], sd[2], abgr);
+            }
         }
     }
 }

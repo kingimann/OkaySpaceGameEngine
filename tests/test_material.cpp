@@ -17,6 +17,7 @@ int main() {
         mr->specular = 0.75f;
         mr->shininess = 48.0f;
         mr->unlit = true;
+        mr->texture = "assets/brick.png";
 
         std::string text = SceneSerializer::Serialize(s);
         Scene s2("x");
@@ -29,6 +30,7 @@ int main() {
             CHECK_NEAR(m2->specular, 0.75f, 1e-5f);
             CHECK_NEAR(m2->shininess, 48.0f, 1e-4f);
             CHECK(m2->unlit);
+            CHECK(m2->texture == "assets/brick.png");
         }
     }
 

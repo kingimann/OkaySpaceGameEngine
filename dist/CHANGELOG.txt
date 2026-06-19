@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.15.0
+  - Textured 3D meshes: set a Texture image on a Mesh Renderer and it's mapped
+    onto the mesh (planar/box projection — exact on cube/plane/quad faces),
+    tinted by Color and lit by the material. Works in the editor and the
+    standalone player; Build Game bundles the image. Textures are cached.
+
 v1.14.0
   - Materials on 3D objects: the Mesh Renderer now has Emissive (self-glow),
     Specular + Shininess (Blinn-Phong highlights), and an Unlit toggle, all

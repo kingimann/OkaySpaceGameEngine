@@ -22,6 +22,7 @@ struct Mesh {
     std::string       name;       // "Cube"/"Pyramid"/"Quad" for primitives
     std::vector<Vec3> vertices;
     std::vector<int>  triangles;  // 3 indices per triangle
+    std::vector<Vec2> uvs;        // optional per-vertex UVs (parallel to vertices)
 
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
 

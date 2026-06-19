@@ -1937,6 +1937,15 @@ void DrawInspector(EditorState& ed) {
                 else ConsoleLog("OBJ load failed: " + mr->meshPath);
                 ed.dirty = true;
             }
+            // Texture (planar/box-mapped, tinted by Color). Blank = untextured.
+            char tex[256];
+            std::strncpy(tex, mr->texture.c_str(), sizeof(tex) - 1);
+            tex[sizeof(tex) - 1] = '\0';
+            if (ImGui::InputText("Texture##mesh", tex, sizeof(tex))) { mr->texture = tex; ed.dirty = true; }
+            if (!mr->texture.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##tex")) { mr->texture.clear(); ed.dirty = true; }
+            }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
             if (ImGui::SmallButton("Subdivide##mesh")) { mr->mesh.Subdivide(); ed.dirty = true; }

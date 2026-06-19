@@ -26,6 +26,10 @@ public:
     float shininess = 16.0f;
     /// Skip lighting entirely and draw the flat base color.
     bool  unlit = false;
+    /// Optional texture image (PNG/JPG…). When set, the solid renderer maps it
+    /// onto the mesh (planar/box projection) tinted by `color`. Build Game
+    /// bundles the file alongside the exe.
+    std::string texture;
 
     /// Optional .OBJ model file. When set, the scene loader replaces `mesh` with
     /// the loaded geometry (and Build Game bundles the file alongside the exe).

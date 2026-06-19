@@ -120,7 +120,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // so older scenes without it still load.
         out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
             << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
-            << (mr->unlit ? 1 : 0) << "\n";
+            << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
@@ -403,6 +403,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> e.r >> e.g >> e.b >> spec >> shin >> unlit;
                         mr->emissive = e; mr->specular = spec; mr->shininess = shin;
                         mr->unlit = (unlit != 0);
+                        in >> std::ws; // optional texture path (quoted)
+                        if (in.peek() == '"') mr->texture = ReadQuoted(in);
                     }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();
@@ -710,7 +712,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     for (const auto& go : scene.Objects()) {
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
-        if (auto* mr = go->GetComponent<MeshRenderer>())   add(mr->meshPath);
+        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); }
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
         if (auto* an = go->GetComponent<SpriteAnimator>())
             for (const auto& f : an->frames) add(f);

@@ -3634,6 +3634,21 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##utt")) toRemove = tt;
         }
     }
+    if (auto* dg = go->GetComponent<UIDraggable>()) {
+        if (ImGui::CollapsingHeader("UI Draggable", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Checkbox("Return to Start##udg", &dg->returnToStart)) ed.dirty = true;
+            if (ImGui::Checkbox("Any widget is a target##udg", &dg->anyTarget)) ed.dirty = true;
+            ImGui::TextDisabled("Drag at runtime. Drop onto a UI Drop Target fires");
+            ImGui::TextDisabled("on_drop() here + on_receive() on the target.");
+            if (ImGui::SmallButton("Remove##udg")) toRemove = dg;
+        }
+    }
+    if (auto* dt = go->GetComponent<UIDropTarget>()) {
+        if (ImGui::CollapsingHeader("UI Drop Target", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextDisabled("Draggables dropped here call this object's on_receive().");
+            if (ImGui::SmallButton("Remove##udt")) toRemove = dt;
+        }
+    }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         if (ImGui::CollapsingHeader("UI Layout Group", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* dirs[] = {"Vertical", "Horizontal"};
@@ -3926,6 +3941,10 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<UISlider>(); ed.dirty = true; }
         if (!go->GetComponent<UIToggle>() && F("UI Toggle") && ImGui::Selectable("UI Toggle"))
             { go->AddComponent<UIToggle>(); ed.dirty = true; }
+        if (!go->GetComponent<UIDraggable>() && F("UI Draggable") && ImGui::Selectable("UI Draggable"))
+            { go->AddComponent<UIDraggable>(); ed.dirty = true; }
+        if (!go->GetComponent<UIDropTarget>() && F("UI Drop Target") && ImGui::Selectable("UI Drop Target"))
+            { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));

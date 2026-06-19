@@ -23,6 +23,7 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIElement.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIInputField.hpp"
@@ -1191,6 +1192,26 @@ struct OkayScriptVM::Impl {
                 if (auto* im = g->GetComponent<UIImage>()) im->fillAmount = a[1].AsFloat();
             return Value{};
         };
+        // Pointer / hover over UI. uiHit returns the topmost widget under the mouse.
+        auto uiHit = [sceneOf]() -> GameObject* {
+            Scene* s = sceneOf(); if (!s) return nullptr;
+            Vec2 m = Input::MousePosition();
+            GameObject* hit = nullptr;
+            for (const auto& up : s->Objects())
+                if (up->active && UIScreenContains(up.get(), m, UICanvas::Width(), UICanvas::Height()))
+                    hit = up.get();
+            return hit;
+        };
+        b["ui_pointer_over"] = [uiHit](std::vector<Value>&) -> Value { return Value{uiHit() != nullptr}; };
+        b["ui_hovered"] = [uiHit](std::vector<Value>&) -> Value {
+            GameObject* h = uiHit(); return Value{h ? h->name : std::string{}};
+        };
+        b["ui_is_hovered"] = [uiHit](std::vector<Value>& a) -> Value {
+            GameObject* h = uiHit(); return Value{h && !a.empty() && h->name == a[0].AsString()};
+        };
+        // The last drag-and-drop result (set by UIDraggable via Prefs).
+        b["ui_drop_source"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("ui_drop_source", "")}; };
+        b["ui_drop_target"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("ui_drop_target", "")}; };
         b["set_texture"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* sr = g->GetComponent<SpriteRenderer>())

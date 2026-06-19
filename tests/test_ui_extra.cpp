@@ -411,6 +411,31 @@ int main() {
         Input::FeedMouse({0, 0}, 0);
     }
 
+    // --- Drag & drop: UIDraggable moves and reports a drop -------------
+    {
+        Scene s("dnd"); s.physicsEnabled = false;
+        UICanvas::Set(1280, 720);
+        auto* item = s.CreateGameObject("Item");
+        auto* ip = item->AddComponent<UIPanel>(); ip->position = {0, 0}; ip->size = {40, 40};
+        item->AddComponent<UIDraggable>();
+        auto* slot = s.CreateGameObject("Slot");
+        auto* sp = slot->AddComponent<UIPanel>(); sp->position = {200, 0}; sp->size = {60, 60};
+        slot->AddComponent<UIDropTarget>();
+        s.Start();
+        Prefs::Clear();
+
+        // Press on the item, drag toward the slot, release over it.
+        Input::FeedMouse({10, 10}, 0); s.Update(0.016f);
+        Input::FeedMouse({10, 10}, 1u << 0); s.Update(0.016f);   // grab
+        Input::FeedMouse({220, 20}, 1u << 0); s.Update(0.016f);  // drag onto slot
+        CHECK(ip->position.x > 100.0f);                          // moved
+        Input::FeedMouse({220, 20}, 0); s.Update(0.016f);        // release on slot
+        CHECK(item->GetComponent<UIDraggable>()->LastDropTarget() == slot);
+        CHECK(Prefs::GetString("ui_drop_source", "") == "Item");
+        CHECK(Prefs::GetString("ui_drop_target", "") == "Slot");
+        Prefs::Clear(); Input::FeedMouse({0, 0}, 0);
+    }
+
     // --- Scroll View wheel-scrolls in the built game (Input wheel) -----
     {
         Scene s("scroll"); s.physicsEnabled = false;

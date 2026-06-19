@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.90.0
+  - UI drag & drop: add a "UI Draggable" component to a widget to drag it at
+    runtime; add "UI Drop Target" to widgets that can receive it. Dropping fires
+    on_drop() on the dragged object and on_receive() on the target (the names are
+    in Prefs / scripts read ui_drop_source() & ui_drop_target()). Optional
+    return-to-start. The building blocks for inventories, card games, etc.
+  - Mouse-over-UI from script: ui_pointer_over(), ui_hovered() (name under the
+    cursor), ui_is_hovered("name").
+
 v1.89.0
   - Mouse wheel now reaches the game: a new Input wheel channel (MouseWheel /
     FeedMouseWheel) fed by the player and editor. Scroll Views now actually

@@ -37,6 +37,9 @@ public:
     /// directions in `outlineColor`, so it reads on any background.
     bool  outline = false;
     Color outlineColor = Color::FromBytes(0, 0, 0, 230);
+    /// Faux-bold: the glyphs are drawn a second time shifted 1 px right, so the
+    /// strokes thicken — for headings/emphasis without a separate font.
+    bool  bold = false;
 
     /// Width/height of the current text at native font size (8 px per glyph).
     int PixelWidth() const { return Font8x8::MeasureWidth(text.c_str()); }

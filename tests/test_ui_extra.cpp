@@ -176,6 +176,7 @@ int main() {
         tr->align = 2;
         tr->outline = true;
         tr->outlineColor = Color::FromBytes(1, 2, 3, 4);
+        tr->bold = true;
 
         std::string txt = SceneSerializer::Serialize(s);
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
@@ -192,6 +193,7 @@ int main() {
         auto* tr2 = s2.Find("Txt")->GetComponent<TextRenderer>();
         CHECK(tr2->align == 2);
         CHECK(tr2->outline);
+        CHECK(tr2->bold);
         CHECK_NEAR(tr2->outlineColor.g, Color::FromBytes(1, 2, 3, 4).g, 1e-3f);
     }
 

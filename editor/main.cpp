@@ -3356,6 +3356,7 @@ void DrawInspector(EditorState& ed) {
                 float ocol[4] = {tr->outlineColor.r, tr->outlineColor.g, tr->outlineColor.b, tr->outlineColor.a};
                 if (ImGui::ColorEdit4("Outline Color##txt", ocol)) { tr->outlineColor = {ocol[0], ocol[1], ocol[2], ocol[3]}; ed.dirty = true; }
             }
+            if (ImGui::Checkbox("Bold##txt", &tr->bold)) ed.dirty = true;
             ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
@@ -4030,6 +4031,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             DrawBitmapText(dl, tr->text, bx, by + px, px, oc);
         }
         DrawBitmapText(dl, tr->text, bx, by, px, col);
+        if (tr->bold) DrawBitmapText(dl, tr->text, bx + px, by, px, col);  // faux-bold
     }
 
     // UI images (logos/icons): preview as a tinted rect with the path centered.
@@ -4574,6 +4576,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
                            o.y + tr->shadowOffset.y * px, px, sh);
         DrawBitmapText(dl, tr->text, o.x, o.y, px, col);
+        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + px, o.y, px, col);  // faux-bold
     }
 
     // 2D collider wireframes (Unity-style green outlines), Scene view only.

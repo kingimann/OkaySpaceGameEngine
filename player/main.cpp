@@ -469,6 +469,7 @@ int main(int argc, char** argv) {
                         DrawText(renderer, tr->text, o.x, o.y + p, p, ol);
                     }
                     DrawText(renderer, tr->text, o.x, o.y, p, col);
+                    if (tr->bold) DrawText(renderer, tr->text, o.x + p, o.y, p, col);
                 } else {
                     SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
                     float px = tr->pixelSize * scale;
@@ -482,6 +483,7 @@ int main(int argc, char** argv) {
                         DrawText(renderer, tr->text, o.x, o.y + px, px, ol);
                     }
                     DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col);
+                    if (tr->bold) DrawText(renderer, tr->text, (float)o.x + px, (float)o.y, px, col);
                 }
             }
         }

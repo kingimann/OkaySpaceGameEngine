@@ -273,6 +273,7 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         if (t.Has("align"))  { std::string a = t.Get("align"); c->align = a == "center" ? 1 : a == "right" ? 2 : 0; }
         if (t.Has("outline")){ c->outline = true; c->outlineColor = ParseColor(t.Get("outline")); }
         if (t.Has("shadow")) { c->shadow = true; c->shadowColor = ParseColor(t.Get("shadow")); }
+        if (t.Has("bold"))   c->bold = ParseBool(t.Get("bold"));
         c->screenPos = c->screenPos + offset;
         // Data binding: `bind="Score: {score}"` keeps the label in sync with the
         // named Prefs values each frame (set them with prefs_set from script).
@@ -313,7 +314,7 @@ bool KnownKey(const std::string& k) {
     static const char* keys[] = {
         "pos","size","color","anchor","class","corner","tooltip","tipdelay","name","active",
         "border","bordercolor","gradient","hover","pressed","textcolor","font",
-        "align","outline","shadow","bind","value","min","max","fill","knob","knobsize",
+        "align","outline","shadow","bold","bind","value","min","max","fill","knob","knobsize",
         "showvalue","on","check","percent","texture","nineslice","amount","placeholder",
         "options","content","bar","dir","spacing","padding","type",
         "onclick","onchange","ontoggle","onsubmit"};

@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.84.0
+  - Text gets a Bold option (faux-bold by double-striking the glyphs) for
+    headings and emphasis — in the Inspector, OkayUI markup (bold=1), saved with
+    the scene, and rendered in the editor and built game.
+
 v1.83.0
   - UI Toggle gains a Style: classic Checkbox or a modern on/off Switch (a pill
     track with a sliding knob, with its own knob color) — pick it in the

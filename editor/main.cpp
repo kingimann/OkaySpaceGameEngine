@@ -327,6 +327,9 @@ bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 bool g_skybox = true;            // draw the default sky gradient in 3D views
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
+bool g_paused = false;           // pause the simulation while staying in Play
+bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
+int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 std::string g_clipboard;         // serialized GameObject for copy/paste
 
 // File dialogs.
@@ -561,7 +564,9 @@ void ConsoleLog(const std::string& msg) {
 
 // ---- A dark, Unity-ish theme ------------------------------------------
 void ApplyTheme() {
-    ImGui::StyleColorsDark();
+    if (g_theme == 1)      ImGui::StyleColorsLight();
+    else if (g_theme == 2) ImGui::StyleColorsClassic();
+    else                   ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
     // Rounding & spacing for a soft, modern look.
     s.WindowRounding    = 6.0f;  s.ChildRounding    = 6.0f;
@@ -574,6 +579,9 @@ void ApplyTheme() {
     s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 0.0f;
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
     s.WindowMenuButtonPosition = ImGuiDir_None;
+
+    // Light / Classic keep ImGui's own palette (only the metrics above apply).
+    if (g_theme != 0) return;
 
     // A cohesive dark palette with a warm blue accent.
     const ImVec4 accent      = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
@@ -677,7 +685,14 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::Separator();
         ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
         ImGui::MenuItem("Skybox", nullptr, &g_skybox);
+        ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);
         ImGui::Separator();
+        if (ImGui::BeginMenu("Theme")) {
+            if (ImGui::MenuItem("Dark", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); }
+            if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); }
+            if (ImGui::MenuItem("Classic", nullptr, g_theme == 2)) { g_theme = 2; ApplyTheme(); }
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
         ImGui::EndMenu();
     }
@@ -781,18 +796,27 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         if (ImGui::Button(">  Play", ImVec2(btnW, 0))) {
-            ed.Play(); ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+            if (g_clearConsoleOnPlay) g_console.clear();
+            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
         ImGui::PopStyleColor(2);
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-        if (ImGui::Button("[]  Stop", ImVec2(btnW, 0))) { ed.Stop(); ConsoleLog("Stop"); }
+        if (ImGui::Button("[]  Stop", ImVec2(btnW, 0))) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+        if (g_paused) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.45f, 0.15f, 1.0f));
+            if (ImGui::Button("Resume", ImVec2(64, 0))) g_paused = false;
+            ImGui::PopStyleColor();
+        } else {
+            if (ImGui::Button("Pause", ImVec2(64, 0))) g_paused = true;
+        }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Step", ImVec2(50, 0))) ed.Tick(1.0f / 60.0f);
+    if (ImGui::Button("Step", ImVec2(50, 0))) { g_paused = true; ed.Tick(1.0f / 60.0f); }
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.34f, 0.62f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.52f, 0.42f, 0.75f, 1.0f));
@@ -801,8 +825,9 @@ void DrawMenuAndToolbar(EditorState& ed, bool& running) {
 
     // Right-aligned status.
     char status[96];
+    const char* mode = !ed.isPlaying() ? "EDIT" : (g_paused ? "PAUSED" : "PLAYING");
     std::snprintf(status, sizeof(status), "v%s   %s   %.0f FPS", OKAY_ENGINE_VERSION,
-                  ed.isPlaying() ? "PLAYING" : "EDIT", ImGui::GetIO().Framerate);
+                  mode, ImGui::GetIO().Framerate);
     ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - 16);
     ImGui::TextColored(ed.isPlaying() ? ImVec4(0.4f, 0.9f, 0.4f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1),
                        "%s", status);
@@ -1354,9 +1379,10 @@ void HandleShortcuts(EditorState& ed) {
         ed.DeleteSelected(); ConsoleLog("Deleted selection");
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
-        if (ed.isPlaying()) { ed.Stop(); ConsoleLog("Stop"); }
+        if (ed.isPlaying()) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         else {
-            ed.Play(); ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+            if (g_clearConsoleOnPlay) g_console.clear();
+            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
     }
@@ -3268,7 +3294,7 @@ int main(int argc, char** argv) {
             Input::FeedKeys({}); // release everything in edit mode
         }
 
-        ed.Tick(dt);
+        if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
         // Pump audio while playing (mono float, queued).
@@ -3311,6 +3337,16 @@ int main(int argc, char** argv) {
         if (g_showScriptEditor) DrawScriptEditor(ed);
         DrawScriptDocs();
         if (g_showStats)     DrawStats(ed);
+
+        // Play-mode tint: a colored border around the whole window so it's
+        // obvious the game is running (green) or paused (amber) — like Unity.
+        if (ed.isPlaying()) {
+            ImGuiViewport* mv = ImGui::GetMainViewport();
+            ImU32 c = g_paused ? IM_COL32(220, 180, 60, 200) : IM_COL32(70, 200, 110, 200);
+            ImGui::GetForegroundDrawList()->AddRect(mv->WorkPos,
+                ImVec2(mv->WorkPos.x + mv->WorkSize.x, mv->WorkPos.y + mv->WorkSize.y),
+                c, 0.0f, 0, 3.0f);
+        }
 
         ImGui::Render();
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);

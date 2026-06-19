@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v1.12.0
+  - Pause / Resume while playing (Step now pauses then advances one frame).
+  - Play-mode tint: a colored border frames the window while playing (green) or
+    paused (amber), so the run state is obvious at a glance.
+  - Editor themes: Dark / Light / Classic under View > Theme.
+  - View > Clear Console on Play (on by default) wipes the log each run.
+  - Status bar shows EDIT / PLAYING / PAUSED.
+
 v1.11.0
   - GameObject > 3D Object submenu to create any built-in primitive (Cube,
     Sphere, Cylinder, Capsule, Cone, Plane, Pyramid, Wedge, Torus, Icosphere,

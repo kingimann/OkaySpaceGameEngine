@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.3.0
+  - Even more scripting:
+      * Vector3 values you can actually work with: var v = new Vector3(3,4,0);
+        read/write v.x / v.y / v.z directly, plus vec_add / vec_sub / vec_scale /
+        vec_length / vec_dot / vec_distance / vec_normalize / vec_lerp / vec_x/y/z
+        (and Vector3.Lerp / Dot / Normalize / Distance).
+      * do { ... } while (cond); loops (run the body at least once).
+    Fully backward compatible.
+
+v2.2.0
+  - More scripting power, still Unity-flavored:
+      * String interpolation: $"Score: {score}  next={score + 1}" — embed any
+        expression in { } (use {{ }} for literal braces).
+      * switch (x) { case 1: ...; break; default: ...; } — C-style fall-through
+        until break; case labels can be numbers or strings.
+      * More Mathf: Clamp01, Repeat, InverseLerp, Approximately, DeltaAngle,
+        LerpAngle.
+    Fully backward compatible.
+
 v2.1.0
   - Easier-to-read scripting: ~90 plain-English aliases so you can usually guess
     the right word — place_at / move_by / position_x / set_position_x / turn /

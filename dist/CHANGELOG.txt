@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v1.65.0
+  - Data binding now works on buttons and input fields too (not just text):
+    `button bind="Coins: {coins}"` keeps the label live. UITextBind updates
+    whichever text-bearing widget it sits on (text / button / input).
+
 v1.64.0
   - UI Toolkit percent sizing: any pos/size component can be a percentage of the
     canvas — e.g. `panel pos=10%,25% size=50%,40` is positioned a tenth in,

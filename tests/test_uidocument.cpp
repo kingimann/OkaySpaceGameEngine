@@ -280,6 +280,18 @@ int main() {
         // Literal braces survive: "{{" / "}}".
         CHECK(UITextBind::Resolve("a {{b}} c") == "a {b} c");
 
+        // Binding also drives a button label.
+        Prefs::SetInt("coins", 3);
+        auto* doc2 = s.CreateGameObject("Doc2")->AddComponent<UIDocument>();
+        doc2->markup = "button bind=\"Coins: {coins}\" pos=0,0 size=120,40\n";
+        doc2->Rebuild(); s.Start(); s.Update(0.0f);
+        UIButton* bb = nullptr;
+        for (GameObject* g : doc2->Generated())
+            if (auto* x = g->GetComponent<UIButton>()) bb = x;
+        CHECK(bb && bb->label == "Coins: 3");
+        Prefs::SetInt("coins", 9); s.Update(0.016f);
+        CHECK(bb && bb->label == "Coins: 9");
+
         // Round-trips: the binding restores and re-applies.
         std::string txt = SceneSerializer::Serialize(s);
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);

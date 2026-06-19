@@ -187,6 +187,7 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         if (t.Has("font"))      c->fontScale    = ParseF(t.Get("font"), 2.0f);
         if (t.Has("border"))    c->borderWidth  = ParseF(t.Get("border"));
         if (t.Has("bordercolor")) c->borderColor = ParseColor(t.Get("bordercolor"));
+        if (t.Has("bind")) { auto* bd = go->AddComponent<UITextBind>(); bd->format = t.Get("bind"); c->label = UITextBind::Resolve(bd->format); }
         Handler(go, t, "onclick", "on_click");
     } else if (t.type == "image") {
         auto* c = go->AddComponent<UIImage>();
@@ -232,6 +233,7 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
         if (!t.label.empty()) c->text = t.label;
         if (t.Has("placeholder")) c->placeholder = t.Get("placeholder");
         if (t.Has("max")) c->maxLength = std::atoi(t.Get("max").c_str());
+        if (t.Has("bind")) { auto* bd = go->AddComponent<UITextBind>(); bd->format = t.Get("bind"); c->text = UITextBind::Resolve(bd->format); }
         Handler(go, t, "onsubmit", "on_submit");
     } else if (t.type == "dropdown") {
         auto* c = go->AddComponent<UIDropdown>();

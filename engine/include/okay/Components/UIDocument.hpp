@@ -34,7 +34,8 @@ class GameObject;
 ///   panel:    border=w bordercolor=r,g,b,a gradient=r,g,b,a
 ///   button:   hover= pressed= textcolor= font=<scale> border= onclick=<script>
 ///   text:     align=left|center|right  outline=r,g,b,a  shadow=r,g,b,a
-///             bind="Score: {score}"  (live data binding to Prefs values)
+///   bind="Score: {score}" — live data binding to Prefs (text/button/input);
+///         updates every frame, {{ }} for literal braces
 ///   slider:   value= min= max= fill= knob= showvalue=1 onchange=<script>
 ///   toggle:   on=1 check=r,g,b,a ontoggle=<script>
 ///   progress: value= fill= percent=1

@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.26.0
+  - Project drag & drop: drag an asset onto a folder (in the grid or the tree)
+    to move it there.
+  - New Character Controller 3D: no-code WASD movement on the ground plane with
+    jump; drives a Rigidbody3D if present.
+
 v1.25.0
   - New Character Controller 2D component: no-code Top-Down or Platformer
     movement (WASD/arrows, jump). Drives a Rigidbody2D if present.

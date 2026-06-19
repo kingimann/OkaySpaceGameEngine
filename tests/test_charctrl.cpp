@@ -55,5 +55,29 @@ int main() {
         }
     }
 
+    // 3D controller: 'w' drives forward (+Z) velocity; space jumps when grounded.
+    {
+        Scene s("3"); s.physicsEnabled = true;
+        GameObject* o = s.CreateGameObject("P3");
+        auto* rb = o->AddComponent<Rigidbody3D>();
+        rb->gravityScale = 0.0f;
+        auto* cc = o->AddComponent<CharacterController3D>();
+        cc->speed = 5.0f; cc->jumpForce = 6.0f;
+        s.Start();
+        Input::FeedKeys({'w'});
+        s.Update(1.0f / 60.0f);
+        CHECK_NEAR(rb->velocity.z, 5.0f, 1e-3f);
+        Input::FeedKeys({'w', ' '});
+        s.Update(1.0f / 60.0f);
+        CHECK_NEAR(rb->velocity.y, 6.0f, 1e-3f);
+        Input::FeedKeys({});
+
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("y"); SceneSerializer::Deserialize(s2, txt);
+        auto* c2 = s2.Find("P3") ? s2.Find("P3")->GetComponent<CharacterController3D>() : nullptr;
+        CHECK(c2 != nullptr);
+        if (c2) CHECK_NEAR(c2->jumpForce, 6.0f, 1e-4f);
+    }
+
     TEST_MAIN_RESULT();
 }

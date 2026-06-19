@@ -10,6 +10,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/CharacterController2D.hpp"
+#include "okay/Components/CharacterController3D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -184,6 +185,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* cc = go->GetComponent<CharacterController2D>()) {
         out << "  charctrl2d " << (int)cc->mode << " " << cc->speed << " " << cc->jumpForce << "\n";
+    }
+    if (auto* cc = go->GetComponent<CharacterController3D>()) {
+        out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0) << "\n";
     }
     if (auto* sp = go->GetComponent<Spinner>()) {
         out << "  spinner " << sp->angularVelocity.x << " " << sp->angularVelocity.y
@@ -496,6 +500,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> m >> sp >> jf;
                     auto* cc = go->AddComponent<CharacterController2D>();
                     cc->mode = (CharacterController2D::Mode)m; cc->speed = sp; cc->jumpForce = jf;
+                } else if (field == "charctrl3d") {
+                    float sp = 5, jf = 6; int cj = 1;
+                    in >> sp >> jf >> cj;
+                    auto* cc = go->AddComponent<CharacterController3D>();
+                    cc->speed = sp; cc->jumpForce = jf; cc->canJump = (cj != 0);
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
                     go->AddComponent<Mover>()->velocity = v;

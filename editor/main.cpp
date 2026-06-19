@@ -1005,6 +1005,27 @@ static AssetKind KindOf(const std::string& extLower, bool isDir) {
     return {IM_COL32(150, 152, 162, 255), "•"};
 }
 
+// Move an asset (file or folder) into a destination folder (drag-and-drop).
+static void MoveAssetInto(const std::string& src, const std::filesystem::path& destDir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path s(src), d = destDir / fs::path(src).filename();
+    if (s.empty() || s == d || s.parent_path() == destDir || !fs::is_directory(destDir, ec)) return;
+    fs::rename(s, d, ec);
+    ConsoleLog(ec ? ("Move failed: " + ec.message())
+                  : ("Moved " + s.filename().string() + " -> " + destDir.filename().string()));
+}
+
+// A drop target on the last-drawn item that accepts an asset path and moves it
+// into `destDir`.
+static void AssetDropTarget(const std::filesystem::path& destDir) {
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+            MoveAssetInto(std::string((const char*)p->Data), destDir);
+        ImGui::EndDragDropTarget();
+    }
+}
+
 // Recursive folder tree (left pane). Clicking a node makes it the current dir.
 static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::size_t bufsz) {
     namespace fs = std::filesystem;
@@ -1025,6 +1046,7 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
         bool open = ImGui::TreeNodeEx(s.filename().string().c_str(), f);
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
             std::strncpy(dirBuf, s.string().c_str(), bufsz - 1);
+        AssetDropTarget(s);   // drop assets onto a folder to move them in
         if (open) { DrawFolderTree(s, dirBuf, bufsz); ImGui::TreePop(); }
     }
 }
@@ -1075,6 +1097,7 @@ void DrawProject(EditorState& ed) {
     bool ro = ImGui::TreeNodeEx("Assets##root", rootF);
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
         std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
+    AssetDropTarget(root);
     if (ro) { DrawFolderTree(root, dirBuf, sizeof(dirBuf)); ImGui::TreePop(); }
     ImGui::EndChild();
 
@@ -1152,6 +1175,14 @@ void DrawProject(EditorState& ed) {
         bool hov = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked()) selected = full;
         bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+
+        // Drag this asset; drop it onto a folder (here or in the tree) to move it.
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload("ASSET_PATH", full.c_str(), full.size() + 1);
+            ImGui::TextUnformatted(name.c_str());
+            ImGui::EndDragDropSource();
+        }
+        if (isDir) AssetDropTarget(e.path());
 
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cell);
         ImGui::TextWrapped("%s", name.c_str());
@@ -2428,6 +2459,16 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cc2")) toRemove = cc;
         }
     }
+    if (auto* cc = go->GetComponent<CharacterController3D>()) {
+        if (ImGui::CollapsingHeader("Character Controller 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::DragFloat("Speed##cc3", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Can Jump##cc3", &cc->canJump)) ed.dirty = true;
+            if (cc->canJump)
+                if (ImGui::DragFloat("Jump Force##cc3", &cc->jumpForce, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            ImGui::TextDisabled("WASD / arrows on XZ. Uses a Rigidbody3D if present.");
+            if (ImGui::SmallButton("Remove##cc3")) toRemove = cc;
+        }
+    }
     if (auto* al = go->GetComponent<ActionList>()) {
         if (ImGui::CollapsingHeader("Actions (Visual Script)", ImGuiTreeNodeFlags_DefaultOpen)) {
             // Trigger -> Conditions -> Instructions, Game-Creator style.
@@ -2793,6 +2834,8 @@ void DrawInspector(EditorState& ed) {
         Hdr("Gameplay");
         if (!go->GetComponent<CharacterController2D>() && F("Character Controller 2D") && ImGui::Selectable("Character Controller 2D"))
             { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
+        if (!go->GetComponent<CharacterController3D>() && F("Character Controller 3D") && ImGui::Selectable("Character Controller 3D"))
+            { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
         if (!go->GetComponent<Mover>() && F("Mover") && ImGui::Selectable("Mover"))
             { go->AddComponent<Mover>(); ed.dirty = true; }
         if (!go->GetComponent<Spinner>() && F("Spinner") && ImGui::Selectable("Spinner"))

@@ -22,6 +22,7 @@ add_library(okay_engine
     src/Components/ScriptComponent.cpp
     src/Components/ActionList.cpp
     src/Components/UIDocument.cpp
+    src/Components/Terrain.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Platform/Steam/Steam.cpp
     src/Components/SteamManager.cpp

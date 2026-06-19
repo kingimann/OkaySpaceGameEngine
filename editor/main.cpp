@@ -428,6 +428,9 @@ enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
 int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
+float g_terrainRadius = 6.0f;
+float g_terrainStrength = 4.0f;
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
@@ -892,6 +895,16 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
             if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
             if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Terrain")) {
+                GameObject* go = ed.CreateEmpty("Terrain");
+                auto* tr = go->AddComponent<Terrain>();
+                tr->Resize(32); tr->size = 50.0f;
+                tr->Hills(6, 6.0f, (unsigned)ImGui::GetTime());   // start with gentle hills
+                tr->Apply();
+                ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
+                ConsoleLog("Created Terrain");
+            }
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Create Directional Light")) {
@@ -2761,6 +2774,26 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Fit 1u##mesh")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
+            // Material presets: save the current look as a reusable .okaymat, or
+            // load one (also accepts a .okaymat dropped from the Project).
+            ImGui::SeparatorText("Material preset");
+            static char matPath[256] = "Assets/Material.okaymat";
+            ImGui::InputText("##matpath", matPath, sizeof(matPath));
+            std::string dropped;
+            if (AcceptAssetPathField(dropped) && dropped.size() < sizeof(matPath)) {
+                std::strncpy(matPath, dropped.c_str(), sizeof(matPath) - 1); matPath[sizeof(matPath)-1]='\0';
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Save##mat")) {
+                if (Material::FromRenderer(*mr).SaveToFile(matPath)) ConsoleLog(std::string("Saved material ") + matPath);
+                else ConsoleLog("Material save failed");
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Load##mat")) {
+                Material m;
+                if (Material::LoadFromFile(matPath, m)) { m.ApplyTo(*mr); ed.dirty = true; ConsoleLog(std::string("Loaded material ") + matPath); }
+                else ConsoleLog("Material load failed");
+            }
             // One-click physics: add a Rigidbody3D + a box collider fitted to the
             // mesh, so a primitive drops and collides immediately on Play.
             if (!go->GetComponent<Rigidbody3D>() || !go->GetComponent<BoxCollider3D>()) {
@@ -2773,6 +2806,33 @@ void DrawInspector(EditorState& ed) {
                     ConsoleLog("Added Rigidbody3D + fitted BoxCollider3D");
                 }
             }
+        }
+    }
+    if (auto* tr = go->GetComponent<Terrain>()) {
+        if (ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float c[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
+            if (ImGui::ColorEdit4("Color##terr", c)) { tr->color = {c[0],c[1],c[2],c[3]}; tr->Apply(); ed.dirty = true; }
+            int res = tr->resolution;
+            if (ImGui::SliderInt("Resolution##terr", &res, 4, 128) && res != tr->resolution) {
+                tr->Resize(res); tr->Apply(); ed.dirty = true;
+            }
+            if (ImGui::DragFloat("Size##terr", &tr->size, 0.5f, 2.0f, 1000.0f)) { tr->Apply(); ed.dirty = true; }
+
+            ImGui::SeparatorText("Sculpt brush (drag in the 3D view)");
+            ImGui::Checkbox("Sculpt##terr", &g_terrainSculpt);
+            ImGui::SameLine(); ImGui::TextDisabled("(Shift = lower)");
+            ImGui::SliderFloat("Radius##terr", &g_terrainRadius, 0.5f, 30.0f);
+            ImGui::SliderFloat("Strength##terr", &g_terrainStrength, 0.1f, 20.0f);
+
+            ImGui::SeparatorText("Generate");
+            if (ImGui::SmallButton("Flatten##terr"))   { tr->Flatten(0.0f); tr->Apply(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Smooth##terr"))    { tr->Smooth(); tr->Apply(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Randomize##terr")) { tr->Randomize(2.0f, (unsigned)ImGui::GetTime()); tr->Apply(); ed.dirty = true; }
+            if (ImGui::SmallButton("Hills##terr"))     { tr->Flatten(0.0f); tr->Hills(8, 8.0f, (unsigned)ImGui::GetTime()); tr->Apply(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove##terr")) toRemove = tr;
         }
     }
     if (auto* li = go->GetComponent<Light>()) {
@@ -4141,6 +4201,35 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     dl->PopClipRect();
 
     if (gameView) return;   // the Game view is non-interactive
+
+    // ---- Terrain sculpt brush: drag on the terrain to raise it (Shift lowers).
+    //      Unprojects the cursor to a world ray and intersects the terrain's
+    //      ground plane, then raises heights within the brush radius. ----
+    if (ed.selected() && g_terrainSculpt && hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (auto* terr = ed.selected()->GetComponent<Terrain>()) {
+            float ndcx = 2.0f * (io.MousePos.x - canvasPos.x) / canvasSize.x - 1.0f;
+            float ndcy = 1.0f - 2.0f * (io.MousePos.y - canvasPos.y) / canvasSize.y;
+            Mat4 inv = vp.Inverse();
+            Vec4 pn = inv * Vec4{ndcx, ndcy, -1.0f, 1.0f};
+            Vec4 pf = inv * Vec4{ndcx, ndcy,  1.0f, 1.0f};
+            Vec3 a{pn.x / pn.w, pn.y / pn.w, pn.z / pn.w};
+            Vec3 b{pf.x / pf.w, pf.y / pf.w, pf.z / pf.w};
+            Vec3 rdir = (b - a).Normalized();
+            Vec3 op = ed.selected()->transform->Position();
+            if (Mathf::Abs(rdir.y) > 1e-5f) {
+                float t = (op.y - a.y) / rdir.y;
+                if (t > 0.0f) {
+                    Vec3 hit = a + rdir * t;
+                    float delta = g_terrainStrength * io.DeltaTime * (io.KeyShift ? -1.0f : 1.0f);
+                    terr->RaiseAt(hit.x - op.x, hit.z - op.z, g_terrainRadius, delta);
+                    terr->Apply();
+                    ed.dirty = true;
+                }
+            }
+            g_uiHandled = true;   // consume the drag: no gizmo / pick this frame
+            return;
+        }
+    }
 
     // ---- Transform gizmo: 3 colored axis handles at the selected object
     //      (Unity W/E/R). Grab a handle and drag to move/rotate/scale on that

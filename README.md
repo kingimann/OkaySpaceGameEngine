@@ -107,6 +107,13 @@ planet, `A` player ship.)*
   audio/gravity/time-scale, `prefs_*` save data, and
   `on_trigger()`/`on_collision()`/`on_click()` handlers.
   See [`docs/scripting.md`](docs/scripting.md).
+- **Terrain** — a Unity-style heightmap terrain you sculpt with a brush (drag in
+  the 3D view to raise, Shift to lower) or generate (Flatten / Smooth / Randomize
+  / Hills), rendered as a generated mesh. Create from GameObject > 3D Object >
+  Terrain; the heightmap saves with the scene.
+- **Materials** — reusable surface presets (albedo, emissive, specular, texture,
+  tiling, unlit, double-sided) saved as `.okaymat` assets and applied to any
+  Mesh Renderer (Save/Load in the inspector, or drag a `.okaymat` from Project).
 - **In-game UI like Unity** — a **Canvas** (CanvasScaler: constant-pixel or
   scale-with-screen) parents the widgets, with one **Event System** routing
   pointer input. Widgets: `UIButton` (`on_click()`), `UIPanel`, `UIImage`,

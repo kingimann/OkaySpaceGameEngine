@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v1.47.0
+  - Terrain (like Unity): a heightmap terrain you sculpt with a brush — drag in
+    the 3D Scene view to raise, hold Shift to lower (tunable radius/strength) —
+    or generate with Flatten / Smooth / Randomize / Hills. Create via GameObject
+    > 3D Object > Terrain; the heightmap renders as a mesh and saves with scene.
+  - Materials: reusable surface presets (albedo, emissive, specular, texture,
+    tiling, unlit, double-sided) saved as .okaymat assets and applied to any
+    Mesh Renderer — Save/Load in the inspector, or drop a .okaymat from Project.
+
 v1.46.0
   - Lobby ready-up + start-match (built on rooms): clients call net_ready(1);
     the host polls net_ready_count() / net_all_ready() and calls net_start_match()

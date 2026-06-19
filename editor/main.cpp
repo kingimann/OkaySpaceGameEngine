@@ -451,6 +451,18 @@ std::string ReadFile(const std::string& path) {
     std::stringstream ss; ss << f.rdbuf();
     return ss.str();
 }
+// Reveal a path in the OS file manager (NOT an IDE) — for "Show in Explorer".
+void RevealInFiles(const std::string& path) {
+#if defined(_WIN32)
+    int rc = std::system(("explorer \"" + path + "\"").c_str());
+#elif defined(__APPLE__)
+    int rc = std::system(("open \"" + path + "\" 2>/dev/null").c_str());
+#else
+    int rc = std::system(("xdg-open \"" + path + "\" >/dev/null 2>&1").c_str());
+#endif
+    (void)rc;
+}
+
 void OpenExternal(const std::string& path) {
     // Prefer VS Code if present, otherwise the OS default handler.
 #if defined(_WIN32)
@@ -1200,7 +1212,7 @@ void DrawProject(EditorState& ed) {
                 renameBuf[sizeof(renameBuf) - 1] = '\0';
             }
             if (ImGui::MenuItem("Show in Explorer"))
-                extide::OpenExternal(fs::path(full).parent_path().string());
+                extide::RevealInFiles(fs::path(full).parent_path().string());
             if (ImGui::MenuItem("Delete")) {
                 std::error_code re; fs::remove_all(full, re);
                 ConsoleLog((re ? "Delete failed: " : "Deleted ") + full);
@@ -1249,7 +1261,7 @@ void DrawProject(EditorState& ed) {
             }
             ImGui::Separator();
         }
-        if (ImGui::MenuItem("Show in Explorer")) extide::OpenExternal(dir.string());
+        if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(dir.string());
         ImGui::EndPopup();
     }
 
@@ -1972,6 +1984,26 @@ void DrawHierarchy(EditorState& ed) {
             bool open = ImGui::TreeNodeEx(node, flags, "%s%s%s", ObjectKind(node),
                                           node->name.c_str(), node->active ? "" : "  (off)");
             if (ImGui::IsItemClicked()) ed.Select(node);
+            // Drag a row onto another to re-parent it (Unity-style hierarchy).
+            if (ImGui::BeginDragDropSource()) {
+                ImGui::SetDragDropPayload("GO_PTR", &node, sizeof(GameObject*));
+                ImGui::TextUnformatted(node->name.c_str());
+                ImGui::EndDragDropSource();
+            }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
+                    GameObject* dragged = *(GameObject**)p->Data;
+                    bool cycle = false;
+                    for (Transform* t = node->transform; t; t = t->Parent())
+                        if (dragged && t == dragged->transform) { cycle = true; break; }
+                    if (dragged && dragged != node && !cycle) {
+                        ed.PushUndo();
+                        dragged->transform->SetParent(node->transform, true);
+                        ed.dirty = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
             // Right-click context menu per item.
             if (ImGui::BeginPopupContextItem()) {
                 ed.Select(node);
@@ -2000,6 +2032,36 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Create Sprite")) ed.CreateSprite();
         if (ImGui::MenuItem("Create Cube"))   ed.CreateCube();
         ImGui::EndPopup();
+    }
+
+    // Empty area: drop a prefab/scene asset to instantiate/open it, or drop a
+    // hierarchy row here to unparent it (move to the scene root).
+    ImGui::Dummy(ImGui::GetContentRegionAvail());
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* gp = ImGui::AcceptDragDropPayload("GO_PTR")) {
+            GameObject* dragged = *(GameObject**)gp->Data;
+            if (dragged && dragged->transform->Parent()) {
+                ed.PushUndo(); dragged->transform->SetParent(nullptr, true); ed.dirty = true;
+            }
+        }
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::string path((const char*)p->Data);
+            std::size_t dot = path.find_last_of('.');
+            std::string ext = dot == std::string::npos ? "" : path.substr(dot);
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            if (ext == ".okayprefab") {
+                ed.PushUndo();
+                std::string err;
+                if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err)) {
+                    ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + path);
+                } else ConsoleLog("Prefab load failed: " + err);
+            } else if (ext == ".okayscene") {
+                std::string err;
+                if (ed.Load(path, &err)) ConsoleLog("Opened " + path);
+                else ConsoleLog("Open failed: " + err);
+            }
+        }
+        ImGui::EndDragDropTarget();
     }
     ImGui::End();
 }

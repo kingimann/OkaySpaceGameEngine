@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.27.0
+  - Hierarchy: drag a row onto another to re-parent it; drop it on empty space
+    to unparent. Drag a prefab/scene from the Project into the Hierarchy to
+    instantiate / open it.
+  - Fixed: 'Show in Explorer' now opens the OS file manager instead of VS Code.
+
 v1.26.0
   - Project drag & drop: drag an asset onto a folder (in the grid or the tree)
     to move it there.

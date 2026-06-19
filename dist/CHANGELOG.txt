@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.8.2
+  - Fixed the in-app updater "doesn't update": the published editor binary was
+    built one version behind VERSION.txt, so after updating the version never
+    advanced and the same update kept being offered. The binaries are now built
+    AT the released version (they match VERSION.txt), and the updater rejects a
+    cached HTML/error page (validates the downloaded file is a real .exe) before
+    swapping it in.
+
 v2.8.1
   - Fixed 3D primitives rendering "inside-out": the Cube, Pyramid and Wedge had
     clockwise (inward-facing) winding, so backface culling dropped their front

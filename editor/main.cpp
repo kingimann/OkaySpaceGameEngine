@@ -334,6 +334,15 @@ std::string InstallUpdate(const std::string& latest) {
         fs::remove(newFile, ec);
         return "Downloaded file looked invalid; update aborted.";
     }
+    // Reject a cached HTML/error page: a real Windows .exe begins with "MZ".
+    {
+        std::ifstream chk(newFile, std::ios::binary);
+        char magic[2] = {0, 0}; chk.read(magic, 2);
+        if (magic[0] != 'M' || magic[1] != 'Z') {
+            fs::remove(newFile, ec);
+            return "Downloaded file wasn't a valid program (CDN cache?). Try again.";
+        }
+    }
     fs::path backup = self; backup += ".old";
     fs::remove(backup, ec);
     fs::rename(self, backup, ec);

@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.39.0
+  - Unity-like Build Settings: the Build dialog now has product/company names,
+    window width/height (with presets), fullscreen / resizable / vsync, "include
+    all project scenes", and a development-build flag. Builds write a
+    game.okayconfig the player reads for the window + scene list, and can bundle
+    every project scene (so load_scene_index works in the shipped game).
+
 v1.38.0
   - Added a placeholder OkaySpace logo (a ringed planet over a starfield), drawn
     procedurally and set as the window icon for both the editor and the launcher.

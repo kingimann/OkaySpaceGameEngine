@@ -408,6 +408,19 @@ char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
 bool  g_openBuildResult = false;
+
+// Unity-style Build Settings: window + player options written into the build's
+// game.okayconfig, plus which scenes to include.
+struct BuildSettings {
+    char  company[128] = "OkaySpace";
+    int   width = 1280, height = 720;
+    bool  fullscreen = false;
+    bool  resizable = true;
+    bool  vsync = true;
+    bool  includeAllProjectScenes = false; // else just the current scene
+    bool  developmentBuild = false;
+};
+BuildSettings g_build;
 bool  g_snap = false;
 float g_snapSize = 1.0f;
 // Active transform tool for the Scene view (Unity's W/E/R).
@@ -576,17 +589,56 @@ std::string EnsurePlayer(std::string* note) {
     return dest.string();
 }
 
+// Options forwarded from the Build Settings dialog into the build.
+struct Options {
+    std::string company = "OkaySpace";
+    int  width = 1280, height = 720;
+    bool fullscreen = false, resizable = true, vsync = true;
+    bool includeAllProjectScenes = false, developmentBuild = false;
+};
+
 // Build the game into outDir. Returns a human-readable status string.
 std::string Build(EditorState& ed, const std::string& outDir,
-                  const std::string& gameName) {
+                  const std::string& gameName, const Options& opt = {}) {
     std::error_code ec;
     fs::path dir(outDir);
     fs::create_directories(dir, ec);
     if (ec) return "Couldn't create folder: " + ec.message();
 
-    // 1) Write the scene next to the player as game.okayscene.
+    // 1) Write the active scene next to the player as game.okayscene (the
+    // startup scene), and gather the scene list for the config.
     if (!SceneSerializer::SaveToFile(ed.scene(), (dir / "game.okayscene").string()))
         return "Failed to write game.okayscene.";
+
+    std::vector<std::string> sceneFiles; // filenames placed in the build folder
+    sceneFiles.push_back("game.okayscene");
+    int extraScenes = 0;
+    if (opt.includeAllProjectScenes && !ed.projectDir().empty()) {
+        fs::path assets = fs::path(ed.projectDir()) / "Assets";
+        if (fs::exists(assets, ec))
+            for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                if (!e.is_regular_file() || e.path().extension() != ".okayscene") continue;
+                std::string fn = e.path().filename().string();
+                if (fn == "game.okayscene") continue;
+                fs::copy_file(e.path(), dir / fn, fs::copy_options::overwrite_existing, ec);
+                if (!ec) { sceneFiles.push_back(fn); ++extraScenes; }
+            }
+    }
+
+    // 1b) Write game.okayconfig (window + scene list) read by the player.
+    {
+        std::ofstream cf((dir / "game.okayconfig").string());
+        cf << "title=" << gameName << "\n";
+        cf << "company=" << opt.company << "\n";
+        cf << "width=" << opt.width << "\n";
+        cf << "height=" << opt.height << "\n";
+        cf << "fullscreen=" << (opt.fullscreen ? 1 : 0) << "\n";
+        cf << "resizable=" << (opt.resizable ? 1 : 0) << "\n";
+        cf << "vsync=" << (opt.vsync ? 1 : 0) << "\n";
+        cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
+        cf << "startup=game.okayscene\n";
+        for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
+    }
 
     // 2) Copy the player runtime, renamed to <Game>.exe. If it isn't beside the
     // editor, fetch it from GitHub so the build is self-contained.
@@ -626,6 +678,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
                       " — run " + exeName + " to play.";
     if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0)
         msg += "  (runtime fetched from GitHub)";
+    if (extraScenes) msg += "  (" + std::to_string(extraScenes + 1) + " scenes)";
     if (copied)  msg += "  (" + std::to_string(copied) + " asset(s) copied)";
     if (missing) msg += "  WARNING: " + std::to_string(missing) +
                         " referenced asset(s) not found and not copied.";
@@ -1959,14 +2012,44 @@ void DrawFileDialogs(EditorState& ed) {
     if (g_showBuildGame) { ImGui::OpenPopup("Build Game"); g_showBuildGame = false; }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Build Game", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Export this scene as a standalone game.");
-        ImGui::TextDisabled("Creates <Name>.exe + game.okayscene in the output folder.");
+        ImGui::Text("Build Settings — export a standalone game.");
+        ImGui::TextDisabled("Creates <Name>.exe + game.okayscene + game.okayconfig.");
         ImGui::Separator();
-        ImGui::InputText("Game name", g_buildNameBuf, sizeof(g_buildNameBuf));
+
+        ImGui::SeparatorText("Player");
+        ImGui::InputText("Product name", g_buildNameBuf, sizeof(g_buildNameBuf));
+        ImGui::InputText("Company", g_build.company, sizeof(g_build.company));
         ImGui::InputText("Output folder", g_buildDirBuf, sizeof(g_buildDirBuf));
+
+        ImGui::SeparatorText("Window");
+        ImGui::SetNextItemWidth(90); ImGui::InputInt("Width", &g_build.width); ImGui::SameLine();
+        ImGui::SetNextItemWidth(90); ImGui::InputInt("Height", &g_build.height);
+        const char* presets[] = {"1280 x 720", "1920 x 1080", "960 x 600", "800 x 600"};
+        static int presetSel = 0;
+        ImGui::SetNextItemWidth(140);
+        if (ImGui::Combo("Preset", &presetSel, presets, IM_ARRAYSIZE(presets))) {
+            const int dims[][2] = {{1280,720},{1920,1080},{960,600},{800,600}};
+            g_build.width = dims[presetSel][0]; g_build.height = dims[presetSel][1];
+        }
+        ImGui::Checkbox("Fullscreen", &g_build.fullscreen); ImGui::SameLine();
+        ImGui::Checkbox("Resizable", &g_build.resizable);   ImGui::SameLine();
+        ImGui::Checkbox("VSync", &g_build.vsync);
+
+        ImGui::SeparatorText("Scenes & Options");
+        ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
+        ImGui::Checkbox("Development build", &g_build.developmentBuild);
+        if (g_build.width  < 320) g_build.width  = 320;
+        if (g_build.height < 240) g_build.height = 240;
+
         ImGui::Separator();
         if (ImGui::Button("Build", ImVec2(120, 0))) {
-            g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf);
+            builder::Options o;
+            o.company = g_build.company;
+            o.width = g_build.width; o.height = g_build.height;
+            o.fullscreen = g_build.fullscreen; o.resizable = g_build.resizable; o.vsync = g_build.vsync;
+            o.includeAllProjectScenes = g_build.includeAllProjectScenes;
+            o.developmentBuild = g_build.developmentBuild;
+            g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);
             ImGui::CloseCurrentPopup();

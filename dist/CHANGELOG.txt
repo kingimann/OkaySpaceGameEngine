@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.92.0
+  - Scriptable Objects (Data Assets): reusable data files (.okaydata) of named
+    fields for item/enemy/level definitions and config — Unity's ScriptableObject
+    idea. Create via Project > New Data Asset and edit fields in a popup; read
+    from OkayScript with data_num/data_str/data_has, and customize from code with
+    data_set + data_save. Resolved beside the game in built builds.
+
 v1.91.0
   - Inventory made trivial: UI Draggable gets "Snap into slot" — drop an item on
     a slot and it centers itself there, no scripting required. New Project >

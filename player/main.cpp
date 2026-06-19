@@ -144,6 +144,7 @@ int main(int argc, char** argv) {
     // Persistent prefs (high scores, settings) live beside the scene file.
     std::string prefsPath = baseDir + "game.okayprefs";
     Prefs::Load(prefsPath);
+    DataAsset::SetBaseDir(baseDir);   // resolve .okaydata assets beside the game
 
     Scene scene("Game");
     std::string err;

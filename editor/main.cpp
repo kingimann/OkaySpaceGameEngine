@@ -399,6 +399,10 @@ void AddRecent(const std::string& path) {
 bool g_showSaveAs = false, g_showOpen = false;
 char g_pathBuf[256] = "scene.okayscene";
 
+// Data Asset (Scriptable Object) editor window.
+bool  g_dataAssetOpen = false;
+std::string g_dataAssetPath;
+
 // Extra panels / tools.
 bool  g_showStats = true;
 bool  g_showScenes = false;
@@ -1465,6 +1469,8 @@ void DrawProject(EditorState& ed) {
                 if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
                     ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + full);
                 } else ConsoleLog("Prefab load failed: " + err);
+            } else if (ext == ".okaydata") {
+                g_dataAssetPath = full; g_dataAssetOpen = true;
             } else if (ext == ".okay" || ext == ".lua" || ext == ".cs" || ext == ".okayvs") {
                 extide::OpenExternal(full);
             }
@@ -1489,6 +1495,13 @@ void DrawProject(EditorState& ed) {
             if (ImGui::MenuItem("New Script")) {
                 fs::path p = uniquePath("NewScript", ".okay");
                 std::ofstream(p) << extide::StarterScript("okayscript");
+                ConsoleLog("Created " + p.string());
+            }
+            if (ImGui::MenuItem("New Data Asset")) {   // Scriptable Object
+                fs::path p = uniquePath("NewData", ".okaydata");
+                std::ofstream(p) << "# Scriptable Object: key = value fields\n"
+                                    "name = Item\n"
+                                    "value = 10\n";
                 ConsoleLog("Created " + p.string());
             }
             ImGui::Separator();
@@ -1649,6 +1662,41 @@ void DrawServices(EditorState& ed) {
         } else ImGui::TextDisabled("not connected");
     }
 
+    ImGui::End();
+}
+
+// Scriptable Object editor: edit a .okaydata file's key/value fields.
+void DrawDataAssetEditor() {
+    if (!g_dataAssetOpen) return;
+    static std::string loaded;
+    static DataAsset asset;
+    if (loaded != g_dataAssetPath) { asset = DataAsset{}; asset.Load(g_dataAssetPath); loaded = g_dataAssetPath; }
+    if (!ImGui::Begin("Data Asset", &g_dataAssetOpen)) { ImGui::End(); return; }
+    ImGui::TextDisabled("%s", g_dataAssetPath.c_str());
+    ImGui::TextDisabled("Read from script: data_num(\"file.okaydata\", \"key\") / data_str(...)");
+    ImGui::Separator();
+    auto& fields = asset.Fields();
+    int remove = -1;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        ImGui::PushID((int)i);
+        char k[64]; std::strncpy(k, fields[i].first.c_str(), sizeof(k) - 1); k[sizeof(k)-1] = '\0';
+        ImGui::SetNextItemWidth(140);
+        if (ImGui::InputText("##k", k, sizeof(k))) fields[i].first = k;
+        ImGui::SameLine();
+        char v[192]; std::strncpy(v, fields[i].second.c_str(), sizeof(v) - 1); v[sizeof(v)-1] = '\0';
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::InputText("##v", v, sizeof(v))) fields[i].second = v;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X")) remove = (int)i;
+        ImGui::PopID();
+    }
+    if (remove >= 0) fields.erase(fields.begin() + remove);
+    if (ImGui::Button("Add Field")) fields.emplace_back("key", "value");
+    ImGui::SameLine();
+    if (ImGui::Button("Save")) {
+        if (asset.Save(g_dataAssetPath)) ConsoleLog("Saved " + g_dataAssetPath);
+        else ConsoleLog("Save failed: " + g_dataAssetPath);
+    }
     ImGui::End();
 }
 
@@ -5447,6 +5495,7 @@ int main(int argc, char** argv) {
         DrawAboutPopup();
         if (g_showHierarchy) DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel (always shown)
+        DrawDataAssetEditor();
         if (g_showGame)      DrawGameView(ed);
         if (g_showInspector) DrawInspector(ed);
         if (g_showConsole)   DrawConsole();

@@ -36,6 +36,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/DataAsset.hpp"
 #include "okay/Math/Easing.hpp"
 
 #include <algorithm>
@@ -1580,6 +1581,31 @@ struct OkayScriptVM::Impl {
         b["steam_overlay"] = [](std::vector<Value>& a) {
             Steam::Get().ActivateOverlay(a.empty() ? "friends" : a[0].AsString());
             return Value{};
+        };
+        // Scriptable Objects: read reusable .okaydata assets (item/enemy/level
+        // definitions, config). Loaded + cached by path.
+        b["data_num"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{0.0f};
+            double def = a.size() > 2 ? a[2].AsFloat() : 0.0;
+            return Value{(float)DataAsset::Cached(a[0].AsString()).GetNumber(a[1].AsString(), def)};
+        };
+        b["data_str"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{std::string{}};
+            std::string def = a.size() > 2 ? a[2].AsString() : std::string{};
+            return Value{DataAsset::Cached(a[0].AsString()).GetString(a[1].AsString(), def)};
+        };
+        b["data_has"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{false};
+            return Value{DataAsset::Cached(a[0].AsString()).Has(a[1].AsString())};
+        };
+        // Customize a data asset from code (then data_save to persist it).
+        b["data_set"] = [](std::vector<Value>& a) {
+            if (a.size() >= 3) DataAsset::Cached(a[0].AsString()).Set(a[1].AsString(), a[2].AsString());
+            return Value{};
+        };
+        b["data_save"] = [](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{false};
+            return Value{DataAsset::Cached(a[0].AsString()).Save(a[0].AsString())};
         };
         // Persistent prefs (high scores, settings) — survive across runs.
         b["prefs_set"] = [](std::vector<Value>& a) {

@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v1.59.0
+  - UI Tooltips (GameObject > UI > Tooltip): add a UI Tooltip to any widget and
+    a hint box appears next to the cursor after hovering it for a short delay.
+    Tunable text, delay, background and text color; saves with the scene and
+    shows in the built game (and the editor's Game view while playing).
+
 v1.58.0
   - Slider/Progress/Toggle customization: rounded corners on all three; the
     Slider gets an adjustable Knob Size and an optional value readout; the

@@ -306,5 +306,38 @@ int main() {
         CHECK_NEAR(tg2->cornerRadius, 5.0f, 1e-4f);
     }
 
+    // --- Tooltip: hover timing + serialization -------------------------
+    {
+        Scene s("Tt"); s.physicsEnabled = false;
+        UICanvas::Set(1280, 720);
+        GameObject* go = s.CreateGameObject("Help");
+        auto* bt = go->AddComponent<UIButton>();
+        bt->anchor = UIAnchor::TopLeft; bt->position = {0, 0}; bt->size = {100, 40};
+        auto* tt = go->AddComponent<UITooltip>();
+        tt->text = "Click me"; tt->delay = 0.3f;
+        s.Start();
+
+        // Pointer off the widget -> never ready.
+        Input::FeedMouse({500, 500}, 0);
+        s.Update(0.5f);
+        CHECK(!tt->Ready());
+
+        // Hover the widget; needs to accumulate past the delay.
+        Input::FeedMouse({10, 10}, 0); s.Update(0.2f);
+        CHECK(!tt->Ready());
+        s.Update(0.2f);                 // total 0.4s > 0.3 delay
+        CHECK(tt->Ready());
+
+        // Leaving resets immediately.
+        Input::FeedMouse({500, 500}, 0); s.Update(0.016f);
+        CHECK(!tt->Ready());
+
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        auto* tt2 = s2.Find("Help")->GetComponent<UITooltip>();
+        CHECK(tt2 && tt2->text == "Click me");
+        CHECK(tt2 && tt2->delay > 0.29f && tt2->delay < 0.31f);
+    }
+
     TEST_MAIN_RESULT();
 }

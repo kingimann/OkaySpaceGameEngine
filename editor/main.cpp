@@ -993,6 +993,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
             if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
             if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
+            if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
             ImGui::EndMenu();
         }
         if (created) ed.Achievement("FIRST_OBJECT");
@@ -3505,6 +3506,19 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##udd")) toRemove = dd;
         }
     }
+    if (auto* tt = go->GetComponent<UITooltip>()) {
+        if (ImGui::CollapsingHeader("UI Tooltip", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char tb[256]; std::strncpy(tb, tt->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
+            if (ImGui::InputText("Text##utt", tb, sizeof(tb))) { tt->text = tb; ed.dirty = true; }
+            if (ImGui::DragFloat("Delay (s)##utt", &tt->delay, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            float bg[4] = {tt->background.r, tt->background.g, tt->background.b, tt->background.a};
+            if (ImGui::ColorEdit4("Background##utt", bg)) { tt->background = {bg[0],bg[1],bg[2],bg[3]}; ed.dirty = true; }
+            float tc[4] = {tt->textColor.r, tt->textColor.g, tt->textColor.b, tt->textColor.a};
+            if (ImGui::ColorEdit4("Text Color##utt", tc)) { tt->textColor = {tc[0],tc[1],tc[2],tc[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("Hover the sibling widget to show it (in Game view / built game).");
+            if (ImGui::SmallButton("Remove##utt")) toRemove = tt;
+        }
+    }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         if (ImGui::CollapsingHeader("UI Layout Group", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* dirs[] = {"Vertical", "Horizontal"};
@@ -4069,6 +4083,23 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRect(ImVec2(a.x, top), ImVec2(b.x, top + sz.y * dd->options.size()),
                         ToColor(dd->borderColor), 0.0f, 0, 1.0f);
         }
+    }
+
+    // UI tooltips: when a sibling widget has been hovered long enough (Ready),
+    // draw the hint box next to the cursor. Tooltips tick only while the scene
+    // updates (Play / Game view), matching the built game.
+    for (const auto& up : objs) {
+        auto* tt = up->GetComponent<UITooltip>();
+        if (!tt || !up->active || !tt->Ready()) continue;
+        Vec2 m = Input::MousePosition();
+        float px = 2.0f;
+        float tw = tt->text.size() * (Font8x8::Width + 1) * px;
+        float th = Font8x8::Height * px;
+        ImVec2 a(canvasPos.x + m.x + 14, canvasPos.y + m.y + 14);
+        ImVec2 b(a.x + tw + 12, a.y + th + 10);
+        dl->AddRectFilled(a, b, ToColor(tt->background), 4.0f);
+        dl->AddRect(a, b, ToColor(tt->borderColor), 4.0f);
+        DrawBitmapText(dl, tt->text, a.x + 6, a.y + 5, px, ToColor(tt->textColor));
     }
 
     // Selection highlight for the selected widget — works for every UI type and

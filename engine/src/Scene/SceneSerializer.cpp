@@ -33,6 +33,7 @@
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UITooltip.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
@@ -303,6 +304,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << dd->options.size();
         for (const auto& opt : dd->options) out << " " << Quote(opt);
         out << "\n";
+    }
+    if (auto* tt = go->GetComponent<UITooltip>()) {
+        out << "  uitooltip " << Quote(tt->text) << " " << tt->delay << " "
+            << tt->background.r << " " << tt->background.g << " " << tt->background.b << " " << tt->background.a << " "
+            << tt->textColor.r << " " << tt->textColor.g << " " << tt->textColor.b << " " << tt->textColor.a << " "
+            << tt->borderColor.r << " " << tt->borderColor.g << " " << tt->borderColor.b << " " << tt->borderColor.a << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
@@ -785,6 +792,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     dd->textColor = t; dd->borderColor = b;
                     dd->options.clear();
                     for (std::size_t k = 0; k < count; ++k) dd->options.push_back(ReadQuoted(in));
+                } else if (field == "uitooltip") {
+                    auto* tt = go->AddComponent<UITooltip>();
+                    tt->text = ReadQuoted(in);
+                    Color bg, tc, bc;
+                    in >> tt->delay
+                       >> bg.r >> bg.g >> bg.b >> bg.a
+                       >> tc.r >> tc.g >> tc.b >> tc.a
+                       >> bc.r >> bc.g >> bc.b >> bc.a;
+                    tt->background = bg; tt->textColor = tc; tt->borderColor = bc;
                 } else if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     int dir = 0, an = 0;

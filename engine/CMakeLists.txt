@@ -23,6 +23,7 @@ add_library(okay_engine
     src/Components/ActionList.cpp
     src/Components/UIDocument.cpp
     src/Components/UILayoutGroup.cpp
+    src/Components/UITooltip.cpp
     src/Components/Terrain.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Platform/Steam/Steam.cpp

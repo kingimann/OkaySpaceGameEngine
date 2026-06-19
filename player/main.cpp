@@ -671,6 +671,24 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        for (const auto& up : scene.Objects()) {           // tooltips (hover hints)
+            auto* tt = up->GetComponent<UITooltip>();
+            if (!tt || !up->active || !tt->Ready()) continue;
+            Vec2 m = Input::MousePosition();
+            float px = 2.0f;
+            float tw = tt->text.size() * (Font8x8::Width + 1) * px;
+            float th = Font8x8::Height * px;
+            SDL_Rect box{(int)(m.x + 14), (int)(m.y + 14), (int)(tw + 12), (int)(th + 10)};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(tt->background.r * 255), (Uint8)(tt->background.g * 255),
+                                   (Uint8)(tt->background.b * 255), (Uint8)(tt->background.a * 255));
+            SDL_RenderFillRect(renderer, &box);
+            SDL_SetRenderDrawColor(renderer, (Uint8)(tt->borderColor.r * 255), (Uint8)(tt->borderColor.g * 255),
+                                   (Uint8)(tt->borderColor.b * 255), (Uint8)(tt->borderColor.a * 255));
+            SDL_RenderDrawRect(renderer, &box);
+            SDL_Color tc{(Uint8)(tt->textColor.r * 255), (Uint8)(tt->textColor.g * 255),
+                         (Uint8)(tt->textColor.b * 255), (Uint8)(tt->textColor.a * 255)};
+            DrawText(renderer, tt->text, m.x + 20, m.y + 19, px, tc);
+        }
         SDL_RenderPresent(renderer);
     };
 

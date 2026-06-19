@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.11.0
+  - Lighting overhauled: multiple lights now contribute at once, in color, with
+    three types — Directional (sun), Point (radiates to a Range), and Spot (a
+    cone with a Spot Angle). Each light has Type, Color, Intensity, Ambient,
+    Range and Spot Angle in the inspector, and there are GameObject > Create
+    Point Light / Spot Light entries. Scenes serialize the new fields (backward
+    compatible). Scripts' set_light/set_ambient still drive the look when there's
+    no Light object.
+  - Fixed the editor UI looking stretched/blurry: the 110% default scaled the
+    bitmap font at a non-integer ratio. The default is back to crisp 100% (the
+    roomier spacing stays), and View > UI Scale still lets you size it up.
+
 v2.10.0
   - Less-compact editor UI: roomier spacing/padding and a new View > UI Scale
     (Compact / Normal / Comfortable / Large / Huge) that scales the whole

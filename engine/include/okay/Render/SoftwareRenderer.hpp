@@ -236,7 +236,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
 
             // Material: diffuse (Lambert, or flat when unlit) + Blinn-Phong
             // specular highlight + self-illuminating emissive.
-            float shade = mr->unlit ? 1.0f : SceneLight::Shade(normal);
+            // Colored multi-light diffuse (directional + point + spot + ambient).
+            Vec3 lit = mr->unlit ? Vec3{1.0f, 1.0f, 1.0f}
+                                 : SceneLights::ShadeColor(centroid, normal);
+            float shade = (lit.x + lit.y + lit.z) * (1.0f / 3.0f);  // scalar for textured tris
             float spec = 0.0f;
             if (!mr->unlit && mr->specular > 0.0f) {
                 Vec3 toLight = SceneLight::Direction() * -1.0f;
@@ -245,9 +248,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 float nh = Vec3::Dot(normal, h);
                 if (nh > 0.0f) spec = std::pow(nh, mr->shininess) * mr->specular;
             }
-            float cr = mr->color.r * shade + spec + mr->emissive.r;
-            float cg = mr->color.g * shade + spec + mr->emissive.g;
-            float cb = mr->color.b * shade + spec + mr->emissive.b;
+            float cr = mr->color.r * lit.x + spec + mr->emissive.r;
+            float cg = mr->color.g * lit.y + spec + mr->emissive.g;
+            float cb = mr->color.b * lit.z + spec + mr->emissive.b;
             // Distance fog: blend the (flat-shaded) color toward the fog color by
             // how far the triangle is, between fogStart and fogEnd.
             if (fogOn) {

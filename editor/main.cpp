@@ -2041,10 +2041,11 @@ static void FitCapsule(GameObject* go, CapsuleCollider3D* cap) {
 }
 
 // One row of the Game-Creator-style action editor: an op dropdown + a free-text
-// args field + a remove button. Returns true if the row asked to be removed.
-static bool DrawActionItem(ActionList::Item& it, const char* const* ops, int nops,
-                           int id, bool& dirty) {
-    bool removed = false;
+// args field + reorder/remove buttons. Returns 0 = none, 1 = remove, 2 = up,
+// 3 = down (the caller applies the index change).
+static int DrawActionItem(ActionList::Item& it, const char* const* ops, int nops,
+                          int id, bool& dirty) {
+    int action = 0;
     ImGui::PushID(id);
     if (it.op.empty()) it.op = ops[0];
     int cur = 0;
@@ -2056,17 +2057,28 @@ static bool DrawActionItem(ActionList::Item& it, const char* const* ops, int nop
     for (auto& a : it.args) { if (!joined.empty()) joined += ' '; joined += a; }
     char buf[256];
     std::strncpy(buf, joined.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
-    ImGui::SetNextItemWidth(-34);
+    ImGui::SetNextItemWidth(-78);
     if (ImGui::InputTextWithHint("##args", "args (space-separated)", buf, sizeof(buf))) {
         it.args.clear();
         std::stringstream ss(buf); std::string tok;
         while (ss >> tok) it.args.push_back(tok);
         dirty = true;
     }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("X")) { removed = true; dirty = true; }
+    ImGui::SameLine(); if (ImGui::SmallButton("^")) action = 2;
+    ImGui::SameLine(); if (ImGui::SmallButton("v")) action = 3;
+    ImGui::SameLine(); if (ImGui::SmallButton("X")) { action = 1; dirty = true; }
     ImGui::PopID();
-    return removed;
+    return action;
+}
+
+// Apply a DrawActionItem reorder/remove result to a list at index i; returns
+// the next index to visit.
+static std::size_t ApplyItemAction(std::vector<ActionList::Item>& list, std::size_t i,
+                                   int action, bool& dirty) {
+    if (action == 1) { list.erase(list.begin() + i); return i; }
+    if (action == 2 && i > 0) { std::swap(list[i], list[i - 1]); dirty = true; }
+    if (action == 3 && i + 1 < list.size()) { std::swap(list[i], list[i + 1]); dirty = true; }
+    return i + 1;
 }
 
 void DrawInspector(EditorState& ed) {
@@ -2478,17 +2490,15 @@ void DrawInspector(EditorState& ed) {
 
             ImGui::SeparatorText("Conditions (all must pass)");
             for (std::size_t i = 0; i < al->conditions.size();) {
-                if (DrawActionItem(al->conditions[i], condOps, IM_ARRAYSIZE(condOps), (int)i, ed.dirty))
-                    al->conditions.erase(al->conditions.begin() + i);
-                else ++i;
+                int act = DrawActionItem(al->conditions[i], condOps, IM_ARRAYSIZE(condOps), (int)i, ed.dirty);
+                i = ApplyItemAction(al->conditions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({"always", {}}); ed.dirty = true; }
 
             ImGui::SeparatorText("Instructions (run top to bottom)");
             for (std::size_t i = 0; i < al->instructions.size();) {
-                if (DrawActionItem(al->instructions[i], instOps, IM_ARRAYSIZE(instOps), 1000 + (int)i, ed.dirty))
-                    al->instructions.erase(al->instructions.begin() + i);
-                else ++i;
+                int act = DrawActionItem(al->instructions[i], instOps, IM_ARRAYSIZE(instOps), 1000 + (int)i, ed.dirty);
+                i = ApplyItemAction(al->instructions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({"move", {}}); ed.dirty = true; }
 

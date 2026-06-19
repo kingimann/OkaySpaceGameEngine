@@ -1,5 +1,9 @@
 OkaySpace Game Engine — Changelog
 
+v1.24.0
+  - Visual scripting: reorder conditions and instructions with the ^ / v
+    buttons on each row.
+
 v1.23.0
   - Signals (Game Creator-style): an Actions list can use the On Message
     trigger and the `send` instruction to broadcast/react to named events.

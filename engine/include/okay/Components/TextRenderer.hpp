@@ -5,6 +5,8 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Graphics/Font.hpp"
 #include <string>
+#include <cctype>
+#include <algorithm>
 
 namespace okay {
 
@@ -50,22 +52,70 @@ public:
     /// Faux-bold: the glyphs are drawn a second time shifted 1 px right, so the
     /// strokes thicken — for headings/emphasis without a separate font.
     bool  bold = false;
+    /// Extra spacing (in font pixels) between glyphs and between lines.
+    float letterSpacing = 0.0f;
+    float lineSpacing = 0.0f;
+    /// Render the text UPPER-CASED without changing the stored string.
+    bool  uppercase = false;
+    /// Word-wrap the text to the box width (screen space). Long words overflow.
+    bool  wrap = false;
 
-    /// Width of the widest line at native font size (8 px per glyph), multi-line
-    /// aware (handles embedded '\n').
-    int PixelWidth() const {
-        int best = 0, cur = 0;
-        for (char ch : text) {
-            if (ch == '\n') { if (cur > best) best = cur; cur = 0; }
-            else cur += Font8x8::Width;
+    /// Horizontal advance per glyph / vertical advance per line, in font pixels.
+    float Advance() const { return (float)Font8x8::Width + 1.0f + letterSpacing; }
+    float LineAdvance() const { return (float)Font8x8::Height + 1.0f + lineSpacing; }
+
+    /// The string actually drawn: optionally upper-cased and word-wrapped to the
+    /// box. Existing '\n' line breaks are preserved.
+    std::string DisplayText() const {
+        std::string s = text;
+        if (uppercase)
+            for (char& c : s) c = (char)std::toupper((unsigned char)c);
+        if (wrap && size.x > 0.0f && pixelSize > 0.0f) {
+            float glyphW = Advance() * pixelSize;
+            int maxChars = glyphW > 0.0f ? (int)(size.x / glyphW) : 0;
+            if (maxChars >= 1) s = WrapTo(s, maxChars);
         }
-        return cur > best ? cur : best;
+        return s;
     }
-    /// Total height of all lines at native font size.
+
+    /// Width of the widest line in font pixels (honors letter spacing + wrap).
+    int PixelWidth() const {
+        std::string s = DisplayText();
+        int best = 0, cur = 0;
+        auto lineW = [this](int glyphs) {
+            return glyphs > 0 ? (int)((glyphs - 1) * Advance() + Font8x8::Width) : 0;
+        };
+        for (char ch : s) {
+            if (ch == '\n') { best = std::max(best, lineW(cur)); cur = 0; }
+            else ++cur;
+        }
+        return std::max(best, lineW(cur));
+    }
+    /// Total height of all lines in font pixels (honors line spacing + wrap).
     int PixelHeight() const {
+        std::string s = DisplayText();
         int lines = 1;
-        for (char c : text) if (c == '\n') ++lines;
-        return lines * Font8x8::Height + (lines - 1);   // (Height+1) per line gap
+        for (char c : s) if (c == '\n') ++lines;
+        return (int)((lines - 1) * LineAdvance() + Font8x8::Height);
+    }
+
+    /// Word-wrap `s` so no line exceeds `maxChars` glyphs (existing '\n' kept;
+    /// a single word longer than the limit overflows rather than splitting).
+    static std::string WrapTo(const std::string& s, int maxChars) {
+        std::string out, word; int lineLen = 0;
+        auto flush = [&]() {
+            if (word.empty()) return;
+            if (lineLen > 0 && lineLen + 1 + (int)word.size() > maxChars) { out += '\n'; lineLen = 0; }
+            else if (lineLen > 0) { out += ' '; ++lineLen; }
+            out += word; lineLen += (int)word.size(); word.clear();
+        };
+        for (char c : s) {
+            if (c == '\n') { flush(); out += '\n'; lineLen = 0; }
+            else if (c == ' ' || c == '\t') flush();
+            else word += c;
+        }
+        flush();
+        return out;
     }
 
     /// Top-left pixel of the text BOX (screen space), anchored and sized by `size`.

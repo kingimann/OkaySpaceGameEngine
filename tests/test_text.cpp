@@ -40,9 +40,14 @@ int main() {
         Scene scene("T");
         GameObject* go = scene.CreateGameObject("Label");
         auto* tr = go->AddComponent<TextRenderer>();
-        tr->text = "SCORE";
-        CHECK(tr->PixelWidth() == 5 * Font8x8::Width);
+        tr->text = "SCORE";   // 5 glyphs advance-spaced: 4*(W+1) + W
+        CHECK(tr->PixelWidth() == 4 * (Font8x8::Width + 1) + Font8x8::Width);
         CHECK(tr->PixelHeight() == Font8x8::Height);
+
+        // letterSpacing widens; uppercase changes the drawn text length-neutrally.
+        tr->letterSpacing = 2.0f;
+        CHECK(tr->PixelWidth() == 4 * (Font8x8::Width + 1 + 2) + Font8x8::Width);
+        tr->letterSpacing = 0.0f;
     }
 
     // --- TextRenderer survives serialization (text with a space) ---

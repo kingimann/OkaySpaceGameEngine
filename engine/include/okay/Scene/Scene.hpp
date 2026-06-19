@@ -55,6 +55,9 @@ public:
     /// MoveToBack draws it first (behind). Used for UI layering in the editor.
     void MoveToFront(GameObject* go);
     void MoveToBack(GameObject* go);
+    /// Reorder `go` among its siblings (same parent) by `dir` (-1 = up/earlier,
+    /// +1 = down/later) — drives hierarchy reordering and UI draw order.
+    void MoveSibling(GameObject* go, int dir);
 
     /// Collect every component of type T across all GameObjects in the scene.
     template <typename T>

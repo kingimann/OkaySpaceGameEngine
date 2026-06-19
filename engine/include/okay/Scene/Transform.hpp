@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Math/Math.hpp"
 #include <vector>
+#include <utility>
 
 namespace okay {
 
@@ -48,6 +49,17 @@ public:
     void SetParent(Transform* parent, bool worldPositionStays = true);
     const std::vector<Transform*>& Children() const { return m_children; }
     int ChildCount() const { return static_cast<int>(m_children.size()); }
+    /// Reorder a child among its siblings by `dir` (-1 = earlier/up, +1 = later/
+    /// down). No-op if it's already at the end being moved.
+    void MoveChild(Transform* child, int dir) {
+        for (std::size_t i = 0; i < m_children.size(); ++i) {
+            if (m_children[i] != child) continue;
+            std::size_t j = (dir < 0) ? (i == 0 ? i : i - 1)
+                                      : (i + 1 >= m_children.size() ? i : i + 1);
+            if (i != j) std::swap(m_children[i], m_children[j]);
+            return;
+        }
+    }
 
 private:
     friend class GameObject;

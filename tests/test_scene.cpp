@@ -67,6 +67,25 @@ int main() {
         for (Transform* c : keepParent->transform->Children()) CHECK(c != nullptr);
     }
 
+    // MoveSibling reorders children within their parent (hierarchy reordering).
+    {
+        GameObject* p = scene.CreateGameObject("P");
+        GameObject* a = scene.CreateGameObject("A");
+        GameObject* b = scene.CreateGameObject("B");
+        GameObject* c = scene.CreateGameObject("C");
+        a->transform->SetParent(p->transform);
+        b->transform->SetParent(p->transform);
+        c->transform->SetParent(p->transform);
+        CHECK(p->transform->Children()[0] == a->transform);   // order: A B C
+        scene.MoveSibling(c, -1);                              // C up -> A C B
+        CHECK(p->transform->Children()[1] == c->transform);
+        CHECK(p->transform->Children()[2] == b->transform);
+        scene.MoveSibling(a, +1);                              // A down -> C A B
+        CHECK(p->transform->Children()[0] == c->transform);
+        CHECK(p->transform->Children()[1] == a->transform);
+        scene.Destroy(p); scene.Update(0.016f);
+    }
+
     // Destroying a parent also destroys its children (no dangling parent ptr).
     CHECK(scene.Find("Parent") != nullptr);
     CHECK(scene.Find("Child") != nullptr);

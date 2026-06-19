@@ -241,7 +241,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tr->size.x << " " << tr->size.y << " " << (tr->vcenter ? 1 : 0)
             << " " << (tr->background ? 1 : 0) << " "
             << tr->backgroundColor.r << " " << tr->backgroundColor.g << " "
-            << tr->backgroundColor.b << " " << tr->backgroundColor.a << "\n";
+            << tr->backgroundColor.b << " " << tr->backgroundColor.a
+            << " " << tr->letterSpacing << " " << tr->lineSpacing
+            << " " << (tr->uppercase ? 1 : 0) << " " << (tr->wrap ? 1 : 0) << "\n";
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -274,7 +276,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << btn->cornerRadius << " " << btn->fontScale << " " << btn->borderWidth << " "
             << btn->borderColor.r << " " << btn->borderColor.g << " " << btn->borderColor.b << " " << btn->borderColor.a
             << " " << btn->hoverScale
-            << " " << Quote(btn->icon) << " " << btn->iconSize << "\n";
+            << " " << Quote(btn->icon) << " " << btn->iconSize
+            << " " << btn->hoverTextColor.r << " " << btn->hoverTextColor.g << " "
+            << btn->hoverTextColor.b << " " << btn->hoverTextColor.a
+            << " " << btn->transitionSpeed << " " << (btn->toggleMode ? 1 : 0)
+            << " " << (btn->isOn ? 1 : 0) << " " << btn->pressOffset
+            << " " << (btn->iconRight ? 1 : 0) << " " << (btn->holdRepeat ? 1 : 0)
+            << " " << btn->repeatDelay << " " << btn->repeatInterval << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -714,6 +722,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> tr->size.x >> tr->size.y >> vc >> bg >> bc.r >> bc.g >> bc.b >> bc.a;
                         tr->vcenter = (vc != 0); tr->background = (bg != 0); tr->backgroundColor = bc;
                     }
+                    in >> std::ws; // optional spacing + uppercase + wrap (added later)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int uc = 0, wr = 0;
+                        in >> tr->letterSpacing >> tr->lineSpacing >> uc >> wr;
+                        tr->uppercase = (uc != 0); tr->wrap = (wr != 0);
+                    }
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;
@@ -778,6 +792,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) in >> btn->hoverScale;
                         in >> std::ws; // optional icon path + size (added later)
                         if (in.peek() == '"') { btn->icon = ReadQuoted(in); in >> btn->iconSize; }
+                        in >> std::ws; // optional hover-text/transition/toggle block (added later)
+                        if (std::isdigit(in.peek()) || in.peek() == '-') {
+                            Color ht; int tm = 0, on = 0, ir = 0, hr = 0;
+                            in >> ht.r >> ht.g >> ht.b >> ht.a >> btn->transitionSpeed
+                               >> tm >> on >> btn->pressOffset >> ir >> hr
+                               >> btn->repeatDelay >> btn->repeatInterval;
+                            btn->hoverTextColor = ht; btn->toggleMode = (tm != 0); btn->isOn = (on != 0);
+                            btn->iconRight = (ir != 0); btn->holdRepeat = (hr != 0);
+                        }
                     }
                 } else if (field == "uipanel") {
                     auto* pn = go->AddComponent<UIPanel>();

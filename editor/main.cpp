@@ -2148,6 +2148,13 @@ void HandleShortcuts(EditorState& ed) {
         }
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_B, false)) g_showBuildGame = true;
+    // Ctrl+Up / Ctrl+Down reorder the selected object among its siblings.
+    if (ctrl && ed.selected() && ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)) {
+        ed.PushUndo(); ed.scene().MoveSibling(ed.selected(), -1); ed.dirty = true;
+    }
+    if (ctrl && ed.selected() && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
+        ed.PushUndo(); ed.scene().MoveSibling(ed.selected(), +1); ed.dirty = true;
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
         ed.DeleteSelected(); ConsoleLog("Deleted selection");
     }
@@ -2519,6 +2526,9 @@ void DrawHierarchy(EditorState& ed) {
                 }
                 if (ImGui::MenuItem("Duplicate", "Ctrl+D")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
                 if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Move Up", "Ctrl+Up"))     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
+                if (ImGui::MenuItem("Move Down", "Ctrl+Down")) { ed.PushUndo(); ed.scene().MoveSibling(node, +1); ed.dirty = true; }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Create Empty Child")) {
                     GameObject* child = ed.scene().CreateGameObject("Child");
@@ -3443,6 +3453,11 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Outline Color##txt", ocol)) { tr->outlineColor = {ocol[0], ocol[1], ocol[2], ocol[3]}; ed.dirty = true; }
             }
             if (ImGui::Checkbox("Bold##txt", &tr->bold)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("UPPERCASE##txt", &tr->uppercase)) ed.dirty = true;
+            if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
+            if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
@@ -3599,10 +3614,26 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Hover Grow##uib", &btn->hoverScale, 0.01f, 1.0f, 2.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale when hovered/focused (1 = none)");
+            float htc[4] = {btn->hoverTextColor.r, btn->hoverTextColor.g, btn->hoverTextColor.b, btn->hoverTextColor.a};
+            if (ImGui::ColorEdit4("Hover Text##uib", htc)) { btn->hoverTextColor = {htc[0], htc[1], htc[2], htc[3]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Transition Speed##uib", &btn->transitionSpeed, 0.2f, 0.0f, 30.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth color fade on hover/press (0 = instant)");
+            if (ImGui::DragFloat("Press Offset##uib", &btn->pressOffset, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             char ic[256]; std::strncpy(ic, btn->icon.c_str(), sizeof(ic) - 1); ic[sizeof(ic)-1] = '\0';
             if (ImGui::InputText("Icon##uib", ic, sizeof(ic))) { btn->icon = ic; ed.dirty = true; }
             if (ImGui::DragFloat("Icon Size##uib", &btn->iconSize, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("PNG/JPG drawn left of the label; 0 = none");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("PNG/JPG drawn beside the label; 0 = none");
+            if (ImGui::Checkbox("Icon on Right##uib", &btn->iconRight)) ed.dirty = true;
+            ImGui::SeparatorText("Behavior");
+            if (ImGui::Checkbox("Toggle Button##uib", &btn->toggleMode)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stays pressed; each click flips its on/off state");
+            if (btn->toggleMode) { ImGui::SameLine(); if (ImGui::Checkbox("On##uib", &btn->isOn)) ed.dirty = true; }
+            if (ImGui::Checkbox("Hold to Repeat##uib", &btn->holdRepeat)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fires on_click() repeatedly while held (steppers)");
+            if (btn->holdRepeat) {
+                if (ImGui::DragFloat("Repeat Delay##uib", &btn->repeatDelay, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Repeat Rate##uib", &btn->repeatInterval, 0.01f, 0.01f, 1.0f)) ed.dirty = true;
+            }
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
     }
@@ -4092,17 +4123,17 @@ void DrawInspector(EditorState& ed) {
 // Draw a string with the engine's 8x8 bitmap font into an ImGui draw list, so
 // the editor viewport shows the same text the built game will (HUDs, labels).
 void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
-                    float px, ImU32 col) {
+                    float px, ImU32 col, float letterSp = 0.0f, float lineSp = 0.0f) {
     if (px < 1.0f) px = 1.0f;
     float cx = ox;
     for (char ch : text) {
-        if (ch == '\n') { oy += (Font8x8::Height + 1) * px; cx = ox; continue; }
+        if (ch == '\n') { oy += (Font8x8::Height + 1 + lineSp) * px; cx = ox; continue; }
         for (int y = 0; y < Font8x8::Height; ++y)
             for (int x = 0; x < Font8x8::Width; ++x)
                 if (Font8x8::Pixel(ch, x, y))
                     dl->AddRectFilled(ImVec2(cx + x * px, oy + y * px),
                                       ImVec2(cx + (x + 1) * px, oy + (y + 1) * px), col);
-        cx += (Font8x8::Width + 1) * px;
+        cx += (Font8x8::Width + 1 + letterSp) * px;
     }
 }
 
@@ -4190,20 +4221,21 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                               ToColor(tr->backgroundColor), 4.0f);
         Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s);   // text inside box
         if (UIScrollView* sv = OwningScrollView(up.get())) o.y -= sv->scroll * s;
-        float px = tr->pixelSize * s;
+        float px = tr->pixelSize * s, ls = tr->letterSpacing, lp = tr->lineSpacing;
+        std::string disp = tr->DisplayText();
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
         if (tr->shadow)
-            DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * px,
-                           by + tr->shadowOffset.y * px, px, sh);
+            DrawBitmapText(dl, disp, bx + tr->shadowOffset.x * px,
+                           by + tr->shadowOffset.y * px, px, sh, ls, lp);
         if (tr->outline) {                            // 4-direction outline
             ImU32 oc = ToColor(tr->outlineColor);
-            DrawBitmapText(dl, tr->text, bx - px, by, px, oc);
-            DrawBitmapText(dl, tr->text, bx + px, by, px, oc);
-            DrawBitmapText(dl, tr->text, bx, by - px, px, oc);
-            DrawBitmapText(dl, tr->text, bx, by + px, px, oc);
+            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp);
+            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp);
+            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp);
+            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp);
         }
-        DrawBitmapText(dl, tr->text, bx, by, px, col);
-        if (tr->bold) DrawBitmapText(dl, tr->text, bx + px, by, px, col);  // faux-bold
+        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp);
+        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp);  // faux-bold
     }
 
     // UI images (logos/icons): preview as a tinted rect with the path centered.
@@ -4340,24 +4372,26 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             float gy = sz.y * (btn->hoverScale - 1.0f) * 0.5f;
             a.x -= gx; a.y -= gy; b.x += gx; b.y += gy;
         }
-        dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), btn->cornerRadius);
+        dl->AddRectFilled(a, b, ToColor(btn->DisplayColor()), btn->cornerRadius);
         if (btn->borderWidth > 0.0f)
             dl->AddRect(a, b, ToColor(btn->borderColor), btn->cornerRadius, 0, btn->borderWidth);
-        // Icon placeholder (the editor overlay doesn't load textures) + label
-        // shifted right to match the built game's layout.
+        float shift = btn->PressShift() * s;
+        // Icon placeholder (the editor overlay doesn't load textures), left or
+        // right; label takes the remaining space. Press shifts content down.
         float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize * s : 0.0f;
         if (isz > 0.0f) {
-            ImVec2 ia(a.x + 8 * s, a.y + ((b.y - a.y) - isz) * 0.5f);
+            float ix = btn->iconRight ? (b.x - isz - 8 * s) : (a.x + 8 * s);
+            ImVec2 ia(ix, a.y + ((b.y - a.y) - isz) * 0.5f + shift);
             dl->AddRectFilled(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 40), 3.0f);
             dl->AddRect(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 110), 3.0f);
         }
         float px = btn->fontScale * s;
         float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-        float left = a.x + (isz > 0.0f ? isz + 12 * s : 0.0f);
-        float avail = b.x - left;
-        DrawBitmapText(dl, btn->label, left + (avail - tw) * 0.5f,
-                       a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f, px,
-                       ToColor(btn->textColor));
+        float left  = a.x + (isz > 0.0f && !btn->iconRight ? isz + 12 * s : 0.0f);
+        float right = b.x - (isz > 0.0f &&  btn->iconRight ? isz + 12 * s : 0.0f);
+        DrawBitmapText(dl, btn->label, left + ((right - left) - tw) * 0.5f,
+                       a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f + shift, px,
+                       ToColor(btn->CurrentTextColor()));
     }
 
     // UI input fields: box + the text (or placeholder) + a caret when focused.

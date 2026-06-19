@@ -43,6 +43,24 @@ public:
     bool interactable = true;
     /// Whether keyboard/gamepad menu navigation can focus this button.
     bool focusable = true;
+    /// Text color while hovered/focused (defaults to the normal text color).
+    Color hoverTextColor = Color::White;
+    /// Color-transition speed (units/sec) for hover/press; 0 = instant (Unity's
+    /// ColorTween). The renderer should use DisplayColor().
+    float transitionSpeed = 0.0f;
+    /// Toggle button: a click flips `isOn` and the button stays in its pressed
+    /// color while on (radio/check style). on_click() still fires each click.
+    bool toggleMode = false;
+    bool isOn = false;
+    /// Pixels the label/icon shift down while pressed (tactile "push"). 0 = none.
+    float pressOffset = 1.0f;
+    /// Draw the icon on the right of the label instead of the left.
+    bool iconRight = false;
+    /// Auto-repeat on_click() while held (steppers, +/- spinners). After an
+    /// initial `repeatDelay`, fires every `repeatInterval` seconds.
+    bool  holdRepeat = false;
+    float repeatDelay = 0.4f;
+    float repeatInterval = 0.12f;
 
     bool IsHovered() const { return m_hover; }
     /// True while the mouse is held down over an interactable button.
@@ -57,19 +75,29 @@ public:
     /// WasClicked() for this frame.
     void Press() {
         if (!interactable) return;
+        if (toggleMode) isOn = !isOn;
         m_clicked = true;
         if (gameObject)
             if (auto* sc = gameObject->GetComponent<ScriptComponent>())
                 if (sc->VM()) sc->VM()->CallEvent("on_click");
     }
 
-    /// The color the renderer should use for the current state.
+    bool IsOn() const { return isOn; }
+
+    /// The target color for the current state.
     Color CurrentColor() const {
-        if (!interactable)        return disabledColor;
-        if (m_pressed)            return pressedColor;
-        if (m_hover || m_focused) return hoverColor;
+        if (!interactable)            return disabledColor;
+        if (m_pressed || (toggleMode && isOn)) return pressedColor;
+        if (m_hover || m_focused)     return hoverColor;
         return color;
     }
+    /// The color the renderer should draw: smoothly eased toward CurrentColor()
+    /// when transitionSpeed > 0, else the state color directly.
+    Color DisplayColor() const { return transitionSpeed > 0.0f ? m_display : CurrentColor(); }
+    /// Text color for the current state (hover/focus uses hoverTextColor).
+    Color CurrentTextColor() const { return (m_hover || m_focused) ? hoverTextColor : textColor; }
+    /// Downward push for the label/icon while pressed (or toggled on), in px.
+    float PressShift() const { return (m_pressed || (toggleMode && isOn)) ? pressOffset : 0.0f; }
 
     bool Contains(const Vec2& p) const {
         Vec2 o = ResolveAnchor(anchor, position, size);
@@ -77,22 +105,46 @@ public:
                p.x <= o.x + size.x && p.y <= o.y + size.y;
     }
 
-    void Update(float) override {
-        if (!interactable) { m_hover = m_pressed = m_clicked = false; return; }
+    void Update(float dt) override {
+        if (!interactable) { m_hover = m_pressed = m_clicked = false; EaseColor(dt); return; }
         Vec2 m = Input::MousePosition();
         m_hover = Contains(m);
         m_pressed = m_hover && Input::GetMouseButton(0);
-        m_clicked = m_hover && Input::GetMouseButtonDown(0);
-        if (m_clicked && gameObject)
-            if (auto* sc = gameObject->GetComponent<ScriptComponent>())
-                if (sc->VM()) sc->VM()->CallEvent("on_click");
+        m_clicked = false;
+        if (m_hover && Input::GetMouseButtonDown(0)) {       // fresh click
+            if (toggleMode) isOn = !isOn;
+            m_clicked = true;
+            m_repeat = repeatDelay;
+            Fire();
+        } else if (holdRepeat && m_pressed) {                // auto-repeat while held
+            m_repeat -= dt;
+            if (m_repeat <= 0.0f) { m_repeat = repeatInterval; m_clicked = true; Fire(); }
+        }
+        EaseColor(dt);
     }
 
 private:
+    void Fire() {
+        if (gameObject)
+            if (auto* sc = gameObject->GetComponent<ScriptComponent>())
+                if (sc->VM()) sc->VM()->CallEvent("on_click");
+    }
+    void EaseColor(float dt) {
+        Color t = CurrentColor();
+        if (transitionSpeed <= 0.0f) { m_display = t; return; }
+        float k = transitionSpeed * dt; if (k > 1.0f) k = 1.0f;
+        m_display.r += (t.r - m_display.r) * k;
+        m_display.g += (t.g - m_display.g) * k;
+        m_display.b += (t.b - m_display.b) * k;
+        m_display.a += (t.a - m_display.a) * k;
+    }
+
     bool m_hover = false;
     bool m_pressed = false;
     bool m_clicked = false;
     bool m_focused = false;
+    float m_repeat = 0.0f;
+    Color m_display = Color::FromBytes(60, 90, 150);
 };
 
 } // namespace okay

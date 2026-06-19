@@ -3549,6 +3549,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
+            if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Show Percent##upb", &pb->showPercent)) ed.dirty = true;
+            if (pb->showPercent) {
+                float tc[4] = {pb->textColor.r, pb->textColor.g, pb->textColor.b, pb->textColor.a};
+                if (ImGui::ColorEdit4("Text Color##upb", tc)) { pb->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+            }
             if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
         }
     }
@@ -3598,6 +3604,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Knob##usl", kc)) { sl->knob = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
             AnchorCombo("Anchor##usl", sl->anchor, ed);
+            if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Knob Size##usl", &sl->knobSize, 0.02f, 0.1f, 3.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Show Value##usl", &sl->showValue)) ed.dirty = true;
+            if (sl->showValue) {
+                float tc[4] = {sl->textColor.r, sl->textColor.g, sl->textColor.b, sl->textColor.a};
+                if (ImGui::ColorEdit4("Text Color##usl", tc)) { sl->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+            }
             if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
         }
     }
@@ -3616,6 +3629,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Check##utg", cc)) { tg->checkColor = {cc[0], cc[1], cc[2], cc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("click in the built game; calls script on_toggle()");
             AnchorCombo("Anchor##utg", tg->anchor, ed);
+            if (ImGui::DragFloat("Corner Radius##utg", &tg->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }
     }
@@ -3921,27 +3935,42 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     for (const auto& up : objs) {
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active) continue;
+        float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pb->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pb->background), pb->cornerRadius);
         dl->AddRectFilled(a, ImVec2(a.x + sz.x * pb->Fraction(), a.y + sz.y),
-                          ToColor(pb->fill), 3.0f);
+                          ToColor(pb->fill), pb->cornerRadius);
+        if (pb->showPercent) {
+            char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+            float px = 2.0f * s;
+            float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
+            DrawBitmapText(dl, pct, a.x + (sz.x - tw) * 0.5f,
+                           a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(pb->textColor));
+        }
     }
 
     // UI sliders: track + fill + knob.
     for (const auto& up : objs) {
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active) continue;
+        float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(sl->background), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(sl->background), sl->cornerRadius);
         dl->AddRectFilled(a, ImVec2(a.x + sz.x * sl->Fraction(), a.y + sz.y),
-                          ToColor(sl->fill), 3.0f);
-        float kx = a.x + sz.x * sl->Fraction(), kw = sz.y * 0.6f;
+                          ToColor(sl->fill), sl->cornerRadius);
+        float kx = a.x + sz.x * sl->Fraction(), kw = sz.y * sl->knobSize;
         dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sz.y + 2),
                           ToColor(sl->knob), 2.0f);
+        if (sl->showValue) {
+            char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+            float px = 2.0f * s;
+            DrawBitmapText(dl, vbuf, a.x + sz.x + 8 * s,
+                           a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(sl->textColor));
+        }
     }
     // UI toggles: box (+ inset check when on) and a label.
     for (const auto& up : objs) {
@@ -3952,7 +3981,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
-        dl->AddRectFilled(a, b, ToColor(tg->boxColor), 3.0f);
+        dl->AddRectFilled(a, b, ToColor(tg->boxColor), tg->cornerRadius);
         if (tg->on) {
             float pad = sz.x * 0.22f;
             dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),

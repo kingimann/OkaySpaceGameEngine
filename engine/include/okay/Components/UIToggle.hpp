@@ -24,6 +24,7 @@ public:
     Color checkColor = Color::FromBytes(90, 200, 110);
     Color textColor  = Color::White;
     UIAnchor anchor = UIAnchor::TopLeft;
+    float cornerRadius = 3.0f;                        // rounded box corners
 
     bool IsHovered() const { return m_hover; }
 

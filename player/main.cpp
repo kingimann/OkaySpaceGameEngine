@@ -15,7 +15,9 @@
 #endif
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <unordered_map>
@@ -554,6 +556,15 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawColor(renderer, (Uint8)(pb->fill.r * 255), (Uint8)(pb->fill.g * 255),
                                    (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255));
             SDL_RenderFillRect(renderer, &fl);
+            if (pb->showPercent) {
+                char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+                float px = 2.0f;
+                float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
+                SDL_Color tc{(Uint8)(pb->textColor.r * 255), (Uint8)(pb->textColor.g * 255),
+                             (Uint8)(pb->textColor.b * 255), (Uint8)(pb->textColor.a * 255)};
+                DrawText(renderer, pct, o.x + (pb->size.x - tw) * 0.5f,
+                         o.y + (pb->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            }
         }
         for (const auto& up : scene.Objects()) {           // sliders
             auto* sl = up->GetComponent<UISlider>();
@@ -568,12 +579,20 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->fill.r * 255), (Uint8)(sl->fill.g * 255),
                                    (Uint8)(sl->fill.b * 255), (Uint8)(sl->fill.a * 255));
             SDL_RenderFillRect(renderer, &fl);
-            int kw = (int)(sl->size.y * 0.6f);
+            int kw = (int)(sl->size.y * sl->knobSize);
             SDL_Rect kn{(int)(o.x + sl->size.x * sl->Fraction()) - kw / 2,
                         (int)o.y - 2, kw, (int)sl->size.y + 4};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->knob.r * 255), (Uint8)(sl->knob.g * 255),
                                    (Uint8)(sl->knob.b * 255), (Uint8)(sl->knob.a * 255));
             SDL_RenderFillRect(renderer, &kn);
+            if (sl->showValue) {
+                char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+                float px = 2.0f;
+                SDL_Color tc{(Uint8)(sl->textColor.r * 255), (Uint8)(sl->textColor.g * 255),
+                             (Uint8)(sl->textColor.b * 255), (Uint8)(sl->textColor.a * 255)};
+                DrawText(renderer, vbuf, o.x + sl->size.x + 8.0f,
+                         o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            }
         }
         for (const auto& up : scene.Objects()) {           // toggles (checkboxes)
             auto* tg = up->GetComponent<UIToggle>();

@@ -25,6 +25,12 @@ public:
     Color fill       = Color::FromBytes(90, 140, 220);
     Color knob       = Color::FromBytes(230, 230, 240);
     UIAnchor anchor = UIAnchor::TopLeft;
+    // Customization: rounded track, knob width (as a fraction of height), and an
+    // optional value readout drawn to the right of the track.
+    float cornerRadius = 3.0f;
+    float knobSize = 0.6f;                           // knob width = size.y * this
+    bool  showValue = false;
+    Color textColor = Color::White;
 
     /// 0..1 position of the handle along the track (for rendering).
     float Fraction() const {

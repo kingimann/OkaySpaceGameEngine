@@ -327,7 +327,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pb->size.x << " " << pb->size.y << " " << pb->value << " "
             << pb->background.r << " " << pb->background.g << " " << pb->background.b << " " << pb->background.a << " "
             << pb->fill.r << " " << pb->fill.g << " " << pb->fill.b << " " << pb->fill.a
-            << " " << (int)pb->anchor << "\n";
+            << " " << (int)pb->anchor << " "
+            << pb->cornerRadius << " " << (pb->showPercent ? 1 : 0) << " "
+            << pb->textColor.r << " " << pb->textColor.g << " " << pb->textColor.b << " " << pb->textColor.a << "\n";
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -344,7 +346,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sl->background.r << " " << sl->background.g << " " << sl->background.b << " " << sl->background.a << " "
             << sl->fill.r << " " << sl->fill.g << " " << sl->fill.b << " " << sl->fill.a << " "
             << sl->knob.r << " " << sl->knob.g << " " << sl->knob.b << " " << sl->knob.a
-            << " " << (int)sl->anchor << "\n";
+            << " " << (int)sl->anchor << " "
+            << sl->cornerRadius << " " << sl->knobSize << " " << (sl->showValue ? 1 : 0) << " "
+            << sl->textColor.r << " " << sl->textColor.g << " " << sl->textColor.b << " " << sl->textColor.a << "\n";
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
         out << "  uitoggle " << Quote(tg->label) << " "
@@ -353,7 +357,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tg->boxColor.r << " " << tg->boxColor.g << " " << tg->boxColor.b << " " << tg->boxColor.a << " "
             << tg->checkColor.r << " " << tg->checkColor.g << " " << tg->checkColor.b << " " << tg->checkColor.a << " "
             << tg->textColor.r << " " << tg->textColor.g << " " << tg->textColor.b << " " << tg->textColor.a
-            << " " << (int)tg->anchor << "\n";
+            << " " << (int)tg->anchor << " " << tg->cornerRadius << "\n";
     }
     if (auto* ps = go->GetComponent<ParticleSystem>()) {
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
@@ -808,6 +812,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> bg.r >> bg.g >> bg.b >> bg.a >> fl.r >> fl.g >> fl.b >> fl.a;
                     pb->background = bg; pb->fill = fl;
                     ReadAnchor(in, pb->anchor);
+                    in >> std::ws; // optional style block (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sp = 0; Color tc;
+                        in >> pb->cornerRadius >> sp >> tc.r >> tc.g >> tc.b >> tc.a;
+                        pb->showPercent = (sp != 0); pb->textColor = tc;
+                    }
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
                     Color c;
@@ -836,6 +846,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> kn.r >> kn.g >> kn.b >> kn.a;
                     sl->background = bg; sl->fill = fl; sl->knob = kn;
                     ReadAnchor(in, sl->anchor);
+                    in >> std::ws; // optional style block (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sv = 0; Color tc;
+                        in >> sl->cornerRadius >> sl->knobSize >> sv >> tc.r >> tc.g >> tc.b >> tc.a;
+                        sl->showValue = (sv != 0); sl->textColor = tc;
+                    }
                 } else if (field == "uitoggle") {
                     auto* tg = go->AddComponent<UIToggle>();
                     tg->label = ReadQuoted(in);
@@ -847,6 +863,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tg->on = (on != 0);
                     tg->boxColor = b; tg->checkColor = c; tg->textColor = t;
                     ReadAnchor(in, tg->anchor);
+                    in >> std::ws; // optional corner radius (added later)
+                    if (std::isdigit(in.peek())) in >> tg->cornerRadius;
                 } else if (field == "particles") {
                     auto* ps = go->AddComponent<ParticleSystem>();
                     int playing = 1, fade = 1;

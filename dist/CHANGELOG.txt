@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.58.0
+  - Slider/Progress/Toggle customization: rounded corners on all three; the
+    Slider gets an adjustable Knob Size and an optional value readout; the
+    Progress Bar gets an optional centered percent readout (with text color).
+  - Consistent "tons of options" styling across the widget set; everything
+    saves with the scene and renders in the built game.
+
 v1.57.0
   - UI Image fill (like Unity's Filled image): set Fill Mode to Left/Right/Up/
     Down and a Fill Amount (0..1) to reveal only part of the image — perfect for

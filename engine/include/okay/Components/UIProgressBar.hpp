@@ -17,6 +17,10 @@ public:
     Color background = Color::FromBytes(40, 40, 50);
     Color fill = Color::FromBytes(90, 200, 110);
     UIAnchor anchor = UIAnchor::TopLeft;
+    // Customization: rounded ends and an optional centered percent readout.
+    float cornerRadius = 3.0f;
+    bool  showPercent = false;
+    Color textColor = Color::White;
 
     void SetValue(float v) { value = Mathf::Clamp01(v); }
     float Fraction() const { return Mathf::Clamp01(value); }

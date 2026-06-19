@@ -281,5 +281,30 @@ int main() {
         CHECK_NEAR(im2->cornerRadius, 6.0f, 1e-4f);
     }
 
+    // --- Slider / progress / toggle style round-trip -------------------
+    {
+        Scene s("Sty2"); s.physicsEnabled = false;
+        auto* sl = s.CreateGameObject("Sld")->AddComponent<UISlider>();
+        sl->cornerRadius = 7.0f; sl->knobSize = 1.2f; sl->showValue = true;
+        sl->textColor = Color::FromBytes(11, 22, 33, 44);
+        auto* pb = s.CreateGameObject("Bar")->AddComponent<UIProgressBar>();
+        pb->cornerRadius = 9.0f; pb->showPercent = true;
+        auto* tg = s.CreateGameObject("Tg")->AddComponent<UIToggle>();
+        tg->cornerRadius = 5.0f;
+
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
+        auto* sl2 = s2.Find("Sld")->GetComponent<UISlider>();
+        CHECK_NEAR(sl2->cornerRadius, 7.0f, 1e-4f);
+        CHECK_NEAR(sl2->knobSize, 1.2f, 1e-4f);
+        CHECK(sl2->showValue);
+        CHECK_NEAR(sl2->textColor.a, Color::FromBytes(11, 22, 33, 44).a, 1e-3f);
+        auto* pb2 = s2.Find("Bar")->GetComponent<UIProgressBar>();
+        CHECK_NEAR(pb2->cornerRadius, 9.0f, 1e-4f);
+        CHECK(pb2->showPercent);
+        auto* tg2 = s2.Find("Tg")->GetComponent<UIToggle>();
+        CHECK_NEAR(tg2->cornerRadius, 5.0f, 1e-4f);
+    }
+
     TEST_MAIN_RESULT();
 }

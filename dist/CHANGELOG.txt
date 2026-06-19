@@ -1,5 +1,9 @@
 OkaySpace Game Engine — Changelog
 
+v1.28.0
+  - Hierarchy: double-click a row (or right-click > Rename) to rename it, and
+    Activate/Deactivate from the right-click menu.
+
 v1.27.0
   - Hierarchy: drag a row onto another to re-parent it; drop it on empty space
     to unparent. Drag a prefab/scene from the Project into the Hierarchy to

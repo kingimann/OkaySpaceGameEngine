@@ -1931,6 +1931,8 @@ static const char* ObjectKind(GameObject* go) {
 }
 
 static char g_hierFilter[96] = "";
+static GameObject* g_hierRename = nullptr;   // object being renamed inline
+static char g_hierRenameBuf[128] = "";
 
 void DrawHierarchy(EditorState& ed) {
     ImGui::Begin("Hierarchy", &g_showHierarchy);
@@ -2004,9 +2006,22 @@ void DrawHierarchy(EditorState& ed) {
                 }
                 ImGui::EndDragDropTarget();
             }
+            // Double-click a row to rename it inline.
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                g_hierRename = node;
+                std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
+                g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
+            }
             // Right-click context menu per item.
             if (ImGui::BeginPopupContextItem()) {
                 ed.Select(node);
+                if (ImGui::MenuItem("Rename")) {
+                    g_hierRename = node;
+                    std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
+                    g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
+                }
+                if (ImGui::MenuItem(node->active ? "Deactivate" : "Activate"))
+                    { node->active = !node->active; ed.dirty = true; }
                 if (ImGui::MenuItem("Duplicate")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
                 if (ImGui::MenuItem("Delete"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
                 ImGui::Separator();
@@ -2062,6 +2077,30 @@ void DrawHierarchy(EditorState& ed) {
             }
         }
         ImGui::EndDragDropTarget();
+    }
+
+    // Inline rename modal (double-click a row or context-menu Rename).
+    if (g_hierRename) {
+        // Confirm the target still exists in the scene.
+        bool alive = false;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g_hierRename) { alive = true; break; }
+        if (!alive) g_hierRename = nullptr;
+    }
+    if (g_hierRename) {
+        ImGui::OpenPopup("Rename Object");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Rename Object", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::SetKeyboardFocusHere();
+            bool enter = ImGui::InputText("Name", g_hierRenameBuf, sizeof(g_hierRenameBuf),
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+            if (enter || ImGui::Button("OK", ImVec2(110, 0))) {
+                if (g_hierRenameBuf[0]) { g_hierRename->name = g_hierRenameBuf; ed.dirty = true; }
+                g_hierRename = nullptr; ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_hierRename = nullptr; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
     }
     ImGui::End();
 }

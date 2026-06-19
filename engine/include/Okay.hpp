@@ -35,6 +35,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/SceneManager.hpp"
 
 // Graphics assets
 #include "okay/Graphics/Image.hpp"

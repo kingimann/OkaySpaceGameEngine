@@ -399,6 +399,7 @@ char g_pathBuf[256] = "scene.okayscene";
 
 // Extra panels / tools.
 bool  g_showStats = true;
+bool  g_showScenes = false;
 bool  g_showInstPrefab = false;
 char  g_prefabBuf[256] = "Prefab.okayprefab";
 bool  g_showBuildGame = false;
@@ -804,6 +805,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
+        ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
         ImGui::Separator();
         ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
         if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
@@ -1494,6 +1496,68 @@ void DrawStats(EditorState& ed) {
     ImGui::End();
 }
 
+// The Scene Manager panel: the project's scenes (Unity's Build Settings list).
+// Lists the .okayscene files in the project, opens them, and manages a build
+// order with a startup scene the player loads first. The build list is fed into
+// the engine SceneManager so scripts can load_scene_index / load_next_scene.
+void DrawScenes(EditorState& ed) {
+    if (!ImGui::Begin("Scenes", &g_showScenes)) { ImGui::End(); return; }
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
+                                           : fs::path(ed.projectDir()) / "Assets";
+    ImGui::TextDisabled("%s", dir.string().c_str());
+
+    // Rescan the folder for scene files (cheap; refresh button forces it).
+    static std::vector<std::string> scenes;
+    static std::string lastDir;
+    auto rescan = [&]() {
+        scenes.clear();
+        if (fs::exists(dir, ec))
+            for (auto& e : fs::recursive_directory_iterator(dir, ec)) {
+                if (e.is_regular_file() && e.path().extension() == ".okayscene")
+                    scenes.push_back(e.path().string());
+            }
+        std::sort(scenes.begin(), scenes.end());
+        // Mirror into the engine SceneManager build list.
+        SceneManager::ClearScenes();
+        for (auto& s : scenes) SceneManager::AddScene(s);
+        lastDir = dir.string();
+    };
+    if (lastDir != dir.string()) rescan();
+    if (ImGui::Button("Refresh")) rescan();
+    ImGui::SameLine();
+    if (ImGui::Button("Save Current As...")) g_showSaveAs = true;
+    ImGui::Separator();
+
+    if (scenes.empty()) ImGui::TextDisabled("No .okayscene files in the project yet.");
+    for (int i = 0; i < (int)scenes.size(); ++i) {
+        const std::string& path = scenes[i];
+        std::string name = fs::path(path).stem().string();
+        bool isCurrent = (path == ed.path());
+        ImGui::PushID(i);
+        ImGui::Text("%d", i);                 // build index
+        ImGui::SameLine();
+        if (ImGui::Selectable(name.c_str(), isCurrent, ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::IsMouseDoubleClicked(0)) {
+                std::string err;
+                if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
+                else ConsoleLog("Open failed: " + err);
+            }
+        }
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70);
+        if (ImGui::SmallButton("Open")) {
+            std::string err;
+            if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
+            else ConsoleLog("Open failed: " + err);
+        }
+        ImGui::PopID();
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("double-click to open; the build order is the index shown");
+    ImGui::End();
+}
+
 // A dedicated code/graph editor panel (separate from the Inspector), with
 // external-IDE round-tripping.
 // Prompt to save unsaved work before quitting. Routed through g_quitRequested
@@ -2053,6 +2117,8 @@ static const char* ObjectKind(GameObject* go) {
 static char g_hierFilter[96] = "";
 static GameObject* g_hierRename = nullptr;   // object being renamed inline
 static char g_hierRenameBuf[128] = "";
+static GameObject* g_prefabSaveTarget = nullptr; // object being saved as a prefab
+static char g_prefabNameBuf[128] = "";
 
 void DrawHierarchy(EditorState& ed) {
     ImGui::Begin("Hierarchy", &g_showHierarchy);
@@ -2135,20 +2201,55 @@ void DrawHierarchy(EditorState& ed) {
             // Right-click context menu per item.
             if (ImGui::BeginPopupContextItem()) {
                 ed.Select(node);
-                if (ImGui::MenuItem("Rename")) {
+                if (ImGui::MenuItem("Rename", "F2")) {
                     g_hierRename = node;
                     std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
                     g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
                 }
                 if (ImGui::MenuItem(node->active ? "Deactivate" : "Activate"))
                     { node->active = !node->active; ed.dirty = true; }
-                if (ImGui::MenuItem("Duplicate")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
-                if (ImGui::MenuItem("Delete"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Add Child")) {
+                if (ImGui::MenuItem("Copy", "Ctrl+C"))
+                    g_clipboard = SceneSerializer::SerializeObject(*node);
+                if (ImGui::MenuItem("Paste As Sibling", "Ctrl+V", false, !g_clipboard.empty())) {
+                    ed.PushUndo();
+                    if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
+                        if (node->transform->Parent()) p->transform->SetParent(node->transform->Parent(), false);
+                        ed.Select(p); ed.dirty = true;
+                    }
+                }
+                if (ImGui::MenuItem("Paste As Child", nullptr, false, !g_clipboard.empty())) {
+                    ed.PushUndo();
+                    if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
+                        p->transform->SetParent(node->transform, false);
+                        ed.Select(p); ed.dirty = true;
+                    }
+                }
+                if (ImGui::MenuItem("Duplicate", "Ctrl+D")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
+                if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Create Empty Child")) {
                     GameObject* child = ed.scene().CreateGameObject("Child");
                     child->transform->SetParent(node->transform, false);
-                    ed.Select(child);
+                    ed.Select(child); ed.dirty = true;
+                }
+                if (ImGui::BeginMenu("Create Child")) {
+                    auto childOf = [&](GameObject* g) { if (g) { g->transform->SetParent(node->transform, false); ed.Select(g); ed.dirty = true; } };
+                    if (ImGui::MenuItem("Cube"))   childOf(ed.CreateCube("Cube"));
+                    if (ImGui::MenuItem("Sprite")) childOf(ed.CreateSprite("Sprite"));
+                    if (ImGui::MenuItem("Camera")) childOf(ed.CreateCamera("Camera"));
+                    if (ImGui::MenuItem("Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); childOf(g); }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Focus (frame)")) {
+                    ed.camTarget = node->transform->Position();
+                    ed.cameraPos = {node->transform->Position().x, node->transform->Position().y};
+                }
+                if (ImGui::MenuItem("Save As Prefab...")) {
+                    g_prefabSaveTarget = node;
+                    std::strncpy(g_prefabNameBuf, node->name.c_str(), sizeof(g_prefabNameBuf) - 1);
+                    g_prefabNameBuf[sizeof(g_prefabNameBuf) - 1] = '\0';
                 }
                 ImGui::EndPopup();
             }
@@ -2166,6 +2267,21 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Create Empty"))  ed.CreateEmpty();
         if (ImGui::MenuItem("Create Sprite")) ed.CreateSprite();
         if (ImGui::MenuItem("Create Cube"))   ed.CreateCube();
+        if (ImGui::MenuItem("Create Camera")) ed.CreateCamera();
+        if (ImGui::MenuItem("Create Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); ed.Select(g); }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("3D Object")) {
+            if (ImGui::MenuItem("Cube"))     ed.CreateCube();
+            if (ImGui::MenuItem("Sphere"))   ed.CreateMesh("Sphere");
+            if (ImGui::MenuItem("Cylinder")) ed.CreateMesh("Cylinder");
+            if (ImGui::MenuItem("Plane"))    ed.CreateMesh("Plane");
+            if (ImGui::MenuItem("Pyramid"))  ed.CreatePyramid();
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
+            ed.PushUndo();
+            if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) { ed.Select(p); ed.dirty = true; }
+        }
         ImGui::EndPopup();
     }
 
@@ -2219,6 +2335,41 @@ void DrawHierarchy(EditorState& ed) {
             }
             ImGui::SameLine();
             if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_hierRename = nullptr; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
+    }
+
+    // Save-as-Prefab modal: writes a .okayprefab into the project's Assets so it
+    // can be dragged back in / instantiated anywhere.
+    if (g_prefabSaveTarget) {
+        bool alive = false;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g_prefabSaveTarget) { alive = true; break; }
+        if (!alive) g_prefabSaveTarget = nullptr;
+    }
+    if (g_prefabSaveTarget) {
+        ImGui::OpenPopup("Save As Prefab");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Save As Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
+                                                   : fs::path(ed.projectDir()) / "Assets";
+            ImGui::Text("Folder: %s", dir.string().c_str());
+            ImGui::SetKeyboardFocusHere();
+            bool enter = ImGui::InputText("Name", g_prefabNameBuf, sizeof(g_prefabNameBuf),
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+            if (enter || ImGui::Button("Save", ImVec2(110, 0))) {
+                if (g_prefabNameBuf[0]) {
+                    fs::create_directories(dir, ec);
+                    fs::path out = dir / (std::string(g_prefabNameBuf) + ".okayprefab");
+                    if (SceneSerializer::SaveObjectToFile(*g_prefabSaveTarget, out.string()))
+                        ConsoleLog("Saved prefab " + out.string());
+                    else ConsoleLog("Prefab save failed");
+                }
+                g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
     }
@@ -4282,6 +4433,7 @@ int main(int argc, char** argv) {
         if (g_showScriptEditor) DrawScriptEditor(ed);
         DrawScriptDocs();
         if (g_showStats)     DrawStats(ed);
+        if (g_showScenes)    DrawScenes(ed);
 
         // Play-mode tint: a colored border around the whole window so it's
         // obvious the game is running (green) or paused (amber) — like Unity.

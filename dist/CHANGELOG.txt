@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v1.36.0
+  - New Scene Manager (engine + a Scenes panel): a build list of the project's
+    scenes with by-index / by-name loading, Load Next and Reload — the engine
+    analogue of Unity's SceneManager + Build Settings. The Scenes panel lists
+    and opens project scenes and feeds the build order.
+  - Prefabs from the Hierarchy: right-click an object > Save As Prefab... writes
+    a .okayprefab into the project (drag it back in to instantiate).
+  - Expanded Hierarchy right-click: Copy / Paste As Sibling / Paste As Child,
+    Duplicate, Create Empty Child, Create Child (Cube/Sprite/Camera/Light),
+    Focus, Rename, Activate, Delete; the empty-space menu adds Camera, Light,
+    a 3D Object submenu and Paste.
+
 v1.35.0
   - Build everything with the skybox and lighting: the sky gradient and a base
     ambient level are now per-scene render settings saved with the scene, so a

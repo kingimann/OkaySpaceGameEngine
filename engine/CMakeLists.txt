@@ -9,6 +9,7 @@ add_library(okay_engine
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp
     src/Scene/Scene.cpp
+    src/Scene/SceneManager.cpp
     src/Scene/SceneSerializer.cpp
     src/Components/Camera.cpp
     src/Components/SpriteRenderer.cpp

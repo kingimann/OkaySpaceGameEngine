@@ -30,6 +30,9 @@ public:
     float fontScale = 2.0f;                        // text pixel size multiplier
     float borderWidth = 0.0f;                      // 0 = no border
     Color borderColor = Color::FromBytes(255, 255, 255, 80);
+    /// Grow effect when hovered/focused: 1 = none, e.g. 1.1 = 10% bigger. A
+    /// lightweight Unity-style "transition" for tactile menus.
+    float hoverScale = 1.0f;
     /// When false the button is greyed out and ignores hover/click (e.g. a
     /// "Continue" entry with no save). Scripts toggle it via set_interactable().
     bool interactable = true;

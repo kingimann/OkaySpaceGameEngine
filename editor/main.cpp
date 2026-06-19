@@ -3510,6 +3510,8 @@ void DrawInspector(EditorState& ed) {
                 float bc[4] = {btn->borderColor.r, btn->borderColor.g, btn->borderColor.b, btn->borderColor.a};
                 if (ImGui::ColorEdit4("Border Color##uib", bc)) { btn->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             }
+            if (ImGui::DragFloat("Hover Grow##uib", &btn->hoverScale, 0.01f, 1.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale when hovered/focused (1 = none)");
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
     }
@@ -3534,6 +3536,13 @@ void DrawInspector(EditorState& ed) {
                 float gb[4] = {pn->colorBottom.r, pn->colorBottom.g, pn->colorBottom.b, pn->colorBottom.a};
                 if (ImGui::ColorEdit4("Bottom Color##uip", gb)) { pn->colorBottom = {gb[0], gb[1], gb[2], gb[3]}; ed.dirty = true; }
                 ImGui::TextDisabled("Color is the top; gradient ignores corner rounding.");
+            }
+            if (ImGui::Checkbox("Drop Shadow##uip", &pn->shadow)) ed.dirty = true;
+            if (pn->shadow) {
+                float sc[4] = {pn->shadowColor.r, pn->shadowColor.g, pn->shadowColor.b, pn->shadowColor.a};
+                if (ImGui::ColorEdit4("Shadow Color##uip", sc)) { pn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+                float so[2] = {pn->shadowOffset.x, pn->shadowOffset.y};
+                if (ImGui::DragFloat2("Shadow Offset##uip", so, 0.5f)) { pn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
             }
             if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
         }
@@ -4041,6 +4050,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 pb2(a.x + sz.x, a.y + sz.y);
+        if (pn->shadow)          // drop shadow behind the panel
+            dl->AddRectFilled(ImVec2(a.x + pn->shadowOffset.x, a.y + pn->shadowOffset.y),
+                              ImVec2(pb2.x + pn->shadowOffset.x, pb2.y + pn->shadowOffset.y),
+                              ToColor(pn->shadowColor), pn->cornerRadius);
         if (pn->useGradient) {   // vertical top->bottom fade (no rounding)
             dl->AddRectFilledMultiColor(a, pb2, ToColor(pn->color), ToColor(pn->color),
                                         ToColor(pn->colorBottom), ToColor(pn->colorBottom));
@@ -4120,13 +4133,19 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
+        // Hover/focus grow: scale the rect about its center.
+        if (btn->hoverScale != 1.0f && (btn->IsHovered() || btn->IsFocused())) {
+            float gx = sz.x * (btn->hoverScale - 1.0f) * 0.5f;
+            float gy = sz.y * (btn->hoverScale - 1.0f) * 0.5f;
+            a.x -= gx; a.y -= gy; b.x += gx; b.y += gy;
+        }
         dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), btn->cornerRadius);
         if (btn->borderWidth > 0.0f)
             dl->AddRect(a, b, ToColor(btn->borderColor), btn->cornerRadius, 0, btn->borderWidth);
         float px = btn->fontScale * s;
         float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-        DrawBitmapText(dl, btn->label, a.x + (sz.x - tw) * 0.5f,
-                       a.y + (sz.y - Font8x8::Height * px) * 0.5f, px,
+        DrawBitmapText(dl, btn->label, a.x + ((b.x - a.x) - tw) * 0.5f,
+                       a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f, px,
                        ToColor(btn->textColor));
     }
 

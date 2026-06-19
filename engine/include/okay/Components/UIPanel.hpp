@@ -23,6 +23,11 @@ public:
     // `colorBottom` the bottom (a vertical fade for headers/backdrops).
     bool  useGradient = false;
     Color colorBottom = Color::FromBytes(10, 12, 18, 200);
+    // Optional drop shadow: a translucent copy drawn behind, offset by
+    // `shadowOffset` pixels — lifts dialogs/cards off the scene.
+    bool  shadow = false;
+    Color shadowColor = Color::FromBytes(0, 0, 0, 120);
+    Vec2  shadowOffset{6.0f, 6.0f};
 };
 
 } // namespace okay

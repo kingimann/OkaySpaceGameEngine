@@ -368,12 +368,21 @@ int main() {
         pb->FillRect(100, 80, ox, oy, fw, fh);
         CHECK_NEAR(fh, 20.0f, 1e-4f); CHECK_NEAR(oy, 60.0f, 1e-4f);  // grows from bottom
 
+        auto* bn = s.CreateGameObject("Bn")->AddComponent<UIButton>();
+        bn->hoverScale = 1.15f;
+        auto* pl = s.CreateGameObject("Pl")->AddComponent<UIPanel>();
+        pl->shadow = true; pl->shadowOffset = {7, 9};
+
         std::string txt = SceneSerializer::Serialize(s);
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
         auto* sl2 = s2.Find("S")->GetComponent<UISlider>();
         CHECK(sl2->wholeNumbers);
         auto* pb2 = s2.Find("P")->GetComponent<UIProgressBar>();
         CHECK(pb2->fillDir == UIProgressBar::FillDir::BottomTop);
+        auto* bn2 = s2.Find("Bn")->GetComponent<UIButton>();
+        CHECK_NEAR(bn2->hoverScale, 1.15f, 1e-4f);
+        auto* pl2 = s2.Find("Pl")->GetComponent<UIPanel>();
+        CHECK(pl2->shadow && pl2->shadowOffset.x > 6.9f && pl2->shadowOffset.y > 8.9f);
     }
 
     // --- Menu navigation reaches toggles, sliders, dropdowns -----------

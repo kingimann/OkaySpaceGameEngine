@@ -545,6 +545,12 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
+            if (pn->shadow) {                               // drop shadow behind
+                SDL_Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
+                SDL_SetRenderDrawColor(renderer, (Uint8)(pn->shadowColor.r * 255), (Uint8)(pn->shadowColor.g * 255),
+                                       (Uint8)(pn->shadowColor.b * 255), (Uint8)(pn->shadowColor.a * 255));
+                SDL_RenderFillRect(renderer, &sh);
+            }
             if (pn->useGradient) {                          // top->bottom fade in bands
                 int bands = r.h > 0 ? (r.h < 64 ? r.h : 64) : 1;
                 for (int i = 0; i < bands; ++i) {
@@ -678,6 +684,11 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)btn->size.x, (int)btn->size.y};
+            if (btn->hoverScale != 1.0f && (btn->IsHovered() || btn->IsFocused())) {
+                int gx = (int)(btn->size.x * (btn->hoverScale - 1.0f) * 0.5f);
+                int gy = (int)(btn->size.y * (btn->hoverScale - 1.0f) * 0.5f);
+                r.x -= gx; r.y -= gy; r.w += 2 * gx; r.h += 2 * gy;
+            }
             SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
                                    (Uint8)(bg.b * 255), (Uint8)(bg.a * 255));
             SDL_RenderFillRect(renderer, &r);

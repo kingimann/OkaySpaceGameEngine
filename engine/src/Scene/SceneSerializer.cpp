@@ -265,7 +265,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << btn->disabledColor.r << " " << btn->disabledColor.g << " " << btn->disabledColor.b << " " << btn->disabledColor.a << " "
             << (btn->interactable ? 1 : 0) << " " << (btn->focusable ? 1 : 0) << " "
             << btn->cornerRadius << " " << btn->fontScale << " " << btn->borderWidth << " "
-            << btn->borderColor.r << " " << btn->borderColor.g << " " << btn->borderColor.b << " " << btn->borderColor.a << "\n";
+            << btn->borderColor.r << " " << btn->borderColor.g << " " << btn->borderColor.b << " " << btn->borderColor.a
+            << " " << btn->hoverScale << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -275,7 +276,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pn->cornerRadius << " " << pn->borderWidth << " "
             << pn->borderColor.r << " " << pn->borderColor.g << " " << pn->borderColor.b << " " << pn->borderColor.a << " "
             << (pn->useGradient ? 1 : 0) << " "
-            << pn->colorBottom.r << " " << pn->colorBottom.g << " " << pn->colorBottom.b << " " << pn->colorBottom.a << "\n";
+            << pn->colorBottom.r << " " << pn->colorBottom.g << " " << pn->colorBottom.b << " " << pn->colorBottom.a << " "
+            << (pn->shadow ? 1 : 0) << " "
+            << pn->shadowColor.r << " " << pn->shadowColor.g << " " << pn->shadowColor.b << " " << pn->shadowColor.a << " "
+            << pn->shadowOffset.x << " " << pn->shadowOffset.y << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
@@ -729,6 +733,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> btn->cornerRadius >> btn->fontScale >> btn->borderWidth
                            >> bc.r >> bc.g >> bc.b >> bc.a;
                         btn->borderColor = bc;
+                        in >> std::ws; // optional hover scale (added later)
+                        if (std::isdigit(in.peek())) in >> btn->hoverScale;
                     }
                 } else if (field == "uipanel") {
                     auto* pn = go->AddComponent<UIPanel>();
@@ -750,6 +756,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int g = 0; Color gb;
                         in >> g >> gb.r >> gb.g >> gb.b >> gb.a;
                         pn->useGradient = (g != 0); pn->colorBottom = gb;
+                    }
+                    in >> std::ws; // optional drop shadow (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sh = 0; Color sc;
+                        in >> sh >> sc.r >> sc.g >> sc.b >> sc.a >> pn->shadowOffset.x >> pn->shadowOffset.y;
+                        pn->shadow = (sh != 0); pn->shadowColor = sc;
                     }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();

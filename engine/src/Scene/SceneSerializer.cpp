@@ -29,8 +29,18 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/Canvas.hpp"
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UITextBind.hpp"
+#include "okay/Components/UIDraggable.hpp"
+#include "okay/Components/Draggable.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/UIDocument.hpp"
+#include "okay/Net/NetworkManager.hpp"
+#include "okay/Components/Terrain.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -118,7 +128,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cam->backgroundColor.b << " " << cam->backgroundColor.a << " "
             << (cam->main ? 1 : 0) << "\n";
     }
-    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+    // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
+    // geometry for it — just the heightmap below, which rebuilds the mesh on load.
+    if (auto* mr = go->GetComponent<MeshRenderer>(); mr && !go->GetComponent<Terrain>()) {
         out << "  mesh " << Quote(mr->mesh.name.empty() ? "Cube" : mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
@@ -129,6 +141,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
             << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << " "
             << mr->tiling.x << " " << mr->tiling.y << "\n";
+    }
+    if (auto* tr = go->GetComponent<Terrain>()) {
+        out << "  terrain " << tr->resolution << " " << tr->size << " "
+            << tr->color.r << " " << tr->color.g << " " << tr->color.b << " " << tr->color.a
+            << " " << tr->heights.size();
+        for (float h : tr->heights) out << " " << h;
+        out << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
@@ -215,7 +234,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tr->screenPos.x << " " << tr->screenPos.y << " " << (int)tr->anchor << " "
             << (tr->shadow ? 1 : 0) << " "
             << tr->shadowColor.r << " " << tr->shadowColor.g << " " << tr->shadowColor.b << " " << tr->shadowColor.a << " "
-            << tr->shadowOffset.x << " " << tr->shadowOffset.y << "\n";
+            << tr->shadowOffset.x << " " << tr->shadowOffset.y << " " << tr->align << " "
+            << (tr->outline ? 1 : 0) << " "
+            << tr->outlineColor.r << " " << tr->outlineColor.g << " " << tr->outlineColor.b << " " << tr->outlineColor.a
+            << " " << (tr->bold ? 1 : 0) << "\n";
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -244,16 +266,93 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)btn->anchor << " "
             << btn->pressedColor.r << " " << btn->pressedColor.g << " " << btn->pressedColor.b << " " << btn->pressedColor.a << " "
             << btn->disabledColor.r << " " << btn->disabledColor.g << " " << btn->disabledColor.b << " " << btn->disabledColor.a << " "
-            << (btn->interactable ? 1 : 0) << " " << (btn->focusable ? 1 : 0) << "\n";
+            << (btn->interactable ? 1 : 0) << " " << (btn->focusable ? 1 : 0) << " "
+            << btn->cornerRadius << " " << btn->fontScale << " " << btn->borderWidth << " "
+            << btn->borderColor.r << " " << btn->borderColor.g << " " << btn->borderColor.b << " " << btn->borderColor.a
+            << " " << btn->hoverScale
+            << " " << Quote(btn->icon) << " " << btn->iconSize << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
             << pn->size.x << " " << pn->size.y << " "
             << pn->color.r << " " << pn->color.g << " " << pn->color.b << " " << pn->color.a
-            << " " << (int)pn->anchor << "\n";
+            << " " << (int)pn->anchor << " "
+            << pn->cornerRadius << " " << pn->borderWidth << " "
+            << pn->borderColor.r << " " << pn->borderColor.g << " " << pn->borderColor.b << " " << pn->borderColor.a << " "
+            << (pn->useGradient ? 1 : 0) << " "
+            << pn->colorBottom.r << " " << pn->colorBottom.g << " " << pn->colorBottom.b << " " << pn->colorBottom.a << " "
+            << (pn->shadow ? 1 : 0) << " "
+            << pn->shadowColor.r << " " << pn->shadowColor.g << " " << pn->shadowColor.b << " " << pn->shadowColor.a << " "
+            << pn->shadowOffset.x << " " << pn->shadowOffset.y << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
+    }
+    if (auto* nm = go->GetComponent<NetworkManager>()) {
+        out << "  network " << (int)nm->autoStart << " " << nm->autoPort << " "
+            << Quote(nm->autoHost) << " " << Quote(nm->startName) << " "
+            << Quote(nm->startRoom) << " "
+            << nm->maxPlayers << " " << nm->snapshotRate << " "
+            << Quote(nm->serverName) << " " << Quote(nm->password) << "\n";
+    }
+    if (auto* in = go->GetComponent<UIInputField>()) {
+        out << "  uiinput " << in->position.x << " " << in->position.y << " "
+            << in->size.x << " " << in->size.y << " " << (int)in->anchor << " "
+            << in->maxLength << " " << Quote(in->text) << " " << Quote(in->placeholder) << " "
+            << in->color.r << " " << in->color.g << " " << in->color.b << " " << in->color.a << " "
+            << (int)in->contentType << "\n";
+    }
+    if (auto* dd = go->GetComponent<UIDropdown>()) {
+        out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
+            << dd->size.x << " " << dd->size.y << " " << (int)dd->anchor << " "
+            << dd->value << " "
+            << dd->color.r << " " << dd->color.g << " " << dd->color.b << " " << dd->color.a << " "
+            << dd->hoverColor.r << " " << dd->hoverColor.g << " " << dd->hoverColor.b << " " << dd->hoverColor.a << " "
+            << dd->listColor.r << " " << dd->listColor.g << " " << dd->listColor.b << " " << dd->listColor.a << " "
+            << dd->textColor.r << " " << dd->textColor.g << " " << dd->textColor.b << " " << dd->textColor.a << " "
+            << dd->borderColor.r << " " << dd->borderColor.g << " " << dd->borderColor.b << " " << dd->borderColor.a << " "
+            << dd->options.size();
+        for (const auto& opt : dd->options) out << " " << Quote(opt);
+        out << " " << (dd->interactable ? 1 : 0) << " " << Quote(dd->placeholder) << "\n";
+    }
+    if (auto* tb = go->GetComponent<UITextBind>()) {
+        out << "  uibind " << Quote(tb->format) << "\n";
+    }
+    if (auto* dg = go->GetComponent<UIDraggable>()) {
+        out << "  uidraggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
+            << " " << (dg->snapToSlot ? 1 : 0)
+            << " " << (int)dg->axis << " " << dg->dragThreshold << " " << (dg->bringToFront ? 1 : 0) << "\n";
+    }
+    if (auto* dt = go->GetComponent<UIDropTarget>()) {
+        out << "  uidroptarget " << Quote(dt->acceptTag)
+            << " " << (dt->showHighlight ? 1 : 0)
+            << " " << dt->highlight.r << " " << dt->highlight.g
+            << " " << dt->highlight.b << " " << dt->highlight.a << "\n";
+    }
+    if (auto* dg = go->GetComponent<Draggable>()) {
+        out << "  draggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
+            << " " << (dg->snapToZone ? 1 : 0)
+            << " " << (int)dg->axis << " " << dg->dragThreshold << " " << (dg->bringToFront ? 1 : 0)
+            << " " << dg->gridX << " " << dg->gridY << " " << dg->dragScale << "\n";
+    }
+    if (auto* dz = go->GetComponent<DropZone>()) {
+        out << "  dropzone " << Quote(dz->acceptTag) << "\n";
+    }
+    if (auto* tt = go->GetComponent<UITooltip>()) {
+        out << "  uitooltip " << Quote(tt->text) << " " << tt->delay << " "
+            << tt->background.r << " " << tt->background.g << " " << tt->background.b << " " << tt->background.a << " "
+            << tt->textColor.r << " " << tt->textColor.g << " " << tt->textColor.b << " " << tt->textColor.a << " "
+            << tt->borderColor.r << " " << tt->borderColor.g << " " << tt->borderColor.b << " " << tt->borderColor.a << "\n";
+    }
+    if (auto* lg = go->GetComponent<UILayoutGroup>()) {
+        out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
+            << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding << "\n";
+    }
+    if (auto* sv = go->GetComponent<UIScrollView>()) {
+        out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
+            << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
+            << sv->contentHeight << " "
+            << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a << "\n";
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
@@ -268,14 +367,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pb->size.x << " " << pb->size.y << " " << pb->value << " "
             << pb->background.r << " " << pb->background.g << " " << pb->background.b << " " << pb->background.a << " "
             << pb->fill.r << " " << pb->fill.g << " " << pb->fill.b << " " << pb->fill.a
-            << " " << (int)pb->anchor << "\n";
+            << " " << (int)pb->anchor << " "
+            << pb->cornerRadius << " " << (pb->showPercent ? 1 : 0) << " "
+            << pb->textColor.r << " " << pb->textColor.g << " " << pb->textColor.b << " " << pb->textColor.a
+            << " " << (int)pb->fillDir << "\n";
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
             << im->size.x << " " << im->size.y << " "
             << im->color.r << " " << im->color.g << " " << im->color.b << " " << im->color.a << " "
             << Quote(im->texture) << " " << (int)im->anchor << " "
-            << (im->nineSlice ? 1 : 0) << " " << im->border << "\n";
+            << (im->nineSlice ? 1 : 0) << " " << im->border << " "
+            << (int)im->fillMode << " " << im->fillAmount << " " << im->cornerRadius << "\n";
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
         out << "  uislider " << sl->position.x << " " << sl->position.y << " "
@@ -284,7 +387,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sl->background.r << " " << sl->background.g << " " << sl->background.b << " " << sl->background.a << " "
             << sl->fill.r << " " << sl->fill.g << " " << sl->fill.b << " " << sl->fill.a << " "
             << sl->knob.r << " " << sl->knob.g << " " << sl->knob.b << " " << sl->knob.a
-            << " " << (int)sl->anchor << "\n";
+            << " " << (int)sl->anchor << " "
+            << sl->cornerRadius << " " << sl->knobSize << " " << (sl->showValue ? 1 : 0) << " "
+            << sl->textColor.r << " " << sl->textColor.g << " " << sl->textColor.b << " " << sl->textColor.a
+            << " " << (sl->wholeNumbers ? 1 : 0)
+            << " " << (sl->interactable ? 1 : 0)
+            << " " << (sl->vertical ? 1 : 0) << "\n";
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
         out << "  uitoggle " << Quote(tg->label) << " "
@@ -293,7 +401,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tg->boxColor.r << " " << tg->boxColor.g << " " << tg->boxColor.b << " " << tg->boxColor.a << " "
             << tg->checkColor.r << " " << tg->checkColor.g << " " << tg->checkColor.b << " " << tg->checkColor.a << " "
             << tg->textColor.r << " " << tg->textColor.g << " " << tg->textColor.b << " " << tg->textColor.a
-            << " " << (int)tg->anchor << "\n";
+            << " " << (int)tg->anchor << " " << tg->cornerRadius
+            << " " << (int)tg->style << " "
+            << tg->knobColor.r << " " << tg->knobColor.g << " " << tg->knobColor.b << " " << tg->knobColor.a
+            << " " << (tg->interactable ? 1 : 0) << "\n";
     }
     if (auto* ps = go->GetComponent<ParticleSystem>()) {
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
@@ -318,6 +429,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             << rs.skyHorizon.r << " " << rs.skyHorizon.g << " " << rs.skyHorizon.b << " "
             << rs.skyBottom.r << " " << rs.skyBottom.g << " " << rs.skyBottom.b << " "
             << rs.ambient << "\n";
+        out << "fog " << (rs.fog ? 1 : 0) << " "
+            << rs.fogColor.r << " " << rs.fogColor.g << " " << rs.fogColor.b << " "
+            << rs.fogStart << " " << rs.fogEnd << "\n";
     }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
@@ -372,6 +486,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                >> rs.skyHorizon.r >> rs.skyHorizon.g >> rs.skyHorizon.b
                >> rs.skyBottom.r >> rs.skyBottom.g >> rs.skyBottom.b >> rs.ambient;
             rs.skybox = (sky != 0);
+        } else if (token == "fog") {
+            auto& rs = scene.renderSettings;
+            int on = 0;
+            in >> on >> rs.fogColor.r >> rs.fogColor.g >> rs.fogColor.b
+               >> rs.fogStart >> rs.fogEnd;
+            rs.fog = (on != 0);
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;
@@ -574,6 +694,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> sh >> sc.r >> sc.g >> sc.b >> sc.a >> so.x >> so.y;
                         tr->shadow = (sh != 0); tr->shadowColor = sc; tr->shadowOffset = so;
                     }
+                    in >> std::ws; // optional alignment (added later)
+                    if (std::isdigit(in.peek())) in >> tr->align;
+                    in >> std::ws; // optional outline (added later still)
+                    if (std::isdigit(in.peek())) {
+                        int ol = 0; Color oc;
+                        in >> ol >> oc.r >> oc.g >> oc.b >> oc.a;
+                        tr->outline = (ol != 0); tr->outlineColor = oc;
+                    }
+                    in >> std::ws; // optional bold flag (added later)
+                    if (std::isdigit(in.peek())) { int bd = 0; in >> bd; tr->bold = (bd != 0); }
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;
@@ -627,6 +757,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int fk = in.peek();
                         if (fk >= '0' && fk <= '9') { int foc = 1; in >> foc; btn->focusable = (foc != 0); }
                     }
+                    // Optional customization block (corner/font/border, added later).
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        Color bc;
+                        in >> btn->cornerRadius >> btn->fontScale >> btn->borderWidth
+                           >> bc.r >> bc.g >> bc.b >> bc.a;
+                        btn->borderColor = bc;
+                        in >> std::ws; // optional hover scale (added later)
+                        if (std::isdigit(in.peek())) in >> btn->hoverScale;
+                        in >> std::ws; // optional icon path + size (added later)
+                        if (in.peek() == '"') { btn->icon = ReadQuoted(in); in >> btn->iconSize; }
+                    }
                 } else if (field == "uipanel") {
                     auto* pn = go->AddComponent<UIPanel>();
                     Color c;
@@ -634,9 +776,139 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> c.r >> c.g >> c.b >> c.a;
                     pn->color = c;
                     ReadAnchor(in, pn->anchor);
+                    // Optional customization block (corner/border, added later).
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        Color bc;
+                        in >> pn->cornerRadius >> pn->borderWidth
+                           >> bc.r >> bc.g >> bc.b >> bc.a;
+                        pn->borderColor = bc;
+                    }
+                    in >> std::ws; // optional gradient (added later)
+                    if (std::isdigit(in.peek())) {
+                        int g = 0; Color gb;
+                        in >> g >> gb.r >> gb.g >> gb.b >> gb.a;
+                        pn->useGradient = (g != 0); pn->colorBottom = gb;
+                    }
+                    in >> std::ws; // optional drop shadow (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sh = 0; Color sc;
+                        in >> sh >> sc.r >> sc.g >> sc.b >> sc.a >> pn->shadowOffset.x >> pn->shadowOffset.y;
+                        pn->shadow = (sh != 0); pn->shadowColor = sc;
+                    }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();
                     doc->markup = ReadQuoted(in);
+                } else if (field == "terrain") {
+                    auto* tr = go->AddComponent<Terrain>();
+                    int res = 32; float sz = 50.0f; Color c; std::size_t count = 0;
+                    in >> res >> sz >> c.r >> c.g >> c.b >> c.a >> count;
+                    tr->Resize(res); tr->size = sz; tr->color = c;
+                    for (std::size_t k = 0; k < count && k < tr->heights.size(); ++k)
+                        in >> tr->heights[k];
+                    tr->Apply();   // rebuild the mesh into a MeshRenderer
+                } else if (field == "network") {
+                    auto* nm = go->AddComponent<NetworkManager>();
+                    int as = 0, port = 45000;
+                    in >> as >> port;
+                    nm->autoStart = (NetworkManager::AutoStart)as;
+                    nm->autoPort = (std::uint16_t)port;
+                    nm->autoHost = ReadQuoted(in);
+                    nm->startName = ReadQuoted(in);
+                    in >> std::ws;
+                    if (in.peek() == '"') nm->startRoom = ReadQuoted(in);  // optional (newer)
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { in >> nm->maxPlayers >> nm->snapshotRate; } // host settings
+                    in >> std::ws;
+                    if (in.peek() == '"') nm->serverName = ReadQuoted(in);
+                    in >> std::ws;
+                    if (in.peek() == '"') nm->password = ReadQuoted(in);
+                } else if (field == "uiinput") {
+                    auto* inp = go->AddComponent<UIInputField>();
+                    int an = 0; Color c;
+                    in >> inp->position.x >> inp->position.y >> inp->size.x >> inp->size.y >> an >> inp->maxLength;
+                    inp->anchor = (UIAnchor)an;
+                    inp->text = ReadQuoted(in); inp->placeholder = ReadQuoted(in);
+                    in >> c.r >> c.g >> c.b >> c.a; inp->color = c;
+                    in >> std::ws; // optional content type (added later)
+                    if (std::isdigit(in.peek())) { int ct = 0; in >> ct; inp->contentType = (UIInputField::ContentType)ct; }
+                } else if (field == "uidropdown") {
+                    auto* dd = go->AddComponent<UIDropdown>();
+                    int an = 0; std::size_t count = 0;
+                    Color c, h, l, t, b;
+                    in >> dd->position.x >> dd->position.y >> dd->size.x >> dd->size.y
+                       >> an >> dd->value
+                       >> c.r >> c.g >> c.b >> c.a >> h.r >> h.g >> h.b >> h.a
+                       >> l.r >> l.g >> l.b >> l.a >> t.r >> t.g >> t.b >> t.a
+                       >> b.r >> b.g >> b.b >> b.a >> count;
+                    dd->anchor = (UIAnchor)an;
+                    dd->color = c; dd->hoverColor = h; dd->listColor = l;
+                    dd->textColor = t; dd->borderColor = b;
+                    dd->options.clear();
+                    for (std::size_t k = 0; k < count; ++k) dd->options.push_back(ReadQuoted(in));
+                    in >> std::ws; // optional interactable (added later)
+                    if (std::isdigit(in.peek())) { int it = 1; in >> it; dd->interactable = (it != 0); }
+                    in >> std::ws; // optional placeholder (added later)
+                    if (in.peek() == '"') dd->placeholder = ReadQuoted(in);
+                } else if (field == "uibind") {
+                    auto* tb = go->AddComponent<UITextBind>();
+                    tb->format = ReadQuoted(in);
+                } else if (field == "uidraggable") {
+                    auto* dg = go->AddComponent<UIDraggable>();
+                    int rs = 0, at = 0; in >> rs >> at;
+                    dg->returnToStart = (rs != 0); dg->anyTarget = (at != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int sn = 0; in >> sn; dg->snapToSlot = (sn != 0); }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        int ax = 0, bf = 0; in >> ax >> dg->dragThreshold >> bf;
+                        dg->axis = (UIDraggable::Axis)ax; dg->bringToFront = (bf != 0);
+                    }
+                } else if (field == "uidroptarget") {
+                    auto* dt = go->AddComponent<UIDropTarget>();
+                    in >> std::ws;
+                    if (in.peek() == '"') dt->acceptTag = ReadQuoted(in);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        int sh = 1; in >> sh; dt->showHighlight = (sh != 0);
+                        in >> dt->highlight.r >> dt->highlight.g
+                           >> dt->highlight.b >> dt->highlight.a;
+                    }
+                } else if (field == "draggable") {
+                    auto* dg = go->AddComponent<Draggable>();
+                    int rs = 0, at = 0, sn = 0, ax = 0, bf = 0;
+                    in >> rs >> at >> sn >> ax >> dg->dragThreshold >> bf;
+                    dg->returnToStart = (rs != 0); dg->anyTarget = (at != 0);
+                    dg->snapToZone = (sn != 0); dg->axis = (Draggable::Axis)ax;
+                    dg->bringToFront = (bf != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-')
+                        in >> dg->gridX >> dg->gridY >> dg->dragScale;
+                } else if (field == "dropzone") {
+                    auto* dz = go->AddComponent<DropZone>();
+                    in >> std::ws;
+                    if (in.peek() == '"') dz->acceptTag = ReadQuoted(in);
+                } else if (field == "uitooltip") {
+                    auto* tt = go->AddComponent<UITooltip>();
+                    tt->text = ReadQuoted(in);
+                    Color bg, tc, bc;
+                    in >> tt->delay
+                       >> bg.r >> bg.g >> bg.b >> bg.a
+                       >> tc.r >> tc.g >> tc.b >> tc.a
+                       >> bc.r >> bc.g >> bc.b >> bc.a;
+                    tt->background = bg; tt->textColor = tc; tt->borderColor = bc;
+                } else if (field == "uilayout") {
+                    auto* lg = go->AddComponent<UILayoutGroup>();
+                    int dir = 0, an = 0;
+                    in >> dir >> an >> lg->origin.x >> lg->origin.y >> lg->spacing >> lg->padding;
+                    lg->direction = (UILayoutGroup::Direction)dir; lg->anchor = (UIAnchor)an;
+                    lg->Arrange();
+                } else if (field == "uiscroll") {
+                    auto* sv = go->AddComponent<UIScrollView>();
+                    int an = 0; Color c;
+                    in >> sv->position.x >> sv->position.y >> sv->size.x >> sv->size.y
+                       >> an >> sv->contentHeight >> c.r >> c.g >> c.b >> c.a;
+                    sv->anchor = (UIAnchor)an; sv->background = c;
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;
@@ -652,6 +924,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> bg.r >> bg.g >> bg.b >> bg.a >> fl.r >> fl.g >> fl.b >> fl.a;
                     pb->background = bg; pb->fill = fl;
                     ReadAnchor(in, pb->anchor);
+                    in >> std::ws; // optional style block (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sp = 0; Color tc;
+                        in >> pb->cornerRadius >> sp >> tc.r >> tc.g >> tc.b >> tc.a;
+                        pb->showPercent = (sp != 0); pb->textColor = tc;
+                        in >> std::ws; // optional fill direction (added later)
+                        if (std::isdigit(in.peek())) { int fd = 0; in >> fd; pb->fillDir = (UIProgressBar::FillDir)fd; }
+                    }
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
                     Color c;
@@ -666,6 +946,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (nk >= '0' && nk <= '9') {
                         int ns = 0; in >> ns >> im->border; im->nineSlice = (ns != 0);
                     }
+                    in >> std::ws; // optional fill block (added later)
+                    if (std::isdigit(in.peek())) {
+                        int fm = 0; in >> fm >> im->fillAmount >> im->cornerRadius;
+                        im->fillMode = (UIImage::FillMode)fm;
+                    }
                 } else if (field == "uislider") {
                     auto* sl = go->AddComponent<UISlider>();
                     Color bg, fl, kn;
@@ -675,6 +960,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> kn.r >> kn.g >> kn.b >> kn.a;
                     sl->background = bg; sl->fill = fl; sl->knob = kn;
                     ReadAnchor(in, sl->anchor);
+                    in >> std::ws; // optional style block (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sv = 0; Color tc;
+                        in >> sl->cornerRadius >> sl->knobSize >> sv >> tc.r >> tc.g >> tc.b >> tc.a;
+                        sl->showValue = (sv != 0); sl->textColor = tc;
+                        in >> std::ws; // optional whole-numbers flag (added later)
+                        if (std::isdigit(in.peek())) { int wn = 0; in >> wn; sl->wholeNumbers = (wn != 0); }
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { int it = 1; in >> it; sl->interactable = (it != 0); }
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { int vt = 0; in >> vt; sl->vertical = (vt != 0); }
+                    }
                 } else if (field == "uitoggle") {
                     auto* tg = go->AddComponent<UIToggle>();
                     tg->label = ReadQuoted(in);
@@ -686,6 +983,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tg->on = (on != 0);
                     tg->boxColor = b; tg->checkColor = c; tg->textColor = t;
                     ReadAnchor(in, tg->anchor);
+                    in >> std::ws; // optional corner radius (added later)
+                    if (std::isdigit(in.peek())) in >> tg->cornerRadius;
+                    in >> std::ws; // optional switch style + knob color (added later)
+                    if (std::isdigit(in.peek())) {
+                        int st = 0; Color kc;
+                        in >> st >> kc.r >> kc.g >> kc.b >> kc.a;
+                        tg->style = (UIToggle::Style)st; tg->knobColor = kc;
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { int it = 1; in >> it; tg->interactable = (it != 0); }
+                    }
                 } else if (field == "particles") {
                     auto* ps = go->AddComponent<ParticleSystem>();
                     int playing = 1, fade = 1;
@@ -798,6 +1105,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
         if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); }
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
+        if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
         if (auto* an = go->GetComponent<SpriteAnimator>())
             for (const auto& f : an->frames) add(f);
     }

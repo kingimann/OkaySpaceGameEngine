@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -398,6 +399,10 @@ void AddRecent(const std::string& path) {
 bool g_showSaveAs = false, g_showOpen = false;
 char g_pathBuf[256] = "scene.okayscene";
 
+// Data Asset (Scriptable Object) editor window.
+bool  g_dataAssetOpen = false;
+std::string g_dataAssetPath;
+
 // Extra panels / tools.
 bool  g_showStats = true;
 bool  g_showScenes = false;
@@ -423,11 +428,19 @@ struct BuildSettings {
 BuildSettings g_build;
 bool  g_snap = false;
 float g_snapSize = 1.0f;
+int   g_uiGrid = 8;         // UI snap grid in pixels (Snap on)
+// Alignment guides: screen-space lines the UI drag snapped to this frame, drawn
+// by the overlay (Unity-style smart snapping). Cleared and refilled each drag.
+float g_uiGuideX = -1.0f;   // canvas-x of a vertical guide, or <0 = none
+float g_uiGuideY = -1.0f;   // canvas-y of a horizontal guide, or <0 = none
 // Active transform tool for the Scene view (Unity's W/E/R).
 enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
 int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
+float g_terrainRadius = 6.0f;
+float g_terrainStrength = 4.0f;
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
@@ -523,8 +536,18 @@ const char* StarterScript(const std::string& lang) {
     if (lang == "csharp")
         return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
                "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    return "function start() {\n    set_pos(0, 0);\n}\n\n"
-           "function update(dt) {\n    move(2 * dt, 0);\n}\n";
+    // OkayScript, written Unity-style (a MonoBehaviour) — this is the syntax
+    // most users expect. The classic function start()/update(dt) style still works.
+    return "public class NewScript : MonoBehaviour {\n"
+           "    float speed = 2f;\n\n"
+           "    void Start() {\n"
+           "        transform.position = new Vector3(0, 0, 0);\n"
+           "    }\n\n"
+           "    void Update() {\n"
+           "        transform.position.x += Input.GetAxis(\"Horizontal\") * speed * Time.deltaTime;\n"
+           "        transform.position.y += Input.GetAxis(\"Vertical\") * speed * Time.deltaTime;\n"
+           "    }\n"
+           "}\n";
 }
 } // namespace extide
 
@@ -687,10 +710,37 @@ std::string Build(EditorState& ed, const std::string& outDir,
 } // namespace builder
 
 // ---- Console log -------------------------------------------------------
-std::vector<std::string> g_console;
-void ConsoleLog(const std::string& msg) {
-    g_console.push_back(msg);
-    if (g_console.size() > 300) g_console.erase(g_console.begin());
+// A Unity-style console entry: severity, text, a short timestamp, and a repeat
+// count (incremented when the same line is logged twice in a row).
+struct ConsoleEntry {
+    int level = 0;            // 0 = info, 1 = warning, 2 = error
+    std::string text;
+    std::string time;
+    int count = 1;
+};
+std::vector<ConsoleEntry> g_console;
+int g_consoleCounts[3] = {0, 0, 0};   // running totals per level (for the toggles)
+
+void ConsoleLog(const std::string& msg, int level = 0) {
+    if (level < 0) level = 0;
+    if (level > 2) level = 2;
+    // Collapse an immediate repeat of the same message into a count.
+    if (!g_console.empty() && g_console.back().text == msg && g_console.back().level == level) {
+        g_console.back().count++;
+        g_consoleCounts[level]++;
+        return;
+    }
+    char ts[16];
+    std::time_t t = std::time(nullptr);
+    std::tm* lt = std::localtime(&t);
+    std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d", lt ? lt->tm_hour : 0, lt ? lt->tm_min : 0, lt ? lt->tm_sec : 0);
+    g_console.push_back({level, msg, ts, 1});
+    g_consoleCounts[level]++;
+    if (g_console.size() > 500) g_console.erase(g_console.begin());
+}
+void ConsoleClear() {
+    g_console.clear();
+    g_consoleCounts[0] = g_consoleCounts[1] = g_consoleCounts[2] = 0;
 }
 
 // ---- A dark, Unity-ish theme ------------------------------------------
@@ -892,6 +942,16 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
             if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
             if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Terrain")) {
+                GameObject* go = ed.CreateEmpty("Terrain");
+                auto* tr = go->AddComponent<Terrain>();
+                tr->Resize(32); tr->size = 50.0f;
+                tr->Hills(6, 6.0f, (unsigned)ImGui::GetTime());   // start with gentle hills
+                tr->Apply();
+                ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
+                ConsoleLog("Created Terrain");
+            }
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Create Directional Light")) {
@@ -948,6 +1008,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
             if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
             if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
+            if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
+            if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
+            if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
+            if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
+            if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
             ImGui::EndMenu();
         }
         if (created) ed.Achievement("FIRST_OBJECT");
@@ -998,7 +1063,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         if (ImGui::Button(">  Play", ImVec2(btnW, 0))) {
-            if (g_clearConsoleOnPlay) g_console.clear();
+            if (g_clearConsoleOnPlay) ConsoleClear();
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -1075,41 +1140,102 @@ void DrawDockSpace(EditorState& ed) {
     ImGui::End();
 }
 
+// A Unity-style console: severity icons + colors, Collapse, per-level filter
+// toggles with counts, search, a selectable list, and a details pane.
 void DrawConsole() {
     static char filter[96] = "";
     static bool autoScroll = true;
+    static bool collapse = false;
+    static bool showInfo = true, showWarn = true, showError = true;
+    static int  selected = -1;
+
     if (ImGui::Begin("Console", &g_showConsole)) {
-        if (ImGui::Button("Clear")) g_console.clear();
+        if (ImGui::Button("Clear")) { ConsoleClear(); selected = -1; }
+        ImGui::SameLine();
+        ImGui::Checkbox("Collapse", &collapse);
+        ImGui::SameLine();
+        ImGui::Checkbox("Clear on Play", &g_clearConsoleOnPlay);
         ImGui::SameLine();
         ImGui::Checkbox("Auto-scroll", &autoScroll);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(180);
-        ImGui::InputTextWithHint("##cfilter", "filter", filter, sizeof(filter));
-        ImGui::SameLine();
-        ImGui::TextDisabled("%zu", g_console.size());
+        ImGui::SetNextItemWidth(160);
+        ImGui::InputTextWithHint("##cfilter", "Search", filter, sizeof(filter));
+
+        // Right-aligned per-level toggle buttons with counts (like Unity).
+        const ImVec4 cInfo(0.82f, 0.84f, 0.88f, 1.0f);
+        const ImVec4 cWarn(0.95f, 0.80f, 0.35f, 1.0f);
+        const ImVec4 cErr (0.96f, 0.45f, 0.42f, 1.0f);
+        auto toggle = [](const char* label, bool& on, const ImVec4& col, int count) {
+            char buf[32]; std::snprintf(buf, sizeof(buf), "%s %d", label, count);
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImVec4 bg = ImGui::GetStyleColorVec4(on ? ImGuiCol_ButtonActive : ImGuiCol_FrameBg);
+            ImGui::PushStyleColor(ImGuiCol_Button, bg);
+            if (ImGui::Button(buf)) on = !on;
+            ImGui::PopStyleColor(2);
+        };
+        float btnW = 168.0f;
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - btnW);
+        toggle("i", showInfo, cInfo, g_consoleCounts[0]); ImGui::SameLine();
+        toggle("!", showWarn, cWarn, g_consoleCounts[1]); ImGui::SameLine();
+        toggle("x", showError, cErr, g_consoleCounts[2]);
         ImGui::Separator();
-        ImGui::BeginChild("log");
+
         std::string needle = filter;
         for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
-        for (const auto& line : g_console) {
+        const ImVec4 levelCol[3] = {cInfo, cWarn, cErr};
+        const char*  levelIcon[3] = {"[i]", "[!]", "[x]"};
+        const bool   levelShow[3] = {showInfo, showWarn, showError};
+
+        // Details pane reserves the bottom; the list fills the rest.
+        float detailsH = 90.0f;
+        ImGui::BeginChild("log", ImVec2(0, -detailsH));
+        // Optional collapse: merge identical (level,text) lines, summing counts.
+        std::vector<int> order;          // indices into g_console to display
+        std::vector<int> mergedCount;    // parallel display counts
+        if (collapse) {
+            std::vector<int> firstAt;    // first display index for a (level|text)
+            std::unordered_map<std::string, int> seen;
+            for (int i = 0; i < (int)g_console.size(); ++i) {
+                const auto& e = g_console[i];
+                std::string key = std::to_string(e.level) + "|" + e.text;
+                auto it = seen.find(key);
+                if (it == seen.end()) { seen[key] = (int)order.size(); order.push_back(i); mergedCount.push_back(e.count); }
+                else mergedCount[it->second] += e.count;
+            }
+        } else {
+            for (int i = 0; i < (int)g_console.size(); ++i) { order.push_back(i); mergedCount.push_back(g_console[i].count); }
+        }
+
+        for (std::size_t row = 0; row < order.size(); ++row) {
+            int i = order[row];
+            const ConsoleEntry& e = g_console[i];
+            if (!levelShow[e.level]) continue;
             if (!needle.empty()) {
-                std::string low = line;
+                std::string low = e.text;
                 for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
                 if (low.find(needle) == std::string::npos) continue;
             }
-            // Tint by severity heuristics so problems stand out.
-            ImVec4 col(0.82f, 0.84f, 0.88f, 1.0f);
-            if (line.find("fail") != std::string::npos || line.find("error") != std::string::npos ||
-                line.find("Error") != std::string::npos)
-                col = ImVec4(0.96f, 0.45f, 0.42f, 1.0f);
-            else if (line.find("Saved") != std::string::npos || line.find("Built") != std::string::npos ||
-                     line.find("Updated") != std::string::npos)
-                col = ImVec4(0.55f, 0.86f, 0.55f, 1.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, col);
-            ImGui::TextUnformatted(line.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, levelCol[e.level]);
+            std::string label = std::string(levelIcon[e.level]) + " " + e.time + "  " + e.text;
+            if (mergedCount[row] > 1) label += "  (" + std::to_string(mergedCount[row]) + ")";
+            label += "##c" + std::to_string(i);
+            if (ImGui::Selectable(label.c_str(), selected == i)) selected = i;
             ImGui::PopStyleColor();
         }
         if (autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+        ImGui::EndChild();
+
+        ImGui::Separator();
+        ImGui::BeginChild("details", ImVec2(0, 0));
+        if (selected >= 0 && selected < (int)g_console.size()) {
+            const ConsoleEntry& e = g_console[selected];
+            ImGui::PushStyleColor(ImGuiCol_Text, levelCol[e.level]);
+            ImGui::TextWrapped("%s", e.text.c_str());
+            ImGui::PopStyleColor();
+            ImGui::TextDisabled("%s at %s", e.level == 2 ? "Error" : e.level == 1 ? "Warning" : "Info", e.time.c_str());
+        } else {
+            ImGui::TextDisabled("Select a log entry to see details.");
+        }
         ImGui::EndChild();
     }
     ImGui::End();
@@ -1353,6 +1479,8 @@ void DrawProject(EditorState& ed) {
                 if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
                     ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + full);
                 } else ConsoleLog("Prefab load failed: " + err);
+            } else if (ext == ".okaydata") {
+                g_dataAssetPath = full; g_dataAssetOpen = true;
             } else if (ext == ".okay" || ext == ".lua" || ext == ".cs" || ext == ".okayvs") {
                 extide::OpenExternal(full);
             }
@@ -1377,6 +1505,13 @@ void DrawProject(EditorState& ed) {
             if (ImGui::MenuItem("New Script")) {
                 fs::path p = uniquePath("NewScript", ".okay");
                 std::ofstream(p) << extide::StarterScript("okayscript");
+                ConsoleLog("Created " + p.string());
+            }
+            if (ImGui::MenuItem("New Data Asset")) {   // Scriptable Object
+                fs::path p = uniquePath("NewData", ".okaydata");
+                std::ofstream(p) << "# Scriptable Object: key = value fields\n"
+                                    "name = Item\n"
+                                    "value = 10\n";
                 ConsoleLog("Created " + p.string());
             }
             ImGui::Separator();
@@ -1480,23 +1615,44 @@ void DrawServices(EditorState& ed) {
         static int port = 45000;
         static char host[64] = "127.0.0.1";
         static char pname[48] = "Player";
-        ImGui::SetNextItemWidth(120);
+        static char srvName[64] = "My Server";
+        static char srvPass[48] = "";
+        static int  maxP = 8;
+        static float tick = 20.0f;
+        // Apply the host settings to the live NetworkManager (used on Host).
+        auto applyHostSettings = [&]() {
+            if (auto* n = ed.net()) {
+                n->SetLocalName(pname);
+                n->serverName = srvName; n->password = srvPass;
+                n->maxPlayers = maxP; n->snapshotRate = tick;
+            }
+        };
+        ImGui::SetNextItemWidth(110);
         ImGui::InputInt("Port", &port);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(120);
         ImGui::InputText("Name", pname, sizeof(pname));
-        if (ImGui::Button("Host")) { ed.StartHost((std::uint16_t)port); if (ed.net()) ed.net()->SetLocalName(pname); }
+
+        ImGui::SeparatorText("Host a game");
+        ImGui::SetNextItemWidth(160); ImGui::InputText("Server##srv", srvName, sizeof(srvName));
+        ImGui::SameLine(); ImGui::SetNextItemWidth(120);
+        ImGui::InputText("Password##srv", srvPass, sizeof(srvPass), ImGuiInputTextFlags_Password);
+        ImGui::SetNextItemWidth(120); ImGui::SliderInt("Max##srv", &maxP, 1, 64);
+        ImGui::SameLine(); ImGui::SetNextItemWidth(140); ImGui::SliderFloat("Tick##srv", &tick, 5.0f, 60.0f, "%.0f/s");
+        if (ImGui::Button("Host Game", ImVec2(-1, 0))) { ed.StartHost((std::uint16_t)port); applyHostSettings(); }
+
+        ImGui::SeparatorText("Join a game");
+        ImGui::SetNextItemWidth(180);
+        ImGui::InputText("Address##host", host, sizeof(host));
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(140);
-        ImGui::InputText("##host", host, sizeof(host));
-        ImGui::SameLine();
-        if (ImGui::Button("Join")) { ed.StartJoin(host, (std::uint16_t)port); if (ed.net()) ed.net()->SetLocalName(pname); }
+        if (ImGui::Button("Join")) { ed.StartJoin(host, (std::uint16_t)port); if (ed.net()) { ed.net()->SetLocalName(pname); ed.net()->password = srvPass; } }
         ImGui::SameLine();
         if (ImGui::Button("Disconnect")) ed.StopNetwork();
         if (auto* n = ed.net()) {
             const char* mode = n->IsServer() ? "Server" : n->IsClient() ? "Client" : "Offline";
             ImGui::Text("Mode: %s   Peers: %d   LocalId: %u",
                         mode, (int)n->PeerCount(), n->LocalId());
+            if (n->IsClient()) ImGui::SameLine(), ImGui::Text("  Ping: %.0f ms", n->RttMs());
             // Chat: broadcast a line to every peer; show what arrives.
             static char chat[128] = "";
             static std::vector<std::string> log;
@@ -1516,6 +1672,41 @@ void DrawServices(EditorState& ed) {
         } else ImGui::TextDisabled("not connected");
     }
 
+    ImGui::End();
+}
+
+// Scriptable Object editor: edit a .okaydata file's key/value fields.
+void DrawDataAssetEditor() {
+    if (!g_dataAssetOpen) return;
+    static std::string loaded;
+    static DataAsset asset;
+    if (loaded != g_dataAssetPath) { asset = DataAsset{}; asset.Load(g_dataAssetPath); loaded = g_dataAssetPath; }
+    if (!ImGui::Begin("Data Asset", &g_dataAssetOpen)) { ImGui::End(); return; }
+    ImGui::TextDisabled("%s", g_dataAssetPath.c_str());
+    ImGui::TextDisabled("Read from script: data_num(\"file.okaydata\", \"key\") / data_str(...)");
+    ImGui::Separator();
+    auto& fields = asset.Fields();
+    int remove = -1;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        ImGui::PushID((int)i);
+        char k[64]; std::strncpy(k, fields[i].first.c_str(), sizeof(k) - 1); k[sizeof(k)-1] = '\0';
+        ImGui::SetNextItemWidth(140);
+        if (ImGui::InputText("##k", k, sizeof(k))) fields[i].first = k;
+        ImGui::SameLine();
+        char v[192]; std::strncpy(v, fields[i].second.c_str(), sizeof(v) - 1); v[sizeof(v)-1] = '\0';
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::InputText("##v", v, sizeof(v))) fields[i].second = v;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X")) remove = (int)i;
+        ImGui::PopID();
+    }
+    if (remove >= 0) fields.erase(fields.begin() + remove);
+    if (ImGui::Button("Add Field")) fields.emplace_back("key", "value");
+    ImGui::SameLine();
+    if (ImGui::Button("Save")) {
+        if (asset.Save(g_dataAssetPath)) ConsoleLog("Saved " + g_dataAssetPath);
+        else ConsoleLog("Save failed: " + g_dataAssetPath);
+    }
     ImGui::End();
 }
 
@@ -1546,6 +1737,14 @@ void DrawStats(EditorState& ed) {
         float bo[3] = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
         if (ImGui::ColorEdit3("Sky Bottom", bo)) { rs.skyBottom = {bo[0], bo[1], bo[2], 1}; ed.dirty = true; }
         if (ImGui::SliderFloat("Ambient", &rs.ambient, 0.0f, 1.0f)) ed.dirty = true;
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Distance Fog", &rs.fog)) ed.dirty = true;
+        if (rs.fog) {
+            float fc[3] = {rs.fogColor.r, rs.fogColor.g, rs.fogColor.b};
+            if (ImGui::ColorEdit3("Fog Color", fc)) { rs.fogColor = {fc[0], fc[1], fc[2], 1}; ed.dirty = true; }
+            if (ImGui::DragFloat("Fog Start", &rs.fogStart, 0.5f, 0.0f, 4000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Fog End", &rs.fogEnd, 0.5f, 0.0f, 8000.0f)) ed.dirty = true;
+        }
     }
     ImGui::End();
 }
@@ -1865,7 +2064,7 @@ void DrawScriptEditor(EditorState& ed) {
                 SetCodeBuffer(sc, extide::StarterScript(newLang));
         }
         ImGui::SameLine();
-        ImGui::TextDisabled(sc->Language() == "okayscript" ? "C-style: { } ;"
+        ImGui::TextDisabled(sc->Language() == "okayscript" ? "Unity-style C#"
                           : sc->Language() == "lua"        ? "Lua: function ... end"
                                                            : "");
         if (!sc->Path().empty()) { ImGui::SameLine(); ImGui::TextDisabled("(%s)", sc->Path().c_str()); }
@@ -1949,7 +2148,7 @@ void HandleShortcuts(EditorState& ed) {
     if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
         if (ed.isPlaying()) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         else {
-            if (g_clearConsoleOnPlay) g_console.clear();
+            if (g_clearConsoleOnPlay) ConsoleClear();
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -2113,6 +2312,7 @@ void DrawNewProjectPopup(EditorState& ed) {
         if (ImGui::Button("Multiplayer (host/join)", ImVec2(-1, 44))) { ed.NewMultiplayer(); finishProject(); }
         if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 36))) { ed.NewCoinCollector(); finishProject(); }
         if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 36)))            { ed.NewMainMenu(); finishProject(); }
+        if (ImGui::Button("Inventory (drag & drop)", ImVec2(-1, 36)))   { ed.NewInventory(); finishProject(); }
         if (ImGui::Button("Snake (full game)", ImVec2(-1, 36)))         { ed.NewSnake(); finishProject(); }
         ImGui::Spacing();
         if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) { ed.NewScene(); finishProject(); }
@@ -2621,6 +2821,71 @@ void DrawInspector(EditorState& ed) {
 
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
 
+    // UI layering + quick-center for any screen-space widget (draw order is the
+    // scene's object order; later = on top, which is also what picking selects).
+    if (IsUIElement(go)) {
+        if (ImGui::Button("Bring to Front")) { ed.scene().MoveToFront(go); ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Send to Back"))   { ed.scene().MoveToBack(go);  ed.dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Center in Canvas")) {
+            UIRect r = GetUIRect(go);
+            if (r.position) {
+                // Center the resolved rect on the canvas for the widget's anchor.
+                float cw = UICanvas::Width(), ch = UICanvas::Height();
+                Vec2 term = ResolveAnchor(r.anchor, Vec2{0, 0}, r.size, cw, ch);
+                r.position->x = (cw - r.size.x) * 0.5f - term.x;
+                r.position->y = (ch - r.size.y) * 0.5f - term.y;
+                ed.dirty = true;
+            }
+        }
+        // Anchor presets (Unity's 3x3): pick a corner/edge/center; the widget
+        // keeps its on-screen position (its offset is recomputed for the new
+        // anchor) so re-anchoring never makes it jump.
+        UIRect ar = GetUIRect(go);
+        if (ar.anchorPtr && ar.position) {
+            ImGui::TextDisabled("Anchor preset:");
+            float cw = UICanvas::Width(), ch = UICanvas::Height();
+            Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, cw, ch);
+            for (int row = 0; row < 3; ++row) {
+                for (int col = 0; col < 3; ++col) {
+                    if (col) ImGui::SameLine();
+                    UIAnchor cand = (UIAnchor)(row * 3 + col);
+                    bool sel = (*ar.anchorPtr == cand);
+                    if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.75f, 1.0f));
+                    ImGui::PushID(row * 3 + col);
+                    if (ImGui::Button("##anc", ImVec2(20, 18))) {
+                        *ar.anchorPtr = cand;       // preserve on-screen position
+                        Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, cw, ch);
+                        ar.position->x = resolved.x - term.x;
+                        ar.position->y = resolved.y - term.y;
+                        ed.dirty = true;
+                    }
+                    ImGui::PopID();
+                    if (sel) ImGui::PopStyleColor();
+                }
+            }
+        }
+        // Stretch helpers for resizable widgets: fill the canvas on an axis.
+        if (ar.sizePtr && ar.position) {
+            float cw = UICanvas::Width(), ch = UICanvas::Height();
+            auto fill = [&](bool x, bool y) {
+                if (x) ar.sizePtr->x = cw;
+                if (y) ar.sizePtr->y = ch;
+                Vec2 term = ResolveAnchor(*ar.anchorPtr, Vec2{0, 0}, *ar.sizePtr, cw, ch);
+                if (x) ar.position->x = -term.x;   // resolved left -> 0
+                if (y) ar.position->y = -term.y;   // resolved top  -> 0
+                ed.dirty = true;
+            };
+            if (ImGui::Button("Fill Width"))  fill(true, false);
+            ImGui::SameLine();
+            if (ImGui::Button("Fill Height")) fill(false, true);
+            ImGui::SameLine();
+            if (ImGui::Button("Fill Canvas")) fill(true, true);
+        }
+        ImGui::Spacing();
+    }
+
     if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
         Transform* t = go->transform;
         float pos[3] = {t->localPosition.x, t->localPosition.y, t->localPosition.z};
@@ -2752,6 +3017,26 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Fit 1u##mesh")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
+            // Material presets: save the current look as a reusable .okaymat, or
+            // load one (also accepts a .okaymat dropped from the Project).
+            ImGui::SeparatorText("Material preset");
+            static char matPath[256] = "Assets/Material.okaymat";
+            ImGui::InputText("##matpath", matPath, sizeof(matPath));
+            std::string dropped;
+            if (AcceptAssetPathField(dropped) && dropped.size() < sizeof(matPath)) {
+                std::strncpy(matPath, dropped.c_str(), sizeof(matPath) - 1); matPath[sizeof(matPath)-1]='\0';
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Save##mat")) {
+                if (Material::FromRenderer(*mr).SaveToFile(matPath)) ConsoleLog(std::string("Saved material ") + matPath);
+                else ConsoleLog("Material save failed");
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Load##mat")) {
+                Material m;
+                if (Material::LoadFromFile(matPath, m)) { m.ApplyTo(*mr); ed.dirty = true; ConsoleLog(std::string("Loaded material ") + matPath); }
+                else ConsoleLog("Material load failed");
+            }
             // One-click physics: add a Rigidbody3D + a box collider fitted to the
             // mesh, so a primitive drops and collides immediately on Play.
             if (!go->GetComponent<Rigidbody3D>() || !go->GetComponent<BoxCollider3D>()) {
@@ -2764,6 +3049,33 @@ void DrawInspector(EditorState& ed) {
                     ConsoleLog("Added Rigidbody3D + fitted BoxCollider3D");
                 }
             }
+        }
+    }
+    if (auto* tr = go->GetComponent<Terrain>()) {
+        if (ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float c[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
+            if (ImGui::ColorEdit4("Color##terr", c)) { tr->color = {c[0],c[1],c[2],c[3]}; tr->Apply(); ed.dirty = true; }
+            int res = tr->resolution;
+            if (ImGui::SliderInt("Resolution##terr", &res, 4, 128) && res != tr->resolution) {
+                tr->Resize(res); tr->Apply(); ed.dirty = true;
+            }
+            if (ImGui::DragFloat("Size##terr", &tr->size, 0.5f, 2.0f, 1000.0f)) { tr->Apply(); ed.dirty = true; }
+
+            ImGui::SeparatorText("Sculpt brush (drag in the 3D view)");
+            ImGui::Checkbox("Sculpt##terr", &g_terrainSculpt);
+            ImGui::SameLine(); ImGui::TextDisabled("(Shift = lower)");
+            ImGui::SliderFloat("Radius##terr", &g_terrainRadius, 0.5f, 30.0f);
+            ImGui::SliderFloat("Strength##terr", &g_terrainStrength, 0.1f, 20.0f);
+
+            ImGui::SeparatorText("Generate");
+            if (ImGui::SmallButton("Flatten##terr"))   { tr->Flatten(0.0f); tr->Apply(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Smooth##terr"))    { tr->Smooth(); tr->Apply(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Randomize##terr")) { tr->Randomize(2.0f, (unsigned)ImGui::GetTime()); tr->Apply(); ed.dirty = true; }
+            if (ImGui::SmallButton("Hills##terr"))     { tr->Flatten(0.0f); tr->Hills(8, 8.0f, (unsigned)ImGui::GetTime()); tr->Apply(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove##terr")) toRemove = tr;
         }
     }
     if (auto* li = go->GetComponent<Light>()) {
@@ -2989,7 +3301,9 @@ void DrawInspector(EditorState& ed) {
                 "set_light", "set_ambient", "set_timescale", "send", "spawn", "spawn3",
                 "destroy", "destroy_obj", "activate", "deactivate", "set_tag",
                 "set_prefs", "add_prefs", "save_prefs",
-                "net_host", "net_join", "net_send", "net_disconnect",
+                "net_host", "net_join", "net_send", "net_send_reliable", "net_set", "net_spawn",
+                "net_ready", "net_start_match", "net_kick", "net_disconnect",
+                "steam_unlock", "steam_set_stat", "steam_inc_stat",
                 "load_scene", "load_scene_index", "load_next_scene", "log"};
 
             ImGui::SeparatorText("Conditions (all must pass)");
@@ -3086,6 +3400,8 @@ void DrawInspector(EditorState& ed) {
                 float sp[2] = {tr->screenPos.x, tr->screenPos.y};
                 if (ImGui::DragFloat2("Screen Pos##txt", sp, 1.0f)) { tr->screenPos = {sp[0], sp[1]}; ed.dirty = true; }
                 AnchorCombo("Anchor##txt", tr->anchor, ed);
+                const char* aligns[] = {"Left", "Center", "Right"};
+                if (ImGui::Combo("Align##txt", &tr->align, aligns, 3)) ed.dirty = true;
             }
             if (ImGui::Checkbox("Shadow##txt", &tr->shadow)) ed.dirty = true;
             if (tr->shadow) {
@@ -3094,6 +3410,12 @@ void DrawInspector(EditorState& ed) {
                 float so[2] = {tr->shadowOffset.x, tr->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##txt", so, 0.1f)) { tr->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
             }
+            if (ImGui::Checkbox("Outline##txt", &tr->outline)) ed.dirty = true;
+            if (tr->outline) {
+                float ocol[4] = {tr->outlineColor.r, tr->outlineColor.g, tr->outlineColor.b, tr->outlineColor.a};
+                if (ImGui::ColorEdit4("Outline Color##txt", ocol)) { tr->outlineColor = {ocol[0], ocol[1], ocol[2], ocol[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Bold##txt", &tr->bold)) ed.dirty = true;
             ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
@@ -3125,6 +3447,47 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##es")) toRemove = es;
         }
     }
+    if (auto* nm = go->GetComponent<NetworkManager>()) {
+        if (ImGui::CollapsingHeader("Network Manager", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play"};
+            int m = (int)nm->autoStart;
+            if (ImGui::Combo("Auto Start##nm", &m, modes, 3)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
+            int port = nm->autoPort;
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputInt("Port##nm", &port)) { nm->autoPort = (std::uint16_t)(port < 0 ? 0 : port); ed.dirty = true; }
+            if (nm->autoStart == NetworkManager::AutoStart::Join) {
+                static char hostBuf[64]; static NetworkManager* bound = nullptr;
+                if (bound != nm) { std::strncpy(hostBuf, nm->autoHost.c_str(), sizeof(hostBuf) - 1); hostBuf[sizeof(hostBuf)-1]='\0'; bound = nm; }
+                if (ImGui::InputText("Host IP##nm", hostBuf, sizeof(hostBuf))) { nm->autoHost = hostBuf; ed.dirty = true; }
+            }
+            static char nameBuf[48]; static NetworkManager* nbound = nullptr;
+            if (nbound != nm) { std::strncpy(nameBuf, nm->startName.c_str(), sizeof(nameBuf) - 1); nameBuf[sizeof(nameBuf)-1]='\0'; nbound = nm; }
+            if (ImGui::InputText("Player Name##nm", nameBuf, sizeof(nameBuf))) { nm->startName = nameBuf; ed.dirty = true; }
+            static char roomBuf[48]; static NetworkManager* rbound = nullptr;
+            if (rbound != nm) { std::strncpy(roomBuf, nm->startRoom.c_str(), sizeof(roomBuf) - 1); roomBuf[sizeof(roomBuf)-1]='\0'; rbound = nm; }
+            if (ImGui::InputText("Room (lobby)##nm", roomBuf, sizeof(roomBuf))) { nm->startRoom = roomBuf; ed.dirty = true; }
+            ImGui::SliderFloat("Smoothing##nm", &nm->interpolationRate, 0.0f, 30.0f, "%.0f /s");
+
+            ImGui::SeparatorText("Host settings");
+            static char srvBuf[64]; static NetworkManager* sbound = nullptr;
+            if (sbound != nm) { std::strncpy(srvBuf, nm->serverName.c_str(), sizeof(srvBuf)-1); srvBuf[sizeof(srvBuf)-1]='\0'; sbound = nm; }
+            if (ImGui::InputText("Server Name##nm", srvBuf, sizeof(srvBuf))) { nm->serverName = srvBuf; ed.dirty = true; }
+            static char passBuf[48]; static NetworkManager* pbound = nullptr;
+            if (pbound != nm) { std::strncpy(passBuf, nm->password.c_str(), sizeof(passBuf)-1); passBuf[sizeof(passBuf)-1]='\0'; pbound = nm; }
+            if (ImGui::InputText("Password##nm", passBuf, sizeof(passBuf), ImGuiInputTextFlags_Password)) { nm->password = passBuf; ed.dirty = true; }
+            if (ImGui::SliderInt("Max Players##nm", &nm->maxPlayers, 1, 64)) ed.dirty = true;
+            if (ImGui::SliderFloat("Tick Rate##nm", &nm->snapshotRate, 5.0f, 60.0f, "%.0f /s")) ed.dirty = true;
+
+            const char* mode = nm->IsServer() ? "Server" : nm->IsClient() ? "Client" : "Offline";
+            ImGui::Text("Live: %s   Peers: %d / %d   Id: %u", mode, (int)nm->PeerCount(), nm->maxPlayers, nm->LocalId());
+            if (nm->IsClient()) {
+                ImGui::Text("Server: %s   Ping: %.0f ms", nm->ServerName().c_str(), nm->RttMs());
+                if (nm->JoinRejected()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f,0.45f,0.42f,1)); ImGui::TextUnformatted("Join refused (full / wrong password)"); ImGui::PopStyleColor(); }
+            }
+            ImGui::TextDisabled("Add this, pick Host/Join, press Play — no code needed.");
+            if (ImGui::SmallButton("Remove##nm")) toRemove = nm;
+        }
+    }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         if (ImGui::CollapsingHeader("UI Document", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::TextDisabled("OkayUI markup -> widgets. One widget per line; indent to nest.");
@@ -3148,8 +3511,31 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             ImGui::SameLine();
+            if (ImGui::Button("Insert Example##uidoc")) {
+                const char* tmpl =
+                    "style card color=30,36,52,235 corner=10 border=1\n"
+                    "panel pos=40,40 size=380,280 class=card gradient=12,14,22,235\n"
+                    "  text \"SETTINGS\" pos=70,64 size=4 align=left outline=0,0,0,255\n"
+                    "  button \"Play\" pos=70,110 size=300,52 corner=8 font=3 tooltip=\"Start the game\" onclick=load_scene(\"game\")\n"
+                    "  slider pos=70,180 size=300,16 value=0.7 showvalue=1\n"
+                    "  toggle \"Fullscreen\" pos=70,220 size=26,26 on=0\n"
+                    "  dropdown pos=70,260 size=200,30 options=Low|Medium|High value=1\n";
+                std::strncpy(buf, tmpl, sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+                doc->markup = buf; doc->Rebuild(); ed.scene().Update(0.0f); ed.dirty = true;
+            }
+            ImGui::SameLine();
             ImGui::TextDisabled("(%d widgets)", (int)doc->Generated().size());
-            ImGui::TextDisabled("types: panel text button image slider toggle progress");
+            ImGui::TextDisabled("types: panel text button image slider toggle progress input dropdown scroll layout");
+            ImGui::TextDisabled("keys: name corner border gradient font hover align outline tooltip options bind on*=...");
+            // Live validation: list any warnings from the last rebuild in red.
+            const auto& diag = doc->Diagnostics();
+            if (diag.empty()) {
+                ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.5f, 1.0f), "No problems.");
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%d problem(s):", (int)diag.size());
+                for (const auto& d : diag)
+                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "  %s", d.c_str());
+            }
             if (ImGui::SmallButton("Remove##uidoc")) toRemove = doc;
         }
     }
@@ -3176,6 +3562,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Focusable##uib", &btn->focusable)) ed.dirty = true;
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
             AnchorCombo("Anchor##uib", btn->anchor, ed);
+            ImGui::SeparatorText("Style");
+            if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Border Width##uib", &btn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            if (btn->borderWidth > 0.0f) {
+                float bc[4] = {btn->borderColor.r, btn->borderColor.g, btn->borderColor.b, btn->borderColor.a};
+                if (ImGui::ColorEdit4("Border Color##uib", bc)) { btn->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::DragFloat("Hover Grow##uib", &btn->hoverScale, 0.01f, 1.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale when hovered/focused (1 = none)");
+            char ic[256]; std::strncpy(ic, btn->icon.c_str(), sizeof(ic) - 1); ic[sizeof(ic)-1] = '\0';
+            if (ImGui::InputText("Icon##uib", ic, sizeof(ic))) { btn->icon = ic; ed.dirty = true; }
+            if (ImGui::DragFloat("Icon Size##uib", &btn->iconSize, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("PNG/JPG drawn left of the label; 0 = none");
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
     }
@@ -3188,7 +3588,201 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {pn->color.r, pn->color.g, pn->color.b, pn->color.a};
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##uip", pn->anchor, ed);
+            ImGui::SeparatorText("Style");
+            if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            if (pn->borderWidth > 0.0f) {
+                float bc[4] = {pn->borderColor.r, pn->borderColor.g, pn->borderColor.b, pn->borderColor.a};
+                if (ImGui::ColorEdit4("Border Color##uip", bc)) { pn->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Gradient##uip", &pn->useGradient)) ed.dirty = true;
+            if (pn->useGradient) {
+                float gb[4] = {pn->colorBottom.r, pn->colorBottom.g, pn->colorBottom.b, pn->colorBottom.a};
+                if (ImGui::ColorEdit4("Bottom Color##uip", gb)) { pn->colorBottom = {gb[0], gb[1], gb[2], gb[3]}; ed.dirty = true; }
+                ImGui::TextDisabled("Color is the top; gradient ignores corner rounding.");
+            }
+            if (ImGui::Checkbox("Drop Shadow##uip", &pn->shadow)) ed.dirty = true;
+            if (pn->shadow) {
+                float sc[4] = {pn->shadowColor.r, pn->shadowColor.g, pn->shadowColor.b, pn->shadowColor.a};
+                if (ImGui::ColorEdit4("Shadow Color##uip", sc)) { pn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+                float so[2] = {pn->shadowOffset.x, pn->shadowOffset.y};
+                if (ImGui::DragFloat2("Shadow Offset##uip", so, 0.5f)) { pn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+            }
             if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
+        }
+    }
+    if (auto* in = go->GetComponent<UIInputField>()) {
+        if (ImGui::CollapsingHeader("UI Input Field", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char tb[128]; std::strncpy(tb, in->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
+            if (ImGui::InputText("Text##uif", tb, sizeof(tb))) { in->text = tb; ed.dirty = true; }
+            char ph[96]; std::strncpy(ph, in->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
+            if (ImGui::InputText("Placeholder##uif", ph, sizeof(ph))) { in->placeholder = ph; ed.dirty = true; }
+            float pos[2] = {in->position.x, in->position.y};
+            if (ImGui::DragFloat2("Pos (px)##uif", pos, 1.0f)) { in->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {in->size.x, in->size.y};
+            if (ImGui::DragFloat2("Size (px)##uif", sz, 1.0f, 8.0f, 4000.0f)) { in->size = {sz[0], sz[1]}; ed.dirty = true; }
+            float c[4] = {in->color.r, in->color.g, in->color.b, in->color.a};
+            if (ImGui::ColorEdit4("Color##uif", c)) { in->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
+            if (ImGui::DragInt("Max Length##uif", &in->maxLength, 1, 1, 1024)) ed.dirty = true;
+            const char* cts[] = {"Standard", "Integer", "Decimal", "Password"};
+            int ct = (int)in->contentType;
+            if (ImGui::Combo("Content Type##uif", &ct, cts, 4)) { in->contentType = (UIInputField::ContentType)ct; ed.dirty = true; }
+            AnchorCombo("Anchor##uif", in->anchor, ed);
+            ImGui::TextDisabled("Click to focus + type at runtime; Enter calls on_submit().");
+            if (ImGui::SmallButton("Remove##uif")) toRemove = in;
+        }
+    }
+    if (auto* dd = go->GetComponent<UIDropdown>()) {
+        if (ImGui::CollapsingHeader("UI Dropdown", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float pos[2] = {dd->position.x, dd->position.y};
+            if (ImGui::DragFloat2("Pos (px)##udd", pos, 1.0f)) { dd->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {dd->size.x, dd->size.y};
+            if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
+            AnchorCombo("Anchor##udd", dd->anchor, ed);
+            char ph[96]; std::strncpy(ph, dd->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
+            if (ImGui::InputText("Placeholder##udd", ph, sizeof(ph))) { dd->placeholder = ph; ed.dirty = true; }
+            if (ImGui::Button("Clear selection##udd")) { dd->value = -1; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("value = -1 shows the placeholder");
+            ImGui::SeparatorText("Options");
+            int toErase = -1;
+            for (int i = 0; i < (int)dd->options.size(); ++i) {
+                ImGui::PushID(i);
+                char ob[96]; std::strncpy(ob, dd->options[i].c_str(), sizeof(ob) - 1); ob[sizeof(ob)-1] = '\0';
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("##opt", ob, sizeof(ob))) { dd->options[i] = ob; ed.dirty = true; }
+                ImGui::SameLine();
+                bool sel = (dd->value == i);
+                if (ImGui::RadioButton("##selopt", sel)) { dd->value = i; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) toErase = i;
+                ImGui::PopID();
+            }
+            if (toErase >= 0) {
+                dd->options.erase(dd->options.begin() + toErase);
+                if (dd->value >= (int)dd->options.size()) dd->value = (int)dd->options.size() - 1;
+                if (dd->value < 0) dd->value = 0;
+                ed.dirty = true;
+            }
+            if (ImGui::SmallButton("Add Option##udd")) { dd->options.push_back("Option"); ed.dirty = true; }
+            ImGui::SeparatorText("Style");
+            float c[4]  = {dd->color.r, dd->color.g, dd->color.b, dd->color.a};
+            if (ImGui::ColorEdit4("Header##udd", c)) { dd->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
+            float h[4]  = {dd->hoverColor.r, dd->hoverColor.g, dd->hoverColor.b, dd->hoverColor.a};
+            if (ImGui::ColorEdit4("Highlight##udd", h)) { dd->hoverColor = {h[0],h[1],h[2],h[3]}; ed.dirty = true; }
+            float l[4]  = {dd->listColor.r, dd->listColor.g, dd->listColor.b, dd->listColor.a};
+            if (ImGui::ColorEdit4("List BG##udd", l)) { dd->listColor = {l[0],l[1],l[2],l[3]}; ed.dirty = true; }
+            float t[4]  = {dd->textColor.r, dd->textColor.g, dd->textColor.b, dd->textColor.a};
+            if (ImGui::ColorEdit4("Text##udd", t)) { dd->textColor = {t[0],t[1],t[2],t[3]}; ed.dirty = true; }
+            float b[4]  = {dd->borderColor.r, dd->borderColor.g, dd->borderColor.b, dd->borderColor.a};
+            if (ImGui::ColorEdit4("Border##udd", b)) { dd->borderColor = {b[0],b[1],b[2],b[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("Click to open; picking an option calls on_change().");
+            if (ImGui::Checkbox("Interactable##udd", &dd->interactable)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##udd")) toRemove = dd;
+        }
+    }
+    if (auto* tt = go->GetComponent<UITooltip>()) {
+        if (ImGui::CollapsingHeader("UI Tooltip", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char tb[256]; std::strncpy(tb, tt->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
+            if (ImGui::InputText("Text##utt", tb, sizeof(tb))) { tt->text = tb; ed.dirty = true; }
+            if (ImGui::DragFloat("Delay (s)##utt", &tt->delay, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            float bg[4] = {tt->background.r, tt->background.g, tt->background.b, tt->background.a};
+            if (ImGui::ColorEdit4("Background##utt", bg)) { tt->background = {bg[0],bg[1],bg[2],bg[3]}; ed.dirty = true; }
+            float tc[4] = {tt->textColor.r, tt->textColor.g, tt->textColor.b, tt->textColor.a};
+            if (ImGui::ColorEdit4("Text Color##utt", tc)) { tt->textColor = {tc[0],tc[1],tc[2],tc[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("Hover the sibling widget to show it (in Game view / built game).");
+            if (ImGui::SmallButton("Remove##utt")) toRemove = tt;
+        }
+    }
+    if (auto* dg = go->GetComponent<UIDraggable>()) {
+        if (ImGui::CollapsingHeader("UI Draggable", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Checkbox("Return to Start##udg", &dg->returnToStart)) ed.dirty = true;
+            if (ImGui::Checkbox("Any widget is a target##udg", &dg->anyTarget)) ed.dirty = true;
+            if (ImGui::Checkbox("Snap into slot##udg", &dg->snapToSlot)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Centers the item in the drop target — instant inventory");
+            const char* axes[] = {"Both", "Horizontal", "Vertical"};
+            int ax = (int)dg->axis;
+            if (ImGui::Combo("Lock Axis##udg", &ax, axes, 3)) { dg->axis = (UIDraggable::Axis)ax; ed.dirty = true; }
+            if (ImGui::DragFloat("Drag Threshold##udg", &dg->dragThreshold, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pixels before a drag starts (0 = instant)");
+            if (ImGui::Checkbox("Bring to Front while dragging##udg", &dg->bringToFront)) ed.dirty = true;
+            ImGui::TextDisabled("Drop onto a UI Drop Target fires on_drop() here +");
+            ImGui::TextDisabled("on_receive() on the target.");
+            if (ImGui::SmallButton("Remove##udg")) toRemove = dg;
+        }
+    }
+    if (auto* dt = go->GetComponent<UIDropTarget>()) {
+        if (ImGui::CollapsingHeader("UI Drop Target", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char tb[64]; std::strncpy(tb, dt->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
+            if (ImGui::InputText("Accept Tag##udt", tb, sizeof(tb))) { dt->acceptTag = tb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
+            if (ImGui::Checkbox("Highlight on hover##udt", &dt->showHighlight)) ed.dirty = true;
+            float hl[4] = {dt->highlight.r, dt->highlight.g, dt->highlight.b, dt->highlight.a};
+            if (ImGui::ColorEdit4("Highlight##udt", hl)) { dt->highlight = {hl[0],hl[1],hl[2],hl[3]}; ed.dirty = true; }
+            ImGui::TextDisabled("Draggables dropped here call this object's on_receive().");
+            if (ImGui::SmallButton("Remove##udt")) toRemove = dt;
+        }
+    }
+    if (auto* dg = go->GetComponent<Draggable>()) {
+        if (ImGui::CollapsingHeader("Draggable (item)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Checkbox("Return to Start##dg", &dg->returnToStart)) ed.dirty = true;
+            if (ImGui::Checkbox("Any sprite is a target##dg", &dg->anyTarget)) ed.dirty = true;
+            if (ImGui::Checkbox("Snap onto zone##dg", &dg->snapToZone)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Centers the item on the drop zone — instant world-space slots");
+            const char* axes[] = {"Both", "Horizontal", "Vertical"};
+            int ax = (int)dg->axis;
+            if (ImGui::Combo("Lock Axis##dg", &ax, axes, 3)) { dg->axis = (Draggable::Axis)ax; ed.dirty = true; }
+            if (ImGui::DragFloat("Drag Threshold##dg", &dg->dragThreshold, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units before a drag starts (0 = instant)");
+            if (ImGui::Checkbox("Bring to Front while dragging##dg", &dg->bringToFront)) ed.dirty = true;
+            float grid[2] = {dg->gridX, dg->gridY};
+            if (ImGui::DragFloat2("Grid Snap##dg", grid, 0.05f, 0.0f, 100.0f)) { dg->gridX = grid[0]; dg->gridY = grid[1]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap drag to a world grid (0 = off) — board/tile games");
+            if (ImGui::DragFloat("Drag Scale##dg", &dg->dragScale, 0.01f, 0.1f, 4.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale the item while dragging for a lifted look (1 = off)");
+            ImGui::TextDisabled("Drag the sprite at runtime; dropping on a Drop Zone");
+            ImGui::TextDisabled("fires on_drop() here + on_receive() on the zone.");
+            ImGui::TextDisabled("Zones also get on_hover_enter/exit() during a drag.");
+            if (ImGui::SmallButton("Remove##dg")) toRemove = dg;
+        }
+    }
+    if (auto* dz = go->GetComponent<DropZone>()) {
+        if (ImGui::CollapsingHeader("Drop Zone (item)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            char tb[64]; std::strncpy(tb, dz->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
+            if (ImGui::InputText("Accept Tag##dz", tb, sizeof(tb))) { dz->acceptTag = tb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
+            ImGui::TextDisabled("Sprites dropped here call this object's on_receive().");
+            if (ImGui::SmallButton("Remove##dz")) toRemove = dz;
+        }
+    }
+    if (auto* lg = go->GetComponent<UILayoutGroup>()) {
+        if (ImGui::CollapsingHeader("UI Layout Group", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* dirs[] = {"Vertical", "Horizontal"};
+            int d = (int)lg->direction;
+            if (ImGui::Combo("Direction##lg", &d, dirs, 2)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            float orig[2] = {lg->origin.x, lg->origin.y};
+            if (ImGui::DragFloat2("Origin##lg", orig, 1.0f)) { lg->origin = {orig[0], orig[1]}; lg->Arrange(); ed.dirty = true; }
+            if (ImGui::DragFloat("Spacing##lg", &lg->spacing, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
+            if (ImGui::DragFloat("Padding##lg", &lg->padding, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
+            AnchorCombo("Anchor##lg", lg->anchor, ed);
+            if (ImGui::SmallButton("Arrange Now##lg")) { lg->Arrange(); ed.dirty = true; }
+            ImGui::SameLine();
+            ImGui::TextDisabled("content: %.0f px", lg->ContentSize());
+            if (ImGui::SmallButton("Remove##lg")) toRemove = lg;
+        }
+    }
+    if (auto* sv = go->GetComponent<UIScrollView>()) {
+        if (ImGui::CollapsingHeader("UI Scroll View", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float pos[2] = {sv->position.x, sv->position.y};
+            if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {sv->size.x, sv->size.y};
+            if (ImGui::DragFloat2("Viewport (px)##usv", sz, 1.0f, 16.0f, 8000.0f)) { sv->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Content Height##usv", &sv->contentHeight, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Scroll##usv", &sv->scroll, 0.0f, sv->ScrollMax())) ed.dirty = true;
+            float c[4] = {sv->background.r, sv->background.g, sv->background.b, sv->background.a};
+            if (ImGui::ColorEdit4("Background##usv", c)) { sv->background = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            AnchorCombo("Anchor##usv", sv->anchor, ed);
+            ImGui::TextDisabled("Parent UI widgets to this; the wheel scrolls them.");
+            if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
     if (auto* pb = go->GetComponent<UIProgressBar>()) {
@@ -3204,6 +3798,15 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
+            if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Show Percent##upb", &pb->showPercent)) ed.dirty = true;
+            if (pb->showPercent) {
+                float tc[4] = {pb->textColor.r, pb->textColor.g, pb->textColor.b, pb->textColor.a};
+                if (ImGui::ColorEdit4("Text Color##upb", tc)) { pb->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+            }
+            const char* fds[] = {"Left -> Right", "Right -> Left", "Bottom -> Top", "Top -> Bottom"};
+            int fd = (int)pb->fillDir;
+            if (ImGui::Combo("Fill Dir##upb", &fd, fds, 4)) { pb->fillDir = (UIProgressBar::FillDir)fd; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
         }
     }
@@ -3226,6 +3829,15 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("corners stay fixed; edges/center stretch to size");
             }
             AnchorCombo("Anchor##uim", im->anchor, ed);
+            ImGui::SeparatorText("Fill & shape");
+            const char* fills[] = {"None", "Left", "Right", "Up", "Down"};
+            int fm = (int)im->fillMode;
+            if (ImGui::Combo("Fill Mode##uim", &fm, fills, 5)) { im->fillMode = (UIImage::FillMode)fm; ed.dirty = true; }
+            if (im->fillMode != UIImage::FillMode::None) {
+                if (ImGui::SliderFloat("Fill Amount##uim", &im->fillAmount, 0.0f, 1.0f)) ed.dirty = true;
+                ImGui::TextDisabled("for cooldowns / health bars; drive with ui_set_progress-style scripts");
+            }
+            if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -3244,6 +3856,21 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Knob##usl", kc)) { sl->knob = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
             AnchorCombo("Anchor##usl", sl->anchor, ed);
+            if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Knob Size##usl", &sl->knobSize, 0.02f, 0.1f, 3.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Show Value##usl", &sl->showValue)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Whole Numbers##usl", &sl->wholeNumbers)) {
+                if (sl->wholeNumbers) sl->value = Mathf::Round(sl->value);
+                ed.dirty = true;
+            }
+            if (sl->showValue) {
+                float tc[4] = {sl->textColor.r, sl->textColor.g, sl->textColor.b, sl->textColor.a};
+                if (ImGui::ColorEdit4("Text Color##usl", tc)) { sl->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Interactable##usl", &sl->interactable)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Vertical##usl", &sl->vertical)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
         }
     }
@@ -3262,6 +3889,15 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Check##utg", cc)) { tg->checkColor = {cc[0], cc[1], cc[2], cc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("click in the built game; calls script on_toggle()");
             AnchorCombo("Anchor##utg", tg->anchor, ed);
+            if (ImGui::DragFloat("Corner Radius##utg", &tg->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            const char* styles[] = {"Checkbox", "Switch"};
+            int st = (int)tg->style;
+            if (ImGui::Combo("Style##utg", &st, styles, 2)) { tg->style = (UIToggle::Style)st; ed.dirty = true; }
+            if (tg->style == UIToggle::Style::Switch) {
+                float kc[4] = {tg->knobColor.r, tg->knobColor.g, tg->knobColor.b, tg->knobColor.a};
+                if (ImGui::ColorEdit4("Knob##utg", kc)) { tg->knobColor = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Interactable##utg", &tg->interactable)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }
     }
@@ -3331,6 +3967,10 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
         if (!go->GetComponent<ParticleSystem>() && F("Particle System") && ImGui::Selectable("Particle System"))
             { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
+        if (!go->GetComponent<Draggable>() && F("Draggable (item)") && ImGui::Selectable("Draggable (item)"))
+            { go->AddComponent<Draggable>(); ed.dirty = true; }
+        if (!go->GetComponent<DropZone>() && F("Drop Zone (item)") && ImGui::Selectable("Drop Zone (item)"))
+            { go->AddComponent<DropZone>(); ed.dirty = true; }
 
         Hdr("Physics 2D");
         if (!go->GetComponent<Rigidbody2D>() && F("Rigidbody2D") && ImGui::Selectable("Rigidbody2D"))
@@ -3396,6 +4036,8 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<EventSystem>(); ed.dirty = true; }
         if (!go->GetComponent<UIDocument>() && F("UI Document") && ImGui::Selectable("UI Document"))
             { go->AddComponent<UIDocument>(); ed.dirty = true; }
+        if (!go->GetComponent<NetworkManager>() && F("Network Manager") && ImGui::Selectable("Network Manager"))
+            { go->AddComponent<NetworkManager>(); ed.dirty = true; }
         if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
             { go->AddComponent<UIButton>(); ed.dirty = true; }
         if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))
@@ -3408,6 +4050,10 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<UISlider>(); ed.dirty = true; }
         if (!go->GetComponent<UIToggle>() && F("UI Toggle") && ImGui::Selectable("UI Toggle"))
             { go->AddComponent<UIToggle>(); ed.dirty = true; }
+        if (!go->GetComponent<UIDraggable>() && F("UI Draggable") && ImGui::Selectable("UI Draggable"))
+            { go->AddComponent<UIDraggable>(); ed.dirty = true; }
+        if (!go->GetComponent<UIDropTarget>() && F("UI Drop Target") && ImGui::Selectable("UI Drop Target"))
+            { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
@@ -3470,6 +4116,36 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // parented to a Canvas fall back to scale 1.
     auto uiScale = [&](GameObject* go) { return UIScaleFor(go, canvasSize.x, canvasSize.y); };
 
+    // Hide a scroll-view child when it falls outside the viewport (cheap clip).
+    auto svCull = [&](GameObject* go, const Vec2& o, const Vec2& sz) -> bool {
+        UIScrollView* sv = OwningScrollView(go);
+        if (!sv) return false;
+        float s = uiScale(go);
+        Vec2 vo = ResolveAnchor(sv->anchor, sv->position * s, sv->size * s, canvasSize.x, canvasSize.y);
+        return (o.y + sz.y < vo.y) || (o.y > vo.y + sv->size.y * s);
+    };
+
+    // Scroll View backgrounds (drawn behind their content) + a scrollbar.
+    for (const auto& up : objs) {
+        auto* sv = up->GetComponent<UIScrollView>();
+        if (!sv || !up->active) continue;
+        float s = uiScale(up.get());
+        Vec2 o = ResolveAnchor(sv->anchor, sv->position * s, sv->size * s, canvasSize.x, canvasSize.y);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 b(a.x + sv->size.x * s, a.y + sv->size.y * s);
+        dl->AddRectFilled(a, b, ToColor(sv->background), 4.0f);
+        // Scrollbar track + thumb on the right edge.
+        if (sv->ScrollMax() > 0.0f) {
+            float barW = 6.0f * s;
+            ImVec2 ta(b.x - barW - 2, a.y + 2), tb(b.x - 2, b.y - 2);
+            dl->AddRectFilled(ta, tb, IM_COL32(255, 255, 255, 30), 3.0f);
+            float viewFrac = (sv->size.y) / sv->contentHeight; if (viewFrac > 1) viewFrac = 1;
+            float thumbH = (tb.y - ta.y) * viewFrac;
+            float thumbY = ta.y + (tb.y - ta.y - thumbH) * sv->Fraction();
+            dl->AddRectFilled(ImVec2(ta.x, thumbY), ImVec2(tb.x, thumbY + thumbH), ToColor(sv->barColor), 3.0f);
+        }
+    }
+
     // Screen-space text (world-anchored text stays with the 2D scene draw).
     for (const auto& up : objs) {
         auto* tr = up->GetComponent<TextRenderer>();
@@ -3479,12 +4155,24 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         ImU32 sh = ToColor(tr->shadowColor);
         Vec2 sz{(float)tr->PixelWidth() * tr->pixelSize * s, (float)tr->PixelHeight() * tr->pixelSize * s};
         Vec2 o = ResolveAnchor(tr->anchor, tr->screenPos * s, sz, canvasSize.x, canvasSize.y);
+        if (UIScrollView* sv = OwningScrollView(up.get())) o.y -= sv->scroll * s;
+        if (svCull(up.get(), o, sz)) continue;
         float px = tr->pixelSize * s;
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
+        if (tr->align == 1)      bx -= sz.x * 0.5f;   // center on screenPos
+        else if (tr->align == 2) bx -= sz.x;          // right-align to screenPos
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, bx + tr->shadowOffset.x * px,
                            by + tr->shadowOffset.y * px, px, sh);
+        if (tr->outline) {                            // 4-direction outline
+            ImU32 oc = ToColor(tr->outlineColor);
+            DrawBitmapText(dl, tr->text, bx - px, by, px, oc);
+            DrawBitmapText(dl, tr->text, bx + px, by, px, oc);
+            DrawBitmapText(dl, tr->text, bx, by - px, px, oc);
+            DrawBitmapText(dl, tr->text, bx, by + px, px, oc);
+        }
         DrawBitmapText(dl, tr->text, bx, by, px, col);
+        if (tr->bold) DrawBitmapText(dl, tr->text, bx + px, by, px, col);  // faux-bold
     }
 
     // UI images (logos/icons): preview as a tinted rect with the path centered.
@@ -3492,10 +4180,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto* im = up->GetComponent<UIImage>();
         if (!im || !up->active) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
-        dl->AddRectFilled(a, b, ToColor(im->color), 3.0f);
-        dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), 3.0f);
+        float fox, foy, fw, fh;
+        im->FilledRect(sz.x, sz.y, fox, foy, fw, fh);
+        ImVec2 fa(a.x + fox, a.y + foy), fb(fa.x + fw, fa.y + fh);
+        dl->AddRectFilled(fa, fb, ToColor(im->color), im->cornerRadius);
+        dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), im->cornerRadius);
         if (!im->texture.empty())
             DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
     }
@@ -3505,31 +4197,71 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pn->color), 4.0f);
+        ImVec2 pb2(a.x + sz.x, a.y + sz.y);
+        if (pn->shadow)          // drop shadow behind the panel
+            dl->AddRectFilled(ImVec2(a.x + pn->shadowOffset.x, a.y + pn->shadowOffset.y),
+                              ImVec2(pb2.x + pn->shadowOffset.x, pb2.y + pn->shadowOffset.y),
+                              ToColor(pn->shadowColor), pn->cornerRadius);
+        if (pn->useGradient) {   // vertical top->bottom fade (no rounding)
+            dl->AddRectFilledMultiColor(a, pb2, ToColor(pn->color), ToColor(pn->color),
+                                        ToColor(pn->colorBottom), ToColor(pn->colorBottom));
+        } else {
+            dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+        }
+        if (pn->borderWidth > 0.0f)
+            dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
     }
     for (const auto& up : objs) {
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active) continue;
+        float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pb->background), 3.0f);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x * pb->Fraction(), a.y + sz.y),
-                          ToColor(pb->fill), 3.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(pb->background), pb->cornerRadius);
+        { float fox, foy, fw, fh; pb->FillRect(sz.x, sz.y, fox, foy, fw, fh);
+          dl->AddRectFilled(ImVec2(a.x + fox, a.y + foy), ImVec2(a.x + fox + fw, a.y + foy + fh),
+                            ToColor(pb->fill), pb->cornerRadius); }
+        if (pb->showPercent) {
+            char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+            float px = 2.0f * s;
+            float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
+            DrawBitmapText(dl, pct, a.x + (sz.x - tw) * 0.5f,
+                           a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(pb->textColor));
+        }
     }
 
     // UI sliders: track + fill + knob.
     for (const auto& up : objs) {
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active) continue;
+        float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(sl->background), 3.0f);
-        dl->AddRectFilled(a, ImVec2(a.x + sz.x * sl->Fraction(), a.y + sz.y),
-                          ToColor(sl->fill), 3.0f);
-        float kx = a.x + sz.x * sl->Fraction(), kw = sz.y * 0.6f;
-        dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sz.y + 2),
-                          ToColor(sl->knob), 2.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(sl->background), sl->cornerRadius);
+        float f = sl->Fraction();
+        if (sl->vertical) {
+            dl->AddRectFilled(ImVec2(a.x, a.y + sz.y * (1.0f - f)), ImVec2(a.x + sz.x, a.y + sz.y),
+                              ToColor(sl->fill), sl->cornerRadius);
+            float ky = a.y + sz.y * (1.0f - f), kh = sz.x * sl->knobSize;
+            dl->AddRectFilled(ImVec2(a.x - 2, ky - kh * 0.5f), ImVec2(a.x + sz.x + 2, ky + kh * 0.5f),
+                              ToColor(sl->knob), 2.0f);
+        } else {
+            dl->AddRectFilled(a, ImVec2(a.x + sz.x * f, a.y + sz.y), ToColor(sl->fill), sl->cornerRadius);
+            float kx = a.x + sz.x * f, kw = sz.y * sl->knobSize;
+            dl->AddRectFilled(ImVec2(kx - kw * 0.5f, a.y - 2), ImVec2(kx + kw * 0.5f, a.y + sz.y + 2),
+                              ToColor(sl->knob), 2.0f);
+        }
+        if (sl->showValue) {
+            char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+            float px = 2.0f * s;
+            DrawBitmapText(dl, vbuf, a.x + sz.x + 8 * s,
+                           a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(sl->textColor));
+        }
+        if (!sl->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), sl->cornerRadius);
     }
     // UI toggles: box (+ inset check when on) and a label.
     for (const auto& up : objs) {
@@ -3537,17 +4269,29 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!tg || !up->active) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
-        dl->AddRectFilled(a, b, ToColor(tg->boxColor), 3.0f);
-        if (tg->on) {
-            float pad = sz.x * 0.22f;
-            dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
-                              ToColor(tg->checkColor), 2.0f);
+        float labelX = b.x + 8.0f * s;
+        if (tg->style == UIToggle::Style::Switch) {
+            // Pill track (full when on) + a sliding knob.
+            float r = sz.y * 0.5f;
+            dl->AddRectFilled(a, b, ToColor(tg->on ? tg->checkColor : tg->boxColor), r);
+            float kr = r - 2.0f;
+            float kx = tg->on ? (b.x - r) : (a.x + r);
+            dl->AddCircleFilled(ImVec2(kx, a.y + r), kr, ToColor(tg->knobColor));
+        } else {
+            dl->AddRectFilled(a, b, ToColor(tg->boxColor), tg->cornerRadius);
+            if (tg->on) {
+                float pad = sz.x * 0.22f;
+                dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, b.y - pad),
+                                  ToColor(tg->checkColor), 2.0f);
+            }
         }
         float px = 2.0f * s;
-        DrawBitmapText(dl, tg->label, b.x + 8.0f * s,
+        DrawBitmapText(dl, tg->label, labelX,
                        a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
+        if (!tg->interactable) dl->AddRectFilled(a, b, IM_COL32(30, 30, 35, 150), tg->cornerRadius);
     }
 
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
@@ -3556,14 +4300,118 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!btn || !up->active) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
-        dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), 4.0f);
-        float px = 2.0f * s;
+        // Hover/focus grow: scale the rect about its center.
+        if (btn->hoverScale != 1.0f && (btn->IsHovered() || btn->IsFocused())) {
+            float gx = sz.x * (btn->hoverScale - 1.0f) * 0.5f;
+            float gy = sz.y * (btn->hoverScale - 1.0f) * 0.5f;
+            a.x -= gx; a.y -= gy; b.x += gx; b.y += gy;
+        }
+        dl->AddRectFilled(a, b, ToColor(btn->CurrentColor()), btn->cornerRadius);
+        if (btn->borderWidth > 0.0f)
+            dl->AddRect(a, b, ToColor(btn->borderColor), btn->cornerRadius, 0, btn->borderWidth);
+        // Icon placeholder (the editor overlay doesn't load textures) + label
+        // shifted right to match the built game's layout.
+        float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize * s : 0.0f;
+        if (isz > 0.0f) {
+            ImVec2 ia(a.x + 8 * s, a.y + ((b.y - a.y) - isz) * 0.5f);
+            dl->AddRectFilled(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 40), 3.0f);
+            dl->AddRect(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 110), 3.0f);
+        }
+        float px = btn->fontScale * s;
         float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-        DrawBitmapText(dl, btn->label, a.x + (sz.x - tw) * 0.5f,
-                       a.y + (sz.y - Font8x8::Height * px) * 0.5f, px,
+        float left = a.x + (isz > 0.0f ? isz + 12 * s : 0.0f);
+        float avail = b.x - left;
+        DrawBitmapText(dl, btn->label, left + (avail - tw) * 0.5f,
+                       a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f, px,
                        ToColor(btn->textColor));
+    }
+
+    // UI input fields: box + the text (or placeholder) + a caret when focused.
+    for (const auto& up : objs) {
+        auto* in = up->GetComponent<UIInputField>();
+        if (!in || !up->active) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
+        dl->AddRectFilled(a, b, ToColor(in->CurrentColor()), 4.0f);
+        if (in->focused) dl->AddRect(a, b, IM_COL32(120, 170, 255, 255), 4.0f, 0, 1.5f);
+        float px = 2.0f * s;
+        float pad = 6 * s;
+        bool empty = in->text.empty();
+        // Horizontal scroll: show the tail that fits so the caret stays visible.
+        std::string full = empty ? in->placeholder : in->DisplayText();
+        float adv = (Font8x8::Width + 1) * px;
+        int fit = adv > 0 ? (int)((sz.x - pad * 2) / adv) : (int)full.size();
+        if (fit < 1) fit = 1;
+        std::string shown = ((int)full.size() > fit) ? full.substr(full.size() - fit) : full;
+        float ty = a.y + (sz.y - Font8x8::Height * px) * 0.5f;
+        DrawBitmapText(dl, shown, a.x + pad, ty, px,
+                       ToColor(empty ? in->placeholderColor : in->textColor));
+        if (in->focused && in->CaretVisible()) {  // blinking caret after the visible text
+            float cw = shown.size() * adv;
+            float cx = a.x + pad + cw;
+            dl->AddLine(ImVec2(cx, ty), ImVec2(cx, ty + Font8x8::Height * px), IM_COL32(255, 255, 255, 220), 1.5f);
+        }
+    }
+
+    // UI dropdowns: header (shows the selection + a caret); when open, the option
+    // list below with the hovered/selected option highlighted. Drawn last among
+    // widgets so an open list sits above its neighbours.
+    for (const auto& up : objs) {
+        auto* dd = up->GetComponent<UIDropdown>();
+        if (!dd || !up->active) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 b(a.x + sz.x, a.y + sz.y);
+        float px = 2.0f * s;
+        float ty = a.y + (sz.y - Font8x8::Height * px) * 0.5f;
+        dl->AddRectFilled(a, b, ToColor(dd->color), 4.0f);
+        dl->AddRect(a, b, ToColor(dd->borderColor), 4.0f, 0, 1.0f);
+        ImU32 hcol = dd->HasSelection() ? ToColor(dd->textColor) : IM_COL32(150, 152, 158, 255);
+        DrawBitmapText(dl, dd->HeaderText(), a.x + 8 * s, ty, px, hcol);
+        // Down-caret on the right.
+        float cx = b.x - 14 * s, cy = a.y + sz.y * 0.5f;
+        dl->AddTriangleFilled(ImVec2(cx - 5 * s, cy - 3 * s), ImVec2(cx + 5 * s, cy - 3 * s),
+                              ImVec2(cx, cy + 4 * s), ToColor(dd->textColor));
+        if (dd->open) {
+            float top = b.y;
+            dl->AddRectFilled(ImVec2(a.x, top), ImVec2(b.x, top + sz.y * dd->options.size()),
+                              ToColor(dd->listColor), 0.0f);
+            for (int i = 0; i < (int)dd->options.size(); ++i) {
+                float oy = top + i * sz.y;
+                if (i == dd->HoveredOption())
+                    dl->AddRectFilled(ImVec2(a.x, oy), ImVec2(b.x, oy + sz.y), ToColor(dd->hoverColor), 0.0f);
+                DrawBitmapText(dl, dd->options[i], a.x + 8 * s,
+                               oy + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(dd->textColor));
+            }
+            dl->AddRect(ImVec2(a.x, top), ImVec2(b.x, top + sz.y * dd->options.size()),
+                        ToColor(dd->borderColor), 0.0f, 0, 1.0f);
+        }
+        if (!dd->interactable) dl->AddRectFilled(a, b, IM_COL32(30, 30, 35, 150), 4.0f);
+    }
+
+    // UI tooltips: when a sibling widget has been hovered long enough (Ready),
+    // draw the hint box next to the cursor. Tooltips tick only while the scene
+    // updates (Play / Game view), matching the built game.
+    for (const auto& up : objs) {
+        auto* tt = up->GetComponent<UITooltip>();
+        if (!tt || !up->active || !tt->Ready()) continue;
+        Vec2 m = Input::MousePosition();
+        float px = 2.0f;
+        float tw = tt->text.size() * (Font8x8::Width + 1) * px;
+        float th = Font8x8::Height * px;
+        ImVec2 a(canvasPos.x + m.x + 14, canvasPos.y + m.y + 14);
+        ImVec2 b(a.x + tw + 12, a.y + th + 10);
+        dl->AddRectFilled(a, b, ToColor(tt->background), 4.0f);
+        dl->AddRect(a, b, ToColor(tt->borderColor), 4.0f);
+        DrawBitmapText(dl, tt->text, a.x + 6, a.y + 5, px, ToColor(tt->textColor));
     }
 
     // Selection highlight for the selected widget — works for every UI type and
@@ -3575,6 +4423,16 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (GetUIScreenRect(ed.selected(), canvasSize.x, canvasSize.y, o, sz)) {
             ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
             ImVec2 b(a.x + sz.x, a.y + sz.y);
+            // Anchor marker: a diamond at the canvas point this widget anchors to,
+            // with a thin line to the widget — so anchoring is visible at a glance.
+            int ai = (int)r.anchor;
+            float ax = (ai % 3 == 0) ? 0.0f : (ai % 3 == 1) ? canvasSize.x * 0.5f : canvasSize.x;
+            float ay = (ai / 3 == 0) ? 0.0f : (ai / 3 == 1) ? canvasSize.y * 0.5f : canvasSize.y;
+            ImVec2 ap(canvasPos.x + ax, canvasPos.y + ay);
+            ImVec2 wc((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+            dl->AddLine(ap, wc, IM_COL32(90, 170, 240, 150), 1.0f);
+            dl->AddNgonFilled(ap, 5.0f, IM_COL32(90, 170, 240, 230), 4);  // diamond
+            // Selection box.
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
                         IM_COL32(255, 200, 0, 255), 2.0f, 0, 2.0f);
             if (r.sizePtr) {   // resizable: draw the 8 grab handles
@@ -3583,7 +4441,20 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                     dl->AddRectFilled(ImVec2(h[i].x - 4, h[i].y - 4),
                                       ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 200, 0, 255));
             }
+            // Live size readout above the box (the unscaled pixel size you author).
+            char dims[48];
+            std::snprintf(dims, sizeof(dims), "%g x %g", r.size.x, r.size.y);
+            dl->AddText(ImVec2(a.x, a.y - 16), IM_COL32(255, 220, 120, 255), dims);
         }
+        // Smart-snap alignment guides (magenta), full canvas extent.
+        if (g_uiGuideX >= 0.0f)
+            dl->AddLine(ImVec2(canvasPos.x + g_uiGuideX, canvasPos.y),
+                        ImVec2(canvasPos.x + g_uiGuideX, canvasPos.y + canvasSize.y),
+                        IM_COL32(255, 80, 220, 200), 1.0f);
+        if (g_uiGuideY >= 0.0f)
+            dl->AddLine(ImVec2(canvasPos.x, canvasPos.y + g_uiGuideY),
+                        ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY),
+                        IM_COL32(255, 80, 220, 200), 1.0f);
     }
 }
 
@@ -3598,6 +4469,22 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
     UICanvas::Set(canvasSize.x, canvasSize.y);
     Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
 
+    // Mouse wheel over a Scroll View's viewport scrolls it (preview authoring).
+    if (hovered && io.MouseWheel != 0.0f && !ed.isPlaying()) {  // play mode scrolls via Input wheel
+        for (const auto& up : ed.scene().Objects()) {
+            auto* sv = up->GetComponent<UIScrollView>();
+            if (!sv || !up->active) continue;
+            float s = UIScaleFor(up.get(), canvasSize.x, canvasSize.y);
+            Vec2 o = ResolveAnchor(sv->anchor, sv->position * s, sv->size * s, canvasSize.x, canvasSize.y);
+            if (mouseCanvas.x >= o.x && mouseCanvas.x <= o.x + sv->size.x * s &&
+                mouseCanvas.y >= o.y && mouseCanvas.y <= o.y + sv->size.y * s) {
+                sv->ScrollBy(-io.MouseWheel * 30.0f);
+                g_uiHandled = true;
+                break;
+            }
+        }
+    }
+
     // Continue an in-progress move/resize of the grabbed widget. Mouse pixels are
     // divided by the owning Canvas's scale so the widget tracks the cursor 1:1
     // even when the canvas is scaling the UI.
@@ -3608,21 +4495,93 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 float s = UIScaleFor(g_uiDragTarget, canvasSize.x, canvasSize.y);
                 if (s < 1e-3f) s = 1.0f;
                 float dx = io.MouseDelta.x / s, dy = io.MouseDelta.y / s;
+                float grid = g_uiGrid > 0 ? (float)g_uiGrid : 1.0f;
+                auto snap = [&](float v) { return g_snap ? Mathf::Round(v / grid) * grid : v; };
                 if (g_uiResizeHandle >= 0 && r.sizePtr) {
                     int hdl = g_uiResizeHandle;
                     bool left  = (hdl == 0 || hdl == 6 || hdl == 7);
                     bool right = (hdl == 2 || hdl == 3 || hdl == 4);
                     bool top   = (hdl == 0 || hdl == 1 || hdl == 2);
                     bool bottom= (hdl == 4 || hdl == 5 || hdl == 6);
-                    if (right)  r.sizePtr->x += dx;
-                    if (bottom) r.sizePtr->y += dy;
-                    if (left)  { r.position->x += dx; r.sizePtr->x -= dx; }
-                    if (top)   { r.position->y += dy; r.sizePtr->y -= dy; }
-                    r.sizePtr->x = Mathf::Max(8.0f, r.sizePtr->x);
-                    r.sizePtr->y = Mathf::Max(8.0f, r.sizePtr->y);
+                    // Resize in SCREEN space so the grabbed edge follows the cursor
+                    // for ANY anchor, then invert the anchor to recover position.
+                    Vec2 o, sz;
+                    GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o, sz);
+                    if (UIScrollView* sv = OwningScrollView(g_uiDragTarget)) o.y += sv->scroll * s; // undo scroll
+                    float l = o.x, t = o.y, rr = o.x + sz.x, bb = o.y + sz.y;
+                    float minPx = 8.0f * s;
+                    if (left)   l  = Mathf::Min(l + io.MouseDelta.x, rr - minPx);
+                    if (right)  rr = Mathf::Max(rr + io.MouseDelta.x, l + minPx);
+                    if (top)    t  = Mathf::Min(t + io.MouseDelta.y, bb - minPx);
+                    if (bottom) bb = Mathf::Max(bb + io.MouseDelta.y, t + minPx);
+                    // Snap the dragged edge to canvas/sibling guide lines.
+                    g_uiGuideX = g_uiGuideY = -1.0f;
+                    bool gxHit = false, gyHit = false;
+                    if (g_snap) {
+                        std::vector<float> cx{0.0f, canvasSize.x * 0.5f, canvasSize.x};
+                        std::vector<float> cy{0.0f, canvasSize.y * 0.5f, canvasSize.y};
+                        for (const auto& up2 : ed.scene().Objects()) {
+                            if (up2.get() == g_uiDragTarget) continue;
+                            Vec2 oo, ss;
+                            if (GetUIScreenRect(up2.get(), canvasSize.x, canvasSize.y, oo, ss)) {
+                                cx.push_back(oo.x); cx.push_back(oo.x + ss.x);
+                                cy.push_back(oo.y); cy.push_back(oo.y + ss.y);
+                            }
+                        }
+                        const float thr = 6.0f;
+                        auto edge = [&](float v, const std::vector<float>& cs, float& guide, bool& hit) {
+                            float best = thr, res = v;
+                            for (float c : cs) { float d = v > c ? v - c : c - v; if (d < best) { best = d; res = c; guide = c; hit = true; } }
+                            return res;
+                        };
+                        if (left)   l  = edge(l,  cx, g_uiGuideX, gxHit);
+                        if (right)  rr = edge(rr, cx, g_uiGuideX, gxHit);
+                        if (top)    t  = edge(t,  cy, g_uiGuideY, gyHit);
+                        if (bottom) bb = edge(bb, cy, g_uiGuideY, gyHit);
+                    }
+                    Vec2 newScreen{rr - l, bb - t};
+                    Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, canvasSize.x, canvasSize.y);
+                    // Grid-snap only on axes that didn't lock onto a guide.
+                    auto gsnap = [&](float v, bool guided) { return (g_snap && !guided) ? Mathf::Round(v / grid) * grid : v; };
+                    r.sizePtr->x  = gsnap(newScreen.x / s, gxHit);
+                    r.sizePtr->y  = gsnap(newScreen.y / s, gyHit);
+                    r.position->x = gsnap((l - term.x) / s, gxHit);
+                    r.position->y = gsnap((t - term.y) / s, gyHit);
                 } else {
-                    r.position->x += dx;
-                    r.position->y += dy;
+                    r.position->x = snap(r.position->x + dx);
+                    r.position->y = snap(r.position->y + dy);
+                    // Unity-style smart guides: snap our edges/center to the canvas
+                    // edges/center and to sibling widgets, drawing a guide line.
+                    g_uiGuideX = g_uiGuideY = -1.0f;
+                    if (g_snap) {
+                        Vec2 o, sz; GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o, sz);
+                        std::vector<float> cx{0.0f, canvasSize.x * 0.5f, canvasSize.x};
+                        std::vector<float> cy{0.0f, canvasSize.y * 0.5f, canvasSize.y};
+                        for (const auto& up2 : ed.scene().Objects()) {
+                            if (up2.get() == g_uiDragTarget) continue;
+                            Vec2 oo, ss;
+                            if (GetUIScreenRect(up2.get(), canvasSize.x, canvasSize.y, oo, ss)) {
+                                cx.push_back(oo.x); cx.push_back(oo.x + ss.x * 0.5f); cx.push_back(oo.x + ss.x);
+                                cy.push_back(oo.y); cy.push_back(oo.y + ss.y * 0.5f); cy.push_back(oo.y + ss.y);
+                            }
+                        }
+                        const float thr = 6.0f;
+                        auto bestSnap = [&](float lo, float mid, float hi, const std::vector<float>& cands,
+                                            float& guide) -> float {
+                            float best = thr, adj = 0.0f; bool found = false;
+                            for (float m : {lo, mid, hi})
+                                for (float c : cands) {
+                                    float d = m > c ? m - c : c - m;
+                                    if (d < best) { best = d; adj = c - m; guide = c; found = true; }
+                                }
+                            return found ? adj : 0.0f;
+                        };
+                        float gx = -1.0f, gy = -1.0f;
+                        float adjX = bestSnap(o.x, o.x + sz.x * 0.5f, o.x + sz.x, cx, gx);
+                        float adjY = bestSnap(o.y, o.y + sz.y * 0.5f, o.y + sz.y, cy, gy);
+                        if (adjX != 0.0f) { r.position->x += adjX / s; g_uiGuideX = gx; }
+                        if (adjY != 0.0f) { r.position->y += adjY / s; g_uiGuideY = gy; }
+                    }
                 }
                 ed.dirty = true;
             }
@@ -3631,6 +4590,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
         }
         g_uiDragTarget = nullptr;
         g_uiResizeHandle = -1;
+        g_uiGuideX = g_uiGuideY = -1.0f;   // clear guides when the drag ends
     }
 
     // Press: first try a resize handle on the current selection, then fall back
@@ -3646,7 +4606,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 ImVec2 h[8]; UIHandlePositions(a, b, h);
                 for (int i = 0; i < 8; ++i) {
                     float dx = io.MousePos.x - h[i].x, dy = io.MousePos.y - h[i].y;
-                    if (dx * dx + dy * dy <= 7.0f * 7.0f) {
+                    if (dx * dx + dy * dy <= 9.0f * 9.0f) {
                         g_uiDragTarget = ed.selected();
                         g_uiResizeHandle = i;
                         g_uiHandled = true;
@@ -3779,6 +4739,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
                            o.y + tr->shadowOffset.y * px, px, sh);
         DrawBitmapText(dl, tr->text, o.x, o.y, px, col);
+        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + px, o.y, px, col);  // faux-bold
     }
 
     // 2D collider wireframes (Unity-style green outlines), Scene view only.
@@ -3811,7 +4772,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Transform gizmo at the selection, reflecting the active tool (Move/Rotate/Scale).
-    if (!gameView && ed.selected()) {
+    if (!gameView && ed.selected() && !IsUIElement(ed.selected())) {
         ImVec2 g = worldToScreen(ed.selected()->transform->Position());
         if (g_tool == Tool::Move) {
             dl->AddLine(g, ImVec2(g.x + 36, g.y), IM_COL32(230, 70, 70, 255), 2.0f);   // +X red
@@ -4102,6 +5063,35 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     if (gameView) return;   // the Game view is non-interactive
 
+    // ---- Terrain sculpt brush: drag on the terrain to raise it (Shift lowers).
+    //      Unprojects the cursor to a world ray and intersects the terrain's
+    //      ground plane, then raises heights within the brush radius. ----
+    if (ed.selected() && g_terrainSculpt && hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (auto* terr = ed.selected()->GetComponent<Terrain>()) {
+            float ndcx = 2.0f * (io.MousePos.x - canvasPos.x) / canvasSize.x - 1.0f;
+            float ndcy = 1.0f - 2.0f * (io.MousePos.y - canvasPos.y) / canvasSize.y;
+            Mat4 inv = vp.Inverse();
+            Vec4 pn = inv * Vec4{ndcx, ndcy, -1.0f, 1.0f};
+            Vec4 pf = inv * Vec4{ndcx, ndcy,  1.0f, 1.0f};
+            Vec3 a{pn.x / pn.w, pn.y / pn.w, pn.z / pn.w};
+            Vec3 b{pf.x / pf.w, pf.y / pf.w, pf.z / pf.w};
+            Vec3 rdir = (b - a).Normalized();
+            Vec3 op = ed.selected()->transform->Position();
+            if (Mathf::Abs(rdir.y) > 1e-5f) {
+                float t = (op.y - a.y) / rdir.y;
+                if (t > 0.0f) {
+                    Vec3 hit = a + rdir * t;
+                    float delta = g_terrainStrength * io.DeltaTime * (io.KeyShift ? -1.0f : 1.0f);
+                    terr->RaiseAt(hit.x - op.x, hit.z - op.z, g_terrainRadius, delta);
+                    terr->Apply();
+                    ed.dirty = true;
+                }
+            }
+            g_uiHandled = true;   // consume the drag: no gizmo / pick this frame
+            return;
+        }
+    }
+
     // ---- Transform gizmo: 3 colored axis handles at the selected object
     //      (Unity W/E/R). Grab a handle and drag to move/rotate/scale on that
     //      axis. X=red, Y=green, Z=blue. ----
@@ -4236,12 +5226,31 @@ void DrawViewport(EditorState& ed) {
         if (ImGui::IsKeyPressed(ImGuiKey_W, false)) g_tool = Tool::Move;
         if (ImGui::IsKeyPressed(ImGuiKey_E, false)) g_tool = Tool::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) g_tool = Tool::Scale;
+        // Arrow keys nudge a selected UI widget: 1px, or a grid step with Shift.
+        if (ed.selected()) {
+            UIRect nr = GetUIRect(ed.selected());
+            if (nr.valid && nr.position) {
+                float step = ImGui::GetIO().KeyShift ? (float)(g_uiGrid > 0 ? g_uiGrid : 1) : 1.0f;
+                float nx = 0.0f, ny = 0.0f;
+                if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow,  true)) nx -= step;
+                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) nx += step;
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow,    true)) ny -= step;
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow,  true)) ny += step;
+                if (nx != 0.0f || ny != 0.0f) {
+                    nr.position->x += nx; nr.position->y += ny; ed.dirty = true;
+                }
+            }
+        }
     }
     ImGui::Checkbox("Snap", &g_snap);
     if (g_snap) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(70);
         ImGui::DragFloat("##snap", &g_snapSize, 0.05f, 0.05f, 10.0f);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::DragInt("UI px##uigrid", &g_uiGrid, 1, 1, 256);   // UI pixel grid
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("UI snap grid (pixels) + edge/center guides");
     }
     ImGui::SameLine();
     ImGui::TextDisabled(ed.view3D ? "drag: orbit  wheel: zoom"
@@ -4258,8 +5267,18 @@ void DrawViewport(EditorState& ed) {
 
     ImGui::InvisibleButton("canvas", canvasSize,
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    bool hovered = ImGui::IsItemHovered();
     ImGuiIO& io = ImGui::GetIO();
+    // Treat the canvas as hovered when the pointer is over it. IsItemHovered()
+    // alone can read false in some docking/overlap states (and while the canvas
+    // is the active item mid-drag), which would make clicks do nothing — so also
+    // accept "window hovered + mouse inside the canvas rect" as a fallback.
+    bool hovered = ImGui::IsItemHovered() || ImGui::IsItemActive();
+    if (!hovered && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        ImVec2 mp = io.MousePos;
+        if (mp.x >= canvasPos.x && mp.y >= canvasPos.y &&
+            mp.x <= canvasEnd.x && mp.y <= canvasEnd.y)
+            hovered = true;
+    }
 
     // UI editing (pick/drag screen-space widgets) runs first and may consume the
     // click so the world pickers below leave the selection alone.
@@ -4396,6 +5415,14 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     LoadRecent();
+
+    // Route engine logs (and script print/log/debug output) into the Console
+    // with the matching severity (Unity-style info/warning/error).
+    Log::sink = [](Log::Level lvl, const std::string& msg) {
+        int level = lvl == Log::Level::Error ? 2 : lvl == Log::Level::Warning ? 1 : 0;
+        ConsoleLog(msg, level);
+    };
+
     ConsoleLog("Welcome to OkaySpace v" OKAY_ENGINE_VERSION
                ". Choose a 2D or 3D project to begin.");
 
@@ -4403,6 +5430,7 @@ int main(int argc, char** argv) {
     std::string lastTitle;
     Uint64 last = SDL_GetPerformanceCounter();
     while (running) {
+        Input::ClearTypedText();   // collect this frame's typed characters
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
@@ -4410,6 +5438,12 @@ int main(int argc, char** argv) {
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
                 e.window.windowID == SDL_GetWindowID(window))
                 g_quitRequested = true;
+            // Route typed characters to the playing game's UI input fields (but not
+            // while an ImGui field — inspector/markup box — is capturing text).
+            if (e.type == SDL_TEXTINPUT && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
+                Input::FeedText(e.text.text);
+            if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
+                Input::FeedMouseWheel((float)e.wheel.y);
         }
 
         Uint64 now = SDL_GetPerformanceCounter();
@@ -4429,6 +5463,9 @@ int main(int argc, char** argv) {
             for (char c = '0'; c <= '9'; ++c)
                 if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
             if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+            if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
+            if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
+            if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
             if (ks[SDL_SCANCODE_UP])    down.push_back('w'); // arrows -> WASD
             if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
             if (ks[SDL_SCANCODE_DOWN])  down.push_back('s');
@@ -4516,6 +5553,7 @@ int main(int argc, char** argv) {
         DrawAboutPopup();
         if (g_showHierarchy) DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel (always shown)
+        DrawDataAssetEditor();
         if (g_showGame)      DrawGameView(ed);
         if (g_showInspector) DrawInspector(ed);
         if (g_showConsole)   DrawConsole();

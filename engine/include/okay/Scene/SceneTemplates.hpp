@@ -17,6 +17,11 @@
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
+#include "okay/Components/UISlider.hpp"
+#include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UIDraggable.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
@@ -254,11 +259,16 @@ inline void MainMenu(Scene& scene) {
     cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
     scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
 
+    // A styled card panel (rounded, subtle border, vertical gradient).
     GameObject* panel = scene.CreateGameObject("Panel");
     auto* pn = panel->AddComponent<UIPanel>();
     pn->position = {40, 40};
-    pn->size = {360, 240};
-    pn->color = Color::FromBytes(30, 36, 52, 220);
+    pn->size = {360, 380};
+    pn->color = Color::FromBytes(34, 40, 58, 235);
+    pn->cornerRadius = 14.0f;
+    pn->borderWidth = 1.0f;
+    pn->useGradient = true;
+    pn->colorBottom = Color::FromBytes(20, 24, 38, 235);
     panel->transform->SetParent(canvas->transform, false);
 
     GameObject* title = scene.CreateGameObject("Title");
@@ -267,16 +277,115 @@ inline void MainMenu(Scene& scene) {
     tr->screenSpace = true;
     tr->screenPos = {70, 70};
     tr->pixelSize = 5.0f;
+    tr->outline = true;                       // reads on any background
     title->transform->SetParent(canvas->transform, false);
 
     GameObject* start = scene.CreateGameObject("StartButton");
     auto* b = start->AddComponent<UIButton>();
     b->label = "Start";
-    b->position = {70, 170};
-    b->size = {300, 60};
+    b->position = {70, 150};
+    b->size = {300, 56};
+    b->cornerRadius = 10.0f;
+    b->fontScale = 3.0f;
     start->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function on_click() { load_scene(\"game.okayscene\"); }\n");
+    start->AddComponent<UITooltip>()->text = "Begin the game";
     start->transform->SetParent(canvas->transform, false);
+
+    // Volume slider with a live value readout, bound to a pref.
+    GameObject* vol = scene.CreateGameObject("Volume");
+    auto* sl = vol->AddComponent<UISlider>();
+    sl->position = {70, 230}; sl->size = {300, 18};
+    sl->value = 0.8f; sl->showValue = true; sl->cornerRadius = 6.0f;
+    vol->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function on_change() { prefs_set(\"volume\", ui_slider_value(\"Volume\")); }\n");
+    vol->transform->SetParent(canvas->transform, false);
+
+    // Fullscreen toggle.
+    GameObject* fs = scene.CreateGameObject("Fullscreen");
+    auto* tg = fs->AddComponent<UIToggle>();
+    tg->position = {70, 270}; tg->size = {26, 26};
+    tg->label = "Fullscreen"; tg->cornerRadius = 5.0f;
+    fs->transform->SetParent(canvas->transform, false);
+
+    // Quality dropdown.
+    GameObject* q = scene.CreateGameObject("Quality");
+    auto* dd = q->AddComponent<UIDropdown>();
+    dd->position = {70, 310}; dd->size = {200, 30};
+    dd->options = {"Low", "Medium", "High"}; dd->value = 2;
+    q->transform->SetParent(canvas->transform, false);
+
+    // Quit button.
+    GameObject* quit = scene.CreateGameObject("QuitButton");
+    auto* qb = quit->AddComponent<UIButton>();
+    qb->label = "Quit"; qb->position = {70, 350}; qb->size = {300, 44};
+    qb->cornerRadius = 10.0f;
+    qb->color = Color::FromBytes(110, 60, 70);
+    quit->transform->SetParent(canvas->transform, false);
+}
+
+/// A ready-made drag-and-drop inventory: a row of slots (UIDropTarget) and a
+/// few draggable items. Each item has a UIDraggable with snapToSlot, so you can
+/// drag items between slots and they snap into place — no scripting required.
+/// A starting point for inventories, hotbars, card hands, crafting grids.
+inline void Inventory(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Inventory");
+
+    GameObject* camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->main = true;
+    cam->backgroundColor = Color::FromBytes(18, 20, 28);
+
+    GameObject* canvas = scene.CreateGameObject("Canvas");
+    auto* cv = canvas->AddComponent<Canvas>();
+    cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+    scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
+
+    GameObject* panel = scene.CreateGameObject("Bag");
+    auto* pn = panel->AddComponent<UIPanel>();
+    pn->position = {40, 60}; pn->size = {500, 140};
+    pn->color = Color::FromBytes(30, 36, 52, 230); pn->cornerRadius = 12.0f;
+    panel->transform->SetParent(canvas->transform, false);
+
+    GameObject* title = scene.CreateGameObject("Title");
+    auto* tr = title->AddComponent<TextRenderer>();
+    tr->text = "INVENTORY"; tr->screenSpace = true; tr->screenPos = {60, 30};
+    tr->pixelSize = 3.0f; tr->bold = true;
+    title->transform->SetParent(canvas->transform, false);
+
+    const int N = 5;
+    const Color itemColors[N] = {
+        Color::FromBytes(220, 90, 90), Color::FromBytes(90, 200, 110),
+        Color::FromBytes(90, 150, 230), Color::FromBytes(230, 200, 80),
+        Color::FromBytes(180, 120, 220)};
+    for (int i = 0; i < N; ++i) {
+        float x = 70.0f + i * 90.0f;
+        GameObject* slot = scene.CreateGameObject("Slot" + std::to_string(i));
+        auto* sp = slot->AddComponent<UIPanel>();
+        sp->position = {x, 90}; sp->size = {72, 72};
+        sp->color = Color::FromBytes(20, 24, 34, 255);
+        sp->cornerRadius = 8.0f; sp->borderWidth = 1.0f;
+        slot->AddComponent<UIDropTarget>();
+        slot->transform->SetParent(canvas->transform, false);
+    }
+    for (int i = 0; i < 3; ++i) {     // three draggable items in the first slots
+        float x = 70.0f + i * 90.0f;
+        GameObject* item = scene.CreateGameObject("Item" + std::to_string(i));
+        auto* ip = item->AddComponent<UIPanel>();
+        ip->position = {x + 6, 96}; ip->size = {60, 60};
+        ip->color = itemColors[i]; ip->cornerRadius = 8.0f;
+        auto* dg = item->AddComponent<UIDraggable>();
+        dg->snapToSlot = true; dg->returnToStart = true;
+        item->transform->SetParent(canvas->transform, false);
+    }
+
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* ht = help->AddComponent<TextRenderer>();
+    ht->text = "Drag the colored items between the slots"; ht->screenSpace = true;
+    ht->screenPos = {60, 220}; ht->pixelSize = 1.5f;
+    help->transform->SetParent(canvas->transform, false);
 }
 
 /// A complete, playable game of Snake — written entirely in OkayScript on a

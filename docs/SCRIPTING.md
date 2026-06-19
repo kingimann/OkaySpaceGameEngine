@@ -24,6 +24,26 @@ function update(dt) {
 }
 ```
 
+### Prefer Unity style? Write it like C#.
+
+OkayScript also accepts a Unity/C# flavor — PascalCase `Start()`/`Update()`,
+`transform.position`, `Input.GetKeyDown(...)`, `Time.deltaTime`, `new Vector3(...)`,
+typed vars (`float speed = 5f;`), `i++`, and a `class : MonoBehaviour` wrapper —
+so Unity code often pastes in unchanged:
+
+```cs
+public class Player : MonoBehaviour {
+    float speed = 5f;
+    void Update() {
+        transform.position.x += Input.GetAxis("Horizontal") * speed * Time.deltaTime;
+        if (Input.GetKeyDown("space")) { Debug.Log("jump!"); }
+    }
+}
+```
+
+See **Unity-style syntax** in [scripting.md](scripting.md) for the full list of
+supported properties, methods, and event-handler names.
+
 A complete movement example:
 
 ```
@@ -121,6 +141,54 @@ function update(dt) {
 | `load_scene("file")` | Switch to another scene |
 | `screen_w()` / `screen_h()` | Viewport size in pixels |
 
+### UI (drive widgets by name)
+| Function | Description |
+|---|---|
+| `ui_set_text("n", "s")` / `ui_get_text("n")` | Text/button label/input text |
+| `ui_clicked("n")` | True the frame a named button was clicked |
+| `ui_set_interactable("n", on)` | Enable/grey-out a button |
+| `ui_slider_value("n")` / `ui_set_slider("n", v)` | Read/set a slider (0..1) |
+| `ui_toggle_value("n")` / `ui_set_toggle("n", on)` | Read/set a toggle |
+| `ui_dropdown_value("n")` / `ui_dropdown_text("n")` | Selected index / option text |
+| `ui_set_dropdown("n", i)` | Select a dropdown option (fires on_change) |
+| `ui_set_progress("n", v)` | Set a progress bar's fill (0..1) |
+| `ui_set_fill("n", v)` | Set a filled UI Image's amount (cooldowns/health) |
+
+### Tweening (DOTween-style) & saves
+Every tween accepts an optional easing and an optional **on-complete** function
+name as its trailing argument(s).
+
+| Function | Description |
+|---|---|
+| `tween_move(x, y, dur [, ease][, "done"])` / `tween_move3(x,y,z,dur ...)` | Animate position |
+| `tween_scale(s, dur [, ease][, "done"])` | Animate uniform scale |
+| `tween_rotate(deg, dur [, ease][, "done"])` | Spin about Z (relative) |
+| `tween_rotate_to(deg, dur [, ease][, "done"])` | Rotate to an absolute Z angle |
+| `tween_scale_xy(sx, sy, dur [, ease][, "done"])` | Non-uniform scale |
+| `tween_ui_move(x, y, dur [, ease][, "done"])` / `tween_ui_size(w, h, dur ...)` | Move / resize a UI widget |
+| `tween_color(r, g, b, dur [, ease][, "done"])` / `tween_fade(alpha, dur ...)` | Animate color / opacity |
+| `tween_move_by(dx, dy, dur [, ease][, "done"])` | Move by a relative offset |
+| `tween_jump(x, y, height, dur [, "done"])` | Arc-jump to a target (coins, hops) |
+| `tween_path(dur, x1,y1, x2,y2, ...)` | Move through waypoints |
+| `tween_loop_move(x, y, dur [, ease])` / `tween_loop_scale(s, dur [, ease])` | Ping-pong forever (floaters, pulsing) |
+| `tween_loop_rotate(dur [, dir])` | Spin continuously (loaders, coins) |
+| `tween_number(from, to, dur [, "prefix"])` | Count a sibling text number (score ticks) |
+| `tween_punch_scale(amount, dur [, vib])` / `tween_punch_pos(dx, dy, dur [, vib])` | Punch & settle ("juice") |
+| `tween_shake(intensity, dur)` | Random shake that decays to a stop |
+| `save_game([slot])` / `load_game([slot])` | Snapshot / restore the scene |
+| `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
+
+Easings: `linear`, `in/out/in_out_quad`, `..._cubic`, `..._sine`, `..._expo`,
+`in_back`/`out_back`, `out_elastic`, `out_bounce`.
+
+### Drag & drop and Data Assets
+Add a **UI Draggable**/**Draggable** + **UI Drop Target**/**Drop Zone** in the
+editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
+`on_receive` and `on_hover_enter/on_hover_exit`. Read the pair with
+`ui_drop_source()/ui_drop_target()` (UI) or `drop_source()/drop_target()`
+(world). Scriptable Objects: `data_num/data_str/data_has(path, key)` to read and
+`data_set(path, key, v)` + `data_save(path)` to write `.okaydata` assets.
+
 ### Scene Manager (build list)
 | Function | Description |
 |---|---|
@@ -138,16 +206,59 @@ function update(dt) {
 | `net_disconnect()` | Leave / stop the session |
 | `net_connected()` / `net_is_server()` / `net_is_client()` | Status |
 | `net_id()` / `net_peers()` | Your peer id / connected peer count |
+| `net_ping()` | Round-trip time to the server in ms (clients) |
 | `net_name("name")` | Set/get this peer's display name |
+| `net_room("name")` | Set the lobby room (before host/join) — rooms are isolated |
+| (host settings) | Set `serverName` / `password` / `maxPlayers` / `snapshotRate` on the Network Manager (inspector or Services panel) |
+| `net_ready(1/0)` | Mark this peer ready in the lobby |
+| `net_ready_count()` / `net_all_ready()` | (host) ready clients in the room / all ready? |
+| `net_start_match()` / `net_match_started()` | (host) begin the match / has it begun? |
 | `net_send("channel", "data")` | Broadcast a message to all peers |
 | `net_send_to(id, "channel", "data")` | Message one peer |
+| `net_send_reliable("channel", "data")` | Like net_send but resent until acked + de-duped |
+| `net_kick(id [, "reason"])` / `net_was_kicked()` | Host kicks a peer / client check |
 | `net_poll()` | Pop one received message (use in a `while`) |
 | `net_msg_channel()` / `net_msg_data()` / `net_msg_from()` | The popped message |
+| `net_set("key", "value")` | Set a server-authoritative **synced variable** |
+| `net_get("key")` | Read a synced variable (same value on every peer) |
+| `net_spawn("prefab", x, y[, z])` | **Replicated spawn** — instantiate a prefab on every peer |
+
+### Steam (achievements, stats, leaderboards, cloud)
+| Function | Description |
+|---|---|
+| `steam_name()` | The player's Steam name |
+| `steam_unlock("ID")` / `steam_is_unlocked("ID")` / `steam_clear("ID")` | Achievements |
+| `steam_set_stat("n", v)` / `steam_get_stat("n")` / `steam_inc_stat("n", by)` | Stats |
+| `steam_store()` | Flush stats/achievements to Steam |
+| `steam_progress("ID", cur, max)` | Show achievement progress (auto-unlocks at max) |
+| `steam_leaderboard("board", score)` | Submit a leaderboard score |
+| `steam_leaderboard_top("board", n)` | Top-N as an array of `"rank,name,score"` |
+| `steam_cloud_write("file", "data")` / `steam_cloud_read("file")` | Steam Cloud |
+| `steam_presence("key", "value")` | Rich presence |
+| `steam_friends()` / `steam_overlay("page")` | Friend count / open the overlay |
+| `steam_owns(appId)` / `steam_owns_dlc(appId)` | Ownership / DLC checks |
+| `steam_achievement_count()` / `steam_language()` | Achievement count / client language |
+
+### Debugging
+All of these print into the editor's **Console**.
+| Function | Description |
+|---|---|
+| `print(...)` / `debug_log(...)` / `log_info(...)` | Log a line (args joined by spaces) |
+| `log_warn(...)` / `log_error(...)` / `trace(...)` | Log at a level (warnings/errors stand out) |
+| `watch("name", value)` | Log `name = value` for quick inspection |
+| `assert(cond [, "msg"])` | Log an error when `cond` is false; returns the result |
+| `format("hp={} of {}", a, b)` | Fill each `{}` with the next argument |
+| `concat(...)` / `str_repeat("ab", 3)` | Join args / repeat a string |
 
 ### State, math & data
 | Function | Description |
 |---|---|
 | `set("k", v)` / `get("k")` | Shared variables across scripts |
+| `approach(cur, target, step)` | Step toward a target without overshooting |
+| `remap(v, inLo, inHi, outLo, outHi)` | Rescale a value between two ranges |
+| `frac(x)` / `mod(a, b)` / `snap(v, step)` | Fraction / positive modulo / round to a step |
+| `is_nan(x)` / `is_finite(x)` / `avg(...)` / `min3` / `max3` | Numeric helpers |
+| `lerp_angle(a, b, t)` | Interpolate degrees the short way round |
 | `prefs_set/prefs_get/prefs_save/prefs_load` | Persist data across runs |
 | `rand(lo, hi)` / `randi(lo, hi)` / `chance(p)` | Randomness |
 | `dist(x1,y1,x2,y2)` / `dist3(...)` / `angle_to(...)` | Geometry |
@@ -155,6 +266,15 @@ function update(dt) {
 | `sqrt pow exp log abs sign floor ceil round` | Math |
 | `min max clamp clamp01 lerp smoothstep wrap ping_pong` | Ranges & easing |
 | `array push pop count contains index_of sort_num shuffle` | Lists |
+
+### Friendly aliases
+Intuitive names for common builtins so code reads naturally:
+`delta_time` (dt), `get_key` / `get_key_down` / `get_key_up` (key…),
+`random` / `random_int` (rand/randi), `pick` (choose), `distance` (dist),
+`instantiate` (spawn), `destroy_self` (destroy), `translate` (move),
+`set_position` (set_pos), `play_audio` (play_sound), `to_string` / `str`
+(to_str), `to_number` / `num` (to_num), `get_x/get_y/get_z` (pos_*),
+`screen_width` / `screen_height`.
 | `upper lower split join substr replace trim str_len` | Strings |
 | `time()` / `dt()` / `fps()` | Timing |
 | `print(...)` | Log to the Console panel |
@@ -170,8 +290,11 @@ function update(dt) {
 ### Physics queries
 | Function | Description |
 |---|---|
-| `raycast_hit(ox, oy, dx, dy [, maxDist])` | 2D ray hits a collider? |
-| `raycast_hit3(ox,oy,oz, dx,dy,dz [, maxDist])` | 3D ray hits a collider? |
+| `raycast_hit(ox, oy, dx, dy [, maxDist])` | 2D ray hits a collider? (boolean) |
+| `raycast(ox, oy, dx, dy [, maxDist])` | 2D ray; returns the **name** of the object hit ("" = miss) |
+| `ray_hit()` / `ray_object()` / `ray_x()` / `ray_y()` / `ray_nx()` / `ray_ny()` / `ray_dist()` | Details of the last `raycast()` |
+| `raycast_hit3(ox,oy,oz, dx,dy,dz [, maxDist])` | 3D ray hits a collider? (boolean) |
+| `raycast3(ox,oy,oz, dx,dy,dz [, maxDist])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
 | `overlap(x, y)` | A 2D collider contains this point? |
 
 ## Physics events

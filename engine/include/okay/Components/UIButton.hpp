@@ -19,12 +19,25 @@ public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{160.0f, 48.0f};
     std::string label = "Button";
+    /// Optional icon image drawn inside the button, left of the label (PNG/JPG;
+    /// bundled by Build Game). `iconSize` is its square size in pixels (0 hides
+    /// it); the label shifts right to make room.
+    std::string icon;
+    float iconSize = 0.0f;
     Color color = Color::FromBytes(60, 90, 150);
     Color hoverColor = Color::FromBytes(80, 120, 200);
     Color pressedColor = Color::FromBytes(45, 70, 120);  // shown while held down
     Color disabledColor = Color::FromBytes(70, 70, 78);  // shown when !interactable
     Color textColor = Color::White;
     UIAnchor anchor = UIAnchor::TopLeft;
+    // Customization: rounded corners, label size, and an optional border.
+    float cornerRadius = 4.0f;
+    float fontScale = 2.0f;                        // text pixel size multiplier
+    float borderWidth = 0.0f;                      // 0 = no border
+    Color borderColor = Color::FromBytes(255, 255, 255, 80);
+    /// Grow effect when hovered/focused: 1 = none, e.g. 1.1 = 10% bigger. A
+    /// lightweight Unity-style "transition" for tactile menus.
+    float hoverScale = 1.0f;
     /// When false the button is greyed out and ignores hover/click (e.g. a
     /// "Continue" entry with no save). Scripts toggle it via set_interactable().
     bool interactable = true;

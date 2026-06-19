@@ -63,7 +63,9 @@ a **Trigger** (`OnStart`, `OnUpdate`, `OnKey`, `OnCollision`, `OnClick`,
   `set_light`, `set_ambient`), physics (`velocity`, `impulse`), data
   (`set_prefs`, `add_prefs`, `save_prefs`), **scenes** (`load_scene`,
   `load_scene_index`, `load_next_scene`), **multiplayer** (`net_host`,
-  `net_join`, `net_send`, `net_disconnect`), messaging (`send`), and `log`.
+  `net_join`, `net_send`, `net_set` synced vars, `net_spawn` replicated spawn,
+  `net_disconnect`), **Steam** (`steam_unlock`, `steam_set_stat`,
+  `steam_inc_stat`), messaging (`send`), and `log`.
 
 Multiplayer with zero code: a `Player` with an `OnKey` ActionList whose
 instruction is `net_host 45000`, and another whose instruction is

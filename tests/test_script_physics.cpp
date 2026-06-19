@@ -47,6 +47,40 @@ int main() {
         CHECK_NEAR(probe->transform->localPosition.y, 0.0f, 0.001f); // away -> miss
     }
 
+    // --- raycast(): returns the hit object's name + detail accessors -----
+    {
+        Scene scene("RcDetail");
+        makeWall(scene);                                     // 2x2 box, spans [-1,1]
+        GameObject* probe = scene.CreateGameObject("Probe");
+        auto* sc = probe->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() {\n"
+            "  raycast(-10, 0, 1, 0, 100);\n"               // hits the wall at x=-1
+            "  if (ray_hit()) { set_x(ray_dist()); }\n"     // distance 9
+            "  if (ray_object() == \"Wall\") { set_y(1); }\n"
+            "}\n"));
+        scene.Start();
+        CHECK_NEAR(probe->transform->localPosition.x, 9.0f, 0.05f);  // distance
+        CHECK_NEAR(probe->transform->localPosition.y, 1.0f, 0.001f); // named the hit
+    }
+
+    // --- raycast() miss: returns empty name, ray_hit() is false ----------
+    {
+        Scene scene("RcMiss");
+        makeWall(scene);
+        GameObject* probe = scene.CreateGameObject("Probe");
+        auto* sc = probe->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() {\n"
+            "  raycast(-10, 0, -1, 0, 100);\n"              // away from the wall
+            "  if (ray_hit()) { set_x(1); }\n"
+            "  if (ray_object() == \"\") { set_y(1); }\n"
+            "}\n"));
+        scene.Start();
+        CHECK_NEAR(probe->transform->localPosition.x, 0.0f, 0.001f); // no hit
+        CHECK_NEAR(probe->transform->localPosition.y, 1.0f, 0.001f); // empty name
+    }
+
     // --- set_velocity / set_vx / set_vy / velocity_x|y on a sibling body ---
     {
         Scene scene("Vel");

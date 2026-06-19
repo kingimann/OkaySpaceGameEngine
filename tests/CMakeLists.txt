@@ -253,6 +253,38 @@ add_executable(test_script_net test_script_net.cpp)
 target_link_libraries(test_script_net PRIVATE okay::engine)
 add_test(NAME script_net COMMAND test_script_net)
 
+add_executable(test_steam_script test_steam_script.cpp)
+target_link_libraries(test_steam_script PRIVATE okay::engine)
+add_test(NAME steam_script COMMAND test_steam_script)
+
+add_executable(test_net_rooms test_net_rooms.cpp)
+target_link_libraries(test_net_rooms PRIVATE okay::engine)
+add_test(NAME net_rooms COMMAND test_net_rooms)
+
+add_executable(test_terrain test_terrain.cpp)
+target_link_libraries(test_terrain PRIVATE okay::engine)
+add_test(NAME terrain COMMAND test_terrain)
+
+add_executable(test_script_debug test_script_debug.cpp)
+target_link_libraries(test_script_debug PRIVATE okay::engine)
+add_test(NAME script_debug COMMAND test_script_debug)
+
+add_executable(test_ui_extra test_ui_extra.cpp)
+target_link_libraries(test_ui_extra PRIVATE okay::engine)
+add_test(NAME ui_extra COMMAND test_ui_extra)
+
+add_executable(test_dataasset test_dataasset.cpp)
+target_link_libraries(test_dataasset PRIVATE okay::engine)
+add_test(NAME dataasset COMMAND test_dataasset)
+
+add_executable(test_item_dragdrop test_item_dragdrop.cpp)
+target_link_libraries(test_item_dragdrop PRIVATE okay::engine)
+add_test(NAME item_dragdrop COMMAND test_item_dragdrop)
+
+add_executable(test_unity_script test_unity_script.cpp)
+target_link_libraries(test_unity_script PRIVATE okay::engine)
+add_test(NAME unity_script COMMAND test_unity_script)
+
 add_executable(test_uidocument test_uidocument.cpp)
 target_link_libraries(test_uidocument PRIVATE okay::engine)
 add_test(NAME uidocument COMMAND test_uidocument)

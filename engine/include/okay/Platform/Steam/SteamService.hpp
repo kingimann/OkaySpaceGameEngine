@@ -91,6 +91,18 @@ public:
     /// Open the Steam overlay to a page ("friends", "achievements", ...).
     virtual void ActivateOverlay(const std::string& page) { (void)page; }
 
+    // ---- Apps / DLC / locale -------------------------------------------
+    /// Whether the player owns/has installed a DLC by its app id.
+    virtual bool IsDlcInstalled(std::uint32_t dlcAppId) const { (void)dlcAppId; return false; }
+    /// Whether the player owns an app id (the base game by default).
+    virtual bool OwnsApp(std::uint32_t appId) const { (void)appId; return false; }
+    /// Number of achievements known to the backend (e.g. unlocked, in sim).
+    virtual int  AchievementCount() const { return 0; }
+    /// Name (id) of the achievement at an index, or "".
+    virtual std::string AchievementName(int index) const { (void)index; return {}; }
+    /// The Steam client language ("english", ...).
+    virtual std::string Language() const { return "english"; }
+
     // ---- Rich presence -------------------------------------------------
     virtual void SetRichPresence(const std::string& key, const std::string& value) = 0;
 };

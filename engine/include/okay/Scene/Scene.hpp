@@ -50,6 +50,12 @@ public:
     GameObject* FindWithTag(const std::string& tag) const;
     const std::vector<std::unique_ptr<GameObject>>& Objects() const { return m_objects; }
 
+    /// Reorder an object in the draw/iteration list. Objects are drawn in list
+    /// order, so the last one is on top — MoveToFront draws it last (frontmost),
+    /// MoveToBack draws it first (behind). Used for UI layering in the editor.
+    void MoveToFront(GameObject* go);
+    void MoveToBack(GameObject* go);
+
     /// Collect every component of type T across all GameObjects in the scene.
     template <typename T>
     std::vector<T*> FindObjectsOfType() const {
@@ -90,6 +96,13 @@ public:
         Color skyHorizon = Color::FromBytes(150, 185, 225);  // horizon haze
         Color skyBottom  = Color::FromBytes(120, 120, 130);  // ground-ish
         float ambient    = 0.15f;                            // base light (0..1)
+        // Distance fog: fades distant geometry toward `fogColor` between
+        // `fogStart` and `fogEnd` world units from the camera (depth cue + it
+        // hides the far clip / pop-in). Off by default.
+        bool  fog        = false;
+        Color fogColor   = Color::FromBytes(150, 185, 225);  // default = horizon
+        float fogStart   = 20.0f;
+        float fogEnd     = 90.0f;
     };
     RenderSettings renderSettings;
 

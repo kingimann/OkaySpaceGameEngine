@@ -81,8 +81,9 @@ planet, `A` player ship.)*
 - **Persistent save data** — `Prefs` (PlayerPrefs-style key/value) for high
   scores and settings; the player auto-loads/saves it.
 - **Starter templates** — `Platformer` / `TopDown` / **`CoinCollector`** (a
-  complete, playable game) / **`MainMenu`** (UI panel + title + Start button)
-  build component-wired scenes from the New Project flow.
+  complete, playable game) / **`MainMenu`** (UI panel + title + Start button) /
+  **`Inventory`** (drag-and-drop bag with slots) build component-wired scenes
+  from the New Project flow.
 - **Utilities** — seedable `Random`, a typed `EventBus`, `Rect`/`Bounds`, extra
   `Mathf` (InverseLerp, SmoothDamp, LerpAngle…), and `Scene::FindObjectsOfType<T>`.
 - **Multiplayer — host your own server, in ~5 lines** — cross-platform UDP
@@ -96,8 +97,13 @@ planet, `A` player ship.)*
   Trigger → Conditions → Instructions) with ~60 ops including variables/math,
   transform/physics, prefs, scene loading, **and networking** (`net_host`,
   `net_join`, `net_send`), plus a node-graph runtime you build in code or text.
-- **Text scripting (OkayScript)** — a built-in language (works everywhere; an
-  optional **C#** backend sits behind the same `IScriptVM`). Has
+- **Text scripting (OkayScript), Unity-style** — write scripts that look almost
+  exactly like a Unity C# `MonoBehaviour`: `void Start()` / `void Update()`,
+  `transform.position = new Vector3(...)`, `Input.GetKeyDown("space")`,
+  `Time.deltaTime`, `Mathf.Sin(t)`, `Debug.Log(...)`, typed vars (`float speed = 5f;`),
+  `i++` loops, and a `public class Foo : MonoBehaviour { }` wrapper that pastes in.
+  The classic lowercase style still works too. A built-in language (works
+  everywhere; an optional **C#** backend sits behind the same `IScriptVM`). Has
   `if`/`while`/`for`/**foreach**/`break`/`continue`, functions, the **ternary**
   `?:`, **arrays** and **maps**, a full **string** library, and a deep builtin
   set: input (keyboard+mouse), 2D/3D transform control, `spawn`/`destroy`,
@@ -107,12 +113,57 @@ planet, `A` player ship.)*
   audio/gravity/time-scale, `prefs_*` save data, and
   `on_trigger()`/`on_collision()`/`on_click()` handlers.
   See [`docs/scripting.md`](docs/scripting.md).
+- **Terrain** — a Unity-style heightmap terrain you sculpt with a brush (drag in
+  the 3D view to raise, Shift to lower) or generate (Flatten / Smooth / Randomize
+  / Hills), rendered as a generated mesh. Create from GameObject > 3D Object >
+  Terrain; the heightmap saves with the scene.
+- **Materials** — reusable surface presets (albedo, emissive, specular, texture,
+  tiling, unlit, double-sided) saved as `.okaymat` assets and applied to any
+  Mesh Renderer (Save/Load in the inspector, or drag a `.okaymat` from Project).
 - **In-game UI like Unity** — a **Canvas** (CanvasScaler: constant-pixel or
   scale-with-screen) parents the widgets, with one **Event System** routing
   pointer input. Widgets: `UIButton` (`on_click()`), `UIPanel`, `UIImage`,
-  `UISlider`, `UIToggle`, `UIProgressBar`, screen-space text — selectable and
-  drag/resizable in the Scene view. A **UIDocument** builds whole HUDs/menus
-  from OkayUI markup (with reusable styles + custom widgets).
+  `UISlider`, `UIToggle`, `UIProgressBar`, `UIInputField` (real OS text input —
+  caret, scroll, Integer/Decimal/Password types), `UIDropdown`, `UITooltip`,
+  and screen-space text. Widgets are richly customizable (rounded corners,
+  borders, gradients, font scale, fills, outlines, data-bound text). A
+  **Scroll View** (wheel-scrollable, clipped) and **Layout Group** make
+  scrollable, auto-arranged lists — all rendered identically in built games.
+- **Unity-style UI editing** — select, drag and resize any widget in the Scene
+  view with anchor-correct handles; **snapping** to a pixel grid plus smart
+  edge/center **alignment guides** to the canvas and siblings; arrow-key
+  nudging; a **3×3 anchor preset** grid (re-anchors without moving the widget);
+  Bring to Front / Send to Back, Center in Canvas, and Fill Width/Height/Canvas.
+- **UI Toolkit (OkayUI markup)** — a **UIDocument** authors whole HUDs/menus as
+  text: every widget type, customization keys (corner/border/gradient/font/
+  align/outline/fill/…), `tooltip=`, percent sizing (`50%`), `name=` (script-
+  addressable), reusable `style` classes, parameterized `define` custom widgets,
+  live data **binding** (`bind="Score: {score}"`), and inline validation with
+  line numbers.
+- **Tweening (DOTween-style) & saves** — animate from OkayScript with
+  `tween_move`/`tween_move3`/`tween_scale`/`tween_rotate`/`tween_color`/
+  `tween_fade` (any easing), each with an optional **on-complete callback**;
+  plus **`tween_loop_move`** (ping-pong floaters/patrols), **`tween_punch_scale`**
+  / **`tween_punch_pos`** and **`tween_shake`** for game-feel "juice". And a save
+  system (`save_game`/`load_game`/`save_exists` slots).
+- **Drag & drop (UI *and* world items)** — make any UI widget draggable with a
+  **UI Draggable** component (drop onto a **UI Drop Target**), or any world
+  sprite draggable with **Draggable** (drop onto a **Drop Zone**). Both fire
+  `on_drop()` / `on_receive()` (scripts read `ui_drop_source/target()` and
+  `drop_source/target()`) and share rich options: lock-axis, drag threshold,
+  bring-to-front, **snap-into-slot/zone** (instant inventories), return-to-start,
+  **accept-tag** filtering, **grid snap** (board/tile games), drag-scale, and
+  hover highlight + `on_hover_enter/exit()`. The **Inventory** starter template
+  is a working drag-and-drop bag.
+- **Scriptable Objects (Data Assets)** — reusable `.okaydata` files of named
+  fields for item/enemy/level definitions and config (Unity's ScriptableObject).
+  Create via **Project → New Data Asset**, edit fields in the editor, read from
+  OkayScript with `data_num`/`data_str`/`data_has` and write with
+  `data_set`/`data_save`.
+- **Raycasting from script** — `raycast(ox,oy,dx,dy[,max])` (and 3D
+  `raycast3(...)`) return the **name of the object hit**, with detail accessors
+  `ray_hit()`, `ray_object()`, `ray_x/y()` (point), `ray_nx/ny()` (normal) and
+  `ray_dist()` — for shooting, line-of-sight, ground checks and click-to-select.
 - **Build for desktop, web & mobile** — one project, every target: a
   self-contained Windows `.exe`, a **WebAssembly** build via Emscripten
   (`scripts/build-web.sh`), and Android/iOS via SDL2.
@@ -299,12 +350,18 @@ function update(d) {
 Full script API: `net_host(port)`, `net_join(ip, port)`, `net_disconnect()`,
 `net_connected()`, `net_is_server()`, `net_is_client()`, `net_id()`,
 `net_peers()`, `net_name(name)`, `net_send(channel, data)`,
-`net_send_to(id, channel, data)`, `net_poll()` + `net_msg_channel/data/from()`.
-The same actions exist as **visual-scripting** ops (`net_host`, `net_join`,
-`net_send`) and in the editor's **Services → Multiplayer** panel (host/join,
-roster, chat). The **New Project → Multiplayer** template is a ready-to-run
-example. Each peer broadcasts its avatar Transform; the server relays messages
-and keeps the roster. Build the game and share `<Game>.exe` — one player hosts,
+`net_send_to(id, channel, data)`, `net_poll()` + `net_msg_channel/data/from()`,
+and **synced variables** `net_set(key, value)` / `net_get(key)` — a
+server-authoritative shared store (scores, game phase) that every peer sees,
+auto-synced to new joiners.
+
+**No code at all?** Add a **Network Manager** component, set **Auto Start =
+Host on Play** (or **Join**) with a port/name in the Inspector, and press Play —
+the component hosts/joins on its own, broadcasting its object's Transform. The
+same actions are also **visual-scripting** ops (`net_host`, `net_join`,
+`net_send`, `net_set`), and the editor's **Services → Multiplayer** panel does
+host/join + roster + chat. The **New Project → Multiplayer** template is a
+ready-to-run example. Build the game and share `<Game>.exe` — one player hosts,
 the rest join over LAN or a forwarded port.
 
 ## Documentation

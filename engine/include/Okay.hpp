@@ -15,6 +15,7 @@
 #include "okay/Core/EventBus.hpp"
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/DataAsset.hpp"
 #include "okay/Core/Application.hpp"
 
 // Input
@@ -63,6 +64,8 @@
 
 // More components
 #include "okay/Components/ParticleSystem.hpp"
+#include "okay/Components/Terrain.hpp"
+#include "okay/Render/Material.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/TilemapCollider2D.hpp"
 
@@ -75,6 +78,14 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UITextBind.hpp"
+#include "okay/Components/UIDraggable.hpp"
+#include "okay/Components/Draggable.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
@@ -119,4 +130,5 @@
 
 // Steam platform integration (simulation backend by default)
 #include "okay/Platform/Steam/SteamService.hpp"
+#include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Components/SteamManager.hpp"

@@ -3,6 +3,7 @@ add_library(okay_engine
     src/Core/Application.cpp
     src/Core/Scheduler.cpp
     src/Core/Prefs.cpp
+    src/Core/DataAsset.cpp
     src/Input/Input.cpp
     src/Render/ConsoleRenderer.cpp
     src/Scene/Component.cpp
@@ -22,7 +23,14 @@ add_library(okay_engine
     src/Components/ScriptComponent.cpp
     src/Components/ActionList.cpp
     src/Components/UIDocument.cpp
+    src/Components/UILayoutGroup.cpp
+    src/Components/UITooltip.cpp
+    src/Components/UITextBind.cpp
+    src/Components/UIDraggable.cpp
+    src/Components/Draggable.cpp
+    src/Components/Terrain.cpp
     src/Platform/Steam/NullSteamService.cpp
+    src/Platform/Steam/Steam.cpp
     src/Components/SteamManager.cpp
     src/Physics/Physics2D.cpp
     src/Physics/Physics3D.cpp

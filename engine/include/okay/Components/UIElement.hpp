@@ -8,8 +8,12 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Math/Vec2.hpp"
 
 namespace okay {
@@ -23,6 +27,7 @@ namespace okay {
 struct UIRect {
     bool      valid = false;
     UIAnchor  anchor = UIAnchor::TopLeft;
+    UIAnchor* anchorPtr = nullptr; // the widget's editable anchor (for the editor)
     Vec2*     position = nullptr;   // the widget's editable offset (pixels)
     Vec2*     sizePtr  = nullptr;   // the widget's editable size, or null (text)
     Vec2      size{0.0f, 0.0f};
@@ -44,15 +49,23 @@ struct UIRect {
 inline UIRect GetUIRect(GameObject* go) {
     UIRect r;
     if (!go) return r;
-    if (auto* b = go->GetComponent<UIButton>())          { r.valid = true; r.anchor = b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
-    else if (auto* p = go->GetComponent<UIPanel>())       { r.valid = true; r.anchor = p->anchor;  r.position = &p->position;  r.sizePtr = &p->size;  r.size = p->size; }
-    else if (auto* im = go->GetComponent<UIImage>())      { r.valid = true; r.anchor = im->anchor; r.position = &im->position; r.sizePtr = &im->size; r.size = im->size; }
-    else if (auto* sl = go->GetComponent<UISlider>())     { r.valid = true; r.anchor = sl->anchor; r.position = &sl->position; r.sizePtr = &sl->size; r.size = sl->size; }
-    else if (auto* tg = go->GetComponent<UIToggle>())     { r.valid = true; r.anchor = tg->anchor; r.position = &tg->position; r.sizePtr = &tg->size; r.size = tg->size; }
-    else if (auto* pb = go->GetComponent<UIProgressBar>()){ r.valid = true; r.anchor = pb->anchor; r.position = &pb->position; r.sizePtr = &pb->size; r.size = pb->size; }
+    if (auto* b = go->GetComponent<UIButton>())          { r.valid = true; r.anchor = b->anchor; r.anchorPtr = &b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
+    else if (auto* p = go->GetComponent<UIPanel>())       { r.valid = true; r.anchor = p->anchor; r.anchorPtr = &p->anchor;  r.position = &p->position;  r.sizePtr = &p->size;  r.size = p->size; }
+    else if (auto* im = go->GetComponent<UIImage>())      { r.valid = true; r.anchor = im->anchor; r.anchorPtr = &im->anchor; r.position = &im->position; r.sizePtr = &im->size; r.size = im->size; }
+    else if (auto* sl = go->GetComponent<UISlider>())     { r.valid = true; r.anchor = sl->anchor; r.anchorPtr = &sl->anchor; r.position = &sl->position; r.sizePtr = &sl->size; r.size = sl->size; }
+    else if (auto* tg = go->GetComponent<UIToggle>())     { r.valid = true; r.anchor = tg->anchor; r.anchorPtr = &tg->anchor; r.position = &tg->position; r.sizePtr = &tg->size; r.size = tg->size; }
+    else if (auto* pb = go->GetComponent<UIProgressBar>()){ r.valid = true; r.anchor = pb->anchor; r.anchorPtr = &pb->anchor; r.position = &pb->position; r.sizePtr = &pb->size; r.size = pb->size; }
+    else if (auto* in = go->GetComponent<UIInputField>()) { r.valid = true; r.anchor = in->anchor; r.anchorPtr = &in->anchor; r.position = &in->position; r.sizePtr = &in->size; r.size = in->size; }
+    else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.anchorPtr = &dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
+    else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.anchorPtr = &sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
+    else if (auto* lg = go->GetComponent<UILayoutGroup>()){ // a controller (no size): movable by its origin, not resizable
+        r.valid = true; r.anchor = lg->anchor; r.anchorPtr = &lg->anchor; r.position = &lg->origin; r.sizePtr = nullptr;
+        float ext = lg->ContentSize() > 24.0f ? lg->ContentSize() : 24.0f;
+        r.size = (lg->direction == UILayoutGroup::Direction::Vertical) ? Vec2{160.0f, ext} : Vec2{ext, 40.0f};
+    }
     else if (auto* tr = go->GetComponent<TextRenderer>()) {
         if (tr->screenSpace) {
-            r.valid = true; r.anchor = tr->anchor; r.position = &tr->screenPos;
+            r.valid = true; r.anchor = tr->anchor; r.anchorPtr = &tr->anchor; r.position = &tr->screenPos;
             r.size = {(float)tr->PixelWidth() * tr->pixelSize,
                       (float)tr->PixelHeight() * tr->pixelSize};
         }
@@ -62,6 +75,16 @@ inline UIRect GetUIRect(GameObject* go) {
 
 /// Does this GameObject carry any screen-space UI widget?
 inline bool IsUIElement(GameObject* go) { return GetUIRect(go).valid; }
+
+/// Whether a widget currently holds keyboard/gamepad menu focus (NavigateUI).
+inline bool IsUIFocused(GameObject* go) {
+    if (!go) return false;
+    if (auto* b = go->GetComponent<UIButton>())   return b->IsFocused();
+    if (auto* t = go->GetComponent<UIToggle>())   return t->IsFocused();
+    if (auto* s = go->GetComponent<UISlider>())   return s->IsFocused();
+    if (auto* d = go->GetComponent<UIDropdown>()) return d->IsFocused();
+    return false;
+}
 
 /// The Canvas a widget belongs to: the nearest Canvas on itself or an ancestor
 /// (Unity's rule that UI lives under a Canvas). nullptr if it isn't parented to
@@ -80,6 +103,16 @@ inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
     return cv ? cv->ScaleFactor(screenW, screenH) : 1.0f;
 }
 
+/// The Scroll View a widget lives in (nearest ancestor), or nullptr — used to
+/// offset and clip the widget so it scrolls with its container.
+inline UIScrollView* OwningScrollView(GameObject* go) {
+    if (!go) return nullptr;
+    for (Transform* t = go->transform ? go->transform->Parent() : nullptr; t; t = t->Parent())
+        if (t->gameObject)
+            if (auto* sv = t->gameObject->GetComponent<UIScrollView>()) return sv;
+    return nullptr;
+}
+
 /// Resolve a widget to its final screen rect, accounting for the owning Canvas's
 /// scale: offsets and sizes scale by the canvas factor, then anchor against the
 /// screen. This is the single source of truth shared by rendering, hit-testing
@@ -91,6 +124,8 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
     float s = UIScaleFor(go, screenW, screenH);
     size = r.size * s;
     origin = ResolveAnchor(r.anchor, *r.position * s, size, screenW, screenH);
+    // Widgets inside a Scroll View move up as it scrolls.
+    if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll * s;
     if (outScale) *outScale = s;
     return true;
 }

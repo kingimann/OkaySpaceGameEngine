@@ -17,6 +17,63 @@ function update(dt) {
 }
 ```
 
+## Unity-style syntax
+
+OkayScript can be written to look almost exactly like a Unity C# `MonoBehaviour`,
+so Unity habits (and code) carry over. All of this is optional — the classic
+style below still works — but you can write:
+
+```cs
+public class Player : MonoBehaviour {
+    float speed = 5f;
+
+    void Start() {
+        transform.position = new Vector3(0, 0, 0);
+    }
+
+    void Update() {
+        // Move with the arrow/WASD axes, scaled by deltaTime.
+        transform.position.x += Input.GetAxis("Horizontal") * speed * Time.deltaTime;
+        transform.position.y += Input.GetAxis("Vertical")   * speed * Time.deltaTime;
+
+        if (Input.GetKeyDown("space")) { Debug.Log("jump!"); }
+
+        for (int i = 0; i < 3; i++) { /* ... */ }
+    }
+}
+```
+
+What's supported:
+
+- **Lifecycle methods** `Awake()`, `Start()`, `Update()`, `LateUpdate()` (and the
+  classic `start`/`update`). `void`/typed return + a `class : MonoBehaviour`
+  wrapper are accepted and the methods are hoisted out, so a real Unity script
+  often pastes in unchanged.
+- **Dot properties**: `transform.position` / `.localPosition` / `.localScale`
+  (and `.x/.y/.z`), `transform.eulerAngles.z`, `Time.deltaTime` / `Time.time` /
+  `Time.timeScale`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
+  `Input.mousePosition.x/y`, `Mathf.PI`, `Random.value`, `Vector3.zero/one/up/...`.
+  Readable and assignable (`transform.position.x = 5;`).
+- **Dot methods**: `Input.GetKey/GetKeyDown/GetKeyUp/GetAxis/GetMouseButton...`,
+  `Mathf.Sin/Cos/Sqrt/Abs/Clamp/Lerp/...`, `Debug.Log(...)`,
+  `transform.Translate(x,y)` / `transform.Rotate(deg)`, `gameObject.SetActive(b)`,
+  `Instantiate(...)`, `Destroy()`, `Physics2D.Raycast(...)`,
+  `Random.Range(a,b)`, `SceneManager.LoadScene("name")`.
+- **`new Vector3(x,y,z)`** / `new Vector2(x,y)` constructors.
+- **Typed declarations** `int x = 0;` `float speed = 5f;` `Vector3 v = ...;` (with
+  `f`/`d` numeric suffixes), plus `i++` / `++i` / `i--`.
+- **`foreach (var item in list) { ... }`** (C# foreach), alongside the classic
+  `for x in list { }`.
+- **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
+  `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
+  / BoxCollider2D at runtime).
+- **`Quaternion.Euler(x, y, z)`** / `Quaternion.identity` — assign to
+  `transform.rotation` (the Z angle drives 2D rotation).
+- **C# attributes** like `[SerializeField]` and `[Header("Stats")]` are accepted
+  (and ignored) before fields and methods.
+- **Event handlers** the Unity way: `OnCollisionEnter()`, `OnTriggerEnter()`,
+  `OnClick()`, `OnValueChanged()` (alongside the classic `on_collision` etc).
+
 ## Language
 
 - **Variables:** `var x = 1;` (function-level scope). Reassign with `x = 2;`.
@@ -105,6 +162,10 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 | `cam_zoom()` / `set_cam_zoom(z)` | read/set the main camera's orthographic size |
 | `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `raycast_hit(ox, oy, dx, dy[, dist])` | true if a ray hits a collider |
+| `raycast(ox, oy, dx, dy[, dist])` | cast a ray; returns the **name** of the object hit ("" = miss) |
+| `ray_hit()` / `ray_object()` | did the last `raycast()` hit, and what it hit |
+| `ray_x()` / `ray_y()` | last hit point; `ray_nx()`/`ray_ny()` surface normal; `ray_dist()` distance |
+| `raycast3(ox,oy,oz, dx,dy,dz[, dist])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
 | `overlap(x, y)` | true if a collider contains the point |
 | `set_gravity(x, y)` | set the scene's 2D gravity (0,0 for top-down) |
 | `set_text(string)` | set this object's TextRenderer text |
@@ -164,6 +225,82 @@ split(s, sep) join(arr, sep)` — plus `+` concatenation.
 ### Maps / dictionaries (string keys)
 `map() map_set(m, k, v) map_get(m, k[, default]) map_has(m, k) map_remove(m, k)
 map_keys(m) map_count(m)` — shared by reference, like arrays.
+
+### Tweening (DOTween-style)
+Smoothly animate this object over time via the scene scheduler. Every tween
+takes an optional easing name and an optional **on-complete** function name as
+its last argument(s).
+
+| Function | Effect |
+| --- | --- |
+| `tween_move(x, y, dur[, ease][, "done"])` | move to (x, y); `ease` e.g. `"out_quad"` |
+| `tween_move3(x, y, z, dur[, ease][, "done"])` | move in 3D |
+| `tween_scale(s, dur[, ease][, "done"])` | scale to uniform `s` |
+| `tween_rotate(deg, dur[, ease][, "done"])` | spin `deg` degrees about Z (relative) |
+| `tween_rotate_to(deg, dur[, ease][, "done"])` | rotate to an **absolute** Z angle (shortest path) |
+| `tween_scale_xy(sx, sy, dur[, ease][, "done"])` | non-uniform scale to (sx, sy) |
+| `tween_ui_move(x, y, dur[, ease][, "done"])` | move a **UI widget** (anchored position) |
+| `tween_ui_size(w, h, dur[, ease][, "done"])` | resize a **UI widget** (grow/shrink panels) |
+| `tween_color(r, g, b, dur[, ease][, "done"])` | fade the sprite/mesh color |
+| `tween_fade(a, dur[, ease][, "done"])` | fade alpha to `a` (works on sprites, meshes & UI Image/Panel) |
+| `tween_move_by(dx, dy, dur[, ease][, "done"])` | move by a **relative** offset |
+| `tween_jump(x, y, height, dur[, "done"])` | arc-jump to (x, y) peaking `height` up (coins, hops) |
+| `tween_path(dur, x1, y1, x2, y2, ...)` | move through a list of waypoints |
+| `tween_loop_move(x, y, dur[, ease])` | **ping-pong** forever between here and (x, y) |
+| `tween_loop_scale(s, dur[, ease])` | ping-pong the scale forever (pulsing) |
+| `tween_loop_rotate(dur[, dir])` | spin continuously, a turn every `dur` (dir +1/-1) |
+| `tween_number(from, to, dur[, "prefix"])` | count a sibling text number up/down (score ticks) |
+| `tween_punch_scale(amount, dur[, vib])` | punch the scale and settle back ("juice") |
+| `tween_punch_pos(dx, dy, dur[, vib])` | punch the position and settle back |
+| `tween_shake(intensity, dur)` | random shake that decays to a stop (impact/camera) |
+
+Easings: `linear in_quad out_quad in_out_quad in_cubic out_cubic in_out_cubic
+in_sine out_sine in_out_sine in_expo out_expo in_out_expo in_back out_back
+out_elastic out_bounce`.
+
+```c
+function start() {
+  tween_move(5, 0, 1.0, "out_quad", "arrived");  // calls arrived() when done
+  tween_loop_move(0, 0.3, 0.8, "in_out_sine");   // bob forever
+}
+function arrived() { tween_punch_scale(0.3, 0.25); }   // pop on arrival
+```
+
+### Drag & drop
+Add a **UI Draggable** (UI widget) or **Draggable** (world sprite) component in
+the editor, and a **UI Drop Target** / **Drop Zone** to receivers. At runtime
+the item follows the cursor; on release over a valid target these handlers fire:
+
+| Handler | On |
+| --- | --- |
+| `on_drag_start()` / `on_drag()` | the dragged object, when a drag begins / each frame |
+| `on_drop()` | the dragged object, when it lands on a valid target |
+| `on_receive()` | the target, when an item lands on it |
+| `on_hover_enter()` / `on_hover_exit()` | a target, as an item enters/leaves during a drag |
+
+Read who was involved with `ui_drop_source()` / `ui_drop_target()` (UI) or
+`drop_source()` / `drop_target()` (world items). Options like snap-into-slot,
+accept-tag, grid snap and lock-axis are set in the inspector — no code needed for
+a basic inventory.
+
+### Scriptable Objects (Data Assets)
+Reusable `.okaydata` files of named fields (item/enemy/level definitions,
+config). Create with **Project → New Data Asset**.
+
+| Function | Effect |
+| --- | --- |
+| `data_num(path, key[, default])` | read a numeric field |
+| `data_str(path, key[, default])` | read a string field |
+| `data_has(path, key)` | does the field exist |
+| `data_set(path, key, value)` | set a field (in memory) |
+| `data_save(path)` | write the asset back to disk |
+
+```c
+function start() {
+  var hp = data_num("data/goblin.okaydata", "health", 10);
+  set_text(data_str("data/goblin.okaydata", "name", "?") + " HP:" + hp);
+}
+```
 
 ## Other backends
 

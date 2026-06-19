@@ -26,11 +26,20 @@ public:
     /// centered title or a bottom-right score adapts to the window size. The
     /// text's own width/height is used so it stays inside the anchored corner.
     UIAnchor anchor = UIAnchor::TopLeft;
+    /// Screen-space horizontal alignment: 0 = left, 1 = center, 2 = right.
+    int align = 0;
     /// Drop shadow: a second copy drawn behind the text, offset by `shadowOffset`
     /// font-pixels, in `shadowColor` — keeps HUD text legible over any backdrop.
     bool  shadow = false;
     Color shadowColor = Color::FromBytes(0, 0, 0, 200);
     Vec2  shadowOffset{1.0f, 1.0f};
+    /// Outline: the text is also drawn offset by 1 font-pixel in all 4 (or 8)
+    /// directions in `outlineColor`, so it reads on any background.
+    bool  outline = false;
+    Color outlineColor = Color::FromBytes(0, 0, 0, 230);
+    /// Faux-bold: the glyphs are drawn a second time shifted 1 px right, so the
+    /// strokes thicken — for headings/emphasis without a separate font.
+    bool  bold = false;
 
     /// Width/height of the current text at native font size (8 px per glyph).
     int PixelWidth() const { return Font8x8::MeasureWidth(text.c_str()); }

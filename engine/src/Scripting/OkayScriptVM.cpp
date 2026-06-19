@@ -5,6 +5,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -18,12 +19,16 @@
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIElement.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
@@ -32,10 +37,15 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/DataAsset.hpp"
+#include "okay/Math/Easing.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -53,7 +63,7 @@ enum class Tok {
     Var, If, Else, While, For, In, Function, Return, True, False, Break, Continue,
     Question, Colon,
     Plus, Minus, Star, Slash, Percent,
-    Assign, PlusEq, MinusEq, StarEq, SlashEq,
+    Assign, PlusEq, MinusEq, StarEq, SlashEq, Inc, Dec,
     Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semicolon
 };
@@ -110,6 +120,8 @@ private:
     Token Number() {
         std::string s;
         while (std::isdigit((unsigned char)Peek()) || Peek() == '.') s += Advance();
+        // Allow C#/Unity numeric suffixes (5f, 1.0f, 2d) — just drop them.
+        if (Peek() == 'f' || Peek() == 'F' || Peek() == 'd' || Peek() == 'D') Advance();
         return {Tok::Number, s, std::stod(s), m_line};
     }
 
@@ -134,6 +146,12 @@ private:
     Token Ident() {
         std::string s;
         while (std::isalnum((unsigned char)Peek()) || Peek() == '_') s += Advance();
+        // Unity-style dotted names are a single token: Input.GetKeyDown,
+        // Time.deltaTime, transform.position.x, gameObject.SetActive.
+        while (Peek() == '.' && (std::isalpha((unsigned char)Peek(1)) || Peek(1) == '_')) {
+            s += Advance();                                   // the '.'
+            while (std::isalnum((unsigned char)Peek()) || Peek() == '_') s += Advance();
+        }
         static const std::unordered_map<std::string, Tok> kw = {
             {"var", Tok::Var}, {"if", Tok::If}, {"else", Tok::Else},
             {"while", Tok::While}, {"for", Tok::For}, {"in", Tok::In},
@@ -148,8 +166,10 @@ private:
         char c = Advance();
         auto two = [&](char n, Tok t) { if (Peek() == n) { Advance(); return Token{t, "", 0, m_line}; } return Token{Tok::End, "", 0, m_line}; };
         switch (c) {
-            case '+': { auto t = two('=', Tok::PlusEq);  return t.type != Tok::End ? t : Token{Tok::Plus, "", 0, m_line}; }
-            case '-': { auto t = two('=', Tok::MinusEq); return t.type != Tok::End ? t : Token{Tok::Minus, "", 0, m_line}; }
+            case '+': { if (Peek() == '+') { Advance(); return {Tok::Inc, "", 0, m_line}; }
+                        auto t = two('=', Tok::PlusEq);  return t.type != Tok::End ? t : Token{Tok::Plus, "", 0, m_line}; }
+            case '-': { if (Peek() == '-') { Advance(); return {Tok::Dec, "", 0, m_line}; }
+                        auto t = two('=', Tok::MinusEq); return t.type != Tok::End ? t : Token{Tok::Minus, "", 0, m_line}; }
             case '*': { auto t = two('=', Tok::StarEq);  return t.type != Tok::End ? t : Token{Tok::Star, "", 0, m_line}; }
             case '/': { auto t = two('=', Tok::SlashEq); return t.type != Tok::End ? t : Token{Tok::Slash, "", 0, m_line}; }
             case '%': return {Tok::Percent, "", 0, m_line};
@@ -206,6 +226,18 @@ struct Runtime {
     std::unordered_map<std::string, std::function<Value(std::vector<Value>&)>> builtins;
     ScriptHost* host = nullptr;
 
+    // Details of the most recent raycast()/raycast3() call, exposed to scripts
+    // through ray_object()/ray_x()/ray_dist()/... accessors.
+    struct LastHit {
+        bool hit = false;
+        std::string object;
+        float px = 0, py = 0, pz = 0;   // hit point
+        float nx = 0, ny = 0, nz = 0;   // surface normal
+        float dist = 0;
+    };
+    LastHit lastHit2D;
+    LastHit lastHit3D;
+
     // Scheduled callbacks (after / every). interval == 0 means fire once.
     struct Timer { float remaining; float interval; std::string fn; bool dead; };
     std::vector<Timer> timers;
@@ -247,18 +279,39 @@ struct Runtime {
     }
 
     Value Call(const std::string& name, std::vector<Value>& args);
+
+    // Unity-style dotted property read/write (transform.position.x, Time.timeScale,
+    // gameObject.name, ...). GetDotted sets `ok` when it recognized the name;
+    // SetDotted returns true when it handled the assignment.
+    Value GetDotted(const std::string& name, bool& ok);
+    bool  SetDotted(const std::string& name, const Value& v);
 };
 
 // ---- Expressions ----
 struct NumberExpr : Expr { double v; explicit NumberExpr(double x) : v(x) {} Value Eval(Runtime&) override { return (float)v; } };
 struct StringExpr : Expr { std::string v; explicit StringExpr(std::string s) : v(std::move(s)) {} Value Eval(Runtime&) override { return v; } };
 struct BoolExpr   : Expr { bool v; explicit BoolExpr(bool b) : v(b) {} Value Eval(Runtime&) override { return v; } };
-struct VarExpr    : Expr { std::string n; explicit VarExpr(std::string s) : n(std::move(s)) {} Value Eval(Runtime& r) override { return r.Get(n); } };
+struct VarExpr    : Expr {
+    std::string n; explicit VarExpr(std::string s) : n(std::move(s)) {}
+    Value Eval(Runtime& r) override {
+        // Unity-style property reads: transform.position.x, Time.deltaTime, ...
+        if (n.find('.') != std::string::npos) {
+            bool ok = false; Value v = r.GetDotted(n, ok);
+            if (ok) return v;
+        }
+        return r.Get(n);
+    }
+};
 
 struct AssignExpr : Expr {
     std::string n; ExprPtr value;
     AssignExpr(std::string s, ExprPtr e) : n(std::move(s)), value(std::move(e)) {}
-    Value Eval(Runtime& r) override { Value v = value->Eval(r); r.Assign(n, v); return v; }
+    Value Eval(Runtime& r) override {
+        Value v = value->Eval(r);
+        if (n.find('.') != std::string::npos && r.SetDotted(n, v)) return v;
+        r.Assign(n, v);
+        return v;
+    }
 };
 
 struct UnaryExpr : Expr {
@@ -465,6 +518,104 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
     return ret;
 }
 
+// ---- Unity-style dotted property access --------------------------------------
+namespace {
+// Euler Z angle (degrees) of a quaternion, for transform.eulerAngles.z.
+float EulerZ(const Quat& q) {
+    return std::atan2(2.0f * (q.w * q.z + q.x * q.y),
+                      1.0f - 2.0f * (q.y * q.y + q.z * q.z)) * Mathf::Rad2Deg;
+}
+} // namespace
+
+Value Runtime::GetDotted(const std::string& name, bool& ok) {
+    ok = true;
+    Transform* t = host ? host->transform : nullptr;
+    GameObject* g = host ? host->gameObject : nullptr;
+
+    // Time
+    if (name == "Time.deltaTime")  return Value{host ? host->deltaTime : 0.0f};
+    if (name == "Time.time")       return Value{Time::ElapsedTime()};
+    if (name == "Time.timeScale")  return Value{Time::TimeScale()};
+    // Mathf constants
+    if (name == "Mathf.PI")        return Value{Mathf::PI};
+    if (name == "Mathf.Deg2Rad")   return Value{Mathf::Deg2Rad};
+    if (name == "Mathf.Rad2Deg")   return Value{Mathf::Rad2Deg};
+    if (name == "Mathf.Infinity")  return Value{1e30f};
+    if (name == "Mathf.Epsilon")   return Value{1e-6f};
+    if (name == "Random.value")    return Value{Random::Shared().Range(0.0f, 1.0f)};
+    // Screen / Input
+    if (name == "Screen.width")        return Value{UICanvas::Width()};
+    if (name == "Screen.height")       return Value{UICanvas::Height()};
+    if (name == "Input.mousePosition.x") return Value{Input::MousePosition().x};
+    if (name == "Input.mousePosition.y") return Value{Input::MousePosition().y};
+    // Vector constants
+    if (name == "Vector3.zero" || name == "Vector2.zero") return Value{Vec3::Zero};
+    if (name == "Vector3.one"  || name == "Vector2.one")  return Value{Vec3{1, 1, 1}};
+    if (name == "Quaternion.identity") return Value{Vec3::Zero};   // euler (0,0,0)
+    if (name == "Vector3.up")    return Value{Vec3{0, 1, 0}};
+    if (name == "Vector3.down")  return Value{Vec3{0, -1, 0}};
+    if (name == "Vector3.right") return Value{Vec3{1, 0, 0}};
+    if (name == "Vector3.left")  return Value{Vec3{-1, 0, 0}};
+
+    if (t) {
+        Vec3 wp = t->Position();
+        if (name == "transform.position")   return Value{wp};
+        if (name == "transform.position.x") return Value{wp.x};
+        if (name == "transform.position.y") return Value{wp.y};
+        if (name == "transform.position.z") return Value{wp.z};
+        if (name == "transform.localPosition")   return Value{t->localPosition};
+        if (name == "transform.localPosition.x") return Value{t->localPosition.x};
+        if (name == "transform.localPosition.y") return Value{t->localPosition.y};
+        if (name == "transform.localPosition.z") return Value{t->localPosition.z};
+        if (name == "transform.localScale")   return Value{t->localScale};
+        if (name == "transform.localScale.x") return Value{t->localScale.x};
+        if (name == "transform.localScale.y") return Value{t->localScale.y};
+        if (name == "transform.localScale.z") return Value{t->localScale.z};
+        if (name == "transform.eulerAngles.z" || name == "transform.rotation")
+            return Value{EulerZ(t->localRotation)};
+    }
+    if (g) {
+        if (name == "gameObject.name") return Value{g->name};
+        if (name == "gameObject.activeSelf" || name == "gameObject.active") return Value{g->active};
+        if (name == "gameObject.tag")  return Value{g->tag};
+    }
+    ok = false;
+    return Value{};
+}
+
+bool Runtime::SetDotted(const std::string& name, const Value& v) {
+    Transform* t = host ? host->transform : nullptr;
+    GameObject* g = host ? host->gameObject : nullptr;
+
+    if (name == "Time.timeScale") { Time::SetTimeScale(v.AsFloat()); return true; }
+    if (t) {
+        if (name == "transform.position")        { t->SetPosition(v.AsVec3()); return true; }
+        if (name == "transform.localPosition")   { t->localPosition = v.AsVec3(); return true; }
+        if (name == "transform.localScale")      { t->localScale = v.AsVec3(); return true; }
+        if (name == "transform.position.x")      { Vec3 p = t->Position(); p.x = v.AsFloat(); t->SetPosition(p); return true; }
+        if (name == "transform.position.y")      { Vec3 p = t->Position(); p.y = v.AsFloat(); t->SetPosition(p); return true; }
+        if (name == "transform.position.z")      { Vec3 p = t->Position(); p.z = v.AsFloat(); t->SetPosition(p); return true; }
+        if (name == "transform.localPosition.x") { t->localPosition.x = v.AsFloat(); return true; }
+        if (name == "transform.localPosition.y") { t->localPosition.y = v.AsFloat(); return true; }
+        if (name == "transform.localPosition.z") { t->localPosition.z = v.AsFloat(); return true; }
+        if (name == "transform.localScale.x")    { t->localScale.x = v.AsFloat(); return true; }
+        if (name == "transform.localScale.y")    { t->localScale.y = v.AsFloat(); return true; }
+        if (name == "transform.localScale.z")    { t->localScale.z = v.AsFloat(); return true; }
+        if (name == "transform.eulerAngles.z")
+            { t->localRotation = Quat::Euler({0, 0, v.AsFloat()}); return true; }
+        // transform.rotation accepts a Quaternion.Euler(...) (a Vec3 euler) or a
+        // bare Z angle; use the Z component either way.
+        if (name == "transform.rotation")
+            { t->localRotation = Quat::Euler({0, 0, v.AsVec3().z}); return true; }
+    }
+    if (g) {
+        if (name == "gameObject.name")       { g->name = v.AsString(); return true; }
+        if (name == "gameObject.activeSelf" || name == "gameObject.active") { g->active = v.AsBool(); return true; }
+        if (name == "gameObject.tag")        { g->tag = v.AsString(); return true; }
+    }
+    return false;
+}
+
 // ===================== Parser =====================
 class Parser {
 public:
@@ -472,16 +623,54 @@ public:
 
     std::vector<StmtPtr> ParseProgram(std::unordered_map<std::string, FunctionDecl>& funcs) {
         std::vector<StmtPtr> top;
-        while (!Check(Tok::End)) {
-            if (Check(Tok::Function)) {
-                std::string name;
-                FunctionDecl decl = ParseFunction(name);
-                funcs[name] = std::move(decl);
-            } else {
-                top.push_back(ParseStatement());
-            }
-        }
+        while (!Check(Tok::End)) ParseMember(top, funcs);
         return top;
+    }
+
+    // Parse one top-level (or in-class) member: a function, a C#-style method,
+    // a `[public] class Name : MonoBehaviour { ... }` wrapper (its methods/fields
+    // are hoisted out, so real Unity scripts paste in), or a statement.
+    void ParseMember(std::vector<StmtPtr>& top, std::unordered_map<std::string, FunctionDecl>& funcs) {
+        SkipAttributes();   // C# attributes: [SerializeField], [Header("..")], ...
+        if (IsClassAhead()) {
+            while (Check(Tok::Ident) && Peek().text != "class") ++m_pos;  // skip modifiers
+            Expect(Tok::Ident, "'class'");                                // the 'class' keyword
+            Expect(Tok::Ident, "class name");                            // its name
+            if (Match(Tok::Colon)) { do { Expect(Tok::Ident, "base type"); } while (Match(Tok::Comma)); }
+            Expect(Tok::LBrace, "'{'");
+            while (!Check(Tok::RBrace) && !Check(Tok::End)) ParseMember(top, funcs);
+            Expect(Tok::RBrace, "'}'");
+            return;
+        }
+        if (Check(Tok::Function)) {
+            std::string name; FunctionDecl decl = ParseFunction(name);
+            funcs[name] = std::move(decl);
+        } else if (IsTypedFunctionAhead()) {            // C#-style: void Start() { }
+            std::string name; FunctionDecl decl = ParseTypedFunction(name);
+            funcs[name] = std::move(decl);
+        } else {
+            top.push_back(ParseStatement());
+        }
+    }
+
+    // Skip C# attributes like [SerializeField] or [Header("Stats")] that may
+    // precede a field/method. Balanced brackets, so [Range(0, 1)] works too.
+    void SkipAttributes() {
+        while (Check(Tok::LBracket)) {
+            int depth = 0;
+            do {
+                if (Check(Tok::LBracket)) ++depth;
+                else if (Check(Tok::RBracket)) --depth;
+                ++m_pos;
+            } while (depth > 0 && !Check(Tok::End));
+        }
+    }
+
+    // A run of identifiers containing "class" (e.g. `public class Foo`).
+    bool IsClassAhead() const {
+        std::size_t i = m_pos;
+        while (m_toks[i].type == Tok::Ident) { if (m_toks[i].text == "class") return true; ++i; }
+        return false;
     }
 
 private:
@@ -497,11 +686,39 @@ private:
     FunctionDecl ParseFunction(std::string& nameOut) {
         Expect(Tok::Function, "'function'");
         nameOut = Expect(Tok::Ident, "function name").text;
-        Expect(Tok::LParen, "'('");
+        return ParseParamsAndBody();
+    }
+
+    // A C#-style method declaration like `void Update()` / `private void Start()`
+    // is a run of >= 2 identifiers (modifiers + return type + name) ending in a
+    // name immediately followed by '('. (A plain call `foo()` is a single ident.)
+    bool IsTypedFunctionAhead() const {
+        std::size_t i = m_pos;
+        int idents = 0;
+        while (m_toks[i].type == Tok::Ident) { ++idents; ++i; }
+        return idents >= 2 && m_toks[i].type == Tok::LParen;
+    }
+
+    FunctionDecl ParseTypedFunction(std::string& nameOut) {
+        // Consume modifier/type identifiers, keeping the last one (before '(')
+        // as the function name.
+        std::string last = Expect(Tok::Ident, "type").text;
+        while (Check(Tok::Ident)) last = m_toks[m_pos++].text;
+        nameOut = last;
+        return ParseParamsAndBody();
+    }
+
+    // Shared by `function f(...)` and `void F(...)`: parse the parameter list
+    // (params may be bare `a` or typed `int a`) and the body block.
+    FunctionDecl ParseParamsAndBody() {
         FunctionDecl decl;
+        Expect(Tok::LParen, "'('");
         if (!Check(Tok::RParen)) {
-            do { decl.params.push_back(Expect(Tok::Ident, "parameter").text); }
-            while (Match(Tok::Comma));
+            do {
+                std::string p = Expect(Tok::Ident, "parameter").text;
+                if (Check(Tok::Ident)) p = m_toks[m_pos++].text; // was a type; real name follows
+                decl.params.push_back(p);
+            } while (Match(Tok::Comma));
         }
         Expect(Tok::RParen, "')'");
         decl.body = ParseBlock();
@@ -516,9 +733,35 @@ private:
         return stmts;
     }
 
+    // A C#-style typed local/field: a run of >= 2 identifiers (type + modifiers
+    // + name) ending in '=' or ';' (e.g. `int score = 0;`, `Vector3 v;`).
+    bool IsTypedVarDeclAhead() const {
+        std::size_t i = m_pos;
+        int idents = 0;
+        while (m_toks[i].type == Tok::Ident) { ++idents; ++i; }
+        return idents >= 2 && (m_toks[i].type == Tok::Assign || m_toks[i].type == Tok::Semicolon);
+    }
+
     StmtPtr ParseStatement() {
-        if (Match(Tok::Var)) {
+        // C#-style: foreach (var item in collection) { ... }
+        if (Check(Tok::Ident) && Peek().text == "foreach") {
+            ++m_pos;
+            Expect(Tok::LParen, "'('");
+            Match(Tok::Var);
+            std::string var = Expect(Tok::Ident, "loop variable").text;
+            if (Check(Tok::Ident)) var = m_toks[m_pos++].text;   // typed: `Type name`
+            Expect(Tok::In, "'in'");
+            auto fe = std::make_unique<ForEachStmt>();
+            fe->var = var;
+            fe->iterable = ParseExpression();
+            Expect(Tok::RParen, "')'");
+            fe->body = ParseBlock();
+            return fe;
+        }
+        if (Match(Tok::Var) || IsTypedVarDeclAhead()) {
+            // For a typed decl, drop the leading type/modifier idents, keep the last.
             std::string name = Expect(Tok::Ident, "variable name").text;
+            while (Check(Tok::Ident)) name = m_toks[m_pos++].text;
             ExprPtr init;
             if (Match(Tok::Assign)) init = ParseExpression();
             Match(Tok::Semicolon);
@@ -559,10 +802,11 @@ private:
             }
             Expect(Tok::LParen, "'('");
             auto st = std::make_unique<ForStmt>();
-            // init: a var declaration, an expression, or empty.
+            // init: a var declaration (var or typed), an expression, or empty.
             if (!Match(Tok::Semicolon)) {
-                if (Match(Tok::Var)) {
+                if (Match(Tok::Var) || IsTypedVarDeclAhead()) {
                     std::string name = Expect(Tok::Ident, "variable name").text;
+                    while (Check(Tok::Ident)) name = m_toks[m_pos++].text;
                     ExprPtr in;
                     if (Match(Tok::Assign)) in = ParseExpression();
                     st->init = std::make_unique<VarDeclStmt>(name, std::move(in));
@@ -643,6 +887,16 @@ private:
                 bin, std::make_unique<VarExpr>(name), std::move(value));
             return std::make_unique<AssignExpr>(name, std::move(combined));
         }
+        // Postfix increment/decrement: x++  ->  x = x + 1  (also x--).
+        if (Check(Tok::Inc) || Check(Tok::Dec)) {
+            auto* var = dynamic_cast<VarExpr*>(left.get());
+            if (!var) throw ScriptError("invalid increment target");
+            std::string name = var->n;
+            Tok bin = Peek().type == Tok::Inc ? Tok::Plus : Tok::Minus; ++m_pos;
+            auto combined = std::make_unique<BinaryExpr>(
+                bin, std::make_unique<VarExpr>(name), std::make_unique<NumberExpr>(1.0));
+            return std::make_unique<AssignExpr>(name, std::move(combined));
+        }
         return left;
     }
     ExprPtr ParseOr() {
@@ -677,6 +931,17 @@ private:
     }
     ExprPtr ParseUnary() {
         if (Check(Tok::Minus) || Check(Tok::Not)) { Tok op = Peek().type; ++m_pos; return std::make_unique<UnaryExpr>(op, ParseUnary()); }
+        // Prefix ++x / --x  ->  x = x + 1 / x = x - 1.
+        if (Check(Tok::Inc) || Check(Tok::Dec)) {
+            Tok bin = Peek().type == Tok::Inc ? Tok::Plus : Tok::Minus; ++m_pos;
+            ExprPtr target = ParseUnary();
+            auto* var = dynamic_cast<VarExpr*>(target.get());
+            if (!var) throw ScriptError("invalid increment target");
+            std::string name = var->n;
+            auto combined = std::make_unique<BinaryExpr>(
+                bin, std::make_unique<VarExpr>(name), std::make_unique<NumberExpr>(1.0));
+            return std::make_unique<AssignExpr>(name, std::move(combined));
+        }
         return ParsePostfix();
     }
     // Postfix indexing: base[i][j]...
@@ -705,6 +970,22 @@ private:
         }
         if (Check(Tok::Ident)) {
             std::string name = m_toks[m_pos++].text;
+            // C#-style `new Vector3(...)` — drop `new`, the T(...) is just a call.
+            if (name == "new") return ParsePrimary();
+            // Generic call `GetComponent<Type>(args)` — pass the type name as the
+            // first argument so builtins can dispatch on it.
+            if (Check(Tok::Lt) && m_toks[m_pos + 1].type == Tok::Ident &&
+                m_toks[m_pos + 2].type == Tok::Gt && m_toks[m_pos + 3].type == Tok::LParen) {
+                std::string typeName = m_toks[m_pos + 1].text;
+                m_pos += 4;   // consume  < Type > (
+                auto call = std::make_unique<CallExpr>(name);
+                call->args.push_back(std::make_unique<StringExpr>(typeName));
+                if (!Check(Tok::RParen)) {
+                    do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
+                }
+                Expect(Tok::RParen, "')'");
+                return call;
+            }
             if (Match(Tok::LParen)) {
                 auto call = std::make_unique<CallExpr>(name);
                 if (!Check(Tok::RParen)) {
@@ -760,12 +1041,45 @@ struct OkayScriptVM::Impl {
         auto& b = rt.builtins;
         auto tf = [this]() -> Transform* { return rt.host ? rt.host->transform : nullptr; };
 
-        b["print"] = [](std::vector<Value>& a) {
+        // ---- Debugging -------------------------------------------------
+        // All of these surface in the editor's Console (it installs a log sink).
+        auto joinArgs = [](std::vector<Value>& a, const char* sep = " ") {
             std::string s;
-            for (std::size_t i = 0; i < a.size(); ++i) { if (i) s += " "; s += a[i].AsString(); }
-            Log::Info("[script] ", s);
+            for (std::size_t i = 0; i < a.size(); ++i) { if (i) s += sep; s += a[i].AsString(); }
+            return s;
+        };
+        b["print"]     = [joinArgs](std::vector<Value>& a) { Log::Info("[script] ", joinArgs(a)); return Value{}; };
+        b["debug_log"] = [joinArgs](std::vector<Value>& a) { Log::Info("[script] ", joinArgs(a)); return Value{}; };
+        b["log_info"]  = [joinArgs](std::vector<Value>& a) { Log::Info("[script] ", joinArgs(a)); return Value{}; };
+        b["log_warn"]  = [joinArgs](std::vector<Value>& a) { Log::Warning("[script] ", joinArgs(a)); return Value{}; };
+        b["log_error"] = [joinArgs](std::vector<Value>& a) { Log::Error("[script] ", joinArgs(a)); return Value{}; };
+        b["trace"]     = [joinArgs](std::vector<Value>& a) { Log::Trace("[script] ", joinArgs(a)); return Value{}; };
+        // watch("hp", hp) -> logs "hp = 42" — quick variable inspection.
+        b["watch"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Log::Info("[watch] ", a[0].AsString(), " = ", a[1].AsString());
+            else if (!a.empty()) Log::Info("[watch] ", a[0].AsString());
             return Value{};
         };
+        // assert(cond [, "message"]) -> logs an error when cond is falsey.
+        b["assert"] = [](std::vector<Value>& a) {
+            bool ok = !a.empty() && a[0].AsFloat() != 0.0f;
+            if (!ok) Log::Error("[assert] failed", a.size() > 1 ? (": " + a[1].AsString()) : std::string{});
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        // format("hp={} of {}", hp, max) -> fills each {} with the next argument.
+        b["format"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string fmt = a[0].AsString(), out;
+            std::size_t arg = 1;
+            for (std::size_t i = 0; i < fmt.size(); ++i) {
+                if (i + 1 < fmt.size() && fmt[i] == '{' && fmt[i + 1] == '}') {
+                    out += (arg < a.size()) ? a[arg++].AsString() : "";
+                    ++i;
+                } else out += fmt[i];
+            }
+            return Value{out};
+        };
+        b["concat"] = [joinArgs](std::vector<Value>& a) { return Value{joinArgs(a, "")}; };
         b["move"] = [tf](std::vector<Value>& a) {
             if (Transform* t = tf())
                 t->Translate({a.size() > 0 ? a[0].AsFloat() : 0.0f,
@@ -1077,6 +1391,102 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // ---- UI by name: read/drive any widget from script -----------------
+        // All take the GameObject name as the first argument so one script can
+        // wire up a whole menu. Missing objects/components are no-ops / defaults.
+        b["ui_set_text"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = a[1].AsString();
+                else if (auto* bt = g->GetComponent<UIButton>()) bt->label = a[1].AsString();
+                else if (auto* in = g->GetComponent<UIInputField>()) in->text = a[1].AsString();
+            }
+            return Value{};
+        };
+        b["ui_get_text"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* tr = g->GetComponent<TextRenderer>()) return Value{tr->text};
+                if (auto* in = g->GetComponent<UIInputField>()) return Value{in->text};
+                if (auto* bt = g->GetComponent<UIButton>()) return Value{bt->label};
+            }
+            return Value{std::string{}};
+        };
+        b["ui_clicked"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* bt = g->GetComponent<UIButton>()) return Value{bt->WasClicked()};
+            return Value{false};
+        };
+        b["ui_set_interactable"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* bt = g->GetComponent<UIButton>()) bt->interactable = a[1].AsBool();
+            return Value{};
+        };
+        b["ui_slider_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) return Value{sl->value};
+            return Value{0.0f};
+        };
+        b["ui_set_slider"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) sl->value = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_toggle_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tg = g->GetComponent<UIToggle>()) return Value{tg->on};
+            return Value{false};
+        };
+        b["ui_set_toggle"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tg = g->GetComponent<UIToggle>()) tg->on = a[1].AsBool();
+            return Value{};
+        };
+        b["ui_dropdown_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) return Value{(float)dd->value};
+            return Value{0.0f};
+        };
+        b["ui_dropdown_text"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) return Value{dd->Selected()};
+            return Value{std::string{}};
+        };
+        b["ui_set_dropdown"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetValue((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["ui_set_progress"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_set_fill"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* im = g->GetComponent<UIImage>()) im->fillAmount = a[1].AsFloat();
+            return Value{};
+        };
+        // Pointer / hover over UI. uiHit returns the topmost widget under the mouse.
+        auto uiHit = [sceneOf]() -> GameObject* {
+            Scene* s = sceneOf(); if (!s) return nullptr;
+            Vec2 m = Input::MousePosition();
+            GameObject* hit = nullptr;
+            for (const auto& up : s->Objects())
+                if (up->active && UIScreenContains(up.get(), m, UICanvas::Width(), UICanvas::Height()))
+                    hit = up.get();
+            return hit;
+        };
+        b["ui_pointer_over"] = [uiHit](std::vector<Value>&) -> Value { return Value{uiHit() != nullptr}; };
+        b["ui_hovered"] = [uiHit](std::vector<Value>&) -> Value {
+            GameObject* h = uiHit(); return Value{h ? h->name : std::string{}};
+        };
+        b["ui_is_hovered"] = [uiHit](std::vector<Value>& a) -> Value {
+            GameObject* h = uiHit(); return Value{h && !a.empty() && h->name == a[0].AsString()};
+        };
+        // The last drag-and-drop result (set by UIDraggable via Prefs).
+        b["ui_drop_source"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("ui_drop_source", "")}; };
+        b["ui_drop_target"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("ui_drop_target", "")}; };
+        b["drop_source"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("drop_source", "")}; };
+        b["drop_target"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("drop_target", "")}; };
         b["set_texture"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* sr = g->GetComponent<SpriteRenderer>())
@@ -1238,6 +1648,34 @@ struct OkayScriptVM::Impl {
             float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
             return Value{sc->physics().Raycast(*sc, origin, dir, maxDist).hit};
         };
+        // raycast(ox, oy, dx, dy [, maxDist]) casts a ray and returns the name of
+        // the object hit (empty string = nothing). Hit details are then available
+        // via ray_hit()/ray_object()/ray_x()/ray_y()/ray_dist()/ray_nx()/ray_ny().
+        b["raycast"] = [this](std::vector<Value>& a) -> Value {
+            rt.lastHit2D = Runtime::LastHit{};
+            if (a.size() < 4 || !rt.host || !rt.host->gameObject) return Value{std::string{}};
+            Scene* sc = rt.host->gameObject->scene();
+            if (!sc) return Value{std::string{}};
+            Vec2 origin{a[0].AsFloat(), a[1].AsFloat()};
+            Vec2 dir{a[2].AsFloat(), a[3].AsFloat()};
+            float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
+            RaycastHit2D h = sc->physics().Raycast(*sc, origin, dir, maxDist);
+            if (h.hit) {
+                rt.lastHit2D.hit = true;
+                rt.lastHit2D.object = h.gameObject ? h.gameObject->name : std::string{};
+                rt.lastHit2D.px = h.point.x;   rt.lastHit2D.py = h.point.y;
+                rt.lastHit2D.nx = h.normal.x;  rt.lastHit2D.ny = h.normal.y;
+                rt.lastHit2D.dist = h.distance;
+            }
+            return Value{rt.lastHit2D.object};
+        };
+        b["ray_hit"]    = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.hit}; };
+        b["ray_object"] = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.object}; };
+        b["ray_x"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.px}; };
+        b["ray_y"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.py}; };
+        b["ray_nx"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.nx}; };
+        b["ray_ny"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.ny}; };
+        b["ray_dist"]   = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit2D.dist}; };
         b["overlap"] = [this](std::vector<Value>& a) {
             if (a.size() < 2 || !rt.host || !rt.host->gameObject) return Value{false};
             Scene* sc = rt.host->gameObject->scene();
@@ -1304,6 +1742,22 @@ struct OkayScriptVM::Impl {
         b["net_is_client"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->IsClient()) ? 1.0f : 0.0f}; };
         b["net_id"]    = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->LocalId() : 0.0f}; };
         b["net_peers"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->PeerCount() : 0.0f}; };
+        b["net_ping"]  = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->RttMs() : 0.0f}; };
+        // Lobby room: set before net_host/net_join so peers only see their room.
+        b["net_room"]  = [this](std::vector<Value>& a) {
+            if (!a.empty()) { if (NetworkManager* n = EnsureNet()) n->SetRoom(a[0].AsString()); return Value{a[0].AsString()}; }
+            NetworkManager* n = Net();
+            return Value{n ? n->Room() : std::string{}};
+        };
+        // Lobby ready-up: clients mark ready; the host polls and starts the match.
+        b["net_ready"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net()) n->SetReady(a.empty() ? true : a[0].AsFloat() != 0.0f);
+            return Value{};
+        };
+        b["net_ready_count"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->ReadyCount() : 0.0f}; };
+        b["net_all_ready"]   = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->AllReady()) ? 1.0f : 0.0f}; };
+        b["net_start_match"] = [this](std::vector<Value>&) { if (NetworkManager* n = Net()) n->StartMatch(); return Value{}; };
+        b["net_match_started"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->MatchStarted()) ? 1.0f : 0.0f}; };
         b["net_name"]  = [this](std::vector<Value>& a) {
             if (NetworkManager* n = Net()) { if (!a.empty()) n->SetLocalName(a[0].AsString()); return Value{n->LocalName()}; }
             return Value{std::string{}};
@@ -1317,6 +1771,22 @@ struct OkayScriptVM::Impl {
             if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
             return Value{};
         };
+        // Reliable (resent until acked) variants for events you can't drop.
+        b["net_send_reliable"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && a.size() >= 2) n->SendReliable(a[0].AsString(), a[1].AsString());
+            return Value{};
+        };
+        b["net_send_reliable_to"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendReliableTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
+            return Value{};
+        };
+        // Moderation: host kicks a peer; clients can check if they were kicked.
+        b["net_kick"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && !a.empty()) n->Kick((std::uint32_t)a[0].AsFloat(), a.size() > 1 ? a[1].AsString() : std::string{});
+            return Value{};
+        };
+        b["net_was_kicked"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->WasKicked()) ? 1.0f : 0.0f}; };
+        b["net_server_name"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->ServerName() : std::string{}}; };
         // Drain one received message into net_msg_* accessors; returns 1 if one
         // was popped (use in a while-loop), 0 when the inbox is empty.
         b["net_poll"] = [this](std::vector<Value>&) {
@@ -1332,6 +1802,113 @@ struct OkayScriptVM::Impl {
         b["net_msg_channel"] = [this](std::vector<Value>&) { return Value{netMsgChannel}; };
         b["net_msg_data"]    = [this](std::vector<Value>&) { return Value{netMsgData}; };
         b["net_msg_from"]    = [this](std::vector<Value>&) { return Value{netMsgFrom}; };
+        // Server-authoritative synced variables: net_set on the server (or a
+        // client request) propagates to every peer; net_get reads the local copy.
+        b["net_set"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && a.size() >= 2) n->SetVar(a[0].AsString(), a[1].AsString());
+            return Value{};
+        };
+        // Spawn a prefab on every peer (replicated): net_spawn("file", x, y[, z]).
+        b["net_spawn"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && !a.empty())
+                n->Spawn(a[0].AsString(), {a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                           a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                                           a.size() > 3 ? a[3].AsFloat() : 0.0f});
+            return Value{};
+        };
+        b["net_get"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            return Value{(n && !a.empty()) ? n->GetVar(a[0].AsString()) : std::string{}};
+        };
+        // ---- Steam (shared process-wide service) ----------------------
+        b["steam_name"]   = [](std::vector<Value>&) { return Value{Steam::Get().UserName()}; };
+        b["steam_unlock"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            bool ok = Steam::Get().UnlockAchievement(a[0].AsString());
+            Steam::Get().StoreStats();
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["steam_is_unlocked"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Steam::Get().IsAchievementUnlocked(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["steam_clear"] = [](std::vector<Value>& a) {
+            if (!a.empty()) Steam::Get().ClearAchievement(a[0].AsString());
+            return Value{};
+        };
+        b["steam_set_stat"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Steam::Get().SetStat(a[0].AsString(), a[1].AsFloat());
+            return Value{};
+        };
+        b["steam_get_stat"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? 0.0f : Steam::Get().GetStat(a[0].AsString())};
+        };
+        b["steam_inc_stat"] = [](std::vector<Value>& a) {
+            return Value{a.size() < 2 ? 0.0f : Steam::Get().IncrementStat(a[0].AsString(), a[1].AsFloat())};
+        };
+        b["steam_store"] = [](std::vector<Value>&) { return Value{Steam::Get().StoreStats() ? 1.0f : 0.0f}; };
+        b["steam_leaderboard"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Steam::Get().UploadLeaderboardScore(a[0].AsString(), (std::int32_t)a[1].AsFloat());
+            return Value{};
+        };
+        b["steam_cloud_write"] = [](std::vector<Value>& a) {
+            return Value{(a.size() >= 2 && Steam::Get().CloudWrite(a[0].AsString(), a[1].AsString())) ? 1.0f : 0.0f};
+        };
+        b["steam_cloud_read"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? std::string{} : Steam::Get().CloudRead(a[0].AsString())};
+        };
+        b["steam_progress"] = [](std::vector<Value>& a) {
+            if (a.size() >= 3) Steam::Get().IndicateAchievementProgress(a[0].AsString(), (std::uint32_t)a[1].AsFloat(), (std::uint32_t)a[2].AsFloat());
+            return Value{};
+        };
+        b["steam_presence"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Steam::Get().SetRichPresence(a[0].AsString(), a[1].AsString());
+            return Value{};
+        };
+        b["steam_friends"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().FriendCount()}; };
+        b["steam_owns"] = [](std::vector<Value>& a) { return Value{Steam::Get().OwnsApp(a.empty() ? 0u : (std::uint32_t)a[0].AsFloat()) ? 1.0f : 0.0f}; };
+        b["steam_owns_dlc"] = [](std::vector<Value>& a) { return Value{Steam::Get().IsDlcInstalled(a.empty() ? 0u : (std::uint32_t)a[0].AsFloat()) ? 1.0f : 0.0f}; };
+        b["steam_achievement_count"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().AchievementCount()}; };
+        b["steam_language"] = [](std::vector<Value>&) { return Value{Steam::Get().Language()}; };
+        // Top-N leaderboard entries as an array of "rank,name,score" strings.
+        b["steam_leaderboard_top"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeArray();
+            auto arr = v.AsArray();
+            if (!a.empty() && arr) {
+                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                for (auto& e : Steam::Get().DownloadLeaderboardTop(a[0].AsString(), n))
+                    arr->push_back(Value{std::to_string(e.rank) + "," + e.name + "," + std::to_string(e.score)});
+            }
+            return v;
+        };
+        b["steam_overlay"] = [](std::vector<Value>& a) {
+            Steam::Get().ActivateOverlay(a.empty() ? "friends" : a[0].AsString());
+            return Value{};
+        };
+        // Scriptable Objects: read reusable .okaydata assets (item/enemy/level
+        // definitions, config). Loaded + cached by path.
+        b["data_num"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{0.0f};
+            double def = a.size() > 2 ? a[2].AsFloat() : 0.0;
+            return Value{(float)DataAsset::Cached(a[0].AsString()).GetNumber(a[1].AsString(), def)};
+        };
+        b["data_str"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{std::string{}};
+            std::string def = a.size() > 2 ? a[2].AsString() : std::string{};
+            return Value{DataAsset::Cached(a[0].AsString()).GetString(a[1].AsString(), def)};
+        };
+        b["data_has"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{false};
+            return Value{DataAsset::Cached(a[0].AsString()).Has(a[1].AsString())};
+        };
+        // Customize a data asset from code (then data_save to persist it).
+        b["data_set"] = [](std::vector<Value>& a) {
+            if (a.size() >= 3) DataAsset::Cached(a[0].AsString()).Set(a[1].AsString(), a[2].AsString());
+            return Value{};
+        };
+        b["data_save"] = [](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{false};
+            return Value{DataAsset::Cached(a[0].AsString()).Save(a[0].AsString())};
+        };
         // Persistent prefs (high scores, settings) — survive across runs.
         b["prefs_set"] = [](std::vector<Value>& a) {
             if (a.size() >= 2) {
@@ -1869,6 +2446,34 @@ struct OkayScriptVM::Impl {
             float maxDist = a.size() > 6 ? a[6].AsFloat() : 1e9f;
             return Value{sc->physics3D().Raycast(*sc, o, d, maxDist).hit};
         };
+        // raycast3(ox,oy,oz, dx,dy,dz [, maxDist]) returns the hit object's name
+        // ("" = miss); details via ray3_hit/ray3_object/ray3_x/y/z/dist/nx/ny/nz.
+        b["raycast3"] = [this](std::vector<Value>& a) -> Value {
+            rt.lastHit3D = Runtime::LastHit{};
+            if (a.size() < 6 || !rt.host || !rt.host->gameObject) return Value{std::string{}};
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value{std::string{}};
+            Vec3 o{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            Vec3 d{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            float maxDist = a.size() > 6 ? a[6].AsFloat() : 1e9f;
+            RaycastHit3D h = sc->physics3D().Raycast(*sc, o, d, maxDist);
+            if (h.hit) {
+                rt.lastHit3D.hit = true;
+                rt.lastHit3D.object = h.gameObject ? h.gameObject->name : std::string{};
+                rt.lastHit3D.px = h.point.x;  rt.lastHit3D.py = h.point.y;  rt.lastHit3D.pz = h.point.z;
+                rt.lastHit3D.nx = h.normal.x; rt.lastHit3D.ny = h.normal.y; rt.lastHit3D.nz = h.normal.z;
+                rt.lastHit3D.dist = h.distance;
+            }
+            return Value{rt.lastHit3D.object};
+        };
+        b["ray3_hit"]    = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.hit}; };
+        b["ray3_object"] = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.object}; };
+        b["ray3_x"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.px}; };
+        b["ray3_y"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.py}; };
+        b["ray3_z"]      = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.pz}; };
+        b["ray3_nx"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.nx}; };
+        b["ray3_ny"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.ny}; };
+        b["ray3_nz"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.nz}; };
+        b["ray3_dist"]   = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.dist}; };
         b["set_gravity3"] = [this](std::vector<Value>& a) {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 rt.host->gameObject->scene()->physics3D().gravity =
@@ -1948,6 +2553,470 @@ struct OkayScriptVM::Impl {
             if (rt.functions.count(fn)) return rt.Call(fn, none);
             return Value{};
         };
+
+        // ---- More everyday math / utility helpers ----------------------
+        auto N = [](std::vector<Value>& a, std::size_t i, float d = 0.0f) {
+            return i < a.size() ? a[i].AsFloat() : d;
+        };
+        // approach(cur, target, step) -> step toward target without overshooting.
+        b["approach"] = [N](std::vector<Value>& a) {
+            float c = N(a, 0), t = N(a, 1), s = std::fabs(N(a, 2));
+            if (c < t) return Value{std::min(c + s, t)};
+            if (c > t) return Value{std::max(c - s, t)};
+            return Value{t};
+        };
+        // remap(v, inLo, inHi, outLo, outHi) -> rescale a value between ranges.
+        b["remap"] = [N](std::vector<Value>& a) {
+            float v = N(a, 0), il = N(a, 1), ih = N(a, 2), ol = N(a, 3), oh = N(a, 4, 1.0f);
+            if (ih == il) return Value{ol};
+            return Value{ol + (v - il) / (ih - il) * (oh - ol)};
+        };
+        b["frac"]   = [N](std::vector<Value>& a) { float v = N(a, 0); return Value{v - std::floor(v)}; };
+        b["mod"]    = [N](std::vector<Value>& a) { float b2 = N(a, 1, 1.0f); float r = b2 != 0 ? std::fmod(N(a, 0), b2) : 0; if (r < 0) r += std::fabs(b2); return Value{r}; };
+        b["snap"]   = [N](std::vector<Value>& a) { float s = N(a, 1, 1.0f); return Value{s != 0 ? std::round(N(a, 0) / s) * s : N(a, 0)}; };
+        b["is_nan"] = [N](std::vector<Value>& a) { float v = N(a, 0); return Value{std::isnan(v) ? 1.0f : 0.0f}; };
+        b["is_finite"] = [N](std::vector<Value>& a) { float v = N(a, 0); return Value{std::isfinite(v) ? 1.0f : 0.0f}; };
+        b["avg"]    = [](std::vector<Value>& a) { if (a.empty()) return Value{0.0f}; float s = 0; for (auto& v : a) s += v.AsFloat(); return Value{s / a.size()}; };
+        b["min3"]   = [N](std::vector<Value>& a) { return Value{std::min(N(a, 0), std::min(N(a, 1), N(a, 2)))}; };
+        b["max3"]   = [N](std::vector<Value>& a) { return Value{std::max(N(a, 0), std::max(N(a, 1), N(a, 2)))}; };
+        b["lerp_angle"] = [N](std::vector<Value>& a) {
+            float fr = N(a, 0), to = N(a, 1), t = N(a, 2);
+            float d = std::fmod(to - fr + 540.0f, 360.0f) - 180.0f;   // shortest path
+            return Value{fr + d * t};
+        };
+        b["str_repeat"] = [](std::vector<Value>& a) {
+            std::string s = a.empty() ? "" : a[0].AsString(); int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            std::string out; for (int i = 0; i < n; ++i) out += s; return Value{out};
+        };
+
+        // ---- Tweening (DOTween-style) ----------------------------------
+        // Smoothly animate the object's transform over time via the scene's
+        // scheduler, with an optional easing name ("out_quad", "in_out_sine"...).
+        auto easeFromArg = [](std::vector<Value>& a, std::size_t i) -> Ease {
+            if (i >= a.size() || !a[i].IsString()) return Ease::Linear;
+            std::string s = a[i].AsString();
+            if (s == "in_quad") return Ease::QuadIn;
+            if (s == "out_quad") return Ease::QuadOut;
+            if (s == "in_out_quad") return Ease::QuadInOut;
+            if (s == "in_cubic") return Ease::CubicIn;
+            if (s == "out_cubic") return Ease::CubicOut;
+            if (s == "in_out_cubic") return Ease::CubicInOut;
+            if (s == "in_sine") return Ease::SineIn;
+            if (s == "out_sine") return Ease::SineOut;
+            if (s == "in_out_sine") return Ease::SineInOut;
+            if (s == "in_expo") return Ease::ExpoIn;
+            if (s == "out_expo") return Ease::ExpoOut;
+            if (s == "in_out_expo") return Ease::ExpoInOut;
+            if (s == "out_back") return Ease::BackOut;
+            if (s == "in_back") return Ease::BackIn;
+            if (s == "out_elastic") return Ease::ElasticOut;
+            if (s == "out_bounce") return Ease::BounceOut;
+            return Ease::Linear;
+        };
+        auto sched = [this]() -> Scheduler* {
+            if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                return &rt.host->gameObject->scene()->scheduler();
+            return nullptr;
+        };
+        // Optional trailing on-complete: if arg `i` is the name of a script
+        // function, returns a callback that invokes it when the tween finishes
+        // (DOTween's OnComplete). Anything else yields an empty callback.
+        auto onDoneFromArg = [this](std::vector<Value>& a, std::size_t i) -> std::function<void()> {
+            if (i >= a.size() || !a[i].IsString()) return {};
+            std::string fn = a[i].AsString();
+            if (!rt.functions.count(fn)) return {};
+            return [this, fn]() { std::vector<Value> none; rt.Call(fn, none); };
+        };
+        b["tween_move"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
+            Ease e = easeFromArg(a, 3);
+            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; }, onDoneFromArg(a, 4));
+            return Value{};
+        };
+        b["tween_move3"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 4) return Value{};
+            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            Ease e = easeFromArg(a, 4);
+            s->Tween(a[3].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; }, onDoneFromArg(a, 5));
+            return Value{};
+        };
+        b["tween_scale"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Vec3 start = t->localScale; float v = a[0].AsFloat(); Vec3 target{v, v, v};
+            Ease e = easeFromArg(a, 2);
+            s->Tween(a[1].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = start + (target - start) * k; }, onDoneFromArg(a, 3));
+            return Value{};
+        };
+        // Spin by `deg` degrees about Z over `dur` seconds.
+        b["tween_rotate"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Quat start = t->localRotation; float deg = a[0].AsFloat(); Ease e = easeFromArg(a, 2);
+            s->Tween(a[1].AsFloat(), [t, start, deg, e](float u) { float k = Easing::Evaluate(e, u); t->localRotation = start * Quat::Euler({0, 0, deg * k}); }, onDoneFromArg(a, 3));
+            return Value{};
+        };
+        // Ping-pong move forever between the current spot and (x, y) — great for
+        // floating pickups, patrolling platforms, hovering UI. Each leg eases.
+        b["tween_loop_move"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
+            float dur = a[2].AsFloat(); Ease e = easeFromArg(a, 3);
+            auto step = std::make_shared<std::function<void(bool)>>();
+            *step = [s, t, start, target, e, dur, step](bool fwd) {
+                Vec3 from = fwd ? start : target, to = fwd ? target : start;
+                s->Tween(dur, [t, from, to, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = from + (to - from) * k; },
+                         [step, fwd]() { (*step)(!fwd); });
+            };
+            (*step)(true);
+            return Value{};
+        };
+        // Punch the scale outward and settle back (DOTween's DOPunchScale) —
+        // perfect for button presses, pickups, "juice". `amount` is the bulge.
+        b["tween_punch_scale"] = [this, sched](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Vec3 start = t->localScale; float amount = a[0].AsFloat(); float dur = a[1].AsFloat();
+            float vib = a.size() > 2 ? a[2].AsFloat() : 6.0f;
+            s->Tween(dur, [t, start, amount, vib](float u) {
+                float osc = Mathf::Sin(u * Mathf::PI * vib) * amount * (1.0f - u);
+                t->localScale = start + Vec3{osc, osc, osc};
+            }, [t, start]() { t->localScale = start; });
+            return Value{};
+        };
+        // Punch the position toward (dx, dy) and settle back.
+        b["tween_punch_pos"] = [this, sched](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            Vec3 start = t->localPosition; Vec2 dir{a[0].AsFloat(), a[1].AsFloat()}; float dur = a[2].AsFloat();
+            float vib = a.size() > 3 ? a[3].AsFloat() : 6.0f;
+            s->Tween(dur, [t, start, dir, vib](float u) {
+                float osc = Mathf::Sin(u * Mathf::PI * vib) * (1.0f - u);
+                t->localPosition = start + Vec3{dir.x * osc, dir.y * osc, 0.0f};
+            }, [t, start]() { t->localPosition = start; });
+            return Value{};
+        };
+        // Shake the position randomly, decaying to a stop (camera/impact shake).
+        b["tween_shake"] = [this, sched](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Vec3 start = t->localPosition; float intensity = a[0].AsFloat(); float dur = a[1].AsFloat();
+            s->Tween(dur, [t, start, intensity](float u) {
+                float decay = (1.0f - u) * intensity;
+                float ox = Random::Shared().Range(-1.0f, 1.0f) * decay;
+                float oy = Random::Shared().Range(-1.0f, 1.0f) * decay;
+                t->localPosition = start + Vec3{ox, oy, 0.0f};
+            }, [t, start]() { t->localPosition = start; });
+            return Value{};
+        };
+        // Relative move (DOTween's DOBlendableMoveBy): glide by an offset.
+        b["tween_move_by"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            Vec3 start = t->localPosition, target{start.x + a[0].AsFloat(), start.y + a[1].AsFloat(), start.z};
+            Ease e = easeFromArg(a, 3);
+            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; }, onDoneFromArg(a, 4));
+            return Value{};
+        };
+        // Jump in an arc to (x, y) peaking `height` units up (DOTween's DOJump) —
+        // coins flying to the HUD, hop-to-tile, loot pop.
+        b["tween_jump"] = [this, sched, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 4) return Value{};
+            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
+            float height = a[2].AsFloat();
+            s->Tween(a[3].AsFloat(), [t, start, target, height](float u) {
+                Vec3 base = start + (target - start) * u;
+                base.y += height * 4.0f * u * (1.0f - u);   // parabola, peak at u=0.5
+                t->localPosition = base;
+            }, [t, target, onDone = onDoneFromArg(a, 4)]() { t->localPosition = target; if (onDone) onDone(); });
+            return Value{};
+        };
+        // Move through a list of waypoints (DOTween's DOPath): tween_path(dur, x1,y1, x2,y2, ...).
+        b["tween_path"] = [this, sched](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            float dur = a[0].AsFloat();
+            auto pts = std::make_shared<std::vector<Vec3>>();
+            pts->push_back(t->localPosition);
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2)
+                pts->push_back(Vec3{a[i].AsFloat(), a[i + 1].AsFloat(), t->localPosition.z});
+            if (pts->size() < 2) return Value{};
+            s->Tween(dur, [t, pts](float u) {
+                int segs = (int)pts->size() - 1;
+                float f = u * segs; int i = (int)f; if (i >= segs) i = segs - 1;
+                float local = f - i;
+                t->localPosition = (*pts)[i] + ((*pts)[i + 1] - (*pts)[i]) * local;
+            }, [t, pts]() { t->localPosition = pts->back(); });
+            return Value{};
+        };
+        // Ping-pong the uniform scale forever (pulsing pickups, breathing UI).
+        b["tween_loop_scale"] = [this, sched, easeFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Vec3 start = t->localScale; float v = a[0].AsFloat(); Vec3 target{v, v, v};
+            float dur = a[1].AsFloat(); Ease e = easeFromArg(a, 2);
+            auto step = std::make_shared<std::function<void(bool)>>();
+            *step = [s, t, start, target, e, dur, step](bool fwd) {
+                Vec3 from = fwd ? start : target, to = fwd ? target : start;
+                s->Tween(dur, [t, from, to, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = from + (to - from) * k; },
+                         [step, fwd]() { (*step)(!fwd); });
+            };
+            (*step)(true);
+            return Value{};
+        };
+        // Spin continuously forever: a full turn every `dur` seconds (loaders, coins).
+        b["tween_loop_rotate"] = [this, sched](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.empty()) return Value{};
+            float dur = a[0].AsFloat(); if (dur < 1e-3f) return Value{};
+            float dir = a.size() > 1 ? a[1].AsFloat() : 1.0f;   // +1 = CCW, -1 = CW
+            auto base = std::make_shared<Quat>(t->localRotation);
+            auto step = std::make_shared<std::function<void()>>();
+            *step = [s, t, dur, dir, base, step]() {
+                Quat from = *base;
+                s->Tween(dur, [t, from, dir](float u) { t->localRotation = from * Quat::Euler({0, 0, 360.0f * dir * u}); },
+                         [t, base, step]() { *base = t->localRotation; (*step)(); });
+            };
+            (*step)();
+            return Value{};
+        };
+        // Count a sibling TextRenderer's number from->to over dur (score ticks,
+        // damage popups). Optional trailing string is a prefix: "Score: ".
+        b["tween_number"] = [this, sched, go](std::vector<Value>& a) {
+            Scheduler* s = sched();
+            if (!s || a.size() < 3) return Value{};
+            float from = a[0].AsFloat(), to = a[1].AsFloat(), dur = a[2].AsFloat();
+            std::string prefix = (a.size() > 3 && a[3].IsString()) ? a[3].AsString() : std::string{};
+            s->Tween(dur, [go, from, to, prefix](float u) {
+                int val = (int)std::lround(from + (to - from) * u);
+                if (GameObject* g = go())
+                    if (auto* tr = g->GetComponent<TextRenderer>())
+                        tr->text = prefix + std::to_string(val);
+            }, [go, to, prefix]() {
+                if (GameObject* g = go())
+                    if (auto* tr = g->GetComponent<TextRenderer>())
+                        tr->text = prefix + std::to_string((int)std::lround(to));
+            });
+            return Value{};
+        };
+        // Rotate to an ABSOLUTE Z angle over dur (DOTween's DORotate) — unlike
+        // tween_rotate which spins by a relative amount.
+        b["tween_rotate_to"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 2) return Value{};
+            Quat start = t->localRotation, target = Quat::Euler({0, 0, a[0].AsFloat()});
+            Ease e = easeFromArg(a, 2);
+            s->Tween(a[1].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localRotation = Quat::Slerp(start, target, k); }, onDoneFromArg(a, 3));
+            return Value{};
+        };
+        // Non-uniform scale to (sx, sy) (DOTween's DOScale with a Vector).
+        b["tween_scale_xy"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
+            if (!t || !s || a.size() < 3) return Value{};
+            Vec3 start = t->localScale, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
+            Ease e = easeFromArg(a, 3);
+            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = start + (target - start) * k; }, onDoneFromArg(a, 4));
+            return Value{};
+        };
+        // Tween a UI widget's anchored position (UI widgets don't use the
+        // Transform) — slide menus/panels in and out.
+        b["tween_ui_move"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Scheduler* s = sched();
+            if (!s || !rt.host || !rt.host->gameObject || a.size() < 3) return Value{};
+            UIRect r = GetUIRect(rt.host->gameObject);
+            if (!r.valid || !r.position) return Value{};
+            Vec2* pos = r.position; Vec2 start = *pos, target{a[0].AsFloat(), a[1].AsFloat()};
+            Ease e = easeFromArg(a, 3);
+            s->Tween(a[2].AsFloat(), [pos, start, target, e](float u) { float k = Easing::Evaluate(e, u); *pos = start + (target - start) * k; }, onDoneFromArg(a, 4));
+            return Value{};
+        };
+        // Tween a UI widget's size (grow/shrink panels, popups).
+        b["tween_ui_size"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
+            Scheduler* s = sched();
+            if (!s || !rt.host || !rt.host->gameObject || a.size() < 3) return Value{};
+            UIRect r = GetUIRect(rt.host->gameObject);
+            if (!r.valid || !r.sizePtr) return Value{};
+            Vec2* sz = r.sizePtr; Vec2 start = *sz, target{a[0].AsFloat(), a[1].AsFloat()};
+            Ease e = easeFromArg(a, 3);
+            s->Tween(a[2].AsFloat(), [sz, start, target, e](float u) { float k = Easing::Evaluate(e, u); *sz = start + (target - start) * k; }, onDoneFromArg(a, 4));
+            return Value{};
+        };
+        // Returns the host's tweenable albedo color, if any (sprite, mesh, or UI).
+        auto colorPtr = [this]() -> Color* {
+            if (!rt.host || !rt.host->gameObject) return nullptr;
+            GameObject* g = rt.host->gameObject;
+            if (auto* sr = g->GetComponent<SpriteRenderer>()) return &sr->color;
+            if (auto* mr = g->GetComponent<MeshRenderer>())   return &mr->color;
+            if (auto* im = g->GetComponent<UIImage>())        return &im->color;
+            if (auto* pn = g->GetComponent<UIPanel>())        return &pn->color;
+            return nullptr;
+        };
+        b["tween_color"] = [this, sched, easeFromArg, colorPtr, onDoneFromArg](std::vector<Value>& a) {
+            Scheduler* s = sched(); Color* c = colorPtr();
+            if (!s || !c || a.size() < 4) return Value{};
+            Color start = *c, target{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), start.a};
+            Ease e = easeFromArg(a, 4);
+            s->Tween(a[3].AsFloat(), [c, start, target, e](float u) {
+                float k = Easing::Evaluate(e, u);
+                c->r = start.r + (target.r - start.r) * k;
+                c->g = start.g + (target.g - start.g) * k;
+                c->b = start.b + (target.b - start.b) * k;
+            }, onDoneFromArg(a, 5));
+            return Value{};
+        };
+        b["tween_fade"] = [this, sched, easeFromArg, colorPtr, onDoneFromArg](std::vector<Value>& a) {
+            Scheduler* s = sched(); Color* c = colorPtr();
+            if (!s || !c || a.size() < 2) return Value{};
+            float start = c->a, target = a[0].AsFloat(); Ease e = easeFromArg(a, 2);
+            s->Tween(a[1].AsFloat(), [c, start, target, e](float u) { float k = Easing::Evaluate(e, u); c->a = start + (target - start) * k; }, onDoneFromArg(a, 3));
+            return Value{};
+        };
+        // ---- Save system: snapshot the whole scene to a slot file ------
+        b["save_game"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            if (!s) return Value{0.0f};
+            std::string slot = a.empty() ? "save1" : a[0].AsString();
+            std::error_code ec; std::filesystem::create_directories("saves", ec);
+            return Value{SceneSerializer::SaveToFile(*s, "saves/" + slot + ".okaysave") ? 1.0f : 0.0f};
+        };
+        b["load_game"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            std::string slot = a.empty() ? "save1" : a[0].AsString();
+            std::string path = "saves/" + slot + ".okaysave";
+            if (s && std::ifstream(path).good()) { s->RequestLoad(path); return Value{1.0f}; }
+            return Value{0.0f};
+        };
+        b["save_exists"] = [](std::vector<Value>& a) {
+            std::string slot = a.empty() ? "save1" : a[0].AsString();
+            return Value{std::ifstream("saves/" + slot + ".okaysave").good() ? 1.0f : 0.0f};
+        };
+        b["delete_save"] = [](std::vector<Value>& a) {
+            std::string slot = a.empty() ? "save1" : a[0].AsString();
+            return Value{std::remove(("saves/" + slot + ".okaysave").c_str()) == 0 ? 1.0f : 0.0f};
+        };
+
+        // ---- Friendly aliases: intuitive names for common builtins so games
+        //      read naturally. Each points at an already-registered function. ----
+        auto alias = [&b](const char* from, const char* to) {
+            auto it = b.find(to);
+            if (it != b.end()) b[from] = it->second;
+        };
+        alias("delta_time", "dt");
+        alias("get_key", "key");
+        alias("get_key_down", "key_down");
+        alias("get_key_up", "key_up");
+        alias("is_key_down", "key");
+        alias("random", "rand");
+        alias("random_int", "randi");
+        alias("random_range", "rand");
+        alias("pick", "choose");
+        alias("distance", "dist");
+        alias("distance_to", "dist_to");
+        alias("instantiate", "spawn");
+        alias("instantiate3", "spawn3");
+        alias("destroy_self", "destroy");
+        alias("translate", "move");
+        alias("rotate_z", "rotate");
+        alias("set_position", "set_pos");
+        alias("set_rotation", "set_rot3");
+        alias("play_audio", "play_sound");
+        alias("to_string", "to_str");
+        alias("to_number", "to_num");
+        alias("str", "to_str");
+        alias("num", "to_num");
+        alias("string_length", "str_len");
+        alias("get_x", "pos_x");
+        alias("get_y", "pos_y");
+        alias("get_z", "pos_z");
+        alias("velocity", "set_velocity");
+        alias("screen_width", "screen_w");
+        alias("screen_height", "screen_h");
+        alias("debug", "debug_log");
+
+        // ---- Unity-style API: write scripts that look like C# in Unity. -----
+        //      Dotted names are single tokens (see the lexer), so these read as
+        //      Input.GetKeyDown("space"), Mathf.Sin(t), Debug.Log(x), etc.
+        b["Vector3"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                              a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                              a.size() > 2 ? a[2].AsFloat() : 0.0f}};
+        };
+        b["Vector2"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                              a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f}};
+        };
+        // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
+        // transform.rotation, which uses the Z component for 2D).
+        b["Quaternion.Euler"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                              a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                              a.size() > 2 ? a[2].AsFloat() : 0.0f}};
+        };
+        // AddComponent<T>() / AddComponent("T") — add a known component at runtime.
+        b["AddComponent"] = [this](std::vector<Value>& a) -> Value {
+            if (!rt.host || !rt.host->gameObject || a.empty()) return Value{false};
+            const std::string& c = a[0].AsString();
+            GameObject* g = rt.host->gameObject;
+            if (c == "SpriteRenderer") { g->AddComponent<SpriteRenderer>(); return Value{true}; }
+            if (c == "Rigidbody2D")    { g->AddComponent<Rigidbody2D>();    return Value{true}; }
+            if (c == "TextRenderer")   { g->AddComponent<TextRenderer>();   return Value{true}; }
+            if (c == "BoxCollider2D")  { g->AddComponent<BoxCollider2D>();  return Value{true}; }
+            return Value{false};
+        };
+        // Input.GetAxis("Horizontal"/"Vertical") -> WASD/stick axis.
+        b["Input.GetAxis"] = [](std::vector<Value>& a) -> Value {
+            std::string ax = a.empty() ? std::string{} : a[0].AsString();
+            return Value{ax == "Vertical" ? Input::AxisWASD().y : Input::AxisWASD().x};
+        };
+        // gameObject.SetActive(bool) toggles this object.
+        b["gameObject.SetActive"] = [this](std::vector<Value>& a) -> Value {
+            if (rt.host && rt.host->gameObject)
+                rt.host->gameObject->active = a.empty() ? true : a[0].AsBool();
+            return Value{};
+        };
+        b["GetComponent"] = [this](std::vector<Value>& a) -> Value {
+            // Lightweight: true if this object has the named component (so scripts
+            // can guard with `if (GetComponent("Rigidbody2D")) ...`).
+            if (!rt.host || !rt.host->gameObject || a.empty()) return Value{false};
+            const std::string& c = a[0].AsString();
+            GameObject* g = rt.host->gameObject;
+            bool has = (c == "SpriteRenderer" && g->GetComponent<SpriteRenderer>())
+                    || (c == "Rigidbody2D"   && g->GetComponent<Rigidbody2D>())
+                    || (c == "TextRenderer"  && g->GetComponent<TextRenderer>());
+            return Value{has};
+        };
+        // Method-name aliases mapping Unity calls onto existing builtins.
+        alias("Input.GetKey", "key");
+        alias("Input.GetKeyDown", "key_down");
+        alias("Input.GetKeyUp", "key_up");
+        alias("Input.GetMouseButton", "mouse");
+        alias("Input.GetMouseButtonDown", "mouse_down");
+        alias("Input.GetMouseButtonUp", "mouse_up");
+        alias("Debug.Log", "print");
+        alias("Debug.LogWarning", "print");
+        alias("Debug.LogError", "print");
+        alias("Mathf.Sin", "sin");   alias("Mathf.Cos", "cos");   alias("Mathf.Tan", "tan");
+        alias("Mathf.Sqrt", "sqrt"); alias("Mathf.Abs", "abs");   alias("Mathf.Sign", "sign");
+        alias("Mathf.Floor", "floor"); alias("Mathf.Ceil", "ceil"); alias("Mathf.Round", "round");
+        alias("Mathf.Min", "min");   alias("Mathf.Max", "max");   alias("Mathf.Pow", "pow");
+        alias("Mathf.Clamp", "clamp"); alias("Mathf.Lerp", "lerp"); alias("Mathf.Atan2", "atan2");
+        alias("Mathf.PingPong", "ping_pong"); alias("Mathf.SmoothStep", "smoothstep");
+        alias("Mathf.MoveTowards", "move_toward");
+        alias("Random.Range", "rand");
+        alias("Vector3.Distance", "dist3"); alias("Vector2.Distance", "dist");
+        alias("transform.Translate", "move"); alias("transform.Rotate", "rotate");
+        alias("transform.LookAt", "look_at3");
+        alias("Instantiate", "spawn"); alias("Object.Instantiate", "spawn");
+        alias("Destroy", "destroy"); alias("Object.Destroy", "destroy");
+        alias("Physics2D.Raycast", "raycast"); alias("Physics.Raycast", "raycast3");
+        alias("SceneManager.LoadScene", "load_scene_name");
+        alias("Application.Quit", "quit");
+        alias("GameObject.Find", "exists");
     }
 };
 
@@ -1982,23 +3051,35 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
 
 void OkayScriptVM::Bind(ScriptHost* host) { m_impl->rt.host = host; }
 
+namespace {
+// Call the first of `names` that the script defines (with the given args).
+// Lets a script use Unity's PascalCase (Start/Update) or the classic
+// lowercase (start/update) names interchangeably.
+void CallFirst(Runtime& rt, std::initializer_list<const char*> names,
+               std::vector<Value>& args, const char* label) {
+    for (const char* n : names) {
+        if (rt.functions.count(n)) {
+            try { rt.Call(n, args); }
+            catch (const std::exception& e) { Log::Error("OkayScript ", label, "(): ", e.what()); }
+            return;
+        }
+    }
+}
+} // namespace
+
 void OkayScriptVM::CallStart() {
     if (!m_impl->loaded) return;
-    if (m_impl->rt.functions.count("start")) {
-        std::vector<Value> none;
-        try { m_impl->rt.Call("start", none); }
-        catch (const std::exception& e) { Log::Error("OkayScript start(): ", e.what()); }
-    }
+    std::vector<Value> none;
+    CallFirst(m_impl->rt, {"Awake", "awake"}, none, "Awake");   // Unity runs Awake then Start
+    CallFirst(m_impl->rt, {"Start", "start"}, none, "Start");
 }
 
 void OkayScriptVM::CallUpdate(float deltaTime) {
     if (!m_impl->loaded) return;
     if (m_impl->rt.host) m_impl->rt.host->deltaTime = deltaTime;
-    if (m_impl->rt.functions.count("update")) {
-        std::vector<Value> args{Value{deltaTime}};
-        try { m_impl->rt.Call("update", args); }
-        catch (const std::exception& e) { Log::Error("OkayScript update(): ", e.what()); }
-    }
+    std::vector<Value> args{Value{deltaTime}};
+    CallFirst(m_impl->rt, {"Update", "update"}, args, "Update");
+    CallFirst(m_impl->rt, {"LateUpdate", "late_update"}, args, "LateUpdate");
     // Scheduled after()/every() callbacks tick even without an update().
     if (!m_impl->rt.timers.empty()) {
         try { m_impl->rt.TickTimers(deltaTime); }
@@ -2008,10 +3089,30 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
 
 void OkayScriptVM::CallEvent(const std::string& function) {
     if (!m_impl->loaded) return;
-    if (m_impl->rt.functions.count(function)) {
+    // The requested (engine) name wins; otherwise accept a Unity-style alias so
+    // scripts can name handlers the Unity way (OnCollisionEnter, OnClick, ...).
+    static const std::unordered_map<std::string, std::vector<std::string>> kAliases = {
+        {"on_collision", {"OnCollisionEnter", "OnCollisionEnter2D"}},
+        {"on_trigger",   {"OnTriggerEnter",   "OnTriggerEnter2D"}},
+        {"on_click",     {"OnClick", "OnMouseDown", "OnPointerClick"}},
+        {"on_change",    {"OnValueChanged"}},
+        {"on_toggle",    {"OnToggle", "OnValueChanged"}},
+        {"on_drop",      {"OnDrop"}},
+        {"on_receive",   {"OnReceive"}},
+        {"on_drag",      {"OnDrag"}},
+        {"on_drag_start",{"OnBeginDrag"}},
+    };
+    std::string fn = function;
+    if (!m_impl->rt.functions.count(fn)) {
+        auto it = kAliases.find(function);
+        if (it != kAliases.end())
+            for (const auto& alt : it->second)
+                if (m_impl->rt.functions.count(alt)) { fn = alt; break; }
+    }
+    if (m_impl->rt.functions.count(fn)) {
         std::vector<Value> none;
-        try { m_impl->rt.Call(function, none); }
-        catch (const std::exception& e) { Log::Error("OkayScript ", function.c_str(), "(): ", e.what()); }
+        try { m_impl->rt.Call(fn, none); }
+        catch (const std::exception& e) { Log::Error("OkayScript ", fn.c_str(), "(): ", e.what()); }
     }
 }
 

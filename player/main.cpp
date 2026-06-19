@@ -15,7 +15,9 @@
 #endif
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <unordered_map>
@@ -142,6 +144,7 @@ int main(int argc, char** argv) {
     // Persistent prefs (high scores, settings) live beside the scene file.
     std::string prefsPath = baseDir + "game.okayprefs";
     Prefs::Load(prefsPath);
+    DataAsset::SetBaseDir(baseDir);   // resolve .okaydata assets beside the game
 
     Scene scene("Game");
     std::string err;
@@ -160,6 +163,7 @@ int main(int argc, char** argv) {
     Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
 
     SDL_AudioSpec want{}, have{};
     want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
@@ -203,12 +207,21 @@ int main(int argc, char** argv) {
     bool running = true;
     Uint64 last = SDL_GetPerformanceCounter();
     auto frame = [&]() {
+        Input::ClearTypedText();                 // collect this frame's typed chars
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
             if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
                 pad = SDL_GameControllerOpen(e.cdevice.which);
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
+            if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
+            if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
+            // Esc quits only when no input field is focused (otherwise it cancels it).
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                bool typing = false;
+                for (const auto& up : scene.Objects())
+                    if (auto* f = up->GetComponent<UIInputField>()) if (f->focused) typing = true;
+                if (!typing) running = false;
+            }
         }
 
         // Feed keyboard into the engine Input.
@@ -219,6 +232,10 @@ int main(int argc, char** argv) {
         for (char c = '0'; c <= '9'; ++c)
             if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
         if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+        // Editing keys for text fields (held-state; edge-detected by the field).
+        if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8);
+        if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
+        if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
         // Map arrow keys onto WASD so arrow-key movement just works.
         if (ks[SDL_SCANCODE_UP])    down.push_back('w');
         if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
@@ -290,6 +307,21 @@ int main(int argc, char** argv) {
         }
 
         int w, h; SDL_GetRendererOutputSize(renderer, &w, &h);
+        // Scroll-view membership: offset a widget's origin by its owning Scroll
+        // View's scroll and clip drawing to the viewport, so scrollable content
+        // shows and hides correctly in the built game. Call once per UI widget
+        // right after resolving its origin; widgets outside a scroll view reset
+        // the clip to none.
+        auto enterScroll = [&](GameObject* g, Vec2& o) {
+            if (UIScrollView* psv = OwningScrollView(g)) {
+                Vec2 vp = ResolveAnchor(psv->anchor, psv->position, psv->size, (float)w, (float)h);
+                o.y -= psv->scroll;
+                SDL_Rect clip{(int)vp.x, (int)vp.y, (int)psv->size.x, (int)psv->size.y};
+                SDL_RenderSetClipRect(renderer, &clip);
+            } else {
+                SDL_RenderSetClipRect(renderer, nullptr);
+            }
+        };
         Camera* cam = scene.mainCamera;
         Color bg = cam ? cam->backgroundColor : Color::Black;
         SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
@@ -381,6 +413,18 @@ int main(int argc, char** argv) {
                 SDL_RenderGeometry(renderer, tex, vtx, 4, idx, 6);
             }
 
+            // Drop-zone highlight: tint a zone while a valid item hovers it.
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            for (const auto& up : scene.Objects()) {
+                auto* dz = up->GetComponent<DropZone>();
+                auto* sr = up->GetComponent<SpriteRenderer>();
+                if (!dz || !sr || !up->active || !dz->IsHovered()) continue;
+                Vec3 ls = up->transform->LossyScale();
+                FillWorldQuad(renderer, up->transform->Position(),
+                              sr->size.x * ls.x, sr->size.y * ls.y,
+                              camPos, scale, w, h, SDL_Color{255, 255, 255, 70});
+            }
+
             // Tilemaps: draw each non-empty cell as a colored quad.
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
             for (const auto& up : scene.Objects()) {
@@ -421,19 +465,39 @@ int main(int argc, char** argv) {
                               (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255)};
                 SDL_Color sh{(Uint8)(tr->shadowColor.r * 255), (Uint8)(tr->shadowColor.g * 255),
                              (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255)};
+                SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
+                             (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255)};
                 if (tr->screenSpace) {
                     Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);
+                    float tw = tr->PixelWidth() * tr->pixelSize;
+                    if (tr->align == 1)      o.x -= tw * 0.5f;
+                    else if (tr->align == 2) o.x -= tw;
+                    float p = tr->pixelSize;
                     if (tr->shadow)
-                        DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * tr->pixelSize,
-                                 o.y + tr->shadowOffset.y * tr->pixelSize, tr->pixelSize, sh);
-                    DrawText(renderer, tr->text, o.x, o.y, tr->pixelSize, col);
+                        DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * p,
+                                 o.y + tr->shadowOffset.y * p, p, sh);
+                    if (tr->outline) {
+                        DrawText(renderer, tr->text, o.x - p, o.y, p, ol);
+                        DrawText(renderer, tr->text, o.x + p, o.y, p, ol);
+                        DrawText(renderer, tr->text, o.x, o.y - p, p, ol);
+                        DrawText(renderer, tr->text, o.x, o.y + p, p, ol);
+                    }
+                    DrawText(renderer, tr->text, o.x, o.y, p, col);
+                    if (tr->bold) DrawText(renderer, tr->text, o.x + p, o.y, p, col);
                 } else {
                     SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
                     float px = tr->pixelSize * scale;
                     if (tr->shadow)
                         DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
                                  o.y + tr->shadowOffset.y * px, px, sh);
+                    if (tr->outline) {
+                        DrawText(renderer, tr->text, o.x - px, o.y, px, ol);
+                        DrawText(renderer, tr->text, o.x + px, o.y, px, ol);
+                        DrawText(renderer, tr->text, o.x, o.y - px, px, ol);
+                        DrawText(renderer, tr->text, o.x, o.y + px, px, ol);
+                    }
                     DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col);
+                    if (tr->bold) DrawText(renderer, tr->text, (float)o.x + px, (float)o.y, px, col);
                 }
             }
         }
@@ -444,7 +508,13 @@ int main(int argc, char** argv) {
             auto* im = up->GetComponent<UIImage>();
             if (!im || !up->active) continue;
             Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)im->size.x, (int)im->size.y};
+            // Radial/linear fill: shrink the drawn rect to fillAmount along an axis.
+            float fox, foy, fw, fh;
+            im->FilledRect(im->size.x, im->size.y, fox, foy, fw, fh);
+            SDL_Rect fr{(int)(o.x + fox), (int)(o.y + foy), (int)fw, (int)fh};
+            bool filled = im->fillMode != UIImage::FillMode::None;
             SDL_Texture* tex = GetTexture(renderer, im->texture, baseDir, textureCache);
             if (tex) {
                 SDL_SetTextureColorMod(tex, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
@@ -468,72 +538,184 @@ int main(int argc, char** argv) {
                             if (s.w > 0 && s.h > 0 && d.w > 0 && d.h > 0)
                                 SDL_RenderCopy(renderer, tex, &s, &d);
                         }
+                } else if (filled) {                        // reveal a proportional slice
+                    int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+                    SDL_Rect src{
+                        (int)(im->size.x > 0 ? fox / im->size.x * tw : 0),
+                        (int)(im->size.y > 0 ? foy / im->size.y * th : 0),
+                        (int)(im->size.x > 0 ? fw  / im->size.x * tw : tw),
+                        (int)(im->size.y > 0 ? fh  / im->size.y * th : th)};
+                    SDL_RenderCopy(renderer, tex, &src, &fr);
                 } else {
                     SDL_RenderCopy(renderer, tex, nullptr, &r);
                 }
             } else {                                        // no image -> colored fill
                 SDL_SetRenderDrawColor(renderer, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
                                        (Uint8)(im->color.b * 255), (Uint8)(im->color.a * 255));
-                SDL_RenderFillRect(renderer, &r);
+                SDL_RenderFillRect(renderer, filled ? &fr : &r);
             }
         }
         for (const auto& up : scene.Objects()) {           // panels (backgrounds) first
             auto* pn = up->GetComponent<UIPanel>();
             if (!pn || !up->active) continue;
             Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(pn->color.r * 255), (Uint8)(pn->color.g * 255),
-                                   (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255));
-            SDL_RenderFillRect(renderer, &r);
+            if (pn->shadow) {                               // drop shadow behind
+                SDL_Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
+                SDL_SetRenderDrawColor(renderer, (Uint8)(pn->shadowColor.r * 255), (Uint8)(pn->shadowColor.g * 255),
+                                       (Uint8)(pn->shadowColor.b * 255), (Uint8)(pn->shadowColor.a * 255));
+                SDL_RenderFillRect(renderer, &sh);
+            }
+            if (pn->useGradient) {                          // top->bottom fade in bands
+                int bands = r.h > 0 ? (r.h < 64 ? r.h : 64) : 1;
+                for (int i = 0; i < bands; ++i) {
+                    float t = bands > 1 ? (float)i / (bands - 1) : 0.0f;
+                    Color cc{pn->color.r + (pn->colorBottom.r - pn->color.r) * t,
+                             pn->color.g + (pn->colorBottom.g - pn->color.g) * t,
+                             pn->color.b + (pn->colorBottom.b - pn->color.b) * t,
+                             pn->color.a + (pn->colorBottom.a - pn->color.a) * t};
+                    SDL_Rect band{r.x, r.y + i * r.h / bands, r.w,
+                                  (r.h / bands) + 1};
+                    SDL_SetRenderDrawColor(renderer, (Uint8)(cc.r * 255), (Uint8)(cc.g * 255),
+                                           (Uint8)(cc.b * 255), (Uint8)(cc.a * 255));
+                    SDL_RenderFillRect(renderer, &band);
+                }
+            } else {
+                SDL_SetRenderDrawColor(renderer, (Uint8)(pn->color.r * 255), (Uint8)(pn->color.g * 255),
+                                       (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255));
+                SDL_RenderFillRect(renderer, &r);
+            }
+            if (pn->borderWidth > 0.0f) {                   // outline (N nested rects)
+                SDL_SetRenderDrawColor(renderer, (Uint8)(pn->borderColor.r * 255), (Uint8)(pn->borderColor.g * 255),
+                                       (Uint8)(pn->borderColor.b * 255), (Uint8)(pn->borderColor.a * 255));
+                for (int bw = 0; bw < (int)pn->borderWidth; ++bw) {
+                    SDL_Rect br{r.x + bw, r.y + bw, r.w - 2 * bw, r.h - 2 * bw};
+                    SDL_RenderDrawRect(renderer, &br);
+                }
+            }
+        }
+        for (const auto& up : scene.Objects()) {           // drop-target highlight (drag feedback)
+            auto* dt = up->GetComponent<UIDropTarget>();
+            if (!dt || !up->active || !dt->showHighlight || !dt->IsHovered()) continue;
+            Vec2 o, sz;
+            if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
+            SDL_Rect hr{(int)o.x, (int)o.y, (int)sz.x, (int)sz.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(dt->highlight.r * 255), (Uint8)(dt->highlight.g * 255),
+                                   (Uint8)(dt->highlight.b * 255), (Uint8)(dt->highlight.a * 255));
+            SDL_RenderFillRect(renderer, &hr);
+        }
+        for (const auto& up : scene.Objects()) {           // scroll-view backgrounds + scrollbar
+            auto* sv = up->GetComponent<UIScrollView>();
+            if (!sv || !up->active) continue;
+            Vec2 o = ResolveAnchor(sv->anchor, sv->position, sv->size, (float)w, (float)h);
+            SDL_Rect box{(int)o.x, (int)o.y, (int)sv->size.x, (int)sv->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(sv->background.r * 255), (Uint8)(sv->background.g * 255),
+                                   (Uint8)(sv->background.b * 255), (Uint8)(sv->background.a * 255));
+            SDL_RenderFillRect(renderer, &box);
+            if (sv->ScrollMax() > 0.0f) {                   // scrollbar track + thumb
+                int barW = 6;
+                SDL_Rect track{box.x + box.w - barW - 2, box.y + 2, barW, box.h - 4};
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 30);
+                SDL_RenderFillRect(renderer, &track);
+                float frac = sv->size.y / (sv->contentHeight > 1.0f ? sv->contentHeight : 1.0f);
+                int thumbH = (int)(track.h * (frac < 1.0f ? frac : 1.0f));
+                int thumbY = track.y + (int)((track.h - thumbH) * sv->Fraction());
+                SDL_Rect thumb{track.x, thumbY, barW, thumbH};
+                SDL_SetRenderDrawColor(renderer, (Uint8)(sv->barColor.r * 255), (Uint8)(sv->barColor.g * 255),
+                                       (Uint8)(sv->barColor.b * 255), (Uint8)(sv->barColor.a * 255));
+                SDL_RenderFillRect(renderer, &thumb);
+            }
         }
         for (const auto& up : scene.Objects()) {           // progress bars
             auto* pb = up->GetComponent<UIProgressBar>();
             if (!pb || !up->active) continue;
             Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(pb->background.r * 255), (Uint8)(pb->background.g * 255),
                                    (Uint8)(pb->background.b * 255), (Uint8)(pb->background.a * 255));
             SDL_RenderFillRect(renderer, &bg);
-            SDL_Rect fl{(int)o.x, (int)o.y,
-                        (int)(pb->size.x * pb->Fraction()), (int)pb->size.y};
+            float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+            SDL_Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
             SDL_SetRenderDrawColor(renderer, (Uint8)(pb->fill.r * 255), (Uint8)(pb->fill.g * 255),
                                    (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255));
             SDL_RenderFillRect(renderer, &fl);
+            if (pb->showPercent) {
+                char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+                float px = 2.0f;
+                float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
+                SDL_Color tc{(Uint8)(pb->textColor.r * 255), (Uint8)(pb->textColor.g * 255),
+                             (Uint8)(pb->textColor.b * 255), (Uint8)(pb->textColor.a * 255)};
+                DrawText(renderer, pct, o.x + (pb->size.x - tw) * 0.5f,
+                         o.y + (pb->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            }
         }
         for (const auto& up : scene.Objects()) {           // sliders
             auto* sl = up->GetComponent<UISlider>();
             if (!sl || !up->active) continue;
             Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->background.r * 255), (Uint8)(sl->background.g * 255),
                                    (Uint8)(sl->background.b * 255), (Uint8)(sl->background.a * 255));
             SDL_RenderFillRect(renderer, &bg);
-            SDL_Rect fl{(int)o.x, (int)o.y,
-                        (int)(sl->size.x * sl->Fraction()), (int)sl->size.y};
+            float f = sl->Fraction();
+            SDL_Rect fl, kn;
+            if (sl->vertical) {
+                fl = {(int)o.x, (int)(o.y + sl->size.y * (1.0f - f)), (int)sl->size.x, (int)(sl->size.y * f)};
+                int kh = (int)(sl->size.x * sl->knobSize);
+                kn = {(int)o.x - 2, (int)(o.y + sl->size.y * (1.0f - f)) - kh / 2, (int)sl->size.x + 4, kh};
+            } else {
+                fl = {(int)o.x, (int)o.y, (int)(sl->size.x * f), (int)sl->size.y};
+                int kw = (int)(sl->size.y * sl->knobSize);
+                kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
+            }
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->fill.r * 255), (Uint8)(sl->fill.g * 255),
                                    (Uint8)(sl->fill.b * 255), (Uint8)(sl->fill.a * 255));
             SDL_RenderFillRect(renderer, &fl);
-            int kw = (int)(sl->size.y * 0.6f);
-            SDL_Rect kn{(int)(o.x + sl->size.x * sl->Fraction()) - kw / 2,
-                        (int)o.y - 2, kw, (int)sl->size.y + 4};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->knob.r * 255), (Uint8)(sl->knob.g * 255),
                                    (Uint8)(sl->knob.b * 255), (Uint8)(sl->knob.a * 255));
             SDL_RenderFillRect(renderer, &kn);
+            if (sl->showValue) {
+                char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+                float px = 2.0f;
+                SDL_Color tc{(Uint8)(sl->textColor.r * 255), (Uint8)(sl->textColor.g * 255),
+                             (Uint8)(sl->textColor.b * 255), (Uint8)(sl->textColor.a * 255)};
+                DrawText(renderer, vbuf, o.x + sl->size.x + 8.0f,
+                         o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            }
+            if (!sl->interactable) { SDL_Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
+                SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
         for (const auto& up : scene.Objects()) {           // toggles (checkboxes)
             auto* tg = up->GetComponent<UIToggle>();
             if (!tg || !up->active) continue;
             Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
             SDL_Rect box{(int)o.x, (int)o.y, (int)tg->size.x, (int)tg->size.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(tg->boxColor.r * 255), (Uint8)(tg->boxColor.g * 255),
-                                   (Uint8)(tg->boxColor.b * 255), (Uint8)(tg->boxColor.a * 255));
-            SDL_RenderFillRect(renderer, &box);
-            if (tg->on) {                                  // inset check fill
-                int pad = (int)(tg->size.x * 0.22f);
-                SDL_Rect chk{box.x + pad, box.y + pad, box.w - 2 * pad, box.h - 2 * pad};
-                SDL_SetRenderDrawColor(renderer, (Uint8)(tg->checkColor.r * 255), (Uint8)(tg->checkColor.g * 255),
-                                       (Uint8)(tg->checkColor.b * 255), (Uint8)(tg->checkColor.a * 255));
-                SDL_RenderFillRect(renderer, &chk);
+            if (tg->style == UIToggle::Style::Switch) {     // pill track + sliding knob
+                const Color& trk = tg->on ? tg->checkColor : tg->boxColor;
+                SDL_SetRenderDrawColor(renderer, (Uint8)(trk.r * 255), (Uint8)(trk.g * 255),
+                                       (Uint8)(trk.b * 255), (Uint8)(trk.a * 255));
+                SDL_RenderFillRect(renderer, &box);
+                int kd = box.h - 4;
+                int kx = tg->on ? (box.x + box.w - kd - 2) : (box.x + 2);
+                SDL_Rect knob{kx, box.y + 2, kd, kd};
+                SDL_SetRenderDrawColor(renderer, (Uint8)(tg->knobColor.r * 255), (Uint8)(tg->knobColor.g * 255),
+                                       (Uint8)(tg->knobColor.b * 255), (Uint8)(tg->knobColor.a * 255));
+                SDL_RenderFillRect(renderer, &knob);
+            } else {
+                SDL_SetRenderDrawColor(renderer, (Uint8)(tg->boxColor.r * 255), (Uint8)(tg->boxColor.g * 255),
+                                       (Uint8)(tg->boxColor.b * 255), (Uint8)(tg->boxColor.a * 255));
+                SDL_RenderFillRect(renderer, &box);
+                if (tg->on) {                              // inset check fill
+                    int pad = (int)(tg->size.x * 0.22f);
+                    SDL_Rect chk{box.x + pad, box.y + pad, box.w - 2 * pad, box.h - 2 * pad};
+                    SDL_SetRenderDrawColor(renderer, (Uint8)(tg->checkColor.r * 255), (Uint8)(tg->checkColor.g * 255),
+                                           (Uint8)(tg->checkColor.b * 255), (Uint8)(tg->checkColor.a * 255));
+                    SDL_RenderFillRect(renderer, &chk);
+                }
             }
             float px = 2.0f;
             float tx = o.x + tg->size.x + 8.0f;
@@ -541,24 +723,146 @@ int main(int argc, char** argv) {
             SDL_Color tc{(Uint8)(tg->textColor.r * 255), (Uint8)(tg->textColor.g * 255),
                          (Uint8)(tg->textColor.b * 255), (Uint8)(tg->textColor.a * 255)};
             DrawText(renderer, tg->label, tx, ty, px, tc);
+            if (!tg->interactable) { SDL_Rect dr{box.x, box.y, box.w, box.h};
+                SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
         for (const auto& up : scene.Objects()) {
             auto* btn = up->GetComponent<UIButton>();
             if (!btn || !up->active) continue;
             Color bg = btn->CurrentColor();
             Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)btn->size.x, (int)btn->size.y};
+            if (btn->hoverScale != 1.0f && (btn->IsHovered() || btn->IsFocused())) {
+                int gx = (int)(btn->size.x * (btn->hoverScale - 1.0f) * 0.5f);
+                int gy = (int)(btn->size.y * (btn->hoverScale - 1.0f) * 0.5f);
+                r.x -= gx; r.y -= gy; r.w += 2 * gx; r.h += 2 * gy;
+            }
             SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
                                    (Uint8)(bg.b * 255), (Uint8)(bg.a * 255));
             SDL_RenderFillRect(renderer, &r);
-            // Center the label (8px glyphs, ~1px gap) at pixel size 2.
-            float px = 2.0f;
+            if (btn->borderWidth > 0.0f) {                  // outline (N nested rects)
+                SDL_SetRenderDrawColor(renderer, (Uint8)(btn->borderColor.r * 255), (Uint8)(btn->borderColor.g * 255),
+                                       (Uint8)(btn->borderColor.b * 255), (Uint8)(btn->borderColor.a * 255));
+                for (int bw = 0; bw < (int)btn->borderWidth; ++bw) {
+                    SDL_Rect br{r.x + bw, r.y + bw, r.w - 2 * bw, r.h - 2 * bw};
+                    SDL_RenderDrawRect(renderer, &br);
+                }
+            }
+            // Optional icon at the left; the label shifts right to make room.
+            float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize : 0.0f;
+            if (isz > 0.0f) {
+                SDL_Texture* itex = GetTexture(renderer, btn->icon, baseDir, textureCache);
+                SDL_Rect ir{(int)(o.x + 8), (int)(o.y + (btn->size.y - isz) * 0.5f), (int)isz, (int)isz};
+                if (itex) { SDL_SetTextureColorMod(itex, 255, 255, 255); SDL_SetTextureAlphaMod(itex, 255);
+                            SDL_RenderCopy(renderer, itex, nullptr, &ir); }
+            }
+            // Center the label (8px glyphs, ~1px gap) at the button's font scale,
+            // within the area right of the icon.
+            float px = btn->fontScale;
             float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-            float tx = o.x + (btn->size.x - tw) * 0.5f;
+            float left = o.x + (isz > 0.0f ? isz + 12.0f : 0.0f);
+            float avail = (o.x + btn->size.x) - left;
+            float tx = left + (avail - tw) * 0.5f;
             float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(btn->textColor.r * 255), (Uint8)(btn->textColor.g * 255),
                          (Uint8)(btn->textColor.b * 255), (Uint8)(btn->textColor.a * 255)};
             DrawText(renderer, btn->label, tx, ty, px, tc);
+        }
+        for (const auto& up : scene.Objects()) {           // dropdowns (header + open list)
+            auto* dd = up->GetComponent<UIDropdown>();
+            if (!dd || !up->active) continue;
+            Vec2 o = ResolveAnchor(dd->anchor, dd->position, dd->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            SDL_Rect hdr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(dd->color.r * 255), (Uint8)(dd->color.g * 255),
+                                   (Uint8)(dd->color.b * 255), (Uint8)(dd->color.a * 255));
+            SDL_RenderFillRect(renderer, &hdr);
+            SDL_SetRenderDrawColor(renderer, (Uint8)(dd->borderColor.r * 255), (Uint8)(dd->borderColor.g * 255),
+                                   (Uint8)(dd->borderColor.b * 255), (Uint8)(dd->borderColor.a * 255));
+            SDL_RenderDrawRect(renderer, &hdr);
+            float px = 2.0f;
+            float ty = o.y + (dd->size.y - Font8x8::Height * px) * 0.5f;
+            SDL_Color tc{(Uint8)(dd->textColor.r * 255), (Uint8)(dd->textColor.g * 255),
+                         (Uint8)(dd->textColor.b * 255), (Uint8)(dd->textColor.a * 255)};
+            SDL_Color htc = dd->HasSelection() ? tc : SDL_Color{150, 152, 158, 255};
+            DrawText(renderer, dd->HeaderText(), o.x + 8.0f, ty, px, htc);
+            if (dd->open) {
+                float top = o.y + dd->size.y;
+                for (int i = 0; i < (int)dd->options.size(); ++i) {
+                    SDL_Rect orow{(int)o.x, (int)(top + i * dd->size.y), (int)dd->size.x, (int)dd->size.y};
+                    const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
+                    SDL_SetRenderDrawColor(renderer, (Uint8)(rc.r * 255), (Uint8)(rc.g * 255),
+                                           (Uint8)(rc.b * 255), (Uint8)(rc.a * 255));
+                    SDL_RenderFillRect(renderer, &orow);
+                    DrawText(renderer, dd->options[i], o.x + 8.0f,
+                             orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+                }
+            }
+            if (!dd->interactable) { SDL_Rect dr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
+                SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
+        }
+        for (const auto& up : scene.Objects()) {           // input fields (box + text + caret)
+            auto* in = up->GetComponent<UIInputField>();
+            if (!in || !up->active) continue;
+            Vec2 o = ResolveAnchor(in->anchor, in->position, in->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            SDL_Rect box{(int)o.x, (int)o.y, (int)in->size.x, (int)in->size.y};
+            Color bg = in->CurrentColor();
+            SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
+                                   (Uint8)(bg.b * 255), (Uint8)(bg.a * 255));
+            SDL_RenderFillRect(renderer, &box);
+            if (in->focused) {                              // focus outline
+                SDL_SetRenderDrawColor(renderer, 120, 170, 255, 255);
+                SDL_RenderDrawRect(renderer, &box);
+            }
+            float px = 2.0f, pad = 6.0f;
+            bool empty = in->text.empty();
+            std::string full = empty ? in->placeholder : in->DisplayText();
+            const Color& txc = empty ? in->placeholderColor : in->textColor;
+            // Horizontal scroll: show the tail that fits so the caret stays visible.
+            float adv = (Font8x8::Width + 1) * px;
+            int fit = adv > 0 ? (int)((in->size.x - pad * 2) / adv) : (int)full.size();
+            if (fit < 1) fit = 1;
+            std::string shown = ((int)full.size() > fit) ? full.substr(full.size() - fit) : full;
+            float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
+            SDL_Color tc{(Uint8)(txc.r * 255), (Uint8)(txc.g * 255), (Uint8)(txc.b * 255), (Uint8)(txc.a * 255)};
+            DrawText(renderer, shown, o.x + pad, ty, px, tc);
+            if (in->focused && in->CaretVisible()) {        // blinking caret after visible text
+                int cx = (int)(o.x + pad + shown.size() * adv);
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 220);
+                SDL_RenderDrawLine(renderer, cx, (int)ty, cx, (int)(ty + Font8x8::Height * px));
+            }
+        }
+        SDL_RenderSetClipRect(renderer, nullptr);   // end scroll clipping
+        for (const auto& up : scene.Objects()) {           // keyboard/gamepad focus ring
+            if (!up->active || !IsUIFocused(up.get())) continue;
+            UIRect r = GetUIRect(up.get());
+            if (!r.valid || !r.position) continue;
+            Vec2 o = ResolveAnchor(r.anchor, *r.position, r.size, (float)w, (float)h);
+            SDL_Rect ring{(int)o.x - 2, (int)o.y - 2, (int)r.size.x + 4, (int)r.size.y + 4};
+            SDL_SetRenderDrawColor(renderer, 255, 210, 90, 255);
+            SDL_RenderDrawRect(renderer, &ring);
+            SDL_Rect ring2{ring.x - 1, ring.y - 1, ring.w + 2, ring.h + 2};
+            SDL_RenderDrawRect(renderer, &ring2);
+        }
+        for (const auto& up : scene.Objects()) {           // tooltips (hover hints)
+            auto* tt = up->GetComponent<UITooltip>();
+            if (!tt || !up->active || !tt->Ready()) continue;
+            Vec2 m = Input::MousePosition();
+            float px = 2.0f;
+            float tw = tt->text.size() * (Font8x8::Width + 1) * px;
+            float th = Font8x8::Height * px;
+            SDL_Rect box{(int)(m.x + 14), (int)(m.y + 14), (int)(tw + 12), (int)(th + 10)};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(tt->background.r * 255), (Uint8)(tt->background.g * 255),
+                                   (Uint8)(tt->background.b * 255), (Uint8)(tt->background.a * 255));
+            SDL_RenderFillRect(renderer, &box);
+            SDL_SetRenderDrawColor(renderer, (Uint8)(tt->borderColor.r * 255), (Uint8)(tt->borderColor.g * 255),
+                                   (Uint8)(tt->borderColor.b * 255), (Uint8)(tt->borderColor.a * 255));
+            SDL_RenderDrawRect(renderer, &box);
+            SDL_Color tc{(Uint8)(tt->textColor.r * 255), (Uint8)(tt->textColor.g * 255),
+                         (Uint8)(tt->textColor.b * 255), (Uint8)(tt->textColor.a * 255)};
+            DrawText(renderer, tt->text, m.x + 20, m.y + 19, px, tc);
         }
         SDL_RenderPresent(renderer);
     };

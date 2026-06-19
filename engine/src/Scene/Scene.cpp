@@ -160,4 +160,24 @@ GameObject* Scene::FindWithTag(const std::string& tag) const {
     return nullptr;
 }
 
+void Scene::MoveToFront(GameObject* go) {
+    for (std::size_t i = 0; i < m_objects.size(); ++i)
+        if (m_objects[i].get() == go) {
+            auto held = std::move(m_objects[i]);
+            m_objects.erase(m_objects.begin() + i);
+            m_objects.push_back(std::move(held));   // drawn last = on top
+            return;
+        }
+}
+
+void Scene::MoveToBack(GameObject* go) {
+    for (std::size_t i = 0; i < m_objects.size(); ++i)
+        if (m_objects[i].get() == go) {
+            auto held = std::move(m_objects[i]);
+            m_objects.erase(m_objects.begin() + i);
+            m_objects.insert(m_objects.begin(), std::move(held));  // drawn first = behind
+            return;
+        }
+}
+
 } // namespace okay

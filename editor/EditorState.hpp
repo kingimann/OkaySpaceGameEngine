@@ -43,6 +43,7 @@ public:
     void NewCoinCollector();
     void NewMainMenu();
     void NewSnake();
+    void NewInventory();
 
     // ---- Files ---------------------------------------------------------
     bool Save(const std::string& path);

@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <thread>
 
 using namespace okay;
@@ -113,6 +114,77 @@ int main() {
         CHECK(server->PeerName(client->LocalId()) == "Alice");
     }
 
+    // --- Synced variables: server sets, client receives the same value ---
+    {
+        server->SetVar("phase", "play");
+        server->SetVar("score", "10");
+        std::string clientPhase;
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            clientPhase = client->GetVar("phase");
+            if (clientPhase == "play" && client->GetVar("score") == "10") break;
+        }
+        CHECK(client->GetVar("phase") == "play");
+        CHECK(client->GetVar("score") == "10");
+        CHECK(server->GetVar("phase") == "play");
+
+        // A client SetVar routes through the server and comes back to everyone.
+        client->SetVar("ready", "1");
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (server->GetVar("ready") == "1") break;
+        }
+        CHECK(server->GetVar("ready") == "1");
+    }
+
+    // --- Ping: the client measures a round-trip time after ~1s of pinging ---
+    {
+        for (int i = 0; i < 150; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (client->RttMs() > 0.0f) break;
+        }
+        CHECK(client->RttMs() > 0.0f);
+    }
+
+    // --- Interpolation: the client's mirror of the host converges to its pos ---
+    {
+        host->transform->localPosition = {5.0f, 6.0f, 0.0f};
+        for (int i = 0; i < 150; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        GameObject* mh = clientScene.Find("Remote0");
+        CHECK(mh != nullptr);
+        if (mh) {
+            CHECK_NEAR(mh->transform->localPosition.x, 5.0f, 0.2f);
+            CHECK_NEAR(mh->transform->localPosition.y, 6.0f, 0.2f);
+        }
+    }
+
+    // --- Networked spawn: server spawns a prefab on every peer ---
+    {
+        // Write a small prefab file to instantiate.
+        Scene tmp("p");
+        GameObject* proto = tmp.CreateGameObject("Bullet");
+        proto->AddComponent<SpriteRenderer>();
+        CHECK(SceneSerializer::SaveObjectToFile(*proto, "bullet.okayprefab"));
+
+        server->Spawn("bullet.okayprefab", {3, 0, 0});
+        // The spawner has it immediately; the client gets it over the wire.
+        CHECK(serverScene.Find("Bullet") != nullptr);
+        bool onClient = false;
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (clientScene.Find("Bullet")) { onClient = true; break; }
+        }
+        CHECK(onClient);
+        std::remove("bullet.okayprefab");
+    }
+
     // --- Targeted send: server -> one client by id ---
     {
         std::string direct;
@@ -126,6 +198,41 @@ int main() {
             if (!direct.empty()) break;
         }
         CHECK(direct == "just for you");
+    }
+
+    // --- Reliable messages: delivered exactly once each way ------------
+    {
+        int gotAtHost = 0, gotAtClient = 0;
+        server->SetMessageHandler([&](const NetworkManager::NetMessage& m){ if (m.channel == "rel") ++gotAtHost; });
+        client->SetMessageHandler([&](const NetworkManager::NetMessage& m){ if (m.channel == "srel") ++gotAtClient; });
+        client->SendReliable("rel", "c2s");
+        server->SendReliable("srel", "s2c");
+        for (int i = 0; i < 120; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (gotAtHost >= 1 && gotAtClient >= 1) break;
+        }
+        // Pump a while longer to ensure resends don't duplicate the delivery.
+        for (int i = 0; i < 60; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        CHECK(gotAtHost == 1);      // delivered once despite acks/resends
+        CHECK(gotAtClient == 1);
+    }
+
+    // --- Kick: the server disconnects a client, which learns it was kicked ---
+    {
+        std::uint32_t cid = client->LocalId();
+        server->Kick(cid, "bye");
+        for (int i = 0; i < 80; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (client->WasKicked()) break;
+        }
+        CHECK(client->WasKicked());
+        CHECK(client->KickReason() == "bye");
+        CHECK(!client->IsConnected());
     }
 
     // --- Client leaving fires the server's peer-left callback ---

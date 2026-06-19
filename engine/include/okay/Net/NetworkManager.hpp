@@ -7,6 +7,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace okay {
@@ -37,6 +38,15 @@ public:
     bool IsClient() const { return m_mode == Mode::Client; }
     /// This peer's network id (0 for the server, >0 for clients once joined).
     std::uint32_t LocalId() const { return m_localId; }
+
+    /// How fast remote avatars are eased toward their latest networked position
+    /// (per second; 0 = snap instantly). Smooths the ~20 Hz snapshots into fluid
+    /// motion at the local frame rate.
+    float interpolationRate = 12.0f;
+
+    /// Round-trip time to the server in milliseconds (clients only; 0 until the
+    /// first ping completes). A simple latency readout for HUDs / netcode.
+    float RttMs() const { return m_rtt; }
     /// The UDP port the server is bound to (0 if not a server).
     std::uint16_t ServerPort() const { return m_socket.LocalPort(); }
     /// True once a client has completed the join handshake.
@@ -53,6 +63,59 @@ public:
     /// roster (defaults to "Player").
     void SetLocalName(const std::string& name) { m_localName = name; }
     const std::string& LocalName() const { return m_localName; }
+
+    /// The "room" (lobby) this peer is in. Peers only see avatars and receive
+    /// broadcast messages from others in the *same* room, so one server can host
+    /// many independent matches. Set it before joining. Default room is "".
+    void SetRoom(const std::string& room) { m_localRoom = room; }
+    const std::string& Room() const { return m_localRoom; }
+
+    // ---- No-code setup: start automatically when the scene plays ------
+    enum class AutoStart { None, Host, Join };
+    AutoStart   autoStart = AutoStart::None;
+    std::uint16_t autoPort = 45000;
+    std::string autoHost = "127.0.0.1";
+    std::string startName;          // local name to use on auto-start (optional)
+    std::string startRoom;          // lobby room to join on auto-start (optional)
+
+    // ---- Host settings (used when this peer is the server) ------------
+    int         maxPlayers = 8;     // reject joins beyond this many clients
+    float       snapshotRate = 20.0f; // state broadcasts per second (tick rate)
+    std::string serverName;         // friendly server label, sent to clients
+    std::string password;           // clients must match to join ("" = open)
+
+    /// The server's friendly name (clients learn it from the join handshake).
+    const std::string& ServerName() const { return m_serverName; }
+    /// True on a client if the last join was refused (server full / bad password).
+    bool JoinRejected() const { return m_joinRejected; }
+
+    /// On scene Start: act on `autoStart` (host or join) so multiplayer needs no
+    /// script — add the component, pick Host/Join in the Inspector, press Play.
+    void Start() override;
+
+    // ---- Lobby: ready-up and start-match ------------------------------
+    /// Mark this peer ready / not ready (clients tell the server). The host can
+    /// then poll the lobby and start the match when everyone's set.
+    void SetReady(bool ready);
+    bool IsReady() const { return m_ready; }
+    /// Server only: how many clients in the host's room are ready.
+    int  ReadyCount() const;
+    /// Server only: true when there's at least one client in the room and every
+    /// client in it is ready — the cue to start.
+    bool AllReady() const;
+    /// Server only: tell everyone in the room the match has begun (sets
+    /// MatchStarted() on every peer in the room).
+    void StartMatch();
+    /// True once the match has been started for this peer's room.
+    bool MatchStarted() const { return m_matchStarted; }
+
+    // ---- Synced variables (server-authoritative shared state) ---------
+    /// Set a shared variable. On the server it applies and broadcasts to every
+    /// client; on a client it asks the server, which applies and re-broadcasts.
+    /// Great for scores, game phase, who's turn it is — one source of truth.
+    void SetVar(const std::string& key, const std::string& value);
+    /// Read the local copy of a synced variable ("" if unset).
+    std::string GetVar(const std::string& key) const;
     /// Called when a new remote peer appears; return a GameObject to represent
     /// it (its Transform will be driven by incoming snapshots).
     void SetRemoteFactory(std::function<GameObject*(std::uint32_t id, char glyph)> f) {
@@ -78,6 +141,27 @@ public:
     /// server routes it; a client relays through the server. Use it for private
     /// messages, targeted RPCs, or replying to one player.
     void SendTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+
+    /// Spawn a prefab on **every** peer (bullets, pickups, effects). Instantiates
+    /// it locally now and tells the others to instantiate the same prefab at the
+    /// same position — replicated object creation with one call.
+    void Spawn(const std::string& prefabPath, const Vec3& position = Vec3::Zero);
+
+    // ---- Reliable messaging (guaranteed delivery + de-dup over UDP) ----
+    /// Like Send(), but resent until the other end acknowledges it and de-duped
+    /// on arrival — for events you can't afford to drop (deaths, score, "go!").
+    /// On a client it targets the server; on the server it reliably reaches every
+    /// client.
+    void SendReliable(const std::string& channel, const std::string& data);
+    /// Reliable message to a single peer id (server routes; 0 = the host).
+    void SendReliableTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+
+    // ---- Moderation ----------------------------------------------------
+    /// Server: disconnect a client by id (with an optional reason it's told).
+    void Kick(std::uint32_t id, const std::string& reason = "");
+    /// Client: true if the server kicked this peer, plus the reason it gave.
+    bool WasKicked() const { return m_kicked; }
+    const std::string& KickReason() const { return m_kickReason; }
 
     /// A connected peer in the session roster.
     struct PeerInfo { std::uint32_t id; std::string name; char glyph; };
@@ -128,7 +212,16 @@ private:
         PeerState state;
         float lastSeen;
         std::string name;
+        std::string room;
+        bool ready = false;
+        // Per-client reliable channel (server side).
+        std::uint32_t relSeq = 0;   // next outgoing sequence to this client
+        std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> relOut; // unacked
+        std::unordered_set<std::uint32_t> relSeen;  // delivered seqs (de-dup)
     };
+
+    void ResendReliable(std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& out,
+                        const net::Endpoint& to, float dt);
 
     void ServerTick(float dt);
     void ClientTick(float dt);
@@ -146,11 +239,29 @@ private:
     char       m_localGlyph  = '@';
     std::uint32_t m_localId  = 0;
     std::string m_localName  = "Player";
+    std::string m_localRoom;     // "" = default room
+    bool m_ready = false;        // this peer's ready flag
+    bool m_matchStarted = false; // set when StartMatch reaches this peer's room
+    std::string m_serverName;    // client: the server's friendly name
+    bool m_joinRejected = false; // client: server refused us (full / password)
+    bool m_kicked = false;       // client: kicked by the server
+    std::string m_kickReason;
+    // Client-side reliable channel (to the server).
+    std::uint32_t m_relSeq = 0;
+    std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;
+    std::unordered_set<std::uint32_t> m_relSeen;
 
     // Client-only
     net::Endpoint m_serverEp{};
     bool     m_joined = false;
     float    m_joinTimer = 0.0f;
+    float    m_clock = 0.0f;      // local seconds, for ping timestamps
+    float    m_pingTimer = 0.0f;
+    float    m_rtt = 0.0f;        // last measured round-trip, ms
+
+    // Smooth remote avatars toward their latest received position.
+    std::unordered_map<std::uint32_t, Vec3> m_remoteTarget;
+    void InterpolateRemotes(float dt);
 
     // Server-only
     std::unordered_map<net::Endpoint, Client, net::EndpointHash> m_clients;
@@ -167,6 +278,10 @@ private:
     std::vector<NetMessage> m_inbox;
     std::function<void(std::uint32_t, const std::string&)> m_peerJoined;
     std::function<void(std::uint32_t)> m_peerLeft;
+
+    // Server-authoritative synced variables
+    std::unordered_map<std::string, std::string> m_syncVars;
+    void ApplySyncVar(const std::string& key, const std::string& value);
 };
 
 } // namespace okay

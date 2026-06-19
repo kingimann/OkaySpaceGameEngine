@@ -1,5 +1,490 @@
 OkaySpace Game Engine — Changelog
 
+v2.0.0
+  - Unity-style scripting, completed. Building on v1.99, OkayScript now also
+    accepts:
+      * foreach (var item in list) { ... }  (C# foreach).
+      * Generic calls: GetComponent<Rigidbody2D>() (truthy if present) and
+        AddComponent<Rigidbody2D>() (adds SpriteRenderer / Rigidbody2D /
+        TextRenderer / BoxCollider2D at runtime).
+      * Quaternion.Euler(x, y, z) / Quaternion.identity, assignable to
+        transform.rotation.
+      * C# attributes like [SerializeField] and [Header("Stats")] are accepted
+        (ignored) before fields and methods.
+    The editor's "new script" template is now a Unity-style MonoBehaviour, and a
+    real Unity script frequently pastes in unchanged. Still fully backward
+    compatible with the classic function start()/update(dt) style.
+
+v1.99.0
+  - Scripting now reads like Unity C#. You can write OkayScript almost exactly
+    like a Unity MonoBehaviour, and a real Unity script often pastes in unchanged:
+      * Lifecycle: void Start() / void Update() / Awake() / LateUpdate() (the
+        classic start/update still work), plus a "public class Foo : MonoBehaviour
+        { ... }" wrapper whose methods & fields are hoisted out automatically.
+      * Dotted properties: transform.position(.x/.y/.z), transform.localScale,
+        transform.eulerAngles.z, Time.deltaTime/time/timeScale, gameObject.name/
+        activeSelf/tag, Screen.width/height, Input.mousePosition, Mathf.PI,
+        Random.value, Vector3.zero/one/up/... — readable AND assignable
+        (transform.position = new Vector3(x, y, z); transform.position.x = 5;).
+      * Dotted methods: Input.GetKey/GetKeyDown/GetAxis/GetMouseButton...,
+        Mathf.Sin/Cos/Sqrt/Clamp/Lerp/..., Debug.Log, transform.Translate/Rotate,
+        gameObject.SetActive, Instantiate/Destroy, Physics2D.Raycast,
+        Random.Range, SceneManager.LoadScene.
+      * Language: typed declarations (int x = 0; float speed = 5f;), f/d numeric
+        suffixes, i++ / ++i / i--, and new Vector3()/Vector2() constructors.
+      * Unity event names: OnCollisionEnter / OnTriggerEnter / OnClick /
+        OnValueChanged (alongside the classic on_collision etc).
+    Fully backward compatible — existing scripts are untouched.
+
+v1.98.0
+  - DOTween for UI + more transform tweens: tween_ui_move / tween_ui_size animate
+    a UI widget's anchored position and size (slide menus in, pop panels open) —
+    UI widgets don't use the Transform, so these target the widget directly. Also
+    tween_rotate_to (rotate to an ABSOLUTE angle via shortest path, vs the
+    relative tween_rotate) and tween_scale_xy (non-uniform scale). And tween_color
+    / tween_fade now also drive UI Image and UI Panel colors, not just sprites and
+    meshes.
+
+v1.97.0
+  - DOTween, even bigger: tween_move_by (relative glide), tween_jump (arc-jump
+    to a target peaking at a height — coins flying to the HUD, hops), tween_path
+    (move through a list of waypoints), tween_loop_scale (pulsing) and
+    tween_loop_rotate (continuous spin — loaders, coins), and tween_number
+    (count a sibling text number up/down with an optional prefix — score ticks,
+    damage popups). Joins the on-complete callbacks, ping-pong, punch and shake
+    added last update.
+
+v1.96.0
+  - Raycasting from script: new raycast(ox,oy,dx,dy[,max]) returns the NAME of
+    the object hit ("" = miss), with full details via ray_hit(), ray_object(),
+    ray_x()/ray_y() (hit point), ray_nx()/ray_ny() (surface normal) and
+    ray_dist(). 3D mirror: raycast3(ox,oy,oz,dx,dy,dz[,max]) + ray3_*(). Great
+    for shooting, line-of-sight, ground checks, and click-to-select. (The old
+    boolean raycast_hit()/raycast_hit3() still work.)
+  - DOTween, expanded: every tween (tween_move/move3/scale/rotate/color/fade)
+    now takes an optional on-complete callback (a function name) as the last
+    argument. New tween_loop_move(x,y,dur[,ease]) ping-pongs forever (floaters,
+    patrols), tween_punch_scale(amount,dur) / tween_punch_pos(dx,dy,dur) add
+    "juice" to buttons & pickups, and tween_shake(intensity,dur) does impact /
+    camera shake — all settle cleanly back to where they started.
+  - Drag & drop, expanded: world Draggables gain Grid Snap (snap to a world grid
+    for board / tile games) and Drag Scale (lift the item visually while
+    dragging). Drop Zones now fire on_hover_enter() / on_hover_exit() on a
+    dragged item entering/leaving them, so slots can react during the drag.
+
+v1.95.0
+  - Drag & drop for world items (not just UI): add a "Draggable (item)" component
+    to a sprite to pick it up and move it around the scene at runtime, and a
+    "Drop Zone (item)" to sprites that can receive it. Dropping fires on_drop()
+    on the item and on_receive() on the zone (scripts read drop_source() &
+    drop_target()). Same rich options as the UI version — lock axis, drag
+    threshold, bring-to-front, snap-onto-zone (instant world-space slots),
+    return-to-start, and an accept-tag filter. Zones highlight while a valid item
+    hovers them. Great for board games, crafting, card games, and loot.
+
+v1.94.0
+  - Drop-target feedback: UI Drop Target now highlights itself while a valid
+    draggable hovers over it during a drag (toggle "Highlight on hover" and pick
+    the overlay color in the inspector). Makes inventory slots feel responsive —
+    you can see exactly where an item will land before you let go.
+
+v1.93.0
+  - UI drag & drop, much more customizable: UI Draggable now has a "Lock axis"
+    option (Both/Horizontal/Vertical) for sliders & rails, a "Drag threshold"
+    (pixels the pointer must move before a drag starts, so a click stays a
+    click), and "Bring to front" to draw the item above its siblings while
+    dragging. UI Drop Target gains an "Accept tag" filter so a slot only takes
+    matching items (e.g. a weapon slot that accepts only "weapon" items). All
+    exposed in the inspector and saved with the scene.
+
+v1.92.0
+  - Scriptable Objects (Data Assets): reusable data files (.okaydata) of named
+    fields for item/enemy/level definitions and config — Unity's ScriptableObject
+    idea. Create via Project > New Data Asset and edit fields in a popup; read
+    from OkayScript with data_num/data_str/data_has, and customize from code with
+    data_set + data_save. Resolved beside the game in built builds.
+
+v1.91.0
+  - Inventory made trivial: UI Draggable gets "Snap into slot" — drop an item on
+    a slot and it centers itself there, no scripting required. New Project >
+    "Inventory (drag & drop)" template stamps out a bag with slots + draggable
+    items you can rearrange immediately.
+
+v1.90.0
+  - UI drag & drop: add a "UI Draggable" component to a widget to drag it at
+    runtime; add "UI Drop Target" to widgets that can receive it. Dropping fires
+    on_drop() on the dragged object and on_receive() on the target (the names are
+    in Prefs / scripts read ui_drop_source() & ui_drop_target()). Optional
+    return-to-start. The building blocks for inventories, card games, etc.
+  - Mouse-over-UI from script: ui_pointer_over(), ui_hovered() (name under the
+    cursor), ui_is_hovered("name").
+
+v1.89.0
+  - Mouse wheel now reaches the game: a new Input wheel channel (MouseWheel /
+    FeedMouseWheel) fed by the player and editor. Scroll Views now actually
+    wheel-scroll in built games (and in editor Play), not just in edit-mode
+    authoring — fixing scrollable lists/menus in shipped games.
+
+v1.88.0
+  - Button icons: a UI Button can show an image (PNG/JPG) left of its label —
+    set Icon + Icon Size in the inspector (or icon=/iconsize= in OkayUI markup).
+    The label shifts to make room, the icon is bundled by Build Game, and it
+    renders in the built game (the editor shows a placeholder box).
+
+v1.87.0
+  - Dropdown placeholder: set a placeholder string and a value of -1 ("Clear
+    selection" in the inspector) to show dimmed prompt text until the player
+    picks an option. Authorable in OkayUI markup (placeholder="..."); saves with
+    the scene and renders in the editor and built game.
+
+v1.86.0
+  - UI Slider can be Vertical: drag bottom-to-top and the fill/knob run
+    vertically — for volume columns, mixers and meters. Toggle "Vertical" in the
+    inspector; saves with the scene and works in the editor and built game.
+
+v1.85.0
+  - Interactable (disabled) state for UI Toggle, Slider and Dropdown (Button
+    already had it): toggle it off to grey the widget out and have it ignore
+    input — for settings that depend on others. Saves with the scene; the
+    disabled look renders in the editor and built game.
+
+v1.84.0
+  - Text gets a Bold option (faux-bold by double-striking the glyphs) for
+    headings and emphasis — in the Inspector, OkayUI markup (bold=1), saved with
+    the scene, and rendered in the editor and built game.
+
+v1.83.0
+  - UI Toggle gains a Style: classic Checkbox or a modern on/off Switch (a pill
+    track with a sliding knob, with its own knob color) — pick it in the
+    inspector. Saves with the scene and renders in editor + built game.
+
+v1.82.0
+  - More UI polish settings: UI Button gets a "Hover Grow" (scales up when
+    hovered/focused — tactile menus), and UI Panel gets a "Drop Shadow"
+    (color + offset) to lift dialogs and cards off the scene. Both save with
+    the scene and render in the editor and built game.
+
+v1.81.0
+  - More widget settings: UI Slider gains "Whole Numbers" (snaps the value to
+    integers — great for difficulty/count pickers), and UI Progress Bar gains a
+    Fill Direction (Left→Right, Right→Left, Bottom→Top, Top→Bottom) for vertical
+    bars and right-anchored meters. Both save with the scene and render in the
+    built game.
+
+v1.80.0
+  - Full controller/keyboard menu navigation: focus now moves across Buttons,
+    Toggles, Sliders and Dropdowns (not just buttons). Up/Down change focus;
+    Enter/Space/A activate a button, flip a toggle, or open a dropdown; Left/
+    Right change a dropdown selection or nudge a slider by 5%. The focused
+    widget shows a highlight ring in the built game.
+
+v1.79.0
+  - The Main Menu project template now showcases the modern UI: a rounded,
+    gradient card with an outlined title, a styled Start button (with tooltip),
+    a volume Slider with a live value bound to a pref, a Fullscreen toggle, a
+    Quality dropdown, and a Quit button — a ready-made settings menu to learn
+    from or build on.
+
+v1.78.0
+  - UI Toolkit: input fields in OkayUI markup support type=integer|decimal|
+    password (e.g. `input type=password placeholder="PIN"`), matching the
+    Input Field content types.
+
+v1.77.0
+  - Snapping now applies while resizing too: dragging a resize handle snaps the
+    grabbed edge to the canvas edges/center and to sibling widgets (with the
+    magenta guide), falling back to the pixel grid on axes that don't lock on.
+
+v1.76.0
+  - Stretch helpers: a selected resizable UI widget's inspector gains Fill Width
+    / Fill Height / Fill Canvas buttons that size it to the canvas on that axis
+    and align it to the edge (respecting its anchor) — quick full-bleed panels
+    and bars.
+
+v1.75.0
+  - Anchor presets (Unity-style 3x3 grid) in a selected UI widget's inspector:
+    click a corner/edge/center to set the anchor. The widget keeps its on-screen
+    position — its pixel offset is recomputed for the new anchor — so switching
+    anchors never makes it jump. The current anchor is highlighted.
+
+v1.74.0
+  - UI layering + centering: a selected UI widget's inspector gains Bring to
+    Front / Send to Back (controls draw order and which overlapping widget gets
+    picked) and Center in Canvas (centers the widget for its anchor). Backed by
+    new Scene::MoveToFront/MoveToBack.
+
+v1.73.0
+  - Arrow-key nudging: with a UI widget selected and the Scene focused, the
+    arrow keys move it one pixel at a time (hold Shift to step by the UI snap
+    grid) for precise placement. Keys repeat while held.
+
+v1.72.0
+  - UI snapping (Unity-style): with Snap on, dragging/resizing a UI widget snaps
+    to a pixel grid (set the "UI px" size in the Scene toolbar, default 8), and
+    moving smart-snaps the widget's edges/center to the canvas edges/center and
+    to other widgets — drawing magenta alignment guides where it locks on.
+
+v1.71.0
+  - Input Field overhaul: typing now comes from the OS text-input event, so
+    uppercase, punctuation and symbols all work (Shift / Caps respected) instead
+    of the old lowercase-only guesswork. A blinking caret, horizontal scrolling
+    (the caret stays visible in long text), Esc-to-cancel, and content types
+    (Standard / Integer / Decimal / Password, with a mask char) round it out.
+    Works the same in the editor and built games.
+
+v1.70.0
+  - Everything displays in builds: the standalone player now renders UI Input
+    Fields (box, text/placeholder, focus outline, caret) and Scroll Views
+    (background + scrollbar) — previously these showed only in the editor.
+  - Scroll View contents now scroll and clip correctly in built games: child
+    widgets are offset by the scroll position and clipped to the viewport, so
+    lists hide off-view rows just like in the editor preview.
+  - Verified every UI widget type (panel, text, button, image, slider, toggle,
+    progress, input, dropdown, scroll view, tooltip) renders in the build;
+    Layout Group arranges its children on start.
+
+v1.69.0
+  - Better UI resizing: handles now resize in screen space, so the grabbed edge
+    follows the cursor correctly for ANY anchor (previously right/center/bottom-
+    anchored widgets drifted because changing size shifts the anchor). The
+    opposite edge stays pinned, with an 8px minimum; handles are easier to grab.
+  - Snap (toolbar) now rounds UI moves/resizes to whole pixels for tidy values.
+  - Anchoring is visible: a selected widget shows a marker at the canvas point
+    it's anchored to with a line to the widget, plus a live "W x H" size readout
+    above the selection box.
+
+v1.68.0
+  - Fix: the newer UI widgets (Scroll View and Layout Group) couldn't be
+    selected or resized in the Scene view because they weren't recognized as
+    UI elements. Scroll View is now fully selectable/resizable; the Layout Group
+    is selectable and movable by its origin (it's a controller, so no resize).
+  - Added a test that creates one of every UI widget and verifies all are
+    scene-selectable and survive save/load.
+
+v1.67.0
+  - Fix: selecting and resizing screen-space UI in the Scene view was
+    unreliable — the canvas "hovered" test could read false in some docking /
+    overlap states (and while mid-drag), so clicks on a widget did nothing.
+    Hover detection is now robust (window-hover + pointer-in-canvas fallback,
+    and stays true while the canvas is the active drag item).
+  - A selected UI widget no longer shows the world move/rotate/scale gizmo
+    (only its UI selection box + resize handles), so the handles are clear.
+
+v1.66.0
+  - UI Toolkit parameterized custom widgets: a `define` body can use $args, and
+    each instance supplies them — define a `card` once with text "$title", then
+    `card title="Hello"` / `card title="World"` stamp out copies with their own
+    text. Longest-name-first substitution; works in labels and any value.
+
+v1.65.0
+  - Data binding now works on buttons and input fields too (not just text):
+    `button bind="Coins: {coins}"` keeps the label live. UITextBind updates
+    whichever text-bearing widget it sits on (text / button / input).
+
+v1.64.0
+  - UI Toolkit percent sizing: any pos/size component can be a percentage of the
+    canvas — e.g. `panel pos=10%,25% size=50%,40` is positioned a tenth in,
+    a quarter down, half the canvas wide and 40px tall. Mix percent and pixels
+    freely; resolved against the canvas when the document builds.
+
+v1.63.0
+  - UI Toolkit live validation: the UI Document now reports markup problems —
+    unknown widget types and unrecognized keys (typos) — each with its line
+    number. The inspector shows "No problems." when clean, or a red list to fix.
+    Available in code via UIDocument::Diagnostics().
+
+v1.62.0
+  - UI data binding: a text widget can bind to live values —
+    `text bind="Score: {score}"` shows the current `score` Prefs value and
+    updates every frame as it changes (set it from script with prefs_set).
+    Multiple {keys} per label; {{ }} emit literal braces. Backed by a new
+    UITextBind component that also serializes for hand-placed text.
+
+v1.61.0
+  - UI Toolkit containers: author `scroll` (clipped, scrollable region with
+    content= height) and `layout` (dir=vertical|horizontal, spacing=, padding=)
+    directly in OkayUI markup — parent widgets to them for scrollable, auto-
+    arranged lists with no hand-placing.
+  - name=<id> on any markup widget sets its GameObject name, so the ui_* script
+    API (ui_set_text, ui_slider_value, …) can target widgets the document built.
+  - active=0|1 starts a widget shown/hidden.
+
+v1.60.0
+  - UI Toolkit (OkayUI markup) greatly expanded: the UI Document now authors the
+    full widget set — added `input` and `dropdown` to panel/text/button/image/
+    slider/toggle/progress — plus a `tooltip="..."` key on ANY widget.
+  - New customization keys in markup: corner=, border=/bordercolor=, gradient=,
+    font=, hover=/pressed=/textcolor=, align=, outline=, shadow=, fill=/amount=,
+    showvalue=, percent=, check=, options=A|B|C, min=/max=.
+  - New event handlers: onchange= (slider/dropdown), ontoggle= (toggle),
+    onsubmit= (input) — alongside onclick=. Handlers take the rest of the line.
+  - Inspector: an "Insert Example" button drops in a styled settings menu so you
+    can see the toolkit in action immediately.
+
+v1.59.0
+  - UI Tooltips (GameObject > UI > Tooltip): add a UI Tooltip to any widget and
+    a hint box appears next to the cursor after hovering it for a short delay.
+    Tunable text, delay, background and text color; saves with the scene and
+    shows in the built game (and the editor's Game view while playing).
+
+v1.58.0
+  - Slider/Progress/Toggle customization: rounded corners on all three; the
+    Slider gets an adjustable Knob Size and an optional value readout; the
+    Progress Bar gets an optional centered percent readout (with text color).
+  - Consistent "tons of options" styling across the widget set; everything
+    saves with the scene and renders in the built game.
+
+v1.57.0
+  - UI Image fill (like Unity's Filled image): set Fill Mode to Left/Right/Up/
+    Down and a Fill Amount (0..1) to reveal only part of the image — perfect for
+    cooldown sweeps, health/mana bars and loading fills. Drive it from script
+    with ui_set_fill("name", v). Works on textured images (reveals a slice) and
+    on plain colored rects.
+  - UI Image rounded corners (Corner Radius) for the colored-rect fallback.
+  - All of it saves with the scene and renders in the built game.
+
+v1.56.0
+  - UI scripting API: drive any widget from OkayScript by name —
+    ui_set_text / ui_get_text, ui_clicked, ui_set_interactable,
+    ui_slider_value / ui_set_slider, ui_toggle_value / ui_set_toggle,
+    ui_dropdown_value / ui_dropdown_text / ui_set_dropdown, and
+    ui_set_progress. One controller script can now wire up a whole menu
+    (read a slider, flip a toggle, pick a dropdown option, update a label).
+    Documented in docs/SCRIPTING.md.
+
+v1.55.0
+  - Panel gradients: a UI Panel can fade top-to-bottom — turn on "Gradient" and
+    set a Bottom Color (Color is the top). Great for headers and backdrops.
+  - Text outline: screen-space and world Text gets an "Outline" option (a
+    1-pixel surround in an Outline Color) so labels read on any background —
+    stacks with the existing drop shadow.
+  - Both save with the scene and render the same in the built game.
+
+v1.54.0
+  - UI Dropdown (GameObject > UI > Dropdown): an option selector like Unity's
+    Dropdown. Click to open the list, pick an option to set the value and call
+    the script's on_change(). Edit the option list, selection, and colors
+    (header / highlight / list / text / border) in the Inspector; everything
+    saves with the scene and renders in the built game.
+
+v1.53.0
+  - UI customization: panels and buttons now have a Corner Radius, an optional
+    Border (width + color), and buttons have a Font Scale for the label size.
+    Edit them in the Inspector; all of it saves with the scene and renders in
+    the built game.
+  - Text alignment: screen-space Text has a Left/Center/Right Align option,
+    measured from its anchored Screen Pos.
+
+v1.52.0
+  - UI Input Field (GameObject > UI > Input Field): click to focus and type;
+    Backspace deletes, Enter calls on_submit(). Placeholder + max length; saves.
+  - More tweens: tween_rotate (spin about Z), tween_color and tween_fade
+    (animate a sprite/mesh albedo or opacity), all with easings.
+
+v1.51.0
+  - UI Scroll View: a wheel-scrollable, clipped region (GameObject > UI > Scroll
+    View). Parent widgets to it; set Content Height; the mouse wheel scrolls and
+    off-view children are hidden, with a scrollbar.
+  - UI Layout Group: vertical/horizontal auto-layout (GameObject > UI > Layout
+    Group) that stacks child widgets by size + spacing — scroll view + layout =
+    scrollable lists with no hand-placing.
+  - Tweening (DOTween-style): tween_move / tween_move3 / tween_scale with easings
+    (out_quad, in_out_sine, out_back, out_bounce, ...).
+  - Save system: save_game / load_game / save_exists / delete_save snapshot the
+    scene to named slots.
+
+v1.50.0
+  - Reliable networking: net_send_reliable / net_send_reliable_to resend until
+    the other end acks and de-dupe on arrival — for events you can't drop
+    (deaths, score, "go!"). Works client->server and server->all/one.
+  - Moderation: net_kick(id, "reason") disconnects a client; the client learns it
+    via net_was_kicked() (and KickReason). Also a net_kick ActionList op.
+  - Steam: ownership + DLC (steam_owns, steam_owns_dlc), achievement enumeration
+    (steam_achievement_count) and steam_language(). The simulation grants
+    ownership so those paths are testable.
+
+v1.49.0
+  - Unity-style Console: severity icons + colors (info/warning/error), a
+    Collapse toggle (groups repeats with a count), per-level filter buttons with
+    live counts, a search box, Clear-on-Play, timestamps, and a details pane for
+    the selected entry. Script/engine logs route in with the right severity.
+  - Easier hosting + more host options: the Network Manager and the Services
+    panel gain Server Name, Password, Max Players and Tick Rate. The server now
+    refuses joins when full or on a wrong password (clients see "join refused"),
+    and clients learn the server's name. All settings save with the scene.
+
+v1.48.0
+  - Script debugging in the editor Console: engine + script logs now stream into
+    the Console. New builtins print, debug_log, log_info, log_warn, log_error,
+    trace, watch("name", v), assert(cond, "msg"), and format("{} of {}", a, b).
+  - Easier coding — lots more helpers: approach, remap, frac, mod, snap, is_nan,
+    is_finite, avg, min3/max3, lerp_angle, concat, str_repeat.
+  - Proper/intuitive function names (aliases): delta_time, get_key(_down/_up),
+    random/random_int, pick, distance, instantiate, destroy_self, translate,
+    set_position, play_audio, to_string/str, to_number/num, get_x/y/z,
+    screen_width/height.
+
+v1.47.0
+  - Terrain (like Unity): a heightmap terrain you sculpt with a brush — drag in
+    the 3D Scene view to raise, hold Shift to lower (tunable radius/strength) —
+    or generate with Flatten / Smooth / Randomize / Hills. Create via GameObject
+    > 3D Object > Terrain; the heightmap renders as a mesh and saves with scene.
+  - Materials: reusable surface presets (albedo, emissive, specular, texture,
+    tiling, unlit, double-sided) saved as .okaymat assets and applied to any
+    Mesh Renderer — Save/Load in the inspector, or drop a .okaymat from Project.
+
+v1.46.0
+  - Lobby ready-up + start-match (built on rooms): clients call net_ready(1);
+    the host polls net_ready_count() / net_all_ready() and calls net_start_match()
+    when everyone's set — every peer in that room then reports net_match_started().
+    Scoped per room, so matches are independent. Also no-code ActionList ops
+    (net_ready, net_start_match).
+
+v1.45.0
+  - Lobbies / rooms: peers in different rooms are fully isolated — they only see
+    avatars and receive broadcast messages from others in the same room, so one
+    server can host many independent matches. Set it with net_room("name")
+    before host/join, or the "Room (lobby)" field on the Network Manager.
+  - Steam leaderboard reads: steam_leaderboard_top("board", n) returns the
+    ranked Top-N as an array of "rank,name,score" strings.
+
+v1.44.0
+  - Smoother multiplayer: remote avatars are now interpolated toward their latest
+    networked position instead of snapping (tunable "Smoothing" on the Network
+    Manager; first sample still snaps so nothing slides in from the origin).
+  - Latency readout: clients ping the server ~1x/sec; net_ping() returns the
+    round-trip in ms, shown in the Network Manager inspector + Services panel.
+
+v1.43.0
+  - Replicated spawning: net_spawn("prefab", x, y[, z]) instantiates a prefab on
+    every peer with one call (bullets, pickups, effects) — the server relays it
+    so all clients make the same object. Also a no-code ActionList op (net_spawn).
+  - More Steam from scripts: steam_progress (achievement progress), steam_presence
+    (rich presence), steam_friends, steam_overlay. Docs updated.
+
+v1.42.0
+  - No-code multiplayer: a Network Manager component with Auto Start = Host/Join
+    on Play (port, host IP, player name) in the Inspector — add it, pick a mode,
+    press Play. It defaults its own object as the broadcast avatar and mirrors
+    peers as sprites; settings save with the scene.
+  - Synced variables: net_set(key, value) / net_get(key) — a server-authoritative
+    shared store every peer sees, auto-synced to new joiners. Also a no-code
+    ActionList op (net_set).
+  - Steam from scripts: a process-wide shared Steam service plus steam_* builtins
+    (name, unlock/is_unlocked/clear, set/get/inc stat, store, leaderboard,
+    cloud read/write). No-code ActionList ops too (steam_unlock, steam_set_stat,
+    steam_inc_stat). Docs updated.
+
+v1.41.0
+  - Better performance: backface culling (solid meshes skip triangles facing
+    away — about half the triangles of a closed mesh, for free) and a per-mesh
+    frustum cull (off-screen meshes are dropped before any per-triangle work).
+    Both apply in the editor's 3D view and the shipped player.
+  - Better graphics: optional distance fog (per scene) that fades far geometry
+    toward a fog color between a start/end distance — a depth cue that also
+    hides far-clip pop-in. Toggle + tune under Stats > Environment; it saves
+    with the scene and renders in the built game.
+
 v1.40.0
   - Multiplayer made easy: a full net_* OkayScript API — net_host(port) /
     net_join(ip, port) let any player host or join their own server, plus

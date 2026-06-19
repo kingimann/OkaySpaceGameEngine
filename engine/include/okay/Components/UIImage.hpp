@@ -23,6 +23,29 @@ public:
     /// resizable panels, frames, and buttons from one small bordered image.
     bool  nineSlice = false;
     float border = 16.0f;                // source-pixel inset for the 9 regions
+    /// Radial/linear fill (cooldowns, health bars, loading). When `fillMode` is
+    /// not None, only `fillAmount` (0..1) of the rect is drawn, revealed along
+    /// the chosen axis/direction.
+    enum class FillMode { None, Left, Right, Up, Down };
+    FillMode fillMode = FillMode::None;
+    float fillAmount = 1.0f;
+    /// Rounded corners for the colored-rect fallback (pixels).
+    float cornerRadius = 0.0f;
+
+    /// The visible sub-rectangle after applying the fill (origin + size in local
+    /// pixels relative to the widget's top-left). Returns the full rect when the
+    /// fill is None or full.
+    void FilledRect(float w, float h, float& ox, float& oy, float& fw, float& fh) const {
+        ox = 0; oy = 0; fw = w; fh = h;
+        float f = fillAmount < 0 ? 0 : (fillAmount > 1 ? 1 : fillAmount);
+        switch (fillMode) {
+            case FillMode::Right: fw = w * f; break;
+            case FillMode::Left:  fw = w * f; ox = w - fw; break;
+            case FillMode::Down:  fh = h * f; break;
+            case FillMode::Up:    fh = h * f; oy = h - fh; break;
+            default: break;
+        }
+    }
 };
 
 } // namespace okay

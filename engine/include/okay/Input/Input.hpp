@@ -2,6 +2,7 @@
 #include "okay/Math/Vec2.hpp"
 #include <unordered_map>
 #include <vector>
+#include <string>
 
 namespace okay {
 
@@ -49,6 +50,24 @@ public:
     /// button id n). Advances the gamepad down-edge state.
     static void FeedGamepad(const Vec2& axis, unsigned buttonMask);
 
+    // ---- Text input (real typed characters: shift, caps, symbols, layout) ----
+    /// The characters typed since the last ClearTypedText() — for text fields.
+    /// Fed by the windowed runtime from the OS text-input event (SDL_TEXTINPUT),
+    /// so it correctly produces uppercase, punctuation and symbols, unlike the
+    /// polled key state. Excludes control keys (backspace/enter — use GetKeyDown).
+    static const std::string& TypedText();
+    /// Append OS-decoded typed text for this frame (windowed runtime / tests).
+    static void FeedText(const std::string& utf8);
+    /// Clear the per-frame typed text AND mouse-wheel delta — call once at the
+    /// start of each frame, before polling events.
+    static void ClearTypedText();
+
+    // ---- Mouse wheel (driven by FeedMouseWheel from the windowed runtime) -----
+    /// This frame's wheel delta (notches; +up / -down). 0 when idle.
+    static float MouseWheel();
+    /// Add to this frame's wheel delta (from the OS scroll event).
+    static void FeedMouseWheel(float delta);
+
 private:
     friend class Application;
     static void BeginSession();   // put terminal into raw, non-blocking mode
@@ -66,6 +85,9 @@ private:
     static Vec2     s_padAxis;
     static unsigned s_padCurrent;
     static unsigned s_padPrevious;
+
+    static std::string s_typedText;
+    static float       s_mouseWheel;
 };
 
 } // namespace okay

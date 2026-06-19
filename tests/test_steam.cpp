@@ -59,6 +59,16 @@ int main() {
     svc->ActivateOverlay("achievements");   // no-op in sim, just shouldn't crash
     CHECK(svc->FriendCount() == 0);
 
+    // Apps / DLC / locale (the simulation grants ownership).
+    CHECK(svc->OwnsApp(480));
+    CHECK(svc->IsDlcInstalled(12345));
+    CHECK(svc->Language() == "english");
+    svc->UnlockAchievement("A1");
+    svc->UnlockAchievement("A2");
+    CHECK(svc->AchievementCount() >= 2);          // A1 + A2 (plus any earlier)
+    CHECK(svc->IsAchievementUnlocked("A1"));
+    CHECK(!svc->AchievementName(0).empty());
+
     svc->SetRichPresence("status", "In the asteroid belt");
     svc->RunCallbacks();
     svc->Shutdown();

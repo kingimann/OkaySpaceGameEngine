@@ -14,7 +14,8 @@ namespace okay {
 namespace {
     enum Msg : std::uint8_t {
         Join = 1, Welcome = 2, State = 3, Snapshot = 4, Leave = 5,
-        Message = 6, DirectMessage = 7, SyncVar = 8, Ping = 9, Pong = 10
+        Message = 6, DirectMessage = 7, SyncVar = 8, Ping = 9, Pong = 10,
+        Ready = 11
     };
     constexpr float kClientTimeout = 5.0f;
 }
@@ -64,6 +65,8 @@ void NetworkManager::Stop() {
     m_inbox.clear();
     m_syncVars.clear();
     m_rtt = 0.0f;
+    m_ready = false;
+    m_matchStarted = false;
     m_mode = Mode::Offline;
     m_joined = false;
 }
@@ -115,6 +118,10 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                              const std::string& data) {
     // The reserved "__spawn" channel instantiates a prefab on this peer instead
     // of surfacing as a user message (replicated object creation).
+    if (channel == "__match_start") {   // lobby: the match has begun for this room
+        m_matchStarted = true;
+        return;
+    }
     if (channel == "__spawn") {
         Scene* s = GetScene();
         if (!s) return;
@@ -164,6 +171,32 @@ void NetworkManager::Start() {
 
 void NetworkManager::ApplySyncVar(const std::string& key, const std::string& value) {
     m_syncVars[key] = value;
+}
+
+void NetworkManager::SetReady(bool ready) {
+    m_ready = ready;
+    if (m_mode == Mode::Client && m_joined) {
+        net::Packet p(Ready); p.Write(std::uint8_t(ready ? 1 : 0));
+        m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+    }
+}
+
+int NetworkManager::ReadyCount() const {
+    int n = 0;
+    for (auto& [ep, c] : m_clients) if (c.room == m_localRoom && c.ready) ++n;
+    return n;
+}
+
+bool NetworkManager::AllReady() const {
+    int inRoom = 0, ready = 0;
+    for (auto& [ep, c] : m_clients)
+        if (c.room == m_localRoom) { ++inRoom; if (c.ready) ++ready; }
+    return inRoom > 0 && ready == inRoom;
+}
+
+void NetworkManager::StartMatch() {
+    m_matchStarted = true;
+    Send("__match_start", "1");   // room-scoped broadcast
 }
 
 std::string NetworkManager::GetVar(const std::string& key) const {
@@ -275,6 +308,10 @@ void NetworkManager::ServerTick(float dt) {
             float stamp = p.ReadF32();
             net::Packet pong(Pong); pong.Write(stamp);
             m_socket.SendTo(from, pong.Data(), pong.Size());
+        } else if (type == Ready) {
+            std::uint8_t r = p.ReadU8();
+            auto it = m_clients.find(from);
+            if (it != m_clients.end()) it->second.ready = (r != 0);
         } else if (type == DirectMessage) {
             auto it = m_clients.find(from);
             if (it != m_clients.end()) {

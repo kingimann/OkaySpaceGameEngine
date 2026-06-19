@@ -305,6 +305,13 @@ void ActionList::Update(float dt) {
             if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>())
                 n->Spawn(Str(it, 0), {Num(it, 1), Num(it, 2), Num(it, 3)});
         }
+        else if (op == "net_ready") {
+            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>())
+                n->SetReady(it.args.empty() ? true : Num(it, 0) != 0.0f);
+        }
+        else if (op == "net_start_match") {
+            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->StartMatch();
+        }
         else if (op == "steam_unlock")   { Steam::Get().UnlockAchievement(Str(it, 0)); Steam::Get().StoreStats(); }
         else if (op == "steam_set_stat") { Steam::Get().SetStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }
         else if (op == "steam_inc_stat") { Steam::Get().IncrementStat(Str(it, 0), Num(it, 1)); Steam::Get().StoreStats(); }

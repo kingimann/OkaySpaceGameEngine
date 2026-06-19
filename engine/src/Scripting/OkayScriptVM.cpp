@@ -1312,6 +1312,15 @@ struct OkayScriptVM::Impl {
             NetworkManager* n = Net();
             return Value{n ? n->Room() : std::string{}};
         };
+        // Lobby ready-up: clients mark ready; the host polls and starts the match.
+        b["net_ready"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net()) n->SetReady(a.empty() ? true : a[0].AsFloat() != 0.0f);
+            return Value{};
+        };
+        b["net_ready_count"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->ReadyCount() : 0.0f}; };
+        b["net_all_ready"]   = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->AllReady()) ? 1.0f : 0.0f}; };
+        b["net_start_match"] = [this](std::vector<Value>&) { if (NetworkManager* n = Net()) n->StartMatch(); return Value{}; };
+        b["net_match_started"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->MatchStarted()) ? 1.0f : 0.0f}; };
         b["net_name"]  = [this](std::vector<Value>& a) {
             if (NetworkManager* n = Net()) { if (!a.empty()) n->SetLocalName(a[0].AsString()); return Value{n->LocalName()}; }
             return Value{std::string{}};

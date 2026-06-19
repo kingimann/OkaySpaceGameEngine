@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v1.46.0
+  - Lobby ready-up + start-match (built on rooms): clients call net_ready(1);
+    the host polls net_ready_count() / net_all_ready() and calls net_start_match()
+    when everyone's set — every peer in that room then reports net_match_started().
+    Scoped per room, so matches are independent. Also no-code ActionList ops
+    (net_ready, net_start_match).
+
 v1.45.0
   - Lobbies / rooms: peers in different rooms are fully isolated — they only see
     avatars and receive broadcast messages from others in the same room, so one

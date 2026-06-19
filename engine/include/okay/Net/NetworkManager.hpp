@@ -81,6 +81,22 @@ public:
     /// script — add the component, pick Host/Join in the Inspector, press Play.
     void Start() override;
 
+    // ---- Lobby: ready-up and start-match ------------------------------
+    /// Mark this peer ready / not ready (clients tell the server). The host can
+    /// then poll the lobby and start the match when everyone's set.
+    void SetReady(bool ready);
+    bool IsReady() const { return m_ready; }
+    /// Server only: how many clients in the host's room are ready.
+    int  ReadyCount() const;
+    /// Server only: true when there's at least one client in the room and every
+    /// client in it is ready — the cue to start.
+    bool AllReady() const;
+    /// Server only: tell everyone in the room the match has begun (sets
+    /// MatchStarted() on every peer in the room).
+    void StartMatch();
+    /// True once the match has been started for this peer's room.
+    bool MatchStarted() const { return m_matchStarted; }
+
     // ---- Synced variables (server-authoritative shared state) ---------
     /// Set a shared variable. On the server it applies and broadcasts to every
     /// client; on a client it asks the server, which applies and re-broadcasts.
@@ -169,6 +185,7 @@ private:
         float lastSeen;
         std::string name;
         std::string room;
+        bool ready = false;
     };
 
     void ServerTick(float dt);
@@ -188,6 +205,8 @@ private:
     std::uint32_t m_localId  = 0;
     std::string m_localName  = "Player";
     std::string m_localRoom;     // "" = default room
+    bool m_ready = false;        // this peer's ready flag
+    bool m_matchStarted = false; // set when StartMatch reaches this peer's room
 
     // Client-only
     net::Endpoint m_serverEp{};

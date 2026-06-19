@@ -76,6 +76,28 @@ int main() {
     CHECK(atHost == "roomA-only");
     CHECK(atB.empty());                 // B is in another room
 
+    // --- Lobby: ready-up in room A, host starts the match for room A only ---
+    {
+        CHECK(!server->AllReady());          // nobody ready yet
+        clientA->SetReady(true);
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f); a.Update(0.02f); b.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (server->ReadyCount() >= 1) break;
+        }
+        CHECK(server->ReadyCount() == 1);
+        CHECK(server->AllReady());           // the one client in room A is ready
+
+        server->StartMatch();                // begins the match for room A
+        for (int i = 0; i < 100; ++i) {
+            serverScene.Update(0.02f); a.Update(0.02f); b.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (clientA->MatchStarted()) break;
+        }
+        CHECK(clientA->MatchStarted());      // room A got the start
+        CHECK(!clientB->MatchStarted());     // room B is unaffected
+    }
+
     // startRoom serializes on the no-code component.
     {
         Scene s("cfg");

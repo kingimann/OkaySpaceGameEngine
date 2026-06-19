@@ -208,4 +208,26 @@ void Scene::MoveToBack(GameObject* go) {
         }
 }
 
+void Scene::MoveSibling(GameObject* go, int dir) {
+    if (!go || dir == 0) return;
+    // A child reorders within its parent's child list (the order the hierarchy
+    // and UI layering use).
+    if (go->transform && go->transform->Parent()) {
+        go->transform->Parent()->MoveChild(go->transform, dir);
+        return;
+    }
+    // A root object reorders among the other ROOT objects (parented objects keep
+    // their place), so only the visible top-level order changes.
+    std::vector<int> roots; int selfPos = -1;
+    for (int i = 0; i < (int)m_objects.size(); ++i) {
+        GameObject* o = m_objects[i].get();
+        if (o->transform && o->transform->Parent()) continue;
+        if (o == go) selfPos = (int)roots.size();
+        roots.push_back(i);
+    }
+    int other = selfPos + dir;
+    if (selfPos >= 0 && other >= 0 && other < (int)roots.size())
+        std::swap(m_objects[roots[selfPos]], m_objects[roots[other]]);
+}
+
 } // namespace okay

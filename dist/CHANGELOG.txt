@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.8.0
+  - Text component expanded: letter spacing, line spacing, UPPERCASE, and word
+    wrap (to the box), on top of the existing align / box / shadow / outline /
+    bold / background options. Multi-line renders consistently in editor + game.
+  - Button component expanded: smooth color transitions (Transition Speed),
+    per-state Hover Text color, a Press Offset "push", Icon-on-right, Toggle Button
+    mode (stays on, flips isOn each click), and Hold-to-Repeat (steppers/spinners
+    with Repeat Delay + Rate). All exposed in the inspector and serialized.
+  - Hierarchy reordering: Move Up / Move Down in a node's right-click menu and
+    Ctrl+Up / Ctrl+Down reorder the selected object among its siblings (children
+    reorder within their parent; roots among roots) — drives UI draw order too.
+
 v2.7.0
   - Crash fixes:
       * Deleting ANY UI widget (or any child object) no longer crashes. Destroying

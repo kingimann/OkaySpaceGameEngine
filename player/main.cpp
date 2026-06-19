@@ -50,12 +50,12 @@ static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, flo
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
 // in screen pixels, each font pixel `px` screen pixels wide.
 static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float oy,
-                     float px, SDL_Color col) {
+                     float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f) {
     if (px < 1.0f) px = 1.0f;
     SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     float cx = ox;
     for (char ch : text) {
-        if (ch == '\n') { oy += (Font8x8::Height + 1) * px; cx = ox; continue; }
+        if (ch == '\n') { oy += (Font8x8::Height + 1 + lineSp) * px; cx = ox; continue; }
         for (int y = 0; y < Font8x8::Height; ++y)
             for (int x = 0; x < Font8x8::Width; ++x)
                 if (Font8x8::Pixel(ch, x, y)) {
@@ -63,7 +63,7 @@ static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float o
                                   (int)px + 1, (int)px + 1};
                     SDL_RenderFillRect(r, &cell);
                 }
-        cx += (Font8x8::Width + 1) * px; // 1px inter-glyph gap
+        cx += (Font8x8::Width + 1 + letterSp) * px; // inter-glyph gap + letter spacing
     }
 }
 
@@ -477,18 +477,19 @@ int main(int argc, char** argv) {
                         SDL_RenderFillRect(renderer, &br);
                     }
                     Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);   // align handled inside
-                    float p = tr->pixelSize;
+                    std::string disp = tr->DisplayText();
+                    float p = tr->pixelSize, ls = tr->letterSpacing, lp = tr->lineSpacing;
                     if (tr->shadow)
-                        DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * p,
-                                 o.y + tr->shadowOffset.y * p, p, sh);
+                        DrawText(renderer, disp, o.x + tr->shadowOffset.x * p,
+                                 o.y + tr->shadowOffset.y * p, p, sh, ls, lp);
                     if (tr->outline) {
-                        DrawText(renderer, tr->text, o.x - p, o.y, p, ol);
-                        DrawText(renderer, tr->text, o.x + p, o.y, p, ol);
-                        DrawText(renderer, tr->text, o.x, o.y - p, p, ol);
-                        DrawText(renderer, tr->text, o.x, o.y + p, p, ol);
+                        DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp);
+                        DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp);
+                        DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp);
+                        DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp);
                     }
-                    DrawText(renderer, tr->text, o.x, o.y, p, col);
-                    if (tr->bold) DrawText(renderer, tr->text, o.x + p, o.y, p, col);
+                    DrawText(renderer, disp, o.x, o.y, p, col, ls, lp);
+                    if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp);
                 } else {
                     SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
                     float px = tr->pixelSize * scale;
@@ -734,7 +735,7 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {
             auto* btn = up->GetComponent<UIButton>();
             if (!btn || !up->active) continue;
-            Color bg = btn->CurrentColor();
+            Color bg = btn->DisplayColor();
             Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)btn->size.x, (int)btn->size.y};
@@ -754,24 +755,27 @@ int main(int argc, char** argv) {
                     SDL_RenderDrawRect(renderer, &br);
                 }
             }
-            // Optional icon at the left; the label shifts right to make room.
+            // Optional icon (left by default, right when iconRight); the label
+            // takes the remaining space. Press shifts content down slightly.
+            float shift = btn->PressShift();
             float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize : 0.0f;
             if (isz > 0.0f) {
                 SDL_Texture* itex = GetTexture(renderer, btn->icon, baseDir, textureCache);
-                SDL_Rect ir{(int)(o.x + 8), (int)(o.y + (btn->size.y - isz) * 0.5f), (int)isz, (int)isz};
+                float ix = btn->iconRight ? (o.x + btn->size.x - isz - 8.0f) : (o.x + 8.0f);
+                SDL_Rect ir{(int)ix, (int)(o.y + (btn->size.y - isz) * 0.5f + shift), (int)isz, (int)isz};
                 if (itex) { SDL_SetTextureColorMod(itex, 255, 255, 255); SDL_SetTextureAlphaMod(itex, 255);
                             SDL_RenderCopy(renderer, itex, nullptr, &ir); }
             }
-            // Center the label (8px glyphs, ~1px gap) at the button's font scale,
-            // within the area right of the icon.
+            // Center the label at the button's font scale, within the area beside
+            // the icon.
             float px = btn->fontScale;
             float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-            float left = o.x + (isz > 0.0f ? isz + 12.0f : 0.0f);
-            float avail = (o.x + btn->size.x) - left;
-            float tx = left + (avail - tw) * 0.5f;
-            float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f;
-            SDL_Color tc{(Uint8)(btn->textColor.r * 255), (Uint8)(btn->textColor.g * 255),
-                         (Uint8)(btn->textColor.b * 255), (Uint8)(btn->textColor.a * 255)};
+            float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f : 0.0f);
+            float right = o.x + btn->size.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f : 0.0f);
+            float tx = left + ((right - left) - tw) * 0.5f;
+            float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f + shift;
+            Color tcc = btn->CurrentTextColor();
+            SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255)};
             DrawText(renderer, btn->label, tx, ty, px, tc);
         }
         for (const auto& up : scene.Objects()) {           // dropdowns (header + open list)

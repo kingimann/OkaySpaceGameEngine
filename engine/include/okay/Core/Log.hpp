@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -11,6 +12,11 @@ public:
     enum class Level { Trace, Info, Warning, Error };
 
     static Level minLevel;
+
+    /// Optional extra sink for every emitted message (level + formatted text).
+    /// The editor installs one so script print/debug output shows in its Console.
+    using Sink = std::function<void(Level, const std::string&)>;
+    static Sink sink;
 
     template <typename... Args>
     static void Trace(Args&&... args)   { Emit(Level::Trace,   "TRACE", std::forward<Args>(args)...); }
@@ -30,10 +36,12 @@ private:
         std::ostream& out = (level == Level::Error || level == Level::Warning)
                                 ? std::cerr : std::cout;
         out << "[okay][" << tag << "] " << oss.str() << '\n';
+        if (sink) sink(level, oss.str());
     }
 };
 
 inline Log::Level Log::minLevel = Log::Level::Trace;
+inline Log::Sink  Log::sink = nullptr;
 
 } // namespace okay
 

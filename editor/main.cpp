@@ -4525,6 +4525,14 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     LoadRecent();
+
+    // Route engine logs (and script print/log/debug output) into the Console.
+    Log::sink = [](Log::Level lvl, const std::string& msg) {
+        const char* tag = lvl == Log::Level::Error ? "[error] "
+                        : lvl == Log::Level::Warning ? "[warn] " : "";
+        ConsoleLog(std::string(tag) + msg);
+    };
+
     ConsoleLog("Welcome to OkaySpace v" OKAY_ENGINE_VERSION
                ". Choose a 2D or 3D project to begin.");
 

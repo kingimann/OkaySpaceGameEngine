@@ -761,12 +761,45 @@ struct OkayScriptVM::Impl {
         auto& b = rt.builtins;
         auto tf = [this]() -> Transform* { return rt.host ? rt.host->transform : nullptr; };
 
-        b["print"] = [](std::vector<Value>& a) {
+        // ---- Debugging -------------------------------------------------
+        // All of these surface in the editor's Console (it installs a log sink).
+        auto joinArgs = [](std::vector<Value>& a, const char* sep = " ") {
             std::string s;
-            for (std::size_t i = 0; i < a.size(); ++i) { if (i) s += " "; s += a[i].AsString(); }
-            Log::Info("[script] ", s);
+            for (std::size_t i = 0; i < a.size(); ++i) { if (i) s += sep; s += a[i].AsString(); }
+            return s;
+        };
+        b["print"]     = [joinArgs](std::vector<Value>& a) { Log::Info("[script] ", joinArgs(a)); return Value{}; };
+        b["debug_log"] = [joinArgs](std::vector<Value>& a) { Log::Info("[script] ", joinArgs(a)); return Value{}; };
+        b["log_info"]  = [joinArgs](std::vector<Value>& a) { Log::Info("[script] ", joinArgs(a)); return Value{}; };
+        b["log_warn"]  = [joinArgs](std::vector<Value>& a) { Log::Warning("[script] ", joinArgs(a)); return Value{}; };
+        b["log_error"] = [joinArgs](std::vector<Value>& a) { Log::Error("[script] ", joinArgs(a)); return Value{}; };
+        b["trace"]     = [joinArgs](std::vector<Value>& a) { Log::Trace("[script] ", joinArgs(a)); return Value{}; };
+        // watch("hp", hp) -> logs "hp = 42" — quick variable inspection.
+        b["watch"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Log::Info("[watch] ", a[0].AsString(), " = ", a[1].AsString());
+            else if (!a.empty()) Log::Info("[watch] ", a[0].AsString());
             return Value{};
         };
+        // assert(cond [, "message"]) -> logs an error when cond is falsey.
+        b["assert"] = [](std::vector<Value>& a) {
+            bool ok = !a.empty() && a[0].AsFloat() != 0.0f;
+            if (!ok) Log::Error("[assert] failed", a.size() > 1 ? (": " + a[1].AsString()) : std::string{});
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        // format("hp={} of {}", hp, max) -> fills each {} with the next argument.
+        b["format"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string fmt = a[0].AsString(), out;
+            std::size_t arg = 1;
+            for (std::size_t i = 0; i < fmt.size(); ++i) {
+                if (i + 1 < fmt.size() && fmt[i] == '{' && fmt[i + 1] == '}') {
+                    out += (arg < a.size()) ? a[arg++].AsString() : "";
+                    ++i;
+                } else out += fmt[i];
+            }
+            return Value{out};
+        };
+        b["concat"] = [joinArgs](std::vector<Value>& a) { return Value{joinArgs(a, "")}; };
         b["move"] = [tf](std::vector<Value>& a) {
             if (Transform* t = tf())
                 t->Translate({a.size() > 0 ? a[0].AsFloat() : 0.0f,
@@ -2043,6 +2076,79 @@ struct OkayScriptVM::Impl {
             if (rt.functions.count(fn)) return rt.Call(fn, none);
             return Value{};
         };
+
+        // ---- More everyday math / utility helpers ----------------------
+        auto N = [](std::vector<Value>& a, std::size_t i, float d = 0.0f) {
+            return i < a.size() ? a[i].AsFloat() : d;
+        };
+        // approach(cur, target, step) -> step toward target without overshooting.
+        b["approach"] = [N](std::vector<Value>& a) {
+            float c = N(a, 0), t = N(a, 1), s = std::fabs(N(a, 2));
+            if (c < t) return Value{std::min(c + s, t)};
+            if (c > t) return Value{std::max(c - s, t)};
+            return Value{t};
+        };
+        // remap(v, inLo, inHi, outLo, outHi) -> rescale a value between ranges.
+        b["remap"] = [N](std::vector<Value>& a) {
+            float v = N(a, 0), il = N(a, 1), ih = N(a, 2), ol = N(a, 3), oh = N(a, 4, 1.0f);
+            if (ih == il) return Value{ol};
+            return Value{ol + (v - il) / (ih - il) * (oh - ol)};
+        };
+        b["frac"]   = [N](std::vector<Value>& a) { float v = N(a, 0); return Value{v - std::floor(v)}; };
+        b["mod"]    = [N](std::vector<Value>& a) { float b2 = N(a, 1, 1.0f); float r = b2 != 0 ? std::fmod(N(a, 0), b2) : 0; if (r < 0) r += std::fabs(b2); return Value{r}; };
+        b["snap"]   = [N](std::vector<Value>& a) { float s = N(a, 1, 1.0f); return Value{s != 0 ? std::round(N(a, 0) / s) * s : N(a, 0)}; };
+        b["is_nan"] = [N](std::vector<Value>& a) { float v = N(a, 0); return Value{std::isnan(v) ? 1.0f : 0.0f}; };
+        b["is_finite"] = [N](std::vector<Value>& a) { float v = N(a, 0); return Value{std::isfinite(v) ? 1.0f : 0.0f}; };
+        b["avg"]    = [](std::vector<Value>& a) { if (a.empty()) return Value{0.0f}; float s = 0; for (auto& v : a) s += v.AsFloat(); return Value{s / a.size()}; };
+        b["min3"]   = [N](std::vector<Value>& a) { return Value{std::min(N(a, 0), std::min(N(a, 1), N(a, 2)))}; };
+        b["max3"]   = [N](std::vector<Value>& a) { return Value{std::max(N(a, 0), std::max(N(a, 1), N(a, 2)))}; };
+        b["lerp_angle"] = [N](std::vector<Value>& a) {
+            float fr = N(a, 0), to = N(a, 1), t = N(a, 2);
+            float d = std::fmod(to - fr + 540.0f, 360.0f) - 180.0f;   // shortest path
+            return Value{fr + d * t};
+        };
+        b["str_repeat"] = [](std::vector<Value>& a) {
+            std::string s = a.empty() ? "" : a[0].AsString(); int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            std::string out; for (int i = 0; i < n; ++i) out += s; return Value{out};
+        };
+
+        // ---- Friendly aliases: intuitive names for common builtins so games
+        //      read naturally. Each points at an already-registered function. ----
+        auto alias = [&b](const char* from, const char* to) {
+            auto it = b.find(to);
+            if (it != b.end()) b[from] = it->second;
+        };
+        alias("delta_time", "dt");
+        alias("get_key", "key");
+        alias("get_key_down", "key_down");
+        alias("get_key_up", "key_up");
+        alias("is_key_down", "key");
+        alias("random", "rand");
+        alias("random_int", "randi");
+        alias("random_range", "rand");
+        alias("pick", "choose");
+        alias("distance", "dist");
+        alias("distance_to", "dist_to");
+        alias("instantiate", "spawn");
+        alias("instantiate3", "spawn3");
+        alias("destroy_self", "destroy");
+        alias("translate", "move");
+        alias("rotate_z", "rotate");
+        alias("set_position", "set_pos");
+        alias("set_rotation", "set_rot3");
+        alias("play_audio", "play_sound");
+        alias("to_string", "to_str");
+        alias("to_number", "to_num");
+        alias("str", "to_str");
+        alias("num", "to_num");
+        alias("string_length", "str_len");
+        alias("get_x", "pos_x");
+        alias("get_y", "pos_y");
+        alias("get_z", "pos_z");
+        alias("velocity", "set_velocity");
+        alias("screen_width", "screen_w");
+        alias("screen_height", "screen_h");
+        alias("debug", "debug_log");
     }
 };
 

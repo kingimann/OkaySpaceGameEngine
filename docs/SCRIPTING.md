@@ -166,10 +166,26 @@ function update(dt) {
 | `steam_presence("key", "value")` | Rich presence |
 | `steam_friends()` / `steam_overlay("page")` | Friend count / open the overlay |
 
+### Debugging
+All of these print into the editor's **Console**.
+| Function | Description |
+|---|---|
+| `print(...)` / `debug_log(...)` / `log_info(...)` | Log a line (args joined by spaces) |
+| `log_warn(...)` / `log_error(...)` / `trace(...)` | Log at a level (warnings/errors stand out) |
+| `watch("name", value)` | Log `name = value` for quick inspection |
+| `assert(cond [, "msg"])` | Log an error when `cond` is false; returns the result |
+| `format("hp={} of {}", a, b)` | Fill each `{}` with the next argument |
+| `concat(...)` / `str_repeat("ab", 3)` | Join args / repeat a string |
+
 ### State, math & data
 | Function | Description |
 |---|---|
 | `set("k", v)` / `get("k")` | Shared variables across scripts |
+| `approach(cur, target, step)` | Step toward a target without overshooting |
+| `remap(v, inLo, inHi, outLo, outHi)` | Rescale a value between two ranges |
+| `frac(x)` / `mod(a, b)` / `snap(v, step)` | Fraction / positive modulo / round to a step |
+| `is_nan(x)` / `is_finite(x)` / `avg(...)` / `min3` / `max3` | Numeric helpers |
+| `lerp_angle(a, b, t)` | Interpolate degrees the short way round |
 | `prefs_set/prefs_get/prefs_save/prefs_load` | Persist data across runs |
 | `rand(lo, hi)` / `randi(lo, hi)` / `chance(p)` | Randomness |
 | `dist(x1,y1,x2,y2)` / `dist3(...)` / `angle_to(...)` | Geometry |
@@ -177,6 +193,15 @@ function update(dt) {
 | `sqrt pow exp log abs sign floor ceil round` | Math |
 | `min max clamp clamp01 lerp smoothstep wrap ping_pong` | Ranges & easing |
 | `array push pop count contains index_of sort_num shuffle` | Lists |
+
+### Friendly aliases
+Intuitive names for common builtins so code reads naturally:
+`delta_time` (dt), `get_key` / `get_key_down` / `get_key_up` (key…),
+`random` / `random_int` (rand/randi), `pick` (choose), `distance` (dist),
+`instantiate` (spawn), `destroy_self` (destroy), `translate` (move),
+`set_position` (set_pos), `play_audio` (play_sound), `to_string` / `str`
+(to_str), `to_number` / `num` (to_num), `get_x/get_y/get_z` (pos_*),
+`screen_width` / `screen_height`.
 | `upper lower split join substr replace trim str_len` | Strings |
 | `time()` / `dt()` / `fps()` | Timing |
 | `print(...)` | Log to the Console panel |

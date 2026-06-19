@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v1.48.0
+  - Script debugging in the editor Console: engine + script logs now stream into
+    the Console. New builtins print, debug_log, log_info, log_warn, log_error,
+    trace, watch("name", v), assert(cond, "msg"), and format("{} of {}", a, b).
+  - Easier coding — lots more helpers: approach, remap, frac, mod, snap, is_nan,
+    is_finite, avg, min3/max3, lerp_angle, concat, str_repeat.
+  - Proper/intuitive function names (aliases): delta_time, get_key(_down/_up),
+    random/random_int, pick, distance, instantiate, destroy_self, translate,
+    set_position, play_audio, to_string/str, to_number/num, get_x/y/z,
+    screen_width/height.
+
 v1.47.0
   - Terrain (like Unity): a heightmap terrain you sculpt with a brush — drag in
     the 3D Scene view to raise, hold Shift to lower (tunable radius/strength) —

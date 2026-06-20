@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.33
+  - Character Creator:
+    * "Split into Parts" button — bakes the character into one child GameObject
+      per body part (Head, Neck, Torso, Hips, Arm.L/R, Leg.L/R), each its own
+      selectable/movable/riggable object with its own mesh.
+    * Fixed arm/leg spread going the wrong way (now spreads outward).
+    * Bigger shoulder & hip joints that bridge the limbs to the body (no more
+      detached shoulders).
+
 v2.16.32
   - Character Creator fixes:
     * Fixed the "see-through" body — the character now renders solid (the

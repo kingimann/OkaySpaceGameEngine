@@ -5173,6 +5173,34 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TreePop();
             }
 
+            // Explode the character into one child GameObject per body part, so
+            // each part is independently selectable/movable/riggable.
+            ImGui::Spacing();
+            if (ImGui::Button("Split into Parts##char", ImVec2(-1, 0))) {
+                okay::HumanoidColors hc;
+                hc.skin = cb->color; hc.shirt = cb->outfit; hc.pants = cb->pants; hc.shoes = cb->shoes;
+                hc.hair = cb->hair;  hc.eye = cb->eye;       hc.hat = cb->hat;     hc.glasses = cb->glasses;
+                hc.hasHair = cb->hasHair; hc.hasFace = cb->hasFace; hc.hasHat = cb->hasHat;
+                hc.hasGlasses = cb->hasGlasses; hc.beard = cb->beard; hc.mustache = cb->mustache;
+                auto parts = okay::BuildHumanoidParts(cb->params, &hc);
+                int nsub = cb->subdivisions < 0 ? 0 : (cb->subdivisions > 4 ? 4 : cb->subdivisions);
+                for (auto& pt : parts) {
+                    okay::Mesh pm = pt.mesh;
+                    if (nsub > 0) pm.SubdivideSmooth(nsub, cb->smoothAmount);
+                    GameObject* child = ed.scene().CreateGameObject(go->name + "/" + pt.name);
+                    child->name = pt.name;
+                    child->transform->SetParent(go->transform, false);
+                    auto* cmr = child->AddComponent<MeshRenderer>();
+                    cmr->mesh = pm; cmr->doubleSided = true;
+                }
+                if (auto* pmr = go->GetComponent<MeshRenderer>()) pmr->mesh = okay::Mesh{};
+                toRemove = cb;   // drop the parametric component; the parts are now real objects
+                ConsoleLog("Split character into " + std::to_string(parts.size()) + " part objects");
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Bake into separate child objects (Head, Torso, Arm.L, ...)\nfor rigging/manual editing. Removes the live Character component.");
+
             if (ch) { cb->Apply(); ed.dirty = true; }   // live rebuild on any change
         }
     }

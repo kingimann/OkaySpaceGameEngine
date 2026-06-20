@@ -1,6 +1,7 @@
 #include "okay/Components/CharacterBody.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Transform.hpp"
 #include <cmath>
 #include <sstream>
 
@@ -40,6 +41,7 @@ std::string CharacterBody::ToText() const {
           << a.rotation.x << " " << a.rotation.y << " " << a.rotation.z << " "
           << a.color.r << " " << a.color.g << " " << a.color.b << " " << a.color.a << " "
           << a.attach << "\n";
+    o << (rootMotion ? 1 : 0) << "\n";
     return o.str();
 }
 
@@ -72,6 +74,7 @@ void CharacterBody::FromText(const std::string& text) {
            >> a.color.r >> a.color.g >> a.color.b >> a.color.a >> a.attach;
         accessories.push_back(a);
     }
+    int rm = 1; if (in >> rm) rootMotion = (rm != 0);   // optional (older presets lack it)
 }
 
 void CharacterBody::Apply() {
@@ -86,6 +89,8 @@ void CharacterBody::Update(float dt) {
     if (anim == 0) return;
     auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
     if (!mr) return;
+    Transform* tr = gameObject ? gameObject->transform : nullptr;
+    if (tr && !restYset) { restY = tr->localPosition.y; restYset = true; }
     animTime += dt * (animSpeed <= 0.0f ? 1.0f : animSpeed);
     const float t = animTime;
     HumanoidParams pp = params;        // animate a copy; authored params untouched
@@ -104,7 +109,24 @@ void CharacterBody::Update(float dt) {
             pp.legSwing = s; pp.armSwing = -s;
             break;
         }
+        case 4: {  // wave: raise the right arm and wave it
+            pp.armSwing = 3.0f * std::sin(t * 1.5f);
+            pp.rightArmRot = {18.0f * std::sin(t * 6.0f), 0.0f, -135.0f};
+            break;
+        }
+        case 5: {  // jump: crouch-and-hop with arms up; bobs the body height
+            float ph = std::sin(t * 3.0f);
+            float h = ph > 0.0f ? ph : 0.0f;
+            pp.legSwing = 0.0f; pp.armSpread = 20.0f + 80.0f * h;
+            if (tr) tr->localPosition.y = restY + 0.8f * h;
+            break;
+        }
         default: break;
+    }
+    // Root motion: Walk/Run travel forward along the object's facing.
+    if (rootMotion && tr && (anim == 2 || anim == 3)) {
+        float spd = (anim == 3 ? 3.0f : 1.2f) * (animSpeed <= 0.0f ? 1.0f : animSpeed);
+        tr->localPosition = tr->localPosition + tr->Forward() * (spd * dt);
     }
     mr->mesh = Build(pp);
 }

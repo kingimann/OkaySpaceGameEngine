@@ -188,6 +188,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << p.armThickness << " " << p.legThickness << " " << p.waist << " " << p.belly;
         out << " " << cb->accessories.size();         // accessory attach points (parallel list)
         for (const auto& a : cb->accessories) out << " " << a.attach;
+        out << " " << (cb->rootMotion ? 1 : 0);
         out << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
@@ -1039,6 +1040,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (k < (int)cb->accessories.size()) cb->accessories[k].attach = at;
                         }
                     }
+                    if (more()) { int rm = 1; in >> rm; cb->rootMotion = (rm != 0); }
                     cb->Apply();   // rebuild the humanoid mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();

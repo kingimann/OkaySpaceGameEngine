@@ -815,8 +815,8 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         float armLen = 0.74f * aL * H;
         float armCY = shoulderY - armLen * 0.5f;       // arm hangs from the shoulder
         float wristY = shoulderY - armLen;             // bottom of the arm
-        // Shoulder joint that bridges the torso to the arm without bulging.
-        arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * sw * 0.82f, shoulderY, 0.0f}, {at * 1.8f, at * 1.8f, at * 1.8f}, shirt);
+        // Small shoulder joint that just fills the arm/torso seam.
+        arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * sw * 0.85f, shoulderY, 0.0f}, {at * 1.2f, at * 1.15f, at * 1.2f}, shirt);
         arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * sw, armCY, 0.0f}, {at, armLen, at}, armRot, shoulder, shirt);
         float hsz = 0.16f * B * p.handSize;
         Vec3 hp{s * sw, wristY + hsz * 0.3f, 0.0f};    // hand at the wrist (overlaps the arm)
@@ -832,7 +832,7 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         Vec3 hip{s * hw, 0.60f * H, 0.0f};
         Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * p.legSpread};   // + spreads outward
         float lt = 0.25f * B * p.legThickness;
-        leg.Add(Mesh::Sphere(0.5f, 6, 7), {s * hw, 0.56f * H, 0.0f}, {lt * 1.7f, lt * 1.7f, lt * 1.7f}, pants);
+        leg.Add(Mesh::Sphere(0.5f, 6, 7), {s * hw, 0.52f * H, 0.0f}, {lt * 1.15f, lt * 1.1f, lt * 1.15f}, pants);
         leg.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.06f * H, 0.0f}, {lt, 1.15f * lL * H, lt}, legRot, hip, pants);
         float fsz = p.footSize, fy = (0.06f - 0.57f * lL) * H;
         leg.AddPosed(Mesh::Sphere(0.5f, 5, 6), {s * hw, fy, 0.0f}, {lt * 0.9f, lt * 0.9f, lt * 0.9f}, legRot, hip, skin);     // ankle

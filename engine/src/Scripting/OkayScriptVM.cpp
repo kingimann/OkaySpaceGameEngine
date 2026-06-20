@@ -78,6 +78,8 @@ struct Token {
 
 struct ScriptError : std::runtime_error {
     using std::runtime_error::runtime_error;
+    int line = 0;                                  // source line (0 = unknown)
+    ScriptError(const std::string& msg, int ln) : std::runtime_error(msg), line(ln) {}
 };
 
 class Lexer {
@@ -214,7 +216,7 @@ private:
             case '&': if (Peek() == '&') { Advance(); return {Tok::And, "", 0, m_line}; } break;
             case '|': if (Peek() == '|') { Advance(); return {Tok::Or, "", 0, m_line}; } break;
         }
-        throw ScriptError(std::string("unexpected character '") + c + "'");
+        throw ScriptError(std::string("unexpected character '") + c + "'", m_line);
     }
 
     const std::string& m_src;
@@ -812,7 +814,7 @@ private:
     bool Check(Tok t) const { return Peek().type == t; }
     bool Match(Tok t) { if (Check(t)) { ++m_pos; return true; } return false; }
     const Token& Expect(Tok t, const char* msg) {
-        if (!Check(t)) throw ScriptError(std::string("parse error: expected ") + msg);
+        if (!Check(t)) throw ScriptError(std::string("parse error: expected ") + msg, Peek().line);
         return m_toks[m_pos++];
     }
 
@@ -897,7 +899,7 @@ private:
             auto st = std::make_unique<DoWhileStmt>();
             st->body = ParseBlock();
             if (!(Check(Tok::While) || (Check(Tok::Ident) && Peek().text == "while")))
-                throw ScriptError("parse error: expected 'while' after do-block");
+                throw ScriptError("parse error: expected 'while' after do-block", Peek().line);
             ++m_pos;   // 'while'
             Expect(Tok::LParen, "'('");
             st->cond = ParseExpression();
@@ -920,7 +922,7 @@ private:
                 } else if (Check(Tok::Ident) && Peek().text == "default") {
                     ++m_pos; c.isDefault = true; Expect(Tok::Colon, "':'");
                 } else {
-                    throw ScriptError("parse error: expected 'case' or 'default' in switch");
+                    throw ScriptError("parse error: expected 'case' or 'default' in switch", Peek().line);
                 }
                 while (!Check(Tok::RBrace) && !Check(Tok::End) &&
                        !(Check(Tok::Ident) && (Peek().text == "case" || Peek().text == "default")))
@@ -1199,7 +1201,7 @@ private:
             }
             return std::make_unique<VarExpr>(name);
         }
-        throw ScriptError("parse error: unexpected token");
+        throw ScriptError("parse error: unexpected token", Peek().line);
     }
 
     std::vector<Token> m_toks;
@@ -3608,6 +3610,14 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->loaded = true; return true; // stray break/continue: harmless
     } catch (const ContinueSignal&) {
         m_impl->loaded = true; return true;
+    } catch (const ScriptError& e) {
+        // Prefix the source line when known, so editors can show a diagnostic.
+        std::string msg = e.line > 0 ? "line " + std::to_string(e.line) + ": " + e.what()
+                                     : std::string(e.what());
+        if (error) *error = msg;
+        Log::Error("OkayScript: ", msg);
+        m_impl->loaded = false;
+        return false;
     } catch (const std::exception& e) {
         if (error) *error = e.what();
         Log::Error("OkayScript: ", e.what());

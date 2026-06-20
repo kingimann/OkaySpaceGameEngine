@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.9
+  - Inline compile diagnostics in the Script Editor:
+    * OkayScript parse/compile errors now report the source line (e.g.
+      "line 12: parse error: expected '}'").
+    * The offending line gets a red wavy underline in the editor.
+    * The error in the status bar is clickable — jump straight to the line.
+
 v2.16.8
   - Script Editor visual polish (VS Code-style):
     * Bracket-pair colorization: matching ()[]{} are tinted by nesting depth

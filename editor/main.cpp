@@ -2957,6 +2957,7 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::SameLine();
         static bool s_highlight = true;
         static std::string s_error;     // last compile error (shown red in status)
+        static bool s_palReq = false;   // request to open the command palette
         static char s_find[128] = "";   // Find query (Ctrl+F highlights matches)
         if (ImGui::SmallButton("Run")) {           // compile + run
             bool ok = sc->LoadSource(buf.data(), &s_error);
@@ -2999,6 +3000,9 @@ void DrawScriptEditor(EditorState& ed) {
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Cmds")) s_palReq = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Command palette (Ctrl+Shift+P)");
         ImGui::SameLine();
         ImGui::Checkbox("Syntax", &s_highlight);
         ImGui::SameLine();
@@ -3144,6 +3148,52 @@ void DrawScriptEditor(EditorState& ed) {
             for (std::size_t pos = hay.find(needle); pos != std::string::npos;
                  pos = hay.find(needle, pos + needle.size())) ++findCount;
             ImGui::SameLine(); ImGui::TextDisabled("%d match%s", findCount, findCount == 1 ? "" : "es");
+        }
+
+        // --- Command Palette (Ctrl+Shift+P): searchable editor actions + go-to ---
+        static char s_palQuery[64] = "";
+        static bool s_palFocus = false;
+        if (s_palReq ||
+            (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+             ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_P, false))) {
+            s_palReq = false; s_palQuery[0] = '\0'; s_palFocus = true; ImGui::OpenPopup("##cmdpalette");
+        }
+        if (ImGui::BeginPopup("##cmdpalette")) {
+            struct Cmd { const char* name; std::function<void()> run; };
+            std::vector<Cmd> cmds = {
+                {"Run (compile & execute)", [&]{ bool ok = sc->LoadSource(buf.data(), &s_error); if (ok) s_error.clear(); ed.dirty = true; }},
+                {"Save", [&]{ std::string p = filePath(); if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
+                {"Format Document", [&]{ SetCodeBuffer(sc, FormatOkayScript(buf.data())); ed.dirty = true; }},
+                {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); SetCodeBuffer(sc, s); std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
+                {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
+                {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
+                {"Toggle Comment Line", [&]{ caret.toggleComment = true; }},
+                {"Open Scripting Docs", [&]{ g_showScriptDocs = true; }},
+                {"Open in External IDE", [&]{ std::string p = filePath(); extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p); }},
+                {"Zoom In", [&]{ s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f); }},
+                {"Zoom Out", [&]{ s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f); }},
+            };
+            if (s_palFocus) { ImGui::SetKeyboardFocusHere(); s_palFocus = false; }
+            ImGui::SetNextItemWidth(340);
+            ImGui::InputTextWithHint("##palq", "Type a command or symbol...", s_palQuery, sizeof(s_palQuery));
+            std::string q = s_palQuery; for (auto& c : q) c = (char)std::tolower((unsigned char)c);
+            auto matches = [&](const std::string& label) {
+                if (q.empty()) return true;
+                std::string l = label; for (auto& c : l) c = (char)std::tolower((unsigned char)c);
+                return l.find(q) != std::string::npos;
+            };
+            ImGui::BeginChild("##palscroll", ImVec2(340, 220));
+            for (auto& cm : cmds)
+                if (matches(cm.name) && ImGui::Selectable(cm.name)) { cm.run(); ImGui::CloseCurrentPopup(); }
+            // Go to any function/class in the file (symbol search).
+            for (const auto& s : ScriptOutline(buf.data())) {
+                std::string label = "Go to  " + s.second;
+                if (matches(label) && ImGui::Selectable(label.c_str())) {
+                    caret.gotoLine = s.first; s_scrollToLine = s.first; ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::EndChild();
+            ImGui::EndPopup();
         }
 
         // --- Editor surface: dark theme, line-number gutter, syntax overlay ---

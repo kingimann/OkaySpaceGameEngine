@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.11
+  - Command Palette in the Script Editor (Ctrl+Shift+P, or the new "Cmds"
+    button): type to fuzzy-search and run editor actions — Run, Save, Format,
+    Reload, toggle Syntax/Minimap, comment line, zoom, open docs/IDE — and it
+    also lists every function/class so you can "Go to" any symbol.
+
 v2.16.10
   - Script Editor minimap (VS Code-style): a scaled overview of the whole file
     pinned beside the editor. Each line is a bar (length ~ its content, comments

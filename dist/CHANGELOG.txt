@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.21
+  - Character Creator: animation! Characters can now move.
+    * Animation selector — None / Idle (gentle sway) / Walk / Run — with an
+      Anim Speed slider. Plays in Play mode: arms and legs swing fore/aft
+      (arms counter the legs) for a natural gait.
+    * Engine: Humanoid() supports antisymmetric arm/leg swing; CharacterBody
+      animates it per-frame during play. Animation choice + speed save/load.
+
 v2.16.20
   - Character Creator: accessories.
     * Hat (brim + crown) and Glasses (sunglasses bar) toggles, each with its own

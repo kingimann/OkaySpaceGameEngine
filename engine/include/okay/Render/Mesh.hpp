@@ -38,6 +38,8 @@ struct HumanoidParams {
     float mouthWidth   = 1.0f;   // multiplier on mouth width (a wider "smile")
     float browAngle    = 0.0f;   // degrees; +tilts brows inward/down (angry), -up (worried)
     bool  ears         = true;   // add ears to the sides of the head
+    float armSwing     = 0.0f;   // degrees: fore/aft arm swing (animation; antisymmetric)
+    float legSwing     = 0.0f;   // degrees: fore/aft leg swing (animation; antisymmetric)
 };
 
 /// Per-region colors for the procedural humanoid (Mesh::Humanoid). When passed,
@@ -735,7 +737,7 @@ struct Mesh {
         m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B * bd}, pants); // hips
         for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
             Vec3 shoulder{s * sw, 1.50f * H + up, 0.0f};       // pivot at the shoulder
-            Vec3 armRot{0.0f, 0.0f, (float)s * -p.armSpread};  // swing out from the body
+            Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * -p.armSpread};  // out + fore/aft
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H + up, 0.0f},
                        {0.22f * B, 0.64f * aL * H, 0.22f * B}, armRot, shoulder, shirt);
             m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H + up, 0.0f},
@@ -744,7 +746,7 @@ struct Mesh {
         }
         for (int s = -1; s <= 1; s += 2) {                                    // legs + feet
             Vec3 hip{s * hw, 0.60f * H, 0.0f};
-            Vec3 legRot{0.0f, 0.0f, (float)s * -p.legSpread};
+            Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * -p.legSpread};
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f},
                        {0.26f * B, 0.96f * lL * H, 0.26f * B}, legRot, hip, pants);
             m.AddPosed(Cube(1.0f), {s * hw, (0.12f - 0.58f * lL) * H, 0.08f},

@@ -27,22 +27,30 @@ public:
     bool  hasHat = false;
     bool  hasGlasses = false;
 
-    /// Build the mesh described by the current parameters (per-part colors).
-    Mesh Build() const {
+    // Simple limb animation, played during Play. 0 None, 1 Idle, 2 Walk, 3 Run.
+    int   anim = 0;
+    float animSpeed = 1.0f;
+    float animTime = 0.0f;        // runtime clock (not serialized)
+
+    /// Build the mesh for an explicit parameter set (used for animation frames).
+    Mesh Build(const HumanoidParams& pp) const {
         HumanoidColors c;
         c.skin = color; c.shirt = outfit; c.pants = pants; c.shoes = shoes;
         c.hair = hair;  c.eye = eye;      c.hasHair = hasHair; c.hasFace = hasFace;
         c.hat = hat; c.glasses = glasses; c.hasHat = hasHat; c.hasGlasses = hasGlasses;
-        Mesh m = Mesh::Humanoid(params, &c);
+        Mesh m = Mesh::Humanoid(pp, &c);
         int n = subdivisions < 0 ? 0 : (subdivisions > 3 ? 3 : subdivisions);
         if (n > 0) m.SubdivideSmooth(n, smoothAmount);
         return m;
     }
+    /// Build the mesh described by the current (rest) parameters.
+    Mesh Build() const { return Build(params); }
 
     /// Build into the sibling MeshRenderer (adding one if needed) and push color.
     void Apply();
 
     void Start() override { Apply(); }
+    void Update(float dt) override;   // animate limbs while playing
 };
 
 } // namespace okay

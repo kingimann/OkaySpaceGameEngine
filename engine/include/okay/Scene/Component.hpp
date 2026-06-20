@@ -62,7 +62,9 @@ private:
     bool m_started = false;
 };
 
-/// Convenience alias for user scripts, echoing Unity's MonoBehaviour.
+/// Convenience aliases for user scripts. OkaySpace's scripts subclass
+/// `OkaySource` the way Unity scripts subclass MonoBehaviour.
 using Behaviour = Component;
+using OkaySource = Component;
 
 } // namespace okay

@@ -90,5 +90,20 @@ int main() {
         CHECK(b.Objects().size() == 2);
     }
 
+    // --- GameObject tag + static flag survive a round-trip ---
+    {
+        Scene scene("S");
+        GameObject* go = scene.CreateGameObject("Wall");
+        go->tag = "Environment";
+        go->isStatic = true;
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        CHECK(SceneSerializer::Deserialize(loaded, text));
+        GameObject* lw = loaded.Find("Wall");
+        CHECK(lw != nullptr);
+        CHECK(lw && lw->tag == "Environment");
+        CHECK(lw && lw->isStatic == true);
+    }
+
     TEST_MAIN_RESULT();
 }

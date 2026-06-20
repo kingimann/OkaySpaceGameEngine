@@ -28,7 +28,7 @@ planet, `A` player ship.)*
 |----------------------|-----------------------------------------------------|
 | `GameObject`         | `okay::GameObject`                                  |
 | `Component`          | `okay::Component`                                   |
-| `MonoBehaviour`      | `okay::Behaviour` (alias of `Component`)            |
+| `MonoBehaviour`      | `okay::OkaySource` / `okay::Behaviour` (Component aliases) |
 | `Transform`          | `okay::Transform` (full parent/child hierarchy)    |
 | `Scene`              | `okay::Scene`                                       |
 | `Camera`             | `okay::Camera` (orthographic + perspective)         |
@@ -101,7 +101,8 @@ planet, `A` player ship.)*
   exactly like a Unity C# `MonoBehaviour`: `void Start()` / `void Update()`,
   `transform.position = new Vector3(...)`, `Input.GetKeyDown("space")`,
   `Time.deltaTime`, `Mathf.Sin(t)`, `Debug.Log(...)`, typed vars (`float speed = 5f;`),
-  `i++` loops, and a `public class Foo : MonoBehaviour { }` wrapper that pastes in.
+  `i++` loops, and a `public class Foo : OkaySource { }` wrapper (Unity's
+  `: MonoBehaviour` still parses, so pasted scripts work too).
   The classic lowercase style still works too. A built-in language (works
   everywhere; an optional **C#** backend sits behind the same `IScriptVM`). Has
   `if`/`while`/`for`/**foreach**/`break`/`continue`, functions, the **ternary**

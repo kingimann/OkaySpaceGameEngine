@@ -138,9 +138,9 @@ SDL_Renderer* g_sdlRenderer = nullptr;
 // time — if the Scene and Game views shared one texture, whichever drew last
 // would overwrite it and BOTH panels would show that content (the flicker seen
 // when splitting Scene + Game). A texture per slot keeps them independent.
-static const int kView3DSlots = 2;
-SDL_Texture* g_view3DTex[kView3DSlots] = {nullptr, nullptr};
-int g_view3DW[kView3DSlots] = {0, 0}, g_view3DH[kView3DSlots] = {0, 0};
+static const int kView3DSlots = 3;   // 0=Scene view, 1=Game view, 2=Camera preview
+SDL_Texture* g_view3DTex[kView3DSlots] = {};
+int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
@@ -412,6 +412,13 @@ char g_pathBuf[256] = "scene.okayscene";
 // Data Asset (Scriptable Object) editor window.
 bool  g_dataAssetOpen = false;
 std::string g_dataAssetPath;
+// Material (.okaymat) editor window.
+bool  g_matAssetOpen = false;
+std::string g_matAssetPath;
+// "New Script" naming dialog (Add Component > Script > New Script...).
+GameObject* g_newScriptGO = nullptr;
+bool  g_newScriptOpen = false;
+char  g_newScriptName[96] = "";
 
 // Extra panels / tools.
 bool  g_showStats = true;
@@ -436,10 +443,59 @@ struct BuildSettings {
     bool  vsync = true;
     bool  hideCursor = false;
     int   fpsCap = 0;                      // 0 = uncapped (vsync paces)
+    bool  quitOnEscape = true;
+    float masterVolume = 1.0f;
+    bool  showFps = false;
     bool  includeAllProjectScenes = false; // else just the current scene
     bool  developmentBuild = false;
 };
 BuildSettings g_build;
+
+// Project-wide settings (persisted to project.okayproj): defaults a build/scene
+// inherits, edited via Edit > Project Settings.
+struct ProjectSettings {
+    char  company[128]  = "OkaySpace";
+    char  version[32]   = "1.0.0";
+    int   defaultWidth  = 1280, defaultHeight = 720;
+    float gravity2D[2]  = {0.0f, -9.81f};
+    float gravity3D[3]  = {0.0f, -9.81f, 0.0f};
+    float ambient       = 0.30f;
+    bool  skybox        = true;
+};
+ProjectSettings g_project;
+bool g_showProjectSettings = false;
+
+void SaveProjectSettings() {
+    std::ofstream f("project.okayproj");
+    if (!f) return;
+    f << "company=" << g_project.company << "\n";
+    f << "version=" << g_project.version << "\n";
+    f << "width=" << g_project.defaultWidth << "\n";
+    f << "height=" << g_project.defaultHeight << "\n";
+    f << "gravity2d=" << g_project.gravity2D[0] << " " << g_project.gravity2D[1] << "\n";
+    f << "gravity3d=" << g_project.gravity3D[0] << " " << g_project.gravity3D[1] << " " << g_project.gravity3D[2] << "\n";
+    f << "ambient=" << g_project.ambient << "\n";
+    f << "skybox=" << (g_project.skybox ? 1 : 0) << "\n";
+}
+
+void LoadProjectSettings() {
+    std::ifstream f("project.okayproj");
+    if (!f) return;
+    std::string line;
+    while (std::getline(f, line)) {
+        std::size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        if      (k == "company") std::strncpy(g_project.company, v.c_str(), sizeof(g_project.company) - 1);
+        else if (k == "version") std::strncpy(g_project.version, v.c_str(), sizeof(g_project.version) - 1);
+        else if (k == "width")   g_project.defaultWidth = std::atoi(v.c_str());
+        else if (k == "height")  g_project.defaultHeight = std::atoi(v.c_str());
+        else if (k == "gravity2d") std::sscanf(v.c_str(), "%f %f", &g_project.gravity2D[0], &g_project.gravity2D[1]);
+        else if (k == "gravity3d") std::sscanf(v.c_str(), "%f %f %f", &g_project.gravity3D[0], &g_project.gravity3D[1], &g_project.gravity3D[2]);
+        else if (k == "ambient") g_project.ambient = (float)std::atof(v.c_str());
+        else if (k == "skybox")  g_project.skybox = std::atoi(v.c_str()) != 0;
+    }
+}
 bool  g_snap = false;
 float g_snapSize = 1.0f;
 int   g_uiGrid = 8;         // UI snap grid in pixels (Snap on)
@@ -452,6 +508,10 @@ enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
 int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+float g_rotAccum = 0.0f;    // raw degrees this rotate-drag (for 15-deg snap detents)
+float g_rotApplied = 0.0f;  // snapped degrees already applied this drag
+float g_rotSnapDeg = 15.0f; // rotation snap increment when Snap is on
+bool  g_gizmoLocal = false; // gizmo axes in the object's local space (Unity's Local/Global)
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
 float g_terrainRadius = 6.0f;
 float g_terrainStrength = 4.0f;
@@ -550,9 +610,10 @@ const char* StarterScript(const std::string& lang) {
     if (lang == "csharp")
         return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
                "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    // OkayScript, written Unity-style (a MonoBehaviour) — this is the syntax
-    // most users expect. The classic function start()/update(dt) style still works.
-    return "public class NewScript : MonoBehaviour {\n"
+    // OkayScript, written Unity-style but with OkaySpace's own base class,
+    // OkaySource — this is the syntax most users expect. The classic
+    // function start()/update(dt) style still works.
+    return "public class NewScript : OkaySource {\n"
            "    float speed = 2f;\n\n"
            "    void Start() {\n"
            "        transform.position = new Vector3(0, 0, 0);\n"
@@ -634,6 +695,9 @@ struct Options {
     bool fullscreen = false, borderless = false, resizable = true, vsync = true;
     bool hideCursor = false;
     int  fpsCap = 0;
+    bool quitOnEscape = true;
+    float masterVolume = 1.0f;
+    bool showFps = false;
     bool includeAllProjectScenes = false, developmentBuild = false;
 };
 
@@ -679,6 +743,9 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "vsync=" << (opt.vsync ? 1 : 0) << "\n";
         cf << "cursor=" << (opt.hideCursor ? 0 : 1) << "\n";
         cf << "fps_cap=" << opt.fpsCap << "\n";
+        cf << "quit_on_escape=" << (opt.quitOnEscape ? 1 : 0) << "\n";
+        cf << "volume=" << opt.masterVolume << "\n";
+        cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
@@ -924,6 +991,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
     if (ImGui::BeginMenu("Edit")) {
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, ed.CanUndo())) { ed.Undo(); ConsoleLog("Undo"); }
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, ed.CanRedo())) { ed.Redo(); ConsoleLog("Redo"); }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Project Settings...")) g_showProjectSettings = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
@@ -1433,6 +1502,17 @@ void DrawProject(EditorState& ed) {
         std::ofstream(p) << extide::StarterScript("okayscript");
         ConsoleLog("Created " + p.string());
     }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Material")) {
+        fs::path p = uniquePath("New Material", ".okaymat");
+        if (Material{}.SaveToFile(p.string())) ConsoleLog("Created " + p.string());
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Scene")) {
+        fs::path p = uniquePath("New Scene", ".okayscene");
+        okay::Scene empty("New Scene");
+        if (SceneSerializer::SaveToFile(empty, p.string())) ConsoleLog("Created " + p.string());
+    }
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("(right-click an item for Rename / Delete)");
@@ -1532,6 +1612,8 @@ void DrawProject(EditorState& ed) {
                 } else ConsoleLog("Prefab load failed: " + err);
             } else if (ext == ".okaydata") {
                 g_dataAssetPath = full; g_dataAssetOpen = true;
+            } else if (ext == ".okaymat") {
+                g_matAssetPath = full; g_matAssetOpen = true;
             } else if (ext == ".okay" || ext == ".lua" || ext == ".cs" || ext == ".okayvs") {
                 extide::OpenExternal(full);
             }
@@ -1564,6 +1646,15 @@ void DrawProject(EditorState& ed) {
                                     "name = Item\n"
                                     "value = 10\n";
                 ConsoleLog("Created " + p.string());
+            }
+            if (ImGui::MenuItem("New Material")) {
+                fs::path p = uniquePath("New Material", ".okaymat");
+                if (Material{}.SaveToFile(p.string())) ConsoleLog("Created " + p.string());
+            }
+            if (ImGui::MenuItem("New Scene")) {
+                fs::path p = uniquePath("New Scene", ".okayscene");
+                okay::Scene empty("New Scene");
+                if (SceneSerializer::SaveToFile(empty, p.string())) ConsoleLog("Created " + p.string());
             }
             ImGui::Separator();
         }
@@ -1759,6 +1850,48 @@ void DrawDataAssetEditor() {
         if (asset.Save(g_dataAssetPath)) ConsoleLog("Saved " + g_dataAssetPath);
         else ConsoleLog("Save failed: " + g_dataAssetPath);
     }
+    ImGui::End();
+}
+
+// Edit a .okaymat asset (Unity-style material inspector): tweak the surface
+// look and Save, or stamp it onto the selected mesh with Apply to Selection.
+void DrawMaterialEditor(EditorState& ed) {
+    if (!g_matAssetOpen) return;
+    static std::string loaded;
+    static Material mat;
+    if (loaded != g_matAssetPath) {
+        mat = Material{}; Material::LoadFromFile(g_matAssetPath, mat); loaded = g_matAssetPath;
+    }
+    if (!ImGui::Begin("Material", &g_matAssetOpen)) { ImGui::End(); return; }
+    ImGui::TextDisabled("%s", g_matAssetPath.c_str());
+    ImGui::Separator();
+    float col[4] = {mat.color.r, mat.color.g, mat.color.b, mat.color.a};
+    if (ImGui::ColorEdit4("Albedo", col)) mat.color = {col[0], col[1], col[2], col[3]};
+    float em[3] = {mat.emissive.r, mat.emissive.g, mat.emissive.b};
+    if (ImGui::ColorEdit3("Emissive", em)) mat.emissive = {em[0], em[1], em[2], 1.0f};
+    ImGui::SliderFloat("Specular", &mat.specular, 0.0f, 1.0f);
+    if (mat.specular > 0.0f) ImGui::SliderFloat("Shininess", &mat.shininess, 1.0f, 128.0f);
+    ImGui::Checkbox("Unlit", &mat.unlit);
+    ImGui::SameLine();
+    ImGui::Checkbox("Double-sided", &mat.doubleSided);
+    char tex[256]; std::strncpy(tex, mat.texture.c_str(), sizeof(tex) - 1); tex[sizeof(tex) - 1] = '\0';
+    if (ImGui::InputText("Texture", tex, sizeof(tex))) mat.texture = tex;
+    float til[2] = {mat.tiling.x, mat.tiling.y};
+    if (ImGui::DragFloat2("Tiling", til, 0.05f, 0.01f, 64.0f)) mat.tiling = {til[0], til[1]};
+    ImGui::Separator();
+    if (ImGui::Button("Save")) {
+        if (mat.SaveToFile(g_matAssetPath)) ConsoleLog("Saved " + g_matAssetPath);
+        else ConsoleLog("Save failed: " + g_matAssetPath);
+    }
+    ImGui::SameLine();
+    bool canApply = ed.selected() && ed.selected()->GetComponent<MeshRenderer>();
+    ImGui::BeginDisabled(!canApply);
+    if (ImGui::Button("Apply to Selection")) {
+        mat.ApplyTo(*ed.selected()->GetComponent<MeshRenderer>());
+        ed.dirty = true; ConsoleLog("Applied material to " + ed.selected()->name);
+    }
+    ImGui::EndDisabled();
+    if (!canApply) { ImGui::SameLine(); ImGui::TextDisabled("(select a mesh to apply)"); }
     ImGui::End();
 }
 
@@ -1971,7 +2104,8 @@ void DrawScriptDocs() {
 
     ImGui::TextWrapped("OkaySpace scripts are written in OkayScript — a small "
         "C-style language. Attach a Script component, then edit it in the Script "
-        "Editor. Two functions drive a script, just like Unity's MonoBehaviour:");
+        "Editor. Two functions drive a script, the same way Unity uses a base "
+        "class (here it's OkaySource):");
     ImGui::Indent();
     ImGui::TextDisabled("start()      runs once when the scene starts");
     ImGui::TextDisabled("update(dt)   runs every frame; dt is seconds elapsed");
@@ -2078,6 +2212,76 @@ void DrawScriptDocs() {
     ImGui::End();
 }
 
+// --- VS Code-style script editor helpers ---------------------------------
+
+// Cursor line/column for the status bar, filled by an InputText callback.
+struct ScriptCaret { int line = 1, col = 1; };
+static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
+    auto* c = (ScriptCaret*)d->UserData;
+    int ln = 1, col = 1;
+    for (int k = 0; k < d->CursorPos && k < d->BufTextLen; ++k) {
+        if (d->Buf[k] == '\n') { ++ln; col = 1; } else ++col;
+    }
+    c->line = ln; c->col = col;
+    return 0;
+}
+
+// Draw the code text with VS Code "Dark+" syntax colors on top of the editor.
+// ProggyClean is monospace, so glyphs advance by a fixed width and the colored
+// overlay lines up exactly with the InputText beneath it.
+static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
+                              float charW, float lineH) {
+    const ImU32 cDefault = IM_COL32(212, 212, 212, 255);
+    const ImU32 cKeyword = IM_COL32( 86, 156, 214, 255);  // blue
+    const ImU32 cType    = IM_COL32( 78, 201, 176, 255);  // teal
+    const ImU32 cString  = IM_COL32(206, 145, 120, 255);  // orange
+    const ImU32 cComment = IM_COL32(106, 153,  85, 255);  // green
+    const ImU32 cNumber  = IM_COL32(181, 206, 168, 255);  // light green
+    static const char* kw[] = {
+        "if","else","for","while","do","return","break","continue","switch","case",
+        "var","let","const","function","func","def","class","struct","new","public",
+        "private","protected","static","void","int","float","bool","string","true",
+        "false","null","this","import","using","namespace","foreach","in","and","or","not"};
+    static const char* types[] = {
+        "Vector2","Vector3","Vec2","Vec3","Color","Quaternion","Transform","GameObject",
+        "Mathf","Input","Time","Okay","OkaySource","Debug","Random","Physics"};
+    auto isWord = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+    auto inList = [](const std::string& s, const char* const* arr, int n) {
+        for (int i = 0; i < n; ++i) if (s == arr[i]) return true; return false; };
+
+    float x = origin.x, y = origin.y;
+    for (int i = 0; text[i];) {
+        char c = text[i];
+        if (c == '\n') { x = origin.x; y += lineH; ++i; continue; }
+        if (c == '/' && text[i + 1] == '/') {                          // line comment
+            int j = i; while (text[j] && text[j] != '\n') ++j;
+            std::string s(text + i, text + j);
+            dl->AddText(ImVec2(x, y), cComment, s.c_str()); x += (j - i) * charW; i = j; continue;
+        }
+        if (c == '"' || c == '\'') {                                   // string literal
+            char q = c; int j = i + 1;
+            while (text[j] && text[j] != q && text[j] != '\n') { if (text[j] == '\\' && text[j + 1]) ++j; ++j; }
+            if (text[j] == q) ++j;
+            std::string s(text + i, text + j);
+            dl->AddText(ImVec2(x, y), cString, s.c_str()); x += (j - i) * charW; i = j; continue;
+        }
+        if (std::isdigit((unsigned char)c)) {                          // number
+            int j = i; while (text[j] && (std::isalnum((unsigned char)text[j]) || text[j] == '.')) ++j;
+            std::string s(text + i, text + j);
+            dl->AddText(ImVec2(x, y), cNumber, s.c_str()); x += (j - i) * charW; i = j; continue;
+        }
+        if (isWord(c)) {                                               // identifier / keyword
+            int j = i; while (text[j] && isWord(text[j])) ++j;
+            std::string s(text + i, text + j);
+            ImU32 col = inList(s, kw, (int)(sizeof(kw) / sizeof(*kw))) ? cKeyword
+                      : inList(s, types, (int)(sizeof(types) / sizeof(*types))) ? cType : cDefault;
+            dl->AddText(ImVec2(x, y), col, s.c_str()); x += (j - i) * charW; i = j; continue;
+        }
+        if (c != ' ' && c != '\t') { char b[2] = {c, 0}; dl->AddText(ImVec2(x, y), cDefault, b); }
+        x += (c == '\t' ? 4 * charW : charW); ++i;
+    }
+}
+
 void DrawScriptEditor(EditorState& ed) {
     if (!ImGui::Begin("Script Editor", &g_showScriptEditor)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
@@ -2091,71 +2295,118 @@ void DrawScriptEditor(EditorState& ed) {
     }
 
     {
-        ImGui::Text("Script  -  %s", go->name.c_str());
-
         auto& buf = CodeBuffer(sc, sc->Source().empty()
             ? extide::StarterScript(sc->Language()) : sc->Source());
-
-        // Only list backends this build actually supports, so the choice is
-        // meaningful (no "backend not available" errors). okayscript is always
-        // present; lua/csharp appear when compiled in.
-        static std::vector<std::string> avail = AvailableScriptLanguages();
-        std::vector<const char*> items; items.reserve(avail.size());
-        for (auto& s : avail) items.push_back(s.c_str());
-        int li = 0;
-        for (int i = 0; i < (int)avail.size(); ++i)
-            if (avail[i] == sc->Language()) li = i;
-        ImGui::SetNextItemWidth(150);
-        if (ImGui::Combo("Lang", &li, items.data(), (int)items.size())) {
-            std::string oldLang = sc->Language(), newLang = avail[li];
-            sc->SetLanguage(newLang);
-            // Swap the starter in if the editor still holds the old default, so
-            // switching languages gives syntax that compiles in the new one.
-            std::string cur = buf.data();
-            if (cur.empty() || cur == extide::StarterScript(oldLang))
-                SetCodeBuffer(sc, extide::StarterScript(newLang));
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled(sc->Language() == "okayscript" ? "Unity-style C#"
-                          : sc->Language() == "lua"        ? "Lua: function ... end"
-                                                           : "");
-        if (!sc->Path().empty()) { ImGui::SameLine(); ImGui::TextDisabled("(%s)", sc->Path().c_str()); }
-        ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= 34.0f; if (av.y < 60) av.y = 60;
-        ImGui::InputTextMultiline("##editor", buf.data(), buf.size(), av);
-
         auto filePath = [&]() {
             return sc->Path().empty() ? go->name + "." + extide::ExtFor(sc->Language()) : sc->Path();
         };
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
 
-        if (ImGui::Button("Compile & Run")) {
+        // --- Toolbar (VS Code-style title row): file + Run / Save / Reload ----
+        std::string fname = sc->Path().empty() ? (go->name + "." + extide::ExtFor(sc->Language()))
+                                               : std::filesystem::path(sc->Path()).filename().string();
+        ImGui::TextColored(ImVec4(0.82f, 0.82f, 0.88f, 1.0f), "%s", fname.c_str());
+        ImGui::SameLine();
+        static bool s_highlight = true;
+        if (ImGui::SmallButton("Run")) {           // compile + run
             std::string e;
             ConsoleLog(sc->LoadSource(buf.data(), &e) ? "Compiled OK" : "Error: " + e);
             ed.dirty = true;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Save File")) {
+        if (ImGui::SmallButton("Save")) {
             std::string p = filePath();
             if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); ConsoleLog("Saved " + p); }
-            else { ConsoleLog("Save failed"); }
+            else ConsoleLog("Save failed");
             ed.dirty = true;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Open in IDE")) {
-            std::string p = filePath();
-            extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p);
-            ConsoleLog("Opened " + p + " in external IDE");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Reload")) {
+        if (ImGui::SmallButton("Reload")) {
             if (!sc->Path().empty()) {
                 std::string src = extide::ReadFile(sc->Path());
                 SetCodeBuffer(sc, src);
                 std::string e; sc->LoadSource(src, &e);
                 ConsoleLog("Reloaded " + sc->Path());
-            } else ConsoleLog("No file to reload (Save File first)");
+            } else ConsoleLog("No file to reload (Save first)");
         }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Open in IDE")) {
+            std::string p = filePath();
+            extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p);
+            ConsoleLog("Opened " + p + " in external IDE");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
+        ImGui::SameLine();
+        ImGui::Checkbox("Syntax", &s_highlight);
+        // Language picker (only backends this build supports).
+        static std::vector<std::string> avail = AvailableScriptLanguages();
+        if (avail.size() > 1) {
+            std::vector<const char*> items; items.reserve(avail.size());
+            for (auto& s : avail) items.push_back(s.c_str());
+            int li = 0;
+            for (int i = 0; i < (int)avail.size(); ++i) if (avail[i] == sc->Language()) li = i;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+            if (ImGui::Combo("##lang", &li, items.data(), (int)items.size())) {
+                std::string oldLang = sc->Language(), newLang = avail[li];
+                sc->SetLanguage(newLang);
+                std::string cur = buf.data();
+                if (cur.empty() || cur == extide::StarterScript(oldLang))
+                    SetCodeBuffer(sc, extide::StarterScript(newLang));
+            }
+        }
+
+        // --- Editor surface: dark theme, line-number gutter, syntax overlay ---
+        static ScriptCaret caret;
+        int lines = 1, curLen = 0, maxLen = 0;
+        for (const char* p = buf.data(); *p; ++p) {
+            if (*p == '\n') { ++lines; if (curLen > maxLen) maxLen = curLen; curLen = 0; }
+            else ++curLen;
+        }
+        if (curLen > maxLen) maxLen = curLen;
+
+        float charW = ImGui::CalcTextSize("0").x;
+        float lineH = ImGui::GetTextLineHeight();
+        float padY  = ImGui::GetStyle().FramePadding.y;
+        float padX  = ImGui::GetStyle().FramePadding.x;
+
+        ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= lineH + 8.0f; if (av.y < 80) av.y = 80;
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(30, 30, 30, 255));   // VS Code editor bg
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(30, 30, 30, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(212, 212, 212, 255));
+        ImGui::BeginChild("editorscroll", av, true,
+                          ImGuiWindowFlags_HorizontalScrollbar);
+
+        // Line-number gutter (tight line spacing so rows match the editor).
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+        ImGui::BeginGroup();
+        ImGui::Dummy(ImVec2(0, padY));
+        for (int i = 1; i <= lines; ++i)
+            ImGui::TextColored(ImVec4(0.42f, 0.44f, 0.5f, 1.0f), "%4d", i);
+        ImGui::EndGroup();
+        ImGui::PopStyleVar();
+        ImGui::SameLine();
+
+        // The editable text, sized to fit all content so the outer child does the
+        // scrolling and the colored overlay (drawn after) stays aligned.
+        float contentW = (maxLen + 2) * charW + padX * 2;
+        float contentH = lines * lineH + padY * 2 + 2;
+        ImGui::InputTextMultiline("##code", buf.data(), buf.size(),
+            ImVec2(contentW, contentH),
+            ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackAlways,
+            ScriptCaretCallback, &caret);
+        if (s_highlight) {
+            ImVec2 mn = ImGui::GetItemRectMin();
+            DrawCodeHighlight(ImGui::GetWindowDrawList(), buf.data(),
+                              ImVec2(mn.x + padX, mn.y + padY), charW, lineH);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(3);
+
+        // --- Status bar (VS Code-style) --------------------------------------
+        const char* langLbl = sc->Language() == "okayscript" ? "OkayScript"
+                            : sc->Language() == "lua" ? "Lua" : sc->Language().c_str();
+        ImGui::TextDisabled("%s   Ln %d, Col %d   %d lines   Spaces", langLbl,
+                            caret.line, caret.col, lines);
     }
     ImGui::End();
 }
@@ -2304,6 +2555,12 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SetNextItemWidth(150);
         if (ImGui::Combo("Frame rate cap", &fpsSel, fpsOpts, 5)) g_build.fpsCap = fpsVals[fpsSel];
 
+        ImGui::SeparatorText("Gameplay");
+        ImGui::Checkbox("Quit on Escape", &g_build.quitOnEscape); ImGui::SameLine();
+        ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
+        ImGui::SetNextItemWidth(200);
+        ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
+
         ImGui::SeparatorText("Scenes & Options");
         ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene_index works");
@@ -2321,6 +2578,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.fullscreen = g_build.fullscreen; o.borderless = g_build.borderless;
             o.resizable = g_build.resizable; o.vsync = g_build.vsync;
             o.hideCursor = g_build.hideCursor; o.fpsCap = g_build.fpsCap;
+            o.quitOnEscape = g_build.quitOnEscape; o.masterVolume = g_build.masterVolume; o.showFps = g_build.showFps;
             o.includeAllProjectScenes = g_build.includeAllProjectScenes;
             o.developmentBuild = g_build.developmentBuild;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
@@ -2413,6 +2671,51 @@ void DrawAboutPopup() {
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+}
+
+// Edit > Project Settings: project-wide defaults that builds inherit, plus
+// quick "apply to current scene" for physics/rendering.
+void DrawProjectSettings(EditorState& ed) {
+    if (!g_showProjectSettings) return;
+    ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Project Settings", &g_showProjectSettings)) {
+        ImGui::TextDisabled("Defaults a new build/scene inherits. Saved to project.okayproj.");
+        if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::InputText("Company##ps", g_project.company, sizeof(g_project.company));
+            ImGui::SetNextItemWidth(160);
+            ImGui::InputText("Version##ps", g_project.version, sizeof(g_project.version));
+            ImGui::SetNextItemWidth(110); ImGui::InputInt("Width##ps", &g_project.defaultWidth); ImGui::SameLine();
+            ImGui::SetNextItemWidth(110); ImGui::InputInt("Height##ps", &g_project.defaultHeight);
+        }
+        if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::DragFloat2("Gravity 2D##ps", g_project.gravity2D, 0.05f);
+            ImGui::DragFloat3("Gravity 3D##ps", g_project.gravity3D, 0.05f);
+            if (ImGui::Button("Apply to current scene##phys")) {
+                ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
+                ed.scene().physics3D().gravity = {g_project.gravity3D[0], g_project.gravity3D[1], g_project.gravity3D[2]};
+                ed.dirty = true; ConsoleLog("Applied project physics to the scene");
+            }
+        }
+        if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::SliderFloat("Ambient##ps", &g_project.ambient, 0.0f, 1.0f);
+            ImGui::Checkbox("Skybox##ps", &g_project.skybox);
+            if (ImGui::Button("Apply to current scene##rend")) {
+                ed.scene().renderSettings.ambient = g_project.ambient;
+                ed.scene().renderSettings.skybox = g_project.skybox;
+                ed.dirty = true; ConsoleLog("Applied project rendering to the scene");
+            }
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Save", ImVec2(110, 0))) { SaveProjectSettings(); ConsoleLog("Project settings saved"); }
+        ImGui::SameLine();
+        if (ImGui::Button("Use in Build", ImVec2(120, 0))) {
+            std::strncpy(g_build.company, g_project.company, sizeof(g_build.company) - 1);
+            std::strncpy(g_build.version, g_project.version, sizeof(g_build.version) - 1);
+            g_build.width = g_project.defaultWidth; g_build.height = g_project.defaultHeight;
+            ConsoleLog("Build settings set from project defaults");
+        }
+    }
+    ImGui::End();
 }
 
 void DrawUpdatePopup() {
@@ -2530,8 +2833,12 @@ void DrawHierarchy(EditorState& ed) {
                                        ImGuiTreeNodeFlags_SpanAvailWidth;
             if (node == ed.selected()) flags |= ImGuiTreeNodeFlags_Selected;
             if (node->transform->ChildCount() == 0) flags |= ImGuiTreeNodeFlags_Leaf;
+            // Unity dims inactive objects; grey the whole row (and its subtree label).
+            bool dim = !node->active;
+            if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
             bool open = ImGui::TreeNodeEx(node, flags, "%s%s%s", ObjectKind(node),
                                           node->name.c_str(), node->active ? "" : "  (off)");
+            if (dim) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
             if (ImGui::IsItemClicked()) ed.Select(node);
             // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
@@ -2560,6 +2867,28 @@ void DrawHierarchy(EditorState& ed) {
                         else if (ty > 0.70f) ed.scene().ReorderSibling(dragged, node, /*after=*/true);
                         else                 dragged->transform->SetParent(node->transform, true);
                         ed.dirty = true;
+                    }
+                }
+                // Drop a Project asset onto an object: a .okaymat applies its look
+                // to the object's Mesh Renderer; an image sets the texture on a
+                // Mesh/Sprite Renderer (Unity-style).
+                if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                    std::string path((const char*)ap->Data);
+                    std::string ext;
+                    if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+                    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                    if (ext == ".okaymat") {
+                        if (auto* mr = node->GetComponent<MeshRenderer>()) {
+                            Material m; if (Material::LoadFromFile(path, m)) {
+                                ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true;
+                                ConsoleLog("Applied material to " + node->name);
+                            }
+                        } else ConsoleLog(node->name + " has no Mesh Renderer for the material");
+                    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                        ed.PushUndo();
+                        if (auto* mr = node->GetComponent<MeshRenderer>())      mr->texture = path;
+                        else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
+                        ed.dirty = true; ConsoleLog("Set texture on " + node->name);
                     }
                 }
                 ImGui::EndDragDropTarget();
@@ -2617,6 +2946,17 @@ void DrawHierarchy(EditorState& ed) {
                     if (ImGui::MenuItem("Camera")) childOf(ed.CreateCamera("Camera"));
                     if (ImGui::MenuItem("Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); childOf(g); }
                     ImGui::EndMenu();
+                }
+                // Wrap this object in a new empty parent (Unity's "Create Parent"),
+                // keeping its on-screen transform unchanged.
+                if (ImGui::MenuItem("Create Parent")) {
+                    ed.PushUndo();
+                    GameObject* parent = ed.scene().CreateGameObject(node->name + " Group");
+                    parent->transform->SetPosition(node->transform->Position());
+                    if (Transform* op = node->transform->Parent())
+                        parent->transform->SetParent(op, true);
+                    node->transform->SetParent(parent->transform, true);  // keep world pose
+                    ed.Select(parent); ed.dirty = true;
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Focus (frame)")) {
@@ -2845,6 +3185,27 @@ static bool AcceptAssetPathField(std::string& field) {
     return changed;
 }
 
+// Unity-style component header: an enable/disable checkbox, the collapsing
+// header title, and a right-click context menu offering "Remove Component"
+// (which sets *toRemove, removed safely after the inspector finishes drawing).
+// Returns whether the component body should be drawn.
+static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
+                       bool removable = true) {
+    ImGui::PushID(comp);
+    bool en = comp->enabled;
+    if (ImGui::Checkbox("##enabled", &en)) comp->enabled = en;
+    ImGui::SameLine();
+    bool open = ImGui::CollapsingHeader(label,
+                    ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+    if (ImGui::BeginPopupContextItem("##compctx")) {
+        if (removable && ImGui::MenuItem("Remove Component")) *toRemove = comp;
+        if (!removable) ImGui::TextDisabled("(required component)");
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return open;
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
 
@@ -2890,15 +3251,37 @@ void DrawInspector(EditorState& ed) {
     char nameBuf[128];
     std::strncpy(nameBuf, go->name.c_str(), sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
-    ImGui::SetNextItemWidth(-1);
+    // Leave room on the right for the Static toggle (Unity places it here).
+    float staticW = ImGui::CalcTextSize("Static").x + ImGui::GetFrameHeight() +
+                    ImGui::GetStyle().ItemInnerSpacing.x + ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - staticW);
     if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Static", &go->isStatic)) ed.dirty = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Marks the object as non-moving (saved with the scene)");
 
-    // Row 2: Tag field + Save-as-Prefab, right-aligned.
-    char tagBuf[64];
-    std::strncpy(tagBuf, go->tag.c_str(), sizeof(tagBuf) - 1);
-    tagBuf[sizeof(tagBuf) - 1] = '\0';
+    // Row 2: Tag dropdown (Unity-style presets + custom) + Save-as-Prefab.
+    static const char* kTagPresets[] = {"Untagged", "Player", "MainCamera", "Enemy",
+                                        "Respawn", "Finish", "GameController", "UI"};
+    std::string curTag = go->tag.empty() ? "Untagged" : go->tag;
     ImGui::SetNextItemWidth(150);
-    if (ImGui::InputText("Tag", tagBuf, sizeof(tagBuf))) { go->tag = tagBuf; ed.dirty = true; }
+    if (ImGui::BeginCombo("Tag", curTag.c_str())) {
+        for (const char* t : kTagPresets) {
+            bool sel = (curTag == t);
+            if (ImGui::Selectable(t, sel)) {
+                go->tag = (std::strcmp(t, "Untagged") == 0) ? "" : t; ed.dirty = true;
+            }
+        }
+        ImGui::Separator();
+        static char customTag[64] = "";
+        ImGui::SetNextItemWidth(130);
+        if (ImGui::InputTextWithHint("##customtag", "custom tag...", customTag, sizeof(customTag),
+                                     ImGuiInputTextFlags_EnterReturnsTrue) && customTag[0]) {
+            go->tag = customTag; ed.dirty = true; customTag[0] = '\0';
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndCombo();
+    }
     ImGui::SameLine();
     float btnW = ImGui::CalcTextSize("Save as Prefab").x + ImGui::GetStyle().FramePadding.x * 2;
     float avail = ImGui::GetContentRegionAvail().x;
@@ -2909,6 +3292,36 @@ void DrawInspector(EditorState& ed) {
         else ConsoleLog("Prefab save failed");
     }
     ImGui::EndChild();
+    // Drop a Project asset onto the object header to attach it: a .okay script
+    // adds a Script component bound to that file; a .okaymat applies its look; an
+    // image sets the texture. (Unity-style drag from Project into the Inspector.)
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::string path((const char*)p->Data), ext;
+            if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            if (ext == ".okay") {
+                ed.PushUndo();
+                auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
+                std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                ConsoleLog("Attached script " + path); ed.dirty = true;
+            } else if (ext == ".okaymat") {
+                if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    Material m; if (Material::LoadFromFile(path, m)) {
+                        ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true; ConsoleLog("Applied material");
+                    }
+                }
+            } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                ed.PushUndo();
+                if (auto* mr = go->GetComponent<MeshRenderer>())        mr->texture = path;
+                else if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = path;
+                ed.dirty = true; ConsoleLog("Set texture");
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+        ImGui::SetTooltip("Drop a script/material/image here to attach it");
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     ImGui::Spacing();
@@ -3012,7 +3425,7 @@ void DrawInspector(EditorState& ed) {
     }
 
     if (auto* sr = go->GetComponent<SpriteRenderer>()) {
-        if (ImGui::CollapsingHeader("Sprite Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Sprite Renderer", sr, &toRemove)) {
             float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
             if (ImGui::ColorEdit4("Color##sprite", col)) {
                 sr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
@@ -3035,7 +3448,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* mr = go->GetComponent<MeshRenderer>()) {
-        if (ImGui::CollapsingHeader("Mesh Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Mesh Renderer", mr, &toRemove)) {
             float col[4] = {mr->color.r, mr->color.g, mr->color.b, mr->color.a};
             if (ImGui::ColorEdit4("Color##mesh", col)) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
@@ -3146,7 +3559,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
-        if (ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Terrain", tr, &toRemove)) {
             float c[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##terr", c)) { tr->color = {c[0],c[1],c[2],c[3]}; tr->Apply(); ed.dirty = true; }
             int res = tr->resolution;
@@ -3173,7 +3586,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* li = go->GetComponent<Light>()) {
-        if (ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Light", li, &toRemove)) {
             const char* types[] = {"Directional", "Point", "Spot"};
             int ty = (int)li->type;
             if (ImGui::Combo("Type##light", &ty, types, 3)) { li->type = (Light::Type)ty; ed.dirty = true; }
@@ -3195,7 +3608,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cam = go->GetComponent<Camera>()) {
-        if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Camera", cam, &toRemove)) {
             int proj = (int)cam->projection;
             const char* projs[] = {"Orthographic", "Perspective"};
             if (ImGui::Combo("Projection", &proj, projs, 2))
@@ -3208,8 +3621,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cam")) toRemove = cam;
         }
     }
-    if (go->GetComponent<Rigidbody2D>())
-        if (ImGui::CollapsingHeader("Rigidbody2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (auto* rb2 = go->GetComponent<Rigidbody2D>())
+        if (CompHeader("Rigidbody2D", rb2, &toRemove)) {
             auto* rb = go->GetComponent<Rigidbody2D>();
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
@@ -3220,7 +3633,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
-        if (ImGui::CollapsingHeader("Box Collider 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Box Collider 2D", bc, &toRemove)) {
             float sz[2] = {bc->size.x, bc->size.y};
             if (ImGui::DragFloat2("Size##bc", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1]}; ed.dirty = true; }
             float off[2] = {bc->offset.x, bc->offset.y};
@@ -3232,7 +3645,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = go->GetComponent<CircleCollider2D>()) {
-        if (ImGui::CollapsingHeader("Circle Collider 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Circle Collider 2D", cc, &toRemove)) {
             ImGui::DragFloat("Radius##cc", &cc->radius, 0.05f, 0.0f, 1000.0f);
             float off[2] = {cc->offset.x, cc->offset.y};
             if (ImGui::DragFloat2("Offset##cc", off, 0.05f)) { cc->offset = {off[0], off[1]}; ed.dirty = true; }
@@ -3243,7 +3656,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cap = go->GetComponent<CapsuleCollider2D>()) {
-        if (ImGui::CollapsingHeader("Capsule Collider 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Capsule Collider 2D", cap, &toRemove)) {
             float sz[2] = {cap->size.x, cap->size.y};
             if (ImGui::DragFloat2("Size##cap2", sz, 0.05f, 0.0f, 1000.0f)) { cap->size = {sz[0], sz[1]}; ed.dirty = true; }
             int dir = (int)cap->direction;
@@ -3257,8 +3670,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cap2")) toRemove = cap;
         }
     }
-    if (go->GetComponent<Rigidbody3D>())
-        if (ImGui::CollapsingHeader("Rigidbody3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (auto* rb3 = go->GetComponent<Rigidbody3D>())
+        if (CompHeader("Rigidbody3D", rb3, &toRemove)) {
             auto* rb = go->GetComponent<Rigidbody3D>();
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
@@ -3274,7 +3687,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
         }
     if (auto* bc = go->GetComponent<BoxCollider3D>()) {
-        if (ImGui::CollapsingHeader("Box Collider 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Box Collider 3D", bc, &toRemove)) {
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
             if (ImGui::DragFloat3("Size##bc3", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
             float off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
@@ -3290,7 +3703,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sc = go->GetComponent<SphereCollider3D>()) {
-        if (ImGui::CollapsingHeader("Sphere Collider 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Sphere Collider 3D", sc, &toRemove)) {
             ImGui::DragFloat("Radius##sc3", &sc->radius, 0.05f, 0.0f, 1000.0f);
             float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
             if (ImGui::DragFloat3("Offset##sc3", off, 0.05f)) { sc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
@@ -3305,7 +3718,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cap = go->GetComponent<CapsuleCollider3D>()) {
-        if (ImGui::CollapsingHeader("Capsule Collider 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Capsule Collider 3D", cap, &toRemove)) {
             ImGui::DragFloat("Radius##cap3", &cap->radius, 0.05f, 0.0f, 1000.0f);
             ImGui::DragFloat("Height##cap3", &cap->height, 0.05f, 0.0f, 1000.0f);
             const char* axes[] = {"X", "Y", "Z"};
@@ -3323,7 +3736,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sc = go->GetComponent<ScriptComponent>()) {
-        if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Script", sc, &toRemove)) {
             static std::vector<std::string> avail = AvailableScriptLanguages();
             std::vector<const char*> items; items.reserve(avail.size());
             for (auto& s : avail) items.push_back(s.c_str());
@@ -3339,7 +3752,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = go->GetComponent<CharacterController2D>()) {
-        if (ImGui::CollapsingHeader("Character Controller 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Character Controller 2D", cc, &toRemove)) {
             int m = (int)cc->mode;
             const char* modes[] = {"Top-Down", "Platformer"};
             if (ImGui::Combo("Mode##cc2", &m, modes, 2)) { cc->mode = (CharacterController2D::Mode)m; ed.dirty = true; }
@@ -3351,7 +3764,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = go->GetComponent<CharacterController3D>()) {
-        if (ImGui::CollapsingHeader("Character Controller 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Character Controller 3D", cc, &toRemove)) {
             if (ImGui::DragFloat("Speed##cc3", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##cc3", &cc->canJump)) ed.dirty = true;
             if (cc->canJump)
@@ -3361,7 +3774,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
-        if (ImGui::CollapsingHeader("Follow Target 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Follow Target 2D", ft, &toRemove)) {
             char tb[64];
             std::strncpy(tb, ft->target.c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';
             if (ImGui::InputText("Target##ft", tb, sizeof(tb))) { ft->target = tb; ed.dirty = true; }
@@ -3372,7 +3785,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* al = go->GetComponent<ActionList>()) {
-        if (ImGui::CollapsingHeader("Actions (Visual Script)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Actions (Visual Script)", al, &toRemove)) {
             // Trigger -> Conditions -> Instructions, Game-Creator style.
             const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision",
                                    "On Click", "On Key Up", "On Message"};
@@ -3432,7 +3845,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* a = go->GetComponent<AudioSource>()) {
-        if (ImGui::CollapsingHeader("Audio Source", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Audio Source", a, &toRemove)) {
             ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f);
             ImGui::Checkbox("Loop", &a->loop);
             ImGui::SameLine();
@@ -3458,7 +3871,7 @@ void DrawInspector(EditorState& ed) {
     }
 
     if (auto* mv = go->GetComponent<Mover>()) {
-        if (ImGui::CollapsingHeader("Mover", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Mover", mv, &toRemove)) {
             float v[3] = {mv->velocity.x, mv->velocity.y, mv->velocity.z};
             if (ImGui::DragFloat3("Velocity##mv", v, 0.05f)) { mv->velocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             ImGui::TextDisabled("units / second");
@@ -3466,7 +3879,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sp = go->GetComponent<Spinner>()) {
-        if (ImGui::CollapsingHeader("Spinner", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Spinner", sp, &toRemove)) {
             float v[3] = {sp->angularVelocity.x, sp->angularVelocity.y, sp->angularVelocity.z};
             if (ImGui::DragFloat3("Angular Vel##sp", v, 0.5f)) { sp->angularVelocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             ImGui::TextDisabled("degrees / second (X, Y, Z)");
@@ -3474,14 +3887,14 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* lt = go->GetComponent<Lifetime>()) {
-        if (ImGui::CollapsingHeader("Lifetime", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Lifetime", lt, &toRemove)) {
             if (ImGui::DragFloat("Seconds##lt", &lt->seconds, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
             ImGui::TextDisabled("destroys this object after N seconds of play");
             if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
         }
     }
     if (auto* cf = go->GetComponent<CameraFollow>()) {
-        if (ImGui::CollapsingHeader("Camera Follow", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Camera Follow", cf, &toRemove)) {
             char buf[128];
             std::strncpy(buf, cf->targetName.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
@@ -3494,7 +3907,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
-        if (ImGui::CollapsingHeader("Text", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Text", tr, &toRemove)) {
             char buf[512];
             std::strncpy(buf, tr->text.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
@@ -3551,7 +3964,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
-        if (ImGui::CollapsingHeader("Canvas", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Canvas", cv, &toRemove)) {
             const char* modes[] = {"Constant Pixel Size", "Scale With Screen Size"};
             int m = (int)cv->scaleMode;
             if (ImGui::Combo("UI Scale Mode##cv", &m, modes, 2)) { cv->scaleMode = (Canvas::ScaleMode)m; ed.dirty = true; }
@@ -3568,7 +3981,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* es = go->GetComponent<EventSystem>()) {
-        if (ImGui::CollapsingHeader("Event System", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Event System", es, &toRemove)) {
             ImGui::TextDisabled("Routes pointer input to UI widgets.");
             GameObject* h = es->Hovered();
             ImGui::Text("Hovered: %s", h ? h->name.c_str() : "(none)");
@@ -3578,7 +3991,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* nm = go->GetComponent<NetworkManager>()) {
-        if (ImGui::CollapsingHeader("Network Manager", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Network Manager", nm, &toRemove)) {
             const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play"};
             int m = (int)nm->autoStart;
             if (ImGui::Combo("Auto Start##nm", &m, modes, 3)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
@@ -3619,7 +4032,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
-        if (ImGui::CollapsingHeader("UI Document", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Document", doc, &toRemove)) {
             ImGui::TextDisabled("OkayUI markup -> widgets. One widget per line; indent to nest.");
             // Edit the markup in a resizable multiline box. A static buffer big
             // enough for sizeable documents keeps this dependency-free.
@@ -3670,7 +4083,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* btn = go->GetComponent<UIButton>()) {
-        if (ImGui::CollapsingHeader("UI Button", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Button", btn, &toRemove)) {
             char lb[128];
             std::strncpy(lb, btn->label.c_str(), sizeof(lb) - 1);
             lb[sizeof(lb) - 1] = '\0';
@@ -3726,7 +4139,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
-        if (ImGui::CollapsingHeader("UI Panel", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Panel", pn, &toRemove)) {
             float pos[2] = {pn->position.x, pn->position.y};
             if (ImGui::DragFloat2("Pos (px)##uip", pos, 1.0f)) { pn->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {pn->size.x, pn->size.y};
@@ -3758,7 +4171,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* in = go->GetComponent<UIInputField>()) {
-        if (ImGui::CollapsingHeader("UI Input Field", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Input Field", in, &toRemove)) {
             char tb[128]; std::strncpy(tb, in->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Text##uif", tb, sizeof(tb))) { in->text = tb; ed.dirty = true; }
             char ph[96]; std::strncpy(ph, in->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
@@ -3779,7 +4192,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
-        if (ImGui::CollapsingHeader("UI Dropdown", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Dropdown", dd, &toRemove)) {
             float pos[2] = {dd->position.x, dd->position.y};
             if (ImGui::DragFloat2("Pos (px)##udd", pos, 1.0f)) { dd->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {dd->size.x, dd->size.y};
@@ -3827,7 +4240,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tt = go->GetComponent<UITooltip>()) {
-        if (ImGui::CollapsingHeader("UI Tooltip", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Tooltip", tt, &toRemove)) {
             char tb[256]; std::strncpy(tb, tt->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Text##utt", tb, sizeof(tb))) { tt->text = tb; ed.dirty = true; }
             if (ImGui::DragFloat("Delay (s)##utt", &tt->delay, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
@@ -3840,7 +4253,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dg = go->GetComponent<UIDraggable>()) {
-        if (ImGui::CollapsingHeader("UI Draggable", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Draggable", dg, &toRemove)) {
             if (ImGui::Checkbox("Return to Start##udg", &dg->returnToStart)) ed.dirty = true;
             if (ImGui::Checkbox("Any widget is a target##udg", &dg->anyTarget)) ed.dirty = true;
             if (ImGui::Checkbox("Snap into slot##udg", &dg->snapToSlot)) ed.dirty = true;
@@ -3857,7 +4270,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dt = go->GetComponent<UIDropTarget>()) {
-        if (ImGui::CollapsingHeader("UI Drop Target", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Drop Target", dt, &toRemove)) {
             char tb[64]; std::strncpy(tb, dt->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Accept Tag##udt", tb, sizeof(tb))) { dt->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
@@ -3869,7 +4282,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dg = go->GetComponent<Draggable>()) {
-        if (ImGui::CollapsingHeader("Draggable (item)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Draggable (item)", dg, &toRemove)) {
             if (ImGui::Checkbox("Return to Start##dg", &dg->returnToStart)) ed.dirty = true;
             if (ImGui::Checkbox("Any sprite is a target##dg", &dg->anyTarget)) ed.dirty = true;
             if (ImGui::Checkbox("Snap onto zone##dg", &dg->snapToZone)) ed.dirty = true;
@@ -3892,7 +4305,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dz = go->GetComponent<DropZone>()) {
-        if (ImGui::CollapsingHeader("Drop Zone (item)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Drop Zone (item)", dz, &toRemove)) {
             char tb[64]; std::strncpy(tb, dz->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Accept Tag##dz", tb, sizeof(tb))) { dz->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
@@ -3901,7 +4314,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
-        if (ImGui::CollapsingHeader("UI Layout Group", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Layout Group", lg, &toRemove)) {
             const char* dirs[] = {"Vertical", "Horizontal"};
             int d = (int)lg->direction;
             if (ImGui::Combo("Direction##lg", &d, dirs, 2)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
@@ -3917,7 +4330,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sv = go->GetComponent<UIScrollView>()) {
-        if (ImGui::CollapsingHeader("UI Scroll View", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Scroll View", sv, &toRemove)) {
             float pos[2] = {sv->position.x, sv->position.y};
             if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sv->size.x, sv->size.y};
@@ -3932,7 +4345,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pb = go->GetComponent<UIProgressBar>()) {
-        if (ImGui::CollapsingHeader("UI Progress Bar", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Progress Bar", pb, &toRemove)) {
             float pos[2] = {pb->position.x, pb->position.y};
             if (ImGui::DragFloat2("Pos (px)##upb", pos, 1.0f)) { pb->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {pb->size.x, pb->size.y};
@@ -3957,7 +4370,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* im = go->GetComponent<UIImage>()) {
-        if (ImGui::CollapsingHeader("UI Image", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Image", im, &toRemove)) {
             float pos[2] = {im->position.x, im->position.y};
             if (ImGui::DragFloat2("Pos (px)##uim", pos, 1.0f)) { im->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {im->size.x, im->size.y};
@@ -3988,7 +4401,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
-        if (ImGui::CollapsingHeader("UI Slider", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Slider", sl, &toRemove)) {
             float pos[2] = {sl->position.x, sl->position.y};
             if (ImGui::DragFloat2("Pos (px)##usl", pos, 1.0f)) { sl->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sl->size.x, sl->size.y};
@@ -4021,7 +4434,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
-        if (ImGui::CollapsingHeader("UI Toggle", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("UI Toggle", tg, &toRemove)) {
             char lb[128];
             std::strncpy(lb, tg->label.c_str(), sizeof(lb) - 1);
             lb[sizeof(lb) - 1] = '\0';
@@ -4048,7 +4461,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
-        if (ImGui::CollapsingHeader("Sprite Animator", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (CompHeader("Sprite Animator", an, &toRemove)) {
             if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Loop##anim", &an->loop)) ed.dirty = true;
             ImGui::SameLine();
@@ -4087,121 +4500,176 @@ void DrawInspector(EditorState& ed) {
     static char acFilter[64] = "";
     if (ImGui::Button("Add Component", ImVec2(-1, 0))) { acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent"); }
     if (ImGui::BeginPopup("AddComponent")) {
-        ImGui::SetNextItemWidth(220);
-        ImGui::InputTextWithHint("##acfilter", "search components...", acFilter, sizeof(acFilter));
+        // Centered "Component" title + search box, like Unity's Add Component.
+        const char* title = "Component";
+        float availW = ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - ImGui::CalcTextSize(title).x) * 0.5f);
+        ImGui::TextDisabled("%s", title);
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##acfilter", "Search", acFilter, sizeof(acFilter));
         ImGui::Separator();
+
+        bool searching = acFilter[0] != '\0';
         // Case-insensitive substring match against the search box.
         auto F = [&](const char* name) {
-            if (!acFilter[0]) return true;
+            if (!searching) return true;
             std::string a = name, b = acFilter;
             for (auto& ch : a) ch = (char)std::tolower((unsigned char)ch);
             for (auto& ch : b) ch = (char)std::tolower((unsigned char)ch);
             return a.find(b) != std::string::npos;
         };
-        // Category headers — shown when not searching, so the filtered list
-        // stays a clean flat match.
-        auto Hdr = [&](const char* s) { if (!acFilter[0]) { ImGui::Spacing(); ImGui::TextDisabled("%s", s); ImGui::Separator(); } };
+        // A category drills into a submenu when browsing (Unity-style), but its
+        // items render inline in a flat list while searching.
+        auto BeginCat = [&](const char* name) -> bool {
+            return searching ? true : ImGui::BeginMenu(name);
+        };
+        auto EndCat = [&](bool opened) { if (!searching && opened) ImGui::EndMenu(); };
+        // One component row: shown only if absent + matches the search.
+        auto item = [&](bool absent, const char* label) {
+            return absent && F(label) && ImGui::MenuItem(label);
+        };
 
-        Hdr("Rendering");
-        if (!go->GetComponent<SpriteRenderer>() && F("Sprite Renderer") && ImGui::Selectable("Sprite Renderer"))
-            { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
-        if (!go->GetComponent<MeshRenderer>() && F("Mesh Renderer (3D)") && ImGui::Selectable("Mesh Renderer (3D)"))
-            { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
-        if (!go->GetComponent<TextRenderer>() && F("Text") && ImGui::Selectable("Text"))
-            { go->AddComponent<TextRenderer>(); ed.dirty = true; }
-        if (!go->GetComponent<SpriteAnimator>() && F("Sprite Animator") && ImGui::Selectable("Sprite Animator"))
-            { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
-        if (!go->GetComponent<ParticleSystem>() && F("Particle System") && ImGui::Selectable("Particle System"))
-            { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
-        if (!go->GetComponent<Draggable>() && F("Draggable (item)") && ImGui::Selectable("Draggable (item)"))
-            { go->AddComponent<Draggable>(); ed.dirty = true; }
-        if (!go->GetComponent<DropZone>() && F("Drop Zone (item)") && ImGui::Selectable("Drop Zone (item)"))
-            { go->AddComponent<DropZone>(); ed.dirty = true; }
+        { bool o = BeginCat("Rendering");
+          if (o) {
+            if (item(!go->GetComponent<SpriteRenderer>(), "Sprite Renderer")) { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
+            if (item(!go->GetComponent<MeshRenderer>(), "Mesh Renderer (3D)")) { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
+            if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Physics 2D");
-        if (!go->GetComponent<Rigidbody2D>() && F("Rigidbody2D") && ImGui::Selectable("Rigidbody2D"))
-            { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
-        if (!go->GetComponent<BoxCollider2D>() && F("Box Collider 2D") && ImGui::Selectable("Box Collider 2D"))
-            { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
-        if (!go->GetComponent<CircleCollider2D>() && F("Circle Collider 2D") && ImGui::Selectable("Circle Collider 2D"))
-            { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
-        if (!go->GetComponent<CapsuleCollider2D>() && F("Capsule Collider 2D") && ImGui::Selectable("Capsule Collider 2D"))
-            { go->AddComponent<CapsuleCollider2D>(); ed.dirty = true; }
-        if (go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>() &&
-            F("Tilemap Collider 2D") && ImGui::Selectable("Tilemap Collider 2D"))
-            { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+        { bool o = BeginCat("Physics 2D");
+          if (o) {
+            if (item(!go->GetComponent<Rigidbody2D>(), "Rigidbody2D")) { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BoxCollider2D>(), "Box Collider 2D")) { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CircleCollider2D>(), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CapsuleCollider2D>(), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); ed.dirty = true; }
+            if (item(go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>(), "Tilemap Collider 2D")) { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Physics 3D");
-        if (!go->GetComponent<Rigidbody3D>() && F("Rigidbody3D") && ImGui::Selectable("Rigidbody3D"))
-            { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-        if (!go->GetComponent<BoxCollider3D>() && F("Box Collider 3D") && ImGui::Selectable("Box Collider 3D"))
-            { go->AddComponent<BoxCollider3D>(); ed.dirty = true; }
-        if (!go->GetComponent<SphereCollider3D>() && F("Sphere Collider 3D") && ImGui::Selectable("Sphere Collider 3D"))
-            { go->AddComponent<SphereCollider3D>(); ed.dirty = true; }
-        if (!go->GetComponent<CapsuleCollider3D>() && F("Capsule Collider 3D") && ImGui::Selectable("Capsule Collider 3D"))
-            { go->AddComponent<CapsuleCollider3D>(); ed.dirty = true; }
+        { bool o = BeginCat("Physics 3D");
+          if (o) {
+            if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Lighting");
-        if (!go->GetComponent<Light>() && F("Directional Light") && ImGui::Selectable("Directional Light"))
-            { go->AddComponent<Light>(); ed.dirty = true; }
+        { bool o = BeginCat("Lighting");
+          if (o) {
+            if (item(!go->GetComponent<Light>(), "Directional Light")) { go->AddComponent<Light>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Camera");
-        if (!go->GetComponent<Camera>() && F("Camera") && ImGui::Selectable("Camera"))
-            { go->AddComponent<Camera>(); ed.dirty = true; }
-        if (!go->GetComponent<CameraFollow>() && F("Camera Follow") && ImGui::Selectable("Camera Follow"))
-            { go->AddComponent<CameraFollow>(); ed.dirty = true; }
+        { bool o = BeginCat("Camera");
+          if (o) {
+            if (item(!go->GetComponent<Camera>(), "Camera")) { go->AddComponent<Camera>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CameraFollow>(), "Camera Follow")) { go->AddComponent<CameraFollow>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Scripting");
-        if (!go->GetComponent<ScriptComponent>() && F("Script (OkayScript)") && ImGui::Selectable("Script (OkayScript)"))
-            { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
-        if (!go->GetComponent<ActionList>() && F("Actions (Visual Script)") && ImGui::Selectable("Actions (Visual Script)"))
-            { go->AddComponent<ActionList>(); ed.dirty = true; }
+        { bool o = BeginCat("Scripts");
+          if (o) {
+            // Existing .okay scripts in the project show up directly here, so one
+            // click attaches them (Unity-style). "New Script..." makes a new file.
+            if (!go->GetComponent<ScriptComponent>()) {
+                namespace fs = std::filesystem;
+                fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
+                                                          : fs::path(ed.projectDir()) / "Assets";
+                std::error_code ec;
+                if (fs::exists(assets, ec)) {
+                    for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                        if (!e.is_regular_file()) continue;
+                        std::string ext = e.path().extension().string();
+                        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                        if (ext != ".okay") continue;
+                        std::string rel = fs::relative(e.path(), assets, ec).string();
+                        if (F(rel.c_str()) && ImGui::MenuItem(rel.c_str())) {
+                            auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+                            std::string err; sc->LoadFile(e.path().string(), &err);
+                            sc->SetPath(e.path().string());
+                            ConsoleLog("Attached script " + e.path().string());
+                            ed.dirty = true;
+                        }
+                    }
+                }
+                if (F("New Script...") && ImGui::MenuItem("New Script...")) {
+                    g_newScriptGO = go; g_newScriptOpen = true;
+                    std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
+                }
+            }
+            if (item(!go->GetComponent<ActionList>(), "Actions (Visual Script)")) { go->AddComponent<ActionList>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Audio");
-        if (!go->GetComponent<AudioSource>() && F("Audio Source") && ImGui::Selectable("Audio Source"))
-            { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+        { bool o = BeginCat("Audio");
+          if (o) {
+            if (item(!go->GetComponent<AudioSource>(), "Audio Source")) { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Gameplay");
-        if (!go->GetComponent<CharacterController2D>() && F("Character Controller 2D") && ImGui::Selectable("Character Controller 2D"))
-            { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
-        if (!go->GetComponent<CharacterController3D>() && F("Character Controller 3D") && ImGui::Selectable("Character Controller 3D"))
-            { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
-        if (!go->GetComponent<FollowTarget2D>() && F("Follow Target 2D") && ImGui::Selectable("Follow Target 2D"))
-            { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
-        if (!go->GetComponent<Mover>() && F("Mover") && ImGui::Selectable("Mover"))
-            { go->AddComponent<Mover>(); ed.dirty = true; }
-        if (!go->GetComponent<Spinner>() && F("Spinner") && ImGui::Selectable("Spinner"))
-            { go->AddComponent<Spinner>(); ed.dirty = true; }
-        if (!go->GetComponent<Lifetime>() && F("Lifetime") && ImGui::Selectable("Lifetime"))
-            { go->AddComponent<Lifetime>(); ed.dirty = true; }
+        { bool o = BeginCat("Gameplay");
+          if (o) {
+            if (item(!go->GetComponent<CharacterController2D>(), "Character Controller 2D")) { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("UI");
-        if (!go->GetComponent<Canvas>() && F("Canvas") && ImGui::Selectable("Canvas"))
-            { go->AddComponent<Canvas>(); ed.dirty = true; }
-        if (!go->GetComponent<EventSystem>() && F("Event System") && ImGui::Selectable("Event System"))
-            { go->AddComponent<EventSystem>(); ed.dirty = true; }
-        if (!go->GetComponent<UIDocument>() && F("UI Document") && ImGui::Selectable("UI Document"))
-            { go->AddComponent<UIDocument>(); ed.dirty = true; }
-        if (!go->GetComponent<NetworkManager>() && F("Network Manager") && ImGui::Selectable("Network Manager"))
-            { go->AddComponent<NetworkManager>(); ed.dirty = true; }
-        if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
-            { go->AddComponent<UIButton>(); ed.dirty = true; }
-        if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))
-            { go->AddComponent<UIPanel>(); ed.dirty = true; }
-        if (!go->GetComponent<UIImage>() && F("UI Image") && ImGui::Selectable("UI Image"))
-            { go->AddComponent<UIImage>(); ed.dirty = true; }
-        if (!go->GetComponent<UIProgressBar>() && F("UI Progress Bar") && ImGui::Selectable("UI Progress Bar"))
-            { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
-        if (!go->GetComponent<UISlider>() && F("UI Slider") && ImGui::Selectable("UI Slider"))
-            { go->AddComponent<UISlider>(); ed.dirty = true; }
-        if (!go->GetComponent<UIToggle>() && F("UI Toggle") && ImGui::Selectable("UI Toggle"))
-            { go->AddComponent<UIToggle>(); ed.dirty = true; }
-        if (!go->GetComponent<UIDraggable>() && F("UI Draggable") && ImGui::Selectable("UI Draggable"))
-            { go->AddComponent<UIDraggable>(); ed.dirty = true; }
-        if (!go->GetComponent<UIDropTarget>() && F("UI Drop Target") && ImGui::Selectable("UI Drop Target"))
-            { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+        { bool o = BeginCat("UI");
+          if (o) {
+            if (item(!go->GetComponent<Canvas>(), "Canvas")) { go->AddComponent<Canvas>(); ed.dirty = true; }
+            if (item(!go->GetComponent<EventSystem>(), "Event System")) { go->AddComponent<EventSystem>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDocument>(), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
+            if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIToggle>(), "UI Toggle")) { go->AddComponent<UIToggle>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+          } EndCat(o); }
+
         ImGui::EndPopup();
     }
+
+    // "New Script" naming dialog: create a fresh .okay under Assets and attach it
+    // to the target object (Unity's Add Component > New Script > Create and Add).
+    if (g_newScriptOpen && !ImGui::IsPopupOpen("New Script")) ImGui::OpenPopup("New Script");
+    if (ImGui::BeginPopupModal("New Script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("Creates Assets/<name>.okay and attaches it.");
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool enter = ImGui::InputText("Name", g_newScriptName, sizeof(g_newScriptName),
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        bool create = ImGui::Button("Create and Add", ImVec2(140, 0)) || enter;
+        ImGui::SameLine();
+        bool cancel = ImGui::Button("Cancel", ImVec2(100, 0));
+        if (create && g_newScriptName[0] && g_newScriptGO) {
+            namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
+                                                      : fs::path(ed.projectDir()) / "Assets";
+            std::error_code se; fs::create_directories(assets, se);
+            std::string base = g_newScriptName;
+            if (base.size() < 5 || base.substr(base.size() - 5) != ".okay") base += ".okay";
+            fs::path p = assets / base;
+            if (fs::exists(p, se)) {
+                ConsoleLog("Script already exists: " + p.string());
+            } else {
+                std::ofstream(p) << extide::StarterScript("okayscript");
+            }
+            auto* nsc = g_newScriptGO->AddComponent<ScriptComponent>("okayscript");
+            std::string err; nsc->LoadFile(p.string(), &err); nsc->SetPath(p.string());
+            ConsoleLog("Created + attached " + p.string());
+            ed.dirty = true;
+            g_newScriptOpen = false; g_newScriptGO = nullptr; ImGui::CloseCurrentPopup();
+        } else if (cancel) {
+            g_newScriptOpen = false; g_newScriptGO = nullptr; ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
     if (ImGui::Button("Delete GameObject", ImVec2(-1, 0))) ed.DeleteSelected();
     ImGui::PopStyleColor();
@@ -5124,18 +5592,40 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 }
             }
 
-            if (up->GetComponent<Light>()) {
-                ImU32 col = (up.get() == ed.selected()) ? IM_COL32(255, 220, 90, 255)
-                                                        : IM_COL32(255, 210, 70, 255);
+            if (auto* lt = up->GetComponent<Light>()) {
+                // Tint the gizmo by the light's own color (so lights are
+                // distinguishable), brightening to yellow when selected.
+                auto chan = [](float v) { return (int)(Mathf::Clamp(v, 0.0f, 1.0f) * 185.0f) + 70; };
+                ImU32 col = (up.get() == ed.selected())
+                    ? IM_COL32(255, 220, 90, 255)
+                    : IM_COL32(chan(lt->color.r), chan(lt->color.g), chan(lt->color.b), 255);
                 // Sun: short rays around the light's position.
                 Vec3 ax[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
                 for (auto& a : ax) { line(p - a * 0.25f, p + a * 0.25f, col); }
-                // Direction arrow along the light's forward axis.
-                Vec3 f = t->Forward();
-                Vec3 tip = p + f * 1.4f;
-                line(p, tip, col, 2.0f);
-                line(tip, tip - f * 0.3f + t->Up() * 0.15f, col);
-                line(tip, tip - f * 0.3f - t->Up() * 0.15f, col);
+                Vec3 f = t->Forward(), r = t->Right(), u = t->Up();
+                if (lt->type == Light::Type::Point) {
+                    // Range sphere: three rings so the reach is readable in 3D.
+                    ring(p, Vec3{1,0,0}, Vec3{0,1,0}, lt->range, col);
+                    ring(p, Vec3{1,0,0}, Vec3{0,0,1}, lt->range, col);
+                    ring(p, Vec3{0,1,0}, Vec3{0,0,1}, lt->range, col);
+                } else if (lt->type == Light::Type::Spot) {
+                    // Cone: apex at the light, base ring at `range` with a radius
+                    // from the half-angle; four edge lines to the rim.
+                    float half = Mathf::Clamp(lt->spotAngle * 0.5f, 1.0f, 89.0f) * Mathf::Deg2Rad;
+                    float rad = lt->range * Mathf::Tan(half);
+                    Vec3 baseC = p + f * lt->range;
+                    ring(baseC, r, u, rad, col);
+                    line(p, baseC + r * rad, col);
+                    line(p, baseC - r * rad, col);
+                    line(p, baseC + u * rad, col);
+                    line(p, baseC - u * rad, col);
+                } else {
+                    // Directional: an arrow along forward (the sun's direction).
+                    Vec3 tip = p + f * 1.4f;
+                    line(p, tip, col, 2.0f);
+                    line(tip, tip - f * 0.3f + u * 0.15f, col);
+                    line(tip, tip - f * 0.3f - u * 0.15f, col);
+                }
             }
 
             // 3D collider wireframes (Unity-style green outlines).
@@ -5214,6 +5704,30 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // project (HUD, menus, buttons) is visible here and in the Game view.
     DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
+    // Camera Preview (Unity): when a perspective Camera is selected, show what
+    // it sees in a small inset in the corner of the Scene view (slot 2 so it
+    // doesn't clobber the Scene/Game textures).
+    if (!gameView && ed.selected()) {
+        if (auto* pc = ed.selected()->GetComponent<Camera>();
+            pc && pc->projection == Camera::Projection::Perspective) {
+            float pw = Mathf::Clamp(canvasSize.x * 0.28f, 140.0f, 320.0f);
+            float ph = pw * 9.0f / 16.0f;
+            ImVec2 pmin(canvasEnd.x - pw - 10, canvasEnd.y - ph - 10);
+            ImVec2 pmax(canvasEnd.x - 10, canvasEnd.y - 10);
+            Color bg = pc->backgroundColor;
+            dl->AddRectFilled(pmin, pmax, IM_COL32((int)(bg.r * 255), (int)(bg.g * 255),
+                                                   (int)(bg.b * 255), 255));
+            Mat4 cvp = pc->ProjectionMatrix(pw / ph) * pc->ViewMatrix();
+            Vec3 ceye = ed.selected()->transform->Position();
+            if (SDL_Texture* ptex = Render3DTexture(ed.scene(), cvp, ceye,
+                                                    (int)pw, (int)ph, 2))
+                dl->AddImage((ImTextureID)ptex, pmin, pmax);
+            dl->AddRect(pmin, pmax, IM_COL32(255, 255, 255, 180));
+            dl->AddText(ImVec2(pmin.x + 4, pmin.y - 16), IM_COL32(220, 220, 230, 255),
+                        "Camera Preview");
+        }
+    }
+
     dl->PopClipRect();
 
     if (gameView) return;   // the Game view is non-interactive
@@ -5262,7 +5776,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         Tool tool = (noScale && g_tool == Tool::Scale) ? Tool::Move : g_tool;
         Vec3 o = t->Position();
         float L = ed.camDist * 0.18f;                 // arm length, screen-stable
-        Vec3 axis[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        // World axes by default; Local mode (and Scale, which is inherently local)
+        // uses the object's own right/up/forward so the handles follow rotation.
+        Vec3 axis[3];
+        if (g_gizmoLocal || tool == Tool::Scale) {
+            axis[0] = t->Right(); axis[1] = t->Up(); axis[2] = t->Forward();
+        } else {
+            axis[0] = {1, 0, 0}; axis[1] = {0, 1, 0}; axis[2] = {0, 0, 1};
+        }
         ImU32 col[3] = {IM_COL32(230, 80, 80, 255), IM_COL32(90, 210, 100, 255),
                         IM_COL32(90, 150, 240, 255)};
         ImVec2 so; bool oOk = toScreen(vp * Vec4{o, 1}, so);
@@ -5288,7 +5809,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             float best = 11.0f; int pick = -1;
             for (int i = 0; i < 3; ++i)
                 if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
-            if (pick >= 0) { ed.PushUndo(); g_gizmoAxis = pick; g_gizmoGrab = true; grabbedThisClick = true; }
+            if (pick >= 0) { ed.PushUndo(); g_gizmoAxis = pick; g_gizmoGrab = true; grabbedThisClick = true;
+                             g_rotAccum = 0.0f; g_rotApplied = 0.0f; }
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_gizmoGrab = false; g_gizmoAxis = -1; }
 
@@ -5309,10 +5831,24 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         t->localPosition.z = Mathf::Round(t->localPosition.z / g_snapSize) * g_snapSize;
                     }
                 } else if (tool == Tool::Rotate) {
-                    t->Rotate(axis[i] * (along * 0.6f));        // degrees about the axis
+                    float deg = along * 0.6f;                   // degrees about the axis
+                    if (g_snap && g_rotSnapDeg > 0.0f) {
+                        // 15-deg detents: apply only whole snapped steps as we cross them.
+                        g_rotAccum += deg;
+                        float snapped = Mathf::Round(g_rotAccum / g_rotSnapDeg) * g_rotSnapDeg;
+                        float step = snapped - g_rotApplied;
+                        if (step != 0.0f) { t->Rotate(axis[i] * step); g_rotApplied = snapped; }
+                    } else {
+                        t->Rotate(axis[i] * deg);
+                    }
                 } else { // Scale
                     Vec3 sc = t->localScale;
                     if (i == 0) sc.x += amt; else if (i == 1) sc.y += amt; else sc.z += amt;
+                    if (g_snap && g_snapSize > 0.0f) {          // snap scale to the increment
+                        sc.x = Mathf::Round(sc.x / g_snapSize) * g_snapSize;
+                        sc.y = Mathf::Round(sc.y / g_snapSize) * g_snapSize;
+                        sc.z = Mathf::Round(sc.z / g_snapSize) * g_snapSize;
+                    }
                     sc.x = Mathf::Max(0.01f, sc.x); sc.y = Mathf::Max(0.01f, sc.y); sc.z = Mathf::Max(0.01f, sc.z);
                     t->localScale = sc;
                 }
@@ -5378,6 +5914,21 @@ void DrawViewport(EditorState& ed) {
         ed.camTarget = p;
         ed.cameraPos = {p.x, p.y};
     }
+    // Align a selected Camera to the current scene view (Unity's Align With View):
+    // snap its position/orientation to the editor eye so the Game view matches.
+    if (ed.view3D && ed.selected() && ed.selected()->GetComponent<Camera>()) {
+        ImGui::SameLine();
+        if (ImGui::Button("Align Cam to View")) {
+            float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
+            Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
+                     Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
+            Vec3 eye = ed.camTarget + dir * ed.camDist;
+            Transform* t = ed.selected()->transform;
+            t->SetPosition(eye);
+            t->localRotation = Quat::LookRotation((ed.camTarget - eye).Normalized(), Vec3::Up);
+            ed.dirty = true;
+        }
+    }
     // Transform tools (W/E/R), highlighting the active one.
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
     auto toolBtn = [&](const char* lbl, Tool t) {
@@ -5390,11 +5941,15 @@ void DrawViewport(EditorState& ed) {
     toolBtn("Move", Tool::Move);
     toolBtn("Rotate", Tool::Rotate);
     toolBtn("Scale", Tool::Scale);
+    // Local/Global handle orientation (Unity's toggle); X toggles it.
+    if (ImGui::Button(g_gizmoLocal ? "Local" : "Global")) g_gizmoLocal = !g_gizmoLocal;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gizmo orientation: Local (object) vs Global (world). Shortcut: X");
     // Keyboard shortcuts W/E/R when the Scene window is focused (and not typing).
     if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_W, false)) g_tool = Tool::Move;
         if (ImGui::IsKeyPressed(ImGuiKey_E, false)) g_tool = Tool::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) g_tool = Tool::Scale;
+        if (ImGui::IsKeyPressed(ImGuiKey_X, false)) g_gizmoLocal = !g_gizmoLocal;
         // Arrow keys nudge a selected UI widget: 1px, or a grid step with Shift.
         if (ed.selected()) {
             UIRect nr = GetUIRect(ed.selected());
@@ -5416,6 +5971,11 @@ void DrawViewport(EditorState& ed) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(70);
         ImGui::DragFloat("##snap", &g_snapSize, 0.05f, 0.05f, 10.0f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move/Scale snap increment");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        ImGui::DragFloat("Rot deg##rotsnap", &g_rotSnapDeg, 1.0f, 1.0f, 90.0f, "%.0f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotation snap increment (degrees)");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(70);
         ImGui::DragInt("UI px##uigrid", &g_uiGrid, 1, 1, 256);   // UI pixel grid
@@ -5436,6 +5996,52 @@ void DrawViewport(EditorState& ed) {
 
     ImGui::InvisibleButton("canvas", canvasSize,
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+
+    // Drag an asset from the Project panel straight onto the Scene to place it
+    // (Unity-style): prefabs instantiate, scenes open, images become sprites,
+    // OBJ models become 3D objects. New objects land at the camera's focus.
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::string path((const char*)p->Data);
+            std::string ext;
+            if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            Vec3 drop = ed.view3D ? ed.camTarget
+                                  : Vec3{ed.cameraPos.x, ed.cameraPos.y, 0.0f};
+            GameObject* placed = nullptr;
+            if (ext == ".okayprefab") {
+                ed.PushUndo();
+                std::string err;
+                placed = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
+                if (!placed) ConsoleLog("Prefab load failed: " + err);
+            } else if (ext == ".okayscene") {
+                std::string err;
+                if (ed.Load(path, &err)) ConsoleLog("Opened " + path);
+                else ConsoleLog("Open failed: " + err);
+            } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                ed.PushUndo();
+                std::filesystem::path fp(path);
+                placed = ed.CreateSprite(fp.stem().string());
+                if (auto* sr = placed->GetComponent<SpriteRenderer>()) sr->texture = path;
+            } else if (ext == ".obj") {
+                ed.PushUndo();
+                std::filesystem::path fp(path);
+                placed = ed.CreateMesh("Cube");
+                if (auto* mr = placed->GetComponent<MeshRenderer>()) {
+                    bool ok = false;
+                    Mesh m = Mesh::LoadOBJ(path, &ok);
+                    if (ok && !m.vertices.empty()) { mr->mesh = m; mr->meshPath = path; }
+                    placed->name = fp.stem().string();
+                }
+            }
+            if (placed) {
+                placed->transform->SetPosition(drop);
+                ed.Select(placed); ed.dirty = true;
+                ConsoleLog("Placed " + placed->name);
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
     ImGuiIO& io = ImGui::GetIO();
     // Treat the canvas as hovered when the pointer is over it. IsItemHovered()
     // alone can read false in some docking/overlap states (and while the canvas
@@ -5456,10 +6062,11 @@ void DrawViewport(EditorState& ed) {
     if (ed.view3D) DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     else           DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
 
-    // Corner overlay.
-    char overlay[128];
-    std::snprintf(overlay, sizeof(overlay), "%s  |  %d objects%s%s",
+    // Corner overlay (view mode, object count, live FPS, selection).
+    char overlay[160];
+    std::snprintf(overlay, sizeof(overlay), "%s  |  %d objects  |  %.0f FPS%s%s",
                   ed.view3D ? "3D" : "2D", (int)ed.scene().Objects().size(),
+                  ImGui::GetIO().Framerate,
                   ed.selected() ? "  |  " : "",
                   ed.selected() ? ed.selected()->name.c_str() : "");
     dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(200, 200, 210, 255), overlay);
@@ -5577,6 +6184,7 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    LoadProjectSettings();   // project.okayproj defaults (company/version/gravity/...)
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
@@ -5720,9 +6328,11 @@ int main(int argc, char** argv) {
         DrawQuitPrompt(ed, running);
         DrawUpdatePopup();
         DrawAboutPopup();
+        DrawProjectSettings(ed);
         if (g_showHierarchy) DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel (always shown)
         DrawDataAssetEditor();
+        DrawMaterialEditor(ed);
         if (g_showGame)      DrawGameView(ed);
         if (g_showInspector) DrawInspector(ed);
         if (g_showConsole)   DrawConsole();

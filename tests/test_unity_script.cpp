@@ -5,7 +5,7 @@ using namespace okay;
 
 // OkayScript can be written in a Unity/C# style: PascalCase Start()/Update(),
 // dotted property access (transform.position.x), new Vector3(...), typed vars,
-// i++ loops, and a `class : MonoBehaviour` wrapper.
+// i++ loops, and a `class : OkaySource` wrapper.
 int main() {
     RUN_SUITE("unity_script");
 
@@ -38,13 +38,13 @@ int main() {
         CHECK_NEAR(go->transform->Position().x, 2.0f, 0.05f);
     }
 
-    // --- class : MonoBehaviour wrapper, typed vars, i++ for-loop --------
+    // --- class : OkaySource wrapper, typed vars, i++ for-loop --------
     {
         Scene s("UClass"); s.physicsEnabled = false;
         GameObject* go = s.CreateGameObject("Counter");
         auto* sc = go->AddComponent<ScriptComponent>("okayscript");
         CHECK(sc->LoadSource(
-            "public class Counter : MonoBehaviour {\n"
+            "public class Counter : OkaySource {\n"
             "    int total = 0;\n"
             "    void Start() {\n"
             "        for (int i = 0; i < 5; i++) { total = total + i; }\n"  // 0+1+2+3+4 = 10
@@ -53,6 +53,20 @@ int main() {
             "}\n"));
         s.Start();
         CHECK_NEAR(go->transform->Position().y, 10.0f, 0.001f);
+    }
+
+    // --- Back-compat: any base name parses, so Unity scripts (: MonoBehaviour)
+    // pasted in still compile even though OkaySource is the documented base.
+    {
+        Scene s("UBase"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Compat");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "public class Compat : MonoBehaviour {\n"
+            "    void Start() { transform.position.x = 3; }\n"
+            "}\n"));
+        s.Start();
+        CHECK_NEAR(go->transform->Position().x, 3.0f, 0.001f);
     }
 
     // --- Mathf.* + gameObject.name + dotted method call ----------------
@@ -79,7 +93,7 @@ int main() {
         go->AddComponent<SpriteRenderer>();
         auto* sc = go->AddComponent<ScriptComponent>("okayscript");
         CHECK(sc->LoadSource(
-            "public class Adv : MonoBehaviour {\n"
+            "public class Adv : OkaySource {\n"
             "    [SerializeField] float total = 0f;\n"
             "    [Header(\"Stats\")]\n"
             "    int hits = 0;\n"

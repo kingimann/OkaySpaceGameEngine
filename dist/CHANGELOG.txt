@@ -1,5 +1,69 @@
 OkaySpace Game Engine — Changelog
 
+v2.13.0
+  - Script editor reworked to feel like VS Code: dark editor surface, a
+    line-number gutter, live syntax highlighting (keywords, types, strings,
+    comments, numbers), a toolbar (Run / Save / Reload / Open in IDE / Docs /
+    Syntax toggle) and a status bar (language, Ln/Col, line count). Tab inserts
+    in code.
+  - Add Component now matches Unity: a centered "Component" title, a Search box,
+    and categories that drill into submenus while browsing (flat filtered list
+    while searching). The Scripts category lists every .okay script in your
+    project directly (one click attaches it) plus "New Script...".
+  - Drag a script/material/image from the Project panel onto the Inspector's
+    object header to attach it (script -> Script component, material -> applied,
+    image -> texture).
+  - Scripts use OkaySpace's own base class, OkaySource, instead of MonoBehaviour
+    (Unity's ": MonoBehaviour" still parses, so pasted scripts keep working).
+  - Add Component > Script now works like Unity: it opens a submenu that lists
+    every .okay script already in your project's Assets (pick one to attach it),
+    plus a "New Script..." entry that prompts for a name, creates the .okay file
+    under Assets, and attaches it ("Create and Add"). Adding a script always
+    references a real file now.
+  - Inspector parity with Unity: every component header now has an enable/disable
+    checkbox and a right-click > Remove Component menu. The Tag field became a
+    dropdown (Untagged/Player/MainCamera/Enemy/... plus custom), and the object
+    header gained a Static toggle that's saved with the scene.
+  - Drag & drop into the Scene view: drag an asset from the Project panel onto the
+    viewport to place it — prefabs instantiate, scenes open, images become
+    sprites, and .obj models become 3D objects (dropped at the camera's focus).
+  - Hierarchy: inactive objects are dimmed (Unity-style), and a new right-click
+    "Create Parent" wraps an object in a fresh empty parent without moving it.
+  - Add Component > "New Script..." creates a starter .okay file under Assets and
+    attaches it in one step. Project panel gained "+ Material" and "+ Scene"
+    create buttons (and matching right-click entries).
+  - Scene view: light gizmos now show their reach — a range sphere for point
+    lights and a cone for spot lights (directional keeps its sun arrow), tinted
+    by each light's color. The corner overlay shows live FPS, and a new "Align
+    Cam to View" button snaps a selected camera to the editor viewpoint (Unity's
+    Align With View).
+  - Snapping now covers all three transform tools: Move snaps to the grid
+    increment, Scale snaps to it too, and Rotate snaps in configurable degree
+    detents (default 15 deg) via a new "Rot deg" field in the Scene toolbar.
+  - Local/Global gizmo toggle (Unity-style, shortcut X): handles can follow the
+    object's own orientation or the world axes; Scale always uses local axes so
+    scaling a rotated object behaves correctly.
+  - Camera Preview: selecting a perspective Camera shows a live inset in the
+    Scene view of exactly what that camera sees (Unity's Camera Preview), so you
+    can frame shots without switching to the Game view.
+  - Material inspector: double-click a .okaymat asset to edit its albedo,
+    emissive, specular/shininess, unlit/double-sided, texture and tiling, then
+    Save or "Apply to Selection" to stamp it onto the selected mesh. You can also
+    drag a .okaymat from the Project straight onto an object in the Hierarchy to
+    apply it, or drag an image onto an object to set its texture.
+
+v2.12.0
+  - New Project Settings window (Edit > Project Settings...): set your game's
+    company and version, default resolution, 2D/3D gravity, and ambient/skybox
+    rendering defaults in one place. Settings persist to project.okayproj, can
+    be applied to the open scene live, and "Use in Build" pushes them straight
+    into the build dialog.
+  - More build settings — a new "Gameplay" section in Build lets you control
+    how the finished game behaves: Quit on Escape (toggle whether Esc closes the
+    game), Master Volume (scale all audio 0–100%), and Show FPS overlay (a small
+    on-screen frame-rate readout). These are written into game.okayconfig and
+    honored by the player, so each built game can be customized without code.
+
 v2.11.1
   - UI looked bloated/"weird": v2.10's spacing bump was too aggressive (very tall
     fields and toolbar). Restored balanced, professional metrics (close to the

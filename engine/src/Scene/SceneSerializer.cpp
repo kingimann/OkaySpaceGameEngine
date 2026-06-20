@@ -453,6 +453,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
+        if (go->isStatic) out << "  static 1\n";
         int parent = t->Parent() ? IndexOf(scene, t->Parent()->gameObject) : -1;
         out << "  parent " << parent << "\n";
         WriteComponents(out, go);
@@ -517,6 +518,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             while (in >> field && field != "end") {
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
+                else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
                 else if (field == "parent") { int p = -1; in >> p; if (p >= 0) parentLinks.push_back({idx, p}); }
                 else if (field == "transform") {
                     Vec3 p, s; Quat q;
@@ -1088,6 +1090,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
+        if (go->isStatic) out << "  static 1\n";
         Transform* parent = go->transform->Parent();
         int pIdx = -1;
         if (parent) {

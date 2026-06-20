@@ -760,7 +760,7 @@ public:
     }
 
     // Parse one top-level (or in-class) member: a function, a C#-style method,
-    // a `[public] class Name : MonoBehaviour { ... }` wrapper (its methods/fields
+    // a `[public] class Name : OkaySource { ... }` wrapper (its methods/fields
     // are hoisted out, so real Unity scripts paste in), or a statement.
     void ParseMember(std::vector<StmtPtr>& top, std::unordered_map<std::string, FunctionDecl>& funcs) {
         SkipAttributes();   // C# attributes: [SerializeField], [Header("..")], ...

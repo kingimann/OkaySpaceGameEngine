@@ -19,12 +19,13 @@ function update(dt) {
 
 ## Unity-style syntax
 
-OkayScript can be written to look almost exactly like a Unity C# `MonoBehaviour`,
-so Unity habits (and code) carry over. All of this is optional — the classic
-style below still works — but you can write:
+OkayScript can be written to look almost exactly like a Unity C# script, except
+the base class is OkaySpace's own `OkaySource` (Unity's `MonoBehaviour` still
+parses too). Unity habits — and most code — carry over. All of this is optional
+— the classic style below still works — but you can write:
 
 ```cs
-public class Player : MonoBehaviour {
+public class Player : OkaySource {
     float speed = 5f;
 
     void Start() {
@@ -46,7 +47,7 @@ public class Player : MonoBehaviour {
 What's supported:
 
 - **Lifecycle methods** `Awake()`, `Start()`, `Update()`, `LateUpdate()` (and the
-  classic `start`/`update`). `void`/typed return + a `class : MonoBehaviour`
+  classic `start`/`update`). `void`/typed return + a `class : OkaySource`
   wrapper are accepted and the methods are hoisted out, so a real Unity script
   often pastes in unchanged.
 - **Dot properties**: `transform.position` / `.localPosition` / `.localScale`

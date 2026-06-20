@@ -581,6 +581,8 @@ int main() {
         cb->params.ears = false;
         cb->hasHat = true;
         cb->anim = 2; cb->animSpeed = 1.5f;
+        { Accessory a; a.name = "Antenna"; a.shape = "Cone"; a.color = Color::FromBytes(10, 220, 10);
+          cb->accessories.push_back(a); }
         cb->subdivisions    = 0;
         // Limb swing moves geometry (arms/legs front-to-back) without changing count.
         {
@@ -590,7 +592,9 @@ int main() {
             CHECK(ma.TriangleCount() == mb.TriangleCount());
             CHECK(mb.Size().z > ma.Size().z + 0.05f);   // legs now reach forward/back
         }
-        int baseTris = cb->Build().TriangleCount();   // base (with hair cap, no subdiv)
+        // Accessories are added AFTER subdivision, so only the body multiplies.
+        int accTris = Mesh::FromName("Cone").TriangleCount();
+        int bodyTris = cb->Build().TriangleCount() - accTris;   // body (no subdiv) minus accessory
         cb->subdivisions    = 1;
         cb->Apply();                                  // builds into a MeshRenderer
         auto* mr = go->GetComponent<MeshRenderer>();
@@ -599,7 +603,7 @@ int main() {
         // Per-part colors: face colors stay parallel through subdivision.
         CHECK(mr->mesh.HasFaceColors());
         CHECK((int)mr->mesh.triColors.size() == mr->mesh.TriangleCount());
-        CHECK(mr->mesh.TriangleCount() == baseTris * 4);   // one subdivision pass
+        CHECK(mr->mesh.TriangleCount() == bodyTris * 4 + accTris);   // body subdivided + accessory
 
         // Taller params make a taller mesh than the default figure.
         CHECK(mr->mesh.Size().y > Mesh::Humanoid().Size().y);
@@ -623,8 +627,11 @@ int main() {
         CHECK(lc->hasHat == true);                                         // accessory round-trips
         CHECK(lc->anim == 2);                                              // animation round-trips
         CHECK_NEAR(lc->animSpeed, 1.5f, 0.001f);
+        CHECK(lc->accessories.size() == 1u);                              // custom accessory round-trips
+        CHECK(lc->accessories[0].name == "Antenna");
+        CHECK(lc->accessories[0].shape == "Cone");
         CHECK(lc->subdivisions == 1);
-        CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == baseTris * 4);
+        CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == bodyTris * 4 + accTris);
     }
 
     TEST_MAIN_RESULT();

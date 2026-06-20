@@ -4967,6 +4967,45 @@ void DrawInspector(EditorState& ed) {
                 float gl[3] = {cb->glasses.r, cb->glasses.g, cb->glasses.b};
                 if (ImGui::ColorEdit3("##glcol", gl)) { cb->glasses = {gl[0], gl[1], gl[2], 1.0f}; ch = true; }
             }
+
+            // Custom accessories: users add any primitive, positioned/colored.
+            ImGui::Spacing();
+            ImGui::TextDisabled("Custom Accessories");
+            const char* accShapes[] = {"Cube", "Sphere", "Cylinder", "Cone", "Pyramid",
+                                       "Capsule", "Torus", "Wedge"};
+            int removeAcc = -1;
+            for (int ai = 0; ai < (int)cb->accessories.size(); ++ai) {
+                okay::Accessory& a = cb->accessories[ai];
+                ImGui::PushID(ai);
+                char hdr[96];
+                std::snprintf(hdr, sizeof(hdr), "%s (%s)###acc%d",
+                              a.name.c_str(), a.shape.c_str(), ai);
+                if (ImGui::TreeNode(hdr)) {
+                    char nm[64]; std::strncpy(nm, a.name.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
+                    if (ImGui::InputText("Name##acc", nm, sizeof(nm))) { a.name = nm; ch = true; }
+                    int si = 0;
+                    for (int k = 0; k < 8; ++k) if (a.shape == accShapes[k]) si = k;
+                    if (ImGui::Combo("Shape##acc", &si, accShapes, 8)) { a.shape = accShapes[si]; ch = true; }
+                    float off[3] = {a.offset.x, a.offset.y, a.offset.z};
+                    if (ImGui::DragFloat3("Offset##acc", off, 0.02f)) { a.offset = {off[0], off[1], off[2]}; ch = true; }
+                    float sc[3] = {a.scale.x, a.scale.y, a.scale.z};
+                    if (ImGui::DragFloat3("Scale##acc", sc, 0.02f, 0.01f, 10.0f)) { a.scale = {sc[0], sc[1], sc[2]}; ch = true; }
+                    float ro[3] = {a.rotation.x, a.rotation.y, a.rotation.z};
+                    if (ImGui::DragFloat3("Rotation##acc", ro, 1.0f)) { a.rotation = {ro[0], ro[1], ro[2]}; ch = true; }
+                    float ac[3] = {a.color.r, a.color.g, a.color.b};
+                    if (ImGui::ColorEdit3("Color##acc", ac)) { a.color = {ac[0], ac[1], ac[2], 1.0f}; ch = true; }
+                    if (ImGui::SmallButton("Remove##acc")) removeAcc = ai;
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+            if (removeAcc >= 0) { cb->accessories.erase(cb->accessories.begin() + removeAcc); ch = true; }
+            if (ImGui::SmallButton("+ Add Accessory")) {
+                okay::Accessory a;
+                a.name = "Accessory " + std::to_string(cb->accessories.size() + 1);
+                cb->accessories.push_back(a);
+                ch = true;
+            }
             ImGui::Spacing();
             ImGui::TextDisabled("Presets");
             if (ImGui::SmallButton("Reset##char"))    { p = HumanoidParams{}; ch = true; }

@@ -176,7 +176,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << cb->glasses.r << " " << cb->glasses.g << " " << cb->glasses.b << " " << cb->glasses.a
             << " " << (cb->hasHat ? 1 : 0) << " " << (cb->hasGlasses ? 1 : 0)
             << " " << cb->anim << " " << cb->animSpeed
-            << "\n";
+            << " " << cb->accessories.size();
+        for (const auto& a : cb->accessories)
+            out << " " << Quote(a.name) << " " << Quote(a.shape)
+                << " " << a.offset.x << " " << a.offset.y << " " << a.offset.z
+                << " " << a.scale.x << " " << a.scale.y << " " << a.scale.z
+                << " " << a.rotation.x << " " << a.rotation.y << " " << a.rotation.z
+                << " " << a.color.r << " " << a.color.g << " " << a.color.b << " " << a.color.a;
+        out << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
@@ -998,6 +1005,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (more()) { int hg = 0; in >> hg; cb->hasGlasses = (hg != 0); }
                     if (more()) in >> cb->anim;
                     if (more()) in >> cb->animSpeed;
+                    if (more()) {
+                        int an = 0; in >> an;
+                        cb->accessories.clear();
+                        for (int k = 0; k < an; ++k) {
+                            Accessory a;
+                            a.name = ReadQuoted(in);
+                            a.shape = ReadQuoted(in);
+                            in >> a.offset.x >> a.offset.y >> a.offset.z
+                               >> a.scale.x >> a.scale.y >> a.scale.z
+                               >> a.rotation.x >> a.rotation.y >> a.rotation.z
+                               >> a.color.r >> a.color.g >> a.color.b >> a.color.a;
+                            cb->accessories.push_back(a);
+                        }
+                    }
                     cb->Apply();   // rebuild the humanoid mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();

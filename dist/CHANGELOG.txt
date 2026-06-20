@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.41
+  - Character Creator: a big step toward a realistic ("GTA-style"), less-blocky
+    character:
+    - Smoother by default — new characters now build at subdivision 2, and the
+      head, arms and legs use higher-resolution base geometry so curves read as
+      curves, not facets. (Dial subdivision down in the inspector if you need
+      the frames back.)
+    - Realistic default proportions — smaller head (~7.5-head build), broader
+      shoulders, narrower hips and a tapered athletic waist, longer legs.
+    - Natural relaxed hands — fingers are now a softly closed rounded hand with
+      a thumb instead of splayed cubes (no more "claw").
+    - Cleaner neck/shoulder join via a trapezius blend, and a relaxed default
+      arm/leg stance.
+
 v2.16.40
   - Character Creator: tapered torso — broad chest narrowing to a waist (a
     natural V-shape) instead of a straight tube, on both the part-based and

@@ -159,6 +159,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const auto& v = mr->mesh.vertices;
         const auto& t = mr->mesh.triangles;
         const bool hasUV = mr->mesh.uvs.size() == v.size();
+        const bool faceCols = mr->mesh.HasFaceColors();   // per-triangle colors?
         Image* tex = mr->texture.empty() ? nullptr : GetCachedTexture(mr->texture);
 
         // --- Per-mesh frustum cull: project the 8 AABB corners to clip space and
@@ -248,9 +249,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 float nh = Vec3::Dot(normal, h);
                 if (nh > 0.0f) spec = std::pow(nh, mr->shininess) * mr->specular;
             }
-            float cr = mr->color.r * lit.x + spec + mr->emissive.r;
-            float cg = mr->color.g * lit.y + spec + mr->emissive.g;
-            float cb = mr->color.b * lit.z + spec + mr->emissive.b;
+            // Per-face color when the mesh carries one (e.g. character skin /
+            // outfit / hair); otherwise the renderer's single albedo color.
+            const Color& base = faceCols ? mr->mesh.triColors[i / 3] : mr->color;
+            float cr = base.r * lit.x + spec + mr->emissive.r;
+            float cg = base.g * lit.y + spec + mr->emissive.g;
+            float cb = base.b * lit.z + spec + mr->emissive.b;
             // Distance fog: blend the (flat-shaded) color toward the fog color by
             // how far the triangle is, between fogStart and fogEnd.
             if (fogOn) {

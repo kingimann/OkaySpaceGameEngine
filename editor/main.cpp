@@ -4917,9 +4917,17 @@ void DrawInspector(EditorState& ed) {
             ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 3);
             if (cb->subdivisions > 0)
                 ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
-            float c[4] = {cb->color.r, cb->color.g, cb->color.b, cb->color.a};
-            if (ImGui::ColorEdit4("Color##char", c)) {
-                cb->color = {c[0], c[1], c[2], c[3]}; ch = true;
+            ImGui::Spacing();
+            ImGui::TextDisabled("Colors");
+            float sk[4] = {cb->color.r, cb->color.g, cb->color.b, cb->color.a};
+            if (ImGui::ColorEdit3("Skin##char", sk))   { cb->color  = {sk[0], sk[1], sk[2], 1.0f}; ch = true; }
+            float of[4] = {cb->outfit.r, cb->outfit.g, cb->outfit.b, cb->outfit.a};
+            if (ImGui::ColorEdit3("Outfit##char", of)) { cb->outfit = {of[0], of[1], of[2], 1.0f}; ch = true; }
+            ch |= ImGui::Checkbox("Hair##char", &cb->hasHair);
+            if (cb->hasHair) {
+                ImGui::SameLine();
+                float hr[4] = {cb->hair.r, cb->hair.g, cb->hair.b, cb->hair.a};
+                if (ImGui::ColorEdit3("##haircol", hr)) { cb->hair = {hr[0], hr[1], hr[2], 1.0f}; ch = true; }
             }
             ImGui::Spacing();
             ImGui::TextDisabled("Presets");

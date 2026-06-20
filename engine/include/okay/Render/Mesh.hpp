@@ -2,6 +2,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Render/Color.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -43,8 +44,11 @@ struct Mesh {
     std::vector<Vec3> vertices;
     std::vector<int>  triangles;  // 3 indices per triangle
     std::vector<Vec2> uvs;        // optional per-vertex UVs (parallel to vertices)
+    std::vector<Color> triColors; // optional per-triangle colors (parallel to faces);
+                                  // used by the renderer only when fully populated.
 
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
+    bool HasFaceColors() const { return (int)triColors.size() == TriangleCount() && !triColors.empty(); }
 
     // ---- Primitive generators -----------------------------------------
     static Mesh Quad(float size = 1.0f) {
@@ -526,12 +530,16 @@ struct Mesh {
             mids[{key.first, key.second}] = idx;
             return idx;
         };
-        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
+        const bool faceCols = HasFaceColors();
+        std::vector<Color> outCols;
+        for (std::size_t i = 0, face = 0; i + 2 < triangles.size(); i += 3, ++face) {
             int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
             int ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a);
             out.insert(out.end(), {a, ab, ca,  ab, b, bc,  ca, bc, c,  ab, bc, ca});
+            if (faceCols) { Color fc = triColors[face]; outCols.insert(outCols.end(), {fc, fc, fc, fc}); }
         }
         triangles = std::move(out);
+        if (faceCols) triColors = std::move(outCols);
         name = "";
     }
 
@@ -592,19 +600,22 @@ struct Mesh {
     }
 
     /// Append another mesh's geometry, scaled (per-axis) then translated.
-    /// Triangle indices are rebased; this is how compound meshes are built.
-    void Add(const Mesh& src, Vec3 offset, Vec3 scale = {1, 1, 1}) {
+    /// Triangle indices are rebased; this is how compound meshes are built. If
+    /// `col` is given, every appended face takes that color (per-part coloring).
+    void Add(const Mesh& src, Vec3 offset, Vec3 scale = {1, 1, 1}, const Color* col = nullptr) {
         int base = (int)vertices.size();
         for (const Vec3& v : src.vertices)
             vertices.push_back({v.x * scale.x + offset.x,
                                 v.y * scale.y + offset.y,
                                 v.z * scale.z + offset.z});
         for (int t : src.triangles) triangles.push_back(t + base);
+        if (col) for (int i = 0, n = (int)src.triangles.size() / 3; i < n; ++i) triColors.push_back(*col);
     }
 
     /// As Add(), but rotate (Euler degrees) about `pivot` after scaling — used to
     /// pose limbs (e.g. spread arms into an A-pose).
-    void AddPosed(const Mesh& src, Vec3 offset, Vec3 scale, Vec3 eulerDeg, Vec3 pivot) {
+    void AddPosed(const Mesh& src, Vec3 offset, Vec3 scale, Vec3 eulerDeg, Vec3 pivot,
+                  const Color* col = nullptr) {
         int base = (int)vertices.size();
         Quat q = Quat::Euler(eulerDeg);
         for (const Vec3& v : src.vertices) {
@@ -615,12 +626,17 @@ struct Mesh {
             vertices.push_back({r.x + pivot.x, r.y + pivot.y, r.z + pivot.z});
         }
         for (int t : src.triangles) triangles.push_back(t + base);
+        if (col) for (int i = 0, n = (int)src.triangles.size() / 3; i < n; ++i) triColors.push_back(*col);
     }
 
     /// A low-poly humanoid blockout assembled from primitive parts (head, neck,
     /// torso, hips, arms, hands, legs, feet), shaped by `p`. Stands on ~Y=0.
     /// Subdivide()/SubdivideSmooth() it to raise it from low-poly to high-poly.
-    static Mesh Humanoid(const HumanoidParams& p) {
+    /// When `skin`/`outfit`/`hair` are given, parts are colored per-region and a
+    /// hair cap is added on top of the head (skin=head/neck/hands, outfit=body).
+    static Mesh Humanoid(const HumanoidParams& p,
+                         const Color* skin = nullptr, const Color* outfit = nullptr,
+                         const Color* hair = nullptr) {
         Mesh m; m.name = "Human";
         const float H = p.height, B = p.build, hd = p.headSize;
         const float sw = 0.46f * p.shoulderWidth;   // arm half-spacing
@@ -630,27 +646,31 @@ struct Mesh {
         // Torso length grows the torso upward (bottom stays at the hips); the upper
         // body (neck, head, arms) rides up by the same amount so it stays attached.
         const float up = 0.78f * H * (p.torsoLength - 1.0f);
-        m.Add(Sphere(0.5f, 6, 8), {0.0f, 1.78f * H + up, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}); // head
-        m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}); // neck
+        const float headY = 1.78f * H + up;
+        m.Add(Sphere(0.5f, 6, 8), {0.0f, headY, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}, skin); // head
+        if (hair)   // a flattened cap over the top of the head
+            m.Add(Sphere(0.5f, 5, 8), {0.0f, headY + 0.10f * hd, 0.0f},
+                  {0.44f * hd, 0.34f * hd, 0.44f * hd}, hair);
+        m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin); // neck
         m.Add(Cube(1.0f), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
-              {0.62f * p.shoulderWidth * B, 0.78f * H * p.torsoLength, 0.34f * B * bd});                // torso
-        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B * bd}); // hips
+              {0.62f * p.shoulderWidth * B, 0.78f * H * p.torsoLength, 0.34f * B * bd}, outfit);        // torso
+        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B * bd}, outfit); // hips
         for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
             Vec3 shoulder{s * sw, 1.50f * H + up, 0.0f};       // pivot at the shoulder
             Vec3 armRot{0.0f, 0.0f, (float)s * -p.armSpread};  // swing out from the body
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H + up, 0.0f},
-                       {0.22f * B, 0.64f * aL * H, 0.22f * B}, armRot, shoulder);
+                       {0.22f * B, 0.64f * aL * H, 0.22f * B}, armRot, shoulder, outfit);
             m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H + up, 0.0f},
                        {0.17f * B * p.handSize, 0.17f * B * p.handSize, 0.17f * B * p.handSize},
-                       armRot, shoulder);
+                       armRot, shoulder, skin);
         }
         for (int s = -1; s <= 1; s += 2) {                                    // legs + feet
             Vec3 hip{s * hw, 0.60f * H, 0.0f};
             Vec3 legRot{0.0f, 0.0f, (float)s * -p.legSpread};
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f},
-                       {0.26f * B, 0.96f * lL * H, 0.26f * B}, legRot, hip);
+                       {0.26f * B, 0.96f * lL * H, 0.26f * B}, legRot, hip, outfit);
             m.AddPosed(Cube(1.0f), {s * hw, (0.12f - 0.58f * lL) * H, 0.08f},
-                       {0.26f * B * p.footSize, 0.12f * p.footSize, 0.52f * p.footSize}, legRot, hip);
+                       {0.26f * B * p.footSize, 0.12f * p.footSize, 0.52f * p.footSize}, legRot, hip, outfit);
         }
         return m;
     }

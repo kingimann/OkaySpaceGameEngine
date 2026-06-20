@@ -426,6 +426,10 @@ char  g_newScriptName[96] = "";
 // Extra panels / tools.
 bool  g_showStats = true;
 bool  g_showSaveManager = false;   // browse/edit .okaysave files
+// Script Editor tabs: objects (each with a ScriptComponent) open for editing.
+std::vector<okay::GameObject*> g_scriptTabs;
+okay::GameObject* g_activeScriptTab = nullptr;
+okay::GameObject* g_focusScriptTab = nullptr;   // request to focus a tab this frame
 bool  g_showScenes = false;
 bool  g_showInstPrefab = false;
 char  g_prefabBuf[256] = "Prefab.okayprefab";
@@ -2532,15 +2536,67 @@ static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
 
 void DrawScriptEditor(EditorState& ed) {
     if (!ImGui::Begin("Script Editor", &g_showScriptEditor)) { ImGui::End(); return; }
-    GameObject* go = ed.selected();
-    ScriptComponent* sc = go ? go->GetComponent<ScriptComponent>() : nullptr;
 
-    if (!sc) {
+    // Keep only tabs whose object is still alive and still has a Script.
+    {
+        std::vector<GameObject*> alive;
+        for (GameObject* t : g_scriptTabs) {
+            for (const auto& up : ed.scene().Objects())
+                if (up.get() == t) { if (t->GetComponent<ScriptComponent>()) alive.push_back(t); break; }
+        }
+        g_scriptTabs = std::move(alive);
+        if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), g_activeScriptTab) == g_scriptTabs.end())
+            g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
+    }
+    // Selecting an object with a Script opens (and focuses) a tab for it.
+    static GameObject* s_lastSel = nullptr;
+    GameObject* sel = ed.selected();
+    if (sel && sel != s_lastSel && sel->GetComponent<ScriptComponent>()) {
+        if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), sel) == g_scriptTabs.end())
+            g_scriptTabs.push_back(sel);
+        g_activeScriptTab = sel; g_focusScriptTab = sel;
+    }
+    s_lastSel = sel;
+
+    if (g_scriptTabs.empty()) {
         ImGui::TextDisabled("Select an object with a Script component.");
         ImGui::TextDisabled("Add one via Inspector > Add Component > Scripting.");
         ImGui::End();
         return;
     }
+
+    // One tab per open script; the selected tab drives the editor below.
+    if (ImGui::BeginTabBar("##scripttabs",
+            ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll)) {
+        GameObject* closeTab = nullptr;
+        for (GameObject* t : g_scriptTabs) {
+            ScriptComponent* tsc = t->GetComponent<ScriptComponent>();
+            std::string disp = (tsc && !tsc->Path().empty())
+                ? std::filesystem::path(tsc->Path()).filename().string()
+                : t->name + "." + extide::ExtFor(tsc ? tsc->Language() : "okayscript");
+            char id[32]; std::snprintf(id, sizeof(id), "###sct%p", (void*)t);
+            ImGuiTabItemFlags fl = (g_focusScriptTab == t) ? ImGuiTabItemFlags_SetSelected : 0;
+            bool open = true;
+            if (ImGui::BeginTabItem((disp + id).c_str(), &open, fl)) {
+                g_activeScriptTab = t;
+                ImGui::EndTabItem();
+            }
+            if (!open) closeTab = t;
+        }
+        ImGui::EndTabBar();
+        g_focusScriptTab = nullptr;
+        if (closeTab) {
+            g_scriptTabs.erase(std::remove(g_scriptTabs.begin(), g_scriptTabs.end(), closeTab),
+                               g_scriptTabs.end());
+            if (g_activeScriptTab == closeTab)
+                g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
+        }
+    }
+
+    GameObject* go = g_activeScriptTab ? g_activeScriptTab
+                   : (g_scriptTabs.empty() ? nullptr : g_scriptTabs.front());
+    ScriptComponent* sc = go ? go->GetComponent<ScriptComponent>() : nullptr;
+    if (!sc) { ImGui::End(); return; }
 
     {
         auto& buf = CodeBuffer(sc, sc->Source().empty()

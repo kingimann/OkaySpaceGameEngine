@@ -1436,6 +1436,9 @@ void DrawProject(EditorState& ed) {
     static std::string selected;        // currently selected asset path
     static std::string lastProject;     // re-home the browser when a project opens
     if (!ImGui::Begin("Project", &g_showProject)) { ImGui::End(); return; }
+    // Roomier spacing for the Project panel (it was too compact).
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(8, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 5));
 
     std::error_code ec;
     fs::path root = ed.projectDir().empty() ? fs::absolute(".", ec)
@@ -1491,31 +1494,42 @@ void DrawProject(EditorState& ed) {
         for (int n = 1; fs::exists(p, ue); ++n) p = dir / (base + std::to_string(n) + ext);
         return p;
     };
+    // Open the rename dialog on a freshly-created asset, so users name it on the
+    // spot (Unity-style "create, then type the name").
+    auto nameOnCreate = [&](const fs::path& p) {
+        renameTarget = p.string();
+        std::string fn = p.filename().string();
+        std::strncpy(renameBuf, fn.c_str(), sizeof(renameBuf) - 1);
+        renameBuf[sizeof(renameBuf) - 1] = '\0';
+        selected = p.string();
+    };
     bool canEdit = fs::is_directory(dir, ec);
     ImGui::BeginDisabled(!canEdit);
     if (ImGui::SmallButton("+ Folder")) {
-        std::error_code ce; fs::create_directory(uniquePath("New Folder", ""), ce);
+        std::error_code ce; fs::path p = uniquePath("New Folder", "");
+        if (!fs::create_directory(p, ce) ? false : true) nameOnCreate(p);
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("+ Script")) {
         fs::path p = uniquePath("NewScript", ".okay");
         std::ofstream(p) << extide::StarterScript("okayscript");
         ConsoleLog("Created " + p.string());
+        nameOnCreate(p);
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("+ Material")) {
         fs::path p = uniquePath("New Material", ".okaymat");
-        if (Material{}.SaveToFile(p.string())) ConsoleLog("Created " + p.string());
+        if (Material{}.SaveToFile(p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("+ Scene")) {
         fs::path p = uniquePath("New Scene", ".okayscene");
         okay::Scene empty("New Scene");
-        if (SceneSerializer::SaveToFile(empty, p.string())) ConsoleLog("Created " + p.string());
+        if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::TextDisabled("(right-click an item for Rename / Delete)");
+    ImGui::TextDisabled("(F2 or right-click to Rename)");
     ImGui::Separator();
 
     std::vector<fs::directory_entry> entries;
@@ -1634,11 +1648,12 @@ void DrawProject(EditorState& ed) {
     if (ImGui::BeginPopupContextWindow("bgctx",
             ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         if (canEdit) {
-            if (ImGui::MenuItem("New Folder")) { std::error_code ce; fs::create_directory(uniquePath("New Folder", ""), ce); }
+            if (ImGui::MenuItem("New Folder")) { std::error_code ce; fs::path p = uniquePath("New Folder", ""); if (fs::create_directory(p, ce)) nameOnCreate(p); }
             if (ImGui::MenuItem("New Script")) {
                 fs::path p = uniquePath("NewScript", ".okay");
                 std::ofstream(p) << extide::StarterScript("okayscript");
                 ConsoleLog("Created " + p.string());
+                nameOnCreate(p);
             }
             if (ImGui::MenuItem("New Data Asset")) {   // Scriptable Object
                 fs::path p = uniquePath("NewData", ".okaydata");
@@ -1646,15 +1661,16 @@ void DrawProject(EditorState& ed) {
                                     "name = Item\n"
                                     "value = 10\n";
                 ConsoleLog("Created " + p.string());
+                nameOnCreate(p);
             }
             if (ImGui::MenuItem("New Material")) {
                 fs::path p = uniquePath("New Material", ".okaymat");
-                if (Material{}.SaveToFile(p.string())) ConsoleLog("Created " + p.string());
+                if (Material{}.SaveToFile(p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
             }
             if (ImGui::MenuItem("New Scene")) {
                 fs::path p = uniquePath("New Scene", ".okayscene");
                 okay::Scene empty("New Scene");
-                if (SceneSerializer::SaveToFile(empty, p.string())) ConsoleLog("Created " + p.string());
+                if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
             }
             ImGui::Separator();
         }
@@ -1662,12 +1678,25 @@ void DrawProject(EditorState& ed) {
         ImGui::EndPopup();
     }
 
+    // F2 renames the selected asset (Explorer/Unity-style) when the Project
+    // window is focused and nothing else is being typed.
+    if (renameTarget.empty() && !selected.empty() &&
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+        renameTarget = selected;
+        std::string fn = fs::path(selected).filename().string();
+        std::strncpy(renameBuf, fn.c_str(), sizeof(renameBuf) - 1);
+        renameBuf[sizeof(renameBuf) - 1] = '\0';
+    }
+
     // Rename modal (opened from an item's context menu). Only open once — calling
     // OpenPopup every frame resets the popup so its buttons never register.
     if (!renameTarget.empty() && !ImGui::IsPopupOpen("Rename Asset")) ImGui::OpenPopup("Rename Asset");
     if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputText("New name", renameBuf, sizeof(renameBuf));
-        bool ok = ImGui::Button("Rename", ImVec2(110, 0));
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool enter = ImGui::InputText("New name", renameBuf, sizeof(renameBuf),
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        bool ok = ImGui::Button("Rename", ImVec2(110, 0)) || enter;
         ImGui::SameLine();
         bool cancel = ImGui::Button("Cancel", ImVec2(110, 0));
         if (ok && renameBuf[0]) {
@@ -1681,6 +1710,7 @@ void DrawProject(EditorState& ed) {
     }
 
     ImGui::EndChild();
+    ImGui::PopStyleVar(2);
     ImGui::End();
 }
 
@@ -2307,9 +2337,12 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::TextColored(ImVec4(0.82f, 0.82f, 0.88f, 1.0f), "%s", fname.c_str());
         ImGui::SameLine();
         static bool s_highlight = true;
+        static std::string s_error;     // last compile error (shown red in status)
+        static char s_find[128] = "";   // Find query (Ctrl+F highlights matches)
         if (ImGui::SmallButton("Run")) {           // compile + run
-            std::string e;
-            ConsoleLog(sc->LoadSource(buf.data(), &e) ? "Compiled OK" : "Error: " + e);
+            bool ok = sc->LoadSource(buf.data(), &s_error);
+            if (ok) s_error.clear();
+            ConsoleLog(ok ? "Compiled OK" : "Error: " + s_error);
             ed.dirty = true;
         }
         ImGui::SameLine();
@@ -2355,6 +2388,23 @@ void DrawScriptEditor(EditorState& ed) {
             }
         }
 
+        // Find bar: Ctrl+F focuses it; matches are highlighted in the editor.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
+            ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(180);
+        ImGui::InputTextWithHint("##find", "Find (Ctrl+F)", s_find, sizeof(s_find));
+        // Count matches (case-insensitive) for the status bar.
+        int findCount = 0;
+        if (s_find[0]) {
+            std::string hay = buf.data(), needle = s_find;
+            for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
+            for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
+            for (std::size_t pos = hay.find(needle); pos != std::string::npos;
+                 pos = hay.find(needle, pos + needle.size())) ++findCount;
+            ImGui::SameLine(); ImGui::TextDisabled("%d match%s", findCount, findCount == 1 ? "" : "es");
+        }
+
         // --- Editor surface: dark theme, line-number gutter, syntax overlay ---
         static ScriptCaret caret;
         int lines = 1, curLen = 0, maxLen = 0;
@@ -2394,11 +2444,31 @@ void DrawScriptEditor(EditorState& ed) {
             ImVec2(contentW, contentH),
             ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackAlways,
             ScriptCaretCallback, &caret);
-        if (s_highlight) {
-            ImVec2 mn = ImGui::GetItemRectMin();
-            DrawCodeHighlight(ImGui::GetWindowDrawList(), buf.data(),
-                              ImVec2(mn.x + padX, mn.y + padY), charW, lineH);
+        ImVec2 mn = ImGui::GetItemRectMin();
+        ImVec2 origin(mn.x + padX, mn.y + padY);
+        ImDrawList* edl = ImGui::GetWindowDrawList();
+        // Highlight every Find match (drawn under the text overlay).
+        if (s_find[0]) {
+            std::string needle = s_find;
+            std::size_t nlen = needle.size();
+            int ln = 0, col = 0;
+            const char* t = buf.data();
+            auto lower = [](char c) { return (char)std::tolower((unsigned char)c); };
+            for (int i = 0; t[i]; ) {
+                if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
+                bool match = true;
+                for (std::size_t k = 0; k < nlen; ++k)
+                    if (!t[i + k] || lower(t[i + k]) != lower(needle[k])) { match = false; break; }
+                if (match) {
+                    ImVec2 a(origin.x + col * charW, origin.y + ln * lineH);
+                    edl->AddRectFilled(a, ImVec2(a.x + nlen * charW, a.y + lineH),
+                                       IM_COL32(120, 110, 40, 180));
+                }
+                ++i; ++col;
+            }
         }
+        if (s_highlight)
+            DrawCodeHighlight(edl, buf.data(), origin, charW, lineH);
         ImGui::EndChild();
         ImGui::PopStyleColor(3);
 
@@ -2407,6 +2477,10 @@ void DrawScriptEditor(EditorState& ed) {
                             : sc->Language() == "lua" ? "Lua" : sc->Language().c_str();
         ImGui::TextDisabled("%s   Ln %d, Col %d   %d lines   Spaces", langLbl,
                             caret.line, caret.col, lines);
+        if (!s_error.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  \xe2\x9c\x97 %s", s_error.c_str());
+        }
     }
     ImGui::End();
 }
@@ -3208,6 +3282,10 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
 
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
+    // Roomier spacing for the Inspector specifically (it was too compact).
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(9, 9));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(9, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
 
     // Lock (pin) the inspector to the current object so it stays put while you
     // click around the scene/hierarchy — Unity's inspector lock.
@@ -3226,6 +3304,7 @@ void DrawInspector(EditorState& ed) {
         ImGui::Dummy(ImVec2(0, 8));
         ImGui::TextDisabled("  Select an object in the Hierarchy");
         ImGui::TextDisabled("  or Scene to edit it here.");
+        ImGui::PopStyleVar(3);
         ImGui::End();
         return;
     }
@@ -3590,16 +3669,35 @@ void DrawInspector(EditorState& ed) {
             const char* types[] = {"Directional", "Point", "Spot"};
             int ty = (int)li->type;
             if (ImGui::Combo("Type##light", &ty, types, 3)) { li->type = (Light::Type)ty; ed.dirty = true; }
-            float c[4] = {li->color.r, li->color.g, li->color.b, li->color.a};
-            if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+
+            // Color mode: an RGB swatch, or a Kelvin temperature like a real bulb.
+            if (ImGui::Checkbox("Use Temperature##light", &li->useTemperature)) ed.dirty = true;
+            if (li->useTemperature) {
+                if (ImGui::SliderFloat("Kelvin##light", &li->temperature, 1500.0f, 15000.0f, "%.0f K"))
+                    ed.dirty = true;
+                Color k = Light::KelvinToColor(li->temperature);
+                ImGui::SameLine(); ImGui::ColorButton("##kprev", ImVec4(k.r, k.g, k.b, 1.0f));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("2700K warm  -  6500K daylight  -  10000K cool");
+            } else {
+                float c[4] = {li->color.r, li->color.g, li->color.b, li->color.a};
+                if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            }
             if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Ambient (scene floor)");
             if (ImGui::SliderFloat("Ambient##light", &li->ambient, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unlit floor brightness (taken from the first light)");
+            float ac[3] = {li->ambientColor.r, li->ambientColor.g, li->ambientColor.b};
+            if (ImGui::ColorEdit3("Ambient Tint##light", ac)) { li->ambientColor = {ac[0], ac[1], ac[2], 1.0f}; ed.dirty = true; }
+
             if (li->type != Light::Type::Directional) {
+                ImGui::SeparatorText(li->type == Light::Type::Spot ? "Spot" : "Point");
                 if (ImGui::DragFloat("Range##light", &li->range, 0.2f, 0.1f, 500.0f)) ed.dirty = true;
             }
             if (li->type == Light::Type::Spot) {
                 if (ImGui::SliderFloat("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Softness##light", &li->spotSoftness, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp cone edge, 1 = very feathered");
             }
             ImGui::TextDisabled(li->type == Light::Type::Point
                 ? "Radiates from this object's position out to Range."
@@ -3611,13 +3709,31 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Camera", cam, &toRemove)) {
             int proj = (int)cam->projection;
             const char* projs[] = {"Orthographic", "Perspective"};
-            if (ImGui::Combo("Projection", &proj, projs, 2))
-                cam->projection = (Camera::Projection)proj;
-            if (cam->projection == Camera::Projection::Orthographic)
-                ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f);
-            else
-                ImGui::DragFloat("FOV", &cam->fieldOfView, 0.5f, 10.0f, 170.0f);
-            ImGui::Checkbox("Main", &cam->main);
+            if (ImGui::Combo("Projection", &proj, projs, 2)) { cam->projection = (Camera::Projection)proj; ed.dirty = true; }
+            if (cam->projection == Camera::Projection::Orthographic) {
+                if (ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f)) ed.dirty = true;
+            } else {
+                if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+            }
+
+            ImGui::SeparatorText("Background");
+            int cf = (int)cam->clearFlags;
+            const char* cfs[] = {"Skybox", "Solid Color"};
+            if (ImGui::Combo("Clear Flags", &cf, cfs, 2)) { cam->clearFlags = (Camera::ClearFlags)cf; ed.dirty = true; }
+            if (cam->clearFlags == Camera::ClearFlags::SolidColor) {
+                float bg[4] = {cam->backgroundColor.r, cam->backgroundColor.g, cam->backgroundColor.b, cam->backgroundColor.a};
+                if (ImGui::ColorEdit4("Background", bg)) { cam->backgroundColor = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
+            }
+
+            ImGui::SeparatorText("Clipping Planes");
+            if (ImGui::DragFloat("Near", &cam->nearClip, 0.01f, 0.001f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Far",  &cam->farClip, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+
+            ImGui::Spacing();
+            if (ImGui::Checkbox("Main", &cam->main)) ed.dirty = true;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            if (ImGui::DragFloat("Depth", &cam->depth, 0.1f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render priority; the highest-depth camera is used as main");
             if (ImGui::SmallButton("Remove##cam")) toRemove = cam;
         }
     }
@@ -4673,6 +4789,32 @@ void DrawInspector(EditorState& ed) {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
     if (ImGui::Button("Delete GameObject", ImVec2(-1, 0))) ed.DeleteSelected();
     ImGui::PopStyleColor();
+
+    // Whole-Inspector drop target for scripts and materials (images keep going to
+    // their own texture fields). Drop a .okay anywhere here to attach a Script.
+    if (ImGuiWindow* w = ImGui::GetCurrentWindow()) {
+        if (ImGui::BeginDragDropTargetCustom(w->InnerClipRect, w->ID)) {
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                std::string path((const char*)p->Data), ext;
+                if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+                for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                if (ext == ".okay") {
+                    ed.PushUndo();
+                    auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
+                    std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                    ConsoleLog("Attached script " + path); ed.dirty = true;
+                } else if (ext == ".okaymat") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        Material m; if (Material::LoadFromFile(path, m)) {
+                            ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true; ConsoleLog("Applied material");
+                        }
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+    }
+    ImGui::PopStyleVar(3);
     ImGui::End();
 }
 
@@ -5518,8 +5660,15 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Skybox: a vertical sky gradient behind everything, using the scene's
     // render settings (these save with the scene, so the built game matches).
     // Drawn first so the grid and the transparent mesh layer sit on top of it.
+    // A camera set to "Solid Color" clear flags suppresses the skybox in the
+    // Game view (the camera's background color shows through instead).
     const auto& rs = ed.scene().renderSettings;
-    if (rs.skybox) {
+    bool solidClear = false;
+    if (gameView) {
+        if (Camera* gmc = SceneCamera(ed.scene()))
+            solidClear = gmc->clearFlags == Camera::ClearFlags::SolidColor;
+    }
+    if (rs.skybox && !solidClear) {
         ImU32 top = ToColor(rs.skyTop);
         ImU32 mid = ToColor(rs.skyHorizon);
         ImU32 bot = ToColor(rs.skyBottom);

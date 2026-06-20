@@ -11,6 +11,8 @@ namespace okay {
 class Camera : public Component {
 public:
     enum class Projection { Orthographic, Perspective };
+    /// How the background is filled each frame (Unity's Clear Flags).
+    enum class ClearFlags { Skybox, SolidColor };
 
     Projection projection = Projection::Orthographic;
 
@@ -21,8 +23,12 @@ public:
     float nearClip = 0.03f;
     float farClip  = 1000.0f;
 
+    /// Background fill mode and the color used when SolidColor.
+    ClearFlags clearFlags = ClearFlags::Skybox;
     /// Color the framebuffer is cleared to each frame.
     Color backgroundColor = Color::Black;
+    /// Render/priority order: the highest-depth camera wins "main" (Unity-like).
+    float depth = 0.0f;
     /// Whether this camera should become the scene's main camera on Awake.
     bool main = true;
 

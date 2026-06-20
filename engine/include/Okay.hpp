@@ -16,6 +16,7 @@
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/DataAsset.hpp"
+#include "okay/Core/SaveData.hpp"
 #include "okay/Core/Application.hpp"
 
 // Input

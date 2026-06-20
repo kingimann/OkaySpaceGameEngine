@@ -56,6 +56,26 @@ int main() {
         CHECK_NEAR(lit.x, 0.3f, 0.001f);  // only ambient
     }
 
+    // --- Tinted (colored) ambient floor ---------------------------------------
+    {
+        SceneLights::Clear();
+        SceneLights::SetAmbientColor(Vec3{0.1f, 0.2f, 0.4f});   // cool blue floor
+        LightSample d; d.type = 0; d.dir = Vec3{0, -1, 0}; d.color = Vec3{1, 1, 1};
+        SceneLights::Add(d);
+        Vec3 dark = SceneLights::ShadeColor(Vec3{0, 0, 0}, Vec3{0, -1, 0}); // facing away
+        CHECK_NEAR(dark.x, 0.1f, 0.001f);
+        CHECK_NEAR(dark.y, 0.2f, 0.001f);
+        CHECK_NEAR(dark.z, 0.4f, 0.001f);   // blue ambient comes through
+    }
+
+    // --- Color temperature: warm is redder, cool is bluer ---------------------
+    {
+        Color warm = Light::KelvinToColor(2700.0f);
+        Color cool = Light::KelvinToColor(12000.0f);
+        CHECK(warm.r >= warm.b);        // incandescent: red >= blue
+        CHECK(warm.b < cool.b);         // cooler light has more blue
+    }
+
     SceneLights::Clear();
     TEST_MAIN_RESULT();
 }

@@ -1,5 +1,25 @@
 OkaySpace Game Engine — Changelog
 
+v2.14.0
+  - Lighting expanded: lights can be tinted by color temperature (Kelvin, e.g.
+    2700K warm to 12000K cool), spot cones gained a Softness control for
+    feathered edges, and the ambient floor can be a color tint, not just a
+    brightness. Multi-light shading uses the colored ambient and a smooth spot
+    falloff.
+  - Camera expanded: Clear Flags (Skybox vs Solid Color), exposed Near/Far
+    clipping planes, a render Depth/priority, and a full inspector. A Solid-Color
+    camera suppresses the skybox in the Game view.
+  - New Easy-Save-style save system: save()/load() with typed values (number,
+    string, Vector3), many named files (slots/profiles), write-through to disk,
+    plus save_has / save_delete / save_clear / save_exists / save_delete_file.
+    Documented in the scripting reference.
+  - Script editor additions: a Find bar (Ctrl+F) that highlights every match with
+    a count, and the last compile error is shown inline (red) in the status bar.
+  - Project/Inspector polish: drop a script or material anywhere in the Inspector
+    (not just the header) to attach/apply it; rename assets with F2; creating a
+    script/material/scene/folder immediately prompts for a name; and both panels
+    got roomier spacing (they were too compact).
+
 v2.13.0
   - Script editor reworked to feel like VS Code: dark editor surface, a
     line-number gutter, live syntax highlighting (keywords, types, strings,

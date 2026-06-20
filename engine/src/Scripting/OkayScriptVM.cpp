@@ -38,6 +38,7 @@
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/DataAsset.hpp"
+#include "okay/Core/SaveData.hpp"
 #include "okay/Math/Easing.hpp"
 
 #include <algorithm>
@@ -2140,6 +2141,49 @@ struct OkayScriptVM::Impl {
         };
         b["prefs_load"] = [](std::vector<Value>& a) {
             return Value{Prefs::Load(a.empty() ? "game.okayprefs" : a[0].AsString())};
+        };
+
+        // Easy-Save-3-style save system: typed values, many files, write-through.
+        //   save("coins", 10)                 -> default file
+        //   save("spawn", new Vector3(1,2,3), "slot1.okaysave")
+        //   load("coins", 0)  /  load("name", "Hero")  /  load("spawn", vec)
+        // The 3rd arg (file) is optional everywhere; values keep their type.
+        auto saveFile = [](std::vector<Value>& a, size_t idx) -> std::string {
+            return (a.size() > idx && a[idx].IsString()) ? a[idx].AsString() : Save::DefaultFile();
+        };
+        b["save"] = [saveFile](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{false};
+            std::string key = a[0].AsString(), file = saveFile(a, 2);
+            if (a[1].IsVec3())        Save::SetVec3(key, a[1].AsVec3(), file);
+            else if (a[1].IsString()) Save::SetString(key, a[1].AsString(), file);
+            else                      Save::SetFloat(key, a[1].AsFloat(), file);
+            return Value{true};
+        };
+        b["load"] = [saveFile](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{0.0f};
+            std::string key = a[0].AsString(), file = saveFile(a, 2);
+            if (a.size() > 1 && a[1].IsVec3())   return Value{Save::GetVec3(key, a[1].AsVec3(), file)};
+            if (a.size() > 1 && a[1].IsString()) return Value{Save::GetString(key, a[1].AsString(), file)};
+            float def = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+            return Value{Save::GetFloat(key, def, file)};
+        };
+        b["save_has"] = [saveFile](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{false};
+            return Value{Save::Has(a[0].AsString(), saveFile(a, 1))};
+        };
+        b["save_delete"] = [saveFile](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{};
+            Save::Delete(a[0].AsString(), saveFile(a, 1)); return Value{};
+        };
+        b["save_clear"] = [](std::vector<Value>& a) -> Value {
+            Save::Clear(a.empty() || !a[0].IsString() ? Save::DefaultFile() : a[0].AsString());
+            return Value{};
+        };
+        b["save_exists"] = [](std::vector<Value>& a) -> Value {
+            return Value{Save::FileExists(a.empty() || !a[0].IsString() ? Save::DefaultFile() : a[0].AsString())};
+        };
+        b["save_delete_file"] = [](std::vector<Value>& a) -> Value {
+            return Value{Save::DeleteFile(a.empty() || !a[0].IsString() ? Save::DefaultFile() : a[0].AsString())};
         };
         // Math helpers
         b["abs"]   = [](std::vector<Value>& a) { return Value{Mathf::Abs(a.empty() ? 0 : a[0].AsFloat())}; };

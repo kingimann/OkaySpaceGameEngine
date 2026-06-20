@@ -126,7 +126,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cam->fieldOfView << " "
             << cam->backgroundColor.r << " " << cam->backgroundColor.g << " "
             << cam->backgroundColor.b << " " << cam->backgroundColor.a << " "
-            << (cam->main ? 1 : 0) << "\n";
+            << (cam->main ? 1 : 0)
+            << " " << (int)cam->clearFlags << " " << cam->depth
+            << " " << cam->nearClip << " " << cam->farClip << "\n";
     }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — just the heightmap below, which rebuilds the mesh on load.
@@ -152,7 +154,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
             << li->color.a << " " << li->ambient << " " << li->intensity
-            << " " << (int)li->type << " " << li->range << " " << li->spotAngle << "\n";
+            << " " << (int)li->type << " " << li->range << " " << li->spotAngle
+            << " " << li->spotSoftness << " " << (li->useTemperature ? 1 : 0) << " " << li->temperature
+            << " " << li->ambientColor.r << " " << li->ambientColor.g << " " << li->ambientColor.b << "\n";
     }
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -560,6 +564,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     cam->fieldOfView = fov;
                     cam->backgroundColor = c;
                     cam->main = (main != 0);
+                    in >> std::ws; // optional clearFlags + depth + near + far (added later)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int cf = 0; in >> cf >> cam->depth >> cam->nearClip >> cam->farClip;
+                        cam->clearFlags = (Camera::ClearFlags)cf;
+                    }
                 } else if (field == "mesh") {
                     std::string kind = ReadQuoted(in);
                     Color c; int wire = 1;
@@ -601,6 +610,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int ty = 0; in >> ty >> li->range >> li->spotAngle;
                         li->type = (Light::Type)ty;
+                    }
+                    in >> std::ws; // optional softness + temperature + ambient tint
+                    if (std::isdigit(in.peek())) {
+                        int useT = 0;
+                        in >> li->spotSoftness >> useT >> li->temperature
+                           >> li->ambientColor.r >> li->ambientColor.g >> li->ambientColor.b;
+                        li->useTemperature = (useT != 0);
                     }
                 } else if (field == "rigidbody2d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;

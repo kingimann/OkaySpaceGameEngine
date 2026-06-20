@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.30
+  - Character Creator: "Auto (move)" animation.
+    * Drives idle/walk/run automatically from how fast the object is actually
+      moving — wire a CharacterController or script to move it and the character
+      animates itself (no manual clip switching).
+
 v2.16.29
   - Character Creator: workflow + prop palette.
     * Accessory list now has Duplicate, Move Up/Down (reorder).

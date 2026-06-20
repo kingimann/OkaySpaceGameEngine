@@ -52,6 +52,8 @@ public:
     float animTime = 0.0f;        // runtime clock (not serialized)
     float restY = 0.0f;           // captured base height for Jump (runtime)
     bool  restYset = false;       // (runtime)
+    Vec3  lastPos = {0, 0, 0};    // previous world position (Auto anim, runtime)
+    bool  lastPosSet = false;     // (runtime)
 
     std::vector<Accessory> accessories;   // user-added custom parts
 

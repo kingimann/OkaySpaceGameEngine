@@ -20,7 +20,9 @@ v2.13.0
     Align With View).
   - Material inspector: double-click a .okaymat asset to edit its albedo,
     emissive, specular/shininess, unlit/double-sided, texture and tiling, then
-    Save or "Apply to Selection" to stamp it onto the selected mesh.
+    Save or "Apply to Selection" to stamp it onto the selected mesh. You can also
+    drag a .okaymat from the Project straight onto an object in the Hierarchy to
+    apply it, or drag an image onto an object to set its texture.
 
 v2.12.0
   - New Project Settings window (Edit > Project Settings...): set your game's

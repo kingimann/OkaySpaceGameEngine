@@ -2742,6 +2742,28 @@ void DrawHierarchy(EditorState& ed) {
                         ed.dirty = true;
                     }
                 }
+                // Drop a Project asset onto an object: a .okaymat applies its look
+                // to the object's Mesh Renderer; an image sets the texture on a
+                // Mesh/Sprite Renderer (Unity-style).
+                if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                    std::string path((const char*)ap->Data);
+                    std::string ext;
+                    if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+                    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                    if (ext == ".okaymat") {
+                        if (auto* mr = node->GetComponent<MeshRenderer>()) {
+                            Material m; if (Material::LoadFromFile(path, m)) {
+                                ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true;
+                                ConsoleLog("Applied material to " + node->name);
+                            }
+                        } else ConsoleLog(node->name + " has no Mesh Renderer for the material");
+                    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                        ed.PushUndo();
+                        if (auto* mr = node->GetComponent<MeshRenderer>())      mr->texture = path;
+                        else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
+                        ed.dirty = true; ConsoleLog("Set texture on " + node->name);
+                    }
+                }
                 ImGui::EndDragDropTarget();
             }
             // Double-click a row to rename it inline.

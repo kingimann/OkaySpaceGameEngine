@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.19
+  - Character Creator: more facial detail.
+    * Ears (toggle), pupils inside the eyes, an adjustable Mouth Width (smile),
+      and a Brow Angle slider (angry/neutral/worried expressions).
+    * All new fields save/load (back-compatible).
+
 v2.16.18
   - Character Creator: hair styles + eye spacing.
     * Hair Style selector: Cap, Short, Long (back panel), Spiky, Ponytail,

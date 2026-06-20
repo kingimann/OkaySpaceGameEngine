@@ -2733,6 +2733,13 @@ static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
     static const char* types[] = {
         "Vector2","Vector3","Vec2","Vec3","Color","Quaternion","Transform","GameObject",
         "Mathf","Input","Time","Okay","OkaySource","Debug","Random","Physics"};
+    // Bracket-pair colorization: rotate through these by nesting depth (VS Code).
+    static const ImU32 cBracket[] = {
+        IM_COL32(255, 214, 110, 255),  // gold
+        IM_COL32(214, 130, 230, 255),  // magenta
+        IM_COL32(90, 178, 240, 255),   // blue
+    };
+    int bracketDepth = 0;
     auto isWord = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
     auto inList = [](const std::string& s, const char* const* arr, int n) {
         for (int i = 0; i < n; ++i) if (s == arr[i]) return true; return false; };
@@ -2764,6 +2771,15 @@ static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
             ImU32 col = inList(s, kw, (int)(sizeof(kw) / sizeof(*kw))) ? cKeyword
                       : inList(s, types, (int)(sizeof(types) / sizeof(*types))) ? cType : cDefault;
             dl->AddText(ImVec2(x, y), col, s.c_str()); x += (j - i) * charW; i = j; continue;
+        }
+        if (c == '(' || c == '[' || c == '{') {                        // opening bracket
+            ImU32 bc = cBracket[bracketDepth % 3]; ++bracketDepth;
+            char b[2] = {c, 0}; dl->AddText(ImVec2(x, y), bc, b); x += charW; ++i; continue;
+        }
+        if (c == ')' || c == ']' || c == '}') {                        // closing bracket
+            if (bracketDepth > 0) --bracketDepth;
+            ImU32 bc = cBracket[bracketDepth % 3];
+            char b[2] = {c, 0}; dl->AddText(ImVec2(x, y), bc, b); x += charW; ++i; continue;
         }
         if (c != ' ' && c != '\t') { char b[2] = {c, 0}; dl->AddText(ImVec2(x, y), cDefault, b); }
         x += (c == '\t' ? 4 * charW : charW); ++i;
@@ -3194,6 +3210,51 @@ void DrawScriptEditor(EditorState& ed) {
             float ly = origin.y + (caret.line - 1) * lineH;
             edl->AddRectFilled(ImVec2(mn.x, ly), ImVec2(mn.x + contentW, ly + lineH),
                                IM_COL32(255, 255, 255, 16));
+        }
+        // Indent guides: faint vertical lines at each 4-space level (VS Code).
+        {
+            const char* t = buf.data();
+            int ln = 0;
+            for (int i = 0;;) {
+                int col = 0, j = i;
+                while (t[j] == ' ' || t[j] == '\t') { col += (t[j] == '\t' ? 4 : 1); ++j; }
+                if (t[j] != '\n' && t[j] != '\0') {        // skip blank lines
+                    float y0 = origin.y + ln * lineH, y1 = y0 + lineH;
+                    for (int g = 4; g < col; g += 4) {
+                        float gx = origin.x + g * charW;
+                        edl->AddLine(ImVec2(gx, y0), ImVec2(gx, y1), IM_COL32(255, 255, 255, 18));
+                    }
+                }
+                while (t[i] && t[i] != '\n') ++i;
+                if (!t[i]) break;
+                ++i; ++ln;
+            }
+        }
+        // Highlight all occurrences of the identifier under the caret (VS Code).
+        {
+            const char* t = buf.data();
+            int tlen = (int)std::strlen(t);
+            auto isW = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+            int p = caret.pos < 0 ? 0 : (caret.pos > tlen ? tlen : caret.pos);
+            int ws = p, we = p;
+            while (ws > 0 && isW(t[ws - 1])) --ws;
+            while (we < tlen && isW(t[we])) ++we;
+            std::string word(t + ws, t + we);
+            if (word.size() >= 2 && (std::isalpha((unsigned char)word[0]) || word[0] == '_')) {
+                int ln = 0, col = 0;
+                for (int i = 0; i < tlen;) {
+                    if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
+                    bool wb = (i == 0 || !isW(t[i - 1]));
+                    if (wb && std::strncmp(t + i, word.c_str(), word.size()) == 0 &&
+                        !isW(t[i + word.size()])) {
+                        ImVec2 a(origin.x + col * charW, origin.y + ln * lineH);
+                        edl->AddRectFilled(a, ImVec2(a.x + word.size() * charW, a.y + lineH),
+                                           IM_COL32(120, 145, 175, 55));
+                        i += (int)word.size(); col += (int)word.size(); continue;
+                    }
+                    ++i; ++col;
+                }
+            }
         }
         // Highlight every Find match (drawn under the text overlay).
         if (s_find[0]) {

@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.8
+  - Script Editor visual polish (VS Code-style):
+    * Bracket-pair colorization: matching ()[]{} are tinted by nesting depth
+      (gold / magenta / blue) so you can read nesting at a glance.
+    * Indent guides: faint vertical lines mark each 4-space indent level.
+    * Highlight all occurrences of the identifier under the caret across the
+      whole file.
+
 v2.16.7
   - Script Editor gained more VS Code-style tools:
     * Modified (dot) marker on tabs and in the status bar when a script has

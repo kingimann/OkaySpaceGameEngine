@@ -10,7 +10,7 @@
 namespace okay {
 
 // Parse an inspector value string into a VsValue: true/false -> bool, a number
-// -> float, otherwise a string (surrounding quotes are stripped).
+// -> float, new Vector3(x,y,z) -> Vec3, otherwise a string (quotes stripped).
 static vs::VsValue ParseFieldValue(const std::string& raw) {
     std::string s = raw;
     auto a = s.find_first_not_of(" \t");
@@ -21,6 +21,18 @@ static vs::VsValue ParseFieldValue(const std::string& raw) {
     if (s == "false") return vs::VsValue{false};
     if (s.size() >= 2 && (s.front() == '"' || s.front() == '\'') && s.back() == s.front())
         return vs::VsValue{s.substr(1, s.size() - 2)};
+    // Vector3 / Vector2 literal: pull the numbers out of the parentheses.
+    if (s.find("Vector3") != std::string::npos || s.find("Vector2") != std::string::npos ||
+        s.find("Vec3") != std::string::npos) {
+        auto lp = s.find('('), rp = s.rfind(')');
+        if (lp != std::string::npos && rp != std::string::npos && rp > lp) {
+            std::string inside = s.substr(lp + 1, rp - lp - 1);
+            for (char& c : inside) if (c == ',') c = ' ';
+            std::istringstream is(inside);
+            Vec3 v{0, 0, 0}; is >> v.x >> v.y >> v.z;
+            return vs::VsValue{v};
+        }
+    }
     // Numeric? (allow a leading sign, digits, one dot, and an f/d suffix)
     char* end = nullptr;
     double d = std::strtod(s.c_str(), &end);

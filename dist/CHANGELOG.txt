@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.3
+  - Fixed adding multiple scripts: you can now attach as many scripts as you like
+    to one object — including the SAME script more than once (Unity allows it) —
+    via Add Component or drag-and-drop. The earlier "can't attach twice" block is
+    gone.
+  - Public variables are more editable, Unity-style: Vector3/Vector2 fields edit
+    as three numbers, [Range(a,b)] shows a slider, [Header("..")] adds a section,
+    and [Tooltip("..")] shows on hover. Numbers/strings/bools as before.
+  - The inspector now reads the script you're TYPING (the live editor buffer), so
+    new public vars appear immediately — no need to press Run (Run executes the
+    script; Save just writes the file).
+
 v2.16.2
   - Multiple scripts per GameObject (like Unity): Add Component > Scripts no
     longer replaces the existing script — each adds another, and the Inspector

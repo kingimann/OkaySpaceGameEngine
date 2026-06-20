@@ -550,6 +550,12 @@ std::unordered_map<GameObject*, Vec3> g_euler;
 
 // Editable text buffers for script/visual-script components, keyed by pointer.
 std::unordered_map<void*, std::vector<char>> g_codeBuf;
+// Peek the live edit buffer for a key (e.g. a ScriptComponent) without creating
+// one — lets the inspector read the code being typed, not just the last compile.
+const char* PeekCodeBuffer(void* key) {
+    auto it = g_codeBuf.find(key);
+    return it == g_codeBuf.end() ? nullptr : it->second.data();
+}
 std::vector<char>& CodeBuffer(void* key, const std::string& initial) {
     auto it = g_codeBuf.find(key);
     if (it == g_codeBuf.end()) {
@@ -2730,6 +2736,8 @@ void DrawScriptEditor(EditorState& ed) {
             ConsoleLog(ok ? "Compiled OK" : "Error: " + s_error);
             ed.dirty = true;
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Compile and run now (executes the script immediately).\nUse Save to just write the file without running.");
         ImGui::SameLine();
         if (ImGui::SmallButton("Save")) {
             std::string p = filePath();
@@ -3856,9 +3864,28 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     return open;
 }
 
-// A public field discovered in a script: its name, declared type, and default
-// value. Used to show Unity-style serialized fields in the Script inspector.
-struct ScriptField { std::string name, type, def; };
+// A public field discovered in a script: its name, declared type, default value,
+// and any Unity attributes (Header/Tooltip/Range). Used to show Unity-style
+// serialized fields in the Script inspector.
+struct ScriptField {
+    std::string name, type, def;
+    std::string header, tooltip;          // [Header("..")] / [Tooltip("..")]
+    bool  hasRange = false; float rmin = 0, rmax = 1;   // [Range(min,max)]
+};
+
+// Pull the text inside an attribute, e.g. attrArg("[Header(\"Stats\")]", "Header").
+static bool ScriptAttrArg(const std::string& line, const char* attr, std::string& out) {
+    std::string key = std::string("[") + attr;
+    auto p = line.find(key);
+    if (p == std::string::npos) return false;
+    auto lp = line.find('(', p); auto rp = line.find(')', lp);
+    if (lp == std::string::npos || rp == std::string::npos) { out.clear(); return true; }
+    out = line.substr(lp + 1, rp - lp - 1);
+    // strip surrounding quotes/space
+    auto a = out.find_first_not_of(" \t\"'"); auto b = out.find_last_not_of(" \t\"'");
+    out = (a == std::string::npos) ? "" : out.substr(a, b - a + 1);
+    return true;
+}
 
 // Scan script source for public/top-level field declarations: lines with `=` at
 // brace depth 0 (classic top-level) or 1 (inside a `class` body, Unity style),
@@ -3870,6 +3897,8 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
     static const std::unordered_set<std::string> kw = {
         "return","if","else","while","for","switch","case","do","break","continue"};
     int depth = 0;
+    // Attributes attach to the NEXT field (Unity puts them on the line above).
+    std::string pendH, pendT; bool pendR = false; float pendRmin = 0, pendRmax = 1;
     std::istringstream in(src);
     std::string line;
     while (std::getline(in, line)) {
@@ -3877,6 +3906,14 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
         std::string code = line;
         if (auto cm = code.find("//"); cm != std::string::npos) code = code.substr(0, cm);
         if (startDepth <= 1) {
+            // Capture [Header("..")] / [Tooltip("..")] / [Range(a,b)] (standalone or inline).
+            std::string av;
+            if (ScriptAttrArg(code, "Header", av))  pendH = av;
+            if (ScriptAttrArg(code, "Tooltip", av)) pendT = av;
+            if (ScriptAttrArg(code, "Range", av)) {
+                for (char& c : av) if (c == ',') c = ' ';
+                std::istringstream is(av); pendR = true; is >> pendRmin >> pendRmax;
+            }
             std::size_t eq = code.find('=');
             if (eq != std::string::npos) {
                 char before = eq > 0 ? code[eq - 1] : ' ';
@@ -3912,8 +3949,14 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                             }
                             auto a = rhs.find_first_not_of(" \t");
                             auto b = rhs.find_last_not_of(" \t");
-                            out.push_back({name, type, a == std::string::npos ? "" : rhs.substr(a, b - a + 1)});
+                            ScriptField f;
+                            f.name = name; f.type = type;
+                            f.def = a == std::string::npos ? "" : rhs.substr(a, b - a + 1);
+                            f.header = pendH; f.tooltip = pendT;
+                            f.hasRange = pendR; f.rmin = pendRmin; f.rmax = pendRmax;
+                            out.push_back(f);
                             seen.insert(name);
+                            pendH.clear(); pendT.clear(); pendR = false;   // consumed
                         }
                     }
                 }
@@ -4026,13 +4069,11 @@ void DrawInspector(EditorState& ed) {
             for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
             if (ext == ".okay") {
                 ed.PushUndo();
-                // Reuse a script already bound to this file; otherwise add a new
-                // one (objects can hold several scripts).
-                ScriptComponent* nsc = nullptr;
-                for (auto* s : go->GetComponents<ScriptComponent>()) if (s->Path() == path) { nsc = s; break; }
-                if (!nsc) nsc = go->AddComponent<ScriptComponent>("okayscript");
+                // Always add a new script (objects can hold several, including
+                // multiple instances of the same one — like Unity).
+                auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
                 std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
-                SetCodeBuffer(nsc, nsc->Source());   // refresh the editor buffer
+                SetCodeBuffer(nsc, nsc->Source());   // fresh editor buffer for it
                 ConsoleLog("Attached script " + path); ed.dirty = true;
             } else if (ext == ".okaymat") {
                 if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -4516,7 +4557,11 @@ void DrawInspector(EditorState& ed) {
 
             // Public variables (Unity's serialized fields): editable values that
             // override the script's defaults per object.
-            std::vector<ScriptField> fields = ParseScriptFields(sc->Source());
+            // Parse the live editor buffer when this script is open (so new public
+            // vars appear as you type), else the last-compiled source.
+            const char* liveBuf = PeekCodeBuffer(sc);
+            std::vector<ScriptField> fields =
+                ParseScriptFields(liveBuf ? std::string(liveBuf) : sc->Source());
             if (fields.empty()) {
                 ImGui::TextDisabled("No public variables. Declare top-level vars,");
                 ImGui::TextDisabled("e.g.  public float speed = 5;");
@@ -4529,15 +4574,38 @@ void DrawInspector(EditorState& ed) {
                     std::string cur = overridden ? sc->fields[f.name] : f.def;
                     ImGui::PushID(f.name.c_str());
                     bool changed = false;
+                    if (!f.header.empty()) { ImGui::Spacing(); ImGui::SeparatorText(f.header.c_str()); }
                     // Variable NAME on the left (Unity-style), value widget on the right.
                     ImGui::AlignTextToFramePadding();
                     if (overridden) ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.55f, 1.0f), "%s", f.name.c_str());
                     else            ImGui::TextUnformatted(f.name.c_str());
-                    if (ImGui::IsItemHovered() && !f.type.empty()) ImGui::SetTooltip("%s", f.type.c_str());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", f.tooltip.empty() ? (f.type.empty() ? f.name.c_str() : f.type.c_str())
+                                                                   : f.tooltip.c_str());
                     ImGui::SameLine(nameCol);
+                    // Is this a Vector3/Vector2 field?
+                    bool isVec = f.type.find("Vector3") != std::string::npos ||
+                                 f.type.find("Vector2") != std::string::npos ||
+                                 f.type.find("Vec3") != std::string::npos ||
+                                 cur.find("Vector3") != std::string::npos ||
+                                 cur.find("Vector2") != std::string::npos;
                     if (cur == "true" || cur == "false") {
                         bool b = (cur == "true");
                         if (ImGui::Checkbox("##v", &b)) { cur = b ? "true" : "false"; changed = true; }
+                    } else if (isVec) {
+                        // Pull 3 numbers from "...(x,y,z)" and edit them.
+                        float v[3] = {0, 0, 0};
+                        if (auto lp = cur.find('('); lp != std::string::npos) {
+                            std::string inside = cur.substr(lp + 1);
+                            if (auto rp = inside.find(')'); rp != std::string::npos) inside = inside.substr(0, rp);
+                            for (char& c : inside) if (c == ',') c = ' ';
+                            std::istringstream is(inside); is >> v[0] >> v[1] >> v[2];
+                        }
+                        ImGui::SetNextItemWidth(-28);
+                        if (ImGui::DragFloat3("##v", v, 0.05f)) {
+                            char nb[96]; std::snprintf(nb, sizeof(nb), "new Vector3(%g, %g, %g)", v[0], v[1], v[2]);
+                            cur = nb; changed = true;
+                        }
                     } else {
                         // Numeric? (allow an f/d suffix). Else edit as text.
                         char* endp = nullptr; std::string num = cur;
@@ -4547,9 +4615,9 @@ void DrawInspector(EditorState& ed) {
                         ImGui::SetNextItemWidth(-28);
                         if (isNum) {
                             float v = (float)dv;
-                            if (ImGui::DragFloat("##v", &v, 0.05f)) {
-                                char nb[32]; std::snprintf(nb, sizeof(nb), "%g", v); cur = nb; changed = true;
-                            }
+                            bool e = f.hasRange ? ImGui::SliderFloat("##v", &v, f.rmin, f.rmax)
+                                                : ImGui::DragFloat("##v", &v, 0.05f);
+                            if (e) { char nb[32]; std::snprintf(nb, sizeof(nb), "%g", v); cur = nb; changed = true; }
                         } else {
                             std::string sv = cur;
                             if (sv.size() >= 2 && (sv.front()=='"'||sv.front()=='\'') && sv.back()==sv.front())
@@ -5453,16 +5521,13 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Scripts");
           if (o) {
             // A GameObject can carry MANY scripts (like Unity). Existing .okay
-            // scripts show up directly (one click attaches another); the same
-            // script file can't be attached twice. "New Script..." makes a file.
+            // scripts show up directly (one click attaches one). You can attach
+            // as many as you like, including the same script more than once
+            // (Unity allows multiple instances). "New Script..." makes a file.
             namespace fs = std::filesystem;
             fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
                                                       : fs::path(ed.projectDir()) / "Assets";
             std::error_code ec;
-            auto alreadyHas = [&](const std::string& p) {
-                for (auto* s : go->GetComponents<ScriptComponent>()) if (s->Path() == p) return true;
-                return false;
-            };
             if (fs::exists(assets, ec)) {
                 for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
                     if (!e.is_regular_file()) continue;
@@ -5471,7 +5536,7 @@ void DrawInspector(EditorState& ed) {
                     if (ext != ".okay") continue;
                     std::string full = e.path().string();
                     std::string rel = fs::relative(e.path(), assets, ec).string();
-                    if (!alreadyHas(full) && F(rel.c_str()) && ImGui::MenuItem(rel.c_str())) {
+                    if (F(rel.c_str()) && ImGui::MenuItem(rel.c_str())) {
                         auto* sc = go->AddComponent<ScriptComponent>("okayscript");
                         std::string err; sc->LoadFile(full, &err); sc->SetPath(full);
                         ConsoleLog("Attached script " + full);

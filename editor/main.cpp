@@ -2512,7 +2512,10 @@ void DrawScriptDocs() {
 // the only safe way to mutate/move the cursor while editing.
 struct ScriptCaret {
     int  line = 1, col = 1, pos = 0;   // reported out each frame
+    int  selLen = 0;                   // out: selected character count
     int  gotoLine = 0;                 // in: jump to this 1-based line (0 = none)
+    int  gotoPos = -1;                 // in: move caret to this byte offset (find-next)
+    int  gotoSelLen = 0;               // in: select this many chars from gotoPos
     bool toggleComment = false;        // in: toggle "// " on the caret's line
     std::string insert;                // in: insert this text at the caret (snippets)
     bool autoPairs = true;             // auto-close brackets + auto-indent on Enter
@@ -2533,6 +2536,14 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         for (; pos < d->BufTextLen && line < target; ++pos)
             if (d->Buf[pos] == '\n') ++line;
         d->CursorPos = d->SelectionStart = d->SelectionEnd = pos;
+    }
+    // Find Next/Prev: move the caret to a match and select it.
+    if (c->gotoPos >= 0) {
+        int p = c->gotoPos > d->BufTextLen ? d->BufTextLen : c->gotoPos;
+        int e = (c->gotoSelLen > 0) ? p + c->gotoSelLen : p;
+        if (e > d->BufTextLen) e = d->BufTextLen;
+        d->CursorPos = e; d->SelectionStart = p; d->SelectionEnd = e;
+        c->gotoPos = -1; c->gotoSelLen = 0;
     }
     // Insert a snippet/template at the caret.
     if (!c->insert.empty()) {
@@ -2621,6 +2632,8 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         if (d->Buf[k] == '\n') { ++ln; col = 1; } else ++col;
     }
     c->line = ln; c->col = col; c->pos = d->CursorPos;
+    c->selLen = d->SelectionEnd - d->SelectionStart;
+    if (c->selLen < 0) c->selLen = -c->selLen;
     return 0;
 }
 
@@ -2757,6 +2770,82 @@ static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
     }
 }
 
+// Per-script "last saved" text so tabs can show a modified (●) marker like VS
+// Code. A tab is dirty when its live edit buffer differs from this baseline.
+static std::unordered_map<okay::ScriptComponent*, std::string> g_scriptSaved;
+static bool ScriptTabDirty(okay::ScriptComponent* t) {
+    const char* live = PeekCodeBuffer(t);
+    if (!live) return false;
+    auto it = g_scriptSaved.find(t);
+    return it != g_scriptSaved.end() && it->second != live;
+}
+
+// Re-indent OkayScript by brace depth (4 spaces / level), a basic "Format
+// Document". Braces inside strings and // line comments are ignored.
+static std::string FormatOkayScript(const std::string& src) {
+    std::vector<std::string> lines; std::string cur;
+    for (char c : src) { if (c == '\n') { lines.push_back(cur); cur.clear(); } else if (c != '\r') cur.push_back(c); }
+    lines.push_back(cur);
+    std::string out; int depth = 0;
+    for (const std::string& raw : lines) {
+        auto a = raw.find_first_not_of(" \t");
+        auto b = raw.find_last_not_of(" \t");
+        std::string t = (a == std::string::npos) ? "" : raw.substr(a, b - a + 1);
+        int net = 0, leadClose = 0; bool sawOther = false, inStr = false, comment = false; char q = 0;
+        for (std::size_t i = 0; i < t.size(); ++i) {
+            char c = t[i];
+            if (comment) break;
+            if (inStr) { if (c == '\\') { ++i; continue; } if (c == q) inStr = false; continue; }
+            if (c == '"' || c == '\'') { inStr = true; q = c; continue; }
+            if (c == '/' && i + 1 < t.size() && t[i + 1] == '/') break;
+            if (c == '{') { ++net; sawOther = true; }
+            else if (c == '}') { --net; if (!sawOther) ++leadClose; }
+            else if (c != ' ' && c != '\t') sawOther = true;
+        }
+        int indent = depth - leadClose; if (indent < 0) indent = 0;
+        if (!t.empty()) out.append((std::size_t)indent * 4, ' ');
+        out += t; out += '\n';
+        depth += net; if (depth < 0) depth = 0;
+    }
+    if (!out.empty() && out.back() == '\n') out.pop_back();
+    return out;
+}
+
+// Functions/classes in a script, for the Outline jump menu: {1-based line, label}.
+static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string& src) {
+    std::vector<std::pair<int, std::string>> out;
+    auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+    auto consider = [&](const std::string& raw, int lineNo) {
+        auto a = raw.find_first_not_of(" \t"); if (a == std::string::npos) return;
+        std::string t = raw.substr(a);
+        auto after = [&](const char* kw) -> std::string {
+            std::string k = kw; if (t.rfind(k, 0) != 0) return "";
+            std::size_t p = k.size(); while (p < t.size() && (t[p]==' '||t[p]=='\t')) ++p;
+            std::string n; while (p < t.size() && isW(t[p])) n += t[p++]; return n;
+        };
+        if (std::string n = after("function"); !n.empty()) { out.push_back({lineNo, "f  " + n}); return; }
+        if (t.rfind("public class", 0) == 0) {
+            std::size_t p = 12; while (p < t.size() && (t[p]==' '||t[p]=='\t')) ++p;
+            std::string n; while (p < t.size() && isW(t[p])) n += t[p++];
+            if (!n.empty()) out.push_back({lineNo, "C  " + n}); return;
+        }
+        if (std::string n = after("class"); !n.empty()) { out.push_back({lineNo, "C  " + n}); return; }
+        // method form:  <type> Name(   (skip control keywords / calls)
+        std::size_t p = 0; auto skip = [&]{ while (p < t.size() && (t[p]==' '||t[p]=='\t')) ++p; };
+        skip(); std::string w1; while (p < t.size() && isW(t[p])) w1 += t[p++];
+        skip(); std::string w2; while (p < t.size() && isW(t[p])) w2 += t[p++];
+        skip();
+        static const char* skipW[] = {"return","new","if","for","while","switch","else","var","do"};
+        for (const char* s : skipW) if (w1 == s) return;
+        if (!w1.empty() && !w2.empty() && p < t.size() && t[p] == '(')
+            out.push_back({lineNo, "f  " + w2});
+    };
+    std::string ln; int n = 1;
+    for (char c : src) { if (c == '\n') { consider(ln, n); ln.clear(); ++n; } else if (c != '\r') ln.push_back(c); }
+    consider(ln, n);
+    return out;
+}
+
 void DrawScriptEditor(EditorState& ed) {
     if (!ImGui::Begin("Script Editor", &g_showScriptEditor)) { ImGui::End(); return; }
 
@@ -2805,6 +2894,7 @@ void DrawScriptEditor(EditorState& ed) {
             std::string disp = !t->Path().empty()
                 ? std::filesystem::path(t->Path()).filename().string()
                 : (tgo ? tgo->name : std::string("script")) + "." + extide::ExtFor(t->Language());
+            if (ScriptTabDirty(t)) disp = "\xe2\x97\x8f " + disp;   // modified marker
             char id[32]; std::snprintf(id, sizeof(id), "###sct%p", (void*)t);
             ImGuiTabItemFlags fl = (g_focusScriptTab == t) ? ImGuiTabItemFlags_SetSelected : 0;
             bool open = true;
@@ -2821,6 +2911,7 @@ void DrawScriptEditor(EditorState& ed) {
                                g_scriptTabs.end());
             if (g_activeScriptTab == closeTab)
                 g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
+            g_scriptSaved.erase(closeTab);   // drop the modified-marker baseline
             // Free a loose (Project-opened) script when its tab is closed.
             g_looseScripts.erase(std::remove_if(g_looseScripts.begin(), g_looseScripts.end(),
                 [&](const std::unique_ptr<ScriptComponent>& u){ return u.get() == closeTab; }),
@@ -2838,6 +2929,7 @@ void DrawScriptEditor(EditorState& ed) {
     {
         auto& buf = CodeBuffer(sc, sc->Source().empty()
             ? extide::StarterScript(sc->Language()) : sc->Source());
+        g_scriptSaved.emplace(sc, std::string(buf.data()));   // clean baseline on first open
         auto filePath = [&]() {
             return sc->Path().empty() ? go->name + "." + extide::ExtFor(sc->Language()) : sc->Path();
         };
@@ -2861,8 +2953,10 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::SmallButton("Save")) {
             std::string p = filePath();
-            if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); ConsoleLog("Saved " + p); }
-            else ConsoleLog("Save failed");
+            if (extide::WriteFile(p, buf.data())) {
+                sc->SetPath(p); ConsoleLog("Saved " + p);
+                g_scriptSaved[sc] = buf.data();    // clears the modified marker
+            } else ConsoleLog("Save failed");
             ed.dirty = true;
         }
         ImGui::SameLine();
@@ -2871,9 +2965,16 @@ void DrawScriptEditor(EditorState& ed) {
                 std::string src = extide::ReadFile(sc->Path());
                 SetCodeBuffer(sc, src);
                 std::string e; sc->LoadSource(src, &e);
+                g_scriptSaved[sc] = src;
                 ConsoleLog("Reloaded " + sc->Path());
             } else ConsoleLog("No file to reload (Save first)");
         }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Format")) {          // re-indent by brace depth
+            std::string f = FormatOkayScript(buf.data());
+            SetCodeBuffer(sc, f); ed.dirty = true; ConsoleLog("Formatted script");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Re-indent the whole document (4 spaces / level)");
         ImGui::SameLine();
         if (ImGui::SmallButton("Open in IDE")) {
             std::string p = filePath();
@@ -2907,6 +3008,19 @@ void DrawScriptEditor(EditorState& ed) {
         if (ImGui::SmallButton("->") || goEnter) {
             caret.gotoLine = s_gotoLine < 1 ? 1 : s_gotoLine;
             s_scrollToLine = caret.gotoLine;
+        }
+        // Outline: jump to any function/class in the file (VS Code's symbol list).
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Outline")) ImGui::OpenPopup("##outline");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to a function or class");
+        if (ImGui::BeginPopup("##outline")) {
+            auto syms = ScriptOutline(buf.data());
+            if (syms.empty()) ImGui::TextDisabled("No functions or classes found.");
+            for (const auto& s : syms) {
+                char lbl[160]; std::snprintf(lbl, sizeof(lbl), "%-28s :%d", s.second.c_str(), s.first);
+                if (ImGui::MenuItem(lbl)) { caret.gotoLine = s.first; s_scrollToLine = s.first; }
+            }
+            ImGui::EndPopup();
         }
         // Ctrl+/ toggles the comment, Ctrl+G focuses the line box.
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
@@ -2960,6 +3074,33 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(150);
         ImGui::InputTextWithHint("##find", "Find (Ctrl+F)", s_find, sizeof(s_find));
+        // Find Next / Prev: scroll to (and select) the next match around the caret.
+        // F3 / Shift+F3 do the same while typing in the editor.
+        auto jumpMatch = [&](bool fwd) {
+            if (!s_find[0]) return;
+            std::string hay = buf.data(), needle = s_find;
+            for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
+            for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
+            std::vector<int> at;
+            for (std::size_t p = hay.find(needle); p != std::string::npos; p = hay.find(needle, p + needle.size()))
+                at.push_back((int)p);
+            if (at.empty()) return;
+            int cur = caret.pos, target = -1;
+            if (fwd) { for (int p : at) if (p > cur) { target = p; break; } if (target < 0) target = at.front(); }
+            else     { for (int p : at) if (p < cur) target = p; if (target < 0) target = at.back(); }
+            caret.gotoPos = target; caret.gotoSelLen = (int)needle.size();
+            int ln = 1; for (int k = 0; k < target && hay[k]; ++k) if (hay[k] == '\n') ++ln;
+            s_scrollToLine = ln;
+        };
+        ImGui::SameLine();
+        if (ImGui::SmallButton("<")) jumpMatch(false);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find previous (Shift+F3)");
+        ImGui::SameLine();
+        if (ImGui::SmallButton(">")) jumpMatch(true);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find next (F3)");
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            ImGui::IsKeyPressed(ImGuiKey_F3, false))
+            jumpMatch(!ImGui::GetIO().KeyShift);
         // Replace field + Replace All (case-sensitive). Clicking here deactivates
         // the editor, so editing the buffer directly takes effect.
         static char s_replace[128] = "";
@@ -3162,8 +3303,14 @@ void DrawScriptEditor(EditorState& ed) {
         // --- Status bar (VS Code-style) --------------------------------------
         const char* langLbl = sc->Language() == "okayscript" ? "OkayScript"
                             : sc->Language() == "lua" ? "Lua" : sc->Language().c_str();
-        ImGui::TextDisabled("%s   Ln %d, Col %d   %d lines   %d chars   Spaces", langLbl,
-                            caret.line, caret.col, lines, (int)std::strlen(buf.data()));
+        char selInfo[32] = "";
+        if (caret.selLen > 0) std::snprintf(selInfo, sizeof(selInfo), " (%d sel)", caret.selLen);
+        ImGui::TextDisabled("%s   Ln %d, Col %d%s   %d lines   %d chars   Spaces", langLbl,
+                            caret.line, caret.col, selInfo, lines, (int)std::strlen(buf.data()));
+        if (ScriptTabDirty(sc)) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "  \xe2\x97\x8f modified");
+        }
         if (!s_error.empty()) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  \xe2\x9c\x97 %s", s_error.c_str());

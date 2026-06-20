@@ -42,6 +42,10 @@ struct HumanoidParams {
     float legSwing     = 0.0f;   // degrees: fore/aft leg swing (animation; antisymmetric)
     float eyeSize      = 1.0f;   // multiplier on eye + pupil size
     float noseSize     = 1.0f;   // multiplier on nose size
+    float armThickness = 1.0f;   // arm girth (independent of build)
+    float legThickness = 1.0f;   // leg girth (independent of build)
+    float waist        = 1.0f;   // hip/midsection width
+    float belly        = 0.0f;   // belly size (0 = none)
 };
 
 /// Per-region colors for the procedural humanoid (Mesh::Humanoid). When passed,
@@ -753,12 +757,15 @@ struct Mesh {
         m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin); // neck
         m.Add(Cube(1.0f), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
               {0.62f * p.shoulderWidth * B, 0.78f * H * p.torsoLength, 0.34f * B * bd}, shirt);         // torso
-        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B * bd}, pants); // hips
+        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B * p.waist, 0.24f * H, 0.34f * B * bd}, pants); // hips
+        if (p.belly > 0.05f)                          // a belly bulge on the lower torso front
+            m.Add(Sphere(0.5f, 6, 8), {0.0f, 0.92f * H, 0.18f * bd},
+                  {0.46f * B * p.belly, 0.40f * H * p.belly, 0.34f * bd * p.belly}, shirt);
         for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
             Vec3 shoulder{s * sw, 1.50f * H + up, 0.0f};       // pivot at the shoulder
             Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * -p.armSpread};  // out + fore/aft
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H + up, 0.0f},
-                       {0.22f * B, 0.64f * aL * H, 0.22f * B}, armRot, shoulder, shirt);
+                       {0.22f * B * p.armThickness, 0.64f * aL * H, 0.22f * B * p.armThickness}, armRot, shoulder, shirt);
             m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H + up, 0.0f},
                        {0.17f * B * p.handSize, 0.17f * B * p.handSize, 0.17f * B * p.handSize},
                        armRot, shoulder, skin);
@@ -767,7 +774,7 @@ struct Mesh {
             Vec3 hip{s * hw, 0.60f * H, 0.0f};
             Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * -p.legSpread};
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f},
-                       {0.26f * B, 0.96f * lL * H, 0.26f * B}, legRot, hip, pants);
+                       {0.26f * B * p.legThickness, 0.96f * lL * H, 0.26f * B * p.legThickness}, legRot, hip, pants);
             m.AddPosed(Cube(1.0f), {s * hw, (0.12f - 0.58f * lL) * H, 0.08f},
                        {0.26f * B * p.footSize, 0.12f * p.footSize, 0.52f * p.footSize}, legRot, hip, shoes);
         }

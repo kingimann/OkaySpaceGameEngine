@@ -379,8 +379,11 @@ bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
-bool g_autosave = false;         // periodically save the open scene
+bool g_autosave = true;          // periodically write a crash-recovery sidecar
 double g_lastAutosave = 0.0;     // seconds since last autosave
+float  g_autosaveInterval = 120.0f;  // seconds between autosaves
+double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI)
+std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
 std::vector<std::string> g_recent; // recently opened/saved scene paths
 std::string g_clipboard;         // serialized GameObject for copy/paste
@@ -974,7 +977,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         if (ImGui::MenuItem("Save", "Ctrl+S")) {
             std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-            if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); ed.Achievement("FIRST_SAVE"); }
+            if (ed.Save(p)) { ConsoleLog("Saved " + p); AddRecent(p); ed.Achievement("FIRST_SAVE");
+                std::error_code rc; std::filesystem::remove(p + ".autosave", rc); }
             else ConsoleLog("Save failed");
         }
         if (ImGui::MenuItem("Save As...")) {
@@ -983,7 +987,17 @@ void DrawMenuAndToolbar(EditorState& ed) {
             g_showSaveAs = true;
         }
         ImGui::Separator();
-        ImGui::MenuItem("Autosave", nullptr, &g_autosave);
+        if (ImGui::BeginMenu("Autosave")) {
+            ImGui::MenuItem("Enabled", nullptr, &g_autosave);
+            ImGui::SetNextItemWidth(150);
+            ImGui::SliderFloat("Interval (s)", &g_autosaveInterval, 30.0f, 600.0f, "%.0f");
+            if (g_autosaveStamp > 0.0)
+                ImGui::TextDisabled("Last autosave: %.0fs ago",
+                                    SDL_GetTicks64() / 1000.0 - g_autosaveStamp);
+            ImGui::TextDisabled("Writes a <scene>.autosave recovery copy;");
+            ImGui::TextDisabled("offered on next open if it's newer than the scene.");
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Build Game...", "Ctrl+B")) g_showBuildGame = true;
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) g_quitRequested = true;
@@ -2675,7 +2689,8 @@ void HandleShortcuts(EditorState& ed) {
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) g_showOpen = true;
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         std::string p = ed.path().empty() ? "scene.okayscene" : ed.path();
-        if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE"); }
+        if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE");
+            std::error_code rc; std::filesystem::remove(p + ".autosave", rc); }
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
         ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
@@ -2897,6 +2912,36 @@ void DrawNewProjectPopup(EditorState& ed) {
         if (ImGui::Button("Snake (full game)", ImVec2(-1, 36)))         { ed.NewSnake(); finishProject(); }
         ImGui::Spacing();
         if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) { ed.NewScene(); finishProject(); }
+        ImGui::EndPopup();
+    }
+}
+
+// Offer to restore a newer "<scene>.autosave" recovery copy after a crash or
+// unclean exit. Recover loads it (and overwrites the scene); Discard removes it.
+void DrawRecoveryPopup(EditorState& ed) {
+    if (!g_recoverPath.empty() && !ImGui::IsPopupOpen("Recover Autosave"))
+        ImGui::OpenPopup("Recover Autosave");
+    if (ImGui::BeginPopupModal("Recover Autosave", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("A newer autosave was found for this scene:");
+        ImGui::TextDisabled("%s", g_recoverPath.c_str());
+        ImGui::TextWrapped("It looks like the editor didn't close cleanly. Recover it?");
+        ImGui::Separator();
+        if (ImGui::Button("Recover", ImVec2(130, 0))) {
+            std::error_code rc;
+            std::string scene = ed.path();
+            std::filesystem::copy_file(g_recoverPath, scene,
+                std::filesystem::copy_options::overwrite_existing, rc);
+            std::string err;
+            if (!rc && ed.Load(scene, &err)) { ed.dirty = true; ConsoleLog("Recovered autosave"); }
+            else ConsoleLog("Recover failed: " + (rc ? rc.message() : err));
+            std::filesystem::remove(g_recoverPath, rc);
+            g_recoverPath.clear(); ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard", ImVec2(130, 0))) {
+            std::error_code rc; std::filesystem::remove(g_recoverPath, rc);
+            g_recoverPath.clear(); ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 }
@@ -6608,12 +6653,38 @@ int main(int argc, char** argv) {
         if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
-        // Autosave the open scene every 60s while editing (never mid-Play).
+        // When the open scene changes, reset the autosave timer and look for a
+        // newer "<scene>.autosave" (a recovery copy from a crash/unclean exit).
+        {
+            static std::string s_watchedScene = "\x01";  // force first check
+            if (ed.path() != s_watchedScene) {
+                s_watchedScene = ed.path();
+                g_lastAutosave = SDL_GetTicks64() / 1000.0;
+                g_recoverPath.clear();
+                if (!ed.path().empty()) {
+                    std::error_code rc;
+                    std::string side = ed.path() + ".autosave";
+                    if (std::filesystem::exists(side, rc)) {
+                        auto ts = std::filesystem::last_write_time(side, rc);
+                        auto os = std::filesystem::exists(ed.path(), rc)
+                                  ? std::filesystem::last_write_time(ed.path(), rc)
+                                  : std::filesystem::file_time_type::min();
+                        if (!rc && ts > os) g_recoverPath = side;
+                    }
+                }
+            }
+        }
+
+        // Autosave a crash-recovery sidecar ("<scene>.autosave") while editing —
+        // never mid-Play, and without touching the real file or the dirty flag.
         if (g_autosave && !ed.isPlaying() && ed.dirty && !ed.path().empty()) {
             double t = SDL_GetTicks64() / 1000.0;
-            if (t - g_lastAutosave > 60.0) {
+            if (t - g_lastAutosave > (double)g_autosaveInterval) {
                 g_lastAutosave = t;
-                if (ed.Save(ed.path())) ConsoleLog("Autosaved " + ed.path());
+                if (SceneSerializer::SaveToFile(ed.scene(), ed.path() + ".autosave")) {
+                    g_autosaveStamp = t;
+                    ConsoleLog("Autosaved recovery copy: " + ed.path() + ".autosave");
+                }
             }
         }
 
@@ -6651,6 +6722,7 @@ int main(int argc, char** argv) {
         DrawQuitPrompt(ed, running);
         DrawUpdatePopup();
         DrawAboutPopup();
+        DrawRecoveryPopup(ed);
         DrawProjectSettings(ed);
         if (g_showHierarchy) DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel (always shown)

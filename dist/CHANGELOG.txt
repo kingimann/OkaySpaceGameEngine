@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.14.4
+  - Safer autosave / crash recovery: instead of silently overwriting your scene,
+    autosave now writes a "<scene>.autosave" recovery copy (on by default, every
+    2 min, configurable under File > Autosave). If the editor didn't close
+    cleanly, opening the scene offers to Recover the newer copy or Discard it. A
+    normal Save removes the recovery copy.
+
 v2.14.3
   - Script editor: toggle a line comment with the "//" button or Ctrl+/, and jump
     to a line with the Go box (the view scrolls to center it). These act on the

@@ -4353,150 +4353,142 @@ void DrawInspector(EditorState& ed) {
     static char acFilter[64] = "";
     if (ImGui::Button("Add Component", ImVec2(-1, 0))) { acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent"); }
     if (ImGui::BeginPopup("AddComponent")) {
-        ImGui::SetNextItemWidth(220);
-        ImGui::InputTextWithHint("##acfilter", "search components...", acFilter, sizeof(acFilter));
+        // Centered "Component" title + search box, like Unity's Add Component.
+        const char* title = "Component";
+        float availW = ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - ImGui::CalcTextSize(title).x) * 0.5f);
+        ImGui::TextDisabled("%s", title);
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##acfilter", "Search", acFilter, sizeof(acFilter));
         ImGui::Separator();
+
+        bool searching = acFilter[0] != '\0';
         // Case-insensitive substring match against the search box.
         auto F = [&](const char* name) {
-            if (!acFilter[0]) return true;
+            if (!searching) return true;
             std::string a = name, b = acFilter;
             for (auto& ch : a) ch = (char)std::tolower((unsigned char)ch);
             for (auto& ch : b) ch = (char)std::tolower((unsigned char)ch);
             return a.find(b) != std::string::npos;
         };
-        // Category headers — shown when not searching, so the filtered list
-        // stays a clean flat match.
-        auto Hdr = [&](const char* s) { if (!acFilter[0]) { ImGui::Spacing(); ImGui::TextDisabled("%s", s); ImGui::Separator(); } };
+        // A category drills into a submenu when browsing (Unity-style), but its
+        // items render inline in a flat list while searching.
+        auto BeginCat = [&](const char* name) -> bool {
+            return searching ? true : ImGui::BeginMenu(name);
+        };
+        auto EndCat = [&](bool opened) { if (!searching && opened) ImGui::EndMenu(); };
+        // One component row: shown only if absent + matches the search.
+        auto item = [&](bool absent, const char* label) {
+            return absent && F(label) && ImGui::MenuItem(label);
+        };
 
-        Hdr("Rendering");
-        if (!go->GetComponent<SpriteRenderer>() && F("Sprite Renderer") && ImGui::Selectable("Sprite Renderer"))
-            { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
-        if (!go->GetComponent<MeshRenderer>() && F("Mesh Renderer (3D)") && ImGui::Selectable("Mesh Renderer (3D)"))
-            { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
-        if (!go->GetComponent<TextRenderer>() && F("Text") && ImGui::Selectable("Text"))
-            { go->AddComponent<TextRenderer>(); ed.dirty = true; }
-        if (!go->GetComponent<SpriteAnimator>() && F("Sprite Animator") && ImGui::Selectable("Sprite Animator"))
-            { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
-        if (!go->GetComponent<ParticleSystem>() && F("Particle System") && ImGui::Selectable("Particle System"))
-            { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
-        if (!go->GetComponent<Draggable>() && F("Draggable (item)") && ImGui::Selectable("Draggable (item)"))
-            { go->AddComponent<Draggable>(); ed.dirty = true; }
-        if (!go->GetComponent<DropZone>() && F("Drop Zone (item)") && ImGui::Selectable("Drop Zone (item)"))
-            { go->AddComponent<DropZone>(); ed.dirty = true; }
+        { bool o = BeginCat("Rendering");
+          if (o) {
+            if (item(!go->GetComponent<SpriteRenderer>(), "Sprite Renderer")) { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
+            if (item(!go->GetComponent<MeshRenderer>(), "Mesh Renderer (3D)")) { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
+            if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Physics 2D");
-        if (!go->GetComponent<Rigidbody2D>() && F("Rigidbody2D") && ImGui::Selectable("Rigidbody2D"))
-            { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
-        if (!go->GetComponent<BoxCollider2D>() && F("Box Collider 2D") && ImGui::Selectable("Box Collider 2D"))
-            { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
-        if (!go->GetComponent<CircleCollider2D>() && F("Circle Collider 2D") && ImGui::Selectable("Circle Collider 2D"))
-            { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
-        if (!go->GetComponent<CapsuleCollider2D>() && F("Capsule Collider 2D") && ImGui::Selectable("Capsule Collider 2D"))
-            { go->AddComponent<CapsuleCollider2D>(); ed.dirty = true; }
-        if (go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>() &&
-            F("Tilemap Collider 2D") && ImGui::Selectable("Tilemap Collider 2D"))
-            { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+        { bool o = BeginCat("Physics 2D");
+          if (o) {
+            if (item(!go->GetComponent<Rigidbody2D>(), "Rigidbody2D")) { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BoxCollider2D>(), "Box Collider 2D")) { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CircleCollider2D>(), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CapsuleCollider2D>(), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); ed.dirty = true; }
+            if (item(go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>(), "Tilemap Collider 2D")) { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Physics 3D");
-        if (!go->GetComponent<Rigidbody3D>() && F("Rigidbody3D") && ImGui::Selectable("Rigidbody3D"))
-            { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-        if (!go->GetComponent<BoxCollider3D>() && F("Box Collider 3D") && ImGui::Selectable("Box Collider 3D"))
-            { go->AddComponent<BoxCollider3D>(); ed.dirty = true; }
-        if (!go->GetComponent<SphereCollider3D>() && F("Sphere Collider 3D") && ImGui::Selectable("Sphere Collider 3D"))
-            { go->AddComponent<SphereCollider3D>(); ed.dirty = true; }
-        if (!go->GetComponent<CapsuleCollider3D>() && F("Capsule Collider 3D") && ImGui::Selectable("Capsule Collider 3D"))
-            { go->AddComponent<CapsuleCollider3D>(); ed.dirty = true; }
+        { bool o = BeginCat("Physics 3D");
+          if (o) {
+            if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Lighting");
-        if (!go->GetComponent<Light>() && F("Directional Light") && ImGui::Selectable("Directional Light"))
-            { go->AddComponent<Light>(); ed.dirty = true; }
+        { bool o = BeginCat("Lighting");
+          if (o) {
+            if (item(!go->GetComponent<Light>(), "Directional Light")) { go->AddComponent<Light>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Camera");
-        if (!go->GetComponent<Camera>() && F("Camera") && ImGui::Selectable("Camera"))
-            { go->AddComponent<Camera>(); ed.dirty = true; }
-        if (!go->GetComponent<CameraFollow>() && F("Camera Follow") && ImGui::Selectable("Camera Follow"))
-            { go->AddComponent<CameraFollow>(); ed.dirty = true; }
+        { bool o = BeginCat("Camera");
+          if (o) {
+            if (item(!go->GetComponent<Camera>(), "Camera")) { go->AddComponent<Camera>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CameraFollow>(), "Camera Follow")) { go->AddComponent<CameraFollow>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Scripting");
-        // Unity-style Script flow: pick an EXISTING .okay script from the project
-        // or create a NEW one. Adding a script always references a real file.
-        if (!go->GetComponent<ScriptComponent>() && F("Script") && ImGui::BeginMenu("Script")) {
-            namespace fs = std::filesystem;
-            fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
-                                                      : fs::path(ed.projectDir()) / "Assets";
-            std::error_code ec;
-            int listed = 0;
-            if (fs::exists(assets, ec)) {
-                for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
-                    if (!e.is_regular_file()) continue;
-                    std::string ext = e.path().extension().string();
-                    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-                    if (ext != ".okay") continue;
-                    std::string rel = fs::relative(e.path(), assets, ec).string();
-                    if (ImGui::MenuItem(rel.c_str())) {
-                        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
-                        std::string err; sc->LoadFile(e.path().string(), &err);
-                        sc->SetPath(e.path().string());
-                        ConsoleLog("Attached script " + e.path().string());
-                        ed.dirty = true;
+        { bool o = BeginCat("Scripts");
+          if (o) {
+            // Unity-style Script flow: pick an EXISTING .okay script or create a NEW one.
+            if (!go->GetComponent<ScriptComponent>() && F("Script") && ImGui::BeginMenu("Script")) {
+                namespace fs = std::filesystem;
+                fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
+                                                          : fs::path(ed.projectDir()) / "Assets";
+                std::error_code ec;
+                int listed = 0;
+                if (fs::exists(assets, ec)) {
+                    for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                        if (!e.is_regular_file()) continue;
+                        std::string ext = e.path().extension().string();
+                        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                        if (ext != ".okay") continue;
+                        std::string rel = fs::relative(e.path(), assets, ec).string();
+                        if (ImGui::MenuItem(rel.c_str())) {
+                            auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+                            std::string err; sc->LoadFile(e.path().string(), &err);
+                            sc->SetPath(e.path().string());
+                            ConsoleLog("Attached script " + e.path().string());
+                            ed.dirty = true;
+                        }
+                        ++listed;
                     }
-                    ++listed;
                 }
+                if (!listed) ImGui::TextDisabled("(no .okay scripts in Assets yet)");
+                ImGui::Separator();
+                if (ImGui::MenuItem("New Script...")) {
+                    g_newScriptGO = go; g_newScriptOpen = true;
+                    std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
+                }
+                ImGui::EndMenu();
             }
-            if (!listed) ImGui::TextDisabled("(no .okay scripts in Assets yet)");
-            ImGui::Separator();
-            if (ImGui::MenuItem("New Script...")) {
-                g_newScriptGO = go; g_newScriptOpen = true;
-                std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
-            }
-            ImGui::EndMenu();
-        }
-        if (!go->GetComponent<ActionList>() && F("Actions (Visual Script)") && ImGui::Selectable("Actions (Visual Script)"))
-            { go->AddComponent<ActionList>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ActionList>(), "Actions (Visual Script)")) { go->AddComponent<ActionList>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Audio");
-        if (!go->GetComponent<AudioSource>() && F("Audio Source") && ImGui::Selectable("Audio Source"))
-            { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+        { bool o = BeginCat("Audio");
+          if (o) {
+            if (item(!go->GetComponent<AudioSource>(), "Audio Source")) { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("Gameplay");
-        if (!go->GetComponent<CharacterController2D>() && F("Character Controller 2D") && ImGui::Selectable("Character Controller 2D"))
-            { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
-        if (!go->GetComponent<CharacterController3D>() && F("Character Controller 3D") && ImGui::Selectable("Character Controller 3D"))
-            { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
-        if (!go->GetComponent<FollowTarget2D>() && F("Follow Target 2D") && ImGui::Selectable("Follow Target 2D"))
-            { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
-        if (!go->GetComponent<Mover>() && F("Mover") && ImGui::Selectable("Mover"))
-            { go->AddComponent<Mover>(); ed.dirty = true; }
-        if (!go->GetComponent<Spinner>() && F("Spinner") && ImGui::Selectable("Spinner"))
-            { go->AddComponent<Spinner>(); ed.dirty = true; }
-        if (!go->GetComponent<Lifetime>() && F("Lifetime") && ImGui::Selectable("Lifetime"))
-            { go->AddComponent<Lifetime>(); ed.dirty = true; }
+        { bool o = BeginCat("Gameplay");
+          if (o) {
+            if (item(!go->GetComponent<CharacterController2D>(), "Character Controller 2D")) { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
+          } EndCat(o); }
 
-        Hdr("UI");
-        if (!go->GetComponent<Canvas>() && F("Canvas") && ImGui::Selectable("Canvas"))
-            { go->AddComponent<Canvas>(); ed.dirty = true; }
-        if (!go->GetComponent<EventSystem>() && F("Event System") && ImGui::Selectable("Event System"))
-            { go->AddComponent<EventSystem>(); ed.dirty = true; }
-        if (!go->GetComponent<UIDocument>() && F("UI Document") && ImGui::Selectable("UI Document"))
-            { go->AddComponent<UIDocument>(); ed.dirty = true; }
-        if (!go->GetComponent<NetworkManager>() && F("Network Manager") && ImGui::Selectable("Network Manager"))
-            { go->AddComponent<NetworkManager>(); ed.dirty = true; }
-        if (!go->GetComponent<UIButton>() && F("UI Button") && ImGui::Selectable("UI Button"))
-            { go->AddComponent<UIButton>(); ed.dirty = true; }
-        if (!go->GetComponent<UIPanel>() && F("UI Panel") && ImGui::Selectable("UI Panel"))
-            { go->AddComponent<UIPanel>(); ed.dirty = true; }
-        if (!go->GetComponent<UIImage>() && F("UI Image") && ImGui::Selectable("UI Image"))
-            { go->AddComponent<UIImage>(); ed.dirty = true; }
-        if (!go->GetComponent<UIProgressBar>() && F("UI Progress Bar") && ImGui::Selectable("UI Progress Bar"))
-            { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
-        if (!go->GetComponent<UISlider>() && F("UI Slider") && ImGui::Selectable("UI Slider"))
-            { go->AddComponent<UISlider>(); ed.dirty = true; }
-        if (!go->GetComponent<UIToggle>() && F("UI Toggle") && ImGui::Selectable("UI Toggle"))
-            { go->AddComponent<UIToggle>(); ed.dirty = true; }
-        if (!go->GetComponent<UIDraggable>() && F("UI Draggable") && ImGui::Selectable("UI Draggable"))
-            { go->AddComponent<UIDraggable>(); ed.dirty = true; }
-        if (!go->GetComponent<UIDropTarget>() && F("UI Drop Target") && ImGui::Selectable("UI Drop Target"))
-            { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+        { bool o = BeginCat("UI");
+          if (o) {
+            if (item(!go->GetComponent<Canvas>(), "Canvas")) { go->AddComponent<Canvas>(); ed.dirty = true; }
+            if (item(!go->GetComponent<EventSystem>(), "Event System")) { go->AddComponent<EventSystem>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDocument>(), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
+            if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIToggle>(), "UI Toggle")) { go->AddComponent<UIToggle>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+          } EndCat(o); }
+
         ImGui::EndPopup();
     }
 

@@ -333,5 +333,31 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.x, 9.0f, 0.001f);   // start() used the override
     }
 
+    // --- Multiple scripts per object survive a serialize round-trip -----------
+    {
+        Scene s("Multi"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Player");
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource("function start(){ set_x(1); }");
+        auto* b = go->AddComponent<ScriptComponent>("okayscript");
+        b->fields["hp"] = "42";
+        b->LoadSource("public var hp = 1;\nfunction start(){ set_y(2); }");
+        CHECK(go->GetComponents<ScriptComponent>().size() == 2);
+
+        std::string text = SceneSerializer::Serialize(s);
+        Scene loaded("L");
+        CHECK(SceneSerializer::Deserialize(loaded, text));
+        GameObject* lp = loaded.Find("Player");
+        CHECK(lp != nullptr);
+        if (lp) {
+            auto scripts = lp->GetComponents<ScriptComponent>();
+            CHECK(scripts.size() == 2);
+            // The field override on the second script round-trips and applies.
+            bool found = false;
+            for (auto* sc : scripts)
+                if (sc->VM() && sc->VM()->GetGlobal("hp").AsFloat() == 42.0f) found = true;
+            CHECK(found);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

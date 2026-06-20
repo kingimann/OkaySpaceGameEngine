@@ -199,14 +199,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cap->offset.x << " " << cap->offset.y << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << "\n";
     }
-    if (auto* sc = go->GetComponent<ScriptComponent>()) {
-        out << "  script " << Quote(sc->Language()) << " " << Quote(sc->Source()) << "\n";
-        if (!sc->Path().empty()) out << "  scriptpath " << Quote(sc->Path()) << "\n";
-        if (!sc->fields.empty()) {
-            out << "  scriptfields " << sc->fields.size();
-            for (const auto& kv : sc->fields) out << " " << Quote(kv.first) << " " << Quote(kv.second);
-            out << "\n";
-        }
+    // Each script is one self-contained line (lang, source, then optional path
+    // and field overrides) so a GameObject can carry several scripts.
+    for (auto* sc : go->GetComponents<ScriptComponent>()) {
+        out << "  script " << Quote(sc->Language()) << " " << Quote(sc->Source())
+            << " " << Quote(sc->Path()) << " " << sc->fields.size();
+        for (const auto& kv : sc->fields) out << " " << Quote(kv.first) << " " << Quote(kv.second);
+        out << "\n";
     }
     if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
         out << "  visualscript " << Quote(vsc->Source()) << "\n";
@@ -691,6 +690,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     std::string src  = ReadQuoted(in);
                     auto* sc = go->AddComponent<ScriptComponent>(lang);
                     sc->LoadSource(src);
+                    // New format: an inline path + field-override block follows the
+                    // source (a leading quote). Old scenes used separate lines.
+                    in >> std::ws;
+                    if (in.peek() == '"') {
+                        sc->SetPath(ReadQuoted(in));
+                        int n = 0; in >> n;
+                        for (int i = 0; i < n; ++i) {
+                            std::string k = ReadQuoted(in), v = ReadQuoted(in);
+                            sc->fields[k] = v;
+                        }
+                        sc->ApplyFieldOverrides();
+                    }
                 } else if (field == "scriptpath") {
                     std::string p = ReadQuoted(in);
                     if (auto* sc = go->GetComponent<ScriptComponent>()) sc->SetPath(p);

@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.1
+  - Script inspector: the variable NAME is now on the left and the value on the
+    right (Unity layout). Overridden values are highlighted, and the type shows
+    on hover.
+
 v2.16.0
   - Script inspector is now Unity-style: gone are the language dropdown, file
     path and "edit in Script Editor" note. Instead it shows the script's PUBLIC

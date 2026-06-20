@@ -4513,25 +4513,32 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("e.g.  public float speed = 5;");
             } else {
                 ImGui::SeparatorText("Variables");
+                float nameCol = ImGui::GetContentRegionAvail().x * 0.42f;   // label column width
+                if (nameCol < 80) nameCol = 80;
                 for (const auto& f : fields) {
                     bool overridden = sc->fields.count(f.name) != 0;
                     std::string cur = overridden ? sc->fields[f.name] : f.def;
                     ImGui::PushID(f.name.c_str());
                     bool changed = false;
-                    // Pick a widget from the current value's shape.
+                    // Variable NAME on the left (Unity-style), value widget on the right.
+                    ImGui::AlignTextToFramePadding();
+                    if (overridden) ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.55f, 1.0f), "%s", f.name.c_str());
+                    else            ImGui::TextUnformatted(f.name.c_str());
+                    if (ImGui::IsItemHovered() && !f.type.empty()) ImGui::SetTooltip("%s", f.type.c_str());
+                    ImGui::SameLine(nameCol);
                     if (cur == "true" || cur == "false") {
                         bool b = (cur == "true");
-                        if (ImGui::Checkbox(f.name.c_str(), &b)) { cur = b ? "true" : "false"; changed = true; }
+                        if (ImGui::Checkbox("##v", &b)) { cur = b ? "true" : "false"; changed = true; }
                     } else {
-                        // Numeric? (allow f/d suffix). Else edit as text.
+                        // Numeric? (allow an f/d suffix). Else edit as text.
                         char* endp = nullptr; std::string num = cur;
                         if (!num.empty() && (num.back()=='f'||num.back()=='F'||num.back()=='d'||num.back()=='D')) num.pop_back();
                         double dv = std::strtod(num.c_str(), &endp);
                         bool isNum = endp && *endp == '\0' && !num.empty();
+                        ImGui::SetNextItemWidth(-28);
                         if (isNum) {
                             float v = (float)dv;
-                            ImGui::SetNextItemWidth(-60);
-                            if (ImGui::DragFloat(f.name.c_str(), &v, 0.05f)) {
+                            if (ImGui::DragFloat("##v", &v, 0.05f)) {
                                 char nb[32]; std::snprintf(nb, sizeof(nb), "%g", v); cur = nb; changed = true;
                             }
                         } else {
@@ -4539,8 +4546,7 @@ void DrawInspector(EditorState& ed) {
                             if (sv.size() >= 2 && (sv.front()=='"'||sv.front()=='\'') && sv.back()==sv.front())
                                 sv = sv.substr(1, sv.size()-2);
                             char tb[256]; std::strncpy(tb, sv.c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
-                            ImGui::SetNextItemWidth(-60);
-                            if (ImGui::InputText(f.name.c_str(), tb, sizeof(tb))) {
+                            if (ImGui::InputText("##v", tb, sizeof(tb))) {
                                 cur = std::string("\"") + tb + "\""; changed = true;
                             }
                         }

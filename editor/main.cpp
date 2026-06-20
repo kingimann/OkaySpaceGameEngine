@@ -1436,6 +1436,9 @@ void DrawProject(EditorState& ed) {
     static std::string selected;        // currently selected asset path
     static std::string lastProject;     // re-home the browser when a project opens
     if (!ImGui::Begin("Project", &g_showProject)) { ImGui::End(); return; }
+    // Roomier spacing for the Project panel (it was too compact).
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(8, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 5));
 
     std::error_code ec;
     fs::path root = ed.projectDir().empty() ? fs::absolute(".", ec)
@@ -1491,31 +1494,42 @@ void DrawProject(EditorState& ed) {
         for (int n = 1; fs::exists(p, ue); ++n) p = dir / (base + std::to_string(n) + ext);
         return p;
     };
+    // Open the rename dialog on a freshly-created asset, so users name it on the
+    // spot (Unity-style "create, then type the name").
+    auto nameOnCreate = [&](const fs::path& p) {
+        renameTarget = p.string();
+        std::string fn = p.filename().string();
+        std::strncpy(renameBuf, fn.c_str(), sizeof(renameBuf) - 1);
+        renameBuf[sizeof(renameBuf) - 1] = '\0';
+        selected = p.string();
+    };
     bool canEdit = fs::is_directory(dir, ec);
     ImGui::BeginDisabled(!canEdit);
     if (ImGui::SmallButton("+ Folder")) {
-        std::error_code ce; fs::create_directory(uniquePath("New Folder", ""), ce);
+        std::error_code ce; fs::path p = uniquePath("New Folder", "");
+        if (!fs::create_directory(p, ce) ? false : true) nameOnCreate(p);
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("+ Script")) {
         fs::path p = uniquePath("NewScript", ".okay");
         std::ofstream(p) << extide::StarterScript("okayscript");
         ConsoleLog("Created " + p.string());
+        nameOnCreate(p);
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("+ Material")) {
         fs::path p = uniquePath("New Material", ".okaymat");
-        if (Material{}.SaveToFile(p.string())) ConsoleLog("Created " + p.string());
+        if (Material{}.SaveToFile(p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("+ Scene")) {
         fs::path p = uniquePath("New Scene", ".okayscene");
         okay::Scene empty("New Scene");
-        if (SceneSerializer::SaveToFile(empty, p.string())) ConsoleLog("Created " + p.string());
+        if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::TextDisabled("(right-click an item for Rename / Delete)");
+    ImGui::TextDisabled("(F2 or right-click to Rename)");
     ImGui::Separator();
 
     std::vector<fs::directory_entry> entries;
@@ -1634,11 +1648,12 @@ void DrawProject(EditorState& ed) {
     if (ImGui::BeginPopupContextWindow("bgctx",
             ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         if (canEdit) {
-            if (ImGui::MenuItem("New Folder")) { std::error_code ce; fs::create_directory(uniquePath("New Folder", ""), ce); }
+            if (ImGui::MenuItem("New Folder")) { std::error_code ce; fs::path p = uniquePath("New Folder", ""); if (fs::create_directory(p, ce)) nameOnCreate(p); }
             if (ImGui::MenuItem("New Script")) {
                 fs::path p = uniquePath("NewScript", ".okay");
                 std::ofstream(p) << extide::StarterScript("okayscript");
                 ConsoleLog("Created " + p.string());
+                nameOnCreate(p);
             }
             if (ImGui::MenuItem("New Data Asset")) {   // Scriptable Object
                 fs::path p = uniquePath("NewData", ".okaydata");
@@ -1646,15 +1661,16 @@ void DrawProject(EditorState& ed) {
                                     "name = Item\n"
                                     "value = 10\n";
                 ConsoleLog("Created " + p.string());
+                nameOnCreate(p);
             }
             if (ImGui::MenuItem("New Material")) {
                 fs::path p = uniquePath("New Material", ".okaymat");
-                if (Material{}.SaveToFile(p.string())) ConsoleLog("Created " + p.string());
+                if (Material{}.SaveToFile(p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
             }
             if (ImGui::MenuItem("New Scene")) {
                 fs::path p = uniquePath("New Scene", ".okayscene");
                 okay::Scene empty("New Scene");
-                if (SceneSerializer::SaveToFile(empty, p.string())) ConsoleLog("Created " + p.string());
+                if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
             }
             ImGui::Separator();
         }
@@ -1662,12 +1678,25 @@ void DrawProject(EditorState& ed) {
         ImGui::EndPopup();
     }
 
+    // F2 renames the selected asset (Explorer/Unity-style) when the Project
+    // window is focused and nothing else is being typed.
+    if (renameTarget.empty() && !selected.empty() &&
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+        renameTarget = selected;
+        std::string fn = fs::path(selected).filename().string();
+        std::strncpy(renameBuf, fn.c_str(), sizeof(renameBuf) - 1);
+        renameBuf[sizeof(renameBuf) - 1] = '\0';
+    }
+
     // Rename modal (opened from an item's context menu). Only open once — calling
     // OpenPopup every frame resets the popup so its buttons never register.
     if (!renameTarget.empty() && !ImGui::IsPopupOpen("Rename Asset")) ImGui::OpenPopup("Rename Asset");
     if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputText("New name", renameBuf, sizeof(renameBuf));
-        bool ok = ImGui::Button("Rename", ImVec2(110, 0));
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool enter = ImGui::InputText("New name", renameBuf, sizeof(renameBuf),
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        bool ok = ImGui::Button("Rename", ImVec2(110, 0)) || enter;
         ImGui::SameLine();
         bool cancel = ImGui::Button("Cancel", ImVec2(110, 0));
         if (ok && renameBuf[0]) {
@@ -1681,6 +1710,7 @@ void DrawProject(EditorState& ed) {
     }
 
     ImGui::EndChild();
+    ImGui::PopStyleVar(2);
     ImGui::End();
 }
 
@@ -3208,6 +3238,10 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
 
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
+    // Roomier spacing for the Inspector specifically (it was too compact).
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(9, 9));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(9, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
 
     // Lock (pin) the inspector to the current object so it stays put while you
     // click around the scene/hierarchy — Unity's inspector lock.
@@ -3226,6 +3260,7 @@ void DrawInspector(EditorState& ed) {
         ImGui::Dummy(ImVec2(0, 8));
         ImGui::TextDisabled("  Select an object in the Hierarchy");
         ImGui::TextDisabled("  or Scene to edit it here.");
+        ImGui::PopStyleVar(3);
         ImGui::End();
         return;
     }
@@ -4673,6 +4708,32 @@ void DrawInspector(EditorState& ed) {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
     if (ImGui::Button("Delete GameObject", ImVec2(-1, 0))) ed.DeleteSelected();
     ImGui::PopStyleColor();
+
+    // Whole-Inspector drop target for scripts and materials (images keep going to
+    // their own texture fields). Drop a .okay anywhere here to attach a Script.
+    if (ImGuiWindow* w = ImGui::GetCurrentWindow()) {
+        if (ImGui::BeginDragDropTargetCustom(w->InnerClipRect, w->ID)) {
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                std::string path((const char*)p->Data), ext;
+                if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+                for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                if (ext == ".okay") {
+                    ed.PushUndo();
+                    auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
+                    std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                    ConsoleLog("Attached script " + path); ed.dirty = true;
+                } else if (ext == ".okaymat") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        Material m; if (Material::LoadFromFile(path, m)) {
+                            ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true; ConsoleLog("Applied material");
+                        }
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+    }
+    ImGui::PopStyleVar(3);
     ImGui::End();
 }
 

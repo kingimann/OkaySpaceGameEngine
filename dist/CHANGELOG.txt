@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.31
+  - Character Creator: much smoother, more cohesive bodies.
+    * Torso and hips are now rounded (capsule/ellipsoid) instead of boxes.
+    * Shoulder and hip joints bridge the limbs to the body (no more gaps /
+      "floating blobs").
+    * New Taubin smoothing rounds without shrinking, and welds seams across parts
+      so subdivision actually smooths the whole figure (no hard creases).
+    * Max Subdivisions raised to 4 for extra-smooth high-poly.
+  - Renderer: 2x supersampled anti-aliasing for all 3D views (editor Scene/Game
+    and the player) — much smoother edges.
+
 v2.16.30
   - Character Creator: "Auto (move)" animation.
     * Drives idle/walk/run automatically from how fast the object is actually

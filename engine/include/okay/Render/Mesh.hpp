@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <map>
+#include <tuple>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -756,9 +757,10 @@ struct Mesh {
                       {(0.18f * p.eyeSpacing + 0.14f) * hd, 0.06f * hd, 0.03f * hd}, &c->glasses);
         }
         m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin); // neck
-        m.Add(Cube(1.0f), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
-              {0.62f * p.shoulderWidth * B, 0.78f * H * p.torsoLength, 0.34f * B * bd}, shirt);         // torso
-        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B * p.waist, 0.24f * H, 0.34f * B * bd}, pants); // hips
+        m.Add(Capsule(0.5f, 1.0f, 12, 4), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
+              {0.64f * p.shoulderWidth * B, 0.86f * H * p.torsoLength, 0.40f * B * bd}, shirt);         // torso (rounded)
+        m.Add(Sphere(0.5f, 8, 12), {0.0f, 0.62f * H, 0.0f},
+              {0.60f * p.hipWidth * B * p.waist, 0.42f * H, 0.40f * B * bd}, pants);                    // hips (rounded)
         if (p.belly > 0.05f)                          // a belly bulge on the lower torso front
             m.Add(Sphere(0.5f, 6, 8), {0.0f, 0.92f * H, 0.18f * bd},
                   {0.46f * B * p.belly, 0.40f * H * p.belly, 0.34f * bd * p.belly}, shirt);
@@ -766,8 +768,11 @@ struct Mesh {
             Vec3 shoulder{s * sw, 1.50f * H + up, 0.0f};       // pivot at the shoulder
             Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * -p.armSpread};  // out + fore/aft
             if (s == 1) { armRot.x += p.rightArmRot.x; armRot.y += p.rightArmRot.y; armRot.z += p.rightArmRot.z; }
+            float at = 0.22f * B * p.armThickness;
+            // Shoulder joint bridges the torso to the arm (no gap).
+            m.Add(Sphere(0.5f, 5, 6), shoulder, {at * 1.5f, at * 1.5f, at * 1.5f}, shirt);
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H + up, 0.0f},
-                       {0.22f * B * p.armThickness, 0.64f * aL * H, 0.22f * B * p.armThickness}, armRot, shoulder, shirt);
+                       {at, 0.64f * aL * H, at}, armRot, shoulder, shirt);
             m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H + up, 0.0f},
                        {0.17f * B * p.handSize, 0.17f * B * p.handSize, 0.17f * B * p.handSize},
                        armRot, shoulder, skin);
@@ -775,8 +780,11 @@ struct Mesh {
         for (int s = -1; s <= 1; s += 2) {                                    // legs + feet
             Vec3 hip{s * hw, 0.60f * H, 0.0f};
             Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * -p.legSpread};
+            float lt = 0.26f * B * p.legThickness;
+            // Hip joint bridges the pelvis to the leg.
+            m.Add(Sphere(0.5f, 5, 6), {s * hw, 0.55f * H, 0.0f}, {lt * 1.4f, lt * 1.4f, lt * 1.4f}, pants);
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f},
-                       {0.26f * B * p.legThickness, 0.96f * lL * H, 0.26f * B * p.legThickness}, legRot, hip, pants);
+                       {lt, 0.96f * lL * H, lt}, legRot, hip, pants);
             m.AddPosed(Cube(1.0f), {s * hw, (0.12f - 0.58f * lL) * H, 0.08f},
                        {0.26f * B * p.footSize, 0.12f * p.footSize, 0.52f * p.footSize}, legRot, hip, shoes);
         }
@@ -784,30 +792,54 @@ struct Mesh {
     }
     static Mesh Humanoid() { return Humanoid(HumanoidParams{}); }
 
-    /// Laplacian smoothing: relax each vertex toward the average of its
-    /// edge-connected neighbours by `amount` (0..1). Rounds off a faceted mesh;
-    /// pairs with Subdivide() to take low-poly geometry up to smooth high-poly.
+    /// Laplacian relaxation: move each vertex toward (positive `amount`) or away
+    /// from (negative) the average of its edge-connected neighbours. Coincident
+    /// vertices are treated as one so seams between welded parts/faces round too.
     void Smooth(float amount = 0.5f) {
-        if (amount <= 0.0f || vertices.empty()) return;
-        std::vector<Vec3> sum(vertices.size(), Vec3{0, 0, 0});
-        std::vector<int>  cnt(vertices.size(), 0);
-        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
-            int idx[3] = {triangles[t], triangles[t + 1], triangles[t + 2]};
-            for (int e = 0; e < 3; ++e) {
-                int v = idx[e], w = idx[(e + 1) % 3];
-                sum[v] = sum[v] + vertices[w]; ++cnt[v];
-                sum[w] = sum[w] + vertices[v]; ++cnt[w];
-            }
+        if (amount == 0.0f || vertices.empty()) return;
+        const std::size_t n = vertices.size();
+        // Group coincident vertices (cube faces, joined parts) so smoothing
+        // propagates across seams instead of leaving hard creases.
+        std::map<std::tuple<int, int, int>, int> grid;
+        std::vector<int> rep(n);
+        auto key = [](const Vec3& v) {
+            return std::make_tuple((int)std::lround(v.x * 2048.0f),
+                                   (int)std::lround(v.y * 2048.0f),
+                                   (int)std::lround(v.z * 2048.0f));
+        };
+        for (std::size_t i = 0; i < n; ++i) {
+            auto k = key(vertices[i]);
+            auto it = grid.find(k);
+            if (it == grid.end()) { grid[k] = (int)i; rep[i] = (int)i; }
+            else rep[i] = it->second;
         }
-        for (std::size_t i = 0; i < vertices.size(); ++i)
-            if (cnt[i] > 0)
-                vertices[i] = vertices[i] * (1.0f - amount) + sum[i] * (amount / cnt[i]);
+        std::vector<Vec3> sum(n, Vec3{0, 0, 0});
+        std::vector<int>  cnt(n, 0);
+        auto link = [&](int a, int b) { int ra = rep[a], rb = rep[b];
+            sum[ra] = sum[ra] + vertices[rb]; ++cnt[ra]; };
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int i0 = triangles[t], i1 = triangles[t + 1], i2 = triangles[t + 2];
+            link(i0, i1); link(i1, i0); link(i1, i2); link(i2, i1); link(i2, i0); link(i0, i2);
+        }
+        std::vector<Vec3> moved(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            int r = rep[i];
+            moved[i] = (cnt[r] > 0)
+                ? vertices[i] * (1.0f - amount) + sum[r] * (amount / cnt[r])
+                : vertices[i];
+        }
+        vertices = std::move(moved);
     }
 
-    /// Convenience: `iterations` rounds of Subdivide()+Smooth() — the low-poly to
-    /// high-poly pipeline (e.g. on a Humanoid()). Each round quadruples triangles.
+    /// Take low-poly geometry up to smooth high-poly: `iterations` rounds of
+    /// Subdivide() + Taubin smoothing (a shrink pass then an inflate pass) so the
+    /// result rounds out WITHOUT collapsing/shrinking like plain Laplacian.
     void SubdivideSmooth(int iterations = 1, float amount = 0.5f) {
-        for (int i = 0; i < iterations && !triangles.empty(); ++i) { Subdivide(); Smooth(amount); }
+        for (int i = 0; i < iterations && !triangles.empty(); ++i) {
+            Subdivide();
+            Smooth(amount);                       // shrink toward neighbours
+            Smooth(-(amount * 1.05f + 0.02f));    // inflate back (Taubin) — keeps volume
+        }
     }
 };
 

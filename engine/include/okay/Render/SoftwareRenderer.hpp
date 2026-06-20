@@ -292,4 +292,38 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     }
 }
 
+/// Supersampled render for smoother (anti-aliased) edges: draw the scene at `ss`x
+/// resolution into `work`, then box-downsample to a w*h ABGR8888 image. Returns a
+/// pointer to the w*h pixels to display (work.color when ss==1, else `out`).
+/// Clears to transparent first; call ApplySceneLight() before this.
+inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32_t>& out,
+                                           const Scene& scene, const Mat4& vp, const Vec3& eye,
+                                           int w, int h, int ss) {
+    if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
+    while (ss > 1 && ((long)w * ss > 4096 || (long)h * ss > 4096)) --ss;
+    const int iw = w * ss, ih = h * ss;
+    work.Resize(iw, ih);
+    work.Clear(0u);
+    RenderMeshes(work, scene, vp, eye);
+    if (ss == 1) return work.color.data();
+    out.assign((std::size_t)w * h, 0u);
+    const std::uint32_t* src = work.color.data();
+    const int n = ss * ss;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            unsigned r = 0, g = 0, b = 0, a = 0;
+            for (int sy = 0; sy < ss; ++sy) {
+                const std::uint32_t* row = src + (std::size_t)(y * ss + sy) * iw + (std::size_t)x * ss;
+                for (int sx = 0; sx < ss; ++sx) {
+                    std::uint32_t p = row[sx];
+                    r += p & 0xFFu; g += (p >> 8) & 0xFFu; b += (p >> 16) & 0xFFu; a += (p >> 24) & 0xFFu;
+                }
+            }
+            out[(std::size_t)y * w + x] =
+                (std::uint32_t)(r / n) | ((std::uint32_t)(g / n) << 8) |
+                ((std::uint32_t)(b / n) << 16) | ((std::uint32_t)(a / n) << 24);
+        }
+    return out.data();
+}
+
 } // namespace okay

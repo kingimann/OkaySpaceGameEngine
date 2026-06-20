@@ -142,6 +142,8 @@ static const int kView3DSlots = 3;   // 0=Scene view, 1=Game view, 2=Camera prev
 SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
+std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
+int g_ssaa = 2;   // 3D anti-aliasing: 1 = off, 2 = 2x supersample
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
@@ -151,11 +153,10 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     if (slot < 0 || slot >= kView3DSlots) slot = 0;
     w = w < 1 ? 1 : (w > 4096 ? 4096 : w);
     h = h < 1 ? 1 : (h > 4096 ? 4096 : h);
-    Raster& ras = g_view3DRaster[slot];
-    ras.Resize(w, h);
-    ras.Clear(0u);                               // transparent
     ApplySceneLight(scene);                      // a Light object aims the shading
-    RenderMeshes(ras, scene, vp, eye);
+    // Supersampled (anti-aliased) render: smoother edges than 1:1 rasterization.
+    const std::uint32_t* px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
+                                             scene, vp, eye, w, h, g_ssaa);
     if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h) {
         if (g_view3DTex[slot]) SDL_DestroyTexture(g_view3DTex[slot]);
         g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
@@ -163,7 +164,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
         g_view3DW[slot] = w; g_view3DH[slot] = h;
     }
-    SDL_UpdateTexture(g_view3DTex[slot], nullptr, ras.color.data(), w * 4);
+    SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, w * 4);
     return g_view3DTex[slot];
 }
 
@@ -4927,7 +4928,7 @@ void DrawInspector(EditorState& ed) {
             if (cb->anim == 2 || cb->anim == 3) ImGui::Checkbox("Root Motion (travel)##char", &cb->rootMotion);
             ImGui::Spacing();
             ImGui::TextDisabled("Detail (low-poly -> high-poly)");
-            ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 3);
+            ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 4);
             if (cb->subdivisions > 0)
                 ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
             ImGui::Spacing();

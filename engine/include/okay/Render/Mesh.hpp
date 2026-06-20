@@ -286,6 +286,7 @@ struct Mesh {
         if (n == "Grid")      return Grid();
         if (n == "Wedge")     return Wedge();
         if (n == "Tube")      return Tube();
+        if (n == "Human" || n == "Humanoid") return Humanoid();
         return Cube();
     }
 
@@ -568,6 +569,63 @@ struct Mesh {
                 m.triangles.insert(m.triangles.end(), {a, b, a + 1, a + 1, b, b + 1});
             }
         return m;
+    }
+
+    /// Append another mesh's geometry, scaled (per-axis) then translated.
+    /// Triangle indices are rebased; this is how compound meshes are built.
+    void Add(const Mesh& src, Vec3 offset, Vec3 scale = {1, 1, 1}) {
+        int base = (int)vertices.size();
+        for (const Vec3& v : src.vertices)
+            vertices.push_back({v.x * scale.x + offset.x,
+                                v.y * scale.y + offset.y,
+                                v.z * scale.z + offset.z});
+        for (int t : src.triangles) triangles.push_back(t + base);
+    }
+
+    /// A low-poly humanoid blockout assembled from primitive parts (head, torso,
+    /// hips, arms, hands, legs, feet). Roughly 2 units tall, standing on Y=0.
+    /// Subdivide() it to smoothly raise it from low-poly to high-poly.
+    static Mesh Humanoid() {
+        Mesh m; m.name = "Human";
+        m.Add(Sphere(0.5f, 6, 8), {0.0f, 1.78f, 0.0f}, {0.40f, 0.46f, 0.40f}); // head
+        m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f, 0.0f}, {0.16f, 0.20f, 0.16f}); // neck
+        m.Add(Cube(1.0f), {0.0f, 1.10f, 0.0f}, {0.62f, 0.78f, 0.34f});        // torso
+        m.Add(Cube(1.0f), {0.0f, 0.66f, 0.0f}, {0.56f, 0.24f, 0.34f});        // hips
+        for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
+            m.Add(Capsule(0.5f, 1.0f, 6, 3), {s * 0.46f, 1.18f, 0.0f}, {0.22f, 0.64f, 0.22f});
+            m.Add(Sphere(0.5f, 5, 6), {s * 0.46f, 0.64f, 0.0f}, {0.17f, 0.17f, 0.17f});
+        }
+        for (int s = -1; s <= 1; s += 2) {                                    // legs + feet
+            m.Add(Capsule(0.5f, 1.0f, 6, 3), {s * 0.20f, 0.12f, 0.0f}, {0.26f, 0.96f, 0.26f});
+            m.Add(Cube(1.0f), {s * 0.20f, -0.46f, 0.08f}, {0.26f, 0.12f, 0.52f});
+        }
+        return m;
+    }
+
+    /// Laplacian smoothing: relax each vertex toward the average of its
+    /// edge-connected neighbours by `amount` (0..1). Rounds off a faceted mesh;
+    /// pairs with Subdivide() to take low-poly geometry up to smooth high-poly.
+    void Smooth(float amount = 0.5f) {
+        if (amount <= 0.0f || vertices.empty()) return;
+        std::vector<Vec3> sum(vertices.size(), Vec3{0, 0, 0});
+        std::vector<int>  cnt(vertices.size(), 0);
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int idx[3] = {triangles[t], triangles[t + 1], triangles[t + 2]};
+            for (int e = 0; e < 3; ++e) {
+                int v = idx[e], w = idx[(e + 1) % 3];
+                sum[v] = sum[v] + vertices[w]; ++cnt[v];
+                sum[w] = sum[w] + vertices[v]; ++cnt[w];
+            }
+        }
+        for (std::size_t i = 0; i < vertices.size(); ++i)
+            if (cnt[i] > 0)
+                vertices[i] = vertices[i] * (1.0f - amount) + sum[i] * (amount / cnt[i]);
+    }
+
+    /// Convenience: `iterations` rounds of Subdivide()+Smooth() — the low-poly to
+    /// high-poly pipeline (e.g. on a Humanoid()). Each round quadruples triangles.
+    void SubdivideSmooth(int iterations = 1, float amount = 0.5f) {
+        for (int i = 0; i < iterations && !triangles.empty(); ++i) { Subdivide(); Smooth(amount); }
     }
 };
 

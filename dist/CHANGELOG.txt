@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.12
+  - Procedural human character + low-poly to high-poly workflow:
+    * New "Human (low-poly)" primitive (GameObject > 3D Object > Human, and the
+      Hierarchy create menu) — a humanoid blockout built from body-part shapes.
+    * Mesh Renderer gets a "Subdiv+Smooth" button that quadruples the triangles
+      and relaxes them (Laplacian smoothing), turning the blocky low-poly human
+      into smooth high-poly geometry. Click it repeatedly for more detail.
+    * Engine: Mesh::Humanoid(), Mesh::Smooth(amount), Mesh::SubdivideSmooth(),
+      and Mesh::Add() for compound meshes.
+
 v2.16.11
   - Command Palette in the Script Editor (Ctrl+Shift+P, or the new "Cmds"
     button): type to fuzzy-search and run editor actions — Run, Save, Format,

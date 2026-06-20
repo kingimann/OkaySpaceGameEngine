@@ -40,6 +40,7 @@ struct HumanoidParams {
     bool  ears         = true;   // add ears to the sides of the head
     float armSwing     = 0.0f;   // degrees: fore/aft arm swing (animation; antisymmetric)
     float legSwing     = 0.0f;   // degrees: fore/aft leg swing (animation; antisymmetric)
+    Vec3  rightArmRot  = {0, 0, 0}; // extra euler on the RIGHT arm only (wave)
     float eyeSize      = 1.0f;   // multiplier on eye + pupil size
     float noseSize     = 1.0f;   // multiplier on nose size
     float armThickness = 1.0f;   // arm girth (independent of build)
@@ -764,6 +765,7 @@ struct Mesh {
         for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
             Vec3 shoulder{s * sw, 1.50f * H + up, 0.0f};       // pivot at the shoulder
             Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * -p.armSpread};  // out + fore/aft
+            if (s == 1) { armRot.x += p.rightArmRot.x; armRot.y += p.rightArmRot.y; armRot.z += p.rightArmRot.z; }
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H + up, 0.0f},
                        {0.22f * B * p.armThickness, 0.64f * aL * H, 0.22f * B * p.armThickness}, armRot, shoulder, shirt);
             m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H + up, 0.0f},

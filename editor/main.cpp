@@ -4918,10 +4918,11 @@ void DrawInspector(EditorState& ed) {
             ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 30.0f, "%.0f deg");
             ImGui::Spacing();
             ImGui::TextDisabled("Animation (plays in Play mode)");
-            const char* anims[] = {"None", "Idle", "Walk", "Run"};
+            const char* anims[] = {"None", "Idle", "Walk", "Run", "Wave", "Jump"};
             ImGui::SetNextItemWidth(160);
-            ImGui::Combo("Animation##char", &cb->anim, anims, 4);
+            ImGui::Combo("Animation##char", &cb->anim, anims, 6);
             if (cb->anim != 0) ImGui::SliderFloat("Anim Speed##char", &cb->animSpeed, 0.1f, 3.0f);
+            if (cb->anim == 2 || cb->anim == 3) ImGui::Checkbox("Root Motion (travel)##char", &cb->rootMotion);
             ImGui::Spacing();
             ImGui::TextDisabled("Detail (low-poly -> high-poly)");
             ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 3);

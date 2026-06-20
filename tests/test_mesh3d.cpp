@@ -585,6 +585,7 @@ int main() {
           a.attach = 1; /* head */ cb->accessories.push_back(a); }
         cb->beard = true; cb->params.noseSize = 1.5f;
         cb->params.waist = 1.4f; cb->params.belly = 0.8f;
+        cb->rootMotion = false;
         cb->subdivisions    = 0;
         // Limb swing moves geometry (arms/legs front-to-back) without changing count.
         {
@@ -644,6 +645,8 @@ int main() {
         CHECK(fresh.accessories.size() == 1u);
         CHECK(fresh.accessories[0].name == "Antenna");
         CHECK(fresh.accessories[0].attach == 1);
+        CHECK(fresh.rootMotion == false);
+        CHECK(lc->rootMotion == false);   // also via the scene serializer
         CHECK(lc->beard == true);                                          // facial hair round-trips
         CHECK_NEAR(lc->params.noseSize, 1.5f, 0.001f);
         CHECK_NEAR(lc->params.waist, 1.4f, 0.001f);                         // body shape round-trips

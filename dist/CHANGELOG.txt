@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.28
+  - Character Creator: more animation.
+    * New clips: Wave (raises and waves the right arm) and Jump (crouch-hop with
+      a body bob).
+    * Root Motion toggle — Walk/Run now travel the character forward along its
+      facing (scaled by Anim Speed). Plays in Play mode; saves/loads.
+
 v2.16.27
   - Character Creator: save/load character presets.
     * Save the entire character (all proportions, face, hair, colors, accessories,

@@ -45,10 +45,13 @@ public:
     bool  beard = false;
     bool  mustache = false;
 
-    // Simple limb animation, played during Play. 0 None, 1 Idle, 2 Walk, 3 Run.
+    // Limb animation, played during Play. 0 None,1 Idle,2 Walk,3 Run,4 Wave,5 Jump.
     int   anim = 0;
     float animSpeed = 1.0f;
+    bool  rootMotion = true;      // Walk/Run travel the GameObject forward
     float animTime = 0.0f;        // runtime clock (not serialized)
+    float restY = 0.0f;           // captured base height for Jump (runtime)
+    bool  restYset = false;       // (runtime)
 
     std::vector<Accessory> accessories;   // user-added custom parts
 

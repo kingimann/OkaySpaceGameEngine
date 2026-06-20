@@ -35,6 +35,9 @@ struct HumanoidParams {
     float bodyDepth    = 1.0f;   // front-to-back thickness of torso + hips
     int   hairStyle    = 1;      // 0 cap, 1 short, 2 long, 3 spiky, 4 ponytail, 5 mohawk
     float eyeSpacing   = 1.0f;   // multiplier on the gap between the eyes
+    float mouthWidth   = 1.0f;   // multiplier on mouth width (a wider "smile")
+    float browAngle    = 0.0f;   // degrees; +tilts brows inward/down (angry), -up (worried)
+    bool  ears         = true;   // add ears to the sides of the head
 };
 
 /// Per-region colors for the procedural humanoid (Mesh::Humanoid). When passed,
@@ -690,18 +693,28 @@ struct Mesh {
                 default: break;                       // 0/1: just the cap
             }
         }
-        if (c && c->hasFace) {                       // eyes, brows, nose, mouth on +Z
+        if (c && p.ears) {                           // ears on the head sides
+            for (int s = -1; s <= 1; s += 2)
+                m.Add(Sphere(0.5f, 4, 5), {s * 0.21f * hd, headY + 0.01f * hd, 0.0f},
+                      {0.05f * hd, 0.09f * hd, 0.07f * hd}, skin);
+        }
+        if (c && c->hasFace) {                       // eyes, pupils, brows, nose, mouth on +Z
             const float fz = 0.19f * hd, ex = 0.09f * hd * p.eyeSpacing;
+            Color pupil{c->eye.r * 0.25f, c->eye.g * 0.25f, c->eye.b * 0.25f, 1.0f};
             for (int s = -1; s <= 1; s += 2) {
                 m.Add(Sphere(0.5f, 4, 5), {s * ex, headY + 0.04f * hd, fz},
-                      {0.06f * hd, 0.07f * hd, 0.05f * hd}, &c->eye);                       // eye
-                m.Add(Cube(1.0f), {s * ex, headY + 0.12f * hd, fz},
-                      {0.09f * hd, 0.025f * hd, 0.04f * hd}, &c->hair);                     // brow
+                      {0.06f * hd, 0.07f * hd, 0.05f * hd}, &c->eye);                       // eye white/iris
+                m.Add(Sphere(0.5f, 3, 4), {s * ex, headY + 0.04f * hd, fz + 0.03f * hd},
+                      {0.028f * hd, 0.032f * hd, 0.02f * hd}, &pupil);                       // pupil
+                // Brow, tilted by browAngle (inner end down for "angry").
+                m.AddPosed(Cube(1.0f), {s * ex, headY + 0.12f * hd, fz},
+                           {0.09f * hd, 0.025f * hd, 0.04f * hd},
+                           {0.0f, 0.0f, (float)s * p.browAngle}, {s * ex, headY + 0.12f * hd, fz}, &c->hair);
             }
             m.Add(Cube(1.0f), {0.0f, headY - 0.01f * hd, fz + 0.02f * hd},
                   {0.05f * hd, 0.08f * hd, 0.06f * hd}, &c->skin);                          // nose
             m.Add(Cube(1.0f), {0.0f, headY - 0.13f * hd, fz},
-                  {0.12f * hd, 0.025f * hd, 0.04f * hd}, &c->hair);                         // mouth
+                  {0.12f * hd * p.mouthWidth, 0.025f * hd, 0.04f * hd}, &c->hair);          // mouth
         }
         m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin); // neck
         m.Add(Cube(1.0f), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},

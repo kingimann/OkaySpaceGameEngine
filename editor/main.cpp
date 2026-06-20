@@ -4943,6 +4943,9 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit3("##eyecol", ey)) { cb->eye = {ey[0], ey[1], ey[2], 1.0f}; ch = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eye color");
                 ch |= ImGui::SliderFloat("Eye Spacing##char", &cb->params.eyeSpacing, 0.5f, 1.8f);
+                ch |= ImGui::SliderFloat("Mouth Width##char", &cb->params.mouthWidth, 0.4f, 2.0f);
+                ch |= ImGui::SliderFloat("Brow Angle##char", &cb->params.browAngle, -30.0f, 30.0f, "%.0f deg");
+                ch |= ImGui::Checkbox("Ears##char", &cb->params.ears);
             }
             ImGui::Spacing();
             ImGui::TextDisabled("Presets");

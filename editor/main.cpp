@@ -3002,6 +3002,10 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::SameLine();
         ImGui::Checkbox("Syntax", &s_highlight);
         ImGui::SameLine();
+        static bool s_minimap = true;
+        ImGui::Checkbox("Map", &s_minimap);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the code minimap (click it to scroll)");
+        ImGui::SameLine();
         static float s_zoom = 1.0f;
         if (ImGui::SmallButton("A-")) s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f);
         ImGui::SameLine();
@@ -3156,10 +3160,15 @@ void DrawScriptEditor(EditorState& ed) {
         float padX  = ImGui::GetStyle().FramePadding.x;
 
         ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= lineH + 8.0f; if (av.y < 80) av.y = 80;
+        const float mmW = 92.0f;                       // minimap column width
+        float editW = av.x - (s_minimap ? mmW + 4.0f : 0.0f);
+        if (editW < 120.0f) editW = av.x;              // too narrow: skip the minimap
+        bool showMap = s_minimap && editW < av.x;
+        float mmScrollY = 0.0f, mmVisibleH = av.y;     // captured from inside the child
         ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(30, 30, 30, 255));   // VS Code editor bg
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(30, 30, 30, 255));
         ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(212, 212, 212, 255));
-        ImGui::BeginChild("editorscroll", av, true,
+        ImGui::BeginChild("editorscroll", ImVec2(editW, av.y), true,
                           ImGuiWindowFlags_HorizontalScrollbar);
 
         // Zoom: scale the editor font, then recompute glyph metrics so the gutter
@@ -3331,8 +3340,64 @@ void DrawScriptEditor(EditorState& ed) {
         }
         // Caret screen position (for the autocomplete popup, drawn after the child).
         ImVec2 caretScreen(origin.x + (caret.col - 1) * charW, origin.y + caret.line * lineH);
+        mmScrollY = ImGui::GetScrollY();
         ImGui::EndChild();
         ImGui::PopStyleColor(3);
+
+        // --- Minimap: a scaled overview of the file pinned beside the editor.
+        // Each line is a bar (length ~ its content); a box marks the visible
+        // region; click/drag to scroll there. Built from the live buffer.
+        if (showMap) {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(24, 24, 24, 255));
+            ImGui::BeginChild("##minimap", ImVec2(mmW, av.y), true,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImDrawList* mdl = ImGui::GetWindowDrawList();
+            ImVec2 mp = ImGui::GetWindowPos();
+            float mh = av.y, innerW = mmW - 8.0f;
+            float step = lines > 0 ? mh / lines : mh;     // vertical px per source line
+            if (step > 3.0f) step = 3.0f;                 // cap so big files still fit
+            float usedH = step * lines; if (usedH > mh) usedH = mh;
+            // Per-line bars, colored by a cheap content sniff (comment/string/code).
+            const char* t = buf.data();
+            int ln = 0; const char* ls = t;
+            auto drawLine = [&](const char* s, const char* e, int idx) {
+                int lead = 0; const char* p = s;
+                while (p < e && (*p == ' ' || *p == '\t')) { lead += (*p == '\t' ? 4 : 1); ++p; }
+                int len = (int)(e - p); if (len <= 0) return;
+                ImU32 col = IM_COL32(150, 152, 160, 200);
+                if (len >= 2 && p[0] == '/' && p[1] == '/') col = IM_COL32(106, 153, 85, 200);
+                float y = mp.y + 4.0f + idx * step;
+                if (y > mp.y + mh - 2.0f) return;
+                float x0 = mp.x + 4.0f + (lead * 0.5f);
+                float w = len * 0.5f; if (x0 - mp.x + w > innerW) w = innerW - (x0 - mp.x);
+                if (w < 1.0f) w = 1.0f;
+                mdl->AddRectFilled(ImVec2(x0, y), ImVec2(x0 + w, y + (step > 1.5f ? 1.5f : step * 0.8f)), col);
+            };
+            for (const char* p = t;; ++p) {
+                if (*p == '\n' || *p == '\0') { drawLine(ls, p, ln); ++ln; ls = p + 1; if (*p == '\0') break; }
+            }
+            // Visible-region box.
+            float total = (float)lines;
+            if (total > 0) {
+                float top = (mmScrollY / lineH) / total;
+                float vis = (mmVisibleH / lineH) / total;
+                float y0 = mp.y + 4.0f + top * usedH;
+                float y1 = y0 + vis * usedH;
+                if (y1 > mp.y + mh - 2.0f) y1 = mp.y + mh - 2.0f;
+                mdl->AddRectFilled(ImVec2(mp.x + 1, y0), ImVec2(mp.x + mmW - 1, y1), IM_COL32(255, 255, 255, 24));
+                mdl->AddRect(ImVec2(mp.x + 1, y0), ImVec2(mp.x + mmW - 1, y1), IM_COL32(255, 255, 255, 70));
+            }
+            // Click or drag to scroll: map the cursor's Y to a line and center it.
+            if (ImGui::IsWindowHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                float fy = (ImGui::GetIO().MousePos.y - (mp.y + 4.0f)) / (usedH > 1 ? usedH : 1);
+                int target = (int)(fy * lines) + 1;
+                if (target < 1) target = 1; if (target > lines) target = lines;
+                s_scrollToLine = target;
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
 
         // --- Autocomplete: a click-to-insert suggestion list at the caret -------
         {

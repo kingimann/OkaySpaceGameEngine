@@ -576,6 +576,7 @@ int main() {
         cb->params.torsoLength = 1.4f;
         cb->outfit = Color::FromBytes(20, 200, 40);
         cb->pants  = Color::FromBytes(200, 20, 60);
+        cb->params.hairStyle = 4;
         cb->subdivisions    = 0;
         int baseTris = cb->Build().TriangleCount();   // base (with hair cap, no subdiv)
         cb->subdivisions    = 1;
@@ -604,6 +605,7 @@ int main() {
         CHECK_NEAR(lc->params.torsoLength, 1.4f, 0.001f);
         CHECK_NEAR(lc->outfit.g, Color::FromBytes(20, 200, 40).g, 0.01f);  // shirt color round-trips
         CHECK_NEAR(lc->pants.r, Color::FromBytes(200, 20, 60).r, 0.01f);   // pants color round-trips
+        CHECK(lc->params.hairStyle == 4);                                  // hair style round-trips
         CHECK(lc->subdivisions == 1);
         CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == baseTris * 4);
     }

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.16
+  - Character Creator: multi-color characters.
+    * Separate Skin, Outfit, and Hair colors (head/neck/hands = skin;
+      torso/arms/legs/feet = outfit), plus an optional Hair cap on the head.
+    * New engine support: meshes can carry per-triangle colors; the software
+      renderer (editor + player) honors them, and they survive subdivision so
+      colors stay crisp from low-poly to high-poly.
+    * Colors save/load and are included in .OBJ-exported geometry's shape.
+
 v2.16.15
   - Character Creator: more anatomy + export.
     * Torso Length (raises the upper body, keeping limbs attached) and Body Depth

@@ -14,11 +14,14 @@ public:
     HumanoidParams params;
     int   subdivisions = 0;        // 0..3 Subdivide+Smooth passes (low -> high poly)
     float smoothAmount = 0.5f;     // Laplacian relax strength per pass
-    Color color = Color::FromBytes(214, 178, 150);   // skin-ish default
+    Color color  = Color::FromBytes(214, 178, 150);  // skin (head/neck/hands)
+    Color outfit = Color::FromBytes(70, 110, 170);   // clothing (torso/limbs)
+    Color hair   = Color::FromBytes(60, 40, 30);     // hair cap
+    bool  hasHair = true;
 
-    /// Build the mesh described by the current parameters.
+    /// Build the mesh described by the current parameters (per-part colors).
     Mesh Build() const {
-        Mesh m = Mesh::Humanoid(params);
+        Mesh m = Mesh::Humanoid(params, &color, &outfit, hasHair ? &hair : nullptr);
         int n = subdivisions < 0 ? 0 : (subdivisions > 3 ? 3 : subdivisions);
         if (n > 0) m.SubdivideSmooth(n, smoothAmount);
         return m;

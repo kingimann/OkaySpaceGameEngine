@@ -574,13 +574,18 @@ int main() {
         cb->params.handSize = 1.7f;
         cb->params.armSpread= 45.0f;
         cb->params.torsoLength = 1.4f;
+        cb->outfit = Color::FromBytes(20, 200, 40);
+        cb->subdivisions    = 0;
+        int baseTris = cb->Build().TriangleCount();   // base (with hair cap, no subdiv)
         cb->subdivisions    = 1;
         cb->Apply();                                  // builds into a MeshRenderer
         auto* mr = go->GetComponent<MeshRenderer>();
         CHECK(mr != nullptr);
         CHECK(mr->mesh.TriangleCount() > 0);
-        int loTris = Mesh::Humanoid().TriangleCount();
-        CHECK(mr->mesh.TriangleCount() == loTris * 4);   // one subdivision pass
+        // Per-part colors: face colors stay parallel through subdivision.
+        CHECK(mr->mesh.HasFaceColors());
+        CHECK((int)mr->mesh.triColors.size() == mr->mesh.TriangleCount());
+        CHECK(mr->mesh.TriangleCount() == baseTris * 4);   // one subdivision pass
 
         // Taller params make a taller mesh than the default figure.
         CHECK(mr->mesh.Size().y > Mesh::Humanoid().Size().y);
@@ -596,8 +601,9 @@ int main() {
         CHECK_NEAR(lc->params.handSize, 1.7f, 0.001f);
         CHECK_NEAR(lc->params.armSpread, 45.0f, 0.001f);
         CHECK_NEAR(lc->params.torsoLength, 1.4f, 0.001f);
+        CHECK_NEAR(lc->outfit.g, Color::FromBytes(20, 200, 40).g, 0.01f);  // outfit color round-trips
         CHECK(lc->subdivisions == 1);
-        CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == loTris * 4);
+        CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == baseTris * 4);
     }
 
     TEST_MAIN_RESULT();

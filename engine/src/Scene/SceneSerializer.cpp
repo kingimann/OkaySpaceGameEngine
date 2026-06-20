@@ -184,7 +184,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << " " << a.rotation.x << " " << a.rotation.y << " " << a.rotation.z
                 << " " << a.color.r << " " << a.color.g << " " << a.color.b << " " << a.color.a;
         out << " " << p.eyeSize << " " << p.noseSize
-            << " " << (cb->beard ? 1 : 0) << " " << (cb->mustache ? 1 : 0);
+            << " " << (cb->beard ? 1 : 0) << " " << (cb->mustache ? 1 : 0)
+            << " " << p.armThickness << " " << p.legThickness << " " << p.waist << " " << p.belly;
         out << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
@@ -1025,6 +1026,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (more()) in >> p.noseSize;
                     if (more()) { int bd = 0; in >> bd; cb->beard = (bd != 0); }
                     if (more()) { int ms = 0; in >> ms; cb->mustache = (ms != 0); }
+                    if (more()) in >> p.armThickness;
+                    if (more()) in >> p.legThickness;
+                    if (more()) in >> p.waist;
+                    if (more()) in >> p.belly;
                     cb->Apply();   // rebuild the humanoid mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();

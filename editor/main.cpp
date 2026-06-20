@@ -4901,9 +4901,13 @@ void DrawInspector(EditorState& ed) {
             ch |= ImGui::SliderFloat("Head Size##char",     &p.headSize,      0.5f, 1.8f);
             ch |= ImGui::SliderFloat("Shoulder Width##char",&p.shoulderWidth, 0.5f, 1.8f);
             ch |= ImGui::SliderFloat("Hip Width##char",     &p.hipWidth,      0.5f, 1.8f);
+            ch |= ImGui::SliderFloat("Waist##char",         &p.waist,         0.5f, 1.8f);
+            ch |= ImGui::SliderFloat("Belly##char",         &p.belly,         0.0f, 1.6f);
             ch |= ImGui::SliderFloat("Torso Length##char",  &p.torsoLength,   0.6f, 1.6f);
             ch |= ImGui::SliderFloat("Body Depth##char",    &p.bodyDepth,     0.6f, 1.8f);
             ch |= ImGui::SliderFloat("Arm Length##char",    &p.armLength,     0.5f, 1.6f);
+            ch |= ImGui::SliderFloat("Arm Thickness##char", &p.armThickness,  0.4f, 2.2f);
+            ch |= ImGui::SliderFloat("Leg Thickness##char", &p.legThickness,  0.4f, 2.2f);
             ch |= ImGui::SliderFloat("Leg Length##char",    &p.legLength,     0.5f, 1.6f);
             ch |= ImGui::SliderFloat("Neck Length##char",   &p.neckLength,    0.3f, 2.0f);
             ch |= ImGui::SliderFloat("Hand Size##char",     &p.handSize,      0.4f, 2.0f);

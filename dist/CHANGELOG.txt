@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.25
+  - Character Creator: more body shapes.
+    * Arm Thickness and Leg Thickness (limb girth, independent of Build).
+    * Waist (hip/midsection width) and Belly (a bulge, 0 = none).
+    * All save/load (back-compatible).
+
 v2.16.24
   - Character Creator: color customization helpers.
     * One-click skin-tone swatches (6 presets).

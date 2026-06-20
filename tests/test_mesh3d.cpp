@@ -584,6 +584,7 @@ int main() {
         { Accessory a; a.name = "Antenna"; a.shape = "Cone"; a.color = Color::FromBytes(10, 220, 10);
           cb->accessories.push_back(a); }
         cb->beard = true; cb->params.noseSize = 1.5f;
+        cb->params.waist = 1.4f; cb->params.belly = 0.8f;
         cb->subdivisions    = 0;
         // Limb swing moves geometry (arms/legs front-to-back) without changing count.
         {
@@ -633,6 +634,8 @@ int main() {
         CHECK(lc->accessories[0].shape == "Cone");
         CHECK(lc->beard == true);                                          // facial hair round-trips
         CHECK_NEAR(lc->params.noseSize, 1.5f, 0.001f);
+        CHECK_NEAR(lc->params.waist, 1.4f, 0.001f);                         // body shape round-trips
+        CHECK_NEAR(lc->params.belly, 0.8f, 0.001f);
         CHECK(lc->subdivisions == 1);
         CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == bodyTris * 4 + accTris);
     }

@@ -422,6 +422,7 @@ char  g_newScriptName[96] = "";
 
 // Extra panels / tools.
 bool  g_showStats = true;
+bool  g_showSaveManager = false;   // browse/edit .okaysave files
 bool  g_showScenes = false;
 bool  g_showInstPrefab = false;
 char  g_prefabBuf[256] = "Prefab.okayprefab";
@@ -1004,6 +1005,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
+        ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
         ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
         ImGui::Separator();
         ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
@@ -1880,6 +1882,103 @@ void DrawDataAssetEditor() {
         if (asset.Save(g_dataAssetPath)) ConsoleLog("Saved " + g_dataAssetPath);
         else ConsoleLog("Save failed: " + g_dataAssetPath);
     }
+    ImGui::End();
+}
+
+// Save Manager: browse the .okaysave files in a project and view/edit their
+// keys (the runtime side of the Easy-Save-style save system). Lets you inspect
+// what a playtest wrote, tweak values, add/remove keys, or wipe a save.
+void DrawSaveManager(EditorState& ed) {
+    namespace fs = std::filesystem;
+    if (!ImGui::Begin("Save Manager", &g_showSaveManager)) { ImGui::End(); return; }
+
+    static std::string sel;            // selected .okaysave path
+    static okay::SaveFile file;        // working copy of the selected file
+    static std::string loaded;         // path currently loaded into `file`
+
+    // Gather candidate save files: the default, plus any *.okaysave in the project.
+    std::vector<std::string> files;
+    files.push_back(okay::Save::DefaultFile());
+    fs::path root = ed.projectDir().empty() ? fs::path(".") : fs::path(ed.projectDir());
+    std::error_code ec;
+    if (fs::exists(root, ec))
+        for (auto& e : fs::recursive_directory_iterator(root, ec))
+            if (e.is_regular_file() && e.path().extension() == ".okaysave")
+                files.push_back(e.path().string());
+
+    ImGui::TextDisabled("Runtime save files (Easy-Save-style key/value data)");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##savefile", sel.empty() ? "(choose a save file)" : sel.c_str())) {
+        for (auto& f : files)
+            if (ImGui::Selectable(f.c_str(), f == sel)) { sel = f; loaded.clear(); }
+        ImGui::EndCombo();
+    }
+    if (sel.empty()) { ImGui::TextDisabled("No file selected."); ImGui::End(); return; }
+    if (loaded != sel) { file = okay::SaveFile{}; file.Load(sel); loaded = sel; }
+
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reload")) { file = okay::SaveFile{}; file.Load(sel); }
+    ImGui::Separator();
+
+    // Editable key table. Values are stored as type:payload; show the type and an
+    // editable payload, re-encoding on change.
+    if (ImGui::BeginTable("savekeys", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+        ImGui::TableHeadersRow();
+
+        std::string deleteKey;
+        // Snapshot keys (sorted) so editing during iteration is safe.
+        std::vector<std::pair<std::string, std::string>> rows(file.Raw().begin(), file.Raw().end());
+        std::sort(rows.begin(), rows.end(), [](auto& a, auto& b){ return a.first < b.first; });
+        for (auto& kv : rows) {
+            ImGui::PushID(kv.first.c_str());
+            char type = kv.second.empty() ? 's' : kv.second[0];
+            std::string payload = kv.second.size() > 2 ? kv.second.substr(2) : "";
+            const char* tname = type == 'f' ? "float" : type == 'i' ? "int"
+                              : type == 'b' ? "bool" : type == 'v' ? "Vector3" : "string";
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(kv.first.c_str());
+            ImGui::TableNextColumn(); ImGui::TextDisabled("%s", tname);
+            ImGui::TableNextColumn();
+            char vbuf[256]; std::strncpy(vbuf, payload.c_str(), sizeof(vbuf) - 1); vbuf[sizeof(vbuf)-1] = '\0';
+            ImGui::SetNextItemWidth(-44);
+            if (ImGui::InputText("##v", vbuf, sizeof(vbuf)))
+                file.SetRaw(kv.first, std::string(1, type) + ":" + vbuf);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X")) deleteKey = kv.first;
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+        if (!deleteKey.empty()) file.Delete(deleteKey);
+    }
+
+    // Add a new key (typed).
+    ImGui::Spacing();
+    static char newKey[64] = "";
+    static int newType = 0;     // 0 float,1 int,2 bool,3 string,4 vec3
+    static char newVal[128] = "0";
+    ImGui::SetNextItemWidth(140); ImGui::InputTextWithHint("##nk", "new key", newKey, sizeof(newKey));
+    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+    ImGui::Combo("##nt", &newType, "float\0int\0bool\0string\0Vector3\0");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(140); ImGui::InputText("##nv", newVal, sizeof(newVal));
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Add") && newKey[0]) {
+        const char tc[] = {'f', 'i', 'b', 's', 'v'};
+        file.SetRaw(newKey, std::string(1, tc[newType]) + ":" + newVal);
+        newKey[0] = '\0';
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Save to disk")) {
+        if (file.Save(sel)) ConsoleLog("Saved " + sel); else ConsoleLog("Save failed: " + sel);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear all keys")) file.Clear();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d keys", (int)file.Count());
     ImGui::End();
 }
 
@@ -6510,6 +6609,7 @@ int main(int argc, char** argv) {
         if (g_showScriptEditor) DrawScriptEditor(ed);
         DrawScriptDocs();
         if (g_showStats)     DrawStats(ed);
+        if (g_showSaveManager) DrawSaveManager(ed);
         if (g_showScenes)    DrawScenes(ed);
 
         // Play-mode tint: a colored border around the whole window so it's

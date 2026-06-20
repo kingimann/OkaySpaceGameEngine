@@ -815,8 +815,8 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         float armLen = 0.74f * aL * H;
         float armCY = shoulderY - armLen * 0.5f;       // arm hangs from the shoulder
         float wristY = shoulderY - armLen;             // bottom of the arm
-        // Big shoulder joint that overlaps BOTH the torso and the arm (no gap).
-        arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * sw * 0.78f, shoulderY, 0.0f}, {at * 2.6f, at * 2.6f, at * 2.6f}, shirt);
+        // Shoulder joint that bridges the torso to the arm without bulging.
+        arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * sw * 0.82f, shoulderY, 0.0f}, {at * 1.8f, at * 1.8f, at * 1.8f}, shirt);
         arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * sw, armCY, 0.0f}, {at, armLen, at}, armRot, shoulder, shirt);
         float hsz = 0.16f * B * p.handSize;
         Vec3 hp{s * sw, wristY + hsz * 0.3f, 0.0f};    // hand at the wrist (overlaps the arm)

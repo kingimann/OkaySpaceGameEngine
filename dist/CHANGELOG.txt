@@ -1,6 +1,20 @@
 OkaySpace Game Engine — Changelog
 
 v2.13.0
+  - Script editor reworked to feel like VS Code: dark editor surface, a
+    line-number gutter, live syntax highlighting (keywords, types, strings,
+    comments, numbers), a toolbar (Run / Save / Reload / Open in IDE / Docs /
+    Syntax toggle) and a status bar (language, Ln/Col, line count). Tab inserts
+    in code.
+  - Add Component now matches Unity: a centered "Component" title, a Search box,
+    and categories that drill into submenus while browsing (flat filtered list
+    while searching). The Scripts category lists every .okay script in your
+    project directly (one click attaches it) plus "New Script...".
+  - Drag a script/material/image from the Project panel onto the Inspector's
+    object header to attach it (script -> Script component, material -> applied,
+    image -> texture).
+  - Scripts use OkaySpace's own base class, OkaySource, instead of MonoBehaviour
+    (Unity's ": MonoBehaviour" still parses, so pasted scripts keep working).
   - Add Component > Script now works like Unity: it opens a submenu that lists
     every .okay script already in your project's Assets (pick one to attach it),
     plus a "New Script..." entry that prompts for a name, creates the .okay file

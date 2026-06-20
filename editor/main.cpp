@@ -2212,6 +2212,76 @@ void DrawScriptDocs() {
     ImGui::End();
 }
 
+// --- VS Code-style script editor helpers ---------------------------------
+
+// Cursor line/column for the status bar, filled by an InputText callback.
+struct ScriptCaret { int line = 1, col = 1; };
+static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
+    auto* c = (ScriptCaret*)d->UserData;
+    int ln = 1, col = 1;
+    for (int k = 0; k < d->CursorPos && k < d->BufTextLen; ++k) {
+        if (d->Buf[k] == '\n') { ++ln; col = 1; } else ++col;
+    }
+    c->line = ln; c->col = col;
+    return 0;
+}
+
+// Draw the code text with VS Code "Dark+" syntax colors on top of the editor.
+// ProggyClean is monospace, so glyphs advance by a fixed width and the colored
+// overlay lines up exactly with the InputText beneath it.
+static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
+                              float charW, float lineH) {
+    const ImU32 cDefault = IM_COL32(212, 212, 212, 255);
+    const ImU32 cKeyword = IM_COL32( 86, 156, 214, 255);  // blue
+    const ImU32 cType    = IM_COL32( 78, 201, 176, 255);  // teal
+    const ImU32 cString  = IM_COL32(206, 145, 120, 255);  // orange
+    const ImU32 cComment = IM_COL32(106, 153,  85, 255);  // green
+    const ImU32 cNumber  = IM_COL32(181, 206, 168, 255);  // light green
+    static const char* kw[] = {
+        "if","else","for","while","do","return","break","continue","switch","case",
+        "var","let","const","function","func","def","class","struct","new","public",
+        "private","protected","static","void","int","float","bool","string","true",
+        "false","null","this","import","using","namespace","foreach","in","and","or","not"};
+    static const char* types[] = {
+        "Vector2","Vector3","Vec2","Vec3","Color","Quaternion","Transform","GameObject",
+        "Mathf","Input","Time","Okay","OkaySource","Debug","Random","Physics"};
+    auto isWord = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+    auto inList = [](const std::string& s, const char* const* arr, int n) {
+        for (int i = 0; i < n; ++i) if (s == arr[i]) return true; return false; };
+
+    float x = origin.x, y = origin.y;
+    for (int i = 0; text[i];) {
+        char c = text[i];
+        if (c == '\n') { x = origin.x; y += lineH; ++i; continue; }
+        if (c == '/' && text[i + 1] == '/') {                          // line comment
+            int j = i; while (text[j] && text[j] != '\n') ++j;
+            std::string s(text + i, text + j);
+            dl->AddText(ImVec2(x, y), cComment, s.c_str()); x += (j - i) * charW; i = j; continue;
+        }
+        if (c == '"' || c == '\'') {                                   // string literal
+            char q = c; int j = i + 1;
+            while (text[j] && text[j] != q && text[j] != '\n') { if (text[j] == '\\' && text[j + 1]) ++j; ++j; }
+            if (text[j] == q) ++j;
+            std::string s(text + i, text + j);
+            dl->AddText(ImVec2(x, y), cString, s.c_str()); x += (j - i) * charW; i = j; continue;
+        }
+        if (std::isdigit((unsigned char)c)) {                          // number
+            int j = i; while (text[j] && (std::isalnum((unsigned char)text[j]) || text[j] == '.')) ++j;
+            std::string s(text + i, text + j);
+            dl->AddText(ImVec2(x, y), cNumber, s.c_str()); x += (j - i) * charW; i = j; continue;
+        }
+        if (isWord(c)) {                                               // identifier / keyword
+            int j = i; while (text[j] && isWord(text[j])) ++j;
+            std::string s(text + i, text + j);
+            ImU32 col = inList(s, kw, (int)(sizeof(kw) / sizeof(*kw))) ? cKeyword
+                      : inList(s, types, (int)(sizeof(types) / sizeof(*types))) ? cType : cDefault;
+            dl->AddText(ImVec2(x, y), col, s.c_str()); x += (j - i) * charW; i = j; continue;
+        }
+        if (c != ' ' && c != '\t') { char b[2] = {c, 0}; dl->AddText(ImVec2(x, y), cDefault, b); }
+        x += (c == '\t' ? 4 * charW : charW); ++i;
+    }
+}
+
 void DrawScriptEditor(EditorState& ed) {
     if (!ImGui::Begin("Script Editor", &g_showScriptEditor)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
@@ -2225,71 +2295,118 @@ void DrawScriptEditor(EditorState& ed) {
     }
 
     {
-        ImGui::Text("Script  -  %s", go->name.c_str());
-
         auto& buf = CodeBuffer(sc, sc->Source().empty()
             ? extide::StarterScript(sc->Language()) : sc->Source());
-
-        // Only list backends this build actually supports, so the choice is
-        // meaningful (no "backend not available" errors). okayscript is always
-        // present; lua/csharp appear when compiled in.
-        static std::vector<std::string> avail = AvailableScriptLanguages();
-        std::vector<const char*> items; items.reserve(avail.size());
-        for (auto& s : avail) items.push_back(s.c_str());
-        int li = 0;
-        for (int i = 0; i < (int)avail.size(); ++i)
-            if (avail[i] == sc->Language()) li = i;
-        ImGui::SetNextItemWidth(150);
-        if (ImGui::Combo("Lang", &li, items.data(), (int)items.size())) {
-            std::string oldLang = sc->Language(), newLang = avail[li];
-            sc->SetLanguage(newLang);
-            // Swap the starter in if the editor still holds the old default, so
-            // switching languages gives syntax that compiles in the new one.
-            std::string cur = buf.data();
-            if (cur.empty() || cur == extide::StarterScript(oldLang))
-                SetCodeBuffer(sc, extide::StarterScript(newLang));
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled(sc->Language() == "okayscript" ? "Unity-style C#"
-                          : sc->Language() == "lua"        ? "Lua: function ... end"
-                                                           : "");
-        if (!sc->Path().empty()) { ImGui::SameLine(); ImGui::TextDisabled("(%s)", sc->Path().c_str()); }
-        ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= 34.0f; if (av.y < 60) av.y = 60;
-        ImGui::InputTextMultiline("##editor", buf.data(), buf.size(), av);
-
         auto filePath = [&]() {
             return sc->Path().empty() ? go->name + "." + extide::ExtFor(sc->Language()) : sc->Path();
         };
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
 
-        if (ImGui::Button("Compile & Run")) {
+        // --- Toolbar (VS Code-style title row): file + Run / Save / Reload ----
+        std::string fname = sc->Path().empty() ? (go->name + "." + extide::ExtFor(sc->Language()))
+                                               : std::filesystem::path(sc->Path()).filename().string();
+        ImGui::TextColored(ImVec4(0.82f, 0.82f, 0.88f, 1.0f), "%s", fname.c_str());
+        ImGui::SameLine();
+        static bool s_highlight = true;
+        if (ImGui::SmallButton("Run")) {           // compile + run
             std::string e;
             ConsoleLog(sc->LoadSource(buf.data(), &e) ? "Compiled OK" : "Error: " + e);
             ed.dirty = true;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Save File")) {
+        if (ImGui::SmallButton("Save")) {
             std::string p = filePath();
             if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); ConsoleLog("Saved " + p); }
-            else { ConsoleLog("Save failed"); }
+            else ConsoleLog("Save failed");
             ed.dirty = true;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Open in IDE")) {
-            std::string p = filePath();
-            extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p);
-            ConsoleLog("Opened " + p + " in external IDE");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Reload")) {
+        if (ImGui::SmallButton("Reload")) {
             if (!sc->Path().empty()) {
                 std::string src = extide::ReadFile(sc->Path());
                 SetCodeBuffer(sc, src);
                 std::string e; sc->LoadSource(src, &e);
                 ConsoleLog("Reloaded " + sc->Path());
-            } else ConsoleLog("No file to reload (Save File first)");
+            } else ConsoleLog("No file to reload (Save first)");
         }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Open in IDE")) {
+            std::string p = filePath();
+            extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p);
+            ConsoleLog("Opened " + p + " in external IDE");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
+        ImGui::SameLine();
+        ImGui::Checkbox("Syntax", &s_highlight);
+        // Language picker (only backends this build supports).
+        static std::vector<std::string> avail = AvailableScriptLanguages();
+        if (avail.size() > 1) {
+            std::vector<const char*> items; items.reserve(avail.size());
+            for (auto& s : avail) items.push_back(s.c_str());
+            int li = 0;
+            for (int i = 0; i < (int)avail.size(); ++i) if (avail[i] == sc->Language()) li = i;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+            if (ImGui::Combo("##lang", &li, items.data(), (int)items.size())) {
+                std::string oldLang = sc->Language(), newLang = avail[li];
+                sc->SetLanguage(newLang);
+                std::string cur = buf.data();
+                if (cur.empty() || cur == extide::StarterScript(oldLang))
+                    SetCodeBuffer(sc, extide::StarterScript(newLang));
+            }
+        }
+
+        // --- Editor surface: dark theme, line-number gutter, syntax overlay ---
+        static ScriptCaret caret;
+        int lines = 1, curLen = 0, maxLen = 0;
+        for (const char* p = buf.data(); *p; ++p) {
+            if (*p == '\n') { ++lines; if (curLen > maxLen) maxLen = curLen; curLen = 0; }
+            else ++curLen;
+        }
+        if (curLen > maxLen) maxLen = curLen;
+
+        float charW = ImGui::CalcTextSize("0").x;
+        float lineH = ImGui::GetTextLineHeight();
+        float padY  = ImGui::GetStyle().FramePadding.y;
+        float padX  = ImGui::GetStyle().FramePadding.x;
+
+        ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= lineH + 8.0f; if (av.y < 80) av.y = 80;
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(30, 30, 30, 255));   // VS Code editor bg
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(30, 30, 30, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(212, 212, 212, 255));
+        ImGui::BeginChild("editorscroll", av, true,
+                          ImGuiWindowFlags_HorizontalScrollbar);
+
+        // Line-number gutter (tight line spacing so rows match the editor).
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+        ImGui::BeginGroup();
+        ImGui::Dummy(ImVec2(0, padY));
+        for (int i = 1; i <= lines; ++i)
+            ImGui::TextColored(ImVec4(0.42f, 0.44f, 0.5f, 1.0f), "%4d", i);
+        ImGui::EndGroup();
+        ImGui::PopStyleVar();
+        ImGui::SameLine();
+
+        // The editable text, sized to fit all content so the outer child does the
+        // scrolling and the colored overlay (drawn after) stays aligned.
+        float contentW = (maxLen + 2) * charW + padX * 2;
+        float contentH = lines * lineH + padY * 2 + 2;
+        ImGui::InputTextMultiline("##code", buf.data(), buf.size(),
+            ImVec2(contentW, contentH),
+            ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackAlways,
+            ScriptCaretCallback, &caret);
+        if (s_highlight) {
+            ImVec2 mn = ImGui::GetItemRectMin();
+            DrawCodeHighlight(ImGui::GetWindowDrawList(), buf.data(),
+                              ImVec2(mn.x + padX, mn.y + padY), charW, lineH);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(3);
+
+        // --- Status bar (VS Code-style) --------------------------------------
+        const char* langLbl = sc->Language() == "okayscript" ? "OkayScript"
+                            : sc->Language() == "lua" ? "Lua" : sc->Language().c_str();
+        ImGui::TextDisabled("%s   Ln %d, Col %d   %d lines   Spaces", langLbl,
+                            caret.line, caret.col, lines);
     }
     ImGui::End();
 }
@@ -3175,6 +3292,36 @@ void DrawInspector(EditorState& ed) {
         else ConsoleLog("Prefab save failed");
     }
     ImGui::EndChild();
+    // Drop a Project asset onto the object header to attach it: a .okay script
+    // adds a Script component bound to that file; a .okaymat applies its look; an
+    // image sets the texture. (Unity-style drag from Project into the Inspector.)
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::string path((const char*)p->Data), ext;
+            if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            if (ext == ".okay") {
+                ed.PushUndo();
+                auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
+                std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                ConsoleLog("Attached script " + path); ed.dirty = true;
+            } else if (ext == ".okaymat") {
+                if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    Material m; if (Material::LoadFromFile(path, m)) {
+                        ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true; ConsoleLog("Applied material");
+                    }
+                }
+            } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                ed.PushUndo();
+                if (auto* mr = go->GetComponent<MeshRenderer>())        mr->texture = path;
+                else if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = path;
+                ed.dirty = true; ConsoleLog("Set texture");
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+        ImGui::SetTooltip("Drop a script/material/image here to attach it");
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     ImGui::Spacing();
@@ -4423,13 +4570,13 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Scripts");
           if (o) {
-            // Unity-style Script flow: pick an EXISTING .okay script or create a NEW one.
-            if (!go->GetComponent<ScriptComponent>() && F("Script") && ImGui::BeginMenu("Script")) {
+            // Existing .okay scripts in the project show up directly here, so one
+            // click attaches them (Unity-style). "New Script..." makes a new file.
+            if (!go->GetComponent<ScriptComponent>()) {
                 namespace fs = std::filesystem;
                 fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
                                                           : fs::path(ed.projectDir()) / "Assets";
                 std::error_code ec;
-                int listed = 0;
                 if (fs::exists(assets, ec)) {
                     for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
                         if (!e.is_regular_file()) continue;
@@ -4437,23 +4584,19 @@ void DrawInspector(EditorState& ed) {
                         for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
                         if (ext != ".okay") continue;
                         std::string rel = fs::relative(e.path(), assets, ec).string();
-                        if (ImGui::MenuItem(rel.c_str())) {
+                        if (F(rel.c_str()) && ImGui::MenuItem(rel.c_str())) {
                             auto* sc = go->AddComponent<ScriptComponent>("okayscript");
                             std::string err; sc->LoadFile(e.path().string(), &err);
                             sc->SetPath(e.path().string());
                             ConsoleLog("Attached script " + e.path().string());
                             ed.dirty = true;
                         }
-                        ++listed;
                     }
                 }
-                if (!listed) ImGui::TextDisabled("(no .okay scripts in Assets yet)");
-                ImGui::Separator();
-                if (ImGui::MenuItem("New Script...")) {
+                if (F("New Script...") && ImGui::MenuItem("New Script...")) {
                     g_newScriptGO = go; g_newScriptOpen = true;
                     std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
                 }
-                ImGui::EndMenu();
             }
             if (item(!go->GetComponent<ActionList>(), "Actions (Visual Script)")) { go->AddComponent<ActionList>(); ed.dirty = true; }
           } EndCat(o); }

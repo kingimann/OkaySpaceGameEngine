@@ -1550,19 +1550,49 @@ void DrawProject(EditorState& ed) {
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("(F2 or right-click to Rename)");
+
+    // ---- View options: type filter, sort, thumbnail size ---------------------
+    static int   s_filter = 0;   // 0 All,1 Scripts,2 Images,3 Scenes,4 Materials,5 Prefabs,6 Data,7 Audio
+    static int   s_sort   = 0;   // 0 Name, 1 Type
+    static float s_cell   = 76.0f;
+    ImGui::SetNextItemWidth(110);
+    ImGui::Combo("##filter", &s_filter, "All\0Scripts\0Images\0Scenes\0Materials\0Prefabs\0Data\0Audio\0");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+    ImGui::Combo("##sort", &s_sort, "Name\0Type\0");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(100);
+    ImGui::SliderFloat("##size", &s_cell, 48.0f, 128.0f, "%.0f px");
     ImGui::Separator();
+
+    // Map the filter to a set of extensions ("" = always show, dirs always show).
+    auto passFilter = [&](const std::string& ext, bool isDir) -> bool {
+        if (isDir || s_filter == 0) return true;
+        switch (s_filter) {
+            case 1: return ext==".okay"||ext==".lua"||ext==".cs"||ext==".okayvs";
+            case 2: return ext==".png"||ext==".jpg"||ext==".jpeg"||ext==".bmp";
+            case 3: return ext==".okayscene";
+            case 4: return ext==".okaymat";
+            case 5: return ext==".okayprefab";
+            case 6: return ext==".okaydata";
+            case 7: return ext==".wav";
+        }
+        return true;
+    };
 
     std::vector<fs::directory_entry> entries;
     if (fs::is_directory(dir, ec))
         for (auto& e : fs::directory_iterator(dir, ec)) entries.push_back(e);
-    std::sort(entries.begin(), entries.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
+    std::sort(entries.begin(), entries.end(), [&](const fs::directory_entry& a, const fs::directory_entry& b) {
         bool da = a.is_directory(), db = b.is_directory();
         if (da != db) return da;     // folders first
+        if (s_sort == 1 && !da) {    // by type (extension), then name
+            std::string ea = Lower(a.path().extension().string()), eb = Lower(b.path().extension().string());
+            if (ea != eb) return ea < eb;
+        }
         return Lower(a.path().filename().string()) < Lower(b.path().filename().string());
     });
 
     std::string needle = Lower(search);
-    const float cell = 76.0f;
+    const float cell = s_cell;
     float availW = ImGui::GetContentRegionAvail().x;
     int cols = (int)(availW / (cell + ImGui::GetStyle().ItemSpacing.x));
     if (cols < 1) cols = 1;
@@ -1574,6 +1604,7 @@ void DrawProject(EditorState& ed) {
         std::string name = e.path().filename().string();
         if (!needle.empty() && Lower(name).find(needle) == std::string::npos) continue;
         std::string ext = Lower(e.path().extension().string());
+        if (!passFilter(ext, isDir)) continue;
         AssetKind k = KindOf(ext, isDir);
         std::string full = e.path().string();
 
@@ -1622,6 +1653,16 @@ void DrawProject(EditorState& ed) {
                 std::strncpy(renameBuf, name.c_str(), sizeof(renameBuf) - 1);
                 renameBuf[sizeof(renameBuf) - 1] = '\0';
             }
+            if (!isDir && ImGui::MenuItem("Duplicate")) {
+                std::error_code ce;
+                fs::path src(full), stem = src.stem(), x = src.extension();
+                fs::path dst = src.parent_path() / (stem.string() + " copy" + x.string());
+                for (int n = 2; fs::exists(dst, ce); ++n)
+                    dst = src.parent_path() / (stem.string() + " copy" + std::to_string(n) + x.string());
+                fs::copy_file(src, dst, ce);
+                ConsoleLog((ce ? "Duplicate failed: " : "Duplicated ") + dst.string());
+            }
+            if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(full.c_str());
             if (ImGui::MenuItem("Show in Explorer"))
                 extide::RevealInFiles(fs::path(full).parent_path().string());
             if (ImGui::MenuItem("Delete")) {
@@ -1661,7 +1702,19 @@ void DrawProject(EditorState& ed) {
     if (shown == 0) {
         ImGui::TextDisabled(ed.projectDir().empty()
             ? "No project open — File > New Project to create one."
-            : "Empty folder.");
+            : (s_filter == 0 && needle.empty() ? "Empty folder." : "No matching assets."));
+    }
+    // Footer: item count + the selected asset's name and size.
+    ImGui::Separator();
+    if (!selected.empty()) {
+        std::error_code se; std::uintmax_t sz = fs::is_regular_file(selected, se) ? fs::file_size(selected, se) : 0;
+        ImGui::TextDisabled("%d item%s   |   %s%s", shown, shown == 1 ? "" : "s",
+                            fs::path(selected).filename().string().c_str(),
+                            sz ? ("  (" + (sz < 1024 ? std::to_string(sz) + " B"
+                                  : sz < 1024 * 1024 ? std::to_string(sz / 1024) + " KB"
+                                  : std::to_string(sz / (1024 * 1024)) + " MB") + ")").c_str() : "");
+    } else {
+        ImGui::TextDisabled("%d item%s", shown, shown == 1 ? "" : "s");
     }
 
     // Right-click empty space: create assets here / reveal the folder.

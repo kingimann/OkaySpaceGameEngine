@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.15.4
+  - Project panel improvements: a type filter (Scripts/Images/Scenes/Materials/
+    Prefabs/Data/Audio), a sort mode (Name/Type), an adjustable thumbnail size,
+    Duplicate and Copy Path in the right-click menu, and a footer showing the
+    item count plus the selected asset's name and size.
+
 v2.15.3
   - Fixed: dropping a script onto an already-selected object's Inspector now
     opens its Script Editor tab right away (the tab only opened on a selection

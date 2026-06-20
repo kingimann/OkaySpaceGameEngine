@@ -121,6 +121,21 @@ void CharacterBody::Update(float dt) {
             if (tr) tr->localPosition.y = restY + 0.8f * h;
             break;
         }
+        case 6: {  // auto: pick idle/walk/run from how fast the object is moving
+            float speed = 0.0f;
+            if (tr) {
+                Vec3 pos = tr->Position();
+                if (lastPosSet && dt > 1e-4f) {
+                    float dx = pos.x - lastPos.x, dz = pos.z - lastPos.z;
+                    speed = std::sqrt(dx * dx + dz * dz) / dt;
+                }
+                lastPos = pos; lastPosSet = true;
+            }
+            if (speed > 2.5f)      { float s = std::sin(t * 7.0f) * 40.0f; pp.legSwing = s; pp.armSwing = -s; }
+            else if (speed > 0.3f) { float s = std::sin(t * 4.0f) * 24.0f; pp.legSwing = s; pp.armSwing = -s; }
+            else                   { pp.armSwing = 4.0f * std::sin(t * 1.6f); }
+            break;
+        }
         default: break;
     }
     // Root motion: Walk/Run travel forward along the object's facing.

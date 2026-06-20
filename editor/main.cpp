@@ -4918,9 +4918,11 @@ void DrawInspector(EditorState& ed) {
             ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 30.0f, "%.0f deg");
             ImGui::Spacing();
             ImGui::TextDisabled("Animation (plays in Play mode)");
-            const char* anims[] = {"None", "Idle", "Walk", "Run", "Wave", "Jump"};
+            const char* anims[] = {"None", "Idle", "Walk", "Run", "Wave", "Jump", "Auto (move)"};
             ImGui::SetNextItemWidth(160);
-            ImGui::Combo("Animation##char", &cb->anim, anims, 6);
+            ImGui::Combo("Animation##char", &cb->anim, anims, 7);
+            if (cb->anim == 6 && ImGui::IsItemHovered())
+                ImGui::SetTooltip("Auto-picks idle/walk/run from how fast the\nobject moves (drive it with a controller or script).");
             if (cb->anim != 0) ImGui::SliderFloat("Anim Speed##char", &cb->animSpeed, 0.1f, 3.0f);
             if (cb->anim == 2 || cb->anim == 3) ImGui::Checkbox("Root Motion (travel)##char", &cb->rootMotion);
             ImGui::Spacing();

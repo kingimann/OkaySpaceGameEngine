@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.15.2
+  - Script editor tabs: edit several scripts at once. Selecting an object with a
+    Script opens (and focuses) a tab for it; switch between open scripts with the
+    tab bar, reorder them, and close one with its X. The editor (and all its
+    tools) act on the active tab, so it no longer follows the current selection.
+
 v2.15.1
   - Script editor, more IDE features: auto-closing brackets and quotes with
     type-over, auto-indent on Enter (matches the line, adds a level after "{"),

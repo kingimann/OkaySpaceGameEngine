@@ -2337,9 +2337,12 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::TextColored(ImVec4(0.82f, 0.82f, 0.88f, 1.0f), "%s", fname.c_str());
         ImGui::SameLine();
         static bool s_highlight = true;
+        static std::string s_error;     // last compile error (shown red in status)
+        static char s_find[128] = "";   // Find query (Ctrl+F highlights matches)
         if (ImGui::SmallButton("Run")) {           // compile + run
-            std::string e;
-            ConsoleLog(sc->LoadSource(buf.data(), &e) ? "Compiled OK" : "Error: " + e);
+            bool ok = sc->LoadSource(buf.data(), &s_error);
+            if (ok) s_error.clear();
+            ConsoleLog(ok ? "Compiled OK" : "Error: " + s_error);
             ed.dirty = true;
         }
         ImGui::SameLine();
@@ -2385,6 +2388,23 @@ void DrawScriptEditor(EditorState& ed) {
             }
         }
 
+        // Find bar: Ctrl+F focuses it; matches are highlighted in the editor.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
+            ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(180);
+        ImGui::InputTextWithHint("##find", "Find (Ctrl+F)", s_find, sizeof(s_find));
+        // Count matches (case-insensitive) for the status bar.
+        int findCount = 0;
+        if (s_find[0]) {
+            std::string hay = buf.data(), needle = s_find;
+            for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
+            for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
+            for (std::size_t pos = hay.find(needle); pos != std::string::npos;
+                 pos = hay.find(needle, pos + needle.size())) ++findCount;
+            ImGui::SameLine(); ImGui::TextDisabled("%d match%s", findCount, findCount == 1 ? "" : "es");
+        }
+
         // --- Editor surface: dark theme, line-number gutter, syntax overlay ---
         static ScriptCaret caret;
         int lines = 1, curLen = 0, maxLen = 0;
@@ -2424,11 +2444,31 @@ void DrawScriptEditor(EditorState& ed) {
             ImVec2(contentW, contentH),
             ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackAlways,
             ScriptCaretCallback, &caret);
-        if (s_highlight) {
-            ImVec2 mn = ImGui::GetItemRectMin();
-            DrawCodeHighlight(ImGui::GetWindowDrawList(), buf.data(),
-                              ImVec2(mn.x + padX, mn.y + padY), charW, lineH);
+        ImVec2 mn = ImGui::GetItemRectMin();
+        ImVec2 origin(mn.x + padX, mn.y + padY);
+        ImDrawList* edl = ImGui::GetWindowDrawList();
+        // Highlight every Find match (drawn under the text overlay).
+        if (s_find[0]) {
+            std::string needle = s_find;
+            std::size_t nlen = needle.size();
+            int ln = 0, col = 0;
+            const char* t = buf.data();
+            auto lower = [](char c) { return (char)std::tolower((unsigned char)c); };
+            for (int i = 0; t[i]; ) {
+                if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
+                bool match = true;
+                for (std::size_t k = 0; k < nlen; ++k)
+                    if (!t[i + k] || lower(t[i + k]) != lower(needle[k])) { match = false; break; }
+                if (match) {
+                    ImVec2 a(origin.x + col * charW, origin.y + ln * lineH);
+                    edl->AddRectFilled(a, ImVec2(a.x + nlen * charW, a.y + lineH),
+                                       IM_COL32(120, 110, 40, 180));
+                }
+                ++i; ++col;
+            }
         }
+        if (s_highlight)
+            DrawCodeHighlight(edl, buf.data(), origin, charW, lineH);
         ImGui::EndChild();
         ImGui::PopStyleColor(3);
 
@@ -2437,6 +2477,10 @@ void DrawScriptEditor(EditorState& ed) {
                             : sc->Language() == "lua" ? "Lua" : sc->Language().c_str();
         ImGui::TextDisabled("%s   Ln %d, Col %d   %d lines   Spaces", langLbl,
                             caret.line, caret.col, lines);
+        if (!s_error.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  \xe2\x9c\x97 %s", s_error.c_str());
+        }
     }
     ImGui::End();
 }

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.26
+  - Character Creator: body presets + accessory parenting.
+    * New body presets using the shape params: Athletic, Stocky, Lanky, Chubby,
+      Buff (alongside the existing set).
+    * Accessories can now attach to a body region — Origin / Head / Torso / Hips /
+      Left Hand / Right Hand / Back — so they follow proportion changes AND
+      animation (e.g. a sword in the hand swings with the arm; a hat tracks the
+      head as height changes). Attach points save/load.
+
 v2.16.25
   - Character Creator: more body shapes.
     * Arm Thickness and Leg Thickness (limb girth, independent of Build).

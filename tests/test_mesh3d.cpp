@@ -582,7 +582,7 @@ int main() {
         cb->hasHat = true;
         cb->anim = 2; cb->animSpeed = 1.5f;
         { Accessory a; a.name = "Antenna"; a.shape = "Cone"; a.color = Color::FromBytes(10, 220, 10);
-          cb->accessories.push_back(a); }
+          a.attach = 1; /* head */ cb->accessories.push_back(a); }
         cb->beard = true; cb->params.noseSize = 1.5f;
         cb->params.waist = 1.4f; cb->params.belly = 0.8f;
         cb->subdivisions    = 0;
@@ -632,6 +632,7 @@ int main() {
         CHECK(lc->accessories.size() == 1u);                              // custom accessory round-trips
         CHECK(lc->accessories[0].name == "Antenna");
         CHECK(lc->accessories[0].shape == "Cone");
+        CHECK(lc->accessories[0].attach == 1);                            // accessory parenting round-trips
         CHECK(lc->beard == true);                                          // facial hair round-trips
         CHECK_NEAR(lc->params.noseSize, 1.5f, 0.001f);
         CHECK_NEAR(lc->params.waist, 1.4f, 0.001f);                         // body shape round-trips

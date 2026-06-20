@@ -2245,14 +2245,14 @@ void DrawScriptDocs() {
 // --- VS Code-style script editor helpers ---------------------------------
 
 // Cursor line/column for the status bar, filled by an InputText callback.
-struct ScriptCaret { int line = 1, col = 1; };
+struct ScriptCaret { int line = 1, col = 1, pos = 0; };
 static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
     auto* c = (ScriptCaret*)d->UserData;
     int ln = 1, col = 1;
     for (int k = 0; k < d->CursorPos && k < d->BufTextLen; ++k) {
         if (d->Buf[k] == '\n') { ++ln; col = 1; } else ++col;
     }
-    c->line = ln; c->col = col;
+    c->line = ln; c->col = col; c->pos = d->CursorPos;
     return 0;
 }
 
@@ -2371,6 +2371,12 @@ void DrawScriptEditor(EditorState& ed) {
         if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
         ImGui::SameLine();
         ImGui::Checkbox("Syntax", &s_highlight);
+        ImGui::SameLine();
+        static float s_zoom = 1.0f;
+        if (ImGui::SmallButton("A-")) s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("A+")) s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom code (Ctrl+scroll in the editor)");
         // Language picker (only backends this build supports).
         static std::vector<std::string> avail = AvailableScriptLanguages();
         if (avail.size() > 1) {
@@ -2426,6 +2432,14 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::BeginChild("editorscroll", av, true,
                           ImGuiWindowFlags_HorizontalScrollbar);
 
+        // Zoom: scale the editor font, then recompute glyph metrics so the gutter
+        // and the syntax overlay stay aligned at any zoom (Ctrl+wheel or A-/A+).
+        ImGui::SetWindowFontScale(s_zoom);
+        if (ImGui::IsWindowHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
+            s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
+        charW = ImGui::CalcTextSize("0").x;
+        lineH = ImGui::GetTextLineHeight();
+
         // Line-number gutter (tight line spacing so rows match the editor).
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
         ImGui::BeginGroup();
@@ -2447,6 +2461,12 @@ void DrawScriptEditor(EditorState& ed) {
         ImVec2 mn = ImGui::GetItemRectMin();
         ImVec2 origin(mn.x + padX, mn.y + padY);
         ImDrawList* edl = ImGui::GetWindowDrawList();
+        // Current-line highlight (the row the caret is on), VS Code-style.
+        {
+            float ly = origin.y + (caret.line - 1) * lineH;
+            edl->AddRectFilled(ImVec2(mn.x, ly), ImVec2(mn.x + contentW, ly + lineH),
+                               IM_COL32(255, 255, 255, 16));
+        }
         // Highlight every Find match (drawn under the text overlay).
         if (s_find[0]) {
             std::string needle = s_find;
@@ -2475,8 +2495,8 @@ void DrawScriptEditor(EditorState& ed) {
         // --- Status bar (VS Code-style) --------------------------------------
         const char* langLbl = sc->Language() == "okayscript" ? "OkayScript"
                             : sc->Language() == "lua" ? "Lua" : sc->Language().c_str();
-        ImGui::TextDisabled("%s   Ln %d, Col %d   %d lines   Spaces", langLbl,
-                            caret.line, caret.col, lines);
+        ImGui::TextDisabled("%s   Ln %d, Col %d   %d lines   %d chars   Spaces", langLbl,
+                            caret.line, caret.col, lines, (int)std::strlen(buf.data()));
         if (!s_error.empty()) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  \xe2\x9c\x97 %s", s_error.c_str());

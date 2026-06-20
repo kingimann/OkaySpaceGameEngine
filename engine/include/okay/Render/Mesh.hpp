@@ -33,6 +33,8 @@ struct HumanoidParams {
     float legSpread    = 3.0f;   // degrees legs angle out (stance width)
     float torsoLength  = 1.0f;   // lengthens the torso (raises the upper body)
     float bodyDepth    = 1.0f;   // front-to-back thickness of torso + hips
+    int   hairStyle    = 1;      // 0 cap, 1 short, 2 long, 3 spiky, 4 ponytail, 5 mohawk
+    float eyeSpacing   = 1.0f;   // multiplier on the gap between the eyes
 };
 
 /// Per-region colors for the procedural humanoid (Mesh::Humanoid). When passed,
@@ -663,11 +665,33 @@ struct Mesh {
         const float up = 0.78f * H * (p.torsoLength - 1.0f);
         const float headY = 1.78f * H + up;
         m.Add(Sphere(0.5f, 6, 8), {0.0f, headY, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}, skin); // head
-        if (c && c->hasHair)   // a flattened cap over the top of the head
-            m.Add(Sphere(0.5f, 5, 8), {0.0f, headY + 0.10f * hd, 0.0f},
-                  {0.44f * hd, 0.34f * hd, 0.44f * hd}, &c->hair);
+        if (c && c->hasHair) {                       // hair, by style
+            const Color* h = &c->hair;
+            m.Add(Sphere(0.5f, 5, 8), {0.0f, headY + 0.10f * hd, 0.0f},      // base cap
+                  {0.44f * hd, 0.34f * hd, 0.44f * hd}, h);
+            switch (p.hairStyle) {
+                case 2:  // long: a panel down the back to the shoulders
+                    m.Add(Cube(1.0f), {0.0f, headY - 0.22f * hd, -0.16f * hd},
+                          {0.40f * hd, 0.55f * hd, 0.16f * hd}, h);
+                    break;
+                case 3:  // spiky: small pyramids on top
+                    for (int sx = -1; sx <= 1; ++sx) for (int sz = -1; sz <= 1; ++sz)
+                        m.Add(Pyramid(1.0f), {sx * 0.13f * hd, headY + 0.26f * hd, sz * 0.13f * hd},
+                              {0.10f * hd, 0.16f * hd, 0.10f * hd}, h);
+                    break;
+                case 4:  // ponytail: a capsule trailing behind
+                    m.Add(Capsule(0.5f, 1.0f, 6, 3), {0.0f, headY - 0.05f * hd, -0.26f * hd},
+                          {0.12f * hd, 0.34f * hd, 0.12f * hd}, h);
+                    break;
+                case 5:  // mohawk: a tall thin strip along the top
+                    m.Add(Cube(1.0f), {0.0f, headY + 0.24f * hd, 0.0f},
+                          {0.08f * hd, 0.22f * hd, 0.46f * hd}, h);
+                    break;
+                default: break;                       // 0/1: just the cap
+            }
+        }
         if (c && c->hasFace) {                       // eyes, brows, nose, mouth on +Z
-            const float fz = 0.19f * hd, ex = 0.09f * hd;
+            const float fz = 0.19f * hd, ex = 0.09f * hd * p.eyeSpacing;
             for (int s = -1; s <= 1; s += 2) {
                 m.Add(Sphere(0.5f, 4, 5), {s * ex, headY + 0.04f * hd, fz},
                       {0.06f * hd, 0.07f * hd, 0.05f * hd}, &c->eye);                       // eye

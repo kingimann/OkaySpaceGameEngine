@@ -4932,6 +4932,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 float hr[3] = {cb->hair.r, cb->hair.g, cb->hair.b};
                 if (ImGui::ColorEdit3("##haircol", hr)) { cb->hair = {hr[0], hr[1], hr[2], 1.0f}; ch = true; }
+                const char* styles[] = {"Cap", "Short", "Long", "Spiky", "Ponytail", "Mohawk"};
+                ImGui::SetNextItemWidth(160);
+                ch |= ImGui::Combo("Hair Style##char", &cb->params.hairStyle, styles, 6);
             }
             ch |= ImGui::Checkbox("Face##char", &cb->hasFace);
             if (cb->hasFace) {
@@ -4939,6 +4942,7 @@ void DrawInspector(EditorState& ed) {
                 float ey[3] = {cb->eye.r, cb->eye.g, cb->eye.b};
                 if (ImGui::ColorEdit3("##eyecol", ey)) { cb->eye = {ey[0], ey[1], ey[2], 1.0f}; ch = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eye color");
+                ch |= ImGui::SliderFloat("Eye Spacing##char", &cb->params.eyeSpacing, 0.5f, 1.8f);
             }
             ImGui::Spacing();
             ImGui::TextDisabled("Presets");

@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.18
+  - Character Creator: hair styles + eye spacing.
+    * Hair Style selector: Cap, Short, Long (back panel), Spiky, Ponytail,
+      Mohawk.
+    * Eye Spacing slider to widen/narrow the eyes.
+    * Both save/load (back-compatible).
+
 v2.16.17
   - Character Creator: faces and a full outfit.
     * A simple face — eyes (with their own Eye color), brows, nose, and mouth —

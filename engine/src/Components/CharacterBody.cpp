@@ -41,7 +41,7 @@ std::string CharacterBody::ToText() const {
           << a.rotation.x << " " << a.rotation.y << " " << a.rotation.z << " "
           << a.color.r << " " << a.color.g << " " << a.color.b << " " << a.color.a << " "
           << a.attach << "\n";
-    o << (rootMotion ? 1 : 0) << "\n";
+    o << (rootMotion ? 1 : 0) << " " << (smoothBody ? 1 : 0) << " " << smoothRes << "\n";
     return o.str();
 }
 
@@ -75,6 +75,8 @@ void CharacterBody::FromText(const std::string& text) {
         accessories.push_back(a);
     }
     int rm = 1; if (in >> rm) rootMotion = (rm != 0);   // optional (older presets lack it)
+    int sb = 0; if (in >> sb) smoothBody = (sb != 0);
+    int sr = 0; if (in >> sr) smoothRes = sr;
 }
 
 void CharacterBody::Apply() {
@@ -88,7 +90,7 @@ void CharacterBody::Apply() {
 }
 
 void CharacterBody::Update(float dt) {
-    if (anim == 0) return;
+    if (anim == 0 || smoothBody) return;   // seamless body is too heavy to rebuild per frame
     auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
     if (!mr) return;
     Transform* tr = gameObject ? gameObject->transform : nullptr;

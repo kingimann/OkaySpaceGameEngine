@@ -4932,9 +4932,16 @@ void DrawInspector(EditorState& ed) {
             if (cb->anim == 2 || cb->anim == 3) ImGui::Checkbox("Root Motion (travel)##char", &cb->rootMotion);
             ImGui::Spacing();
             ImGui::TextDisabled("Detail (low-poly -> high-poly)");
-            ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 4);
-            if (cb->subdivisions > 0)
-                ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
+            ch |= ImGui::Checkbox("Seamless Body (smooth skin)##char", &cb->smoothBody);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Fuse the body into ONE continuous surface (no visible joined parts).\nHeavier to build; animation is disabled in this mode.");
+            if (cb->smoothBody) {
+                ch |= ImGui::SliderInt("Smooth Quality##char", &cb->smoothRes, 24, 72);
+            } else {
+                ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 4);
+                if (cb->subdivisions > 0)
+                    ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
+            }
             ImGui::Spacing();
             ImGui::TextDisabled("Colors");
             // Quick skin-tone swatches.

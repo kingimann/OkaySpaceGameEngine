@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.37
+  - Character Creator: SEAMLESS BODY mode.
+    * New "Seamless Body (smooth skin)" toggle fuses the body masses into ONE
+      continuous surface (via signed-distance fields + Surface Nets) instead of
+      visibly joined primitives — a real smooth character skin. The detailed head
+      is kept on top, and per-region colors (skin/shirt/pants/shoes) carry over.
+    * "Smooth Quality" slider controls the surface resolution.
+    * Heavier to build, so limb animation is disabled while in this mode (use the
+      primitive mode for animated characters; seamless for hero/static).
+
 v2.16.36
   - Character Creator detail pass:
     * Hands now have three fingers + a thumb (not a plain block).

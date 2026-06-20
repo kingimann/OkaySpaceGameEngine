@@ -655,5 +655,24 @@ int main() {
         CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == bodyTris * 4 + accTris);
     }
 
+    // --- Surface Nets extracts a sphere from an SDF (seamless-body mesher) ---
+    {
+        auto sdf = [](const Vec3& p) { return p.Magnitude() - 1.0f; };
+        auto col = [](const Vec3&) { return Color::White; };
+        Mesh s = SurfaceNets(sdf, col, {-1.6f, -1.6f, -1.6f}, {1.6f, 1.6f, 1.6f}, 24);
+        CHECK(!s.vertices.empty());
+        CHECK(s.TriangleCount() > 0);
+        CHECK(s.HasFaceColors());
+        // Every extracted vertex lies near the unit sphere surface.
+        float worst = 0.0f;
+        for (auto& v : s.vertices) worst = std::fmax(worst, std::fabs(v.Magnitude() - 1.0f));
+        CHECK(worst < 0.2f);
+
+        // The seamless humanoid builds a single non-empty connected body.
+        Mesh sh = BuildSmoothHumanoid(HumanoidParams{}, nullptr, 28);
+        CHECK(sh.TriangleCount() > 100);
+        CHECK(sh.name == "Human");
+    }
+
     TEST_MAIN_RESULT();
 }

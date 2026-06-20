@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <fstream>
 #include <map>
 #include <tuple>
@@ -847,5 +848,143 @@ inline Mesh Mesh::Humanoid(const HumanoidParams& p, const HumanoidColors* c) {
     return m;
 }
 inline Mesh Mesh::Humanoid() { return Humanoid(HumanoidParams{}); }
+
+// ---- Seamless body via signed-distance field + Surface Nets ----------------
+
+/// Naive Surface Nets: extract a smooth watertight mesh from an SDF (`sdf` < 0
+/// inside) over [lo,hi] at `res` cells/axis. Each face is colored by `colorAt`
+/// at its centroid. Used to fuse overlapping body blobs into one seamless skin.
+inline Mesh SurfaceNets(const std::function<float(const Vec3&)>& sdf,
+                        const std::function<Color(const Vec3&)>& colorAt,
+                        const Vec3& lo, const Vec3& hi, int res) {
+    Mesh out;
+    if (res < 2) res = 2; if (res > 96) res = 96;
+    const int nx = res, ny = res, nz = res, sx = nx + 1, sy = ny + 1, sz = nz + 1;
+    Vec3 cs{(hi.x - lo.x) / nx, (hi.y - lo.y) / ny, (hi.z - lo.z) / nz};
+    auto pos = [&](int i, int j, int k) { return Vec3{lo.x + i * cs.x, lo.y + j * cs.y, lo.z + k * cs.z}; };
+    auto SI = [&](int i, int j, int k) { return ((std::size_t)k * sy + j) * sx + i; };
+    std::vector<float> d((std::size_t)sx * sy * sz);
+    for (int k = 0; k < sz; ++k) for (int j = 0; j < sy; ++j) for (int i = 0; i < sx; ++i)
+        d[SI(i, j, k)] = sdf(pos(i, j, k));
+    auto CI = [&](int i, int j, int k) { return ((std::size_t)k * ny + j) * nx + i; };
+    std::vector<int> cellV((std::size_t)nx * ny * nz, -1);
+    static const int co[8][3] = {{0,0,0},{1,0,0},{0,1,0},{1,1,0},{0,0,1},{1,0,1},{0,1,1},{1,1,1}};
+    static const int ed[12][2] = {{0,1},{0,2},{0,4},{1,3},{1,5},{2,3},{2,6},{3,7},{4,5},{4,6},{5,7},{6,7}};
+    for (int k = 0; k < nz; ++k) for (int j = 0; j < ny; ++j) for (int i = 0; i < nx; ++i) {
+        float cd[8]; Vec3 cp[8]; bool neg = false, posb = false;
+        for (int c = 0; c < 8; ++c) {
+            int ii = i + co[c][0], jj = j + co[c][1], kk = k + co[c][2];
+            cd[c] = d[SI(ii, jj, kk)]; cp[c] = pos(ii, jj, kk);
+            if (cd[c] < 0) neg = true; else posb = true;
+        }
+        if (!(neg && posb)) continue;
+        Vec3 sum{0, 0, 0}; int cnt = 0;
+        for (int e = 0; e < 12; ++e) {
+            int a = ed[e][0], b = ed[e][1];
+            if ((cd[a] < 0) != (cd[b] < 0)) {
+                float t = cd[a] / (cd[a] - cd[b]);
+                sum = sum + cp[a] * (1.0f - t) + cp[b] * t; ++cnt;
+            }
+        }
+        cellV[CI(i, j, k)] = (int)out.vertices.size();
+        out.vertices.push_back(cnt ? sum * (1.0f / cnt) : (cp[0] + cp[7]) * 0.5f);
+    }
+    auto quad = [&](int a, int b, int c2, int e, bool flip) {
+        if (a < 0 || b < 0 || c2 < 0 || e < 0) return;
+        if (!flip) out.triangles.insert(out.triangles.end(), {a, b, c2, a, c2, e});
+        else       out.triangles.insert(out.triangles.end(), {a, c2, b, a, e, c2});
+    };
+    for (int k = 0; k < sz; ++k) for (int j = 0; j < sy; ++j) for (int i = 0; i < sx; ++i) {
+        float dc = d[SI(i, j, k)];
+        if (i < nx && j > 0 && k > 0 && (dc < 0) != (d[SI(i + 1, j, k)] < 0))
+            quad(cellV[CI(i, j - 1, k - 1)], cellV[CI(i, j, k - 1)], cellV[CI(i, j, k)], cellV[CI(i, j - 1, k)], dc < 0);
+        if (j < ny && i > 0 && k > 0 && (dc < 0) != (d[SI(i, j + 1, k)] < 0))
+            quad(cellV[CI(i - 1, j, k - 1)], cellV[CI(i, j, k - 1)], cellV[CI(i, j, k)], cellV[CI(i - 1, j, k)], !(dc < 0));
+        if (k < nz && i > 0 && j > 0 && (dc < 0) != (d[SI(i, j, k + 1)] < 0))
+            quad(cellV[CI(i - 1, j - 1, k)], cellV[CI(i, j - 1, k)], cellV[CI(i, j, k)], cellV[CI(i - 1, j, k)], dc < 0);
+    }
+    out.triColors.reserve(out.triangles.size() / 3);
+    for (std::size_t t = 0; t + 2 < out.triangles.size(); t += 3) {
+        Vec3 ctr = (out.vertices[out.triangles[t]] + out.vertices[out.triangles[t + 1]] +
+                    out.vertices[out.triangles[t + 2]]) * (1.0f / 3.0f);
+        out.triColors.push_back(colorAt(ctr));
+    }
+    return out;
+}
+
+/// Seamless humanoid: the body masses are blended into ONE continuous skin via
+/// smooth-union SDFs + Surface Nets, then the detailed head is appended on top.
+inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c, int res) {
+    struct Blob { int kind; Vec3 a, b, rad; float r; Color col; };  // 0 sphere,1 capsule,2 ellipsoid
+    std::vector<Blob> bl;
+    Color skin  = c ? c->skin  : Color::White;
+    Color shirt = c ? c->shirt : Color::White;
+    Color pants = c ? c->pants : Color::White;
+    Color shoes = c ? c->shoes : Color::White;
+    const float H = p.height, B = p.build, bd = p.bodyDepth;
+    const float sw = 0.46f * p.shoulderWidth, hw = 0.20f * p.hipWidth;
+    const float aL = p.armLength, lL = p.legLength;
+    const float up = 0.78f * H * (p.torsoLength - 1.0f);
+    bl.push_back({0, {0, 1.50f * H + up, 0}, {}, {}, 0.13f, skin});                                   // neck
+    bl.push_back({2, {0, (0.71f * H) + 0.39f * H * p.torsoLength, 0}, {},
+                  {0.30f * p.shoulderWidth * B, 0.46f * H * p.torsoLength, 0.20f * B * bd}, 0, shirt}); // torso
+    bl.push_back({2, {0, 0.60f * H, 0}, {}, {0.28f * p.hipWidth * B * p.waist, 0.22f * H, 0.20f * B * bd}, 0, pants}); // hips
+    for (int s = -1; s <= 1; s += 2) {
+        float shoulderY = 1.46f * H + up, at = 0.16f * B * p.armThickness, armLen = 0.74f * aL * H;
+        Vec3 sh{s * sw, shoulderY, 0};
+        Quat q = Quat::Euler({(float)s * p.armSwing, 0, (float)s * p.armSpread});
+        Vec3 wrist = sh + q * Vec3{0, -armLen, 0};
+        bl.push_back({1, sh, wrist, {}, at, shirt});                              // upper+fore arm
+        bl.push_back({0, wrist + q * Vec3{0, -at, 0}, {}, {}, at * 1.1f, skin});  // hand
+        float lt = 0.20f * B * p.legThickness;
+        Vec3 hip{s * hw, 0.60f * H, 0};
+        Quat ql = Quat::Euler({(float)s * p.legSwing, 0, (float)s * p.legSpread});
+        Vec3 ankle = hip + ql * Vec3{0, -(0.6f * H + 0.55f * lL * H), 0};
+        bl.push_back({1, hip, ankle, {}, lt, pants});                            // leg
+        bl.push_back({2, ankle + Vec3{0, -0.02f * H, 0.12f}, {}, {0.10f * B, 0.07f, 0.22f}, 0, shoes}); // foot
+    }
+    auto segd = [](const Vec3& pt, const Vec3& a, const Vec3& b) {
+        Vec3 ab = b - a, ap = pt - a; float dd = Vec3::Dot(ab, ab);
+        float t = dd > 1e-6f ? Vec3::Dot(ap, ab) / dd : 0.0f;
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        return (pt - (a + ab * t)).Magnitude();
+    };
+    auto one = [&](const Blob& b2, const Vec3& pt) -> float {
+        if (b2.kind == 0) return (pt - b2.a).Magnitude() - b2.r;
+        if (b2.kind == 1) return segd(pt, b2.a, b2.b) - b2.r;
+        Vec3 e{(pt.x - b2.a.x) / b2.rad.x, (pt.y - b2.a.y) / b2.rad.y, (pt.z - b2.a.z) / b2.rad.z};
+        float mn = std::min(b2.rad.x, std::min(b2.rad.y, b2.rad.z));
+        return (e.Magnitude() - 1.0f) * mn;
+    };
+    const float kk = 0.10f;
+    auto field = [&](const Vec3& pt) -> float {
+        float dr = 1e9f;
+        for (const Blob& b2 : bl) {
+            float dd = one(b2, pt);
+            float h = 0.5f + 0.5f * (dr - dd) / kk; h = h < 0 ? 0 : (h > 1 ? 1 : h);
+            dr = (dd * (1 - h) + dr * h) - kk * h * (1 - h);
+        }
+        return dr;
+    };
+    auto colorAt = [&](const Vec3& pt) -> Color {
+        float best = 1e9f; Color cc = skin;
+        for (const Blob& b2 : bl) { float dd = one(b2, pt); if (dd < best) { best = dd; cc = b2.col; } }
+        return cc;
+    };
+    Vec3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
+    auto expand = [&](const Vec3& q, float r) {
+        lo = {std::min(lo.x, q.x - r), std::min(lo.y, q.y - r), std::min(lo.z, q.z - r)};
+        hi = {std::max(hi.x, q.x + r), std::max(hi.y, q.y + r), std::max(hi.z, q.z + r)};
+    };
+    for (const Blob& b2 : bl) {
+        float r = b2.kind == 2 ? std::max(b2.rad.x, std::max(b2.rad.y, b2.rad.z)) : b2.r;
+        expand(b2.a, r); if (b2.kind == 1) expand(b2.b, r);
+    }
+    Vec3 m2{0.25f, 0.25f, 0.25f}; lo = lo - m2; hi = hi + m2;
+    Mesh body = SurfaceNets(field, colorAt, lo, hi, res);
+    for (const HumanoidPart& pt : BuildHumanoidParts(p, c)) if (pt.name == "Head") body.Append(pt.mesh);
+    body.name = "Human";
+    return body;
+}
 
 } // namespace okay

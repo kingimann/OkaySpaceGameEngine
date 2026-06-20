@@ -1,5 +1,9 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.38
+  - Character Creator: smaller shoulder joints (they were too bulky) — they still
+    bridge the arm to the torso without ballooning the shoulders.
+
 v2.16.37
   - Character Creator: SEAMLESS BODY mode.
     * New "Seamless Body (smooth skin)" toggle fuses the body masses into ONE

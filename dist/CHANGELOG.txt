@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.40
+  - Character Creator: tapered torso — broad chest narrowing to a waist (a
+    natural V-shape) instead of a straight tube, on both the part-based and
+    the seamless body.
+  - Character Creator: new "Arm Gap" and "Leg Gap" sliders to set the lateral
+    spacing of the limbs from the body (move arms in/out, widen/narrow stance)
+    independently of shoulder/hip width and spread angle.
+
 v2.16.39
   - Character Creator: much smaller shoulder and hip joints (they were too big
     and ball-like) — now just fill the seam between limb and body.

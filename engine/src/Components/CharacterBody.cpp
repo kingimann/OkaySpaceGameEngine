@@ -42,6 +42,7 @@ std::string CharacterBody::ToText() const {
           << a.color.r << " " << a.color.g << " " << a.color.b << " " << a.color.a << " "
           << a.attach << "\n";
     o << (rootMotion ? 1 : 0) << " " << (smoothBody ? 1 : 0) << " " << smoothRes << "\n";
+    o << p.armGap << " " << p.legGap << "\n";
     return o.str();
 }
 
@@ -77,6 +78,9 @@ void CharacterBody::FromText(const std::string& text) {
     int rm = 1; if (in >> rm) rootMotion = (rm != 0);   // optional (older presets lack it)
     int sb = 0; if (in >> sb) smoothBody = (sb != 0);
     int sr = 0; if (in >> sr) smoothRes = sr;
+    float ag = 0.0f, lg = 0.0f;                          // limb spacing (optional)
+    if (in >> ag) p.armGap = ag;
+    if (in >> lg) p.legGap = lg;
 }
 
 void CharacterBody::Apply() {

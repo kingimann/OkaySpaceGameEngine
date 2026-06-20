@@ -49,6 +49,8 @@ struct HumanoidParams {
     float legThickness = 1.0f;   // leg girth (independent of build)
     float waist        = 1.0f;   // hip/midsection width
     float belly        = 0.0f;   // belly size (0 = none)
+    float armGap       = 0.0f;   // lateral spacing of arms from the body (+out, -in)
+    float legGap       = 0.0f;   // lateral spacing of legs (stance width; +apart, -together)
 };
 
 /// Per-region colors for the procedural humanoid (Mesh::Humanoid). When passed,
@@ -798,8 +800,13 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
     add("Neck").Add(Mesh::Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin);
 
     Mesh& torso = add("Torso");
-    torso.Add(Mesh::Capsule(0.5f, 1.0f, 12, 4), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
-              {0.58f * p.shoulderWidth * B, 0.90f * H * p.torsoLength, 0.36f * B * bd}, shirt);
+    {   // Tapered torso: broad chest over a narrower waist (V-shape).
+        float ty = (0.71f * H) + 0.39f * H * p.torsoLength, tl2 = p.torsoLength;
+        torso.Add(Mesh::Sphere(0.5f, 10, 12), {0.0f, ty + 0.22f * H * tl2, 0.0f},
+                  {0.62f * p.shoulderWidth * B, 0.46f * H * tl2, 0.40f * B * bd}, shirt);   // chest
+        torso.Add(Mesh::Sphere(0.5f, 10, 12), {0.0f, ty - 0.20f * H * tl2, 0.0f},
+                  {0.46f * p.shoulderWidth * B * p.waist, 0.44f * H * tl2, 0.36f * B * bd}, shirt); // waist
+    }
     if (p.belly > 0.05f)
         torso.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, 0.92f * H, 0.18f * bd}, {0.46f * B * p.belly, 0.40f * H * p.belly, 0.34f * bd * p.belly}, shirt);
 
@@ -807,8 +814,9 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
 
     for (int s = -1; s <= 1; s += 2) {
         Mesh& arm = add(s < 0 ? "Arm.L" : "Arm.R");
+        float aw = sw + p.armGap;                       // shoulder x incl. lateral spacing
         float shoulderY = 1.46f * H + up;
-        Vec3 shoulder{s * sw, shoulderY, 0.0f};
+        Vec3 shoulder{s * aw, shoulderY, 0.0f};
         Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * p.armSpread};   // + spreads outward
         if (s == 1) { armRot.x += p.rightArmRot.x; armRot.y += p.rightArmRot.y; armRot.z += p.rightArmRot.z; }
         float at = 0.22f * B * p.armThickness;
@@ -816,10 +824,10 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         float armCY = shoulderY - armLen * 0.5f;       // arm hangs from the shoulder
         float wristY = shoulderY - armLen;             // bottom of the arm
         // Small shoulder joint that just fills the arm/torso seam.
-        arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * sw * 0.85f, shoulderY, 0.0f}, {at * 1.2f, at * 1.15f, at * 1.2f}, shirt);
-        arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * sw, armCY, 0.0f}, {at, armLen, at}, armRot, shoulder, shirt);
+        arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * aw * 0.85f, shoulderY, 0.0f}, {at * 1.2f, at * 1.15f, at * 1.2f}, shirt);
+        arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * aw, armCY, 0.0f}, {at, armLen, at}, armRot, shoulder, shirt);
         float hsz = 0.16f * B * p.handSize;
-        Vec3 hp{s * sw, wristY + hsz * 0.3f, 0.0f};    // hand at the wrist (overlaps the arm)
+        Vec3 hp{s * aw, wristY + hsz * 0.3f, 0.0f};    // hand at the wrist (overlaps the arm)
         arm.AddPosed(Mesh::Cube(1.0f), hp, {hsz * 1.0f, hsz * 1.0f, hsz * 0.55f}, armRot, shoulder, skin);  // palm
         for (int f = -1; f <= 1; ++f)                  // three fingers off the palm
             arm.AddPosed(Mesh::Cube(1.0f), {hp.x + f * hsz * 0.33f, hp.y - hsz * 0.85f, hp.z},
@@ -829,15 +837,16 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
     }
     for (int s = -1; s <= 1; s += 2) {
         Mesh& leg = add(s < 0 ? "Leg.L" : "Leg.R");
-        Vec3 hip{s * hw, 0.60f * H, 0.0f};
+        float lw = hw + p.legGap;                       // hip x incl. lateral spacing
+        Vec3 hip{s * lw, 0.60f * H, 0.0f};
         Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * p.legSpread};   // + spreads outward
         float lt = 0.25f * B * p.legThickness;
-        leg.Add(Mesh::Sphere(0.5f, 6, 7), {s * hw, 0.52f * H, 0.0f}, {lt * 1.15f, lt * 1.1f, lt * 1.15f}, pants);
-        leg.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.06f * H, 0.0f}, {lt, 1.15f * lL * H, lt}, legRot, hip, pants);
+        leg.Add(Mesh::Sphere(0.5f, 6, 7), {s * lw, 0.52f * H, 0.0f}, {lt * 1.15f, lt * 1.1f, lt * 1.15f}, pants);
+        leg.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * lw, 0.06f * H, 0.0f}, {lt, 1.15f * lL * H, lt}, legRot, hip, pants);
         float fsz = p.footSize, fy = (0.06f - 0.57f * lL) * H;
-        leg.AddPosed(Mesh::Sphere(0.5f, 5, 6), {s * hw, fy, 0.0f}, {lt * 0.9f, lt * 0.9f, lt * 0.9f}, legRot, hip, skin);     // ankle
-        leg.AddPosed(Mesh::Cube(1.0f), {s * hw, fy - 0.06f * H, 0.16f * fsz}, {0.22f * B * fsz, 0.11f * fsz, 0.58f * fsz}, legRot, hip, shoes); // sole
-        leg.AddPosed(Mesh::Sphere(0.5f, 5, 7), {s * hw, fy - 0.055f * H, 0.42f * fsz}, {0.22f * B * fsz, 0.13f * fsz, 0.22f * fsz}, legRot, hip, shoes); // rounded toe
+        leg.AddPosed(Mesh::Sphere(0.5f, 5, 6), {s * lw, fy, 0.0f}, {lt * 0.9f, lt * 0.9f, lt * 0.9f}, legRot, hip, skin);     // ankle
+        leg.AddPosed(Mesh::Cube(1.0f), {s * lw, fy - 0.06f * H, 0.16f * fsz}, {0.22f * B * fsz, 0.11f * fsz, 0.58f * fsz}, legRot, hip, shoes); // sole
+        leg.AddPosed(Mesh::Sphere(0.5f, 5, 7), {s * lw, fy - 0.055f * H, 0.42f * fsz}, {0.22f * B * fsz, 0.13f * fsz, 0.22f * fsz}, legRot, hip, shoes); // rounded toe
     }
     return parts;
 }
@@ -926,18 +935,25 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     const float aL = p.armLength, lL = p.legLength;
     const float up = 0.78f * H * (p.torsoLength - 1.0f);
     bl.push_back({0, {0, 1.50f * H + up, 0}, {}, {}, 0.13f, skin});                                   // neck
-    bl.push_back({2, {0, (0.71f * H) + 0.39f * H * p.torsoLength, 0}, {},
-                  {0.30f * p.shoulderWidth * B, 0.46f * H * p.torsoLength, 0.20f * B * bd}, 0, shirt}); // torso
+    {   // Tapered torso: broad chest blob over a narrower waist blob (V-shape),
+        // smooth-unioned into one seamless surface.
+        float ty = (0.71f * H) + 0.39f * H * p.torsoLength, tl2 = p.torsoLength;
+        bl.push_back({2, {0, ty + 0.18f * H * tl2, 0}, {},
+                      {0.32f * p.shoulderWidth * B, 0.26f * H * tl2, 0.21f * B * bd}, 0, shirt});      // chest
+        bl.push_back({2, {0, ty - 0.16f * H * tl2, 0}, {},
+                      {0.25f * p.shoulderWidth * B * p.waist, 0.26f * H * tl2, 0.18f * B * bd}, 0, shirt}); // waist
+    }
     bl.push_back({2, {0, 0.60f * H, 0}, {}, {0.28f * p.hipWidth * B * p.waist, 0.22f * H, 0.20f * B * bd}, 0, pants}); // hips
     for (int s = -1; s <= 1; s += 2) {
+        float aw = sw + p.armGap;
         float shoulderY = 1.46f * H + up, at = 0.16f * B * p.armThickness, armLen = 0.74f * aL * H;
-        Vec3 sh{s * sw, shoulderY, 0};
+        Vec3 sh{s * aw, shoulderY, 0};
         Quat q = Quat::Euler({(float)s * p.armSwing, 0, (float)s * p.armSpread});
         Vec3 wrist = sh + q * Vec3{0, -armLen, 0};
         bl.push_back({1, sh, wrist, {}, at, shirt});                              // upper+fore arm
         bl.push_back({0, wrist + q * Vec3{0, -at, 0}, {}, {}, at * 1.1f, skin});  // hand
-        float lt = 0.20f * B * p.legThickness;
-        Vec3 hip{s * hw, 0.60f * H, 0};
+        float lt = 0.20f * B * p.legThickness, lw = hw + p.legGap;
+        Vec3 hip{s * lw, 0.60f * H, 0};
         Quat ql = Quat::Euler({(float)s * p.legSwing, 0, (float)s * p.legSpread});
         Vec3 ankle = hip + ql * Vec3{0, -(0.6f * H + 0.55f * lL * H), 0};
         bl.push_back({1, hip, ankle, {}, lt, pants});                            // leg

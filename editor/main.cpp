@@ -4921,6 +4921,8 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Pose");
             ch |= ImGui::SliderFloat("Arm Spread##char",    &p.armSpread,     0.0f, 80.0f, "%.0f deg");
             ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 30.0f, "%.0f deg");
+            ch |= ImGui::SliderFloat("Arm Gap##char",       &p.armGap,       -0.20f, 0.40f, "%.2f");
+            ch |= ImGui::SliderFloat("Leg Gap##char",       &p.legGap,       -0.15f, 0.40f, "%.2f");
             ImGui::Spacing();
             ImGui::TextDisabled("Animation (plays in Play mode)");
             const char* anims[] = {"None", "Idle", "Walk", "Run", "Wave", "Jump", "Auto (move)"};

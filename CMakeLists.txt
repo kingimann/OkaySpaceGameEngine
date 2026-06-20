@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.16.39
+    VERSION 2.16.40
     DESCRIPTION "A Unity-inspired C++ game engine"
     LANGUAGES CXX)
 

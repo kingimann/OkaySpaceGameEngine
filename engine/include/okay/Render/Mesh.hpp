@@ -26,6 +26,10 @@ struct HumanoidParams {
     float armLength    = 1.0f;
     float legLength    = 1.0f;
     float neckLength   = 1.0f;
+    float handSize     = 1.0f;
+    float footSize     = 1.0f;
+    float armSpread    = 10.0f;  // degrees arms angle out from the body (A/T-pose)
+    float legSpread    = 3.0f;   // degrees legs angle out (stance width)
 };
 
 /// A simple indexed triangle mesh (positions + triangle indices). Enough to
@@ -596,6 +600,21 @@ struct Mesh {
         for (int t : src.triangles) triangles.push_back(t + base);
     }
 
+    /// As Add(), but rotate (Euler degrees) about `pivot` after scaling — used to
+    /// pose limbs (e.g. spread arms into an A-pose).
+    void AddPosed(const Mesh& src, Vec3 offset, Vec3 scale, Vec3 eulerDeg, Vec3 pivot) {
+        int base = (int)vertices.size();
+        Quat q = Quat::Euler(eulerDeg);
+        for (const Vec3& v : src.vertices) {
+            Vec3 s{v.x * scale.x + offset.x - pivot.x,
+                   v.y * scale.y + offset.y - pivot.y,
+                   v.z * scale.z + offset.z - pivot.z};
+            Vec3 r = q * s;
+            vertices.push_back({r.x + pivot.x, r.y + pivot.y, r.z + pivot.z});
+        }
+        for (int t : src.triangles) triangles.push_back(t + base);
+    }
+
     /// A low-poly humanoid blockout assembled from primitive parts (head, neck,
     /// torso, hips, arms, hands, legs, feet), shaped by `p`. Stands on ~Y=0.
     /// Subdivide()/SubdivideSmooth() it to raise it from low-poly to high-poly.
@@ -610,12 +629,21 @@ struct Mesh {
         m.Add(Cube(1.0f), {0.0f, 1.10f * H, 0.0f}, {0.62f * p.shoulderWidth * B, 0.78f * H, 0.34f * B}); // torso
         m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B});      // hips
         for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
-            m.Add(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H, 0.0f}, {0.22f * B, 0.64f * aL * H, 0.22f * B});
-            m.Add(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H, 0.0f}, {0.17f * B, 0.17f * B, 0.17f * B});
+            Vec3 shoulder{s * sw, 1.50f * H, 0.0f};            // pivot at the shoulder
+            Vec3 armRot{0.0f, 0.0f, (float)s * -p.armSpread};  // swing out from the body
+            m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H, 0.0f},
+                       {0.22f * B, 0.64f * aL * H, 0.22f * B}, armRot, shoulder);
+            m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H, 0.0f},
+                       {0.17f * B * p.handSize, 0.17f * B * p.handSize, 0.17f * B * p.handSize},
+                       armRot, shoulder);
         }
         for (int s = -1; s <= 1; s += 2) {                                    // legs + feet
-            m.Add(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f}, {0.26f * B, 0.96f * lL * H, 0.26f * B});
-            m.Add(Cube(1.0f), {s * hw, (0.12f - 0.58f * lL) * H, 0.08f}, {0.26f * B, 0.12f, 0.52f});
+            Vec3 hip{s * hw, 0.60f * H, 0.0f};
+            Vec3 legRot{0.0f, 0.0f, (float)s * -p.legSpread};
+            m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f},
+                       {0.26f * B, 0.96f * lL * H, 0.26f * B}, legRot, hip);
+            m.AddPosed(Cube(1.0f), {s * hw, (0.12f - 0.58f * lL) * H, 0.08f},
+                       {0.26f * B * p.footSize, 0.12f * p.footSize, 0.52f * p.footSize}, legRot, hip);
         }
         return m;
     }

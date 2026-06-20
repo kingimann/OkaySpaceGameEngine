@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.14
+  - Character Creator expanded:
+    * New proportions: Hand Size and Foot Size.
+    * Posing: Arm Spread (A-pose/T-pose) and Leg Spread (stance) angle the
+      limbs out from the body (limbs now rotate about the shoulder/hip).
+    * More presets: Masculine, Feminine, Child, Robot (plus Reset/Slim/Heavy/Tall).
+    * Randomize button generates a random body in one click.
+    * All new fields save/load (back-compatible with v2.16.13 character data).
+
 v2.16.13
   - Character Creator component (GameObject > 3D Object > Character):
     * Live proportion sliders — Height, Build, Head Size, Shoulder/Hip Width,

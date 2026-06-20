@@ -430,6 +430,35 @@ bool  g_showSaveManager = false;   // browse/edit .okaysave files
 std::vector<okay::ScriptComponent*> g_scriptTabs;
 okay::ScriptComponent* g_activeScriptTab = nullptr;
 okay::ScriptComponent* g_focusScriptTab = nullptr;   // request to focus a tab this frame
+// Project scripts opened for editing on their own (not attached to a GameObject).
+// Owned here so their Script Editor tabs persist; freed when the tab is closed.
+std::vector<std::unique_ptr<okay::ScriptComponent>> g_looseScripts;
+static bool IsLooseScript(okay::ScriptComponent* s) {
+    for (auto& up : g_looseScripts) if (up.get() == s) return true;
+    return false;
+}
+// Open a Project script file in the in-app Script Editor as a standalone,
+// file-backed tab (focuses an existing tab if it's already open).
+static void OpenScriptFileInEditor(const std::string& path) {
+    for (auto& up : g_looseScripts)
+        if (up->Path() == path) {                       // already open -> focus it
+            if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), up.get()) == g_scriptTabs.end())
+                g_scriptTabs.push_back(up.get());
+            g_activeScriptTab = up.get(); g_focusScriptTab = up.get();
+            g_showScriptEditor = true; return;
+        }
+    std::string ext;
+    if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    std::string lang = (ext == ".lua") ? "lua" : (ext == ".cs") ? "cs" : "okayscript";
+    auto sc = std::make_unique<okay::ScriptComponent>(lang);
+    std::string err; sc->LoadFile(path, &err); sc->SetPath(path);
+    okay::ScriptComponent* raw = sc.get();
+    g_looseScripts.push_back(std::move(sc));
+    g_scriptTabs.push_back(raw);
+    g_activeScriptTab = raw; g_focusScriptTab = raw;
+    g_showScriptEditor = true;
+}
 bool  g_showScenes = false;
 bool  g_showInstPrefab = false;
 char  g_prefabBuf[256] = "Prefab.okayprefab";
@@ -514,10 +543,13 @@ float g_uiGuideY = -1.0f;   // canvas-y of a horizontal guide, or <0 = none
 // Active transform tool for the Scene view (Unity's W/E/R).
 enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
-int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
+int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, 3=view, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+int   g_gizmoHover = -1;    // axis the mouse is hovering this frame (for highlight)
 float g_rotAccum = 0.0f;    // raw degrees this rotate-drag (for 15-deg snap detents)
 float g_rotApplied = 0.0f;  // snapped degrees already applied this drag
+float g_rotTotal = 0.0f;    // signed degrees turned this drag (HUD readout)
+float g_rotStartAng = 0.0f; // ring angle (rad) where this rotate-drag began
 float g_rotSnapDeg = 15.0f; // rotation snap increment when Snap is on
 bool  g_gizmoLocal = false; // gizmo axes in the object's local space (Unity's Local/Global)
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
@@ -1744,7 +1776,9 @@ void DrawProject(EditorState& ed) {
                 g_dataAssetPath = full; g_dataAssetOpen = true;
             } else if (ext == ".okaymat") {
                 g_matAssetPath = full; g_matAssetOpen = true;
-            } else if (ext == ".okay" || ext == ".lua" || ext == ".cs" || ext == ".okayvs") {
+            } else if (ext == ".okay" || ext == ".lua" || ext == ".cs") {
+                OpenScriptFileInEditor(full);    // edit in the in-app Script Editor
+            } else if (ext == ".okayvs") {
                 extide::OpenExternal(full);
             }
         }
@@ -2638,6 +2672,38 @@ static const std::vector<std::string>& ScriptCompletions() {
     return w;
 }
 
+// Members offered after "<receiver>." in the editor (Unity-style API surface, so
+// e.g. typing `transform.` lists position/rotation/Translate/…). Returns an empty
+// list for unknown receivers.
+static const std::vector<std::string>& ScriptMembers(const std::string& receiver) {
+    static const std::unordered_map<std::string, std::vector<std::string>> M = {
+        {"transform", {"position","rotation","localPosition","localScale","eulerAngles",
+                       "right","up","forward","Translate","Rotate","LookAt"}},
+        {"gameObject", {"name","tag","activeSelf","SetActive","GetComponent"}},
+        {"Input", {"GetAxis","GetButton","GetButtonDown","GetButtonUp","GetKey","GetKeyDown",
+                   "GetKeyUp","GetMouseButton","GetMouseButtonDown","GetMouseButtonUp","mousePosition"}},
+        {"Time", {"deltaTime","time","timeScale","fixedDeltaTime"}},
+        {"Mathf", {"Abs","Acos","Asin","Atan","Ceil","Clamp","Clamp01","Cos","Deg2Rad","DeltaAngle",
+                   "Epsilon","Exp","Floor","Infinity","InverseLerp","Lerp","LerpAngle","Log","Max",
+                   "Min","MoveTowards","PI","PerlinNoise","PingPong","Pow","Rad2Deg","Repeat","Round",
+                   "Sign","Sin","SmoothStep","Sqrt","Tan"}},
+        {"Physics2D", {"Raycast","OverlapCircle"}},
+        {"Debug", {"Log","LogWarning","LogError"}},
+        {"Random", {"Range","value"}},
+        {"Quaternion", {"Euler","identity","AngleAxis"}},
+        {"Vector3", {"zero","one","up","down","left","right","forward","back","Angle","Distance",
+                     "Dot","Cross","Lerp","LerpUnclamped","Normalize"}},
+        {"Vector2", {"zero","one","up","down","left","right","Lerp","Distance"}},
+        {"Color", {"red","green","blue","white","black","gray","grey","yellow","cyan","magenta","Lerp"}},
+        {"SceneManager", {"LoadScene","GetActiveScene"}},
+        {"Screen", {"width","height"}},
+        {"Application", {"Quit"}},
+    };
+    static const std::vector<std::string> empty;
+    auto it = M.find(receiver);
+    return it == M.end() ? empty : it->second;
+}
+
 static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
                               float charW, float lineH) {
     const ImU32 cDefault = IM_COL32(212, 212, 212, 255);
@@ -2701,7 +2767,7 @@ void DrawScriptEditor(EditorState& ed) {
         for (ScriptComponent* s : up->GetComponents<ScriptComponent>()) owner[s] = up.get();
     {
         std::vector<ScriptComponent*> alive;
-        for (ScriptComponent* t : g_scriptTabs) if (owner.count(t)) alive.push_back(t);
+        for (ScriptComponent* t : g_scriptTabs) if (owner.count(t) || IsLooseScript(t)) alive.push_back(t);
         g_scriptTabs = std::move(alive);
         if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), g_activeScriptTab) == g_scriptTabs.end())
             g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
@@ -2755,6 +2821,10 @@ void DrawScriptEditor(EditorState& ed) {
                                g_scriptTabs.end());
             if (g_activeScriptTab == closeTab)
                 g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
+            // Free a loose (Project-opened) script when its tab is closed.
+            g_looseScripts.erase(std::remove_if(g_looseScripts.begin(), g_looseScripts.end(),
+                [&](const std::unique_ptr<ScriptComponent>& u){ return u.get() == closeTab; }),
+                g_looseScripts.end());
         }
     }
 
@@ -2762,7 +2832,8 @@ void DrawScriptEditor(EditorState& ed) {
                         : (g_scriptTabs.empty() ? nullptr : g_scriptTabs.front());
     if (!sc) { ImGui::End(); return; }
     GameObject* go = owner.count(sc) ? owner[sc] : nullptr;
-    if (!go) { ImGui::End(); return; }
+    // A loose (Project-opened) script has no GameObject but is file-backed.
+    if (!go && !IsLooseScript(sc)) { ImGui::End(); return; }
 
     {
         auto& buf = CodeBuffer(sc, sc->Source().empty()
@@ -3046,14 +3117,28 @@ void DrawScriptEditor(EditorState& ed) {
             auto isWord = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
             while (ws > 0 && tx[ws - 1] && isWord(tx[ws - 1])) --ws;
             std::string prefix(tx + ws, tx + p);
-            if (prefix.size() >= 2) {
+            // Member mode: if the word is preceded by "<receiver>.", complete the
+            // members of that receiver (e.g. transform.|  ->  position, Rotate, …).
+            std::string receiver;
+            if (ws > 0 && tx[ws - 1] == '.') {
+                int rs = ws - 1;
+                while (rs > 0 && isWord(tx[rs - 1])) --rs;
+                receiver.assign(tx + rs, tx + (ws - 1));
+            }
+            const std::vector<std::string>& members = ScriptMembers(receiver);
+            bool memberMode = !receiver.empty() && !members.empty();
+            // Members list from the first keystroke (or right after the dot); plain
+            // words still need 2+ chars so the popup doesn't fire constantly.
+            if (memberMode || prefix.size() >= 2) {
                 std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
                 std::vector<const std::string*> hits;
-                for (const auto& w : ScriptCompletions()) {
-                    if (w.size() <= prefix.size()) continue;
+                const std::vector<std::string>& pool = memberMode ? members : ScriptCompletions();
+                for (const auto& w : pool) {
+                    if (w.size() < prefix.size()) continue;
+                    if (!memberMode && w.size() == prefix.size()) continue;  // exact word: nothing to add
                     std::string lw = w; for (auto& ch : lw) ch = (char)std::tolower((unsigned char)ch);
                     if (lw.compare(0, lp.size(), lp) == 0) hits.push_back(&w);
-                    if (hits.size() >= 8) break;
+                    if (hits.size() >= 12) break;
                 }
                 if (!hits.empty()) {
                     ImGui::SetNextWindowPos(ImVec2(caretScreen.x, caretScreen.y + 2));
@@ -6829,13 +6914,32 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImVec2 tip[3]; bool tipOk[3];
         for (int i = 0; i < 3; ++i) tipOk[i] = toScreen(vp * Vec4{o + axis[i] * L, 1}, tip[i]);
 
-        // Rotate uses Unity-style rings (a circle per axis lying in the plane
-        // perpendicular to that axis); Move/Scale use straight arms with knobs.
+        // View basis at the object (camera-facing) for the screen-aligned ring
+        // and for fading the back half of each ring, Unity-style.
+        Vec3 vToCam = eye - o;
+        Vec3 vdir   = vToCam.Normalized();
+        Vec3 vright = Vec3::Cross(Vec3::Up, vdir).Normalized();
+        Vec3 vup    = Vec3::Cross(vdir, vright);
+
+        // Rotate uses Unity-style rings: a circle per axis (X/Y/Z) plus an outer
+        // screen-aligned ring (i==3) for view-axis "trackball" spin. Move/Scale
+        // use straight arms with knobs.
         const int RING_SEG = 64;
+        const float VIEW_RAD = L * 1.2f;
+        auto rotAxisOf = [&](int i) -> Vec3 { return i < 3 ? axis[i] : vdir; };
         auto ringPt = [&](int i, float ang, ImVec2& out) -> bool {
-            Vec3 u = axis[(i + 1) % 3], v = axis[(i + 2) % 3];
-            Vec3 p = o + (u * Mathf::Cos(ang) + v * Mathf::Sin(ang)) * L;
+            Vec3 u, v; float rad;
+            if (i < 3) { u = axis[(i + 1) % 3]; v = axis[(i + 2) % 3]; rad = L; }
+            else       { u = vright;            v = vup;              rad = VIEW_RAD; }
+            Vec3 p = o + (u * Mathf::Cos(ang) + v * Mathf::Sin(ang)) * rad;
             return toScreen(vp * Vec4{p, 1}, out);
+        };
+        // Is the ring point at this angle on the camera-facing half?
+        auto ringFront = [&](int i, float ang) -> bool {
+            if (i >= 3) return true;
+            Vec3 u = axis[(i + 1) % 3], v = axis[(i + 2) % 3];
+            Vec3 rel = u * Mathf::Cos(ang) + v * Mathf::Sin(ang);
+            return (rel.x * vToCam.x + rel.y * vToCam.y + rel.z * vToCam.z) >= 0.0f;
         };
         // Closest screen distance (px) from the mouse to ring i, plus the angle there.
         auto ringPick = [&](int i, float& bestAng) -> float {
@@ -6853,16 +6957,63 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             return best;
         };
 
+        // Hover detection for rotate (highlight the ring under the cursor before
+        // you grab it). Skipped while already dragging a handle.
+        g_gizmoHover = -1;
+        if (oOk && tool == Tool::Rotate && hovered && !g_uiHandled && !g_gizmoGrab) {
+            float best = 8.0f, a;
+            for (int i = 0; i < 4; ++i) { float d = ringPick(i, a); if (d < best) { best = d; g_gizmoHover = i; } }
+        }
+
         if (oOk && tool == Tool::Rotate) {
-            for (int i = 0; i < 3; ++i) {
-                ImU32 c = (g_gizmoGrab && g_gizmoAxis == i) ? IM_COL32(255, 230, 90, 255) : col[i];
+            ImU32 colA[4] = {col[0], col[1], col[2], IM_COL32(210, 210, 215, 255)};
+            // Faint silhouette sphere behind the rings (radius = projected view ring).
+            ImVec2 vr; if (ringPt(3, 0.0f, vr)) {
+                float sr = Mathf::Sqrt((vr.x - so.x) * (vr.x - so.x) + (vr.y - so.y) * (vr.y - so.y));
+                dl->AddCircleFilled(so, sr, IM_COL32(120, 130, 145, 22), 48);
+            }
+            for (int i = 3; i >= 0; --i) {   // view ring first (behind), axes on top
+                bool active = (g_gizmoGrab && g_gizmoAxis == i);
+                bool hot    = active || g_gizmoHover == i;
+                ImU32 base  = hot ? IM_COL32(255, 230, 90, 255) : colA[i];
+                float th    = hot ? 3.5f : 2.5f;
                 ImVec2 prev; bool prevOk = ringPt(i, 0.0f, prev);
+                bool prevFront = ringFront(i, 0.0f);
                 for (int s = 1; s <= RING_SEG; ++s) {
                     float a = (float)s / RING_SEG * 2.0f * Mathf::PI;
                     ImVec2 cur; bool curOk = ringPt(i, a, cur);
-                    if (prevOk && curOk) dl->AddLine(prev, cur, c, 2.5f);
-                    prev = cur; prevOk = curOk;
+                    bool front = ringFront(i, a);
+                    if (prevOk && curOk) {
+                        // Dim the back-facing half so the ring reads as 3D.
+                        ImU32 c = (front && prevFront)
+                                  ? base
+                                  : (base & 0x00FFFFFF) | (hot ? 0x70000000u : 0x40000000u);
+                        dl->AddLine(prev, cur, c, th);
+                    }
+                    prev = cur; prevOk = curOk; prevFront = front;
                 }
+            }
+            // While dragging: a translucent wedge from the grab angle to the
+            // current angle, plus a live degree readout near the pivot.
+            if (g_gizmoGrab && g_gizmoAxis >= 0) {
+                int i = g_gizmoAxis;
+                float sweep = g_rotTotal * Mathf::Deg2Rad;
+                int steps = (int)(Mathf::Abs(sweep) / (2.0f * Mathf::PI) * RING_SEG) + 1;
+                if (steps > RING_SEG * 3) steps = RING_SEG * 3;
+                ImU32 fill = IM_COL32(255, 230, 90, 70);
+                ImVec2 a0; bool a0ok = ringPt(i, g_rotStartAng, a0);
+                for (int s = 0; s < steps; ++s) {
+                    float f0 = (float)s / steps, f1 = (float)(s + 1) / steps;
+                    ImVec2 p0, p1;
+                    if (ringPt(i, g_rotStartAng + sweep * f0, p0) &&
+                        ringPt(i, g_rotStartAng + sweep * f1, p1))
+                        dl->AddTriangleFilled(so, p0, p1, fill);
+                }
+                if (a0ok) dl->AddLine(so, a0, IM_COL32(255, 230, 90, 200), 1.5f);
+                ImVec2 aN; if (ringPt(i, g_rotStartAng + sweep, aN))
+                    dl->AddLine(so, aN, IM_COL32(255, 230, 90, 200), 1.5f);
+                char hud[32]; std::snprintf(hud, sizeof(hud), "%.1f\xc2\xb0", g_rotTotal);
+                dl->AddText(ImVec2(so.x + 12, so.y - 24), IM_COL32(255, 255, 255, 255), hud);
             }
             dl->AddCircleFilled(so, 3.0f, IM_COL32(230, 230, 230, 255));
         } else if (oOk) {
@@ -6881,17 +7032,18 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
         // Grab the closest handle (ring for Rotate, arm for Move/Scale) on press.
         if (hovered && oOk && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            int pick = -1;
+            int pick = -1; float pickAng = 0.0f;
             if (tool == Tool::Rotate) {
                 float best = 8.0f, a;
-                for (int i = 0; i < 3; ++i) { float d = ringPick(i, a); if (d < best) { best = d; pick = i; } }
+                for (int i = 0; i < 4; ++i) { float d = ringPick(i, a); if (d < best) { best = d; pick = i; pickAng = a; } }
             } else {
                 float best = 11.0f;
                 for (int i = 0; i < 3; ++i)
                     if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
             }
             if (pick >= 0) { ed.PushUndo(); g_gizmoAxis = pick; g_gizmoGrab = true; grabbedThisClick = true;
-                             g_rotAccum = 0.0f; g_rotApplied = 0.0f; }
+                             g_rotAccum = 0.0f; g_rotApplied = 0.0f;
+                             g_rotTotal = 0.0f; g_rotStartAng = pickAng; }
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_gizmoGrab = false; g_gizmoAxis = -1; }
 
@@ -6899,9 +7051,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (g_gizmoGrab && g_gizmoAxis >= 0 && oOk && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             int i = g_gizmoAxis;
             if (tool == Tool::Rotate) {
-                // Spin about axis i by dragging tangent to its ring: find the ring
-                // point nearest the cursor, take its screen-space tangent, and
-                // project the mouse motion onto it.
+                // Spin about the grabbed axis (X/Y/Z or the view axis) by dragging
+                // tangent to its ring: find the ring point nearest the cursor, take
+                // its screen-space tangent, and project the mouse motion onto it.
+                Vec3 rax = rotAxisOf(i);
                 float a; ringPick(i, a);
                 ImVec2 p0, p1;
                 if (ringPt(i, a - 0.06f, p0) && ringPt(i, a + 0.06f, p1)) {
@@ -6915,9 +7068,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             g_rotAccum += deg;
                             float snapped = Mathf::Round(g_rotAccum / g_rotSnapDeg) * g_rotSnapDeg;
                             float step = snapped - g_rotApplied;
-                            if (step != 0.0f) { t->Rotate(axis[i] * step); g_rotApplied = snapped; }
+                            if (step != 0.0f) { t->Rotate(rax * step); g_rotApplied = snapped; g_rotTotal = snapped; }
                         } else {
-                            t->Rotate(axis[i] * deg);
+                            t->Rotate(rax * deg);
+                            g_rotTotal += deg;
                         }
                         ed.dirty = true;
                     }

@@ -2330,7 +2330,11 @@ void DrawScriptDocs() {
 
     header("State, math & data");
     api("set(\"k\", v) / get(\"k\")", "shared variables");
-    api("prefs_set / prefs_get / prefs_save", "save data across runs");
+    api("prefs_set / prefs_get / prefs_save", "PlayerPrefs-style key/value");
+    api("save(\"k\", v[, file]) / load(\"k\", def[, file])", "Easy-Save: typed values (num/str/Vector3), many files");
+    api("save_has / save_delete / save_clear", "manage keys in a save file");
+    api("save_exists([file]) / save_delete_file([file])", "check / remove a save file");
+    api("data_num / data_str / data_set", "Scriptable Object (.okaydata) fields");
     api("rand(lo,hi) / randi / chance(p)", "randomness");
     api("dist(...) / dist3(...) / angle_to", "geometry");
     api("sin cos tan sqrt pow abs min max", "math");
@@ -2481,6 +2485,51 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
 // Draw the code text with VS Code "Dark+" syntax colors on top of the editor.
 // ProggyClean is monospace, so glyphs advance by a fixed width and the colored
 // overlay lines up exactly with the InputText beneath it.
+// Words the editor offers for autocomplete: keywords, types, and common builtins
+// (a curated subset of the OkayScript API — see docs/scripting.md).
+static const std::vector<std::string>& ScriptCompletions() {
+    static const std::vector<std::string> w = {
+        // keywords
+        "if","else","for","while","do","return","break","continue","switch","case",
+        "var","function","class","new","public","private","true","false","foreach","in",
+        // Unity-style API
+        "Vector3","Vector2","Color","Mathf","Input","Time","Debug","Random","Physics2D",
+        "SceneManager","Quaternion","transform","gameObject","OkaySource",
+        // transform / movement
+        "move","set_pos","set_x","set_y","pos_x","pos_y","rotate","move_toward","look_at",
+        "move3","set_pos3","set_z","pos_z","rotate3","set_scale","set_scale3","move_forward",
+        // physics
+        "set_velocity","set_velocity3","add_force","add_impulse","jump","set_gravity",
+        // input
+        "key","key_down","key_up","axis_x","axis_y","mouse_x","mouse_y","mouse","mouse_down",
+        // object / scene
+        "name","set_name","tag","set_tag","has_tag","set_active","self_active","destroy",
+        "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
+        "nearest_tag","set_cam","move_cam","set_cam_zoom","set_bg","set_light","set_ambient",
+        "load_scene","load_scene_index","load_next_scene","screen_w","screen_h",
+        // components / fx
+        "set_text","set_color","set_texture","set_mesh","emit","play_anim","play_sound",
+        "set_progress","set_fill",
+        // save / prefs / data
+        "save","load","save_has","save_delete","save_exists","save_clear","prefs_set",
+        "prefs_get","prefs_get_str","prefs_save","prefs_load","data_num","data_str","data_set",
+        // math / util
+        "abs","sin","cos","tan","sqrt","pow","floor","ceil","round","min","max","sign",
+        "clamp","clamp01","lerp","distance","random","random_range","print","log","format",
+        // tweens
+        "tween_move","tween_move3","tween_scale","tween_rotate","tween_color","tween_fade",
+        "tween_loop_move","tween_punch_scale","tween_shake",
+        // networking
+        "net_host","net_join","net_send","net_poll","net_is_server",
+        // ui
+        "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
+        "ui_toggle_value","ui_set_progress",
+        // raycast
+        "raycast","raycast3","overlap_circle",
+    };
+    return w;
+}
+
 static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
                               float charW, float lineH) {
     const ImU32 cDefault = IM_COL32(212, 212, 212, 255);
@@ -2548,15 +2597,22 @@ void DrawScriptEditor(EditorState& ed) {
         if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), g_activeScriptTab) == g_scriptTabs.end())
             g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
     }
-    // Selecting an object with a Script opens (and focuses) a tab for it.
+    // Open (and focus) a tab when you select a scriptable object, OR when the
+    // current selection just GAINED a Script (e.g. a script dropped on its
+    // Inspector / added via Add Component). Tracking "gained" separately means
+    // closing a tab for the selected object doesn't immediately reopen it.
     static GameObject* s_lastSel = nullptr;
+    static bool s_lastSelHadScript = false;
     GameObject* sel = ed.selected();
-    if (sel && sel != s_lastSel && sel->GetComponent<ScriptComponent>()) {
+    bool selHasScript = sel && sel->GetComponent<ScriptComponent>();
+    bool selectionChanged = (sel != s_lastSel);
+    bool gainedScript = (sel == s_lastSel && selHasScript && !s_lastSelHadScript);
+    if (selHasScript && (selectionChanged || gainedScript)) {
         if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), sel) == g_scriptTabs.end())
             g_scriptTabs.push_back(sel);
         g_activeScriptTab = sel; g_focusScriptTab = sel;
     }
-    s_lastSel = sel;
+    s_lastSel = sel; s_lastSelHadScript = selHasScript;
 
     if (g_scriptTabs.empty()) {
         ImGui::TextDisabled("Select an object with a Script component.");
@@ -2865,8 +2921,46 @@ void DrawScriptEditor(EditorState& ed) {
                 if (other >= 0) box(other);
             }
         }
+        // Caret screen position (for the autocomplete popup, drawn after the child).
+        ImVec2 caretScreen(origin.x + (caret.col - 1) * charW, origin.y + caret.line * lineH);
         ImGui::EndChild();
         ImGui::PopStyleColor(3);
+
+        // --- Autocomplete: a click-to-insert suggestion list at the caret -------
+        {
+            // The word being typed: trailing [A-Za-z0-9_] before the caret.
+            const char* tx = buf.data();
+            int p = caret.pos, ws = p;
+            auto isWord = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
+            while (ws > 0 && tx[ws - 1] && isWord(tx[ws - 1])) --ws;
+            std::string prefix(tx + ws, tx + p);
+            if (prefix.size() >= 2) {
+                std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
+                std::vector<const std::string*> hits;
+                for (const auto& w : ScriptCompletions()) {
+                    if (w.size() <= prefix.size()) continue;
+                    std::string lw = w; for (auto& ch : lw) ch = (char)std::tolower((unsigned char)ch);
+                    if (lw.compare(0, lp.size(), lp) == 0) hits.push_back(&w);
+                    if (hits.size() >= 8) break;
+                }
+                if (!hits.empty()) {
+                    ImGui::SetNextWindowPos(ImVec2(caretScreen.x, caretScreen.y + 2));
+                    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 46, 245));
+                    if (ImGui::Begin("##autocomplete", nullptr,
+                            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
+                            ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                            ImGuiWindowFlags_NoSavedSettings)) {
+                        for (const std::string* w : hits) {
+                            if (ImGui::Selectable(w->c_str()))
+                                caret.insert = w->substr(prefix.size());   // spliced when editor inactive
+                        }
+                    }
+                    ImGui::End();
+                    ImGui::PopStyleColor();
+                }
+            }
+        }
 
         // --- Status bar (VS Code-style) --------------------------------------
         const char* langLbl = sc->Language() == "okayscript" ? "OkayScript"
@@ -3808,8 +3902,10 @@ void DrawInspector(EditorState& ed) {
             for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
             if (ext == ".okay") {
                 ed.PushUndo();
-                auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
+                auto* nsc = go->GetComponent<ScriptComponent>();
+                if (!nsc) nsc = go->AddComponent<ScriptComponent>("okayscript");
                 std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                SetCodeBuffer(nsc, nsc->Source());   // refresh the editor buffer
                 ConsoleLog("Attached script " + path); ed.dirty = true;
             } else if (ext == ".okaymat") {
                 if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -5288,8 +5384,10 @@ void DrawInspector(EditorState& ed) {
                 for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
                 if (ext == ".okay") {
                     ed.PushUndo();
-                    auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
+                    auto* nsc = go->GetComponent<ScriptComponent>();
+                    if (!nsc) nsc = go->AddComponent<ScriptComponent>("okayscript");
                     std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                    SetCodeBuffer(nsc, nsc->Source());   // refresh the editor buffer
                     ConsoleLog("Attached script " + path); ed.dirty = true;
                 } else if (ext == ".okaymat") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {

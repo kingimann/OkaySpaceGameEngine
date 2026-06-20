@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.15.3
+  - Fixed: dropping a script onto an already-selected object's Inspector now
+    opens its Script Editor tab right away (the tab only opened on a selection
+    change before). Script drops also reuse an existing Script component and
+    refresh the editor's buffer, so the dropped file shows immediately.
+  - Script editor autocomplete: as you type an identifier, a suggestion list of
+    keywords / API / builtins pops up at the caret — click one to insert it.
+  - Scripting reference updated with the save()/load() system (in-editor Help >
+    Scripting Reference and docs/scripting.md).
+
 v2.15.2
   - Script editor tabs: edit several scripts at once. Selecting an object with a
     Script opens (and focuses) a tab for it; switch between open scripts with the

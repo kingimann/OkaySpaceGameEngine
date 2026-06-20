@@ -4925,6 +4925,26 @@ void DrawInspector(EditorState& ed) {
                 ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
             ImGui::Spacing();
             ImGui::TextDisabled("Colors");
+            // Quick skin-tone swatches.
+            {
+                struct Sw { int r, g, b; };
+                static const Sw tones[] = {{255,224,189},{241,194,167},{224,172,138},
+                                           {198,134,96},{141,85,57},{90,56,37}};
+                for (int i = 0; i < 6; ++i) {
+                    ImGui::PushID(1000 + i);
+                    ImVec4 col(tones[i].r / 255.0f, tones[i].g / 255.0f, tones[i].b / 255.0f, 1.0f);
+                    if (ImGui::ColorButton("##tone", col, ImGuiColorEditFlags_NoTooltip, ImVec2(18, 18)))
+                        { cb->color = Color::FromBytes(tones[i].r, tones[i].g, tones[i].b); ch = true; }
+                    ImGui::PopID();
+                    if (i < 5) ImGui::SameLine();
+                }
+                ImGui::SameLine(); ImGui::TextDisabled("skin tones");
+            }
+            if (ImGui::SmallButton("Randomize Colors##char")) {
+                auto rc = []{ return Color::FromBytes(std::rand() % 256, std::rand() % 256, std::rand() % 256); };
+                cb->outfit = rc(); cb->pants = rc(); cb->shoes = rc(); cb->hair = rc(); cb->eye = rc();
+                ch = true;
+            }
             float sk[3] = {cb->color.r, cb->color.g, cb->color.b};
             if (ImGui::ColorEdit3("Skin##char", sk))   { cb->color  = {sk[0], sk[1], sk[2], 1.0f}; ch = true; }
             float of[3] = {cb->outfit.r, cb->outfit.g, cb->outfit.b};

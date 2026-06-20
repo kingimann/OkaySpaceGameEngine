@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.24
+  - Character Creator: color customization helpers.
+    * One-click skin-tone swatches (6 presets).
+    * "Randomize Colors" button (shirt/pants/shoes/hair/eyes).
+
 v2.16.23
   - Character Creator: even more detail.
     * Facial hair: Beard and Mustache toggles (hair-colored).

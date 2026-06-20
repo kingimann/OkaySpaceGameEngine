@@ -426,10 +426,10 @@ char  g_newScriptName[96] = "";
 // Extra panels / tools.
 bool  g_showStats = true;
 bool  g_showSaveManager = false;   // browse/edit .okaysave files
-// Script Editor tabs: objects (each with a ScriptComponent) open for editing.
-std::vector<okay::GameObject*> g_scriptTabs;
-okay::GameObject* g_activeScriptTab = nullptr;
-okay::GameObject* g_focusScriptTab = nullptr;   // request to focus a tab this frame
+// Script Editor tabs: one per open ScriptComponent (an object can have several).
+std::vector<okay::ScriptComponent*> g_scriptTabs;
+okay::ScriptComponent* g_activeScriptTab = nullptr;
+okay::ScriptComponent* g_focusScriptTab = nullptr;   // request to focus a tab this frame
 bool  g_showScenes = false;
 bool  g_showInstPrefab = false;
 char  g_prefabBuf[256] = "Prefab.okayprefab";
@@ -2639,37 +2639,38 @@ static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
 void DrawScriptEditor(EditorState& ed) {
     if (!ImGui::Begin("Script Editor", &g_showScriptEditor)) { ImGui::End(); return; }
 
-    // Keep only tabs whose object is still alive and still has a Script.
+    // Gather every live ScriptComponent (an object can have several), and prune
+    // tabs whose component was deleted. `owner` maps a component to its object.
+    std::unordered_map<ScriptComponent*, GameObject*> owner;
+    for (const auto& up : ed.scene().Objects())
+        for (ScriptComponent* s : up->GetComponents<ScriptComponent>()) owner[s] = up.get();
     {
-        std::vector<GameObject*> alive;
-        for (GameObject* t : g_scriptTabs) {
-            for (const auto& up : ed.scene().Objects())
-                if (up.get() == t) { if (t->GetComponent<ScriptComponent>()) alive.push_back(t); break; }
-        }
+        std::vector<ScriptComponent*> alive;
+        for (ScriptComponent* t : g_scriptTabs) if (owner.count(t)) alive.push_back(t);
         g_scriptTabs = std::move(alive);
         if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), g_activeScriptTab) == g_scriptTabs.end())
             g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
     }
-    // Open (and focus) a tab when you select a scriptable object, OR when the
-    // current selection just GAINED a Script (e.g. a script dropped on its
-    // Inspector / added via Add Component). Tracking "gained" separately means
-    // closing a tab for the selected object doesn't immediately reopen it.
+    // Selecting a scriptable object (or one that just gained a script) opens and
+    // focuses tabs for its scripts.
     static GameObject* s_lastSel = nullptr;
-    static bool s_lastSelHadScript = false;
+    static int s_lastSelScripts = 0;
     GameObject* sel = ed.selected();
-    bool selHasScript = sel && sel->GetComponent<ScriptComponent>();
-    bool selectionChanged = (sel != s_lastSel);
-    bool gainedScript = (sel == s_lastSel && selHasScript && !s_lastSelHadScript);
-    if (selHasScript && (selectionChanged || gainedScript)) {
-        if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), sel) == g_scriptTabs.end())
-            g_scriptTabs.push_back(sel);
-        g_activeScriptTab = sel; g_focusScriptTab = sel;
+    int selScripts = sel ? (int)sel->GetComponents<ScriptComponent>().size() : 0;
+    if (sel && selScripts > 0 && (sel != s_lastSel || selScripts != s_lastSelScripts)) {
+        ScriptComponent* focusComp = nullptr;
+        for (ScriptComponent* s : sel->GetComponents<ScriptComponent>()) {
+            if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), s) == g_scriptTabs.end())
+                g_scriptTabs.push_back(s);
+            if (!focusComp) focusComp = s;
+        }
+        if (focusComp) { g_activeScriptTab = focusComp; g_focusScriptTab = focusComp; }
     }
-    s_lastSel = sel; s_lastSelHadScript = selHasScript;
+    s_lastSel = sel; s_lastSelScripts = selScripts;
 
     if (g_scriptTabs.empty()) {
         ImGui::TextDisabled("Select an object with a Script component.");
-        ImGui::TextDisabled("Add one via Inspector > Add Component > Scripting.");
+        ImGui::TextDisabled("Add one via Inspector > Add Component > Scripts.");
         ImGui::End();
         return;
     }
@@ -2677,12 +2678,12 @@ void DrawScriptEditor(EditorState& ed) {
     // One tab per open script; the selected tab drives the editor below.
     if (ImGui::BeginTabBar("##scripttabs",
             ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll)) {
-        GameObject* closeTab = nullptr;
-        for (GameObject* t : g_scriptTabs) {
-            ScriptComponent* tsc = t->GetComponent<ScriptComponent>();
-            std::string disp = (tsc && !tsc->Path().empty())
-                ? std::filesystem::path(tsc->Path()).filename().string()
-                : t->name + "." + extide::ExtFor(tsc ? tsc->Language() : "okayscript");
+        ScriptComponent* closeTab = nullptr;
+        for (ScriptComponent* t : g_scriptTabs) {
+            GameObject* tgo = owner[t];
+            std::string disp = !t->Path().empty()
+                ? std::filesystem::path(t->Path()).filename().string()
+                : (tgo ? tgo->name : std::string("script")) + "." + extide::ExtFor(t->Language());
             char id[32]; std::snprintf(id, sizeof(id), "###sct%p", (void*)t);
             ImGuiTabItemFlags fl = (g_focusScriptTab == t) ? ImGuiTabItemFlags_SetSelected : 0;
             bool open = true;
@@ -2702,10 +2703,11 @@ void DrawScriptEditor(EditorState& ed) {
         }
     }
 
-    GameObject* go = g_activeScriptTab ? g_activeScriptTab
-                   : (g_scriptTabs.empty() ? nullptr : g_scriptTabs.front());
-    ScriptComponent* sc = go ? go->GetComponent<ScriptComponent>() : nullptr;
+    ScriptComponent* sc = g_activeScriptTab ? g_activeScriptTab
+                        : (g_scriptTabs.empty() ? nullptr : g_scriptTabs.front());
     if (!sc) { ImGui::End(); return; }
+    GameObject* go = owner.count(sc) ? owner[sc] : nullptr;
+    if (!go) { ImGui::End(); return; }
 
     {
         auto& buf = CodeBuffer(sc, sc->Source().empty()
@@ -3886,11 +3888,17 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                 if (assign && lhs.find('(') == std::string::npos) {
                     std::string rhs = code.substr(eq + 1);
                     if (auto sc2 = rhs.find(';'); sc2 != std::string::npos) rhs = rhs.substr(0, sc2);
+                    // Only PUBLIC vars (or [SerializeField]) show in the inspector;
+                    // an undecorated or `private` var is private, so it's hidden.
+                    bool hasSerialize = lhs.find("[SerializeField]") != std::string::npos ||
+                                        lhs.find("[Serialize") != std::string::npos;
                     // Strip [Attribute] markers from the left side.
                     std::string l2; bool inb = false;
                     for (char c : lhs) { if (c == '[') inb = true; else if (c == ']') inb = false; else if (!inb) l2 += c; }
                     std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
-                    if (!toks.empty()) {
+                    bool hasPublic = false, hasPrivate = false;
+                    for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private") hasPrivate = true; }
+                    if (!toks.empty() && (hasPublic || hasSerialize) && !hasPrivate) {
                         std::string name = toks.back();
                         bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');
                         for (char c : name) if (!(std::isalnum((unsigned char)c) || c == '_')) valid = false;
@@ -4018,7 +4026,10 @@ void DrawInspector(EditorState& ed) {
             for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
             if (ext == ".okay") {
                 ed.PushUndo();
-                auto* nsc = go->GetComponent<ScriptComponent>();
+                // Reuse a script already bound to this file; otherwise add a new
+                // one (objects can hold several scripts).
+                ScriptComponent* nsc = nullptr;
+                for (auto* s : go->GetComponents<ScriptComponent>()) if (s->Path() == path) { nsc = s; break; }
                 if (!nsc) nsc = go->AddComponent<ScriptComponent>("okayscript");
                 std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
                 SetCodeBuffer(nsc, nsc->Source());   // refresh the editor buffer
@@ -4490,19 +4501,17 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
         }
     }
-    if (auto* sc = go->GetComponent<ScriptComponent>()) {
-        if (CompHeader("Script", sc, &toRemove)) {
-            // Unity-style header: the script name + a button to open the code.
-            std::string sname = sc->Path().empty() ? go->name
-                              : std::filesystem::path(sc->Path()).stem().string();
-            ImGui::Text("Script");
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 96);
-            ImGui::TextColored(ImVec4(0.72f, 0.78f, 0.9f, 1.0f), "%s", sname.c_str());
+    // A GameObject may carry several scripts (like Unity's multiple MonoBehaviours).
+    for (auto* sc : go->GetComponents<ScriptComponent>()) {
+        std::string sname = sc->Path().empty() ? go->name
+                          : std::filesystem::path(sc->Path()).stem().string();
+        std::string slabel = "Script (" + sname + ")";
+        if (CompHeader(slabel.c_str(), sc, &toRemove)) {
             if (ImGui::SmallButton("Open in Script Editor")) {
                 g_showScriptEditor = true;
-                if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), go) == g_scriptTabs.end())
-                    g_scriptTabs.push_back(go);
-                g_activeScriptTab = go; g_focusScriptTab = go;
+                if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), sc) == g_scriptTabs.end())
+                    g_scriptTabs.push_back(sc);
+                g_activeScriptTab = sc; g_focusScriptTab = sc;
             }
 
             // Public variables (Unity's serialized fields): editable values that
@@ -5443,33 +5452,36 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Scripts");
           if (o) {
-            // Existing .okay scripts in the project show up directly here, so one
-            // click attaches them (Unity-style). "New Script..." makes a new file.
-            if (!go->GetComponent<ScriptComponent>()) {
-                namespace fs = std::filesystem;
-                fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
-                                                          : fs::path(ed.projectDir()) / "Assets";
-                std::error_code ec;
-                if (fs::exists(assets, ec)) {
-                    for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
-                        if (!e.is_regular_file()) continue;
-                        std::string ext = e.path().extension().string();
-                        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-                        if (ext != ".okay") continue;
-                        std::string rel = fs::relative(e.path(), assets, ec).string();
-                        if (F(rel.c_str()) && ImGui::MenuItem(rel.c_str())) {
-                            auto* sc = go->AddComponent<ScriptComponent>("okayscript");
-                            std::string err; sc->LoadFile(e.path().string(), &err);
-                            sc->SetPath(e.path().string());
-                            ConsoleLog("Attached script " + e.path().string());
-                            ed.dirty = true;
-                        }
+            // A GameObject can carry MANY scripts (like Unity). Existing .okay
+            // scripts show up directly (one click attaches another); the same
+            // script file can't be attached twice. "New Script..." makes a file.
+            namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
+                                                      : fs::path(ed.projectDir()) / "Assets";
+            std::error_code ec;
+            auto alreadyHas = [&](const std::string& p) {
+                for (auto* s : go->GetComponents<ScriptComponent>()) if (s->Path() == p) return true;
+                return false;
+            };
+            if (fs::exists(assets, ec)) {
+                for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                    if (!e.is_regular_file()) continue;
+                    std::string ext = e.path().extension().string();
+                    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                    if (ext != ".okay") continue;
+                    std::string full = e.path().string();
+                    std::string rel = fs::relative(e.path(), assets, ec).string();
+                    if (!alreadyHas(full) && F(rel.c_str()) && ImGui::MenuItem(rel.c_str())) {
+                        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+                        std::string err; sc->LoadFile(full, &err); sc->SetPath(full);
+                        ConsoleLog("Attached script " + full);
+                        ed.dirty = true;
                     }
                 }
-                if (F("New Script...") && ImGui::MenuItem("New Script...")) {
-                    g_newScriptGO = go; g_newScriptOpen = true;
-                    std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
-                }
+            }
+            if (F("New Script...") && ImGui::MenuItem("New Script...")) {
+                g_newScriptGO = go; g_newScriptOpen = true;
+                std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
             }
             if (item(!go->GetComponent<ActionList>(), "Actions (Visual Script)")) { go->AddComponent<ActionList>(); ed.dirty = true; }
           } EndCat(o); }

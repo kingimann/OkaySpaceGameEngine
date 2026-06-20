@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.2
+  - Multiple scripts per GameObject (like Unity): Add Component > Scripts no
+    longer replaces the existing script — each adds another, and the Inspector
+    shows every Script with its own header and public variables. The same script
+    file can't be attached twice. Script Editor tabs are now per-script, and
+    scenes serialize all of an object's scripts (with their field overrides).
+  - Only PUBLIC variables show in the inspector now: a var must be marked
+    `public` (or `[SerializeField]`) to appear; an undecorated or `private` var
+    is treated as private and hidden.
+
 v2.16.1
   - Script inspector: the variable NAME is now on the left and the value on the
     right (Unity layout). Overridden values are highlighted, and the type shows

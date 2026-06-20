@@ -412,6 +412,9 @@ char g_pathBuf[256] = "scene.okayscene";
 // Data Asset (Scriptable Object) editor window.
 bool  g_dataAssetOpen = false;
 std::string g_dataAssetPath;
+// Material (.okaymat) editor window.
+bool  g_matAssetOpen = false;
+std::string g_matAssetPath;
 
 // Extra panels / tools.
 bool  g_showStats = true;
@@ -1600,6 +1603,8 @@ void DrawProject(EditorState& ed) {
                 } else ConsoleLog("Prefab load failed: " + err);
             } else if (ext == ".okaydata") {
                 g_dataAssetPath = full; g_dataAssetOpen = true;
+            } else if (ext == ".okaymat") {
+                g_matAssetPath = full; g_matAssetOpen = true;
             } else if (ext == ".okay" || ext == ".lua" || ext == ".cs" || ext == ".okayvs") {
                 extide::OpenExternal(full);
             }
@@ -1836,6 +1841,48 @@ void DrawDataAssetEditor() {
         if (asset.Save(g_dataAssetPath)) ConsoleLog("Saved " + g_dataAssetPath);
         else ConsoleLog("Save failed: " + g_dataAssetPath);
     }
+    ImGui::End();
+}
+
+// Edit a .okaymat asset (Unity-style material inspector): tweak the surface
+// look and Save, or stamp it onto the selected mesh with Apply to Selection.
+void DrawMaterialEditor(EditorState& ed) {
+    if (!g_matAssetOpen) return;
+    static std::string loaded;
+    static Material mat;
+    if (loaded != g_matAssetPath) {
+        mat = Material{}; Material::LoadFromFile(g_matAssetPath, mat); loaded = g_matAssetPath;
+    }
+    if (!ImGui::Begin("Material", &g_matAssetOpen)) { ImGui::End(); return; }
+    ImGui::TextDisabled("%s", g_matAssetPath.c_str());
+    ImGui::Separator();
+    float col[4] = {mat.color.r, mat.color.g, mat.color.b, mat.color.a};
+    if (ImGui::ColorEdit4("Albedo", col)) mat.color = {col[0], col[1], col[2], col[3]};
+    float em[3] = {mat.emissive.r, mat.emissive.g, mat.emissive.b};
+    if (ImGui::ColorEdit3("Emissive", em)) mat.emissive = {em[0], em[1], em[2], 1.0f};
+    ImGui::SliderFloat("Specular", &mat.specular, 0.0f, 1.0f);
+    if (mat.specular > 0.0f) ImGui::SliderFloat("Shininess", &mat.shininess, 1.0f, 128.0f);
+    ImGui::Checkbox("Unlit", &mat.unlit);
+    ImGui::SameLine();
+    ImGui::Checkbox("Double-sided", &mat.doubleSided);
+    char tex[256]; std::strncpy(tex, mat.texture.c_str(), sizeof(tex) - 1); tex[sizeof(tex) - 1] = '\0';
+    if (ImGui::InputText("Texture", tex, sizeof(tex))) mat.texture = tex;
+    float til[2] = {mat.tiling.x, mat.tiling.y};
+    if (ImGui::DragFloat2("Tiling", til, 0.05f, 0.01f, 64.0f)) mat.tiling = {til[0], til[1]};
+    ImGui::Separator();
+    if (ImGui::Button("Save")) {
+        if (mat.SaveToFile(g_matAssetPath)) ConsoleLog("Saved " + g_matAssetPath);
+        else ConsoleLog("Save failed: " + g_matAssetPath);
+    }
+    ImGui::SameLine();
+    bool canApply = ed.selected() && ed.selected()->GetComponent<MeshRenderer>();
+    ImGui::BeginDisabled(!canApply);
+    if (ImGui::Button("Apply to Selection")) {
+        mat.ApplyTo(*ed.selected()->GetComponent<MeshRenderer>());
+        ed.dirty = true; ConsoleLog("Applied material to " + ed.selected()->name);
+    }
+    ImGui::EndDisabled();
+    if (!canApply) { ImGui::SameLine(); ImGui::TextDisabled("(select a mesh to apply)"); }
     ImGui::End();
 }
 
@@ -5327,8 +5374,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
 
             if (auto* lt = up->GetComponent<Light>()) {
-                ImU32 col = (up.get() == ed.selected()) ? IM_COL32(255, 220, 90, 255)
-                                                        : IM_COL32(255, 210, 70, 255);
+                // Tint the gizmo by the light's own color (so lights are
+                // distinguishable), brightening to yellow when selected.
+                auto chan = [](float v) { return (int)(Mathf::Clamp(v, 0.0f, 1.0f) * 185.0f) + 70; };
+                ImU32 col = (up.get() == ed.selected())
+                    ? IM_COL32(255, 220, 90, 255)
+                    : IM_COL32(chan(lt->color.r), chan(lt->color.g), chan(lt->color.b), 255);
                 // Sun: short rays around the light's position.
                 Vec3 ax[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
                 for (auto& a : ax) { line(p - a * 0.25f, p + a * 0.25f, col); }
@@ -6007,6 +6058,7 @@ int main(int argc, char** argv) {
         if (g_showHierarchy) DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel (always shown)
         DrawDataAssetEditor();
+        DrawMaterialEditor(ed);
         if (g_showGame)      DrawGameView(ed);
         if (g_showInspector) DrawInspector(ed);
         if (g_showConsole)   DrawConsole();

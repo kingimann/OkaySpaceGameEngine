@@ -14,6 +14,20 @@
 
 namespace okay {
 
+/// Proportion knobs for the procedural humanoid (Mesh::Humanoid). Defaults of 1
+/// reproduce the baseline figure; the editor's Character component exposes these
+/// as sliders. Multipliers are applied to a fixed base layout.
+struct HumanoidParams {
+    float height       = 1.0f;   // overall vertical scale
+    float build        = 1.0f;   // limb/torso thickness
+    float headSize     = 1.0f;
+    float shoulderWidth= 1.0f;   // arm spacing + torso top width
+    float hipWidth     = 1.0f;   // leg spacing + hip width
+    float armLength    = 1.0f;
+    float legLength    = 1.0f;
+    float neckLength   = 1.0f;
+};
+
 /// A simple indexed triangle mesh (positions + triangle indices). Enough to
 /// describe 3D geometry; the editor renders these as wireframes and a future
 /// GPU backend can upload them directly. `name` tags built-in primitives so they
@@ -582,25 +596,30 @@ struct Mesh {
         for (int t : src.triangles) triangles.push_back(t + base);
     }
 
-    /// A low-poly humanoid blockout assembled from primitive parts (head, torso,
-    /// hips, arms, hands, legs, feet). Roughly 2 units tall, standing on Y=0.
-    /// Subdivide() it to smoothly raise it from low-poly to high-poly.
-    static Mesh Humanoid() {
+    /// A low-poly humanoid blockout assembled from primitive parts (head, neck,
+    /// torso, hips, arms, hands, legs, feet), shaped by `p`. Stands on ~Y=0.
+    /// Subdivide()/SubdivideSmooth() it to raise it from low-poly to high-poly.
+    static Mesh Humanoid(const HumanoidParams& p) {
         Mesh m; m.name = "Human";
-        m.Add(Sphere(0.5f, 6, 8), {0.0f, 1.78f, 0.0f}, {0.40f, 0.46f, 0.40f}); // head
-        m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f, 0.0f}, {0.16f, 0.20f, 0.16f}); // neck
-        m.Add(Cube(1.0f), {0.0f, 1.10f, 0.0f}, {0.62f, 0.78f, 0.34f});        // torso
-        m.Add(Cube(1.0f), {0.0f, 0.66f, 0.0f}, {0.56f, 0.24f, 0.34f});        // hips
+        const float H = p.height, B = p.build, hd = p.headSize;
+        const float sw = 0.46f * p.shoulderWidth;   // arm half-spacing
+        const float hw = 0.20f * p.hipWidth;        // leg half-spacing
+        const float aL = p.armLength, lL = p.legLength;
+        m.Add(Sphere(0.5f, 6, 8), {0.0f, 1.78f * H, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}); // head
+        m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}); // neck
+        m.Add(Cube(1.0f), {0.0f, 1.10f * H, 0.0f}, {0.62f * p.shoulderWidth * B, 0.78f * H, 0.34f * B}); // torso
+        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B});      // hips
         for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
-            m.Add(Capsule(0.5f, 1.0f, 6, 3), {s * 0.46f, 1.18f, 0.0f}, {0.22f, 0.64f, 0.22f});
-            m.Add(Sphere(0.5f, 5, 6), {s * 0.46f, 0.64f, 0.0f}, {0.17f, 0.17f, 0.17f});
+            m.Add(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H, 0.0f}, {0.22f * B, 0.64f * aL * H, 0.22f * B});
+            m.Add(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H, 0.0f}, {0.17f * B, 0.17f * B, 0.17f * B});
         }
         for (int s = -1; s <= 1; s += 2) {                                    // legs + feet
-            m.Add(Capsule(0.5f, 1.0f, 6, 3), {s * 0.20f, 0.12f, 0.0f}, {0.26f, 0.96f, 0.26f});
-            m.Add(Cube(1.0f), {s * 0.20f, -0.46f, 0.08f}, {0.26f, 0.12f, 0.52f});
+            m.Add(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f}, {0.26f * B, 0.96f * lL * H, 0.26f * B});
+            m.Add(Cube(1.0f), {s * hw, (0.12f - 0.58f * lL) * H, 0.08f}, {0.26f * B, 0.12f, 0.52f});
         }
         return m;
     }
+    static Mesh Humanoid() { return Humanoid(HumanoidParams{}); }
 
     /// Laplacian smoothing: relax each vertex toward the average of its
     /// edge-connected neighbours by `amount` (0..1). Rounds off a faceted mesh;

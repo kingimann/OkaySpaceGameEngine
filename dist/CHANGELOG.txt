@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.13
+  - Character Creator component (GameObject > 3D Object > Character):
+    * Live proportion sliders — Height, Build, Head Size, Shoulder/Hip Width,
+      Arm/Leg Length, Neck Length — rebuild the humanoid as you drag.
+    * Detail sliders take it from low-poly to high-poly (Subdivisions 0-3 +
+      Smoothness), with a live triangle counter.
+    * Quick presets: Reset, Slim, Heavy, Tall; plus a skin Color.
+    * Full save/load: a "character" component persists all parameters and
+      rebuilds its mesh on load (no baked geometry stored).
+
 v2.16.12
   - Procedural human character + low-poly to high-poly workflow:
     * New "Human (low-poly)" primitive (GameObject > 3D Object > Human, and the

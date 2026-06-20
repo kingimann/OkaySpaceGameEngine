@@ -564,5 +564,35 @@ int main() {
         CHECK(cube.vertices.size() == vn);
     }
 
+    // --- CharacterBody: parametric humanoid that rebuilds + serializes ---
+    {
+        Scene scene("Chars");
+        GameObject* go = scene.CreateGameObject("Hero");
+        auto* cb = go->AddComponent<CharacterBody>();
+        cb->params.height = 1.3f;
+        cb->params.build  = 1.5f;
+        cb->subdivisions  = 1;
+        cb->Apply();                                  // builds into a MeshRenderer
+        auto* mr = go->GetComponent<MeshRenderer>();
+        CHECK(mr != nullptr);
+        CHECK(mr->mesh.TriangleCount() > 0);
+        int loTris = Mesh::Humanoid().TriangleCount();
+        CHECK(mr->mesh.TriangleCount() == loTris * 4);   // one subdivision pass
+
+        // Taller params make a taller mesh than the default figure.
+        CHECK(mr->mesh.Size().y > Mesh::Humanoid().Size().y);
+
+        // Round-trips through serialization (params restored, mesh rebuilt).
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* lc = loaded.Find("Hero")->GetComponent<CharacterBody>();
+        CHECK(lc != nullptr);
+        CHECK_NEAR(lc->params.height, 1.3f, 0.001f);
+        CHECK_NEAR(lc->params.build, 1.5f, 0.001f);
+        CHECK(lc->subdivisions == 1);
+        CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == loTris * 4);
+    }
+
     TEST_MAIN_RESULT();
 }

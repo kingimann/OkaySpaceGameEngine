@@ -42,6 +42,7 @@
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/CharacterBody.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -131,9 +132,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)cam->clearFlags << " " << cam->depth
             << " " << cam->nearClip << " " << cam->farClip << "\n";
     }
-    // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
-    // geometry for it — just the heightmap below, which rebuilds the mesh on load.
-    if (auto* mr = go->GetComponent<MeshRenderer>(); mr && !go->GetComponent<Terrain>()) {
+    // A Terrain or CharacterBody owns its (generated) mesh, so don't serialize the
+    // big MeshRenderer geometry for it — the component below rebuilds it on load.
+    if (auto* mr = go->GetComponent<MeshRenderer>();
+        mr && !go->GetComponent<Terrain>() && !go->GetComponent<CharacterBody>()) {
         out << "  mesh " << Quote(mr->mesh.name.empty() ? "Cube" : mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
@@ -151,6 +153,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tr->heights.size();
         for (float h : tr->heights) out << " " << h;
         out << "\n";
+    }
+    if (auto* cb = go->GetComponent<CharacterBody>()) {
+        const HumanoidParams& p = cb->params;
+        out << "  character " << p.height << " " << p.build << " " << p.headSize << " "
+            << p.shoulderWidth << " " << p.hipWidth << " " << p.armLength << " "
+            << p.legLength << " " << p.neckLength << " " << cb->subdivisions << " "
+            << cb->smoothAmount << " " << cb->color.r << " " << cb->color.g << " "
+            << cb->color.b << " " << cb->color.a << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
@@ -915,6 +925,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (std::size_t k = 0; k < count && k < tr->heights.size(); ++k)
                         in >> tr->heights[k];
                     tr->Apply();   // rebuild the mesh into a MeshRenderer
+                } else if (field == "character") {
+                    auto* cb = go->AddComponent<CharacterBody>();
+                    HumanoidParams& p = cb->params;
+                    in >> p.height >> p.build >> p.headSize >> p.shoulderWidth >> p.hipWidth
+                       >> p.armLength >> p.legLength >> p.neckLength >> cb->subdivisions
+                       >> cb->smoothAmount >> cb->color.r >> cb->color.g >> cb->color.b >> cb->color.a;
+                    cb->Apply();   // rebuild the humanoid mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();
                     int as = 0, port = 45000;

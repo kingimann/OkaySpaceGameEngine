@@ -2343,10 +2343,37 @@ void DrawScriptDocs() {
 
 // --- VS Code-style script editor helpers ---------------------------------
 
-// Cursor line/column for the status bar, filled by an InputText callback.
-struct ScriptCaret { int line = 1, col = 1, pos = 0; };
+// Carries cursor info OUT (line/col/pos) and pending edit commands IN (go-to-line,
+// comment toggle) so the InputText callback can act on the live, active buffer —
+// the only safe way to mutate/move the cursor while editing.
+struct ScriptCaret {
+    int  line = 1, col = 1, pos = 0;   // reported out each frame
+    int  gotoLine = 0;                 // in: jump to this 1-based line (0 = none)
+    bool toggleComment = false;        // in: toggle "// " on the caret's line
+};
 static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
     auto* c = (ScriptCaret*)d->UserData;
+    // Go to line: move the caret to the start of the requested line.
+    if (c->gotoLine > 0) {
+        int target = c->gotoLine; c->gotoLine = 0;
+        int line = 1, pos = 0;
+        for (; pos < d->BufTextLen && line < target; ++pos)
+            if (d->Buf[pos] == '\n') ++line;
+        d->CursorPos = d->SelectionStart = d->SelectionEnd = pos;
+    }
+    // Toggle a line comment ("// ") at the first non-space of the caret's line.
+    if (c->toggleComment) {
+        c->toggleComment = false;
+        int p = d->CursorPos; if (p > d->BufTextLen) p = d->BufTextLen;
+        int ls = p; while (ls > 0 && d->Buf[ls - 1] != '\n') --ls;
+        int fnw = ls; while (fnw < d->BufTextLen && (d->Buf[fnw] == ' ' || d->Buf[fnw] == '\t')) ++fnw;
+        if (fnw + 1 < d->BufTextLen && d->Buf[fnw] == '/' && d->Buf[fnw + 1] == '/') {
+            int rem = (fnw + 2 < d->BufTextLen && d->Buf[fnw + 2] == ' ') ? 3 : 2;
+            d->DeleteChars(fnw, rem);
+        } else {
+            d->InsertChars(fnw, "// ");
+        }
+    }
     int ln = 1, col = 1;
     for (int k = 0; k < d->CursorPos && k < d->BufTextLen; ++k) {
         if (d->Buf[k] == '\n') { ++ln; col = 1; } else ++col;
@@ -2476,6 +2503,29 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::SmallButton("A+")) s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom code (Ctrl+scroll in the editor)");
+
+        // Caret state + pending editor commands (applied in the InputText callback
+        // so they act on the live buffer). Declared here so the toolbar can drive
+        // them; reported back (line/col) by the callback below.
+        static ScriptCaret caret;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("//")) caret.toggleComment = true;   // comment/uncomment line
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle // comment on the current line (Ctrl+/)");
+        ImGui::SameLine(); ImGui::TextDisabled("Go");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(54);
+        static int s_gotoLine = 1;
+        static int s_scrollToLine = 0;
+        bool goEnter = ImGui::InputInt("##goto", &s_gotoLine, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("->") || goEnter) {
+            caret.gotoLine = s_gotoLine < 1 ? 1 : s_gotoLine;
+            s_scrollToLine = caret.gotoLine;
+        }
+        // Ctrl+/ toggles the comment, Ctrl+G focuses the line box.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;
+        }
+
         // Language picker (only backends this build supports).
         static std::vector<std::string> avail = AvailableScriptLanguages();
         if (avail.size() > 1) {
@@ -2511,7 +2561,6 @@ void DrawScriptEditor(EditorState& ed) {
         }
 
         // --- Editor surface: dark theme, line-number gutter, syntax overlay ---
-        static ScriptCaret caret;
         int lines = 1, curLen = 0, maxLen = 0;
         for (const char* p = buf.data(); *p; ++p) {
             if (*p == '\n') { ++lines; if (curLen > maxLen) maxLen = curLen; curLen = 0; }
@@ -2538,6 +2587,12 @@ void DrawScriptEditor(EditorState& ed) {
             s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
         charW = ImGui::CalcTextSize("0").x;
         lineH = ImGui::GetTextLineHeight();
+
+        // Scroll to a Go-to-line request (center the target line in the view).
+        if (s_scrollToLine > 0) {
+            ImGui::SetScrollY((s_scrollToLine - 1) * lineH - av.y * 0.4f);
+            s_scrollToLine = 0;
+        }
 
         // Line-number gutter (tight line spacing so rows match the editor).
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));

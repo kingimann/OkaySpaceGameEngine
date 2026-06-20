@@ -3625,16 +3625,35 @@ void DrawInspector(EditorState& ed) {
             const char* types[] = {"Directional", "Point", "Spot"};
             int ty = (int)li->type;
             if (ImGui::Combo("Type##light", &ty, types, 3)) { li->type = (Light::Type)ty; ed.dirty = true; }
-            float c[4] = {li->color.r, li->color.g, li->color.b, li->color.a};
-            if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+
+            // Color mode: an RGB swatch, or a Kelvin temperature like a real bulb.
+            if (ImGui::Checkbox("Use Temperature##light", &li->useTemperature)) ed.dirty = true;
+            if (li->useTemperature) {
+                if (ImGui::SliderFloat("Kelvin##light", &li->temperature, 1500.0f, 15000.0f, "%.0f K"))
+                    ed.dirty = true;
+                Color k = Light::KelvinToColor(li->temperature);
+                ImGui::SameLine(); ImGui::ColorButton("##kprev", ImVec4(k.r, k.g, k.b, 1.0f));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("2700K warm  -  6500K daylight  -  10000K cool");
+            } else {
+                float c[4] = {li->color.r, li->color.g, li->color.b, li->color.a};
+                if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            }
             if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Ambient (scene floor)");
             if (ImGui::SliderFloat("Ambient##light", &li->ambient, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unlit floor brightness (taken from the first light)");
+            float ac[3] = {li->ambientColor.r, li->ambientColor.g, li->ambientColor.b};
+            if (ImGui::ColorEdit3("Ambient Tint##light", ac)) { li->ambientColor = {ac[0], ac[1], ac[2], 1.0f}; ed.dirty = true; }
+
             if (li->type != Light::Type::Directional) {
+                ImGui::SeparatorText(li->type == Light::Type::Spot ? "Spot" : "Point");
                 if (ImGui::DragFloat("Range##light", &li->range, 0.2f, 0.1f, 500.0f)) ed.dirty = true;
             }
             if (li->type == Light::Type::Spot) {
                 if (ImGui::SliderFloat("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Softness##light", &li->spotSoftness, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp cone edge, 1 = very feathered");
             }
             ImGui::TextDisabled(li->type == Light::Type::Point
                 ? "Radiates from this object's position out to Range."
@@ -3646,13 +3665,31 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Camera", cam, &toRemove)) {
             int proj = (int)cam->projection;
             const char* projs[] = {"Orthographic", "Perspective"};
-            if (ImGui::Combo("Projection", &proj, projs, 2))
-                cam->projection = (Camera::Projection)proj;
-            if (cam->projection == Camera::Projection::Orthographic)
-                ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f);
-            else
-                ImGui::DragFloat("FOV", &cam->fieldOfView, 0.5f, 10.0f, 170.0f);
-            ImGui::Checkbox("Main", &cam->main);
+            if (ImGui::Combo("Projection", &proj, projs, 2)) { cam->projection = (Camera::Projection)proj; ed.dirty = true; }
+            if (cam->projection == Camera::Projection::Orthographic) {
+                if (ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f)) ed.dirty = true;
+            } else {
+                if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+            }
+
+            ImGui::SeparatorText("Background");
+            int cf = (int)cam->clearFlags;
+            const char* cfs[] = {"Skybox", "Solid Color"};
+            if (ImGui::Combo("Clear Flags", &cf, cfs, 2)) { cam->clearFlags = (Camera::ClearFlags)cf; ed.dirty = true; }
+            if (cam->clearFlags == Camera::ClearFlags::SolidColor) {
+                float bg[4] = {cam->backgroundColor.r, cam->backgroundColor.g, cam->backgroundColor.b, cam->backgroundColor.a};
+                if (ImGui::ColorEdit4("Background", bg)) { cam->backgroundColor = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
+            }
+
+            ImGui::SeparatorText("Clipping Planes");
+            if (ImGui::DragFloat("Near", &cam->nearClip, 0.01f, 0.001f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Far",  &cam->farClip, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+
+            ImGui::Spacing();
+            if (ImGui::Checkbox("Main", &cam->main)) ed.dirty = true;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            if (ImGui::DragFloat("Depth", &cam->depth, 0.1f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render priority; the highest-depth camera is used as main");
             if (ImGui::SmallButton("Remove##cam")) toRemove = cam;
         }
     }
@@ -5579,8 +5616,15 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Skybox: a vertical sky gradient behind everything, using the scene's
     // render settings (these save with the scene, so the built game matches).
     // Drawn first so the grid and the transparent mesh layer sit on top of it.
+    // A camera set to "Solid Color" clear flags suppresses the skybox in the
+    // Game view (the camera's background color shows through instead).
     const auto& rs = ed.scene().renderSettings;
-    if (rs.skybox) {
+    bool solidClear = false;
+    if (gameView) {
+        if (Camera* gmc = SceneCamera(ed.scene()))
+            solidClear = gmc->clearFlags == Camera::ClearFlags::SolidColor;
+    }
+    if (rs.skybox && !solidClear) {
         ImU32 top = ToColor(rs.skyTop);
         ImU32 mid = ToColor(rs.skyHorizon);
         ImU32 bot = ToColor(rs.skyBottom);

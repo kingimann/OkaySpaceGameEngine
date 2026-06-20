@@ -41,7 +41,8 @@ struct LightSample {
     Vec3  pos{0, 0, 0};         // world position (point / spot)
     Vec3  color{1, 1, 1};       // rgb * intensity
     float range = 10.0f;        // point / spot falloff distance
-    float cosOuter = 0.7071f;   // cos(half spot angle)
+    float cosOuter = 0.7071f;   // cos(half spot angle) — cone edge
+    float cosInner = 0.7071f;   // cos(soft inner angle) — full brightness inside
 };
 
 /// Multi-light shading: the player/editor fill this list from the scene's Light
@@ -50,9 +51,20 @@ struct LightSample {
 struct SceneLights {
     static std::vector<LightSample>& List() { static std::vector<LightSample> v; return v; }
     static float& Ambient() { static float a = 0.25f; return a; }
+    /// Tinted ambient (RGB). Defaults to a neutral grey scaled by Ambient().
+    static Vec3& AmbientColor() { static Vec3 c{0.25f, 0.25f, 0.25f}; return c; }
     static void Clear() { List().clear(); }
     static void Add(const LightSample& s) { List().push_back(s); }
-    static void SetAmbient(float a) { Ambient() = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a); }
+    static void SetAmbient(float a) {
+        a = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
+        Ambient() = a; AmbientColor() = Vec3{a, a, a};
+    }
+    /// Set a colored ambient floor (e.g. a cool sky tint). `Ambient()` tracks its
+    /// average so scalar consumers still see a sensible value.
+    static void SetAmbientColor(const Vec3& c) {
+        AmbientColor() = Vec3{c.x < 0 ? 0 : c.x, c.y < 0 ? 0 : c.y, c.z < 0 ? 0 : c.z};
+        Ambient() = (AmbientColor().x + AmbientColor().y + AmbientColor().z) / 3.0f;
+    }
 
     /// Accumulated light color (RGB multipliers, clamped to 1) at a world point
     /// with the given surface normal. When no lights were gathered, falls back to
@@ -60,12 +72,11 @@ struct SceneLights {
     static Vec3 ShadeColor(const Vec3& p, const Vec3& n) {
         Vec3 nn = n.Normalized();
         const auto& lights = List();
-        float amb = Ambient();
-        Vec3 acc{amb, amb, amb};
         if (lights.empty()) {
             float s = LambertShade(nn, SceneLight::Direction(), SceneLight::Ambient());
             return Vec3{s, s, s};
         }
+        Vec3 acc = AmbientColor();
         for (const auto& L : lights) {
             float ndl, atten = 1.0f;
             if (L.type == 0) {
@@ -79,10 +90,12 @@ struct SceneLights {
                 atten *= atten;                                  // smooth falloff
                 if (L.type == 2) {                               // spot cone
                     float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
-                    float denom = 1.0f - L.cosOuter;
-                    float spot = denom > 1e-4f ? (cs - L.cosOuter) / denom : (cs >= L.cosOuter ? 1.0f : 0.0f);
+                    // Smooth from the soft inner angle to the hard outer edge.
+                    float denom = L.cosInner - L.cosOuter;
+                    float spot = denom > 1e-4f ? (cs - L.cosOuter) / denom
+                                               : (cs >= L.cosOuter ? 1.0f : 0.0f);
                     if (spot < 0.0f) spot = 0.0f; else if (spot > 1.0f) spot = 1.0f;
-                    atten *= spot;
+                    atten *= spot * spot;                        // softer rolloff
                 }
             }
             if (ndl < 0.0f) ndl = 0.0f;

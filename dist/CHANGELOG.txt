@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.14.2
+  - New Save Manager window (Window > Save Manager): browse the .okaysave files
+    in your project (and the default save), view and edit their keys in a typed
+    table, add/remove keys, clear or re-save a file. The editor counterpart to
+    the runtime save() / load() system — inspect or tweak exactly what a playtest
+    wrote.
+
 v2.14.1
   - Script editor: the current line is now highlighted (VS Code-style), the
     status bar shows a live character count, and you can zoom the code with the

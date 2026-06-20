@@ -54,6 +54,9 @@ public:
         for (auto& kv : m_data) ks.push_back(kv.first);
         return ks;
     }
+    /// Raw `type:payload` store, for tools that want to inspect/edit entries.
+    const std::unordered_map<std::string, std::string>& Raw() const { return m_data; }
+    void SetRaw(const std::string& k, const std::string& typedValue) { m_data[k] = typedValue; }
 
     /// Write every key to `path` (one `key=type:payload` line each).
     bool Save(const std::string& path) const {

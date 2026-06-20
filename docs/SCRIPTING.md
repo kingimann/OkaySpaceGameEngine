@@ -12,7 +12,8 @@ panel. The same reference is available inside the editor under
 
 ## Lifecycle
 
-Two functions drive every script, like Unity's `MonoBehaviour`:
+Two functions drive every script, the same way Unity uses `MonoBehaviour`
+(OkaySpace's base class is `OkaySource`):
 
 ```
 function start() {
@@ -28,11 +29,12 @@ function update(dt) {
 
 OkayScript also accepts a Unity/C# flavor — PascalCase `Start()`/`Update()`,
 `transform.position`, `Input.GetKeyDown(...)`, `Time.deltaTime`, `new Vector3(...)`,
-typed vars (`float speed = 5f;`), `i++`, and a `class : MonoBehaviour` wrapper —
-so Unity code often pastes in unchanged:
+typed vars (`float speed = 5f;`), `i++`, and a `class : OkaySource` wrapper
+(any base name parses, so Unity code with `: MonoBehaviour` still pastes in
+unchanged):
 
 ```cs
-public class Player : MonoBehaviour {
+public class Player : OkaySource {
     float speed = 5f;
     void Update() {
         transform.position.x += Input.GetAxis("Horizontal") * speed * Time.deltaTime;

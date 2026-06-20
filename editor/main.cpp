@@ -610,9 +610,10 @@ const char* StarterScript(const std::string& lang) {
     if (lang == "csharp")
         return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
                "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    // OkayScript, written Unity-style (a MonoBehaviour) — this is the syntax
-    // most users expect. The classic function start()/update(dt) style still works.
-    return "public class NewScript : MonoBehaviour {\n"
+    // OkayScript, written Unity-style but with OkaySpace's own base class,
+    // OkaySource — this is the syntax most users expect. The classic
+    // function start()/update(dt) style still works.
+    return "public class NewScript : OkaySource {\n"
            "    float speed = 2f;\n\n"
            "    void Start() {\n"
            "        transform.position = new Vector3(0, 0, 0);\n"
@@ -2103,7 +2104,8 @@ void DrawScriptDocs() {
 
     ImGui::TextWrapped("OkaySpace scripts are written in OkayScript — a small "
         "C-style language. Attach a Script component, then edit it in the Script "
-        "Editor. Two functions drive a script, just like Unity's MonoBehaviour:");
+        "Editor. Two functions drive a script, the same way Unity uses a base "
+        "class (here it's OkaySource):");
     ImGui::Indent();
     ImGui::TextDisabled("start()      runs once when the scene starts");
     ImGui::TextDisabled("update(dt)   runs every frame; dt is seconds elapsed");

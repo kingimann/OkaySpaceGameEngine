@@ -633,6 +633,17 @@ int main() {
         CHECK(lc->accessories[0].name == "Antenna");
         CHECK(lc->accessories[0].shape == "Cone");
         CHECK(lc->accessories[0].attach == 1);                            // accessory parenting round-trips
+
+        // .okaychar preset text round-trips the full character.
+        std::string preset = cb->ToText();
+        CharacterBody fresh;
+        fresh.FromText(preset);
+        CHECK_NEAR(fresh.params.height, cb->params.height, 0.001f);
+        CHECK_NEAR(fresh.params.waist, 1.4f, 0.001f);
+        CHECK(fresh.beard == true);
+        CHECK(fresh.accessories.size() == 1u);
+        CHECK(fresh.accessories[0].name == "Antenna");
+        CHECK(fresh.accessories[0].attach == 1);
         CHECK(lc->beard == true);                                          // facial hair round-trips
         CHECK_NEAR(lc->params.noseSize, 1.5f, 0.001f);
         CHECK_NEAR(lc->params.waist, 1.4f, 0.001f);                         // body shape round-trips

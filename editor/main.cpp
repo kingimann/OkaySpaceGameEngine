@@ -5087,6 +5087,26 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Bake the mesh (with current detail) to assets/<name>.obj");
+
+            // Save / load the whole character as a reusable .okaychar preset.
+            static char charFile[256] = "assets/character.okaychar";
+            ImGui::SetNextItemWidth(-90);
+            ImGui::InputText("##charfile", charFile, sizeof(charFile));
+            ImGui::SameLine();
+            if (ImGui::Button("Save##charpreset")) {
+                std::error_code mc; std::filesystem::create_directories(
+                    std::filesystem::path(charFile).parent_path(), mc);
+                if (extide::WriteFile(charFile, cb->ToText())) ConsoleLog(std::string("Saved character ") + charFile);
+                else ConsoleLog("Save failed");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Load##charpreset")) {
+                std::string txt = extide::ReadFile(charFile);
+                if (!txt.empty()) { cb->FromText(txt); ch = true; ConsoleLog(std::string("Loaded character ") + charFile); }
+                else ConsoleLog("Load failed (no file?)");
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load a .okaychar preset into this character");
+
             if (ch) { cb->Apply(); ed.dirty = true; }   // live rebuild on any change
         }
     }

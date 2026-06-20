@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.0
+  - Script inspector is now Unity-style: gone are the language dropdown, file
+    path and "edit in Script Editor" note. Instead it shows the script's PUBLIC
+    VARIABLES as editable fields (top-level / public vars like "public float
+    speed = 5;"), with a per-object value that overrides the script default, a
+    revert button, and an "Open in Script Editor" button.
+  - Under the hood: scripts gained per-instance field overrides — the VM can set
+    globals, ScriptComponent stores the overrides and applies them over the
+    script's defaults after each compile, and they serialize with the scene.
+
 v2.15.4
   - Project panel improvements: a type filter (Scripts/Images/Scenes/Materials/
     Prefabs/Data/Audio), a sort mode (Name/Type), an adjustable thumbnail size,

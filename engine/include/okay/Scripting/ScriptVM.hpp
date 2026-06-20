@@ -46,6 +46,10 @@ public:
 
     /// Read back a global the script defined (for tests and gameplay glue).
     virtual vs::VsValue GetGlobal(const std::string& name) const = 0;
+
+    /// Set a global variable — used to apply a component's serialized public-field
+    /// overrides over the script's defaults (Unity-style inspector values).
+    virtual void SetGlobal(const std::string& /*name*/, const vs::VsValue& /*v*/) {}
 };
 
 /// Names of the script backends compiled into this build (always includes

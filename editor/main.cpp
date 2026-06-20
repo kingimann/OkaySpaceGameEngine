@@ -3854,6 +3854,69 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     return open;
 }
 
+// A public field discovered in a script: its name, declared type, and default
+// value. Used to show Unity-style serialized fields in the Script inspector.
+struct ScriptField { std::string name, type, def; };
+
+// Scan script source for public/top-level field declarations: lines with `=` at
+// brace depth 0 (classic top-level) or 1 (inside a `class` body, Unity style),
+// where the left side is an identifier (optionally typed / public / attributed)
+// and not a function call. Locals inside function bodies (deeper) are ignored.
+static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
+    std::vector<ScriptField> out;
+    std::unordered_set<std::string> seen;
+    static const std::unordered_set<std::string> kw = {
+        "return","if","else","while","for","switch","case","do","break","continue"};
+    int depth = 0;
+    std::istringstream in(src);
+    std::string line;
+    while (std::getline(in, line)) {
+        int startDepth = depth;
+        std::string code = line;
+        if (auto cm = code.find("//"); cm != std::string::npos) code = code.substr(0, cm);
+        if (startDepth <= 1) {
+            std::size_t eq = code.find('=');
+            if (eq != std::string::npos) {
+                char before = eq > 0 ? code[eq - 1] : ' ';
+                char after  = eq + 1 < code.size() ? code[eq + 1] : ' ';
+                bool assign = after != '=' && before != '=' && before != '!' &&
+                              before != '<' && before != '>' && before != '+' &&
+                              before != '-' && before != '*' && before != '/';
+                std::string lhs = code.substr(0, eq);
+                if (assign && lhs.find('(') == std::string::npos) {
+                    std::string rhs = code.substr(eq + 1);
+                    if (auto sc2 = rhs.find(';'); sc2 != std::string::npos) rhs = rhs.substr(0, sc2);
+                    // Strip [Attribute] markers from the left side.
+                    std::string l2; bool inb = false;
+                    for (char c : lhs) { if (c == '[') inb = true; else if (c == ']') inb = false; else if (!inb) l2 += c; }
+                    std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
+                    if (!toks.empty()) {
+                        std::string name = toks.back();
+                        bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');
+                        for (char c : name) if (!(std::isalnum((unsigned char)c) || c == '_')) valid = false;
+                        if (valid && !kw.count(name) && !seen.count(name)) {
+                            std::string type;
+                            for (auto& t : toks) {
+                                if (t == name) break;
+                                if (t == "public" || t == "private" || t == "static" ||
+                                    t == "const" || t == "readonly" || t == "var") continue;
+                                type = t;
+                            }
+                            auto a = rhs.find_first_not_of(" \t");
+                            auto b = rhs.find_last_not_of(" \t");
+                            out.push_back({name, type, a == std::string::npos ? "" : rhs.substr(a, b - a + 1)});
+                            seen.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+        for (char c : code) { if (c == '{') ++depth; else if (c == '}') --depth; }
+        if (depth < 0) depth = 0;
+    }
+    return out;
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     // Roomier spacing for the Inspector specifically (it was too compact).
@@ -4429,18 +4492,69 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* sc = go->GetComponent<ScriptComponent>()) {
         if (CompHeader("Script", sc, &toRemove)) {
-            static std::vector<std::string> avail = AvailableScriptLanguages();
-            std::vector<const char*> items; items.reserve(avail.size());
-            for (auto& s : avail) items.push_back(s.c_str());
-            int li = 0;
-            for (int i = 0; i < (int)avail.size(); ++i)
-                if (avail[i] == sc->Language()) li = i;
-            if (ImGui::Combo("Language", &li, items.data(), (int)items.size()))
-                sc->SetLanguage(avail[li]);
-            if (sc->Path().empty()) ImGui::TextDisabled("inline script");
-            else ImGui::TextDisabled("file: %s", sc->Path().c_str());
-            ImGui::TextWrapped("Edit code in the Script Editor panel (View > Script Editor).");
-            if (ImGui::SmallButton("Remove##script")) toRemove = sc;
+            // Unity-style header: the script name + a button to open the code.
+            std::string sname = sc->Path().empty() ? go->name
+                              : std::filesystem::path(sc->Path()).stem().string();
+            ImGui::Text("Script");
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 96);
+            ImGui::TextColored(ImVec4(0.72f, 0.78f, 0.9f, 1.0f), "%s", sname.c_str());
+            if (ImGui::SmallButton("Open in Script Editor")) {
+                g_showScriptEditor = true;
+                if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), go) == g_scriptTabs.end())
+                    g_scriptTabs.push_back(go);
+                g_activeScriptTab = go; g_focusScriptTab = go;
+            }
+
+            // Public variables (Unity's serialized fields): editable values that
+            // override the script's defaults per object.
+            std::vector<ScriptField> fields = ParseScriptFields(sc->Source());
+            if (fields.empty()) {
+                ImGui::TextDisabled("No public variables. Declare top-level vars,");
+                ImGui::TextDisabled("e.g.  public float speed = 5;");
+            } else {
+                ImGui::SeparatorText("Variables");
+                for (const auto& f : fields) {
+                    bool overridden = sc->fields.count(f.name) != 0;
+                    std::string cur = overridden ? sc->fields[f.name] : f.def;
+                    ImGui::PushID(f.name.c_str());
+                    bool changed = false;
+                    // Pick a widget from the current value's shape.
+                    if (cur == "true" || cur == "false") {
+                        bool b = (cur == "true");
+                        if (ImGui::Checkbox(f.name.c_str(), &b)) { cur = b ? "true" : "false"; changed = true; }
+                    } else {
+                        // Numeric? (allow f/d suffix). Else edit as text.
+                        char* endp = nullptr; std::string num = cur;
+                        if (!num.empty() && (num.back()=='f'||num.back()=='F'||num.back()=='d'||num.back()=='D')) num.pop_back();
+                        double dv = std::strtod(num.c_str(), &endp);
+                        bool isNum = endp && *endp == '\0' && !num.empty();
+                        if (isNum) {
+                            float v = (float)dv;
+                            ImGui::SetNextItemWidth(-60);
+                            if (ImGui::DragFloat(f.name.c_str(), &v, 0.05f)) {
+                                char nb[32]; std::snprintf(nb, sizeof(nb), "%g", v); cur = nb; changed = true;
+                            }
+                        } else {
+                            std::string sv = cur;
+                            if (sv.size() >= 2 && (sv.front()=='"'||sv.front()=='\'') && sv.back()==sv.front())
+                                sv = sv.substr(1, sv.size()-2);
+                            char tb[256]; std::strncpy(tb, sv.c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
+                            ImGui::SetNextItemWidth(-60);
+                            if (ImGui::InputText(f.name.c_str(), tb, sizeof(tb))) {
+                                cur = std::string("\"") + tb + "\""; changed = true;
+                            }
+                        }
+                    }
+                    // Revert-to-default button when overridden.
+                    if (overridden) {
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("o")) { sc->fields.erase(f.name); sc->ApplyFieldOverrides(); ed.dirty = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Revert to the script default (%s)", f.def.c_str());
+                    }
+                    if (changed) { sc->fields[f.name] = cur; sc->ApplyFieldOverrides(); ed.dirty = true; }
+                    ImGui::PopID();
+                }
+            }
         }
     }
     if (auto* cc = go->GetComponent<CharacterController2D>()) {

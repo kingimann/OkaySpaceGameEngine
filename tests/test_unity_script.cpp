@@ -315,5 +315,23 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.x, 5.0f, 0.001f);
     }
 
+    // --- Public-field overrides: inspector values replace script defaults ------
+    {
+        Scene s("Fields"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Hero");
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        sc->fields["speed"] = "9";              // inspector override
+        sc->fields["title"] = "Boss";
+        CHECK(sc->LoadSource(
+            "var speed = 1;\n"
+            "var title = \"none\";\n"
+            "function start() { set_x(speed); }\n"));
+        // Override is applied over the script's default after compile.
+        CHECK_NEAR(sc->VM()->GetGlobal("speed").AsFloat(), 9.0f, 0.001f);
+        CHECK(sc->VM()->GetGlobal("title").AsString() == "Boss");
+        s.Start();
+        CHECK_NEAR(go->transform->localPosition.x, 9.0f, 0.001f);   // start() used the override
+    }
+
     TEST_MAIN_RESULT();
 }

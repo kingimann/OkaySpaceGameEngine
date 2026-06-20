@@ -758,9 +758,9 @@ struct Mesh {
         }
         m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin); // neck
         m.Add(Capsule(0.5f, 1.0f, 12, 4), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
-              {0.64f * p.shoulderWidth * B, 0.86f * H * p.torsoLength, 0.40f * B * bd}, shirt);         // torso (rounded)
+              {0.58f * p.shoulderWidth * B, 0.90f * H * p.torsoLength, 0.36f * B * bd}, shirt);         // torso (rounded)
         m.Add(Sphere(0.5f, 8, 12), {0.0f, 0.62f * H, 0.0f},
-              {0.60f * p.hipWidth * B * p.waist, 0.42f * H, 0.40f * B * bd}, pants);                    // hips (rounded)
+              {0.52f * p.hipWidth * B * p.waist, 0.40f * H, 0.36f * B * bd}, pants);                    // hips (rounded)
         if (p.belly > 0.05f)                          // a belly bulge on the lower torso front
             m.Add(Sphere(0.5f, 6, 8), {0.0f, 0.92f * H, 0.18f * bd},
                   {0.46f * B * p.belly, 0.40f * H * p.belly, 0.34f * bd * p.belly}, shirt);
@@ -768,25 +768,32 @@ struct Mesh {
             Vec3 shoulder{s * sw, 1.50f * H + up, 0.0f};       // pivot at the shoulder
             Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * -p.armSpread};  // out + fore/aft
             if (s == 1) { armRot.x += p.rightArmRot.x; armRot.y += p.rightArmRot.y; armRot.z += p.rightArmRot.z; }
-            float at = 0.22f * B * p.armThickness;
+            float at = 0.19f * B * p.armThickness;
             // Shoulder joint bridges the torso to the arm (no gap).
             m.Add(Sphere(0.5f, 5, 6), shoulder, {at * 1.5f, at * 1.5f, at * 1.5f}, shirt);
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H + up, 0.0f},
                        {at, 0.64f * aL * H, at}, armRot, shoulder, shirt);
-            m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H + up, 0.0f},
-                       {0.17f * B * p.handSize, 0.17f * B * p.handSize, 0.17f * B * p.handSize},
-                       armRot, shoulder, skin);
+            // Hand: a flattened palm plus a thumb (instead of a plain ball).
+            float hsz = 0.16f * B * p.handSize;
+            Vec3 hp{s * sw, (1.18f - 0.56f * aL) * H + up, 0.0f};
+            m.AddPosed(Cube(1.0f), hp, {hsz * 1.0f, hsz * 1.35f, hsz * 0.55f}, armRot, shoulder, skin); // palm
+            m.AddPosed(Cube(1.0f), {hp.x + s * hsz * 0.7f, hp.y + hsz * 0.25f, hp.z},
+                       {hsz * 0.45f, hsz * 0.7f, hsz * 0.45f}, armRot, shoulder, skin);                 // thumb
         }
         for (int s = -1; s <= 1; s += 2) {                                    // legs + feet
             Vec3 hip{s * hw, 0.60f * H, 0.0f};
             Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * -p.legSpread};
-            float lt = 0.26f * B * p.legThickness;
+            float lt = 0.22f * B * p.legThickness;
             // Hip joint bridges the pelvis to the leg.
             m.Add(Sphere(0.5f, 5, 6), {s * hw, 0.55f * H, 0.0f}, {lt * 1.4f, lt * 1.4f, lt * 1.4f}, pants);
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f},
                        {lt, 0.96f * lL * H, lt}, legRot, hip, pants);
-            m.AddPosed(Cube(1.0f), {s * hw, (0.12f - 0.58f * lL) * H, 0.08f},
-                       {0.26f * B * p.footSize, 0.12f * p.footSize, 0.52f * p.footSize}, legRot, hip, shoes);
+            // Foot: an ankle joint plus a forward-pointing sole (toes at +Z).
+            float fsz = p.footSize, fy = (0.12f - 0.54f * lL) * H;
+            m.AddPosed(Sphere(0.5f, 5, 6), {s * hw, fy, 0.0f},
+                       {lt * 0.9f, lt * 0.9f, lt * 0.9f}, legRot, hip, skin);                   // ankle
+            m.AddPosed(Cube(1.0f), {s * hw, fy - 0.06f * H, 0.16f * fsz},
+                       {0.22f * B * fsz, 0.11f * fsz, 0.58f * fsz}, legRot, hip, shoes);         // sole/toes
         }
         return m;
     }

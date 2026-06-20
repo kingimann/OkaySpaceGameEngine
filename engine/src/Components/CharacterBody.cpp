@@ -83,6 +83,8 @@ void CharacterBody::Apply() {
     if (!mr) mr = gameObject->AddComponent<MeshRenderer>();
     mr->mesh = Build();
     mr->color = color;
+    mr->doubleSided = true;   // the assembled parts have mixed winding; draw solid
+                              // from both sides so the body never looks see-through.
 }
 
 void CharacterBody::Update(float dt) {

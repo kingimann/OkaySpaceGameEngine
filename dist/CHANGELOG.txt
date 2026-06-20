@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.6
+  - Hierarchy panel gained Unity-style touches:
+    * Expand All / Collapse All buttons to open or close the whole tree at once.
+    * Sort toggle (A-Z) that alphabetically orders siblings and roots.
+    * Component icon badges at the right of each row (S=Script, L=Light,
+      R=Rigidbody, C=Collider, A=Animator, P=Particles) for a quick read of
+      what's attached — like Unity's component icons.
+    * Child-count shown on parents, e.g. "Player (3)".
+    * Badges also appear in search results.
+
 v2.16.5
   - Rotate gizmo is richer and more Unity-like: rings now fade on their
     camera-facing back half (so they read as a 3D sphere), the ring under the

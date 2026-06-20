@@ -3575,6 +3575,37 @@ static bool        g_hierRenameOpen = false; // request to open the rename popup
 static char g_hierRenameBuf[128] = "";
 static GameObject* g_prefabSaveTarget = nullptr; // object being saved as a prefab
 static char g_prefabNameBuf[128] = "";
+static bool g_hierSort   = false;            // sort siblings A->Z (Unity's alpha sort)
+static int  g_hierExpand = 0;                // 1=expand-all, 2=collapse-all (one frame)
+
+// Component "icon" badges at a Hierarchy row's right edge (like Unity showing
+// component icons): a quick read of what's attached. Drawn via the draw list so
+// they don't interfere with the row's own click/drag handling.
+static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
+    struct Badge { bool on; ImU32 col; const char* s; };
+    bool hasRb = go->GetComponent<Rigidbody2D>() != nullptr ||
+                 go->GetComponent<Rigidbody3D>() != nullptr;
+    bool hasCol = go->GetComponent<BoxCollider2D>() != nullptr ||
+                  go->GetComponent<CircleCollider2D>() != nullptr;
+    Badge badges[] = {
+        { !go->GetComponents<ScriptComponent>().empty(), IM_COL32(150, 140, 235, 255), "S" },
+        { go->GetComponent<Light>()    != nullptr,       IM_COL32(235, 205, 90, 255),  "L" },
+        { hasRb,                                         IM_COL32(235, 140, 70, 255),  "R" },
+        { hasCol,                                        IM_COL32(120, 200, 130, 255), "C" },
+        { go->GetComponent<Animator>() != nullptr,       IM_COL32(110, 200, 160, 255), "A" },
+        { go->GetComponent<ParticleSystem>() != nullptr, IM_COL32(110, 200, 235, 255), "P" },
+    };
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float x = rowMax.x - 4.0f, cy = (rowMin.y + rowMax.y) * 0.5f;
+    for (const Badge& b : badges) {
+        if (!b.on) continue;
+        const float w = 13.0f;
+        ImVec2 mn(x - w, cy - 7.0f), mx(x, cy + 7.0f);
+        dl->AddRectFilled(mn, mx, (b.col & 0x00FFFFFF) | 0x55000000, 3.0f);
+        dl->AddText(ImVec2(mn.x + 3.5f, mn.y - 1.0f), b.col, b.s);
+        x -= (w + 3.0f);
+    }
+}
 
 void DrawHierarchy(EditorState& ed) {
     ImGui::Begin("Hierarchy", &g_showHierarchy);
@@ -3593,6 +3624,14 @@ void DrawHierarchy(EditorState& ed) {
         ImGui::EndPopup();
     }
     ImGui::SameLine();
+    if (ImGui::SmallButton("Expand"))   g_hierExpand = 1;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Expand all");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Collapse")) g_hierExpand = 2;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collapse all");
+    ImGui::SameLine();
+    if (ImGui::SmallButton(g_hierSort ? "Sort: A-Z" : "Sort: None")) g_hierSort = !g_hierSort;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle alphabetical sorting of siblings");
     ImGui::SetNextItemWidth(-1);
     ImGui::InputTextWithHint("##hfilter", "search objects...", g_hierFilter, sizeof(g_hierFilter));
     ImGui::Separator();
@@ -3607,31 +3646,45 @@ void DrawHierarchy(EditorState& ed) {
             for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
             if (low.find(needle) == std::string::npos) continue;
             bool sel = (go == ed.selected());
+            ImGui::PushID(go);
             if (ImGui::Selectable((std::string(ObjectKind(go)) + go->name).c_str(), sel))
                 ed.Select(go);
+            HierComponentBadges(go, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            ImGui::PopID();
         }
         ImGui::End();
         return;
     }
 
     const auto& objs = ed.scene().Objects();
-    for (const auto& up : objs) {
-        GameObject* go = up.get();
-        // Show only roots; children are listed under their parent.
-        if (go->transform->Parent() != nullptr) continue;
+    // Roots only (children render under their parent); optionally A->Z sorted.
+    std::vector<GameObject*> roots;
+    for (const auto& up : objs)
+        if (up->transform->Parent() == nullptr) roots.push_back(up.get());
+    if (g_hierSort)
+        std::sort(roots.begin(), roots.end(), [](GameObject* a, GameObject* b) {
+            return a->name < b->name;
+        });
+    for (GameObject* go : roots) {
         std::function<void(GameObject*)> drawNode = [&](GameObject* node) {
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
                                        ImGuiTreeNodeFlags_DefaultOpen |
                                        ImGuiTreeNodeFlags_SpanAvailWidth;
             if (node == ed.selected()) flags |= ImGuiTreeNodeFlags_Selected;
-            if (node->transform->ChildCount() == 0) flags |= ImGuiTreeNodeFlags_Leaf;
+            int childCount = node->transform->ChildCount();
+            if (childCount == 0) flags |= ImGuiTreeNodeFlags_Leaf;
+            // Expand All / Collapse All applies to nodes that actually have children.
+            if (g_hierExpand && childCount > 0) ImGui::SetNextItemOpen(g_hierExpand == 1);
             // Unity dims inactive objects; grey the whole row (and its subtree label).
             bool dim = !node->active;
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
-            bool open = ImGui::TreeNodeEx(node, flags, "%s%s%s", ObjectKind(node),
-                                          node->name.c_str(), node->active ? "" : "  (off)");
+            // Show a child count on parents (Unity-style), plus an (off) marker.
+            char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
+            bool open = ImGui::TreeNodeEx(node, flags, "%s%s%s%s", ObjectKind(node),
+                                          node->name.c_str(), cnt, node->active ? "" : "  (off)");
             if (dim) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
+            HierComponentBadges(node, rowMin, rowMax);
             if (ImGui::IsItemClicked()) ed.Select(node);
             // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
             // it as a sibling (above/below), or onto the middle to RE-PARENT it.
@@ -3763,13 +3816,19 @@ void DrawHierarchy(EditorState& ed) {
                 ImGui::EndPopup();
             }
             if (open) {
-                for (Transform* child : node->transform->Children())
-                    drawNode(child->gameObject);
+                std::vector<Transform*> kids(node->transform->Children().begin(),
+                                             node->transform->Children().end());
+                if (g_hierSort)
+                    std::sort(kids.begin(), kids.end(), [](Transform* a, Transform* b) {
+                        return a->gameObject->name < b->gameObject->name;
+                    });
+                for (Transform* child : kids) drawNode(child->gameObject);
                 ImGui::TreePop();
             }
         };
         drawNode(go);
     }
+    g_hierExpand = 0;   // expand/collapse-all is a one-frame request
     // Right-click empty space to create objects.
     if (ImGui::BeginPopupContextWindow("HierarchyCtx",
             ImGuiPopupFlags_NoOpenOverItems | ImGuiPopupFlags_MouseButtonRight)) {

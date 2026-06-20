@@ -663,141 +663,24 @@ struct Mesh {
         if (col) for (int i = 0, n = (int)src.triangles.size() / 3; i < n; ++i) triColors.push_back(*col);
     }
 
+    /// Concatenate another mesh wholesale (vertices, rebased triangles, face
+    /// colors) — used to merge pre-built parts into one mesh.
+    void Append(const Mesh& src) {
+        int base = (int)vertices.size();
+        vertices.insert(vertices.end(), src.vertices.begin(), src.vertices.end());
+        for (int t : src.triangles) triangles.push_back(t + base);
+        triColors.insert(triColors.end(), src.triColors.begin(), src.triColors.end());
+    }
+
     /// A low-poly humanoid blockout assembled from primitive parts (head, neck,
     /// torso, hips, arms, hands, legs, feet), shaped by `p`. Stands on ~Y=0.
     /// Subdivide()/SubdivideSmooth() it to raise it from low-poly to high-poly.
     /// When `c` is given, parts are colored per-region (skin/shirt/pants/shoes),
     /// a hair cap and a simple face (eyes/brows/nose/mouth) are added optionally.
-    static Mesh Humanoid(const HumanoidParams& p, const HumanoidColors* c = nullptr) {
-        Mesh m; m.name = "Human";
-        const float H = p.height, B = p.build, hd = p.headSize;
-        const float sw = 0.46f * p.shoulderWidth;   // arm half-spacing
-        const float hw = 0.20f * p.hipWidth;        // leg half-spacing
-        const float aL = p.armLength, lL = p.legLength;
-        const float bd = p.bodyDepth;
-        const Color* skin  = c ? &c->skin  : nullptr;
-        const Color* shirt = c ? &c->shirt : nullptr;
-        const Color* pants = c ? &c->pants : nullptr;
-        const Color* shoes = c ? &c->shoes : nullptr;
-        // Torso length grows the torso upward (bottom stays at the hips); the upper
-        // body (neck, head, arms) rides up by the same amount so it stays attached.
-        const float up = 0.78f * H * (p.torsoLength - 1.0f);
-        const float headY = 1.78f * H + up;
-        m.Add(Sphere(0.5f, 6, 8), {0.0f, headY, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}, skin); // head
-        if (c && c->hasHair) {                       // hair, by style
-            const Color* h = &c->hair;
-            m.Add(Sphere(0.5f, 5, 8), {0.0f, headY + 0.10f * hd, 0.0f},      // base cap
-                  {0.44f * hd, 0.34f * hd, 0.44f * hd}, h);
-            switch (p.hairStyle) {
-                case 2:  // long: a panel down the back to the shoulders
-                    m.Add(Cube(1.0f), {0.0f, headY - 0.22f * hd, -0.16f * hd},
-                          {0.40f * hd, 0.55f * hd, 0.16f * hd}, h);
-                    break;
-                case 3:  // spiky: small pyramids on top
-                    for (int sx = -1; sx <= 1; ++sx) for (int sz = -1; sz <= 1; ++sz)
-                        m.Add(Pyramid(1.0f), {sx * 0.13f * hd, headY + 0.26f * hd, sz * 0.13f * hd},
-                              {0.10f * hd, 0.16f * hd, 0.10f * hd}, h);
-                    break;
-                case 4:  // ponytail: a capsule trailing behind
-                    m.Add(Capsule(0.5f, 1.0f, 6, 3), {0.0f, headY - 0.05f * hd, -0.26f * hd},
-                          {0.12f * hd, 0.34f * hd, 0.12f * hd}, h);
-                    break;
-                case 5:  // mohawk: a tall thin strip along the top
-                    m.Add(Cube(1.0f), {0.0f, headY + 0.24f * hd, 0.0f},
-                          {0.08f * hd, 0.22f * hd, 0.46f * hd}, h);
-                    break;
-                case 6:  // bun: a ball on top/back of the head
-                    m.Add(Sphere(0.5f, 6, 8), {0.0f, headY + 0.30f * hd, -0.08f * hd},
-                          {0.26f * hd, 0.26f * hd, 0.26f * hd}, h);
-                    break;
-                case 7:  // afro: a big round puff
-                    m.Add(Sphere(0.5f, 7, 9), {0.0f, headY + 0.16f * hd, 0.0f},
-                          {0.62f * hd, 0.56f * hd, 0.62f * hd}, h);
-                    break;
-                default: break;                       // 0/1: just the cap
-            }
-        }
-        if (c && c->hasHat) {                        // brimmed hat on top of the head
-            m.Add(Cylinder(0.5f, 1.0f, 10), {0.0f, headY + 0.20f * hd, 0.0f},
-                  {0.64f * hd, 0.04f * hd, 0.64f * hd}, &c->hat);      // brim
-            m.Add(Cylinder(0.5f, 1.0f, 10), {0.0f, headY + 0.34f * hd, 0.0f},
-                  {0.42f * hd, 0.24f * hd, 0.42f * hd}, &c->hat);      // crown
-        }
-        if (c && p.ears) {                           // ears on the head sides
-            for (int s = -1; s <= 1; s += 2)
-                m.Add(Sphere(0.5f, 4, 5), {s * 0.21f * hd, headY + 0.01f * hd, 0.0f},
-                      {0.05f * hd, 0.09f * hd, 0.07f * hd}, skin);
-        }
-        if (c && c->hasFace) {                       // eyes, pupils, brows, nose, mouth on +Z
-            const float fz = 0.19f * hd, ex = 0.09f * hd * p.eyeSpacing;
-            Color pupil{c->eye.r * 0.25f, c->eye.g * 0.25f, c->eye.b * 0.25f, 1.0f};
-            const float es = p.eyeSize;
-            for (int s = -1; s <= 1; s += 2) {
-                m.Add(Sphere(0.5f, 4, 5), {s * ex, headY + 0.04f * hd, fz},
-                      {0.06f * hd * es, 0.07f * hd * es, 0.05f * hd}, &c->eye);              // eye white/iris
-                m.Add(Sphere(0.5f, 3, 4), {s * ex, headY + 0.04f * hd, fz + 0.03f * hd},
-                      {0.028f * hd * es, 0.032f * hd * es, 0.02f * hd}, &pupil);             // pupil
-                // Brow, tilted by browAngle (inner end down for "angry").
-                m.AddPosed(Cube(1.0f), {s * ex, headY + 0.12f * hd, fz},
-                           {0.09f * hd, 0.025f * hd, 0.04f * hd},
-                           {0.0f, 0.0f, (float)s * p.browAngle}, {s * ex, headY + 0.12f * hd, fz}, &c->hair);
-            }
-            m.Add(Cube(1.0f), {0.0f, headY - 0.01f * hd, fz + 0.02f * hd},
-                  {0.05f * hd * p.noseSize, 0.08f * hd * p.noseSize, 0.06f * hd * p.noseSize}, &c->skin); // nose
-            m.Add(Cube(1.0f), {0.0f, headY - 0.13f * hd, fz},
-                  {0.12f * hd * p.mouthWidth, 0.025f * hd, 0.04f * hd}, &c->hair);          // mouth
-            if (c->mustache)                          // mustache under the nose
-                m.Add(Cube(1.0f), {0.0f, headY - 0.08f * hd, fz},
-                      {0.13f * hd, 0.03f * hd, 0.05f * hd}, &c->hair);
-            if (c->beard)                             // beard around the chin/jaw
-                m.Add(Sphere(0.5f, 5, 6), {0.0f, headY - 0.19f * hd, fz - 0.04f * hd},
-                      {0.30f * hd, 0.20f * hd, 0.20f * hd}, &c->hair);
-            if (c->hasGlasses)                        // a sunglasses bar across the eyes
-                m.Add(Cube(1.0f), {0.0f, headY + 0.04f * hd, fz + 0.03f * hd},
-                      {(0.18f * p.eyeSpacing + 0.14f) * hd, 0.06f * hd, 0.03f * hd}, &c->glasses);
-        }
-        m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin); // neck
-        m.Add(Capsule(0.5f, 1.0f, 12, 4), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
-              {0.58f * p.shoulderWidth * B, 0.90f * H * p.torsoLength, 0.36f * B * bd}, shirt);         // torso (rounded)
-        m.Add(Sphere(0.5f, 8, 12), {0.0f, 0.62f * H, 0.0f},
-              {0.52f * p.hipWidth * B * p.waist, 0.40f * H, 0.36f * B * bd}, pants);                    // hips (rounded)
-        if (p.belly > 0.05f)                          // a belly bulge on the lower torso front
-            m.Add(Sphere(0.5f, 6, 8), {0.0f, 0.92f * H, 0.18f * bd},
-                  {0.46f * B * p.belly, 0.40f * H * p.belly, 0.34f * bd * p.belly}, shirt);
-        for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
-            Vec3 shoulder{s * sw, 1.50f * H + up, 0.0f};       // pivot at the shoulder
-            Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * -p.armSpread};  // out + fore/aft
-            if (s == 1) { armRot.x += p.rightArmRot.x; armRot.y += p.rightArmRot.y; armRot.z += p.rightArmRot.z; }
-            float at = 0.19f * B * p.armThickness;
-            // Shoulder joint bridges the torso to the arm (no gap).
-            m.Add(Sphere(0.5f, 5, 6), shoulder, {at * 1.5f, at * 1.5f, at * 1.5f}, shirt);
-            m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H + up, 0.0f},
-                       {at, 0.64f * aL * H, at}, armRot, shoulder, shirt);
-            // Hand: a flattened palm plus a thumb (instead of a plain ball).
-            float hsz = 0.16f * B * p.handSize;
-            Vec3 hp{s * sw, (1.18f - 0.56f * aL) * H + up, 0.0f};
-            m.AddPosed(Cube(1.0f), hp, {hsz * 1.0f, hsz * 1.35f, hsz * 0.55f}, armRot, shoulder, skin); // palm
-            m.AddPosed(Cube(1.0f), {hp.x + s * hsz * 0.7f, hp.y + hsz * 0.25f, hp.z},
-                       {hsz * 0.45f, hsz * 0.7f, hsz * 0.45f}, armRot, shoulder, skin);                 // thumb
-        }
-        for (int s = -1; s <= 1; s += 2) {                                    // legs + feet
-            Vec3 hip{s * hw, 0.60f * H, 0.0f};
-            Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * -p.legSpread};
-            float lt = 0.22f * B * p.legThickness;
-            // Hip joint bridges the pelvis to the leg.
-            m.Add(Sphere(0.5f, 5, 6), {s * hw, 0.55f * H, 0.0f}, {lt * 1.4f, lt * 1.4f, lt * 1.4f}, pants);
-            m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f},
-                       {lt, 0.96f * lL * H, lt}, legRot, hip, pants);
-            // Foot: an ankle joint plus a forward-pointing sole (toes at +Z).
-            float fsz = p.footSize, fy = (0.12f - 0.54f * lL) * H;
-            m.AddPosed(Sphere(0.5f, 5, 6), {s * hw, fy, 0.0f},
-                       {lt * 0.9f, lt * 0.9f, lt * 0.9f}, legRot, hip, skin);                   // ankle
-            m.AddPosed(Cube(1.0f), {s * hw, fy - 0.06f * H, 0.16f * fsz},
-                       {0.22f * B * fsz, 0.11f * fsz, 0.58f * fsz}, legRot, hip, shoes);         // sole/toes
-        }
-        return m;
-    }
-    static Mesh Humanoid() { return Humanoid(HumanoidParams{}); }
+    /// Build the merged single-mesh humanoid (see BuildHumanoidParts for the
+    /// per-part layout). Defined out-of-line below the struct.
+    static Mesh Humanoid(const HumanoidParams& p, const HumanoidColors* c = nullptr);
+    static Mesh Humanoid();
 
     /// Laplacian relaxation: move each vertex toward (positive `amount`) or away
     /// from (negative) the average of its edge-connected neighbours. Coincident
@@ -849,5 +732,109 @@ struct Mesh {
         }
     }
 };
+
+/// One named body part of a humanoid (its own positioned, colored mesh).
+struct HumanoidPart { std::string name; Mesh mesh; };
+
+/// Build the humanoid as a list of named parts (Head, Neck, Torso, Hips, Arm.L,
+/// Arm.R, Leg.L, Leg.R). Each part is a self-contained, character-local mesh —
+/// merge them for one object, or spawn one GameObject per part to rig/animate.
+inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
+                                                    const HumanoidColors* c = nullptr) {
+    std::vector<HumanoidPart> parts;
+    parts.reserve(16);
+    auto add = [&](const char* nm) -> Mesh& { parts.push_back({nm, Mesh{}}); return parts.back().mesh; };
+    const float H = p.height, B = p.build, hd = p.headSize;
+    const float sw = 0.46f * p.shoulderWidth, hw = 0.20f * p.hipWidth;
+    const float aL = p.armLength, lL = p.legLength, bd = p.bodyDepth;
+    const Color* skin  = c ? &c->skin  : nullptr;
+    const Color* shirt = c ? &c->shirt : nullptr;
+    const Color* pants = c ? &c->pants : nullptr;
+    const Color* shoes = c ? &c->shoes : nullptr;
+    const float up = 0.78f * H * (p.torsoLength - 1.0f);
+    const float headY = 1.78f * H + up;
+
+    Mesh& head = add("Head");
+    head.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, headY, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}, skin);
+    if (c && c->hasHair) {
+        const Color* h = &c->hair;
+        head.Add(Mesh::Sphere(0.5f, 5, 8), {0.0f, headY + 0.10f * hd, 0.0f}, {0.44f * hd, 0.34f * hd, 0.44f * hd}, h);
+        switch (p.hairStyle) {
+            case 2: head.Add(Mesh::Cube(1.0f), {0.0f, headY - 0.22f * hd, -0.16f * hd}, {0.40f * hd, 0.55f * hd, 0.16f * hd}, h); break;
+            case 3: for (int sx = -1; sx <= 1; ++sx) for (int sz = -1; sz <= 1; ++sz)
+                        head.Add(Mesh::Pyramid(1.0f), {sx * 0.13f * hd, headY + 0.26f * hd, sz * 0.13f * hd}, {0.10f * hd, 0.16f * hd, 0.10f * hd}, h); break;
+            case 4: head.Add(Mesh::Capsule(0.5f, 1.0f, 6, 3), {0.0f, headY - 0.05f * hd, -0.26f * hd}, {0.12f * hd, 0.34f * hd, 0.12f * hd}, h); break;
+            case 5: head.Add(Mesh::Cube(1.0f), {0.0f, headY + 0.24f * hd, 0.0f}, {0.08f * hd, 0.22f * hd, 0.46f * hd}, h); break;
+            case 6: head.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, headY + 0.30f * hd, -0.08f * hd}, {0.26f * hd, 0.26f * hd, 0.26f * hd}, h); break;
+            case 7: head.Add(Mesh::Sphere(0.5f, 7, 9), {0.0f, headY + 0.16f * hd, 0.0f}, {0.62f * hd, 0.56f * hd, 0.62f * hd}, h); break;
+            default: break;
+        }
+    }
+    if (c && c->hasHat) {
+        head.Add(Mesh::Cylinder(0.5f, 1.0f, 10), {0.0f, headY + 0.20f * hd, 0.0f}, {0.64f * hd, 0.04f * hd, 0.64f * hd}, &c->hat);
+        head.Add(Mesh::Cylinder(0.5f, 1.0f, 10), {0.0f, headY + 0.34f * hd, 0.0f}, {0.42f * hd, 0.24f * hd, 0.42f * hd}, &c->hat);
+    }
+    if (c && p.ears)
+        for (int s = -1; s <= 1; s += 2)
+            head.Add(Mesh::Sphere(0.5f, 4, 5), {s * 0.21f * hd, headY + 0.01f * hd, 0.0f}, {0.05f * hd, 0.09f * hd, 0.07f * hd}, skin);
+    if (c && c->hasFace) {
+        const float fz = 0.19f * hd, ex = 0.09f * hd * p.eyeSpacing, es = p.eyeSize;
+        Color pupil{c->eye.r * 0.25f, c->eye.g * 0.25f, c->eye.b * 0.25f, 1.0f};
+        for (int s = -1; s <= 1; s += 2) {
+            head.Add(Mesh::Sphere(0.5f, 4, 5), {s * ex, headY + 0.04f * hd, fz}, {0.06f * hd * es, 0.07f * hd * es, 0.05f * hd}, &c->eye);
+            head.Add(Mesh::Sphere(0.5f, 3, 4), {s * ex, headY + 0.04f * hd, fz + 0.03f * hd}, {0.028f * hd * es, 0.032f * hd * es, 0.02f * hd}, &pupil);
+            head.AddPosed(Mesh::Cube(1.0f), {s * ex, headY + 0.12f * hd, fz}, {0.09f * hd, 0.025f * hd, 0.04f * hd}, {0.0f, 0.0f, (float)s * p.browAngle}, {s * ex, headY + 0.12f * hd, fz}, &c->hair);
+        }
+        head.Add(Mesh::Cube(1.0f), {0.0f, headY - 0.01f * hd, fz + 0.02f * hd}, {0.05f * hd * p.noseSize, 0.08f * hd * p.noseSize, 0.06f * hd * p.noseSize}, &c->skin);
+        head.Add(Mesh::Cube(1.0f), {0.0f, headY - 0.13f * hd, fz}, {0.12f * hd * p.mouthWidth, 0.025f * hd, 0.04f * hd}, &c->hair);
+        if (c->mustache) head.Add(Mesh::Cube(1.0f), {0.0f, headY - 0.08f * hd, fz}, {0.13f * hd, 0.03f * hd, 0.05f * hd}, &c->hair);
+        if (c->beard)    head.Add(Mesh::Sphere(0.5f, 5, 6), {0.0f, headY - 0.19f * hd, fz - 0.04f * hd}, {0.30f * hd, 0.20f * hd, 0.20f * hd}, &c->hair);
+        if (c->hasGlasses) head.Add(Mesh::Cube(1.0f), {0.0f, headY + 0.04f * hd, fz + 0.03f * hd}, {(0.18f * p.eyeSpacing + 0.14f) * hd, 0.06f * hd, 0.03f * hd}, &c->glasses);
+    }
+
+    add("Neck").Add(Mesh::Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin);
+
+    Mesh& torso = add("Torso");
+    torso.Add(Mesh::Capsule(0.5f, 1.0f, 12, 4), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
+              {0.58f * p.shoulderWidth * B, 0.90f * H * p.torsoLength, 0.36f * B * bd}, shirt);
+    if (p.belly > 0.05f)
+        torso.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, 0.92f * H, 0.18f * bd}, {0.46f * B * p.belly, 0.40f * H * p.belly, 0.34f * bd * p.belly}, shirt);
+
+    add("Hips").Add(Mesh::Sphere(0.5f, 8, 12), {0.0f, 0.62f * H, 0.0f}, {0.52f * p.hipWidth * B * p.waist, 0.40f * H, 0.36f * B * bd}, pants);
+
+    for (int s = -1; s <= 1; s += 2) {
+        Mesh& arm = add(s < 0 ? "Arm.L" : "Arm.R");
+        Vec3 shoulder{s * sw, 1.46f * H + up, 0.0f};
+        Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * p.armSpread};   // + spreads outward
+        if (s == 1) { armRot.x += p.rightArmRot.x; armRot.y += p.rightArmRot.y; armRot.z += p.rightArmRot.z; }
+        float at = 0.19f * B * p.armThickness;
+        // Big shoulder joint that overlaps BOTH the torso and the arm (no gap).
+        arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * sw * 0.78f, 1.46f * H + up, 0.0f}, {at * 2.6f, at * 2.6f, at * 2.6f}, shirt);
+        arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.14f * H + up, 0.0f}, {at, 0.64f * aL * H, at}, armRot, shoulder, shirt);
+        float hsz = 0.16f * B * p.handSize;
+        Vec3 hp{s * sw, (1.14f - 0.56f * aL) * H + up, 0.0f};
+        arm.AddPosed(Mesh::Cube(1.0f), hp, {hsz * 1.0f, hsz * 1.35f, hsz * 0.55f}, armRot, shoulder, skin);
+        arm.AddPosed(Mesh::Cube(1.0f), {hp.x + s * hsz * 0.7f, hp.y + hsz * 0.25f, hp.z}, {hsz * 0.45f, hsz * 0.7f, hsz * 0.45f}, armRot, shoulder, skin);
+    }
+    for (int s = -1; s <= 1; s += 2) {
+        Mesh& leg = add(s < 0 ? "Leg.L" : "Leg.R");
+        Vec3 hip{s * hw, 0.60f * H, 0.0f};
+        Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * p.legSpread};   // + spreads outward
+        float lt = 0.22f * B * p.legThickness;
+        leg.Add(Mesh::Sphere(0.5f, 6, 7), {s * hw, 0.56f * H, 0.0f}, {lt * 1.7f, lt * 1.7f, lt * 1.7f}, pants);
+        leg.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f}, {lt, 0.96f * lL * H, lt}, legRot, hip, pants);
+        float fsz = p.footSize, fy = (0.12f - 0.54f * lL) * H;
+        leg.AddPosed(Mesh::Sphere(0.5f, 5, 6), {s * hw, fy, 0.0f}, {lt * 0.9f, lt * 0.9f, lt * 0.9f}, legRot, hip, skin);
+        leg.AddPosed(Mesh::Cube(1.0f), {s * hw, fy - 0.06f * H, 0.16f * fsz}, {0.22f * B * fsz, 0.11f * fsz, 0.58f * fsz}, legRot, hip, shoes);
+    }
+    return parts;
+}
+
+inline Mesh Mesh::Humanoid(const HumanoidParams& p, const HumanoidColors* c) {
+    Mesh m; m.name = "Human";
+    for (const HumanoidPart& pt : BuildHumanoidParts(p, c)) m.Append(pt.mesh);
+    return m;
+}
+inline Mesh Mesh::Humanoid() { return Humanoid(HumanoidParams{}); }
 
 } // namespace okay

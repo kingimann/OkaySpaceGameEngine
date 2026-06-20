@@ -1,5 +1,9 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.39
+  - Character Creator: much smaller shoulder and hip joints (they were too big
+    and ball-like) — now just fill the seam between limb and body.
+
 v2.16.38
   - Character Creator: smaller shoulder joints (they were too bulky) — they still
     bridge the arm to the torso without ballooning the shoulders.

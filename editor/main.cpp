@@ -4938,10 +4938,13 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 float hr[3] = {cb->hair.r, cb->hair.g, cb->hair.b};
                 if (ImGui::ColorEdit3("##haircol", hr)) { cb->hair = {hr[0], hr[1], hr[2], 1.0f}; ch = true; }
-                const char* styles[] = {"Cap", "Short", "Long", "Spiky", "Ponytail", "Mohawk"};
+                const char* styles[] = {"Cap", "Short", "Long", "Spiky", "Ponytail", "Mohawk", "Bun", "Afro"};
                 ImGui::SetNextItemWidth(160);
-                ch |= ImGui::Combo("Hair Style##char", &cb->params.hairStyle, styles, 6);
+                ch |= ImGui::Combo("Hair Style##char", &cb->params.hairStyle, styles, 8);
             }
+            ch |= ImGui::Checkbox("Beard##char", &cb->beard);
+            ImGui::SameLine();
+            ch |= ImGui::Checkbox("Mustache##char", &cb->mustache);
             ch |= ImGui::Checkbox("Face##char", &cb->hasFace);
             if (cb->hasFace) {
                 ImGui::SameLine();
@@ -4949,6 +4952,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit3("##eyecol", ey)) { cb->eye = {ey[0], ey[1], ey[2], 1.0f}; ch = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eye color");
                 ch |= ImGui::SliderFloat("Eye Spacing##char", &cb->params.eyeSpacing, 0.5f, 1.8f);
+                ch |= ImGui::SliderFloat("Eye Size##char", &cb->params.eyeSize, 0.5f, 2.0f);
+                ch |= ImGui::SliderFloat("Nose Size##char", &cb->params.noseSize, 0.4f, 2.2f);
                 ch |= ImGui::SliderFloat("Mouth Width##char", &cb->params.mouthWidth, 0.4f, 2.0f);
                 ch |= ImGui::SliderFloat("Brow Angle##char", &cb->params.browAngle, -30.0f, 30.0f, "%.0f deg");
                 ch |= ImGui::Checkbox("Ears##char", &cb->params.ears);

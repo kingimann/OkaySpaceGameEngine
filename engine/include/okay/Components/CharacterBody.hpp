@@ -38,6 +38,8 @@ public:
     bool  hasFace = true;
     bool  hasHat = false;
     bool  hasGlasses = false;
+    bool  beard = false;
+    bool  mustache = false;
 
     // Simple limb animation, played during Play. 0 None, 1 Idle, 2 Walk, 3 Run.
     int   anim = 0;
@@ -52,6 +54,7 @@ public:
         c.skin = color; c.shirt = outfit; c.pants = pants; c.shoes = shoes;
         c.hair = hair;  c.eye = eye;      c.hasHair = hasHair; c.hasFace = hasFace;
         c.hat = hat; c.glasses = glasses; c.hasHat = hasHat; c.hasGlasses = hasGlasses;
+        c.beard = beard; c.mustache = mustache;
         Mesh m = Mesh::Humanoid(pp, &c);
         int n = subdivisions < 0 ? 0 : (subdivisions > 3 ? 3 : subdivisions);
         if (n > 0) m.SubdivideSmooth(n, smoothAmount);

@@ -573,6 +573,7 @@ int main() {
         cb->params.build    = 1.5f;
         cb->params.handSize = 1.7f;
         cb->params.armSpread= 45.0f;
+        cb->params.torsoLength = 1.4f;
         cb->subdivisions    = 1;
         cb->Apply();                                  // builds into a MeshRenderer
         auto* mr = go->GetComponent<MeshRenderer>();
@@ -594,6 +595,7 @@ int main() {
         CHECK_NEAR(lc->params.build, 1.5f, 0.001f);
         CHECK_NEAR(lc->params.handSize, 1.7f, 0.001f);
         CHECK_NEAR(lc->params.armSpread, 45.0f, 0.001f);
+        CHECK_NEAR(lc->params.torsoLength, 1.4f, 0.001f);
         CHECK(lc->subdivisions == 1);
         CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == loTris * 4);
     }

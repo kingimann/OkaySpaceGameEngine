@@ -175,6 +175,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << cb->hat.r << " " << cb->hat.g << " " << cb->hat.b << " " << cb->hat.a
             << " " << cb->glasses.r << " " << cb->glasses.g << " " << cb->glasses.b << " " << cb->glasses.a
             << " " << (cb->hasHat ? 1 : 0) << " " << (cb->hasGlasses ? 1 : 0)
+            << " " << cb->anim << " " << cb->animSpeed
             << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
@@ -995,6 +996,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (more()) in >> cb->glasses.a;
                     if (more()) { int hh = 0; in >> hh; cb->hasHat = (hh != 0); }
                     if (more()) { int hg = 0; in >> hg; cb->hasGlasses = (hg != 0); }
+                    if (more()) in >> cb->anim;
+                    if (more()) in >> cb->animSpeed;
                     cb->Apply();   // rebuild the humanoid mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();

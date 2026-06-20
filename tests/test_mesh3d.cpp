@@ -580,7 +580,16 @@ int main() {
         cb->params.mouthWidth = 1.6f;
         cb->params.ears = false;
         cb->hasHat = true;
+        cb->anim = 2; cb->animSpeed = 1.5f;
         cb->subdivisions    = 0;
+        // Limb swing moves geometry (arms/legs front-to-back) without changing count.
+        {
+            HumanoidParams a = cb->params, b = cb->params;
+            b.legSwing = 30.0f;
+            Mesh ma = Mesh::Humanoid(a), mb = Mesh::Humanoid(b);
+            CHECK(ma.TriangleCount() == mb.TriangleCount());
+            CHECK(mb.Size().z > ma.Size().z + 0.05f);   // legs now reach forward/back
+        }
         int baseTris = cb->Build().TriangleCount();   // base (with hair cap, no subdiv)
         cb->subdivisions    = 1;
         cb->Apply();                                  // builds into a MeshRenderer
@@ -612,6 +621,8 @@ int main() {
         CHECK_NEAR(lc->params.mouthWidth, 1.6f, 0.001f);                   // face detail round-trips
         CHECK(lc->params.ears == false);
         CHECK(lc->hasHat == true);                                         // accessory round-trips
+        CHECK(lc->anim == 2);                                              // animation round-trips
+        CHECK_NEAR(lc->animSpeed, 1.5f, 0.001f);
         CHECK(lc->subdivisions == 1);
         CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == baseTris * 4);
     }

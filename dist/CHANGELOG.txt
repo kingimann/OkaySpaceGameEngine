@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.15.1
+  - Script editor, more IDE features: auto-closing brackets and quotes with
+    type-over, auto-indent on Enter (matches the line, adds a level after "{"),
+    a toggle for it ("Auto"), bracket-match highlighting (boxes the pair around
+    the caret), and Find & Replace (a Replace field + Replace All).
+
 v2.15.0
   - Keyframe Animator: the engine's property animator (AnimationClip of
     position/rotation/scale curves) is now usable in the editor. Add it from

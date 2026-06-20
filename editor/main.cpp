@@ -2365,6 +2365,8 @@ struct ScriptCaret {
     int  gotoLine = 0;                 // in: jump to this 1-based line (0 = none)
     bool toggleComment = false;        // in: toggle "// " on the caret's line
     std::string insert;                // in: insert this text at the caret (snippets)
+    bool autoPairs = true;             // auto-close brackets + auto-indent on Enter
+    int  prevLen = -1;                 // buffer length last frame (to detect typing)
 };
 static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
     auto* c = (ScriptCaret*)d->UserData;
@@ -2433,6 +2435,37 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             d->CursorPos = d->SelectionStart = d->SelectionEnd = ls + (int)next.size() + 1 + off;
         }
     }
+    // Auto-pairing + auto-indent: only when exactly one char was just typed.
+    if (c->autoPairs && c->prevLen >= 0 && d->BufTextLen == c->prevLen + 1 &&
+        d->CursorPos > 0 && d->CursorPos <= d->BufTextLen) {
+        char ch = d->Buf[d->CursorPos - 1];
+        char next = d->CursorPos < d->BufTextLen ? d->Buf[d->CursorPos] : '\0';
+        auto isWord = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
+        if (ch == '\n') {
+            // Copy the broken line's leading whitespace; add a level after '{'.
+            int nl = d->CursorPos - 1;
+            int pls = nl; while (pls > 0 && d->Buf[pls - 1] != '\n') --pls;
+            std::string indent;
+            for (int i = pls; i < nl && (d->Buf[i] == ' ' || d->Buf[i] == '\t'); ++i) indent += d->Buf[i];
+            int last = nl - 1; while (last >= pls && (d->Buf[last] == ' ' || d->Buf[last] == '\t')) --last;
+            if (last >= pls && d->Buf[last] == '{') indent += "    ";
+            if (!indent.empty()) {
+                int c0 = d->CursorPos; d->InsertChars(c0, indent.c_str());
+                d->CursorPos = d->SelectionStart = d->SelectionEnd = c0 + (int)indent.size();
+            }
+        } else if ((ch == '(' || ch == '[' || ch == '{' || ch == '"') &&
+                   (next == '\0' || next == ' ' || next == ')' || next == ']' ||
+                    next == '}' || next == '\n' || !isWord(next))) {
+            const char* close = ch == '(' ? ")" : ch == '[' ? "]" : ch == '{' ? "}" : "\"";
+            int c0 = d->CursorPos; d->InsertChars(c0, close);
+            d->CursorPos = d->SelectionStart = d->SelectionEnd = c0;   // sit between the pair
+        } else if ((ch == ')' || ch == ']' || ch == '}' || ch == '"') && next == ch) {
+            // Typed a closer right before the auto-inserted one: skip over it.
+            d->DeleteChars(d->CursorPos - 1, 1);
+            d->CursorPos = d->SelectionStart = d->SelectionEnd = d->CursorPos + 1;
+        }
+    }
+    c->prevLen = d->BufTextLen;
     int ln = 1, col = 1;
     for (int k = 0; k < d->CursorPos && k < d->BufTextLen; ++k) {
         if (d->Buf[k] == '\n') { ++ln; col = 1; } else ++col;
@@ -2605,6 +2638,9 @@ void DrawScriptEditor(EditorState& ed) {
                 if (ImGui::MenuItem(s.name)) caret.insert = s.text;
             ImGui::EndPopup();
         }
+        ImGui::SameLine();
+        ImGui::Checkbox("Auto", &caret.autoPairs);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-close brackets/quotes and auto-indent on Enter");
 
         // Language picker (only backends this build supports).
         static std::vector<std::string> avail = AvailableScriptLanguages();
@@ -2627,8 +2663,22 @@ void DrawScriptEditor(EditorState& ed) {
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
             ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
             ImGui::SetKeyboardFocusHere();
-        ImGui::SetNextItemWidth(180);
+        ImGui::SetNextItemWidth(150);
         ImGui::InputTextWithHint("##find", "Find (Ctrl+F)", s_find, sizeof(s_find));
+        // Replace field + Replace All (case-sensitive). Clicking here deactivates
+        // the editor, so editing the buffer directly takes effect.
+        static char s_replace[128] = "";
+        ImGui::SameLine(); ImGui::SetNextItemWidth(150);
+        ImGui::InputTextWithHint("##replace", "Replace", s_replace, sizeof(s_replace));
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Replace All") && s_find[0]) {
+            std::string text = buf.data(), from = s_find, to = s_replace;
+            int n = 0;
+            for (std::size_t p = text.find(from); p != std::string::npos && !from.empty();
+                 p = text.find(from, p + to.size())) { text.replace(p, from.size(), to); ++n; }
+            if (n > 0) { SetCodeBuffer(sc, text); ed.dirty = true; }
+            ConsoleLog("Replaced " + std::to_string(n) + " occurrence" + (n == 1 ? "" : "s"));
+        }
         // Count matches (case-insensitive) for the status bar.
         int findCount = 0;
         if (s_find[0]) {
@@ -2731,6 +2781,34 @@ void DrawScriptEditor(EditorState& ed) {
         }
         if (s_highlight)
             DrawCodeHighlight(edl, buf.data(), origin, charW, lineH);
+
+        // Bracket matching: when the caret sits next to a ()[]{} bracket, box it
+        // and its partner so nesting is easy to read.
+        {
+            const char* tx = buf.data();
+            int tlen = (int)std::strlen(tx);
+            auto opener = [](char x){ return x=='('||x=='['||x=='{'; };
+            auto closer = [](char x){ return x==')'||x==']'||x=='}'; };
+            auto match = [](char x)->char{ return x=='('?')':x=='['?']':x=='{'?'}':x==')'?'(':x==']'?'[':'{'; };
+            int bpos = -1;
+            if (caret.pos > 0 && caret.pos - 1 < tlen && (opener(tx[caret.pos-1]) || closer(tx[caret.pos-1]))) bpos = caret.pos - 1;
+            else if (caret.pos < tlen && (opener(tx[caret.pos]) || closer(tx[caret.pos]))) bpos = caret.pos;
+            if (bpos >= 0) {
+                char b = tx[bpos], m = match(b);
+                int dir = opener(b) ? 1 : -1, depth = 0, other = -1;
+                for (int i = bpos; i >= 0 && i < tlen; i += dir) {
+                    if (tx[i] == b) ++depth; else if (tx[i] == m) { if (--depth == 0) { other = i; break; } }
+                }
+                auto box = [&](int p) {
+                    int ln = 0, col = 0;
+                    for (int i = 0; i < p && i < tlen; ++i) { if (tx[i]=='\n'){++ln;col=0;} else ++col; }
+                    ImVec2 a(origin.x + col*charW, origin.y + ln*lineH);
+                    edl->AddRect(a, ImVec2(a.x + charW, a.y + lineH), IM_COL32(120,180,120,220));
+                };
+                box(bpos);
+                if (other >= 0) box(other);
+            }
+        }
         ImGui::EndChild();
         ImGui::PopStyleColor(3);
 

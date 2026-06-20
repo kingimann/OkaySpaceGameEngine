@@ -235,6 +235,35 @@ when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
 The standalone player auto-loads `game.okayprefs` on launch and saves it on
 exit, so values set with `prefs_set` persist between play sessions.
 
+### Save system (Easy-Save-style)
+
+For richer save games — many files (slots/profiles), typed values, and
+write-through to disk — use the `save`/`load` family. Each value keeps its type
+(number, string, or `Vector3`), and the optional last argument names the file
+(default `save.okaysave`).
+
+| Function | Effect |
+| --- | --- |
+| `save(key, value[, file])` | store a number / string / Vector3 and write the file |
+| `load(key[, default][, file])` | read it back; the default's type picks the return type |
+| `save_has(key[, file])` | does the key exist? |
+| `save_delete(key[, file])` | remove one key (and re-save) |
+| `save_clear([file])` | wipe a file's keys |
+| `save_exists([file])` | does the save file exist on disk? |
+| `save_delete_file([file])` | delete the whole save file |
+
+```cs
+// Save a checkpoint, then restore it next run
+save("coins", 120);
+save("name", "Hero");
+save("spawn", new Vector3(4, 0, 2), "slot1.okaysave");
+
+int coins = load("coins", 0);
+string who = load("name", "Player");
+Vector3 at = load("spawn", new Vector3(0, 0, 0), "slot1.okaysave");
+if (!save_exists("slot1.okaysave")) { /* first time playing */ }
+```
+
 ### Math
 `abs sin cos tan asin acos atan atan2 sqrt pow exp log floor ceil round sign
 min max clamp lerp smoothstep len hypot wrap(v, lo, hi) ping_pong(t, len)

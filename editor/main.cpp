@@ -3279,6 +3279,29 @@ void DrawScriptEditor(EditorState& ed) {
         if (s_highlight)
             DrawCodeHighlight(edl, buf.data(), origin, charW, lineH);
 
+        // Inline diagnostic: a red wavy underline under the error line (the
+        // compiler now prefixes "line N:" to parse/compile errors).
+        int errLine = (!s_error.empty() && s_error.rfind("line ", 0) == 0)
+                      ? std::atoi(s_error.c_str() + 5) : 0;
+        if (errLine > 0 && errLine <= lines) {
+            const char* t = buf.data();
+            int cur = 1, len = 0;
+            for (int i = 0; t[i]; ++i) {
+                if (t[i] == '\n') { if (cur == errLine) break; ++cur; len = 0; }
+                else if (cur == errLine) ++len;
+            }
+            if (len < 1) len = 1;
+            float y = origin.y + errLine * lineH - 1.5f;
+            float x1 = origin.x + len * charW;
+            ImU32 red = IM_COL32(240, 80, 80, 230);
+            bool up = true;
+            for (float x = origin.x; x < x1; x += 3.0f, up = !up) {
+                float xe = x + 3.0f > x1 ? x1 : x + 3.0f;
+                edl->AddLine(ImVec2(x, y + (up ? 2.0f : 0.0f)),
+                             ImVec2(xe, y + (up ? 0.0f : 2.0f)), red, 1.3f);
+            }
+        }
+
         // Bracket matching: when the caret sits next to a ()[]{} bracket, box it
         // and its partner so nesting is easy to read.
         {
@@ -3375,6 +3398,9 @@ void DrawScriptEditor(EditorState& ed) {
         if (!s_error.empty()) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  \xe2\x9c\x97 %s", s_error.c_str());
+            int eln = (s_error.rfind("line ", 0) == 0) ? std::atoi(s_error.c_str() + 5) : 0;
+            if (eln > 0 && ImGui::IsItemClicked()) { caret.gotoLine = eln; s_scrollToLine = eln; }
+            if (eln > 0 && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to go to line %d", eln);
         }
     }
     ImGui::End();

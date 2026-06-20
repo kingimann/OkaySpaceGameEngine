@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.4
+  - Rotate tool is now Unity-style: instead of straight axis arms, the Rotate
+    gizmo (E) draws three colored rings (X/Y/Z) around the selection. Grab a ring
+    and drag tangent to it to spin about that axis. Snap detents still apply.
+  - Project window now draws real category icons instead of plain letter chips:
+    folders, script pages, material spheres, scene/prefab hexes, audio, and
+    meshes each get a distinct drawn shape in their category color.
+  - Fixed drag-and-drop from the Project window into the Inspector replacing the
+    existing script: dropping a .okay now always ATTACHES a new Script component,
+    so you can stack as many as you want (matching Add Component).
+  - Fixed an ImGui "ID conflict" popup when hovering "Open in Script Editor" (and
+    other widgets) on an object that has more than one script — each script's
+    inspector widgets are now uniquely scoped.
+
 v2.16.3
   - Fixed adding multiple scripts: you can now attach as many scripts as you like
     to one object — including the SAME script more than once (Unity allows it) —

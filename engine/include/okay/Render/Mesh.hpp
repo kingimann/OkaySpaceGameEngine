@@ -804,15 +804,19 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
 
     for (int s = -1; s <= 1; s += 2) {
         Mesh& arm = add(s < 0 ? "Arm.L" : "Arm.R");
-        Vec3 shoulder{s * sw, 1.46f * H + up, 0.0f};
+        float shoulderY = 1.46f * H + up;
+        Vec3 shoulder{s * sw, shoulderY, 0.0f};
         Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * p.armSpread};   // + spreads outward
         if (s == 1) { armRot.x += p.rightArmRot.x; armRot.y += p.rightArmRot.y; armRot.z += p.rightArmRot.z; }
         float at = 0.19f * B * p.armThickness;
+        float armLen = 0.74f * aL * H;
+        float armCY = shoulderY - armLen * 0.5f;       // arm hangs from the shoulder
+        float wristY = shoulderY - armLen;             // bottom of the arm
         // Big shoulder joint that overlaps BOTH the torso and the arm (no gap).
-        arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * sw * 0.78f, 1.46f * H + up, 0.0f}, {at * 2.6f, at * 2.6f, at * 2.6f}, shirt);
-        arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.14f * H + up, 0.0f}, {at, 0.64f * aL * H, at}, armRot, shoulder, shirt);
+        arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * sw * 0.78f, shoulderY, 0.0f}, {at * 2.6f, at * 2.6f, at * 2.6f}, shirt);
+        arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * sw, armCY, 0.0f}, {at, armLen, at}, armRot, shoulder, shirt);
         float hsz = 0.16f * B * p.handSize;
-        Vec3 hp{s * sw, (1.14f - 0.56f * aL) * H + up, 0.0f};
+        Vec3 hp{s * sw, wristY + hsz * 0.3f, 0.0f};    // hand at the wrist (overlaps the arm)
         arm.AddPosed(Mesh::Cube(1.0f), hp, {hsz * 1.0f, hsz * 1.35f, hsz * 0.55f}, armRot, shoulder, skin);
         arm.AddPosed(Mesh::Cube(1.0f), {hp.x + s * hsz * 0.7f, hp.y + hsz * 0.25f, hp.z}, {hsz * 0.45f, hsz * 0.7f, hsz * 0.45f}, armRot, shoulder, skin);
     }

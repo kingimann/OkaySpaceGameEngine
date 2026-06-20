@@ -21,6 +21,9 @@ v2.13.0
   - Snapping now covers all three transform tools: Move snaps to the grid
     increment, Scale snaps to it too, and Rotate snaps in configurable degree
     detents (default 15 deg) via a new "Rot deg" field in the Scene toolbar.
+  - Local/Global gizmo toggle (Unity-style, shortcut X): handles can follow the
+    object's own orientation or the world axes; Scale always uses local axes so
+    scaling a rotated object behaves correctly.
   - Camera Preview: selecting a perspective Camera shows a live inset in the
     Scene view of exactly what that camera sees (Unity's Camera Preview), so you
     can frame shots without switching to the Game view.

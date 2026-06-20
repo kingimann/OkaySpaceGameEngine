@@ -507,6 +507,7 @@ bool  g_gizmoGrab = false;  // true while a gizmo handle is held
 float g_rotAccum = 0.0f;    // raw degrees this rotate-drag (for 15-deg snap detents)
 float g_rotApplied = 0.0f;  // snapped degrees already applied this drag
 float g_rotSnapDeg = 15.0f; // rotation snap increment when Snap is on
+bool  g_gizmoLocal = false; // gizmo axes in the object's local space (Unity's Local/Global)
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
 float g_terrainRadius = 6.0f;
 float g_terrainStrength = 4.0f;
@@ -5582,7 +5583,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         Tool tool = (noScale && g_tool == Tool::Scale) ? Tool::Move : g_tool;
         Vec3 o = t->Position();
         float L = ed.camDist * 0.18f;                 // arm length, screen-stable
-        Vec3 axis[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        // World axes by default; Local mode (and Scale, which is inherently local)
+        // uses the object's own right/up/forward so the handles follow rotation.
+        Vec3 axis[3];
+        if (g_gizmoLocal || tool == Tool::Scale) {
+            axis[0] = t->Right(); axis[1] = t->Up(); axis[2] = t->Forward();
+        } else {
+            axis[0] = {1, 0, 0}; axis[1] = {0, 1, 0}; axis[2] = {0, 0, 1};
+        }
         ImU32 col[3] = {IM_COL32(230, 80, 80, 255), IM_COL32(90, 210, 100, 255),
                         IM_COL32(90, 150, 240, 255)};
         ImVec2 so; bool oOk = toScreen(vp * Vec4{o, 1}, so);
@@ -5740,11 +5748,15 @@ void DrawViewport(EditorState& ed) {
     toolBtn("Move", Tool::Move);
     toolBtn("Rotate", Tool::Rotate);
     toolBtn("Scale", Tool::Scale);
+    // Local/Global handle orientation (Unity's toggle); X toggles it.
+    if (ImGui::Button(g_gizmoLocal ? "Local" : "Global")) g_gizmoLocal = !g_gizmoLocal;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gizmo orientation: Local (object) vs Global (world). Shortcut: X");
     // Keyboard shortcuts W/E/R when the Scene window is focused (and not typing).
     if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_W, false)) g_tool = Tool::Move;
         if (ImGui::IsKeyPressed(ImGuiKey_E, false)) g_tool = Tool::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) g_tool = Tool::Scale;
+        if (ImGui::IsKeyPressed(ImGuiKey_X, false)) g_gizmoLocal = !g_gizmoLocal;
         // Arrow keys nudge a selected UI widget: 1px, or a grid step with Shift.
         if (ed.selected()) {
             UIRect nr = GetUIRect(ed.selected());

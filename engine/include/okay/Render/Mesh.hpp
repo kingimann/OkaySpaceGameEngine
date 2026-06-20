@@ -23,18 +23,18 @@ namespace okay {
 struct HumanoidParams {
     float height       = 1.0f;   // overall vertical scale
     float build        = 1.0f;   // limb/torso thickness
-    float headSize     = 1.0f;
-    float shoulderWidth= 1.0f;   // arm spacing + torso top width
-    float hipWidth     = 1.0f;   // leg spacing + hip width
+    float headSize     = 0.88f;  // realistic ~7.5-head proportions (smaller head)
+    float shoulderWidth= 1.15f;  // arm spacing + torso top width (broad shoulders)
+    float hipWidth     = 0.92f;  // leg spacing + hip width (narrower hips)
     float armLength    = 1.0f;
-    float legLength    = 1.0f;
+    float legLength    = 1.08f;  // longer legs read as a taller, adult build
     float neckLength   = 1.0f;
     float handSize     = 1.0f;
     float footSize     = 1.0f;
-    float armSpread    = 10.0f;  // degrees arms angle out from the body (A/T-pose)
-    float legSpread    = 3.0f;   // degrees legs angle out (stance width)
+    float armSpread    = 7.0f;   // degrees arms angle out from the body (A/T-pose)
+    float legSpread    = 4.0f;   // degrees legs angle out (stance width)
     float torsoLength  = 1.0f;   // lengthens the torso (raises the upper body)
-    float bodyDepth    = 1.0f;   // front-to-back thickness of torso + hips
+    float bodyDepth    = 0.92f;  // front-to-back thickness of torso + hips
     int   hairStyle    = 1;      // 0 cap, 1 short, 2 long, 3 spiky, 4 ponytail, 5 mohawk
     float eyeSpacing   = 1.0f;   // multiplier on the gap between the eyes
     float mouthWidth   = 1.0f;   // multiplier on mouth width (a wider "smile")
@@ -47,7 +47,7 @@ struct HumanoidParams {
     float noseSize     = 1.0f;   // multiplier on nose size
     float armThickness = 1.0f;   // arm girth (independent of build)
     float legThickness = 1.0f;   // leg girth (independent of build)
-    float waist        = 1.0f;   // hip/midsection width
+    float waist        = 0.86f;  // hip/midsection width (tapered, athletic)
     float belly        = 0.0f;   // belly size (0 = none)
     float armGap       = 0.0f;   // lateral spacing of arms from the body (+out, -in)
     float legGap       = 0.0f;   // lateral spacing of legs (stance width; +apart, -together)
@@ -758,9 +758,11 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
     const float headY = 1.78f * H + up;
 
     Mesh& head = add("Head");
-    head.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, headY, 0.0f}, {0.36f * hd, 0.44f * hd, 0.36f * hd}, skin);
-    head.Add(Mesh::Sphere(0.5f, 5, 7), {0.0f, headY - 0.15f * hd, 0.03f * hd},          // jaw / chin
-             {0.30f * hd, 0.26f * hd, 0.32f * hd}, skin);
+    head.Add(Mesh::Sphere(0.5f, 11, 13), {0.0f, headY, 0.0f}, {0.34f * hd, 0.42f * hd, 0.36f * hd}, skin);  // cranium
+    head.Add(Mesh::Sphere(0.5f, 9, 11), {0.0f, headY - 0.15f * hd, 0.04f * hd},         // jaw / chin
+             {0.29f * hd, 0.26f * hd, 0.33f * hd}, skin);
+    head.Add(Mesh::Sphere(0.5f, 8, 10), {0.0f, headY - 0.06f * hd, 0.10f * hd},         // cheeks / face front
+             {0.28f * hd, 0.30f * hd, 0.26f * hd}, skin);
     if (c && c->hasHair) {
         const Color* h = &c->hair;
         head.Add(Mesh::Sphere(0.5f, 5, 8), {0.0f, headY + 0.10f * hd, 0.0f}, {0.44f * hd, 0.34f * hd, 0.44f * hd}, h);
@@ -797,7 +799,7 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         if (c->hasGlasses) head.Add(Mesh::Cube(1.0f), {0.0f, headY + 0.04f * hd, fz + 0.03f * hd}, {(0.18f * p.eyeSpacing + 0.14f) * hd, 0.06f * hd, 0.03f * hd}, &c->glasses);
     }
 
-    add("Neck").Add(Mesh::Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin);
+    add("Neck").Add(Mesh::Cylinder(0.5f, 1.0f, 10), {0.0f, 1.52f * H + up, 0.0f}, {0.15f, 0.20f * p.neckLength, 0.15f}, skin);
 
     Mesh& torso = add("Torso");
     {   // Tapered torso: broad chest over a narrower waist (V-shape).
@@ -806,6 +808,10 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
                   {0.62f * p.shoulderWidth * B, 0.46f * H * tl2, 0.40f * B * bd}, shirt);   // chest
         torso.Add(Mesh::Sphere(0.5f, 10, 12), {0.0f, ty - 0.20f * H * tl2, 0.0f},
                   {0.46f * p.shoulderWidth * B * p.waist, 0.44f * H * tl2, 0.36f * B * bd}, shirt); // waist
+        // Trapezius: soft slope from the neck base out to the shoulders so the
+        // neck/shoulder join doesn't look like a peg in a hole.
+        torso.Add(Mesh::Sphere(0.5f, 8, 10), {0.0f, 1.44f * H + up, 0.0f},
+                  {0.40f * p.shoulderWidth * B, 0.16f * H, 0.32f * B * bd}, shirt);
     }
     if (p.belly > 0.05f)
         torso.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, 0.92f * H, 0.18f * bd}, {0.46f * B * p.belly, 0.40f * H * p.belly, 0.34f * bd * p.belly}, shirt);
@@ -825,15 +831,16 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         float wristY = shoulderY - armLen;             // bottom of the arm
         // Small shoulder joint that just fills the arm/torso seam.
         arm.Add(Mesh::Sphere(0.5f, 6, 7), {s * aw * 0.85f, shoulderY, 0.0f}, {at * 1.2f, at * 1.15f, at * 1.2f}, shirt);
-        arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * aw, armCY, 0.0f}, {at, armLen, at}, armRot, shoulder, shirt);
-        float hsz = 0.16f * B * p.handSize;
-        Vec3 hp{s * aw, wristY + hsz * 0.3f, 0.0f};    // hand at the wrist (overlaps the arm)
-        arm.AddPosed(Mesh::Cube(1.0f), hp, {hsz * 1.0f, hsz * 1.0f, hsz * 0.55f}, armRot, shoulder, skin);  // palm
-        for (int f = -1; f <= 1; ++f)                  // three fingers off the palm
-            arm.AddPosed(Mesh::Cube(1.0f), {hp.x + f * hsz * 0.33f, hp.y - hsz * 0.85f, hp.z},
-                         {hsz * 0.24f, hsz * 0.7f, hsz * 0.4f}, armRot, shoulder, skin);
-        arm.AddPosed(Mesh::Cube(1.0f), {hp.x + s * hsz * 0.65f, hp.y - hsz * 0.1f, hp.z},        // thumb
-                     {hsz * 0.3f, hsz * 0.55f, hsz * 0.35f}, armRot, shoulder, skin);
+        arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 9, 3), {s * aw, armCY, 0.0f}, {at, armLen, at}, armRot, shoulder, shirt);
+        // Relaxed hand: a rounded palm with the fingers softly closed into a
+        // single mitt (the old splayed cubes read as a claw) plus a thumb.
+        float hsz = 0.145f * B * p.handSize;
+        Vec3 hp{s * aw, wristY + hsz * 0.15f, 0.0f};   // hand at the wrist (overlaps the arm)
+        arm.AddPosed(Mesh::Sphere(0.5f, 6, 7), hp, {hsz * 0.82f, hsz * 0.78f, hsz * 0.52f}, armRot, shoulder, skin);  // palm
+        arm.AddPosed(Mesh::Sphere(0.5f, 6, 7), {hp.x, hp.y - hsz * 0.66f, hp.z + hsz * 0.04f},
+                     {hsz * 0.74f, hsz * 0.62f, hsz * 0.48f}, armRot, shoulder, skin);    // fingers (relaxed/closed)
+        arm.AddPosed(Mesh::Sphere(0.5f, 5, 6), {hp.x + s * hsz * 0.42f, hp.y - hsz * 0.18f, hp.z + hsz * 0.06f},
+                     {hsz * 0.34f, hsz * 0.5f, hsz * 0.34f}, armRot, shoulder, skin);     // thumb
     }
     for (int s = -1; s <= 1; s += 2) {
         Mesh& leg = add(s < 0 ? "Leg.L" : "Leg.R");
@@ -842,7 +849,7 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * p.legSpread};   // + spreads outward
         float lt = 0.25f * B * p.legThickness;
         leg.Add(Mesh::Sphere(0.5f, 6, 7), {s * lw, 0.52f * H, 0.0f}, {lt * 1.15f, lt * 1.1f, lt * 1.15f}, pants);
-        leg.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * lw, 0.06f * H, 0.0f}, {lt, 1.15f * lL * H, lt}, legRot, hip, pants);
+        leg.AddPosed(Mesh::Capsule(0.5f, 1.0f, 9, 3), {s * lw, 0.06f * H, 0.0f}, {lt, 1.15f * lL * H, lt}, legRot, hip, pants);
         float fsz = p.footSize, fy = (0.06f - 0.57f * lL) * H;
         leg.AddPosed(Mesh::Sphere(0.5f, 5, 6), {s * lw, fy, 0.0f}, {lt * 0.9f, lt * 0.9f, lt * 0.9f}, legRot, hip, skin);     // ankle
         leg.AddPosed(Mesh::Cube(1.0f), {s * lw, fy - 0.06f * H, 0.16f * fsz}, {0.22f * B * fsz, 0.11f * fsz, 0.58f * fsz}, legRot, hip, shoes); // sole

@@ -372,10 +372,10 @@ int main(int argc, char** argv) {
             Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
             Mat4 vp = cam->ProjectionMatrix(h > 0 ? (float)w / h : 1.0f) * cam->ViewMatrix();
             if (w > 0 && h > 0) {
-                mesh3D.Resize(w, h);
-                mesh3D.Clear(0u);                       // transparent
                 ApplySceneLight(scene);                 // a Light object aims the shading
-                RenderMeshes(mesh3D, scene, vp, camPos);
+                // 2x supersampled (anti-aliased) software render.
+                static std::vector<std::uint32_t> mesh3DDown;
+                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h, 2);
                 if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
                     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
                     mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
@@ -383,7 +383,7 @@ int main(int argc, char** argv) {
                     SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
                     mesh3DW = w; mesh3DH = h;
                 }
-                SDL_UpdateTexture(mesh3DTex, nullptr, mesh3D.color.data(), w * 4);
+                SDL_UpdateTexture(mesh3DTex, nullptr, px, w * 4);
                 SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
             }
         } else {

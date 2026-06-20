@@ -65,7 +65,7 @@ public:
         c.hat = hat; c.glasses = glasses; c.hasHat = hasHat; c.hasGlasses = hasGlasses;
         c.beard = beard; c.mustache = mustache;
         Mesh m = Mesh::Humanoid(pp, &c);
-        int n = subdivisions < 0 ? 0 : (subdivisions > 3 ? 3 : subdivisions);
+        int n = subdivisions < 0 ? 0 : (subdivisions > 4 ? 4 : subdivisions);
         if (n > 0) m.SubdivideSmooth(n, smoothAmount);
         // Anchor (position + euler) of an attach region, matching Humanoid()'s
         // layout so accessories follow proportions and animation.

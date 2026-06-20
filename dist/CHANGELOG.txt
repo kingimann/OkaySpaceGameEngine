@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.7
+  - Script Editor gained more VS Code-style tools:
+    * Modified (dot) marker on tabs and in the status bar when a script has
+      unsaved changes; it clears on Save/Reload.
+    * Format button re-indents the whole document by brace depth (4 spaces
+      per level), skipping braces inside strings and // comments.
+    * Outline button lists the file's functions and classes; pick one to jump
+      and scroll straight to it.
+    * Find Next / Prev arrows (and F3 / Shift+F3) step through matches around
+      the caret, selecting and scrolling to each.
+    * Status bar now shows the selection length, e.g. "Col 7 (12 sel)".
+
 v2.16.6
   - Hierarchy panel gained Unity-style touches:
     * Expand All / Collapse All buttons to open or close the whole tree at once.

@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.10
+  - Script Editor minimap (VS Code-style): a scaled overview of the whole file
+    pinned beside the editor. Each line is a bar (length ~ its content, comments
+    tinted green), a translucent box marks the visible region, and you can click
+    or drag the minimap to scroll. Toggle it with the new "Map" checkbox.
+
 v2.16.9
   - Inline compile diagnostics in the Script Editor:
     * OkayScript parse/compile errors now report the source line (e.g.

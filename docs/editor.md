@@ -63,6 +63,37 @@ uses, built right into the engine app.
 
 ## What you can do
 
+Recent additions (v2.12–2.14):
+
+- **Add Component, Unity-style** — a centered *Component* title + Search box;
+  categories (Rendering, Animation, Physics 2D/3D, Lighting, Camera, Scripts,
+  Audio, Gameplay, UI) drill into submenus while browsing, collapse to a flat
+  filtered list while searching. The **Scripts** category lists every `.okay`
+  file in your project (one click attaches it) plus **New Script…**.
+- **Component headers** have an **enable/disable checkbox** and a right-click
+  **Remove Component** menu; the object header has a **Tag** dropdown and a
+  **Static** flag (saved with the scene).
+- **Script Editor (VS Code-style)** — line-number gutter, live syntax
+  highlighting, **Find** (Ctrl+F), inline compile errors, current-line
+  highlight, **zoom** (Ctrl+scroll), **comment toggle** (Ctrl+/), **go-to-line**,
+  **duplicate line** (Ctrl+D), **move line** (Alt+↑/↓), and a **Snippets** menu.
+- **Material inspector** — double-click a `.okaymat` to edit albedo / emissive /
+  specular / texture / tiling, then Save or **Apply to Selection**; or drag a
+  `.okaymat`/image onto an object to apply it.
+- **Save Manager** (Window ▸ Save Manager) — browse and edit `.okaysave` runtime
+  save files (typed key/value table); the editor side of `save()` / `load()`.
+- **Drag & drop from Project** — drop prefabs/scenes/images/`.obj` into the Scene
+  to place them; drop scripts/materials onto the Inspector or Hierarchy.
+- **Scene gizmos** — **snapping** for Move/Rotate/Scale (grid + 15° detents) and
+  a **Local/Global** toggle (X); a live **Camera Preview** inset for a selected
+  perspective camera; colored **light gizmos** (range sphere / spot cone).
+- **Project Settings** (Edit ▸ Project Settings) and a larger **Build** dialog
+  (Quit-on-Escape, Master Volume, Show-FPS).
+- **Crash-safe autosave** (File ▸ Autosave) writes a `<scene>.autosave` recovery
+  copy and offers to restore it after an unclean exit.
+- **Keyframe Animator** — add it from *Animation*, then play/scrub and **Record**
+  the transform into keyframe tracks.
+
 - **Hierarchy** — see the scene tree (parents/children); click to select.
 - **Inspector** — rename, toggle active, edit Transform (position / Z rotation /
   scale), edit the Sprite Renderer (color, size) and Camera (ortho size), and

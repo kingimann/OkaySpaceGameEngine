@@ -281,6 +281,10 @@ add_executable(test_savedata test_savedata.cpp)
 target_link_libraries(test_savedata PRIVATE okay::engine)
 add_test(NAME savedata COMMAND test_savedata)
 
+add_executable(test_animator test_animator.cpp)
+target_link_libraries(test_animator PRIVATE okay::engine)
+add_test(NAME animator COMMAND test_animator)
+
 add_executable(test_dataasset test_dataasset.cpp)
 target_link_libraries(test_dataasset PRIVATE okay::engine)
 add_test(NAME dataasset COMMAND test_dataasset)

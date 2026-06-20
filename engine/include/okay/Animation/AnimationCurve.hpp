@@ -27,6 +27,9 @@ public:
     void Clear() { m_keys.clear(); }
     bool Empty() const { return m_keys.empty(); }
     const std::vector<Keyframe>& Keys() const { return m_keys; }
+    std::size_t Count() const { return m_keys.size(); }
+    /// Remove the key at index i (tools/editors). Out-of-range is ignored.
+    void RemoveKey(std::size_t i) { if (i < m_keys.size()) m_keys.erase(m_keys.begin() + i); }
 
     float Duration() const { return m_keys.empty() ? 0.0f : m_keys.back().time; }
 

@@ -79,7 +79,16 @@ planet, `A` player ship.)*
 - **Easing & Tween** — the classic easing curve set (`Ease`) plus a one-shot
   `Tween` for game-feel animation.
 - **Persistent save data** — `Prefs` (PlayerPrefs-style key/value) for high
-  scores and settings; the player auto-loads/saves it.
+  scores and settings, plus an **Easy-Save-style save system** (`okay::Save` /
+  `SaveFile`): typed values (number/string/`Vector3`), many named files
+  (slots/profiles), write-through to disk, and key management. Scripts use
+  `save()` / `load()` / `save_has` / `save_delete` / `save_exists`, and the
+  editor's **Save Manager** window browses and edits `.okaysave` files.
+- **Keyframe animation** — an `Animator` plays an `AnimationClip` of
+  `AnimationCurve` tracks (`position.*`, `rotation.z`, `scale.*`), like Unity's
+  Animator. The inspector has play/pause, a time scrubber, and **Record** to
+  capture the object's transform into keys at the current time. Clips save with
+  the scene.
 - **Starter templates** — `Platformer` / `TopDown` / **`CoinCollector`** (a
   complete, playable game) / **`MainMenu`** (UI panel + title + Start button) /
   **`Inventory`** (drag-and-drop bag with slots) build component-wired scenes
@@ -98,7 +107,7 @@ planet, `A` player ship.)*
   transform/physics, prefs, scene loading, **and networking** (`net_host`,
   `net_join`, `net_send`), plus a node-graph runtime you build in code or text.
 - **Text scripting (OkayScript), Unity-style** — write scripts that look almost
-  exactly like a Unity C# `MonoBehaviour`: `void Start()` / `void Update()`,
+  exactly like a Unity C# script (base class `OkaySource`): `void Start()` / `void Update()`,
   `transform.position = new Vector3(...)`, `Input.GetKeyDown("space")`,
   `Time.deltaTime`, `Mathf.Sin(t)`, `Debug.Log(...)`, typed vars (`float speed = 5f;`),
   `i++` loops, and a `public class Foo : OkaySource { }` wrapper (Unity's
@@ -111,9 +120,12 @@ planet, `A` player ship.)*
   `load_scene` + **Scene Manager** (`load_scene_index`/`load_next_scene`),
   **networking** (`net_*`), physics `raycast_hit`/`overlap`, component control
   (`set_text`/`set_color`/`set_texture`/`play_sound`/`set_progress`),
-  audio/gravity/time-scale, `prefs_*` save data, and
+  audio/gravity/time-scale, `prefs_*` and **`save()`/`load()`** save data, and
   `on_trigger()`/`on_collision()`/`on_click()` handlers.
-  See [`docs/scripting.md`](docs/scripting.md).
+  See [`docs/scripting.md`](docs/scripting.md). Scripts are written in a
+  built-in **VS Code-style editor** (line-number gutter, syntax highlighting,
+  Find, inline errors, comment-toggle, go-to-line, duplicate/move-line, zoom and
+  snippets).
 - **Terrain** — a Unity-style heightmap terrain you sculpt with a brush (drag in
   the 3D view to raise, Shift to lower) or generate (Flatten / Smooth / Randomize
   / Hills), rendered as a generated mesh. Create from GameObject > 3D Object >
@@ -183,6 +195,22 @@ planet, `A` player ship.)*
   Add Component / Inspector for every component, scene save/load, **Build Game**,
   and an in-app self-updater. Ships as a single self-contained `.exe`
   (`dist/OkaySpaceEngine.exe`). See [`docs/editor.md`](docs/editor.md).
+- **Unity-parity editor polish** — a Unity-style **Add Component** (centered
+  title + Search, categories that drill into submenus; the Scripts category lists
+  your `.okay` files and "New Script…"); component headers with **enable
+  checkboxes** + right-click **Remove**; a **Tag** dropdown and **Static** flag;
+  **drag assets from Project** onto the Scene (place prefabs/sprites/models) or
+  the Inspector/Hierarchy (attach scripts, apply materials/textures); **gizmo
+  snapping** for move/rotate/scale + **Local/Global** toggle; a **Material
+  inspector** (`.okaymat`), a live **Camera Preview** inset, light **gizmos**,
+  and an **Edit ▸ Project Settings** window.
+- **Crash-safe autosave** — writes a `<scene>.autosave` recovery copy on a timer
+  (File ▸ Autosave), and offers to **Recover** it if the editor didn't close
+  cleanly. A normal Save clears it.
+- **Expanded camera & lighting** — cameras have Clear Flags (Skybox / Solid
+  Color), near/far clip, FOV/size and a render Depth; lights add color
+  **temperature** (Kelvin), **soft** spot cones, and a colored **ambient** tint,
+  with multi-light colored shading shared by the editor and player.
 - **Online services built into the engine & editor** — Steam (achievements,
   stats, leaderboards, cloud) and multiplayer (host/join, roster, chat) live in
   the editor's **Services** panel. Ship on Steam via

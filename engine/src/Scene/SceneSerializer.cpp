@@ -22,6 +22,7 @@
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
+#include "okay/Components/Animator.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/TilemapCollider2D.hpp"
@@ -260,6 +261,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
             << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << "\n";
+    }
+    if (auto* anim = go->GetComponent<Animator>()) {
+        out << "  animator " << anim->speed << " " << (anim->playing ? 1 : 0) << " "
+            << (anim->clip.loop ? 1 : 0) << " " << Quote(anim->clip.name)
+            << " " << anim->clip.Tracks().size();
+        for (const auto& tr : anim->clip.Tracks()) {
+            out << " " << Quote(tr.first) << " " << tr.second.Keys().size();
+            for (const auto& k : tr.second.Keys()) out << " " << k.time << " " << k.value;
+        }
+        out << "\n";
     }
     if (auto* tm = go->GetComponent<Tilemap>()) {
         out << "  tilemap " << tm->tileSize << " " << tm->Width() << " " << tm->Height();
@@ -772,6 +783,22 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int sp = 0; in >> sp >> au->minDistance >> au->maxDistance;
                         au->spatial = (sp != 0);
+                    }
+                } else if (field == "animator") {
+                    float speed = 1.0f; int playing = 1, loop = 1, tc = 0;
+                    in >> speed >> playing >> loop;
+                    std::string cname = ReadQuoted(in);
+                    in >> tc;
+                    auto* anim = go->AddComponent<Animator>();
+                    anim->speed = speed; anim->playing = (playing != 0);
+                    anim->clip.loop = (loop != 0); anim->clip.name = cname;
+                    for (int t = 0; t < tc; ++t) {
+                        std::string tn = ReadQuoted(in);
+                        int kc = 0; in >> kc;
+                        for (int k = 0; k < kc; ++k) {
+                            float kt = 0, kv = 0; in >> kt >> kv;
+                            anim->clip.AddKey(tn, kt, kv);
+                        }
                     }
                 } else if (field == "tilemap") {
                     float ts = 1.0f; int tw = 0, th = 0;

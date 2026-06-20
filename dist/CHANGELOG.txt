@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.23
+  - Character Creator: even more detail.
+    * Facial hair: Beard and Mustache toggles (hair-colored).
+    * Eye Size and Nose Size sliders.
+    * Two more hair styles: Bun and Afro (now 8 total).
+    * All new options save/load (back-compatible).
+
 v2.16.22
   - Character Creator: create your own accessories.
     * New "Custom Accessories" list — add any number of parts, each a primitive

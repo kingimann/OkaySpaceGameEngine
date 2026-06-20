@@ -40,6 +40,8 @@ struct HumanoidParams {
     bool  ears         = true;   // add ears to the sides of the head
     float armSwing     = 0.0f;   // degrees: fore/aft arm swing (animation; antisymmetric)
     float legSwing     = 0.0f;   // degrees: fore/aft leg swing (animation; antisymmetric)
+    float eyeSize      = 1.0f;   // multiplier on eye + pupil size
+    float noseSize     = 1.0f;   // multiplier on nose size
 };
 
 /// Per-region colors for the procedural humanoid (Mesh::Humanoid). When passed,
@@ -57,6 +59,8 @@ struct HumanoidColors {
     bool  hasFace = true;
     bool  hasHat = false;
     bool  hasGlasses = false;
+    bool  beard = false;         // chin/jaw beard (hair color)
+    bool  mustache = false;      // mustache under the nose (hair color)
 };
 
 /// A simple indexed triangle mesh (positions + triangle indices). Enough to
@@ -696,6 +700,14 @@ struct Mesh {
                     m.Add(Cube(1.0f), {0.0f, headY + 0.24f * hd, 0.0f},
                           {0.08f * hd, 0.22f * hd, 0.46f * hd}, h);
                     break;
+                case 6:  // bun: a ball on top/back of the head
+                    m.Add(Sphere(0.5f, 6, 8), {0.0f, headY + 0.30f * hd, -0.08f * hd},
+                          {0.26f * hd, 0.26f * hd, 0.26f * hd}, h);
+                    break;
+                case 7:  // afro: a big round puff
+                    m.Add(Sphere(0.5f, 7, 9), {0.0f, headY + 0.16f * hd, 0.0f},
+                          {0.62f * hd, 0.56f * hd, 0.62f * hd}, h);
+                    break;
                 default: break;                       // 0/1: just the cap
             }
         }
@@ -713,20 +725,27 @@ struct Mesh {
         if (c && c->hasFace) {                       // eyes, pupils, brows, nose, mouth on +Z
             const float fz = 0.19f * hd, ex = 0.09f * hd * p.eyeSpacing;
             Color pupil{c->eye.r * 0.25f, c->eye.g * 0.25f, c->eye.b * 0.25f, 1.0f};
+            const float es = p.eyeSize;
             for (int s = -1; s <= 1; s += 2) {
                 m.Add(Sphere(0.5f, 4, 5), {s * ex, headY + 0.04f * hd, fz},
-                      {0.06f * hd, 0.07f * hd, 0.05f * hd}, &c->eye);                       // eye white/iris
+                      {0.06f * hd * es, 0.07f * hd * es, 0.05f * hd}, &c->eye);              // eye white/iris
                 m.Add(Sphere(0.5f, 3, 4), {s * ex, headY + 0.04f * hd, fz + 0.03f * hd},
-                      {0.028f * hd, 0.032f * hd, 0.02f * hd}, &pupil);                       // pupil
+                      {0.028f * hd * es, 0.032f * hd * es, 0.02f * hd}, &pupil);             // pupil
                 // Brow, tilted by browAngle (inner end down for "angry").
                 m.AddPosed(Cube(1.0f), {s * ex, headY + 0.12f * hd, fz},
                            {0.09f * hd, 0.025f * hd, 0.04f * hd},
                            {0.0f, 0.0f, (float)s * p.browAngle}, {s * ex, headY + 0.12f * hd, fz}, &c->hair);
             }
             m.Add(Cube(1.0f), {0.0f, headY - 0.01f * hd, fz + 0.02f * hd},
-                  {0.05f * hd, 0.08f * hd, 0.06f * hd}, &c->skin);                          // nose
+                  {0.05f * hd * p.noseSize, 0.08f * hd * p.noseSize, 0.06f * hd * p.noseSize}, &c->skin); // nose
             m.Add(Cube(1.0f), {0.0f, headY - 0.13f * hd, fz},
                   {0.12f * hd * p.mouthWidth, 0.025f * hd, 0.04f * hd}, &c->hair);          // mouth
+            if (c->mustache)                          // mustache under the nose
+                m.Add(Cube(1.0f), {0.0f, headY - 0.08f * hd, fz},
+                      {0.13f * hd, 0.03f * hd, 0.05f * hd}, &c->hair);
+            if (c->beard)                             // beard around the chin/jaw
+                m.Add(Sphere(0.5f, 5, 6), {0.0f, headY - 0.19f * hd, fz - 0.04f * hd},
+                      {0.30f * hd, 0.20f * hd, 0.20f * hd}, &c->hair);
             if (c->hasGlasses)                        // a sunglasses bar across the eyes
                 m.Add(Cube(1.0f), {0.0f, headY + 0.04f * hd, fz + 0.03f * hd},
                       {(0.18f * p.eyeSpacing + 0.14f) * hd, 0.06f * hd, 0.03f * hd}, &c->glasses);

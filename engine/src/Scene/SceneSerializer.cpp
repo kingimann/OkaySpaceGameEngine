@@ -172,6 +172,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cb->hasFace ? 1 : 0)
             << " " << p.hairStyle << " " << p.eyeSpacing
             << " " << p.mouthWidth << " " << p.browAngle << " " << (p.ears ? 1 : 0)
+            << " " << cb->hat.r << " " << cb->hat.g << " " << cb->hat.b << " " << cb->hat.a
+            << " " << cb->glasses.r << " " << cb->glasses.g << " " << cb->glasses.b << " " << cb->glasses.a
+            << " " << (cb->hasHat ? 1 : 0) << " " << (cb->hasGlasses ? 1 : 0)
             << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
@@ -982,6 +985,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (more()) in >> p.mouthWidth;
                     if (more()) in >> p.browAngle;
                     if (more()) { int er = 1; in >> er; p.ears = (er != 0); }
+                    if (more()) in >> cb->hat.r;
+                    if (more()) in >> cb->hat.g;
+                    if (more()) in >> cb->hat.b;
+                    if (more()) in >> cb->hat.a;
+                    if (more()) in >> cb->glasses.r;
+                    if (more()) in >> cb->glasses.g;
+                    if (more()) in >> cb->glasses.b;
+                    if (more()) in >> cb->glasses.a;
+                    if (more()) { int hh = 0; in >> hh; cb->hasHat = (hh != 0); }
+                    if (more()) { int hg = 0; in >> hg; cb->hasGlasses = (hg != 0); }
                     cb->Apply();   // rebuild the humanoid mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();

@@ -579,6 +579,7 @@ int main() {
         cb->params.hairStyle = 4;
         cb->params.mouthWidth = 1.6f;
         cb->params.ears = false;
+        cb->hasHat = true;
         cb->subdivisions    = 0;
         int baseTris = cb->Build().TriangleCount();   // base (with hair cap, no subdiv)
         cb->subdivisions    = 1;
@@ -610,6 +611,7 @@ int main() {
         CHECK(lc->params.hairStyle == 4);                                  // hair style round-trips
         CHECK_NEAR(lc->params.mouthWidth, 1.6f, 0.001f);                   // face detail round-trips
         CHECK(lc->params.ears == false);
+        CHECK(lc->hasHat == true);                                         // accessory round-trips
         CHECK(lc->subdivisions == 1);
         CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == baseTris * 4);
     }

@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.20
+  - Character Creator: accessories.
+    * Hat (brim + crown) and Glasses (sunglasses bar) toggles, each with its own
+      color.
+    * Save/load, back-compatible.
+
 v2.16.19
   - Character Creator: more facial detail.
     * Ears (toggle), pupils inside the eyes, an adjustable Mouth Width (smile),

@@ -49,8 +49,12 @@ struct HumanoidColors {
     Color shoes = Color::FromBytes(35, 35, 40);    // feet
     Color hair  = Color::FromBytes(60, 40, 30);    // hair cap, brows, mouth
     Color eye   = Color::FromBytes(40, 40, 50);    // eyes
+    Color hat   = Color::FromBytes(150, 40, 40);   // hat
+    Color glasses = Color::FromBytes(20, 20, 25);  // glasses frame
     bool  hasHair = true;
     bool  hasFace = true;
+    bool  hasHat = false;
+    bool  hasGlasses = false;
 };
 
 /// A simple indexed triangle mesh (positions + triangle indices). Enough to
@@ -693,6 +697,12 @@ struct Mesh {
                 default: break;                       // 0/1: just the cap
             }
         }
+        if (c && c->hasHat) {                        // brimmed hat on top of the head
+            m.Add(Cylinder(0.5f, 1.0f, 10), {0.0f, headY + 0.20f * hd, 0.0f},
+                  {0.64f * hd, 0.04f * hd, 0.64f * hd}, &c->hat);      // brim
+            m.Add(Cylinder(0.5f, 1.0f, 10), {0.0f, headY + 0.34f * hd, 0.0f},
+                  {0.42f * hd, 0.24f * hd, 0.42f * hd}, &c->hat);      // crown
+        }
         if (c && p.ears) {                           // ears on the head sides
             for (int s = -1; s <= 1; s += 2)
                 m.Add(Sphere(0.5f, 4, 5), {s * 0.21f * hd, headY + 0.01f * hd, 0.0f},
@@ -715,6 +725,9 @@ struct Mesh {
                   {0.05f * hd, 0.08f * hd, 0.06f * hd}, &c->skin);                          // nose
             m.Add(Cube(1.0f), {0.0f, headY - 0.13f * hd, fz},
                   {0.12f * hd * p.mouthWidth, 0.025f * hd, 0.04f * hd}, &c->hair);          // mouth
+            if (c->hasGlasses)                        // a sunglasses bar across the eyes
+                m.Add(Cube(1.0f), {0.0f, headY + 0.04f * hd, fz + 0.03f * hd},
+                      {(0.18f * p.eyeSpacing + 0.14f) * hd, 0.06f * hd, 0.03f * hd}, &c->glasses);
         }
         m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin); // neck
         m.Add(Cube(1.0f), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},

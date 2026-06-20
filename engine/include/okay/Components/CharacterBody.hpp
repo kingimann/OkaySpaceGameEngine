@@ -20,14 +20,19 @@ public:
     Color shoes  = Color::FromBytes(35, 35, 40);     // feet
     Color hair   = Color::FromBytes(60, 40, 30);     // hair cap / brows / mouth
     Color eye    = Color::FromBytes(40, 40, 50);     // eyes
+    Color hat    = Color::FromBytes(150, 40, 40);    // hat
+    Color glasses= Color::FromBytes(20, 20, 25);     // glasses frame
     bool  hasHair = true;
     bool  hasFace = true;
+    bool  hasHat = false;
+    bool  hasGlasses = false;
 
     /// Build the mesh described by the current parameters (per-part colors).
     Mesh Build() const {
         HumanoidColors c;
         c.skin = color; c.shirt = outfit; c.pants = pants; c.shoes = shoes;
         c.hair = hair;  c.eye = eye;      c.hasHair = hasHair; c.hasFace = hasFace;
+        c.hat = hat; c.glasses = glasses; c.hasHat = hasHat; c.hasGlasses = hasGlasses;
         Mesh m = Mesh::Humanoid(params, &c);
         int n = subdivisions < 0 ? 0 : (subdivisions > 3 ? 3 : subdivisions);
         if (n > 0) m.SubdivideSmooth(n, smoothAmount);

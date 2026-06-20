@@ -4948,6 +4948,20 @@ void DrawInspector(EditorState& ed) {
                 ch |= ImGui::Checkbox("Ears##char", &cb->params.ears);
             }
             ImGui::Spacing();
+            ImGui::TextDisabled("Accessories");
+            ch |= ImGui::Checkbox("Hat##char", &cb->hasHat);
+            if (cb->hasHat) {
+                ImGui::SameLine();
+                float ht[3] = {cb->hat.r, cb->hat.g, cb->hat.b};
+                if (ImGui::ColorEdit3("##hatcol", ht)) { cb->hat = {ht[0], ht[1], ht[2], 1.0f}; ch = true; }
+            }
+            ch |= ImGui::Checkbox("Glasses##char", &cb->hasGlasses);
+            if (cb->hasGlasses) {
+                ImGui::SameLine();
+                float gl[3] = {cb->glasses.r, cb->glasses.g, cb->glasses.b};
+                if (ImGui::ColorEdit3("##glcol", gl)) { cb->glasses = {gl[0], gl[1], gl[2], 1.0f}; ch = true; }
+            }
+            ImGui::Spacing();
             ImGui::TextDisabled("Presets");
             if (ImGui::SmallButton("Reset##char"))    { p = HumanoidParams{}; ch = true; }
             ImGui::SameLine();

@@ -1394,19 +1394,65 @@ static std::string Lower(std::string s) {
 }
 
 // Visual kind (icon color + short letter) for an asset, by extension.
-struct AssetKind { ImU32 col; const char* letter; };
+// An asset's icon: a category (for the drawn glyph), a tint, and a short label.
+enum class AssetIcon { Folder, Script, Material, Scene, Prefab, Image, Audio, Mesh, Data, Visual, Generic };
+struct AssetKind { ImU32 col; const char* letter; AssetIcon icon; };
 static AssetKind KindOf(const std::string& extLower, bool isDir) {
-    if (isDir) return {IM_COL32(225, 200, 95, 255), "DIR"};
-    if (extLower == ".okayscene")  return {IM_COL32(90, 150, 240, 255), "SCN"};
-    if (extLower == ".okayprefab") return {IM_COL32(80, 210, 225, 255), "PFB"};
+    if (isDir) return {IM_COL32(235, 200, 90, 255), "", AssetIcon::Folder};
+    if (extLower == ".okayscene")  return {IM_COL32(90, 150, 240, 255), "SCN", AssetIcon::Scene};
+    if (extLower == ".okayprefab") return {IM_COL32(80, 210, 225, 255), "PFB", AssetIcon::Prefab};
     if (extLower == ".png" || extLower == ".jpg" || extLower == ".jpeg" ||
-        extLower == ".bmp" || extLower == ".tga") return {IM_COL32(110, 200, 120, 255), "IMG"};
-    if (extLower == ".wav")        return {IM_COL32(230, 160, 70, 255), "WAV"};
-    if (extLower == ".okay" || extLower == ".lua" || extLower == ".cs")
-        return {IM_COL32(185, 140, 235, 255), "CS"};
-    if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ"};
-    if (extLower == ".okayvs")     return {IM_COL32(150, 200, 170, 255), "VS"};
-    return {IM_COL32(150, 152, 162, 255), "•"};
+        extLower == ".bmp" || extLower == ".tga") return {IM_COL32(110, 200, 120, 255), "IMG", AssetIcon::Image};
+    if (extLower == ".wav")        return {IM_COL32(230, 160, 70, 255), "WAV", AssetIcon::Audio};
+    if (extLower == ".okay")       return {IM_COL32(120, 180, 255, 255), "OKS", AssetIcon::Script};
+    if (extLower == ".lua" || extLower == ".cs") return {IM_COL32(150, 140, 235, 255), "SCR", AssetIcon::Script};
+    if (extLower == ".okaymat")    return {IM_COL32(235, 110, 170, 255), "MAT", AssetIcon::Material};
+    if (extLower == ".okaydata")   return {IM_COL32(110, 205, 190, 255), "DAT", AssetIcon::Data};
+    if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ", AssetIcon::Mesh};
+    if (extLower == ".okayvs")     return {IM_COL32(150, 200, 170, 255), "VS",  AssetIcon::Visual};
+    return {IM_COL32(150, 152, 162, 255), "FILE", AssetIcon::Generic};
+}
+
+// Draw a simple type icon inside the cell rect (a folder shape, a script page, a
+// material sphere, ...), so scripts/folders/materials are recognizable at a glance.
+static void DrawAssetIcon(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const AssetKind& k) {
+    ImU32 c = k.col, dim = (k.col & 0x00FFFFFF) | 0x66000000;
+    float w = mx.x - mn.x, h = mx.y - mn.y;
+    ImVec2 ctr(mn.x + w * 0.5f, mn.y + h * 0.5f);
+    float r = (w < h ? w : h) * 0.30f;
+    switch (k.icon) {
+        case AssetIcon::Folder: {
+            ImVec2 a(mn.x + w*0.18f, mn.y + h*0.34f), b(mx.x - w*0.18f, mx.y - h*0.24f);
+            dl->AddRectFilled(ImVec2(a.x, a.y - h*0.10f), ImVec2(a.x + w*0.30f, a.y + h*0.04f), c, 2.0f); // tab
+            dl->AddRectFilled(a, b, c, 3.0f);
+            dl->AddRectFilled(ImVec2(a.x, a.y), ImVec2(b.x, a.y + h*0.06f), dim);
+            break;
+        }
+        case AssetIcon::Script: {  // a page with text lines
+            ImVec2 a(mn.x + w*0.28f, mn.y + h*0.18f), b(mx.x - w*0.28f, mx.y - h*0.18f);
+            dl->AddRectFilled(a, b, IM_COL32(235,238,245,255), 2.0f);
+            for (int i = 0; i < 4; ++i) {
+                float y = a.y + (b.y - a.y) * (0.22f + i * 0.2f);
+                dl->AddLine(ImVec2(a.x + w*0.06f, y), ImVec2(b.x - w*0.06f, y), c, 1.5f);
+            }
+            break;
+        }
+        case AssetIcon::Material: {  // a shaded sphere
+            dl->AddCircleFilled(ctr, r, c, 24);
+            dl->AddCircleFilled(ImVec2(ctr.x - r*0.32f, ctr.y - r*0.32f), r*0.42f, IM_COL32(255,255,255,120), 16);
+            break;
+        }
+        case AssetIcon::Scene:  dl->AddNgonFilled(ctr, r, c, 6); break;       // hex
+        case AssetIcon::Prefab: dl->AddNgonFilled(ctr, r, c, 6);
+                                dl->AddCircleFilled(ctr, r*0.4f, IM_COL32(20,30,40,255), 12); break;
+        case AssetIcon::Audio: {
+            dl->AddRectFilled(ImVec2(ctr.x - r*0.7f, ctr.y - r*0.3f), ImVec2(ctr.x, ctr.y + r*0.3f), c);
+            dl->AddTriangleFilled(ImVec2(ctr.x, ctr.y - r*0.7f), ImVec2(ctr.x, ctr.y + r*0.7f), ImVec2(ctr.x + r*0.6f, ctr.y), c);
+            break;
+        }
+        case AssetIcon::Mesh:   dl->AddNgon(ctr, r, c, 4, 2.5f); break;
+        default:                dl->AddRectFilled(ImVec2(ctr.x - r, ctr.y - r*1.2f), ImVec2(ctr.x + r, ctr.y + r*1.2f), c, 2.0f); break;
+    }
 }
 
 // Move an asset (file or folder) into a destination folder (drag-and-drop).
@@ -1625,11 +1671,14 @@ void DrawProject(EditorState& ed) {
                 selected = full;
             if (selected == full) ImGui::PopStyleColor();
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cv.x * 0.5f, cv.y * 0.5f, cv.z * 0.5f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, cv);
-            if (selected == full) ImGui::PushStyleColor(ImGuiCol_Button, cv);
-            ImGui::Button(k.letter, ImVec2(cell, cell));
-            if (selected == full) ImGui::PopStyleColor();
+            // Neutral cell background; the drawn icon carries the category color.
+            ImVec4 bg(0.16f, 0.17f, 0.19f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, selected == full ? cv : bg);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                  ImVec4(cv.x * 0.45f, cv.y * 0.45f, cv.z * 0.45f, 1.0f));
+            ImGui::Button("##cell", ImVec2(cell, cell));
+            DrawAssetIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(),
+                          ImGui::GetItemRectMax(), k);
             ImGui::PopStyleColor(2);
         }
         bool hov = ImGui::IsItemHovered();
@@ -4544,6 +4593,9 @@ void DrawInspector(EditorState& ed) {
     }
     // A GameObject may carry several scripts (like Unity's multiple MonoBehaviours).
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
+        // Scope every widget by the component pointer so multiple scripts on one
+        // object don't collide IDs (which makes ImGui flag a conflict on hover).
+        ImGui::PushID(sc);
         std::string sname = sc->Path().empty() ? go->name
                           : std::filesystem::path(sc->Path()).stem().string();
         std::string slabel = "Script (" + sname + ")";
@@ -4639,6 +4691,7 @@ void DrawInspector(EditorState& ed) {
                 }
             }
         }
+        ImGui::PopID();
     }
     if (auto* cc = go->GetComponent<CharacterController2D>()) {
         if (CompHeader("Character Controller 2D", cc, &toRemove)) {
@@ -5634,10 +5687,11 @@ void DrawInspector(EditorState& ed) {
                 for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
                 if (ext == ".okay") {
                     ed.PushUndo();
-                    auto* nsc = go->GetComponent<ScriptComponent>();
-                    if (!nsc) nsc = go->AddComponent<ScriptComponent>("okayscript");
+                    // Always attach a new Script (objects can hold several, even
+                    // multiple instances of the same script) — like Unity.
+                    auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
                     std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
-                    SetCodeBuffer(nsc, nsc->Source());   // refresh the editor buffer
+                    SetCodeBuffer(nsc, nsc->Source());   // fresh editor buffer for it
                     ConsoleLog("Attached script " + path); ed.dirty = true;
                 } else if (ext == ".okaymat") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -6775,7 +6829,43 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImVec2 tip[3]; bool tipOk[3];
         for (int i = 0; i < 3; ++i) tipOk[i] = toScreen(vp * Vec4{o + axis[i] * L, 1}, tip[i]);
 
-        if (oOk) {
+        // Rotate uses Unity-style rings (a circle per axis lying in the plane
+        // perpendicular to that axis); Move/Scale use straight arms with knobs.
+        const int RING_SEG = 64;
+        auto ringPt = [&](int i, float ang, ImVec2& out) -> bool {
+            Vec3 u = axis[(i + 1) % 3], v = axis[(i + 2) % 3];
+            Vec3 p = o + (u * Mathf::Cos(ang) + v * Mathf::Sin(ang)) * L;
+            return toScreen(vp * Vec4{p, 1}, out);
+        };
+        // Closest screen distance (px) from the mouse to ring i, plus the angle there.
+        auto ringPick = [&](int i, float& bestAng) -> float {
+            float best = 1e30f; bestAng = 0.0f;
+            ImVec2 prev; bool prevOk = ringPt(i, 0.0f, prev);
+            for (int s = 1; s <= RING_SEG; ++s) {
+                float a = (float)s / RING_SEG * 2.0f * Mathf::PI;
+                ImVec2 cur; bool curOk = ringPt(i, a, cur);
+                if (prevOk && curOk) {
+                    float d = SegDistPx(io.MousePos, prev, cur);
+                    if (d < best) { best = d; bestAng = a - (Mathf::PI / RING_SEG); }
+                }
+                prev = cur; prevOk = curOk;
+            }
+            return best;
+        };
+
+        if (oOk && tool == Tool::Rotate) {
+            for (int i = 0; i < 3; ++i) {
+                ImU32 c = (g_gizmoGrab && g_gizmoAxis == i) ? IM_COL32(255, 230, 90, 255) : col[i];
+                ImVec2 prev; bool prevOk = ringPt(i, 0.0f, prev);
+                for (int s = 1; s <= RING_SEG; ++s) {
+                    float a = (float)s / RING_SEG * 2.0f * Mathf::PI;
+                    ImVec2 cur; bool curOk = ringPt(i, a, cur);
+                    if (prevOk && curOk) dl->AddLine(prev, cur, c, 2.5f);
+                    prev = cur; prevOk = curOk;
+                }
+            }
+            dl->AddCircleFilled(so, 3.0f, IM_COL32(230, 230, 230, 255));
+        } else if (oOk) {
             for (int i = 0; i < 3; ++i) {
                 if (!tipOk[i]) continue;
                 ImU32 c = (g_gizmoGrab && g_gizmoAxis == i) ? IM_COL32(255, 230, 90, 255) : col[i];
@@ -6784,60 +6874,80 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     dl->AddRectFilled(ImVec2(tip[i].x - 5, tip[i].y - 5),
                                       ImVec2(tip[i].x + 5, tip[i].y + 5), c);   // scale cube
                 else
-                    dl->AddCircleFilled(tip[i], 5.0f, c);                       // move/rotate knob
+                    dl->AddCircleFilled(tip[i], 5.0f, c);                       // move knob
             }
             dl->AddCircleFilled(so, 3.0f, IM_COL32(230, 230, 230, 255));
         }
 
-        // Grab the closest handle on mouse-press.
+        // Grab the closest handle (ring for Rotate, arm for Move/Scale) on press.
         if (hovered && oOk && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            float best = 11.0f; int pick = -1;
-            for (int i = 0; i < 3; ++i)
-                if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
+            int pick = -1;
+            if (tool == Tool::Rotate) {
+                float best = 8.0f, a;
+                for (int i = 0; i < 3; ++i) { float d = ringPick(i, a); if (d < best) { best = d; pick = i; } }
+            } else {
+                float best = 11.0f;
+                for (int i = 0; i < 3; ++i)
+                    if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
+            }
             if (pick >= 0) { ed.PushUndo(); g_gizmoAxis = pick; g_gizmoGrab = true; grabbedThisClick = true;
                              g_rotAccum = 0.0f; g_rotApplied = 0.0f; }
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_gizmoGrab = false; g_gizmoAxis = -1; }
 
-        // Drag the grabbed axis.
-        if (g_gizmoGrab && g_gizmoAxis >= 0 && tipOk[g_gizmoAxis] && oOk &&
-            ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        // Drag the grabbed handle.
+        if (g_gizmoGrab && g_gizmoAxis >= 0 && oOk && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             int i = g_gizmoAxis;
-            ImVec2 sdir{tip[i].x - so.x, tip[i].y - so.y};
-            float slen = Mathf::Sqrt(sdir.x * sdir.x + sdir.y * sdir.y);
-            if (slen > 1e-3f) {
-                float along = (io.MouseDelta.x * sdir.x + io.MouseDelta.y * sdir.y) / slen;
-                float amt = along * (L / slen);       // screen px -> world units along axis
-                if (tool == Tool::Move) {
-                    t->localPosition += axis[i] * amt;
-                    if (g_snap && g_snapSize > 0.0f) {
-                        t->localPosition.x = Mathf::Round(t->localPosition.x / g_snapSize) * g_snapSize;
-                        t->localPosition.y = Mathf::Round(t->localPosition.y / g_snapSize) * g_snapSize;
-                        t->localPosition.z = Mathf::Round(t->localPosition.z / g_snapSize) * g_snapSize;
+            if (tool == Tool::Rotate) {
+                // Spin about axis i by dragging tangent to its ring: find the ring
+                // point nearest the cursor, take its screen-space tangent, and
+                // project the mouse motion onto it.
+                float a; ringPick(i, a);
+                ImVec2 p0, p1;
+                if (ringPt(i, a - 0.06f, p0) && ringPt(i, a + 0.06f, p1)) {
+                    ImVec2 tg{p1.x - p0.x, p1.y - p0.y};
+                    float tl = Mathf::Sqrt(tg.x * tg.x + tg.y * tg.y);
+                    if (tl > 1e-3f) {
+                        tg.x /= tl; tg.y /= tl;
+                        float deg = (io.MouseDelta.x * tg.x + io.MouseDelta.y * tg.y) * 0.5f;
+                        if (g_snap && g_rotSnapDeg > 0.0f) {
+                            // Detents: apply only whole snapped steps as we cross them.
+                            g_rotAccum += deg;
+                            float snapped = Mathf::Round(g_rotAccum / g_rotSnapDeg) * g_rotSnapDeg;
+                            float step = snapped - g_rotApplied;
+                            if (step != 0.0f) { t->Rotate(axis[i] * step); g_rotApplied = snapped; }
+                        } else {
+                            t->Rotate(axis[i] * deg);
+                        }
+                        ed.dirty = true;
                     }
-                } else if (tool == Tool::Rotate) {
-                    float deg = along * 0.6f;                   // degrees about the axis
-                    if (g_snap && g_rotSnapDeg > 0.0f) {
-                        // 15-deg detents: apply only whole snapped steps as we cross them.
-                        g_rotAccum += deg;
-                        float snapped = Mathf::Round(g_rotAccum / g_rotSnapDeg) * g_rotSnapDeg;
-                        float step = snapped - g_rotApplied;
-                        if (step != 0.0f) { t->Rotate(axis[i] * step); g_rotApplied = snapped; }
-                    } else {
-                        t->Rotate(axis[i] * deg);
-                    }
-                } else { // Scale
-                    Vec3 sc = t->localScale;
-                    if (i == 0) sc.x += amt; else if (i == 1) sc.y += amt; else sc.z += amt;
-                    if (g_snap && g_snapSize > 0.0f) {          // snap scale to the increment
-                        sc.x = Mathf::Round(sc.x / g_snapSize) * g_snapSize;
-                        sc.y = Mathf::Round(sc.y / g_snapSize) * g_snapSize;
-                        sc.z = Mathf::Round(sc.z / g_snapSize) * g_snapSize;
-                    }
-                    sc.x = Mathf::Max(0.01f, sc.x); sc.y = Mathf::Max(0.01f, sc.y); sc.z = Mathf::Max(0.01f, sc.z);
-                    t->localScale = sc;
                 }
-                ed.dirty = true;
+            } else if (tipOk[i]) {
+                ImVec2 sdir{tip[i].x - so.x, tip[i].y - so.y};
+                float slen = Mathf::Sqrt(sdir.x * sdir.x + sdir.y * sdir.y);
+                if (slen > 1e-3f) {
+                    float along = (io.MouseDelta.x * sdir.x + io.MouseDelta.y * sdir.y) / slen;
+                    float amt = along * (L / slen);       // screen px -> world units along axis
+                    if (tool == Tool::Move) {
+                        t->localPosition += axis[i] * amt;
+                        if (g_snap && g_snapSize > 0.0f) {
+                            t->localPosition.x = Mathf::Round(t->localPosition.x / g_snapSize) * g_snapSize;
+                            t->localPosition.y = Mathf::Round(t->localPosition.y / g_snapSize) * g_snapSize;
+                            t->localPosition.z = Mathf::Round(t->localPosition.z / g_snapSize) * g_snapSize;
+                        }
+                    } else { // Scale
+                        Vec3 sc = t->localScale;
+                        if (i == 0) sc.x += amt; else if (i == 1) sc.y += amt; else sc.z += amt;
+                        if (g_snap && g_snapSize > 0.0f) {      // snap scale to the increment
+                            sc.x = Mathf::Round(sc.x / g_snapSize) * g_snapSize;
+                            sc.y = Mathf::Round(sc.y / g_snapSize) * g_snapSize;
+                            sc.z = Mathf::Round(sc.z / g_snapSize) * g_snapSize;
+                        }
+                        sc.x = Mathf::Max(0.01f, sc.x); sc.y = Mathf::Max(0.01f, sc.y); sc.z = Mathf::Max(0.01f, sc.z);
+                        t->localScale = sc;
+                    }
+                    ed.dirty = true;
+                }
             }
         }
     }

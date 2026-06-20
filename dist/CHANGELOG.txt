@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.22
+  - Character Creator: create your own accessories.
+    * New "Custom Accessories" list — add any number of parts, each a primitive
+      (Cube/Sphere/Cylinder/Cone/Pyramid/Capsule/Torus/Wedge) with its own name,
+      position, scale, rotation, and color. Build hats, swords, wings, antennae,
+      backpacks, etc.
+    * Add/remove/edit per accessory in the inspector; live preview; full
+      save/load (back-compatible). Accessories ride on top of the body without
+      being subdivided, so their edges stay crisp.
+
 v2.16.21
   - Character Creator: animation! Characters can now move.
     * Animation selector — None / Idle (gentle sway) / Walk / Run — with an

@@ -5,6 +5,18 @@
 
 namespace okay {
 
+/// A user-defined accessory part attached to a character: a primitive shape
+/// placed in the character's local space, with its own color. Users add these in
+/// the inspector to build hats, swords, wings, antennae, etc.
+struct Accessory {
+    std::string name  = "Accessory";
+    std::string shape = "Cube";          // primitive (Mesh::FromName)
+    Vec3  offset = {0.0f, 1.9f, 0.25f};
+    Vec3  scale  = {0.2f, 0.2f, 0.2f};
+    Vec3  rotation = {0.0f, 0.0f, 0.0f}; // euler degrees
+    Color color = Color::FromBytes(200, 200, 205);
+};
+
 /// A parametric humanoid "character creator": proportion sliders (height, build,
 /// head size, shoulders, hips, limb lengths/thickness) plus a subdivision level
 /// that takes it from low-poly to smooth high-poly. Lives next to a MeshRenderer
@@ -32,6 +44,8 @@ public:
     float animSpeed = 1.0f;
     float animTime = 0.0f;        // runtime clock (not serialized)
 
+    std::vector<Accessory> accessories;   // user-added custom parts
+
     /// Build the mesh for an explicit parameter set (used for animation frames).
     Mesh Build(const HumanoidParams& pp) const {
         HumanoidColors c;
@@ -41,6 +55,9 @@ public:
         Mesh m = Mesh::Humanoid(pp, &c);
         int n = subdivisions < 0 ? 0 : (subdivisions > 3 ? 3 : subdivisions);
         if (n > 0) m.SubdivideSmooth(n, smoothAmount);
+        // User accessories on top (not subdivided, so edges stay crisp).
+        for (const Accessory& a : accessories)
+            m.AddPosed(Mesh::FromName(a.shape), a.offset, a.scale, a.rotation, a.offset, &a.color);
         return m;
     }
     /// Build the mesh described by the current (rest) parameters.

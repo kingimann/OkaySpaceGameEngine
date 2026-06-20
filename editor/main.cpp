@@ -5015,6 +5015,9 @@ void DrawInspector(EditorState& ed) {
                     int si = 0;
                     for (int k = 0; k < 8; ++k) if (a.shape == accShapes[k]) si = k;
                     if (ImGui::Combo("Shape##acc", &si, accShapes, 8)) { a.shape = accShapes[si]; ch = true; }
+                    const char* attachPts[] = {"Origin", "Head", "Torso", "Hips",
+                                               "Left Hand", "Right Hand", "Back"};
+                    if (ImGui::Combo("Attach To##acc", &a.attach, attachPts, 7)) ch = true;
                     float off[3] = {a.offset.x, a.offset.y, a.offset.z};
                     if (ImGui::DragFloat3("Offset##acc", off, 0.02f)) { a.offset = {off[0], off[1], off[2]}; ch = true; }
                     float sc[3] = {a.scale.x, a.scale.y, a.scale.z};
@@ -5051,6 +5054,16 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Child##char"))    { p = HumanoidParams{}; p.height = 0.7f; p.headSize = 1.4f; p.armLength = 0.85f; p.legLength = 0.8f; p.build = 0.9f; ch = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("Robot##char"))    { p = HumanoidParams{}; p.build = 1.3f; p.shoulderWidth = 1.3f; p.hipWidth = 1.1f; p.armSpread = 25.0f; p.headSize = 0.9f; ch = true; }
+            // Builds using the new body-shape params.
+            if (ImGui::SmallButton("Athletic##char")) { p = HumanoidParams{}; p.shoulderWidth = 1.25f; p.hipWidth = 0.9f; p.waist = 0.85f; p.armThickness = 1.15f; p.legThickness = 1.15f; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Stocky##char"))   { p = HumanoidParams{}; p.height = 0.9f; p.build = 1.3f; p.shoulderWidth = 1.3f; p.waist = 1.2f; p.legThickness = 1.3f; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Lanky##char"))    { p = HumanoidParams{}; p.height = 1.3f; p.build = 0.8f; p.armLength = 1.2f; p.legLength = 1.25f; p.armThickness = 0.8f; p.legThickness = 0.8f; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Chubby##char"))   { p = HumanoidParams{}; p.build = 1.35f; p.waist = 1.5f; p.belly = 1.1f; p.armThickness = 1.3f; p.legThickness = 1.3f; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Buff##char"))     { p = HumanoidParams{}; p.shoulderWidth = 1.45f; p.hipWidth = 0.85f; p.waist = 0.8f; p.build = 1.15f; p.armThickness = 1.45f; p.legThickness = 1.3f; ch = true; }
             if (ImGui::Button("Randomize##char", ImVec2(-1, 0))) {
                 auto rf = [](float lo, float hi) { return lo + (hi - lo) * (float)std::rand() / (float)RAND_MAX; };
                 p.height = rf(0.8f, 1.4f);   p.build = rf(0.7f, 1.7f);

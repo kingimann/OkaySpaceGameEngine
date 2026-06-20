@@ -15,6 +15,10 @@ struct Accessory {
     Vec3  scale  = {0.2f, 0.2f, 0.2f};
     Vec3  rotation = {0.0f, 0.0f, 0.0f}; // euler degrees
     Color color = Color::FromBytes(200, 200, 205);
+    // Attach point: 0 Origin, 1 Head, 2 Torso, 3 Hips, 4 Left Hand, 5 Right Hand,
+    // 6 Back. Non-origin anchors track proportions and animation (e.g. a sword in
+    // the hand swings with the arm; a hat on the head rises with height).
+    int   attach = 0;
 };
 
 /// A parametric humanoid "character creator": proportion sliders (height, build,
@@ -58,9 +62,41 @@ public:
         Mesh m = Mesh::Humanoid(pp, &c);
         int n = subdivisions < 0 ? 0 : (subdivisions > 3 ? 3 : subdivisions);
         if (n > 0) m.SubdivideSmooth(n, smoothAmount);
+        // Anchor (position + euler) of an attach region, matching Humanoid()'s
+        // layout so accessories follow proportions and animation.
+        auto anchorOf = [&](int region, Vec3& pos, Vec3& euler) {
+            float H = pp.height, B = pp.build, bd = pp.bodyDepth;
+            float up = 0.78f * H * (pp.torsoLength - 1.0f);
+            float headY = 1.78f * H + up;
+            float torsoY = (0.71f * H) + 0.39f * H * pp.torsoLength;
+            pos = {0, 0, 0}; euler = {0, 0, 0};
+            switch (region) {
+                case 1: pos = {0, headY, 0}; break;                         // head
+                case 2: pos = {0, torsoY, 0}; break;                        // torso
+                case 3: pos = {0, 0.66f * H, 0}; break;                     // hips
+                case 6: pos = {0, torsoY, -0.34f * B * bd}; break;          // back
+                case 4: case 5: {                                          // hands
+                    int s = (region == 4) ? -1 : 1;
+                    float sw = 0.46f * pp.shoulderWidth;
+                    Vec3 shoulder{s * sw, 1.50f * H + up, 0};
+                    Vec3 handRest{s * sw, (1.18f - 0.54f * pp.armLength) * H + up, 0};
+                    Vec3 armRot{(float)s * pp.armSwing, 0.0f, (float)s * -pp.armSpread};
+                    Quat q = Quat::Euler(armRot);
+                    pos = shoulder + q * (handRest - shoulder);
+                    euler = armRot;
+                    break;
+                }
+                default: break;                                            // 0 = local origin
+            }
+        };
         // User accessories on top (not subdivided, so edges stay crisp).
-        for (const Accessory& a : accessories)
-            m.AddPosed(Mesh::FromName(a.shape), a.offset, a.scale, a.rotation, a.offset, &a.color);
+        for (const Accessory& a : accessories) {
+            Vec3 ap, ae; anchorOf(a.attach, ap, ae);
+            Quat q = Quat::Euler(ae);
+            Vec3 world = ap + q * a.offset;
+            Vec3 eul{ae.x + a.rotation.x, ae.y + a.rotation.y, ae.z + a.rotation.z};
+            m.AddPosed(Mesh::FromName(a.shape), world, a.scale, eul, world, &a.color);
+        }
         return m;
     }
     /// Build the mesh described by the current (rest) parameters.

@@ -18,6 +18,9 @@ v2.13.0
     by each light's color. The corner overlay shows live FPS, and a new "Align
     Cam to View" button snaps a selected camera to the editor viewpoint (Unity's
     Align With View).
+  - Camera Preview: selecting a perspective Camera shows a live inset in the
+    Scene view of exactly what that camera sees (Unity's Camera Preview), so you
+    can frame shots without switching to the Game view.
   - Material inspector: double-click a .okaymat asset to edit its albedo,
     emissive, specular/shininess, unlit/double-sided, texture and tiling, then
     Save or "Apply to Selection" to stamp it onto the selected mesh. You can also

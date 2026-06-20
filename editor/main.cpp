@@ -138,9 +138,9 @@ SDL_Renderer* g_sdlRenderer = nullptr;
 // time — if the Scene and Game views shared one texture, whichever drew last
 // would overwrite it and BOTH panels would show that content (the flicker seen
 // when splitting Scene + Game). A texture per slot keeps them independent.
-static const int kView3DSlots = 2;
-SDL_Texture* g_view3DTex[kView3DSlots] = {nullptr, nullptr};
-int g_view3DW[kView3DSlots] = {0, 0}, g_view3DH[kView3DSlots] = {0, 0};
+static const int kView3DSlots = 3;   // 0=Scene view, 1=Game view, 2=Camera preview
+SDL_Texture* g_view3DTex[kView3DSlots] = {};
+int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
@@ -5506,6 +5506,30 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Screen-space UI draws on top of the 3D view too, so UI added to a 3D
     // project (HUD, menus, buttons) is visible here and in the Game view.
     DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+
+    // Camera Preview (Unity): when a perspective Camera is selected, show what
+    // it sees in a small inset in the corner of the Scene view (slot 2 so it
+    // doesn't clobber the Scene/Game textures).
+    if (!gameView && ed.selected()) {
+        if (auto* pc = ed.selected()->GetComponent<Camera>();
+            pc && pc->projection == Camera::Projection::Perspective) {
+            float pw = Mathf::Clamp(canvasSize.x * 0.28f, 140.0f, 320.0f);
+            float ph = pw * 9.0f / 16.0f;
+            ImVec2 pmin(canvasEnd.x - pw - 10, canvasEnd.y - ph - 10);
+            ImVec2 pmax(canvasEnd.x - 10, canvasEnd.y - 10);
+            Color bg = pc->backgroundColor;
+            dl->AddRectFilled(pmin, pmax, IM_COL32((int)(bg.r * 255), (int)(bg.g * 255),
+                                                   (int)(bg.b * 255), 255));
+            Mat4 cvp = pc->ProjectionMatrix(pw / ph) * pc->ViewMatrix();
+            Vec3 ceye = ed.selected()->transform->Position();
+            if (SDL_Texture* ptex = Render3DTexture(ed.scene(), cvp, ceye,
+                                                    (int)pw, (int)ph, 2))
+                dl->AddImage((ImTextureID)ptex, pmin, pmax);
+            dl->AddRect(pmin, pmax, IM_COL32(255, 255, 255, 180));
+            dl->AddText(ImVec2(pmin.x + 4, pmin.y - 16), IM_COL32(220, 220, 230, 255),
+                        "Camera Preview");
+        }
+    }
 
     dl->PopClipRect();
 

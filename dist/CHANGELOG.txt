@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.29
+  - Character Creator: workflow + prop palette.
+    * Accessory list now has Duplicate, Move Up/Down (reorder).
+    * Prop palette — one-click Sword, Halo, Cape, Tail, Horns, Wings, Jetpack
+      (pre-parented to the right body region).
+    * Preset Library browser — lists every .okaychar in the folder; click to load.
+
 v2.16.28
   - Character Creator: more animation.
     * New clips: Wave (raises and waves the right arm) and Jump (crouch-hop with

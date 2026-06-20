@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.34
+  - Character Creator: fixed detached hands — the arm now hangs from the
+    shoulder and the hand sits at the wrist (no more floating palm squares).
+    Arms are a touch longer for a more natural reach.
+
 v2.16.33
   - Character Creator:
     * "Split into Parts" button — bakes the character into one child GameObject

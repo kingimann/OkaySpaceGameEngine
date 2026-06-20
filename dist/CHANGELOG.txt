@@ -18,6 +18,9 @@ v2.13.0
     by each light's color. The corner overlay shows live FPS, and a new "Align
     Cam to View" button snaps a selected camera to the editor viewpoint (Unity's
     Align With View).
+  - Snapping now covers all three transform tools: Move snaps to the grid
+    increment, Scale snaps to it too, and Rotate snaps in configurable degree
+    detents (default 15 deg) via a new "Rot deg" field in the Scene toolbar.
   - Camera Preview: selecting a perspective Camera shows a live inset in the
     Scene view of exactly what that camera sees (Unity's Camera Preview), so you
     can frame shots without switching to the Game view.

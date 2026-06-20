@@ -504,6 +504,9 @@ enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
 int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_gizmoGrab = false;  // true while a gizmo handle is held
+float g_rotAccum = 0.0f;    // raw degrees this rotate-drag (for 15-deg snap detents)
+float g_rotApplied = 0.0f;  // snapped degrees already applied this drag
+float g_rotSnapDeg = 15.0f; // rotation snap increment when Snap is on
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
 float g_terrainRadius = 6.0f;
 float g_terrainStrength = 4.0f;
@@ -5605,7 +5608,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             float best = 11.0f; int pick = -1;
             for (int i = 0; i < 3; ++i)
                 if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
-            if (pick >= 0) { ed.PushUndo(); g_gizmoAxis = pick; g_gizmoGrab = true; grabbedThisClick = true; }
+            if (pick >= 0) { ed.PushUndo(); g_gizmoAxis = pick; g_gizmoGrab = true; grabbedThisClick = true;
+                             g_rotAccum = 0.0f; g_rotApplied = 0.0f; }
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_gizmoGrab = false; g_gizmoAxis = -1; }
 
@@ -5626,10 +5630,24 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         t->localPosition.z = Mathf::Round(t->localPosition.z / g_snapSize) * g_snapSize;
                     }
                 } else if (tool == Tool::Rotate) {
-                    t->Rotate(axis[i] * (along * 0.6f));        // degrees about the axis
+                    float deg = along * 0.6f;                   // degrees about the axis
+                    if (g_snap && g_rotSnapDeg > 0.0f) {
+                        // 15-deg detents: apply only whole snapped steps as we cross them.
+                        g_rotAccum += deg;
+                        float snapped = Mathf::Round(g_rotAccum / g_rotSnapDeg) * g_rotSnapDeg;
+                        float step = snapped - g_rotApplied;
+                        if (step != 0.0f) { t->Rotate(axis[i] * step); g_rotApplied = snapped; }
+                    } else {
+                        t->Rotate(axis[i] * deg);
+                    }
                 } else { // Scale
                     Vec3 sc = t->localScale;
                     if (i == 0) sc.x += amt; else if (i == 1) sc.y += amt; else sc.z += amt;
+                    if (g_snap && g_snapSize > 0.0f) {          // snap scale to the increment
+                        sc.x = Mathf::Round(sc.x / g_snapSize) * g_snapSize;
+                        sc.y = Mathf::Round(sc.y / g_snapSize) * g_snapSize;
+                        sc.z = Mathf::Round(sc.z / g_snapSize) * g_snapSize;
+                    }
                     sc.x = Mathf::Max(0.01f, sc.x); sc.y = Mathf::Max(0.01f, sc.y); sc.z = Mathf::Max(0.01f, sc.z);
                     t->localScale = sc;
                 }
@@ -5748,6 +5766,11 @@ void DrawViewport(EditorState& ed) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(70);
         ImGui::DragFloat("##snap", &g_snapSize, 0.05f, 0.05f, 10.0f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move/Scale snap increment");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        ImGui::DragFloat("Rot deg##rotsnap", &g_rotSnapDeg, 1.0f, 1.0f, 90.0f, "%.0f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotation snap increment (degrees)");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(70);
         ImGui::DragInt("UI px##uigrid", &g_uiGrid, 1, 1, 256);   // UI pixel grid

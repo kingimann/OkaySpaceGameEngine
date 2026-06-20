@@ -1104,7 +1104,14 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
             if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
             if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
-            if (ImGui::MenuItem("Human (low-poly)")) { ed.CreateMesh("Human"); ConsoleLog("Created Human (subdivide in the Mesh Renderer to smooth it)"); created = true; }
+            if (ImGui::MenuItem("Character (humanoid)")) {
+                GameObject* g = ed.CreateEmpty("Character");
+                g->AddComponent<MeshRenderer>();
+                g->AddComponent<CharacterBody>()->Apply();
+                ed.Select(g); ed.view3D = true; ed.dirty = true;
+                ConsoleLog("Created Character (edit proportions in the Character component)");
+                created = true;
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Terrain")) {
                 GameObject* go = ed.CreateEmpty("Terrain");
@@ -4194,7 +4201,12 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Cylinder")) ed.CreateMesh("Cylinder");
             if (ImGui::MenuItem("Plane"))    ed.CreateMesh("Plane");
             if (ImGui::MenuItem("Pyramid"))  ed.CreatePyramid();
-            if (ImGui::MenuItem("Human (low-poly)")) ed.CreateMesh("Human");
+            if (ImGui::MenuItem("Character (humanoid)")) {
+                GameObject* g = ed.CreateEmpty("Character");
+                g->AddComponent<MeshRenderer>();
+                g->AddComponent<CharacterBody>()->Apply();
+                ed.Select(g); ed.view3D = true; ed.dirty = true;
+            }
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
@@ -4877,6 +4889,42 @@ void DrawInspector(EditorState& ed) {
                     ConsoleLog("Added Rigidbody3D + fitted BoxCollider3D");
                 }
             }
+        }
+    }
+    if (auto* cb = go->GetComponent<CharacterBody>()) {
+        if (CompHeader("Character", cb, &toRemove)) {
+            HumanoidParams& p = cb->params;
+            bool ch = false;
+            ImGui::TextDisabled("Body proportions");
+            ch |= ImGui::SliderFloat("Height##char",        &p.height,        0.5f, 2.0f);
+            ch |= ImGui::SliderFloat("Build##char",         &p.build,         0.4f, 2.2f);
+            ch |= ImGui::SliderFloat("Head Size##char",     &p.headSize,      0.5f, 1.8f);
+            ch |= ImGui::SliderFloat("Shoulder Width##char",&p.shoulderWidth, 0.5f, 1.8f);
+            ch |= ImGui::SliderFloat("Hip Width##char",     &p.hipWidth,      0.5f, 1.8f);
+            ch |= ImGui::SliderFloat("Arm Length##char",    &p.armLength,     0.5f, 1.6f);
+            ch |= ImGui::SliderFloat("Leg Length##char",    &p.legLength,     0.5f, 1.6f);
+            ch |= ImGui::SliderFloat("Neck Length##char",   &p.neckLength,    0.3f, 2.0f);
+            ImGui::Spacing();
+            ImGui::TextDisabled("Detail (low-poly -> high-poly)");
+            ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 3);
+            if (cb->subdivisions > 0)
+                ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
+            float c[4] = {cb->color.r, cb->color.g, cb->color.b, cb->color.a};
+            if (ImGui::ColorEdit4("Color##char", c)) {
+                cb->color = {c[0], c[1], c[2], c[3]}; ch = true;
+            }
+            ImGui::Spacing();
+            if (ImGui::Button("Reset Proportions##char")) { p = HumanoidParams{}; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Slim##char"))    { p.build = 0.7f;  p.shoulderWidth = 0.9f; p.hipWidth = 0.85f; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Heavy##char"))   { p.build = 1.6f;  p.shoulderWidth = 1.3f; p.hipWidth = 1.3f;  ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Tall##char"))    { p.height = 1.4f; p.legLength = 1.3f; ch = true; }
+            int tris = 0;
+            if (auto* mr = go->GetComponent<MeshRenderer>()) tris = mr->mesh.TriangleCount();
+            ImGui::TextDisabled("%d triangles", tris);
+            if (ch) { cb->Apply(); ed.dirty = true; }   // live rebuild on any change
         }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
@@ -6032,6 +6080,7 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<SpriteRenderer>(), "Sprite Renderer")) { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<MeshRenderer>(), "Mesh Renderer (3D)")) { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<CharacterBody>(), "Character (humanoid)")) { go->AddComponent<CharacterBody>()->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }

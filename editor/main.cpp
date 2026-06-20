@@ -4904,6 +4904,12 @@ void DrawInspector(EditorState& ed) {
             ch |= ImGui::SliderFloat("Arm Length##char",    &p.armLength,     0.5f, 1.6f);
             ch |= ImGui::SliderFloat("Leg Length##char",    &p.legLength,     0.5f, 1.6f);
             ch |= ImGui::SliderFloat("Neck Length##char",   &p.neckLength,    0.3f, 2.0f);
+            ch |= ImGui::SliderFloat("Hand Size##char",     &p.handSize,      0.4f, 2.0f);
+            ch |= ImGui::SliderFloat("Foot Size##char",     &p.footSize,      0.4f, 2.0f);
+            ImGui::Spacing();
+            ImGui::TextDisabled("Pose");
+            ch |= ImGui::SliderFloat("Arm Spread##char",    &p.armSpread,     0.0f, 80.0f, "%.0f deg");
+            ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 30.0f, "%.0f deg");
             ImGui::Spacing();
             ImGui::TextDisabled("Detail (low-poly -> high-poly)");
             ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 3);
@@ -4914,13 +4920,31 @@ void DrawInspector(EditorState& ed) {
                 cb->color = {c[0], c[1], c[2], c[3]}; ch = true;
             }
             ImGui::Spacing();
-            if (ImGui::Button("Reset Proportions##char")) { p = HumanoidParams{}; ch = true; }
+            ImGui::TextDisabled("Presets");
+            if (ImGui::SmallButton("Reset##char"))    { p = HumanoidParams{}; ch = true; }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Slim##char"))    { p.build = 0.7f;  p.shoulderWidth = 0.9f; p.hipWidth = 0.85f; ch = true; }
+            if (ImGui::SmallButton("Slim##char"))     { p.build = 0.7f; p.shoulderWidth = 0.9f; p.hipWidth = 0.85f; ch = true; }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Heavy##char"))   { p.build = 1.6f;  p.shoulderWidth = 1.3f; p.hipWidth = 1.3f;  ch = true; }
+            if (ImGui::SmallButton("Heavy##char"))    { p.build = 1.6f; p.shoulderWidth = 1.3f; p.hipWidth = 1.3f;  ch = true; }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Tall##char"))    { p.height = 1.4f; p.legLength = 1.3f; ch = true; }
+            if (ImGui::SmallButton("Tall##char"))     { p.height = 1.4f; p.legLength = 1.3f; ch = true; }
+            if (ImGui::SmallButton("Masculine##char")){ p = HumanoidParams{}; p.build = 1.2f; p.shoulderWidth = 1.4f; p.hipWidth = 0.9f; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Feminine##char")) { p = HumanoidParams{}; p.build = 0.85f; p.shoulderWidth = 0.9f; p.hipWidth = 1.2f; p.height = 0.95f; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Child##char"))    { p = HumanoidParams{}; p.height = 0.7f; p.headSize = 1.4f; p.armLength = 0.85f; p.legLength = 0.8f; p.build = 0.9f; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Robot##char"))    { p = HumanoidParams{}; p.build = 1.3f; p.shoulderWidth = 1.3f; p.hipWidth = 1.1f; p.armSpread = 25.0f; p.headSize = 0.9f; ch = true; }
+            if (ImGui::Button("Randomize##char", ImVec2(-1, 0))) {
+                auto rf = [](float lo, float hi) { return lo + (hi - lo) * (float)std::rand() / (float)RAND_MAX; };
+                p.height = rf(0.8f, 1.4f);   p.build = rf(0.7f, 1.7f);
+                p.headSize = rf(0.8f, 1.4f); p.shoulderWidth = rf(0.7f, 1.5f);
+                p.hipWidth = rf(0.7f, 1.4f); p.armLength = rf(0.8f, 1.3f);
+                p.legLength = rf(0.8f, 1.3f);p.neckLength = rf(0.6f, 1.5f);
+                p.handSize = rf(0.7f, 1.4f); p.footSize = rf(0.7f, 1.5f);
+                p.armSpread = rf(5.0f, 35.0f);
+                ch = true;
+            }
             int tris = 0;
             if (auto* mr = go->GetComponent<MeshRenderer>()) tris = mr->mesh.TriangleCount();
             ImGui::TextDisabled("%d triangles", tris);

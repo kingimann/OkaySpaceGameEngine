@@ -160,7 +160,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << p.shoulderWidth << " " << p.hipWidth << " " << p.armLength << " "
             << p.legLength << " " << p.neckLength << " " << cb->subdivisions << " "
             << cb->smoothAmount << " " << cb->color.r << " " << cb->color.g << " "
-            << cb->color.b << " " << cb->color.a << "\n";
+            << cb->color.b << " " << cb->color.a
+            << " " << p.handSize << " " << p.footSize << " " << p.armSpread << " " << p.legSpread
+            << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
@@ -931,6 +933,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> p.height >> p.build >> p.headSize >> p.shoulderWidth >> p.hipWidth
                        >> p.armLength >> p.legLength >> p.neckLength >> cb->subdivisions
                        >> cb->smoothAmount >> cb->color.r >> cb->color.g >> cb->color.b >> cb->color.a;
+                    // Optional trailing fields (added later); read only if present on this line.
+                    auto more = [&]() -> bool {
+                        while (in.peek() == ' ' || in.peek() == '\t') in.get();
+                        int c = in.peek();
+                        return c != '\n' && c != '\r' && c != EOF;
+                    };
+                    if (more()) in >> p.handSize;
+                    if (more()) in >> p.footSize;
+                    if (more()) in >> p.armSpread;
+                    if (more()) in >> p.legSpread;
                     cb->Apply();   // rebuild the humanoid mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();

@@ -569,9 +569,11 @@ int main() {
         Scene scene("Chars");
         GameObject* go = scene.CreateGameObject("Hero");
         auto* cb = go->AddComponent<CharacterBody>();
-        cb->params.height = 1.3f;
-        cb->params.build  = 1.5f;
-        cb->subdivisions  = 1;
+        cb->params.height   = 1.3f;
+        cb->params.build    = 1.5f;
+        cb->params.handSize = 1.7f;
+        cb->params.armSpread= 45.0f;
+        cb->subdivisions    = 1;
         cb->Apply();                                  // builds into a MeshRenderer
         auto* mr = go->GetComponent<MeshRenderer>();
         CHECK(mr != nullptr);
@@ -590,6 +592,8 @@ int main() {
         CHECK(lc != nullptr);
         CHECK_NEAR(lc->params.height, 1.3f, 0.001f);
         CHECK_NEAR(lc->params.build, 1.5f, 0.001f);
+        CHECK_NEAR(lc->params.handSize, 1.7f, 0.001f);
+        CHECK_NEAR(lc->params.armSpread, 45.0f, 0.001f);
         CHECK(lc->subdivisions == 1);
         CHECK(loaded.Find("Hero")->GetComponent<MeshRenderer>()->mesh.TriangleCount() == loTris * 4);
     }

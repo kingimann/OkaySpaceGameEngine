@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.14.1
+  - Script editor: the current line is now highlighted (VS Code-style), the
+    status bar shows a live character count, and you can zoom the code with the
+    A- / A+ buttons or Ctrl + mouse wheel (the gutter and syntax overlay stay
+    aligned at any zoom).
+
 v2.14.0
   - Lighting expanded: lights can be tinted by color temperature (Kelvin, e.g.
     2700K warm to 12000K cool), spot cones gained a Softness control for

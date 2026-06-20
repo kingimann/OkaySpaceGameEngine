@@ -415,6 +415,10 @@ std::string g_dataAssetPath;
 // Material (.okaymat) editor window.
 bool  g_matAssetOpen = false;
 std::string g_matAssetPath;
+// "New Script" naming dialog (Add Component > Script > New Script...).
+GameObject* g_newScriptGO = nullptr;
+bool  g_newScriptOpen = false;
+char  g_newScriptName[96] = "";
 
 // Extra panels / tools.
 bool  g_showStats = true;
@@ -4412,22 +4416,38 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<CameraFollow>(); ed.dirty = true; }
 
         Hdr("Scripting");
-        if (!go->GetComponent<ScriptComponent>() && F("Script (OkayScript)") && ImGui::Selectable("Script (OkayScript)"))
-            { go->AddComponent<ScriptComponent>("okayscript"); ed.dirty = true; }
-        // Unity's "New Script": create a fresh .okay file under Assets and attach it.
-        if (!go->GetComponent<ScriptComponent>() && F("New Script...") && ImGui::Selectable("New Script...")) {
+        // Unity-style Script flow: pick an EXISTING .okay script from the project
+        // or create a NEW one. Adding a script always references a real file.
+        if (!go->GetComponent<ScriptComponent>() && F("Script") && ImGui::BeginMenu("Script")) {
             namespace fs = std::filesystem;
-            fs::path assets = ed.projectDir().empty() ? fs::path(".")
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
                                                       : fs::path(ed.projectDir()) / "Assets";
-            std::error_code se; fs::create_directories(assets, se);
-            fs::path p = assets / (go->name + "Script.okay");
-            for (int n = 1; fs::exists(p, se); ++n)
-                p = assets / (go->name + "Script" + std::to_string(n) + ".okay");
-            std::ofstream(p) << extide::StarterScript("okayscript");
-            auto* nsc = go->AddComponent<ScriptComponent>("okayscript");
-            std::string err; nsc->LoadFile(p.string(), &err); nsc->SetPath(p.string());
-            ConsoleLog("Created + attached " + p.string());
-            ed.dirty = true;
+            std::error_code ec;
+            int listed = 0;
+            if (fs::exists(assets, ec)) {
+                for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                    if (!e.is_regular_file()) continue;
+                    std::string ext = e.path().extension().string();
+                    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                    if (ext != ".okay") continue;
+                    std::string rel = fs::relative(e.path(), assets, ec).string();
+                    if (ImGui::MenuItem(rel.c_str())) {
+                        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+                        std::string err; sc->LoadFile(e.path().string(), &err);
+                        sc->SetPath(e.path().string());
+                        ConsoleLog("Attached script " + e.path().string());
+                        ed.dirty = true;
+                    }
+                    ++listed;
+                }
+            }
+            if (!listed) ImGui::TextDisabled("(no .okay scripts in Assets yet)");
+            ImGui::Separator();
+            if (ImGui::MenuItem("New Script...")) {
+                g_newScriptGO = go; g_newScriptOpen = true;
+                std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
+            }
+            ImGui::EndMenu();
         }
         if (!go->GetComponent<ActionList>() && F("Actions (Visual Script)") && ImGui::Selectable("Actions (Visual Script)"))
             { go->AddComponent<ActionList>(); ed.dirty = true; }
@@ -4477,6 +4497,42 @@ void DrawInspector(EditorState& ed) {
             { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
         ImGui::EndPopup();
     }
+
+    // "New Script" naming dialog: create a fresh .okay under Assets and attach it
+    // to the target object (Unity's Add Component > New Script > Create and Add).
+    if (g_newScriptOpen && !ImGui::IsPopupOpen("New Script")) ImGui::OpenPopup("New Script");
+    if (ImGui::BeginPopupModal("New Script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("Creates Assets/<name>.okay and attaches it.");
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool enter = ImGui::InputText("Name", g_newScriptName, sizeof(g_newScriptName),
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        bool create = ImGui::Button("Create and Add", ImVec2(140, 0)) || enter;
+        ImGui::SameLine();
+        bool cancel = ImGui::Button("Cancel", ImVec2(100, 0));
+        if (create && g_newScriptName[0] && g_newScriptGO) {
+            namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
+                                                      : fs::path(ed.projectDir()) / "Assets";
+            std::error_code se; fs::create_directories(assets, se);
+            std::string base = g_newScriptName;
+            if (base.size() < 5 || base.substr(base.size() - 5) != ".okay") base += ".okay";
+            fs::path p = assets / base;
+            if (fs::exists(p, se)) {
+                ConsoleLog("Script already exists: " + p.string());
+            } else {
+                std::ofstream(p) << extide::StarterScript("okayscript");
+            }
+            auto* nsc = g_newScriptGO->AddComponent<ScriptComponent>("okayscript");
+            std::string err; nsc->LoadFile(p.string(), &err); nsc->SetPath(p.string());
+            ConsoleLog("Created + attached " + p.string());
+            ed.dirty = true;
+            g_newScriptOpen = false; g_newScriptGO = nullptr; ImGui::CloseCurrentPopup();
+        } else if (cancel) {
+            g_newScriptOpen = false; g_newScriptGO = nullptr; ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
     if (ImGui::Button("Delete GameObject", ImVec2(-1, 0))) ed.DeleteSelected();
     ImGui::PopStyleColor();

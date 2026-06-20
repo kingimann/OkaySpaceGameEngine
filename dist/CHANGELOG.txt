@@ -1,6 +1,11 @@
 OkaySpace Game Engine — Changelog
 
 v2.13.0
+  - Add Component > Script now works like Unity: it opens a submenu that lists
+    every .okay script already in your project's Assets (pick one to attach it),
+    plus a "New Script..." entry that prompts for a name, creates the .okay file
+    under Assets, and attaches it ("Create and Add"). Adding a script always
+    references a real file now.
   - Inspector parity with Unity: every component header now has an enable/disable
     checkbox and a right-click > Remove Component menu. The Tag field became a
     dropdown (Untagged/Player/MainCamera/Enemy/... plus custom), and the object

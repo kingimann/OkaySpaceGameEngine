@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.15.0
+  - Keyframe Animator: the engine's property animator (AnimationClip of
+    position/rotation/scale curves) is now usable in the editor. Add it from
+    Add Component > Animation > Animator, then play/pause, scrub the timeline,
+    and "Record Key" to capture the object's transform into tracks at the current
+    time. Per-track key counts with Clear; clips save with the scene.
+  - Script editor, even more: duplicate the current line with Ctrl+D, move it
+    with Alt+Up/Alt+Down, and insert templates from the new Snippets menu
+    (start/update/class/if/for/foreach/while/save-load/...). These run through the
+    editor's input callback, so they work on the live buffer.
+  - Docs & README refreshed to cover the save system, keyframe animation, the
+    VS Code-style script editor, Unity-style Add Component, autosave/recovery,
+    Material/Save Manager windows, and the expanded camera/lighting.
+
 v2.14.4
   - Safer autosave / crash recovery: instead of silently overwriting your scene,
     autosave now writes a "<scene>.autosave" recovery copy (on by default, every

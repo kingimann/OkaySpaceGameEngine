@@ -2,6 +2,7 @@
 #include "okay/Animation/AnimationCurve.hpp"
 #include <string>
 #include <unordered_map>
+#include <cmath>
 
 namespace okay {
 
@@ -17,6 +18,31 @@ public:
         if (curve.Duration() > m_length) m_length = curve.Duration();
         if (loop) curve.wrap = AnimationCurve::Wrap::Loop;
         m_tracks[track] = std::move(curve);
+    }
+
+    /// Add/update a single keyframe on a track (creates the track if needed).
+    /// Editors use this to "record" a value at the current time.
+    void AddKey(const std::string& track, float time, float value) {
+        AnimationCurve& c = m_tracks[track];
+        if (loop) c.wrap = AnimationCurve::Wrap::Loop;
+        // Replace an existing key at (nearly) the same time, else add a new one.
+        bool replaced = false;
+        AnimationCurve nc; nc.wrap = c.wrap; nc.smooth = c.smooth;
+        for (const auto& k : c.Keys()) {
+            if (std::abs(k.time - time) < 1e-4f) { nc.AddKey(time, value); replaced = true; }
+            else nc.AddKey(k.time, k.value);
+        }
+        if (!replaced) nc.AddKey(time, value);
+        c = std::move(nc);
+        if (c.Duration() > m_length) m_length = c.Duration();
+    }
+    void RemoveTrack(const std::string& track) { m_tracks.erase(track); Recompute(); }
+    AnimationCurve* Track(const std::string& track) {
+        auto it = m_tracks.find(track); return it == m_tracks.end() ? nullptr : &it->second;
+    }
+    void Recompute() {
+        m_length = 0.0f;
+        for (auto& kv : m_tracks) if (kv.second.Duration() > m_length) m_length = kv.second.Duration();
     }
 
     float Length() const { return m_length; }

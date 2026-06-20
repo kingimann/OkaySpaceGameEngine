@@ -2364,9 +2364,16 @@ struct ScriptCaret {
     int  line = 1, col = 1, pos = 0;   // reported out each frame
     int  gotoLine = 0;                 // in: jump to this 1-based line (0 = none)
     bool toggleComment = false;        // in: toggle "// " on the caret's line
+    std::string insert;                // in: insert this text at the caret (snippets)
 };
 static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
     auto* c = (ScriptCaret*)d->UserData;
+    ImGuiIO& io = ImGui::GetIO();
+    auto lineBounds = [&](int p, int& ls, int& le) {
+        if (p > d->BufTextLen) p = d->BufTextLen;
+        ls = p; while (ls > 0 && d->Buf[ls - 1] != '\n') --ls;
+        le = p; while (le < d->BufTextLen && d->Buf[le] != '\n') ++le;
+    };
     // Go to line: move the caret to the start of the requested line.
     if (c->gotoLine > 0) {
         int target = c->gotoLine; c->gotoLine = 0;
@@ -2375,17 +2382,55 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             if (d->Buf[pos] == '\n') ++line;
         d->CursorPos = d->SelectionStart = d->SelectionEnd = pos;
     }
+    // Insert a snippet/template at the caret.
+    if (!c->insert.empty()) {
+        d->InsertChars(d->CursorPos, c->insert.c_str());
+        c->insert.clear();
+    }
     // Toggle a line comment ("// ") at the first non-space of the caret's line.
     if (c->toggleComment) {
         c->toggleComment = false;
-        int p = d->CursorPos; if (p > d->BufTextLen) p = d->BufTextLen;
-        int ls = p; while (ls > 0 && d->Buf[ls - 1] != '\n') --ls;
-        int fnw = ls; while (fnw < d->BufTextLen && (d->Buf[fnw] == ' ' || d->Buf[fnw] == '\t')) ++fnw;
+        int ls, le; lineBounds(d->CursorPos, ls, le);
+        int fnw = ls; while (fnw < le && (d->Buf[fnw] == ' ' || d->Buf[fnw] == '\t')) ++fnw;
         if (fnw + 1 < d->BufTextLen && d->Buf[fnw] == '/' && d->Buf[fnw + 1] == '/') {
             int rem = (fnw + 2 < d->BufTextLen && d->Buf[fnw + 2] == ' ') ? 3 : 2;
             d->DeleteChars(fnw, rem);
         } else {
             d->InsertChars(fnw, "// ");
+        }
+    }
+    // Ctrl+D: duplicate the caret's line below it.
+    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+        int ls, le; lineBounds(d->CursorPos, ls, le);
+        std::string dup = "\n" + std::string(d->Buf + ls, d->Buf + le);
+        d->InsertChars(le, dup.c_str());
+        d->CursorPos = d->SelectionStart = d->SelectionEnd = d->CursorPos + (int)dup.size();
+    }
+    // Alt+Up / Alt+Down: move the caret's line up or down (swap with neighbor).
+    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) {
+        int ls, le; lineBounds(d->CursorPos, ls, le);
+        if (ls > 0) {
+            int pls = ls - 1; while (pls > 0 && d->Buf[pls - 1] != '\n') --pls;
+            std::string prev(d->Buf + pls, d->Buf + (ls - 1));
+            std::string cur(d->Buf + ls, d->Buf + le);
+            int off = d->CursorPos - ls;
+            d->DeleteChars(pls, le - pls);
+            std::string repl = cur + "\n" + prev;
+            d->InsertChars(pls, repl.c_str());
+            d->CursorPos = d->SelectionStart = d->SelectionEnd = pls + off;
+        }
+    }
+    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) {
+        int ls, le; lineBounds(d->CursorPos, ls, le);
+        if (le < d->BufTextLen) {
+            int nls = le + 1, nle = nls; while (nle < d->BufTextLen && d->Buf[nle] != '\n') ++nle;
+            std::string cur(d->Buf + ls, d->Buf + le);
+            std::string next(d->Buf + nls, d->Buf + nle);
+            int off = d->CursorPos - ls;
+            d->DeleteChars(ls, nle - ls);
+            std::string repl = next + "\n" + cur;
+            d->InsertChars(ls, repl.c_str());
+            d->CursorPos = d->SelectionStart = d->SelectionEnd = ls + (int)next.size() + 1 + off;
         }
     }
     int ln = 1, col = 1;
@@ -2539,6 +2584,27 @@ void DrawScriptEditor(EditorState& ed) {
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
             if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;
         }
+        // Snippets: insert a common template at the caret.
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Snippet")) ImGui::OpenPopup("##snippets");
+        if (ImGui::BeginPopup("##snippets")) {
+            struct Snip { const char* name; const char* text; };
+            static const Snip snips[] = {
+                {"start()",   "function start() {\n    \n}\n"},
+                {"update(dt)","function update(dt) {\n    \n}\n"},
+                {"class",     "public class NewScript : OkaySource {\n    void Start() {\n        \n    }\n    void Update() {\n        \n    }\n}\n"},
+                {"if",        "if () {\n    \n}\n"},
+                {"if/else",   "if () {\n    \n} else {\n    \n}\n"},
+                {"for",       "for (int i = 0; i < 10; i++) {\n    \n}\n"},
+                {"foreach",   "foreach (var item in list) {\n    \n}\n"},
+                {"while",     "while () {\n    \n}\n"},
+                {"on_collision", "function on_collision(other) {\n    \n}\n"},
+                {"save/load", "save(\"key\", value);\nvar v = load(\"key\", 0);\n"},
+            };
+            for (const auto& s : snips)
+                if (ImGui::MenuItem(s.name)) caret.insert = s.text;
+            ImGui::EndPopup();
+        }
 
         // Language picker (only backends this build supports).
         static std::vector<std::string> avail = AvailableScriptLanguages();
@@ -2626,6 +2692,14 @@ void DrawScriptEditor(EditorState& ed) {
             ImVec2(contentW, contentH),
             ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackAlways,
             ScriptCaretCallback, &caret);
+        // A snippet chosen from the toolbar menu steals focus from the editor, so
+        // the callback won't run — splice it into the buffer at the caret here.
+        if (!caret.insert.empty() && !ImGui::IsItemActive()) {
+            std::string s(buf.data());
+            int p = caret.pos < 0 ? 0 : (caret.pos > (int)s.size() ? (int)s.size() : caret.pos);
+            s.insert((std::size_t)p, caret.insert);
+            SetCodeBuffer(sc, s); caret.insert.clear(); ed.dirty = true;
+        }
         ImVec2 mn = ImGui::GetItemRectMin();
         ImVec2 origin(mn.x + padX, mn.y + padY);
         ImDrawList* edl = ImGui::GetWindowDrawList();
@@ -4826,6 +4900,61 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##anim")) toRemove = an;
         }
     }
+    if (auto* anm = go->GetComponent<Animator>()) {
+        if (CompHeader("Animator", anm, &toRemove)) {
+            char cn[64]; std::strncpy(cn, anm->clip.name.c_str(), sizeof(cn) - 1); cn[sizeof(cn)-1] = '\0';
+            if (ImGui::InputText("Clip##anm", cn, sizeof(cn))) { anm->clip.name = cn; ed.dirty = true; }
+            if (ImGui::Checkbox("Loop##anm", &anm->clip.loop)) { anm->clip.Recompute(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Playing##anm", &anm->playing)) ed.dirty = true;
+            if (ImGui::DragFloat("Speed##anm", &anm->speed, 0.02f, -4.0f, 4.0f)) ed.dirty = true;
+
+            // Playback scrubber: drag to preview the clip at any time.
+            float len = anm->clip.Length();
+            float t = anm->Time();
+            ImGui::SetNextItemWidth(-90);
+            if (ImGui::SliderFloat("Time##anm", &t, 0.0f, len > 0 ? len : 1.0f, "%.2fs")) {
+                anm->SetTime(t); ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(anm->playing ? "Pause" : "Play")) anm->playing = !anm->playing;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("|<")) anm->Restart();
+
+            ImGui::SeparatorText("Keyframes");
+            ImGui::TextDisabled("Scrub to a time, pose the object, then Record.");
+            // Record the object's current transform into keys at the current time.
+            if (ImGui::Button("Record Key (transform @ time)")) {
+                float kt = anm->Time();
+                Vec3 p = go->transform->localPosition, s = go->transform->localScale;
+                Quat q = go->transform->localRotation;       // Z angle for the rotation.z track
+                float zdeg = 2.0f * std::atan2(q.z, q.w) * Mathf::Rad2Deg;
+                anm->clip.AddKey("position.x", kt, p.x); anm->clip.AddKey("position.y", kt, p.y);
+                anm->clip.AddKey("position.z", kt, p.z);
+                anm->clip.AddKey("scale.x", kt, s.x);    anm->clip.AddKey("scale.y", kt, s.y);
+                anm->clip.AddKey("scale.z", kt, s.z);
+                anm->clip.AddKey("rotation.z", kt, zdeg);
+                ed.dirty = true; ConsoleLog("Recorded keyframe at " + std::to_string(kt) + "s");
+            }
+            // Per-track key counts, with a way to drop a track.
+            std::vector<std::string> tracks;
+            for (auto& tr : anm->clip.Tracks()) tracks.push_back(tr.first);
+            std::sort(tracks.begin(), tracks.end());
+            std::string dropTrack;
+            for (auto& tn : tracks) {
+                AnimationCurve* c = anm->clip.Track(tn);
+                ImGui::BulletText("%s  (%d keys)", tn.c_str(), c ? (int)c->Count() : 0);
+                ImGui::SameLine();
+                ImGui::PushID(tn.c_str());
+                if (ImGui::SmallButton("Clear")) dropTrack = tn;
+                ImGui::PopID();
+            }
+            if (!dropTrack.empty()) { anm->clip.RemoveTrack(dropTrack); ed.dirty = true; }
+            if (tracks.empty()) ImGui::TextDisabled("(no tracks yet — Record a key)");
+            ImGui::Spacing();
+            if (ImGui::SmallButton("Remove##anm-comp")) toRemove = anm;
+        }
+    }
 
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
@@ -4873,6 +5002,12 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
+          } EndCat(o); }
+
+        { bool o = BeginCat("Animation");
+          if (o) {
+            if (item(!go->GetComponent<Animator>(), "Animator (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Physics 2D");

@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.35
+  - Character Creator: more adult proportions — smaller head and longer legs so
+    the default figure is taller and less stubby (use the Height/Head Size/Leg
+    Length sliders to taste).
+
 v2.16.34
   - Character Creator: fixed detached hands — the arm now hangs from the
     shoulder and the hand sits at the wrist (no more floating palm squares).

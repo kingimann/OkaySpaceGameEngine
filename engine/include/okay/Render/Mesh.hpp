@@ -755,7 +755,7 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
     const float headY = 1.78f * H + up;
 
     Mesh& head = add("Head");
-    head.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, headY, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}, skin);
+    head.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, headY, 0.0f}, {0.36f * hd, 0.44f * hd, 0.36f * hd}, skin);
     if (c && c->hasHair) {
         const Color* h = &c->hair;
         head.Add(Mesh::Sphere(0.5f, 5, 8), {0.0f, headY + 0.10f * hd, 0.0f}, {0.44f * hd, 0.34f * hd, 0.44f * hd}, h);
@@ -826,8 +826,8 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * p.legSpread};   // + spreads outward
         float lt = 0.22f * B * p.legThickness;
         leg.Add(Mesh::Sphere(0.5f, 6, 7), {s * hw, 0.56f * H, 0.0f}, {lt * 1.7f, lt * 1.7f, lt * 1.7f}, pants);
-        leg.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f}, {lt, 0.96f * lL * H, lt}, legRot, hip, pants);
-        float fsz = p.footSize, fy = (0.12f - 0.54f * lL) * H;
+        leg.AddPosed(Mesh::Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.06f * H, 0.0f}, {lt, 1.15f * lL * H, lt}, legRot, hip, pants);
+        float fsz = p.footSize, fy = (0.06f - 0.57f * lL) * H;
         leg.AddPosed(Mesh::Sphere(0.5f, 5, 6), {s * hw, fy, 0.0f}, {lt * 0.9f, lt * 0.9f, lt * 0.9f}, legRot, hip, skin);
         leg.AddPosed(Mesh::Cube(1.0f), {s * hw, fy - 0.06f * H, 0.16f * fsz}, {0.22f * B * fsz, 0.11f * fsz, 0.58f * fsz}, legRot, hip, shoes);
     }

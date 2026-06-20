@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.32
+  - Character Creator fixes:
+    * Fixed the "see-through" body — the character now renders solid (the
+      assembled parts are drawn double-sided).
+    * Slimmer, more human proportions (thinner limbs, tapered torso).
+    * Proper hands (palm + thumb) and feet (ankle + forward sole/toes) instead
+      of plain balls and flat blocks.
+  - View > "3D Anti-aliasing (2x)" toggle — turn AA off to boost FPS on heavy
+    or highly-subdivided scenes.
+
 v2.16.31
   - Character Creator: much smoother, more cohesive bodies.
     * Torso and hips are now rounded (capsule/ellipsoid) instead of boxes.

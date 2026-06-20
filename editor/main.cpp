@@ -1065,6 +1065,10 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
         ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
         ImGui::Separator();
+        bool aa = g_ssaa > 1;
+        if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) g_ssaa = aa ? 2 : 1;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
+        ImGui::Separator();
         ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
         if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
         ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);

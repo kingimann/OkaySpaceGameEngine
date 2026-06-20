@@ -3689,4 +3689,8 @@ vs::VsValue OkayScriptVM::GetGlobal(const std::string& name) const {
     return it != g.end() ? it->second : vs::VsValue{};
 }
 
+void OkayScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {
+    m_impl->rt.Global().vars[name] = v;
+}
+
 } // namespace okay

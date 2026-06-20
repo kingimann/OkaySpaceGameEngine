@@ -24,6 +24,7 @@ public:
     void CallUpdate(float deltaTime) override;
     void CallEvent(const std::string& function) override;
     vs::VsValue GetGlobal(const std::string& name) const override;
+    void SetGlobal(const std::string& name, const vs::VsValue& v) override;
 
 private:
     struct Impl;

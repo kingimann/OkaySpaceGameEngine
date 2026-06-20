@@ -3,6 +3,7 @@
 #include "okay/Scripting/ScriptVM.hpp"
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 namespace okay {
 
@@ -35,6 +36,16 @@ public:
     }
     IScriptVM* VM() const { return m_vm.get(); }
     ScriptHost& Host() { return m_host; }
+
+    /// Per-instance overrides for the script's public variables, shown and edited
+    /// in the Inspector (Unity-style serialized fields). Stored as text and
+    /// applied over the script's defaults after each compile. The editor reads
+    /// the script source to know which names exist; this map holds the values
+    /// the user changed.
+    std::unordered_map<std::string, std::string> fields;
+    /// Apply the `fields` overrides to the live VM (parsing text -> bool/number/
+    /// string). Called automatically after a successful compile.
+    void ApplyFieldOverrides();
 
     void Start() override;
     void Update(float dt) override;

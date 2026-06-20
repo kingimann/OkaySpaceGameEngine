@@ -1104,6 +1104,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
             if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
             if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
+            if (ImGui::MenuItem("Human (low-poly)")) { ed.CreateMesh("Human"); ConsoleLog("Created Human (subdivide in the Mesh Renderer to smooth it)"); created = true; }
             ImGui::Separator();
             if (ImGui::MenuItem("Terrain")) {
                 GameObject* go = ed.CreateEmpty("Terrain");
@@ -4193,6 +4194,7 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Cylinder")) ed.CreateMesh("Cylinder");
             if (ImGui::MenuItem("Plane"))    ed.CreateMesh("Plane");
             if (ImGui::MenuItem("Pyramid"))  ed.CreatePyramid();
+            if (ImGui::MenuItem("Human (low-poly)")) ed.CreateMesh("Human");
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
@@ -4816,6 +4818,13 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
             if (ImGui::SmallButton("Subdivide##mesh")) { mr->mesh.Subdivide(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Subdiv+Smooth##mesh")) {  // low-poly -> high-poly (rounds it)
+                mr->mesh.SubdivideSmooth(1, 0.5f); ed.dirty = true;
+                ConsoleLog("Subdivided + smoothed: " + std::to_string(mr->mesh.TriangleCount()) + " triangles");
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Quadruple the triangles and relax them — turns a\nlow-poly blockout (e.g. Human) into smooth high-poly.");
             ImGui::SameLine();
             if (ImGui::SmallButton("Smooth##mesh")) {     // subdivide + reproject to sphere
                 Vec3 sz = mr->mesh.Size();

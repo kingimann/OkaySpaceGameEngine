@@ -536,5 +536,33 @@ int main() {
         CHECK_NEAR(fwd.z, 0.0f, 0.01f);
     }
 
+    // --- Humanoid + the low-poly -> high-poly pipeline ---
+    {
+        Mesh human = Mesh::Humanoid();
+        CHECK(human.name == "Human");
+        CHECK(!human.vertices.empty());
+        CHECK(human.TriangleCount() > 0);
+        CHECK(Mesh::FromName("Human").name == "Human");
+        // Stands on the ground-ish and is roughly 2 units tall.
+        Vec3 s = human.Size();
+        CHECK(s.y > 1.5f);
+
+        // Subdivide quadruples triangles; the smoothing pass keeps the silhouette
+        // close (a little shrinkage is expected) and doesn't blow up the bounds.
+        Mesh hi = Mesh::Humanoid();
+        int t0 = hi.TriangleCount();
+        hi.SubdivideSmooth(1, 0.5f);
+        CHECK(hi.TriangleCount() == t0 * 4);
+        Vec3 s2 = hi.Size();
+        CHECK(s2.y > s.y * 0.7f);          // still recognizably the same height
+        CHECK(s2.y <= s.y + 0.001f);       // smoothing never inflates past the original
+
+        // Smooth() alone moves vertices toward neighbours but preserves count.
+        Mesh cube = Mesh::Cube();
+        std::size_t vn = cube.vertices.size();
+        cube.Smooth(0.5f);
+        CHECK(cube.vertices.size() == vn);
+    }
+
     TEST_MAIN_RESULT();
 }

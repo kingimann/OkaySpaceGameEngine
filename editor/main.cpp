@@ -5003,7 +5003,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Custom Accessories");
             const char* accShapes[] = {"Cube", "Sphere", "Cylinder", "Cone", "Pyramid",
                                        "Capsule", "Torus", "Wedge"};
-            int removeAcc = -1;
+            int removeAcc = -1, dupAcc = -1, moveAcc = -1, moveDir = 0;
             for (int ai = 0; ai < (int)cb->accessories.size(); ++ai) {
                 okay::Accessory& a = cb->accessories[ai];
                 ImGui::PushID(ai);
@@ -5027,18 +5027,52 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::DragFloat3("Rotation##acc", ro, 1.0f)) { a.rotation = {ro[0], ro[1], ro[2]}; ch = true; }
                     float ac[3] = {a.color.r, a.color.g, a.color.b};
                     if (ImGui::ColorEdit3("Color##acc", ac)) { a.color = {ac[0], ac[1], ac[2], 1.0f}; ch = true; }
+                    if (ImGui::SmallButton("Duplicate##acc")) dupAcc = ai;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Up##acc"))   { moveAcc = ai; moveDir = -1; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Down##acc")) { moveAcc = ai; moveDir = 1; }
+                    ImGui::SameLine();
                     if (ImGui::SmallButton("Remove##acc")) removeAcc = ai;
                     ImGui::TreePop();
                 }
                 ImGui::PopID();
             }
             if (removeAcc >= 0) { cb->accessories.erase(cb->accessories.begin() + removeAcc); ch = true; }
+            if (dupAcc >= 0) { cb->accessories.insert(cb->accessories.begin() + dupAcc + 1, cb->accessories[dupAcc]); ch = true; }
+            if (moveAcc >= 0) {
+                int j = moveAcc + moveDir;
+                if (j >= 0 && j < (int)cb->accessories.size()) { std::swap(cb->accessories[moveAcc], cb->accessories[j]); ch = true; }
+            }
+            // Quick-add a custom accessory, then a prop palette of presets.
+            auto addAcc = [&](const char* nm, const char* shape, Vec3 off, Vec3 scl, Vec3 rot,
+                              okay::Color col, int attach) {
+                okay::Accessory a; a.name = nm; a.shape = shape; a.offset = off; a.scale = scl;
+                a.rotation = rot; a.color = col; a.attach = attach;
+                cb->accessories.push_back(a); ch = true;
+            };
             if (ImGui::SmallButton("+ Add Accessory")) {
                 okay::Accessory a;
                 a.name = "Accessory " + std::to_string(cb->accessories.size() + 1);
                 cb->accessories.push_back(a);
                 ch = true;
             }
+            ImGui::TextDisabled("Props:");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Sword"))  addAcc("Sword", "Cube", {0, 0.45f, 0}, {0.04f, 0.5f, 0.04f}, {0, 0, 0}, okay::Color::FromBytes(200, 205, 215), 5);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Halo"))   addAcc("Halo", "Torus", {0, 0.42f, 0}, {0.5f, 0.5f, 0.5f}, {0, 0, 0}, okay::Color::FromBytes(255, 220, 90), 1);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Cape"))   addAcc("Cape", "Cube", {0, -0.3f, -0.05f}, {0.5f, 0.7f, 0.05f}, {0, 0, 0}, okay::Color::FromBytes(150, 30, 40), 6);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Tail"))   addAcc("Tail", "Capsule", {0, -0.1f, -0.2f}, {0.12f, 0.5f, 0.12f}, {60, 0, 0}, okay::Color::FromBytes(120, 80, 50), 3);
+            if (ImGui::SmallButton("Horns"))  { addAcc("Horn L", "Cone", {-0.12f, 0.2f, 0}, {0.07f, 0.18f, 0.07f}, {0, 0, 20}, okay::Color::FromBytes(230, 225, 210), 1);
+                                               addAcc("Horn R", "Cone", { 0.12f, 0.2f, 0}, {0.07f, 0.18f, 0.07f}, {0, 0, -20}, okay::Color::FromBytes(230, 225, 210), 1); }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Wings"))  { addAcc("Wing L", "Wedge", {-0.4f, 0, -0.05f}, {0.5f, 0.7f, 0.08f}, {0, -20, 0}, okay::Color::FromBytes(235, 235, 245), 6);
+                                               addAcc("Wing R", "Wedge", { 0.4f, 0, -0.05f}, {0.5f, 0.7f, 0.08f}, {0, 20, 0}, okay::Color::FromBytes(235, 235, 245), 6); }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Jetpack")) addAcc("Jetpack", "Cube", {0, 0, -0.18f}, {0.3f, 0.4f, 0.18f}, {0, 0, 0}, okay::Color::FromBytes(90, 95, 105), 6);
             ImGui::Spacing();
             ImGui::TextDisabled("Presets");
             if (ImGui::SmallButton("Reset##char"))    { p = HumanoidParams{}; ch = true; }
@@ -5107,6 +5141,30 @@ void DrawInspector(EditorState& ed) {
                 else ConsoleLog("Load failed (no file?)");
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load a .okaychar preset into this character");
+
+            // Preset browser: one-click load of any .okaychar in the folder.
+            if (ImGui::TreeNode("Preset Library##charlib")) {
+                namespace fs = std::filesystem;
+                fs::path dir = fs::path(charFile).parent_path();
+                if (dir.empty()) dir = ".";
+                std::error_code ec; bool any = false;
+                if (fs::is_directory(dir, ec)) {
+                    for (auto& e : fs::directory_iterator(dir, ec)) {
+                        if (e.path().extension() != ".okaychar") continue;
+                        any = true;
+                        std::string fn = e.path().filename().string();
+                        if (ImGui::Selectable(fn.c_str())) {
+                            std::string txt = extide::ReadFile(e.path().string());
+                            if (!txt.empty()) { cb->FromText(txt); ch = true;
+                                std::strncpy(charFile, e.path().string().c_str(), sizeof(charFile) - 1);
+                                charFile[sizeof(charFile) - 1] = '\0';
+                                ConsoleLog("Loaded character " + fn); }
+                        }
+                    }
+                }
+                if (!any) ImGui::TextDisabled("No .okaychar presets in %s", dir.string().c_str());
+                ImGui::TreePop();
+            }
 
             if (ch) { cb->Apply(); ed.dirty = true; }   // live rebuild on any change
         }

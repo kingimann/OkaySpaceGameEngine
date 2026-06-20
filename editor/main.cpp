@@ -4919,15 +4919,26 @@ void DrawInspector(EditorState& ed) {
                 ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
             ImGui::Spacing();
             ImGui::TextDisabled("Colors");
-            float sk[4] = {cb->color.r, cb->color.g, cb->color.b, cb->color.a};
+            float sk[3] = {cb->color.r, cb->color.g, cb->color.b};
             if (ImGui::ColorEdit3("Skin##char", sk))   { cb->color  = {sk[0], sk[1], sk[2], 1.0f}; ch = true; }
-            float of[4] = {cb->outfit.r, cb->outfit.g, cb->outfit.b, cb->outfit.a};
-            if (ImGui::ColorEdit3("Outfit##char", of)) { cb->outfit = {of[0], of[1], of[2], 1.0f}; ch = true; }
+            float of[3] = {cb->outfit.r, cb->outfit.g, cb->outfit.b};
+            if (ImGui::ColorEdit3("Shirt##char", of))  { cb->outfit = {of[0], of[1], of[2], 1.0f}; ch = true; }
+            float pa[3] = {cb->pants.r, cb->pants.g, cb->pants.b};
+            if (ImGui::ColorEdit3("Pants##char", pa))  { cb->pants  = {pa[0], pa[1], pa[2], 1.0f}; ch = true; }
+            float sh[3] = {cb->shoes.r, cb->shoes.g, cb->shoes.b};
+            if (ImGui::ColorEdit3("Shoes##char", sh))  { cb->shoes  = {sh[0], sh[1], sh[2], 1.0f}; ch = true; }
             ch |= ImGui::Checkbox("Hair##char", &cb->hasHair);
             if (cb->hasHair) {
                 ImGui::SameLine();
-                float hr[4] = {cb->hair.r, cb->hair.g, cb->hair.b, cb->hair.a};
+                float hr[3] = {cb->hair.r, cb->hair.g, cb->hair.b};
                 if (ImGui::ColorEdit3("##haircol", hr)) { cb->hair = {hr[0], hr[1], hr[2], 1.0f}; ch = true; }
+            }
+            ch |= ImGui::Checkbox("Face##char", &cb->hasFace);
+            if (cb->hasFace) {
+                ImGui::SameLine();
+                float ey[3] = {cb->eye.r, cb->eye.g, cb->eye.b};
+                if (ImGui::ColorEdit3("##eyecol", ey)) { cb->eye = {ey[0], ey[1], ey[2], 1.0f}; ch = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eye color");
             }
             ImGui::Spacing();
             ImGui::TextDisabled("Presets");

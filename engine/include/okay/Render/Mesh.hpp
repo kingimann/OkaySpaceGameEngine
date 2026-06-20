@@ -35,6 +35,19 @@ struct HumanoidParams {
     float bodyDepth    = 1.0f;   // front-to-back thickness of torso + hips
 };
 
+/// Per-region colors for the procedural humanoid (Mesh::Humanoid). When passed,
+/// parts are colored individually and optional hair + face details are added.
+struct HumanoidColors {
+    Color skin  = Color::FromBytes(214, 178, 150); // head, neck, hands, nose
+    Color shirt = Color::FromBytes(70, 110, 170);  // torso, arms
+    Color pants = Color::FromBytes(50, 55, 70);    // hips, legs
+    Color shoes = Color::FromBytes(35, 35, 40);    // feet
+    Color hair  = Color::FromBytes(60, 40, 30);    // hair cap, brows, mouth
+    Color eye   = Color::FromBytes(40, 40, 50);    // eyes
+    bool  hasHair = true;
+    bool  hasFace = true;
+};
+
 /// A simple indexed triangle mesh (positions + triangle indices). Enough to
 /// describe 3D geometry; the editor renders these as wireframes and a future
 /// GPU backend can upload them directly. `name` tags built-in primitives so they
@@ -632,34 +645,49 @@ struct Mesh {
     /// A low-poly humanoid blockout assembled from primitive parts (head, neck,
     /// torso, hips, arms, hands, legs, feet), shaped by `p`. Stands on ~Y=0.
     /// Subdivide()/SubdivideSmooth() it to raise it from low-poly to high-poly.
-    /// When `skin`/`outfit`/`hair` are given, parts are colored per-region and a
-    /// hair cap is added on top of the head (skin=head/neck/hands, outfit=body).
-    static Mesh Humanoid(const HumanoidParams& p,
-                         const Color* skin = nullptr, const Color* outfit = nullptr,
-                         const Color* hair = nullptr) {
+    /// When `c` is given, parts are colored per-region (skin/shirt/pants/shoes),
+    /// a hair cap and a simple face (eyes/brows/nose/mouth) are added optionally.
+    static Mesh Humanoid(const HumanoidParams& p, const HumanoidColors* c = nullptr) {
         Mesh m; m.name = "Human";
         const float H = p.height, B = p.build, hd = p.headSize;
         const float sw = 0.46f * p.shoulderWidth;   // arm half-spacing
         const float hw = 0.20f * p.hipWidth;        // leg half-spacing
         const float aL = p.armLength, lL = p.legLength;
         const float bd = p.bodyDepth;
+        const Color* skin  = c ? &c->skin  : nullptr;
+        const Color* shirt = c ? &c->shirt : nullptr;
+        const Color* pants = c ? &c->pants : nullptr;
+        const Color* shoes = c ? &c->shoes : nullptr;
         // Torso length grows the torso upward (bottom stays at the hips); the upper
         // body (neck, head, arms) rides up by the same amount so it stays attached.
         const float up = 0.78f * H * (p.torsoLength - 1.0f);
         const float headY = 1.78f * H + up;
         m.Add(Sphere(0.5f, 6, 8), {0.0f, headY, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}, skin); // head
-        if (hair)   // a flattened cap over the top of the head
+        if (c && c->hasHair)   // a flattened cap over the top of the head
             m.Add(Sphere(0.5f, 5, 8), {0.0f, headY + 0.10f * hd, 0.0f},
-                  {0.44f * hd, 0.34f * hd, 0.44f * hd}, hair);
+                  {0.44f * hd, 0.34f * hd, 0.44f * hd}, &c->hair);
+        if (c && c->hasFace) {                       // eyes, brows, nose, mouth on +Z
+            const float fz = 0.19f * hd, ex = 0.09f * hd;
+            for (int s = -1; s <= 1; s += 2) {
+                m.Add(Sphere(0.5f, 4, 5), {s * ex, headY + 0.04f * hd, fz},
+                      {0.06f * hd, 0.07f * hd, 0.05f * hd}, &c->eye);                       // eye
+                m.Add(Cube(1.0f), {s * ex, headY + 0.12f * hd, fz},
+                      {0.09f * hd, 0.025f * hd, 0.04f * hd}, &c->hair);                     // brow
+            }
+            m.Add(Cube(1.0f), {0.0f, headY - 0.01f * hd, fz + 0.02f * hd},
+                  {0.05f * hd, 0.08f * hd, 0.06f * hd}, &c->skin);                          // nose
+            m.Add(Cube(1.0f), {0.0f, headY - 0.13f * hd, fz},
+                  {0.12f * hd, 0.025f * hd, 0.04f * hd}, &c->hair);                         // mouth
+        }
         m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}, skin); // neck
         m.Add(Cube(1.0f), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
-              {0.62f * p.shoulderWidth * B, 0.78f * H * p.torsoLength, 0.34f * B * bd}, outfit);        // torso
-        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B * bd}, outfit); // hips
+              {0.62f * p.shoulderWidth * B, 0.78f * H * p.torsoLength, 0.34f * B * bd}, shirt);         // torso
+        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B * bd}, pants); // hips
         for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
             Vec3 shoulder{s * sw, 1.50f * H + up, 0.0f};       // pivot at the shoulder
             Vec3 armRot{0.0f, 0.0f, (float)s * -p.armSpread};  // swing out from the body
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H + up, 0.0f},
-                       {0.22f * B, 0.64f * aL * H, 0.22f * B}, armRot, shoulder, outfit);
+                       {0.22f * B, 0.64f * aL * H, 0.22f * B}, armRot, shoulder, shirt);
             m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H + up, 0.0f},
                        {0.17f * B * p.handSize, 0.17f * B * p.handSize, 0.17f * B * p.handSize},
                        armRot, shoulder, skin);
@@ -668,9 +696,9 @@ struct Mesh {
             Vec3 hip{s * hw, 0.60f * H, 0.0f};
             Vec3 legRot{0.0f, 0.0f, (float)s * -p.legSpread};
             m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * hw, 0.12f * H, 0.0f},
-                       {0.26f * B, 0.96f * lL * H, 0.26f * B}, legRot, hip, outfit);
+                       {0.26f * B, 0.96f * lL * H, 0.26f * B}, legRot, hip, pants);
             m.AddPosed(Cube(1.0f), {s * hw, (0.12f - 0.58f * lL) * H, 0.08f},
-                       {0.26f * B * p.footSize, 0.12f * p.footSize, 0.52f * p.footSize}, legRot, hip, outfit);
+                       {0.26f * B * p.footSize, 0.12f * p.footSize, 0.52f * p.footSize}, legRot, hip, shoes);
         }
         return m;
     }

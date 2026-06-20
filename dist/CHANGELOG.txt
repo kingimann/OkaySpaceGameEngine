@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.17
+  - Character Creator: faces and a full outfit.
+    * A simple face — eyes (with their own Eye color), brows, nose, and mouth —
+      added to the head; toggle it with "Face".
+    * Outfit split into Skin / Shirt / Pants / Shoes color regions (torso+arms =
+      shirt, hips+legs = pants, feet = shoes) for proper clothed characters.
+    * All new colors + the Face toggle save/load (back-compatible).
+
 v2.16.16
   - Character Creator: multi-color characters.
     * Separate Skin, Outfit, and Hair colors (head/neck/hands = skin;

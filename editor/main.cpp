@@ -5326,18 +5326,36 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 }
             }
 
-            if (up->GetComponent<Light>()) {
+            if (auto* lt = up->GetComponent<Light>()) {
                 ImU32 col = (up.get() == ed.selected()) ? IM_COL32(255, 220, 90, 255)
                                                         : IM_COL32(255, 210, 70, 255);
                 // Sun: short rays around the light's position.
                 Vec3 ax[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
                 for (auto& a : ax) { line(p - a * 0.25f, p + a * 0.25f, col); }
-                // Direction arrow along the light's forward axis.
-                Vec3 f = t->Forward();
-                Vec3 tip = p + f * 1.4f;
-                line(p, tip, col, 2.0f);
-                line(tip, tip - f * 0.3f + t->Up() * 0.15f, col);
-                line(tip, tip - f * 0.3f - t->Up() * 0.15f, col);
+                Vec3 f = t->Forward(), r = t->Right(), u = t->Up();
+                if (lt->type == Light::Type::Point) {
+                    // Range sphere: three rings so the reach is readable in 3D.
+                    ring(p, Vec3{1,0,0}, Vec3{0,1,0}, lt->range, col);
+                    ring(p, Vec3{1,0,0}, Vec3{0,0,1}, lt->range, col);
+                    ring(p, Vec3{0,1,0}, Vec3{0,0,1}, lt->range, col);
+                } else if (lt->type == Light::Type::Spot) {
+                    // Cone: apex at the light, base ring at `range` with a radius
+                    // from the half-angle; four edge lines to the rim.
+                    float half = Mathf::Clamp(lt->spotAngle * 0.5f, 1.0f, 89.0f) * Mathf::Deg2Rad;
+                    float rad = lt->range * Mathf::Tan(half);
+                    Vec3 baseC = p + f * lt->range;
+                    ring(baseC, r, u, rad, col);
+                    line(p, baseC + r * rad, col);
+                    line(p, baseC - r * rad, col);
+                    line(p, baseC + u * rad, col);
+                    line(p, baseC - u * rad, col);
+                } else {
+                    // Directional: an arrow along forward (the sun's direction).
+                    Vec3 tip = p + f * 1.4f;
+                    line(p, tip, col, 2.0f);
+                    line(tip, tip - f * 0.3f + u * 0.15f, col);
+                    line(tip, tip - f * 0.3f - u * 0.15f, col);
+                }
             }
 
             // 3D collider wireframes (Unity-style green outlines).
@@ -5580,6 +5598,21 @@ void DrawViewport(EditorState& ed) {
         ed.camTarget = p;
         ed.cameraPos = {p.x, p.y};
     }
+    // Align a selected Camera to the current scene view (Unity's Align With View):
+    // snap its position/orientation to the editor eye so the Game view matches.
+    if (ed.view3D && ed.selected() && ed.selected()->GetComponent<Camera>()) {
+        ImGui::SameLine();
+        if (ImGui::Button("Align Cam to View")) {
+            float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
+            Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
+                     Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
+            Vec3 eye = ed.camTarget + dir * ed.camDist;
+            Transform* t = ed.selected()->transform;
+            t->SetPosition(eye);
+            t->localRotation = Quat::LookRotation((ed.camTarget - eye).Normalized(), Vec3::Up);
+            ed.dirty = true;
+        }
+    }
     // Transform tools (W/E/R), highlighting the active one.
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
     auto toolBtn = [&](const char* lbl, Tool t) {
@@ -5704,10 +5737,11 @@ void DrawViewport(EditorState& ed) {
     if (ed.view3D) DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     else           DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
 
-    // Corner overlay.
-    char overlay[128];
-    std::snprintf(overlay, sizeof(overlay), "%s  |  %d objects%s%s",
+    // Corner overlay (view mode, object count, live FPS, selection).
+    char overlay[160];
+    std::snprintf(overlay, sizeof(overlay), "%s  |  %d objects  |  %.0f FPS%s%s",
                   ed.view3D ? "3D" : "2D", (int)ed.scene().Objects().size(),
+                  ImGui::GetIO().Framerate,
                   ed.selected() ? "  |  " : "",
                   ed.selected() ? ed.selected()->name.c_str() : "");
     dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(200, 200, 210, 255), overlay);

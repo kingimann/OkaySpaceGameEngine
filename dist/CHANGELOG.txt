@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.5
+  - Rotate gizmo is richer and more Unity-like: rings now fade on their
+    camera-facing back half (so they read as a 3D sphere), the ring under the
+    cursor highlights before you grab it, a translucent wedge + live degree
+    readout show how far you're turning, and a new outer screen-aligned ring
+    lets you free-spin about the camera/view axis.
+  - Autocomplete now understands member access: typing "transform." lists
+    position, rotation, Translate, Rotate, …; likewise Input., Time., Mathf.,
+    Vector3., Physics2D., Debug., Random., Quaternion., Color., SceneManager.,
+    Screen. and more. Plain keyword/builtin completion is unchanged.
+  - You can now edit Project scripts directly: double-click a .okay/.lua/.cs in
+    the Project window to open it in the in-app Script Editor as its own tab
+    (no GameObject required). Save/Run/Reload work as usual.
+
 v2.16.4
   - Rotate tool is now Unity-style: instead of straight axis arms, the Rotate
     gizmo (E) draws three colored rings (X/Y/Z) around the selection. Grab a ring

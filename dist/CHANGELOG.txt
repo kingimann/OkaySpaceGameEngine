@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.36
+  - Character Creator detail pass:
+    * Hands now have three fingers + a thumb (not a plain block).
+    * Feet get a rounded toe.
+    * Head has a jaw/chin so it reads more like a face than a ball.
+    * Thicker default arms/legs (less stick-like).
+
 v2.16.35
   - Character Creator: more adult proportions — smaller head and longer legs so
     the default figure is taller and less stubby (use the Height/Head Size/Leg

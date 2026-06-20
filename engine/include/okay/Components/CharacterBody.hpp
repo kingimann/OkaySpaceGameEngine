@@ -107,6 +107,11 @@ public:
 
     void Start() override { Apply(); }
     void Update(float dt) override;   // animate limbs while playing
+
+    /// Serialize all character settings to a portable ".okaychar" text blob, and
+    /// restore them — for a reusable character preset library.
+    std::string ToText() const;
+    void FromText(const std::string& text);
 };
 
 } // namespace okay

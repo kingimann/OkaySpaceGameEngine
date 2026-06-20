@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.27
+  - Character Creator: save/load character presets.
+    * Save the entire character (all proportions, face, hair, colors, accessories,
+      animation) to a reusable ".okaychar" file, and load it back onto any
+      character — build a personal character library.
+
 v2.16.26
   - Character Creator: body presets + accessory parenting.
     * New body presets using the shape params: Athletic, Stocky, Lanky, Chubby,

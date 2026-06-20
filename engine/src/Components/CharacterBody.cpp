@@ -2,8 +2,77 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include <cmath>
+#include <sstream>
 
 namespace okay {
+
+namespace {
+std::string Quoted(const std::string& s) { return "\"" + s + "\""; }
+std::string ReadQ(std::istream& in) {
+    std::string t; in >> std::ws;
+    if (in.peek() == '"') { in.get(); std::getline(in, t, '"'); }
+    else in >> t;
+    return t;
+}
+} // namespace
+
+std::string CharacterBody::ToText() const {
+    std::ostringstream o;
+    const HumanoidParams& p = params;
+    o << "okaychar 1\n";
+    o << p.height << " " << p.build << " " << p.headSize << " " << p.shoulderWidth << " "
+      << p.hipWidth << " " << p.armLength << " " << p.legLength << " " << p.neckLength << " "
+      << p.handSize << " " << p.footSize << " " << p.armSpread << " " << p.legSpread << " "
+      << p.torsoLength << " " << p.bodyDepth << " " << p.hairStyle << " " << p.eyeSpacing << " "
+      << p.mouthWidth << " " << p.browAngle << " " << (p.ears ? 1 : 0) << " " << p.eyeSize << " "
+      << p.noseSize << " " << p.armThickness << " " << p.legThickness << " " << p.waist << " "
+      << p.belly << "\n";
+    auto wc = [&](const Color& c) { o << c.r << " " << c.g << " " << c.b << " " << c.a << " "; };
+    wc(color); wc(outfit); wc(pants); wc(shoes); wc(hair); wc(eye); wc(hat); wc(glasses); o << "\n";
+    o << (hasHair ? 1 : 0) << " " << (hasFace ? 1 : 0) << " " << (hasHat ? 1 : 0) << " "
+      << (hasGlasses ? 1 : 0) << " " << (beard ? 1 : 0) << " " << (mustache ? 1 : 0) << " "
+      << subdivisions << " " << smoothAmount << " " << anim << " " << animSpeed << "\n";
+    o << accessories.size() << "\n";
+    for (const Accessory& a : accessories)
+        o << Quoted(a.name) << " " << Quoted(a.shape) << " "
+          << a.offset.x << " " << a.offset.y << " " << a.offset.z << " "
+          << a.scale.x << " " << a.scale.y << " " << a.scale.z << " "
+          << a.rotation.x << " " << a.rotation.y << " " << a.rotation.z << " "
+          << a.color.r << " " << a.color.g << " " << a.color.b << " " << a.color.a << " "
+          << a.attach << "\n";
+    return o.str();
+}
+
+void CharacterBody::FromText(const std::string& text) {
+    std::istringstream in(text);
+    std::string tag; int ver = 0;
+    in >> tag >> ver;
+    if (tag != "okaychar") return;
+    HumanoidParams& p = params;
+    int ears = 1;
+    in >> p.height >> p.build >> p.headSize >> p.shoulderWidth >> p.hipWidth >> p.armLength
+       >> p.legLength >> p.neckLength >> p.handSize >> p.footSize >> p.armSpread >> p.legSpread
+       >> p.torsoLength >> p.bodyDepth >> p.hairStyle >> p.eyeSpacing >> p.mouthWidth
+       >> p.browAngle >> ears >> p.eyeSize >> p.noseSize >> p.armThickness >> p.legThickness
+       >> p.waist >> p.belly;
+    p.ears = (ears != 0);
+    auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+    rc(color); rc(outfit); rc(pants); rc(shoes); rc(hair); rc(eye); rc(hat); rc(glasses);
+    int hh, hf, ht, hg, bd, ms;
+    in >> hh >> hf >> ht >> hg >> bd >> ms >> subdivisions >> smoothAmount >> anim >> animSpeed;
+    hasHair = hh; hasFace = hf; hasHat = ht; hasGlasses = hg; beard = bd; mustache = ms;
+    std::size_t n = 0; in >> n;
+    accessories.clear();
+    for (std::size_t k = 0; k < n; ++k) {
+        Accessory a;
+        a.name = ReadQ(in); a.shape = ReadQ(in);
+        in >> a.offset.x >> a.offset.y >> a.offset.z
+           >> a.scale.x >> a.scale.y >> a.scale.z
+           >> a.rotation.x >> a.rotation.y >> a.rotation.z
+           >> a.color.r >> a.color.g >> a.color.b >> a.color.a >> a.attach;
+        accessories.push_back(a);
+    }
+}
 
 void CharacterBody::Apply() {
     if (!gameObject) return;

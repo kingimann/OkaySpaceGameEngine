@@ -30,6 +30,8 @@ struct HumanoidParams {
     float footSize     = 1.0f;
     float armSpread    = 10.0f;  // degrees arms angle out from the body (A/T-pose)
     float legSpread    = 3.0f;   // degrees legs angle out (stance width)
+    float torsoLength  = 1.0f;   // lengthens the torso (raises the upper body)
+    float bodyDepth    = 1.0f;   // front-to-back thickness of torso + hips
 };
 
 /// A simple indexed triangle mesh (positions + triangle indices). Enough to
@@ -624,16 +626,21 @@ struct Mesh {
         const float sw = 0.46f * p.shoulderWidth;   // arm half-spacing
         const float hw = 0.20f * p.hipWidth;        // leg half-spacing
         const float aL = p.armLength, lL = p.legLength;
-        m.Add(Sphere(0.5f, 6, 8), {0.0f, 1.78f * H, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}); // head
-        m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}); // neck
-        m.Add(Cube(1.0f), {0.0f, 1.10f * H, 0.0f}, {0.62f * p.shoulderWidth * B, 0.78f * H, 0.34f * B}); // torso
-        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B});      // hips
+        const float bd = p.bodyDepth;
+        // Torso length grows the torso upward (bottom stays at the hips); the upper
+        // body (neck, head, arms) rides up by the same amount so it stays attached.
+        const float up = 0.78f * H * (p.torsoLength - 1.0f);
+        m.Add(Sphere(0.5f, 6, 8), {0.0f, 1.78f * H + up, 0.0f}, {0.40f * hd, 0.46f * hd, 0.40f * hd}); // head
+        m.Add(Cylinder(0.5f, 1.0f, 6), {0.0f, 1.52f * H + up, 0.0f}, {0.16f, 0.20f * p.neckLength, 0.16f}); // neck
+        m.Add(Cube(1.0f), {0.0f, (0.71f * H) + 0.39f * H * p.torsoLength, 0.0f},
+              {0.62f * p.shoulderWidth * B, 0.78f * H * p.torsoLength, 0.34f * B * bd});                // torso
+        m.Add(Cube(1.0f), {0.0f, 0.66f * H, 0.0f}, {0.56f * p.hipWidth * B, 0.24f * H, 0.34f * B * bd}); // hips
         for (int s = -1; s <= 1; s += 2) {                                    // arms + hands
-            Vec3 shoulder{s * sw, 1.50f * H, 0.0f};            // pivot at the shoulder
+            Vec3 shoulder{s * sw, 1.50f * H + up, 0.0f};       // pivot at the shoulder
             Vec3 armRot{0.0f, 0.0f, (float)s * -p.armSpread};  // swing out from the body
-            m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H, 0.0f},
+            m.AddPosed(Capsule(0.5f, 1.0f, 6, 3), {s * sw, 1.18f * H + up, 0.0f},
                        {0.22f * B, 0.64f * aL * H, 0.22f * B}, armRot, shoulder);
-            m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H, 0.0f},
+            m.AddPosed(Sphere(0.5f, 5, 6), {s * sw, (1.18f - 0.54f * aL) * H + up, 0.0f},
                        {0.17f * B * p.handSize, 0.17f * B * p.handSize, 0.17f * B * p.handSize},
                        armRot, shoulder);
         }

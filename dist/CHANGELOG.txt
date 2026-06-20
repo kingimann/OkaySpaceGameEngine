@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.15
+  - Character Creator: more anatomy + export.
+    * Torso Length (raises the upper body, keeping limbs attached) and Body Depth
+      (front-to-back thickness) sliders.
+    * Export .OBJ — bake the character (at its current detail level) to
+      assets/<name>.obj for reuse as a regular model asset.
+    * Randomize now also varies torso length and body depth.
+    * New fields save/load (back-compatible).
+
 v2.16.14
   - Character Creator expanded:
     * New proportions: Hand Size and Foot Size.

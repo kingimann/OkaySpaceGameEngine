@@ -4901,6 +4901,8 @@ void DrawInspector(EditorState& ed) {
             ch |= ImGui::SliderFloat("Head Size##char",     &p.headSize,      0.5f, 1.8f);
             ch |= ImGui::SliderFloat("Shoulder Width##char",&p.shoulderWidth, 0.5f, 1.8f);
             ch |= ImGui::SliderFloat("Hip Width##char",     &p.hipWidth,      0.5f, 1.8f);
+            ch |= ImGui::SliderFloat("Torso Length##char",  &p.torsoLength,   0.6f, 1.6f);
+            ch |= ImGui::SliderFloat("Body Depth##char",    &p.bodyDepth,     0.6f, 1.8f);
             ch |= ImGui::SliderFloat("Arm Length##char",    &p.armLength,     0.5f, 1.6f);
             ch |= ImGui::SliderFloat("Leg Length##char",    &p.legLength,     0.5f, 1.6f);
             ch |= ImGui::SliderFloat("Neck Length##char",   &p.neckLength,    0.3f, 2.0f);
@@ -4942,12 +4944,22 @@ void DrawInspector(EditorState& ed) {
                 p.hipWidth = rf(0.7f, 1.4f); p.armLength = rf(0.8f, 1.3f);
                 p.legLength = rf(0.8f, 1.3f);p.neckLength = rf(0.6f, 1.5f);
                 p.handSize = rf(0.7f, 1.4f); p.footSize = rf(0.7f, 1.5f);
-                p.armSpread = rf(5.0f, 35.0f);
+                p.armSpread = rf(5.0f, 35.0f); p.torsoLength = rf(0.8f, 1.3f);
+                p.bodyDepth = rf(0.8f, 1.4f);
                 ch = true;
             }
             int tris = 0;
             if (auto* mr = go->GetComponent<MeshRenderer>()) tris = mr->mesh.TriangleCount();
             ImGui::TextDisabled("%d triangles", tris);
+            // Bake the current character to an .OBJ asset for reuse outside the creator.
+            if (ImGui::Button("Export .OBJ##char", ImVec2(-1, 0))) {
+                std::string path = "assets/" + go->name + ".obj";
+                std::error_code mc; std::filesystem::create_directories("assets", mc);
+                if (cb->Build().SaveOBJ(path)) ConsoleLog("Exported character to " + path);
+                else ConsoleLog("Failed to export " + path);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Bake the mesh (with current detail) to assets/<name>.obj");
             if (ch) { cb->Apply(); ed.dirty = true; }   // live rebuild on any change
         }
     }

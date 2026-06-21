@@ -42,7 +42,6 @@
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/Terrain.hpp"
-#include "okay/Components/CharacterBody.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -132,10 +131,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)cam->clearFlags << " " << cam->depth
             << " " << cam->nearClip << " " << cam->farClip << "\n";
     }
-    // A Terrain or CharacterBody owns its (generated) mesh, so don't serialize the
-    // big MeshRenderer geometry for it — the component below rebuilds it on load.
+    // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
+    // geometry for it — the component below rebuilds it on load.
     if (auto* mr = go->GetComponent<MeshRenderer>();
-        mr && !go->GetComponent<Terrain>() && !go->GetComponent<CharacterBody>()) {
+        mr && !go->GetComponent<Terrain>()) {
         out << "  mesh " << Quote(mr->mesh.name.empty() ? "Cube" : mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
@@ -158,49 +157,6 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wcol(tr->waterColor); wcol(tr->sandColor); wcol(tr->grassColor);
         wcol(tr->rockColor); wcol(tr->snowColor);
         out << " " << tr->waterLevel << " " << tr->snowLevel << " " << tr->rockSlope;
-        out << "\n";
-    }
-    if (auto* cb = go->GetComponent<CharacterBody>()) {
-        const HumanoidParams& p = cb->params;
-        out << "  character " << p.height << " " << p.build << " " << p.headSize << " "
-            << p.shoulderWidth << " " << p.hipWidth << " " << p.armLength << " "
-            << p.legLength << " " << p.neckLength << " " << cb->subdivisions << " "
-            << cb->smoothAmount << " " << cb->color.r << " " << cb->color.g << " "
-            << cb->color.b << " " << cb->color.a
-            << " " << p.handSize << " " << p.footSize << " " << p.armSpread << " " << p.legSpread
-            << " " << p.torsoLength << " " << p.bodyDepth
-            << " " << cb->outfit.r << " " << cb->outfit.g << " " << cb->outfit.b << " " << cb->outfit.a
-            << " " << cb->hair.r << " " << cb->hair.g << " " << cb->hair.b << " " << cb->hair.a
-            << " " << (cb->hasHair ? 1 : 0)
-            << " " << cb->pants.r << " " << cb->pants.g << " " << cb->pants.b << " " << cb->pants.a
-            << " " << cb->shoes.r << " " << cb->shoes.g << " " << cb->shoes.b << " " << cb->shoes.a
-            << " " << cb->eye.r << " " << cb->eye.g << " " << cb->eye.b << " " << cb->eye.a
-            << " " << (cb->hasFace ? 1 : 0)
-            << " " << p.hairStyle << " " << p.eyeSpacing
-            << " " << p.mouthWidth << " " << p.browAngle << " " << (p.ears ? 1 : 0)
-            << " " << cb->hat.r << " " << cb->hat.g << " " << cb->hat.b << " " << cb->hat.a
-            << " " << cb->glasses.r << " " << cb->glasses.g << " " << cb->glasses.b << " " << cb->glasses.a
-            << " " << (cb->hasHat ? 1 : 0) << " " << (cb->hasGlasses ? 1 : 0)
-            << " " << cb->anim << " " << cb->animSpeed
-            << " " << cb->accessories.size();
-        for (const auto& a : cb->accessories)
-            out << " " << Quote(a.name) << " " << Quote(a.shape)
-                << " " << a.offset.x << " " << a.offset.y << " " << a.offset.z
-                << " " << a.scale.x << " " << a.scale.y << " " << a.scale.z
-                << " " << a.rotation.x << " " << a.rotation.y << " " << a.rotation.z
-                << " " << a.color.r << " " << a.color.g << " " << a.color.b << " " << a.color.a;
-        out << " " << p.eyeSize << " " << p.noseSize
-            << " " << (cb->beard ? 1 : 0) << " " << (cb->mustache ? 1 : 0)
-            << " " << p.armThickness << " " << p.legThickness << " " << p.waist << " " << p.belly;
-        out << " " << cb->accessories.size();         // accessory attach points (parallel list)
-        for (const auto& a : cb->accessories) out << " " << a.attach;
-        out << " " << (cb->rootMotion ? 1 : 0);
-        out << " " << (cb->smoothBody ? 1 : 0) << " " << cb->smoothRes;
-        out << " " << p.armGap << " " << p.legGap;
-        out << " " << cb->pose.size();          // skeletal pose (euler per bone)
-        for (const Vec3& r : cb->pose) out << " " << r.x << " " << r.y << " " << r.z;
-        out << " " << (cb->lowPoly ? 1 : 0) << " " << (cb->realistic ? 1 : 0);    // body style
-        out << " " << p.gender << " " << p.muscle;
         out << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
@@ -981,108 +937,6 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> tr->waterLevel >> tr->snowLevel >> tr->rockSlope;
                     }
                     tr->Apply();   // rebuild the mesh into a MeshRenderer
-                } else if (field == "character") {
-                    auto* cb = go->AddComponent<CharacterBody>();
-                    HumanoidParams& p = cb->params;
-                    in >> p.height >> p.build >> p.headSize >> p.shoulderWidth >> p.hipWidth
-                       >> p.armLength >> p.legLength >> p.neckLength >> cb->subdivisions
-                       >> cb->smoothAmount >> cb->color.r >> cb->color.g >> cb->color.b >> cb->color.a;
-                    // Optional trailing fields (added later); read only if present on this line.
-                    auto more = [&]() -> bool {
-                        while (in.peek() == ' ' || in.peek() == '\t') in.get();
-                        int c = in.peek();
-                        return c != '\n' && c != '\r' && c != EOF;
-                    };
-                    if (more()) in >> p.handSize;
-                    if (more()) in >> p.footSize;
-                    if (more()) in >> p.armSpread;
-                    if (more()) in >> p.legSpread;
-                    if (more()) in >> p.torsoLength;
-                    if (more()) in >> p.bodyDepth;
-                    if (more()) in >> cb->outfit.r;
-                    if (more()) in >> cb->outfit.g;
-                    if (more()) in >> cb->outfit.b;
-                    if (more()) in >> cb->outfit.a;
-                    if (more()) in >> cb->hair.r;
-                    if (more()) in >> cb->hair.g;
-                    if (more()) in >> cb->hair.b;
-                    if (more()) in >> cb->hair.a;
-                    if (more()) { int hh = 1; in >> hh; cb->hasHair = (hh != 0); }
-                    if (more()) in >> cb->pants.r;
-                    if (more()) in >> cb->pants.g;
-                    if (more()) in >> cb->pants.b;
-                    if (more()) in >> cb->pants.a;
-                    if (more()) in >> cb->shoes.r;
-                    if (more()) in >> cb->shoes.g;
-                    if (more()) in >> cb->shoes.b;
-                    if (more()) in >> cb->shoes.a;
-                    if (more()) in >> cb->eye.r;
-                    if (more()) in >> cb->eye.g;
-                    if (more()) in >> cb->eye.b;
-                    if (more()) in >> cb->eye.a;
-                    if (more()) { int hf = 1; in >> hf; cb->hasFace = (hf != 0); }
-                    if (more()) in >> p.hairStyle;
-                    if (more()) in >> p.eyeSpacing;
-                    if (more()) in >> p.mouthWidth;
-                    if (more()) in >> p.browAngle;
-                    if (more()) { int er = 1; in >> er; p.ears = (er != 0); }
-                    if (more()) in >> cb->hat.r;
-                    if (more()) in >> cb->hat.g;
-                    if (more()) in >> cb->hat.b;
-                    if (more()) in >> cb->hat.a;
-                    if (more()) in >> cb->glasses.r;
-                    if (more()) in >> cb->glasses.g;
-                    if (more()) in >> cb->glasses.b;
-                    if (more()) in >> cb->glasses.a;
-                    if (more()) { int hh = 0; in >> hh; cb->hasHat = (hh != 0); }
-                    if (more()) { int hg = 0; in >> hg; cb->hasGlasses = (hg != 0); }
-                    if (more()) in >> cb->anim;
-                    if (more()) in >> cb->animSpeed;
-                    if (more()) {
-                        int an = 0; in >> an;
-                        cb->accessories.clear();
-                        for (int k = 0; k < an; ++k) {
-                            Accessory a;
-                            a.name = ReadQuoted(in);
-                            a.shape = ReadQuoted(in);
-                            in >> a.offset.x >> a.offset.y >> a.offset.z
-                               >> a.scale.x >> a.scale.y >> a.scale.z
-                               >> a.rotation.x >> a.rotation.y >> a.rotation.z
-                               >> a.color.r >> a.color.g >> a.color.b >> a.color.a;
-                            cb->accessories.push_back(a);
-                        }
-                    }
-                    if (more()) in >> p.eyeSize;
-                    if (more()) in >> p.noseSize;
-                    if (more()) { int bd = 0; in >> bd; cb->beard = (bd != 0); }
-                    if (more()) { int ms = 0; in >> ms; cb->mustache = (ms != 0); }
-                    if (more()) in >> p.armThickness;
-                    if (more()) in >> p.legThickness;
-                    if (more()) in >> p.waist;
-                    if (more()) in >> p.belly;
-                    if (more()) {                       // accessory attach points
-                        int na = 0; in >> na;
-                        for (int k = 0; k < na; ++k) {
-                            int at = 0; in >> at;
-                            if (k < (int)cb->accessories.size()) cb->accessories[k].attach = at;
-                        }
-                    }
-                    if (more()) { int rm = 1; in >> rm; cb->rootMotion = (rm != 0); }
-                    if (more()) { int sb = 0; in >> sb; cb->smoothBody = (sb != 0); }
-                    if (more()) in >> cb->smoothRes;
-                    if (more()) in >> p.armGap;
-                    if (more()) in >> p.legGap;
-                    if (more()) {                       // skeletal pose
-                        std::size_t np = 0; in >> np;
-                        cb->pose.assign(np, Vec3{0, 0, 0});
-                        for (std::size_t k = 0; k < np; ++k)
-                            in >> cb->pose[k].x >> cb->pose[k].y >> cb->pose[k].z;
-                    }
-                    if (more()) { int lp = 1; in >> lp; cb->lowPoly = (lp != 0); }
-                    if (more()) { int rl = 1; in >> rl; cb->realistic = (rl != 0); }
-                    if (more()) in >> p.gender;
-                    if (more()) in >> p.muscle;
-                    cb->Apply();   // rebuild the humanoid mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();
                     int as = 0, port = 45000;

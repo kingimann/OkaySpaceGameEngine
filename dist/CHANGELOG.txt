@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.28.0
+  - Removed the procedural Character creator (the CharacterBody component, the
+    humanoid mesh generators, the bundled MakeHuman base mesh, and its editor UI
+    and serialization). It wasn't meeting expectations, so it's been pulled to
+    keep the engine focused. Existing scenes that referenced a character simply
+    drop that component on load; everything else is unaffected. The general
+    movement components (Character Controller 2D / 3D) are untouched.
+
 v2.27.0
   - Character: a big leap in realism, matching MakeHuman's look.
     - NEW skin "matcap" (lit-sphere) shading in the software renderer. The base

@@ -6,7 +6,6 @@ add_library(okay_engine
     src/Core/DataAsset.cpp
     src/Input/Input.cpp
     src/Render/ConsoleRenderer.cpp
-    src/Render/HumanBaseMeshData.cpp
     src/Scene/Component.cpp
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp
@@ -30,7 +29,6 @@ add_library(okay_engine
     src/Components/UIDraggable.cpp
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
-    src/Components/CharacterBody.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Platform/Steam/Steam.cpp
     src/Components/SteamManager.cpp

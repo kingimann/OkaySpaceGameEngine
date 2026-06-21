@@ -272,7 +272,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (cm->runKey ? cm->runKey : '-') << " " << cm->stopDistance << " " << cm->turnSpeed
             << " " << cm->mouseButton << " " << (cm->holdToMove ? 1 : 0) << " "
             << (cm->driveAnimation ? 1 : 0) << " " << (cm->usePlayerHeight ? 1 : 0)
-            << " " << cm->groundY << "\n";
+            << " " << cm->groundY
+            // extended: follow camera (optional, back-compatible trailing fields)
+            << " " << (cm->followCamera ? 1 : 0) << " " << cm->cameraHeight << " " << cm->cameraDistance
+            << " " << cm->minDistance << " " << cm->maxDistance << " " << cm->cameraYaw
+            << " " << cm->cameraPitch << " " << cm->minPitch << " " << cm->maxPitch
+            << " " << cm->rotateSpeed << " " << cm->keyRotateSpeed
+            << " " << (cm->rotateLeftKey ? cm->rotateLeftKey : '-')
+            << " " << (cm->rotateRightKey ? cm->rotateRightKey : '-')
+            << " " << cm->cameraDamping << "\n";
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -848,6 +856,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     cm->stopDistance = sd; cm->turnSpeed = ts; cm->mouseButton = mb;
                     cm->holdToMove = (hold != 0); cm->driveAnimation = (anim != 0);
                     cm->usePlayerHeight = (useH != 0); cm->groundY = gy;
+                    // extended follow-camera fields (optional)
+                    int fc = 1; float ch = 1, cd = 12, mnd = 4, mxd = 24, cy = 0, cpi = 50,
+                                      mnp = 15, mxp = 85, rsp = 0.3f, krs = 90, cdamp = 0;
+                    std::string rlk = "-", rrk = "-";
+                    if (in >> fc >> ch >> cd >> mnd >> mxd >> cy >> cpi >> mnp >> mxp >> rsp >> krs >> rlk >> rrk >> cdamp) {
+                        cm->followCamera = (fc != 0); cm->cameraHeight = ch; cm->cameraDistance = cd;
+                        cm->minDistance = mnd; cm->maxDistance = mxd; cm->cameraYaw = cy;
+                        cm->cameraPitch = cpi; cm->minPitch = mnp; cm->maxPitch = mxp;
+                        cm->rotateSpeed = rsp; cm->keyRotateSpeed = krs;
+                        cm->rotateLeftKey = (rlk == "-" || rlk.empty()) ? 0 : rlk[0];
+                        cm->rotateRightKey = (rrk == "-" || rrk.empty()) ? 0 : rrk[0];
+                        cm->cameraDamping = cdamp;
+                    }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
                     float sp = 3, sd = 0; in >> sp >> sd;

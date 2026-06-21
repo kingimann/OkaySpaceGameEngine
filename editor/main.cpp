@@ -5766,6 +5766,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Use Player Height##ctm", &cm->usePlayerHeight)) ed.dirty = true;
             if (!cm->usePlayerHeight)
                 if (ImGui::DragFloat("Ground Y##ctm", &cm->groundY, 0.05f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Follow Camera");
+            if (ImGui::Checkbox("Follow Camera##ctm", &cm->followCamera)) ed.dirty = true;
+            if (cm->followCamera) {
+                if (ImGui::DragFloat("Cam Height##ctm", &cm->cameraHeight, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Cam Distance##ctm", &cm->cameraDistance, 0.1f, 1.0f, 40.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Min Distance##ctm", &cm->minDistance, 0.1f, 1.0f, 40.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Max Distance##ctm", &cm->maxDistance, 0.1f, 1.0f, 60.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Cam Yaw##ctm", &cm->cameraYaw, 0.5f)) ed.dirty = true;
+                if (ImGui::DragFloat("Cam Pitch##ctm", &cm->cameraPitch, 0.5f, 5.0f, 89.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Rotate Speed##ctm", &cm->rotateSpeed, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Damping##ctm", &cm->cameraDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                ImGui::TextDisabled("Middle-drag rotates, wheel zooms.");
+            }
             ImGui::TextDisabled("Click the ground to walk there (RuneScape-style). Needs the main Camera.");
             if (ImGui::SmallButton("Remove##ctm")) toRemove = cm;
         }

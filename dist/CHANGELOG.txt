@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.72.0
+  - Fixed 3D face flickering (z-fighting): the depth test now uses a small bias so
+    the first-drawn surface wins near-ties, stopping the shimmer between abutting
+    faces (very visible on the blocky character's overlapping body parts).
+  - Click-To-Move now has a RuneScape-style follow camera built in: it trails the
+    player and keeps it centered. Middle-drag rotates the camera, the wheel zooms,
+    and optional keys rotate it. Tunable in the inspector and saved with the scene.
+
 v2.71.0
   - New: Click-To-Move controller (RuneScape / Diablo style) + a "Point & Click"
     template. Click the ground and your Character walks there (unprojected onto the

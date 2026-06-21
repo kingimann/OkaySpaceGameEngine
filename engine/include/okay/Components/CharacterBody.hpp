@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
+#include "okay/Math/Mat4.hpp"
 
 namespace okay {
 
@@ -58,6 +59,17 @@ public:
     bool  lastPosSet = false;     // (runtime)
 
     std::vector<Accessory> accessories;   // user-added custom parts
+
+    // ---- Skeletal rig: pose the character by rotating bones. The body mesh is
+    //      skinned to a humanoid skeleton (linear-blend skinning), so rotating a
+    //      bone bends the limb. `pose[i]` is bone i's local rotation (euler deg);
+    //      all-zero (or empty) = the rest pose, mesh unchanged. ----
+    struct Bone { int parent; Vec3 joint; Vec3 tail; };
+    std::vector<Vec3> pose;                 // per-bone local rotation (euler deg)
+    static int  BoneCount();                // number of rig bones
+    static const char* BoneName(int i);     // UI label for bone i
+    std::vector<Bone> BuildSkeleton(const HumanoidParams& p) const;
+    void ApplyPose(Mesh& m, const HumanoidParams& p) const;   // deform m by `pose`
 
     /// Build the mesh for an explicit parameter set (used for animation frames).
     Mesh Build(const HumanoidParams& pp0) const {
@@ -118,6 +130,7 @@ public:
         if (smoothBody)
             for (std::size_t i = 0; i + 2 < m.triangles.size(); i += 3)
                 std::swap(m.triangles[i + 1], m.triangles[i + 2]);
+        ApplyPose(m, pp);           // bend the mesh to the posed skeleton (if any)
         m.ComputeSmoothNormals();   // smooth (Gouraud) shading + seam hiding
         return m;
     }

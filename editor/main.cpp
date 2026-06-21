@@ -562,6 +562,11 @@ int   g_terrainGenType = 0;    // 0 Mountains,1 Hills,2 Plains,3 Plateau,4 Islan
 float g_terrainGenAmp = 12.0f; // generation amplitude (peak height)
 float g_terrainGenFreq = 3.0f; // generation frequency (feature density)
 int   g_terrainGenOct = 5;     // generation octaves (detail)
+int   g_scatterProp = 0;       // 0 Tree,1 Pine,2 Rock,3 Bush
+int   g_scatterCount = 80;     // how many props to scatter per pass
+float g_scatterMinScale = 0.7f, g_scatterMaxScale = 1.5f;
+float g_scatterMaxSlope = 0.6f;// skip faces steeper than this (0 flat..1 vertical)
+float g_scatterMinH = -100.0f, g_scatterMaxH = 100.0f; // local height band to fill
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
@@ -1115,6 +1120,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
             if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
             if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Tree"))      { ed.CreateMesh("Tree");      ConsoleLog("Created Tree"); created = true; }
+            if (ImGui::MenuItem("Pine"))      { ed.CreateMesh("Pine");      ConsoleLog("Created Pine"); created = true; }
+            if (ImGui::MenuItem("Rock"))      { ed.CreateMesh("Rock");      ConsoleLog("Created Rock"); created = true; }
+            if (ImGui::MenuItem("Bush"))      { ed.CreateMesh("Bush");      ConsoleLog("Created Bush"); created = true; }
             if (ImGui::MenuItem("Character (humanoid)")) {
                 GameObject* g = ed.CreateEmpty("Character");
                 g->AddComponent<MeshRenderer>();
@@ -5274,6 +5284,48 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SliderFloat("Water Level##terr", &tr->waterLevel, -20.0f, 40.0f)) { tr->Apply(); ed.dirty = true; }
                 if (ImGui::SliderFloat("Snow Level##terr",  &tr->snowLevel,  0.0f, 80.0f))   { tr->Apply(); ed.dirty = true; }
                 if (ImGui::SliderFloat("Rock Slope##terr",  &tr->rockSlope,  0.1f, 1.0f))    { tr->Apply(); ed.dirty = true; }
+            }
+
+            ImGui::SeparatorText("Scatter props (trees, rocks, bushes)");
+            const char* props[] = {"Tree", "Pine", "Rock", "Bush"};
+            ImGui::SetNextItemWidth(160);
+            ImGui::Combo("Prop##scat", &g_scatterProp, props, 4);
+            ImGui::SliderInt("Count##scat", &g_scatterCount, 1, 500);
+            ImGui::DragFloatRange2("Scale##scat", &g_scatterMinScale, &g_scatterMaxScale, 0.02f, 0.1f, 6.0f, "%.2f");
+            ImGui::SliderFloat("Max Slope##scat", &g_scatterMaxSlope, 0.0f, 1.0f);
+            ImGui::DragFloatRange2("Height Band##scat", &g_scatterMinH, &g_scatterMaxH, 0.2f, -100.0f, 100.0f, "%.1f");
+            if (ImGui::Button("Scatter##scat")) {
+                Random rng((unsigned)(ImGui::GetTime() * 1000.0) + 7u);
+                float half = tr->size * 0.5f, e = tr->CellSize();
+                int placed = 0;
+                for (int i = 0; i < g_scatterCount; ++i) {
+                    float lx = rng.Range(-half, half), lz = rng.Range(-half, half);
+                    float h = tr->SampleHeight(lx, lz);
+                    if (h < g_scatterMinH || h > g_scatterMaxH) continue;
+                    float hx = tr->SampleHeight(lx + e, lz) - tr->SampleHeight(lx - e, lz);
+                    float hz = tr->SampleHeight(lx, lz + e) - tr->SampleHeight(lx, lz - e);
+                    Vec3 n = Vec3{-hx, 2.0f * e, -hz}.Normalized();
+                    if (1.0f - n.y > g_scatterMaxSlope) continue;       // too steep
+                    GameObject* o = ed.scene().CreateGameObject(std::string("Scatter_") + props[g_scatterProp]);
+                    o->AddComponent<MeshRenderer>()->mesh = Mesh::FromName(props[g_scatterProp]);
+                    o->transform->SetParent(tr->gameObject->transform, false);
+                    o->transform->localPosition = {lx, h, lz};
+                    float sc = rng.Range(g_scatterMinScale, g_scatterMaxScale);
+                    o->transform->localScale = {sc, sc, sc};
+                    o->transform->localRotation = Quat::Euler({0.0f, rng.Range(0.0f, 360.0f), 0.0f});
+                    ++placed;
+                }
+                ConsoleLog("Scattered " + std::to_string(placed) + " " + props[g_scatterProp] + "(s)");
+                ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Scattered##scat")) {
+                std::vector<GameObject*> kill;
+                for (const auto& o : ed.scene().Objects())
+                    if (o->name.rfind("Scatter_", 0) == 0) kill.push_back(o.get());
+                for (GameObject* k : kill) ed.scene().Destroy(k);
+                ConsoleLog("Cleared " + std::to_string(kill.size()) + " scattered prop(s)");
+                ed.dirty = true;
             }
 
             if (ImGui::SmallButton("Remove##terr")) toRemove = tr;

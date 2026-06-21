@@ -696,5 +696,20 @@ int main() {
         CHECK(radial == total);    // every sphere normal is (anti)radial
     }
 
+    // --- Vegetation / rock primitives: colored, smooth, ground-resting -----
+    {
+        for (const char* nm : {"Tree", "Pine", "Rock", "Bush"}) {
+            Mesh m = Mesh::FromName(nm);
+            CHECK(m.TriangleCount() > 0);
+            CHECK(m.HasFaceColors());   // every face tinted (bark/leaf/stone)
+            CHECK(m.HasNormals());      // smooth-shaded
+            CHECK(m.name == nm);
+            // Rests on/above the ground plane (base near y=0, nothing far below).
+            Vec3 lo, hi; m.Bounds(lo, hi);
+            CHECK(lo.y > -0.5f);
+            CHECK(hi.y > lo.y);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

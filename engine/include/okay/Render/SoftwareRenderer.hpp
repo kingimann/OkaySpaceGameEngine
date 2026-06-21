@@ -151,11 +151,17 @@ public:
         float inv = 1.0f / area;
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
-                float px = x + 0.5f, py = y + 0.5f;
-                float w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv;
-                float w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv;
-                float w2 = 1.0f - w0 - w1;
-                if (w0 < 0 || w1 < 0 || w2 < 0) continue;       // outside triangle
+                // Double precision avoids catastrophic float cancellation near edges
+                // of very large (screen-filling) triangles — the cause of the torn
+                // ground silhouette, dashed edge cracks and faint depth banding.
+                double px = x + 0.5, py = y + 0.5;
+                double w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * (double)inv;
+                double w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * (double)inv;
+                double w2 = 1.0 - w0 - w1;
+                // Edge bias: accept pixels a hair past an edge so adjacent triangles
+                // overlap by ~1px instead of leaving a crack that shows the sky
+                // through (the dashed seams). The depth test resolves the overlap.
+                if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
                 float d = w0 * d0 + w1 * d1 + w2 * d2;
                 std::size_t i = (std::size_t)y * width + x;
                 if (d < depth[i] - 1.5e-5f) { depth[i] = d; color[i] = abgr; }   // bias: stable winner on near-ties
@@ -186,15 +192,17 @@ public:
         float inv = 1.0f / area;
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
-                float px = x + 0.5f, py = y + 0.5f;
-                float w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * inv;
-                float w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * inv;
-                float w2 = 1.0f - w0 - w1;
+                // Double precision avoids float cancellation across huge triangles
+                // (torn silhouettes / edge cracks / depth banding on big grounds).
+                double px = x + 0.5, py = y + 0.5;
+                double w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * (double)inv;
+                double w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * (double)inv;
+                double w2 = 1.0 - w0 - w1;
                 // Tiny edge bias: pixels right on a shared edge can fall just outside
                 // both triangles from float rounding, leaving 1px cracks (a dotted
                 // seam across the big ground quad). Accept a hair past the edge so
                 // adjacent triangles always overlap; the depth test resolves it.
-                if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
+                if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
                 if (d >= depth[i] - 1.5e-5f) continue;   // small bias: first-drawn wins near-ties (kills z-fighting flicker)
@@ -296,15 +304,17 @@ public:
         LodGrad lg2 = MakeLodGrad(X, Y, inv, U, V, IW);
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
-                float px = x + 0.5f, py = y + 0.5f;
-                float w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * inv;
-                float w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * inv;
-                float w2 = 1.0f - w0 - w1;
+                // Double precision avoids float cancellation across huge triangles
+                // (torn silhouettes / edge cracks / depth banding on big grounds).
+                double px = x + 0.5, py = y + 0.5;
+                double w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * (double)inv;
+                double w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * (double)inv;
+                double w2 = 1.0 - w0 - w1;
                 // Tiny edge bias: pixels right on a shared edge can fall just outside
                 // both triangles from float rounding, leaving 1px cracks (a dotted
                 // seam across the big ground quad). Accept a hair past the edge so
                 // adjacent triangles always overlap; the depth test resolves it.
-                if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
+                if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
                 if (d >= depth[i] - 1.5e-5f) continue;   // small bias: first-drawn wins near-ties (kills z-fighting flicker)
@@ -380,15 +390,17 @@ public:
         const bool  envOn     = EnvSky().enabled;
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
-                float px = x + 0.5f, py = y + 0.5f;
-                float w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * inv;
-                float w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * inv;
-                float w2 = 1.0f - w0 - w1;
+                // Double precision avoids float cancellation across huge triangles
+                // (torn silhouettes / edge cracks / depth banding on big grounds).
+                double px = x + 0.5, py = y + 0.5;
+                double w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * (double)inv;
+                double w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * (double)inv;
+                double w2 = 1.0 - w0 - w1;
                 // Tiny edge bias: pixels right on a shared edge can fall just outside
                 // both triangles from float rounding, leaving 1px cracks (a dotted
                 // seam across the big ground quad). Accept a hair past the edge so
                 // adjacent triangles always overlap; the depth test resolves it.
-                if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
+                if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
                 if (d >= depth[i] - 1.5e-5f) continue;   // small bias: first-drawn wins near-ties (kills z-fighting flicker)

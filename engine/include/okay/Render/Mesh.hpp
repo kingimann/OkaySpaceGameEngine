@@ -187,6 +187,7 @@ struct Mesh {
                 int a = r * stride + s, b = a + stride;
                 m.triangles.insert(m.triangles.end(), {a, b, a + 1, a + 1, b, b + 1});
             }
+        m.ComputeSmoothNormals();   // round the surface (no facets)
         return m;
     }
 
@@ -257,6 +258,7 @@ struct Mesh {
                 int c = r1 * sides + s1, d = r * sides + s1;
                 m.triangles.insert(m.triangles.end(), {a, b, d, d, b, c});
             }
+        m.ComputeSmoothNormals();   // smooth torus surface
         return m;
     }
 
@@ -310,6 +312,7 @@ struct Mesh {
         for (int i = 0; i < subdivisions; ++i) m.Subdivide();
         m.ProjectToSphere(radius);
         m.name = "Icosphere";                     // Subdivide clears the name
+        m.ComputeSmoothNormals();                 // round the surface (no facets)
         return m;
     }
 
@@ -711,6 +714,7 @@ struct Mesh {
                 int a = r * stride + s, b = a + stride;
                 m.triangles.insert(m.triangles.end(), {a, b, a + 1, a + 1, b, b + 1});
             }
+        m.ComputeSmoothNormals();   // smooth capsule surface
         return m;
     }
 

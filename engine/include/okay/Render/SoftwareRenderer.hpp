@@ -179,8 +179,20 @@ public:
 
 // Process-wide texture cache for the software renderer (path -> RGBA image).
 // Loaded lazily; failed/empty paths cache an empty image so we don't retry.
-inline Image* GetCachedTexture(const std::string& path) {
+inline std::unordered_map<std::string, Image>& TextureCacheMap() {
     static std::unordered_map<std::string, Image> cache;
+    return cache;
+}
+
+// Register an in-memory image under a name so it can be used without a file on
+// disk (e.g. an embedded/procedural matcap that ships inside the exe). Names
+// conventionally start with '@' to avoid colliding with real file paths.
+inline void RegisterTexture(const std::string& name, Image img) {
+    TextureCacheMap()[name] = std::move(img);
+}
+
+inline Image* GetCachedTexture(const std::string& path) {
+    auto& cache = TextureCacheMap();
     auto it = cache.find(path);
     if (it == cache.end()) {
         Image img;
@@ -207,9 +219,13 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const bool hasUV = mr->mesh.uvs.size() == v.size();
         const bool faceCols = mr->mesh.HasFaceColors();   // per-triangle colors?
         Image* tex = mr->texture.empty() ? nullptr : GetCachedTexture(mr->texture);
+        Image* mcap = (mr->matcap.empty() || mr->unlit) ? nullptr : GetCachedTexture(mr->matcap);
+        // Matcap shading needs per-vertex normals; fall back if the mesh has none.
+        const bool useMatcap = mcap && mr->mesh.HasNormals();
         // Smooth (Gouraud) shading when the mesh carries per-vertex normals and
-        // isn't textured/unlit — interpolated lighting across each face.
-        const bool smooth = !tex && mr->mesh.HasNormals();
+        // isn't textured/unlit — interpolated lighting across each face. Matcap
+        // also rides the smooth path (it interpolates a per-vertex sampled color).
+        const bool smooth = useMatcap || (!tex && mr->mesh.HasNormals());
         const Mat4 nrm = model;   // linear part transforms normals (rigid/uniform)
 
         // --- Per-mesh frustum cull: project the 8 AABB corners to clip space and
@@ -268,7 +284,22 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 // Per-vertex light color (Gouraud) from the smoothed vertex
                 // normal; falls back to white when not smooth-shading.
                 Vec3 lk{1.0f, 1.0f, 1.0f};
-                if (smooth && !mr->unlit) {
+                if (useMatcap) {
+                    // Matcap: sample the lit-sphere by the camera-space normal. Build
+                    // a view frame from the eye->vertex direction so the lookup is
+                    // stable as the camera orbits.
+                    Vec3 nk = nrm.MultiplyVector(mr->mesh.normals[idx[k]]).Normalized();
+                    if (facing < 0.0f) nk = nk * -1.0f;
+                    Vec3 fwd = (wp[k] - eye).Normalized();
+                    Vec3 rgt = Vec3::Cross(Vec3{0, 1, 0}, fwd);
+                    float rl = rgt.Magnitude();
+                    rgt = rl > 1e-4f ? rgt * (1.0f / rl) : Vec3{1, 0, 0};
+                    Vec3 upv = Vec3::Cross(fwd, rgt);
+                    float mx = Vec3::Dot(nk, rgt), my = Vec3::Dot(nk, upv);
+                    float mu = mx * 0.5f + 0.5f, mv = 1.0f - (my * 0.5f + 0.5f);
+                    Color mc = mcap->Sample(mu, mv);
+                    lk = {mc.r, mc.g, mc.b};
+                } else if (smooth && !mr->unlit) {
                     Vec3 nk = nrm.MultiplyVector(mr->mesh.normals[idx[k]]).Normalized();
                     if (facing < 0.0f) nk = nk * -1.0f;   // match the flipped face for back faces
                     lk = SceneLights::ShadeColor(wp[k], nk);

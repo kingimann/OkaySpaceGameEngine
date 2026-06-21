@@ -2,8 +2,62 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Render/SoftwareRenderer.hpp"   // RegisterTexture (matcap)
+#include "okay/Graphics/Image.hpp"
 #include <cmath>
 #include <sstream>
+
+namespace {
+// Build a soft, skin-like matcap (lit-sphere) once and register it so the
+// software renderer can shade the character with it. A matcap bakes the whole
+// lighting response into a sphere image; sampling it by the camera-space normal
+// makes subtle surface relief (eye sockets, nose, lips, collarbones) read
+// clearly and gives skin a soft, slightly subsurface look instead of flat clay.
+// This is generated procedurally, so it ships inside the exe with no asset file.
+const char* EnsureSkinMatcap() {
+    static const char* name = "@skin_matcap";
+    static bool built = false;
+    if (built) return name;
+    built = true;
+    const int N = 128;
+    okay::Image img(N, N);
+    // Key light from the upper front-left, like a soft studio key.
+    float Lx = -0.35f, Ly = 0.55f, Lz = 0.78f;
+    float Ll = std::sqrt(Lx * Lx + Ly * Ly + Lz * Lz);
+    Lx /= Ll; Ly /= Ll; Lz /= Ll;
+    for (int y = 0; y < N; ++y) {
+        for (int x = 0; x < N; ++x) {
+            float nx = (x + 0.5f) / N * 2.0f - 1.0f;
+            float ny = 1.0f - (y + 0.5f) / N * 2.0f;
+            float r2 = nx * nx + ny * ny;
+            float val, rr, gg, bb;
+            if (r2 >= 1.0f) {
+                // Silhouette/rim: dark, gives the body a soft edge falloff.
+                val = 0.30f; rr = val; gg = val * 0.95f; bb = val * 0.9f;
+            } else {
+                float nz = std::sqrt(1.0f - r2);
+                float d = nx * Lx + ny * Ly + nz * Lz;       // N.L
+                float wrap = d * 0.5f + 0.5f;                // soft "wrap" diffuse
+                val = 0.34f + 0.85f * wrap * wrap;           // ambient + soft diffuse
+                // Blinn-ish specular toward the eye (+Z).
+                float hx = Lx, hy = Ly, hz = Lz + 1.0f;
+                float hl = std::sqrt(hx * hx + hy * hy + hz * hz);
+                float nh = (nx * hx + ny * hy + nz * hz) / hl;
+                float spec = nh > 0 ? std::pow(nh, 28.0f) * 0.45f : 0.0f;
+                // Warm skin: keep red, pull green/blue down a touch, and add a
+                // subsurface reddening in the mid-shadow terminator.
+                float term = (1.0f - wrap) * wrap * 0.5f;    // peaks at the terminator
+                rr = val + spec + term * 0.10f;
+                gg = val * 0.93f + spec;
+                bb = val * 0.85f + spec;
+            }
+            img.SetPixel(x, y, okay::Color(rr, gg, bb, 1.0f));
+        }
+    }
+    okay::RegisterTexture(name, std::move(img));
+    return name;
+}
+} // namespace
 
 namespace okay {
 
@@ -233,6 +287,10 @@ void CharacterBody::Apply() {
     // of looking like flat matte clay.
     mr->specular = 0.22f;
     mr->shininess = 24.0f;
+    // The realistic base mesh has a fully-modelled face (eye sockets, nose, lips,
+    // ears) but flat shading hides it. Shade it with a soft skin matcap so that
+    // relief reads — the same lit-sphere technique MakeHuman uses.
+    mr->matcap = realistic ? EnsureSkinMatcap() : std::string();
 }
 
 void CharacterBody::Update(float dt) {

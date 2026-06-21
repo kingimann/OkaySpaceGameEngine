@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.27.0
+  - Character: a big leap in realism, matching MakeHuman's look.
+    - NEW skin "matcap" (lit-sphere) shading in the software renderer. The base
+      mesh always had a fully-modelled face (eye sockets, nose, lips, ears), but
+      flat shading washed it out into a smooth blob. The matcap bakes a soft,
+      skin-like lighting response so all that surface relief now reads clearly --
+      this is the same technique MakeHuman uses. Generated procedurally, so it
+      ships inside the exe (no asset files).
+    - NEW eyeballs (white + colored iris + pupil) fitted into the modelled eye
+      sockets, plus slim, subtle eyebrows. The face finally looks alive.
+    - Default character is now bald (like MakeHuman's default); turn on Hair in
+      the inspector for hairstyles. Hair styles were reworked with a proper high
+      hairline instead of a bowl cut.
+    - Height now makes the character TALLER, not just uniformly bigger: it scales
+      mostly vertically (with a gentle width increase), and its range is wider.
+  - Renderer: MeshRenderer gained a `matcap` slot; images can be registered
+    in-memory (RegisterTexture) and Image gained UV Sample().
+
 v2.26.0
   - Character: the DEFAULT character is now the MakeHuman base figure itself,
     with natural human proportions. Previously the default sliders (lean build,

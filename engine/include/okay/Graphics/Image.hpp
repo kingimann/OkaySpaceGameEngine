@@ -43,6 +43,15 @@ public:
             for (int x = 0; x < m_w; ++x) SetPixel(x, y, c);
     }
 
+    /// Sample by normalized UV (0..1), clamped to the edges. Nearest-neighbour.
+    Color Sample(float u, float v) const {
+        if (m_w <= 0 || m_h <= 0) return Color(1, 1, 1, 1);
+        u = u < 0 ? 0 : (u > 1 ? 1 : u);
+        v = v < 0 ? 0 : (v > 1 ? 1 : v);
+        int x = (int)(u * (m_w - 1) + 0.5f), y = (int)(v * (m_h - 1) + 0.5f);
+        return GetPixel(x, y);
+    }
+
     /// Load any stb-supported image as RGBA. Returns false (and leaves the image
     /// empty) on failure; `error` receives a message if provided.
     bool Load(const std::string& path, std::string* error = nullptr);

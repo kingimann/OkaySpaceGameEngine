@@ -33,6 +33,14 @@ public:
     /// Texture repeat across the surface (UVs are multiplied by this).
     Vec2 tiling = {1.0f, 1.0f};
 
+    /// Optional matcap (lit-sphere) image, sampled by the camera-space normal.
+    /// This is the technique MakeHuman uses for soft, skin-like shading: it bakes
+    /// the entire lighting response into a sphere image, so subtle surface relief
+    /// (eye sockets, nose, lips on a face mesh) reads clearly even in a flat
+    /// software renderer. The sampled value multiplies the (per-face) base color.
+    /// Set to a registered in-memory image name (see RegisterTexture). Empty = off.
+    std::string matcap;
+
     /// Optional .OBJ model file. When set, the scene loader replaces `mesh` with
     /// the loaded geometry (and Build Game bundles the file alongside the exe).
     std::string meshPath;

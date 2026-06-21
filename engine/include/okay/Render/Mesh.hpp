@@ -57,14 +57,14 @@ struct HumanoidParams {
     /// when the mesh is built (the underlying values are left untouched).
     void ClampHuman() {
         auto cl = [](float& v, float lo, float hi) { v = v < lo ? lo : (v > hi ? hi : v); };
-        cl(height, 0.8f, 1.4f);       cl(build, 0.82f, 1.3f);
-        cl(headSize, 0.85f, 1.08f);   cl(neckLength, 0.78f, 1.22f);
-        cl(shoulderWidth, 0.92f, 1.3f); cl(hipWidth, 0.78f, 1.15f);
-        cl(armLength, 0.88f, 1.12f);  cl(legLength, 0.9f, 1.16f);
-        cl(armThickness, 0.8f, 1.25f);cl(legThickness, 0.82f, 1.25f);
-        cl(torsoLength, 0.88f, 1.15f);cl(bodyDepth, 0.8f, 1.12f);
-        cl(handSize, 0.78f, 1.22f);   cl(footSize, 0.8f, 1.3f);
-        cl(waist, 0.78f, 1.2f);       cl(belly, 0.0f, 0.9f);
+        cl(height, 0.82f, 1.35f);     cl(build, 0.85f, 1.22f);
+        cl(headSize, 0.86f, 1.06f);   cl(neckLength, 0.8f, 1.18f);
+        cl(shoulderWidth, 0.95f, 1.28f); cl(hipWidth, 0.8f, 1.12f);
+        cl(armLength, 0.9f, 1.1f);    cl(legLength, 0.92f, 1.14f);
+        cl(armThickness, 0.82f, 1.18f);cl(legThickness, 0.85f, 1.18f);
+        cl(torsoLength, 0.9f, 1.12f); cl(bodyDepth, 0.82f, 1.08f);
+        cl(handSize, 0.8f, 1.18f);    cl(footSize, 0.82f, 1.25f);
+        cl(waist, 0.8f, 1.15f);       cl(belly, 0.0f, 0.85f);
         cl(armSpread, 0.0f, 25.0f);   cl(legSpread, 0.0f, 12.0f);
         cl(armGap, -0.05f, 0.10f);    cl(legGap, -0.05f, 0.14f);
         cl(eyeSpacing, 0.75f, 1.3f);  cl(eyeSize, 0.75f, 1.35f);
@@ -1165,6 +1165,10 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     }
     Vec3 m2{0.25f, 0.25f, 0.25f}; lo = lo - m2; hi = hi + m2;
     Mesh body = SurfaceNets(field, colorAt, lo, hi, res);
+    // Taubin smooth (relax, then anti-shrink) twice to melt the voxel facets off
+    // the silhouette — rounds the body without adding any triangles.
+    body.Smooth(0.50f); body.Smooth(-0.53f);
+    body.Smooth(0.50f); body.Smooth(-0.53f);
     for (const HumanoidPart& pt : BuildHumanoidParts(p, c)) if (pt.name == "Head") body.Append(pt.mesh);
     // Fingers: too thin to resolve in the SDF grid, so they're appended at full
     // detail — four fingers + a thumb, oriented along each forearm. They read as a

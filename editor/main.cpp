@@ -5002,6 +5002,29 @@ void DrawInspector(EditorState& ed) {
             if (cb->anim != 0) ImGui::SliderFloat("Anim Speed##char", &cb->animSpeed, 0.1f, 3.0f);
             if (cb->anim == 2 || cb->anim == 3) ImGui::Checkbox("Root Motion (travel)##char", &cb->rootMotion);
             ImGui::Spacing();
+            ImGui::TextDisabled("Pose (skeleton rig)");
+            if ((int)cb->pose.size() < CharacterBody::BoneCount())
+                cb->pose.assign(CharacterBody::BoneCount(), Vec3{0, 0, 0});
+            static int s_bone = 5;   // default: left upper arm
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::BeginCombo("Bone##rig", CharacterBody::BoneName(s_bone))) {
+                for (int i = 0; i < CharacterBody::BoneCount(); ++i)
+                    if (ImGui::Selectable(CharacterBody::BoneName(i), i == s_bone)) s_bone = i;
+                ImGui::EndCombo();
+            }
+            {
+                Vec3& r = cb->pose[s_bone];
+                float rot[3] = {r.x, r.y, r.z};
+                if (ImGui::DragFloat3("Rotation##rig", rot, 1.0f, -170.0f, 170.0f, "%.0f deg")) {
+                    r = {rot[0], rot[1], rot[2]}; ch = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Rotate this bone to pose the character.\nChild bones follow (forward kinematics).");
+            }
+            if (ImGui::SmallButton("Reset Bone##rig")) { cb->pose[s_bone] = {0, 0, 0}; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset Pose##rig")) { for (Vec3& q : cb->pose) q = {0, 0, 0}; ch = true; }
+            ImGui::Spacing();
             ImGui::TextDisabled("Detail (low-poly -> high-poly)");
             ch |= ImGui::Checkbox("Seamless Body (smooth skin)##char", &cb->smoothBody);
             if (ImGui::IsItemHovered())

@@ -723,6 +723,42 @@ int main() {
         CHECK_NEAR(q.legLength, q0.legLength, 1e-4f);
     }
 
+    // --- Skeletal rig: posing a bone bends the mesh; rest pose is a no-op ----
+    {
+        Scene s("Rig"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Hero");
+        auto* cb = go->AddComponent<CharacterBody>();
+        cb->smoothBody = true; cb->smoothRes = 28;
+
+        Mesh rest = cb->Build();                       // empty pose -> rest
+        CHECK(rest.vertices.size() > 100);
+        CHECK(CharacterBody::BoneCount() == 17);
+
+        // Empty/zero pose must leave the mesh identical (no-op skinning).
+        cb->pose.assign(CharacterBody::BoneCount(), Vec3{0, 0, 0});
+        Mesh rest2 = cb->Build();
+        CHECK(rest2.vertices.size() == rest.vertices.size());
+        float maxd0 = 0.0f;
+        for (std::size_t i = 0; i < rest.vertices.size(); ++i)
+            maxd0 = std::fmax(maxd0, (rest2.vertices[i] - rest.vertices[i]).Magnitude());
+        CHECK(maxd0 < 1e-3f);
+
+        // Rotating the right upper-arm bone (index 8) must move right-side hand
+        // vertices a lot while leaving the left foot essentially put.
+        cb->pose[8] = Vec3{0, 0, 60};                  // raise/abduct the right arm
+        Mesh posed = cb->Build();
+        CHECK(posed.vertices.size() == rest.vertices.size());
+        float movedRightUp = 0.0f, movedLeftLow = 0.0f;
+        for (std::size_t i = 0; i < rest.vertices.size(); ++i) {
+            const Vec3& a = rest.vertices[i]; const Vec3& b = posed.vertices[i];
+            float d = (b - a).Magnitude();
+            if (a.x > 0.35f && a.y > 1.0f) movedRightUp = std::fmax(movedRightUp, d); // right arm region
+            if (a.x < -0.1f && a.y < 0.2f) movedLeftLow = std::fmax(movedLeftLow, d); // left leg/foot
+        }
+        CHECK(movedRightUp > 0.1f);     // the posed arm clearly moved
+        CHECK(movedLeftLow < 0.05f);    // the opposite leg stayed put
+    }
+
     // --- Vegetation / rock primitives: colored, smooth, ground-resting -----
     {
         for (const char* nm : {"Tree", "Pine", "Rock", "Bush"}) {

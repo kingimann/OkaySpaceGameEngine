@@ -1060,7 +1060,7 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     // ---- Torso: anatomical V-taper — broad shoulders/clavicle, pecs/ribcage,
     //      a narrow waist, then the pelvis. Each mass overlaps its neighbour so
     //      the smooth-union makes one continuous trunk. ----
-    bl.push_back({2, {0, 1.42f * H + up, 0}, {}, {0.345f * sW * B, 0.090f * H, 0.165f * B * bd}, 0, shirt}); // clavicle / traps
+    bl.push_back({2, {0, 1.40f * H + up, 0}, {}, {0.210f * sW * B, 0.115f * H, 0.160f * B * bd}, 0, shirt}); // base of neck (narrow; shoulders slope out via traps)
     bl.push_back({2, {0, 1.29f * H + up, 0.01f * bd}, {}, {0.300f * sW * B, 0.150f * H, 0.200f * B * bd}, 0, shirt}); // upper chest (pecs)
     bl.push_back({2, {0, 1.12f * H + up * 0.7f, 0}, {}, {0.255f * sW * B, 0.160f * H, 0.180f * B * bd}, 0, shirt}); // lower ribcage
     bl.push_back({2, {0, 0.92f * H + up * 0.3f, 0}, {}, {0.205f * B * p.waist, 0.150f * H, 0.160f * B * bd}, 0, shirt}); // waist (narrowest)
@@ -1076,8 +1076,11 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         Quat q = Quat::Euler({(float)s * p.armSwing, 0, (float)s * p.armSpread});
         Vec3 elbow = sh + q * Vec3{0, -armLen * 0.5f, 0};
         Vec3 wrist = sh + q * Vec3{0, -armLen, 0};
-        bl.push_back({1, {s * 0.17f * sW * B, shoulderY, 0}, sh, {}, at * 1.25f, shirt}); // shoulder bridge (closes armpit)
-        bl.push_back({0, sh, {}, {}, at * 1.45f, shirt});                          // deltoid
+        // Trapezius: a muscle sloping from the neck base DOWN to the shoulder, so
+        // the shoulder line slopes naturally instead of forming a flat square bar.
+        bl.push_back({1, {0, 1.52f * H + up, -0.01f * bd}, {s * aw * 0.80f, shoulderY + 0.01f * H, 0}, {}, 0.075f, shirt});
+        bl.push_back({1, {s * 0.17f * sW * B, shoulderY, 0}, sh, {}, at * 1.20f, shirt}); // shoulder bridge (closes armpit)
+        bl.push_back({1, sh, Vec3{s * aw, shoulderY - 0.06f * H, 0}, {}, at * 1.20f, shirt}); // deltoid (rounded, drops to upper arm)
         // Pectoral: a soft chest plate on the front, one per side, for definition.
         bl.push_back({2, {s * 0.12f * sW * B, 1.27f * H + up, 0.12f * B * bd}, {},
                       {0.135f * sW * B, 0.105f * H, 0.105f * B * bd}, 0, shirt});
@@ -1103,9 +1106,12 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         // Calf muscle: a bulge on the upper-back of the shin for leg definition.
         bl.push_back({2, knee + ql * Vec3{0, -legLen * 0.30f, 0} + Vec3{0, 0, -0.05f * bd}, {},
                       {lt * 0.78f, lt * 1.30f, lt * 0.95f}, 0, pants});
-        bl.push_back({0, ankle, {}, {}, lt * 0.66f, shoes});                       // ankle
-        bl.push_back({2, ankle + Vec3{0, -0.05f * H, 0.10f}, {}, {0.090f * B, 0.060f, 0.165f}, 0, shoes}); // foot sole (forward)
-        bl.push_back({2, ankle + Vec3{0, -0.055f * H, 0.215f}, {}, {0.075f * B, 0.050f, 0.075f}, 0, shoes}); // toe
+        bl.push_back({0, ankle, {}, {}, lt * 0.55f, skin});                        // ankle (slim)
+        // Foot: a flat, elongated shoe shape (heel under the ankle to a tapered
+        // toe) instead of a bulbous blob.
+        bl.push_back({2, ankle + Vec3{0, -0.075f * H, 0.085f}, {}, {0.070f * B, 0.045f, 0.205f}, 0, shoes}); // sole (long, flat)
+        bl.push_back({2, ankle + Vec3{0, -0.080f * H, 0.215f}, {}, {0.060f * B, 0.038f, 0.080f}, 0, shoes}); // toe cap
+        bl.push_back({0, ankle + Vec3{0, -0.045f * H, -0.05f}, {}, {}, lt * 0.48f, shoes}); // heel
     }
     auto segd = [](const Vec3& pt, const Vec3& a, const Vec3& b) {
         Vec3 ab = b - a, ap = pt - a; float dd = Vec3::Dot(ab, ab);

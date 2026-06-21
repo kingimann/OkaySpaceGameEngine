@@ -45,7 +45,8 @@ public:
     bool  hasGlasses = false;
     bool  beard = false;
     bool  mustache = false;
-    bool  lowPoly = true;         // flat-shaded low-poly modelled body (default look)
+    bool  realistic = true;       // use the bundled anatomical human base mesh (default)
+    bool  lowPoly = true;         // flat-shaded low-poly modelled body
     bool  smoothBody = true;      // seamless single-surface body (SDF + Surface Nets)
     int   smoothRes = 48;         // grid resolution for the seamless body
 
@@ -71,6 +72,9 @@ public:
     static const char* BoneName(int i);     // UI label for bone i
     std::vector<Bone> BuildSkeleton(const HumanoidParams& p) const;
     void ApplyPose(Mesh& m, const HumanoidParams& p) const;   // deform m by `pose`
+    /// The bundled CC0 anatomical human base mesh, loaded once and normalized
+    /// (centered on X/Z, feet at y=0, height 1). Empty if the asset isn't found.
+    static const Mesh& HumanBaseMesh();
 
     /// Build the mesh for an explicit parameter set (used for animation frames).
     Mesh Build(const HumanoidParams& pp0) const {
@@ -81,7 +85,41 @@ public:
         c.hat = hat; c.glasses = glasses; c.hasHat = hasHat; c.hasGlasses = hasGlasses;
         c.beard = beard; c.mustache = mustache;
         Mesh m;
-        if (lowPoly) {
+        bool usedBase = false;
+        if (realistic) {
+            const Mesh& base = HumanBaseMesh();           // bundled anatomical human
+            if (!base.vertices.empty()) {
+                m = base;                                 // normalized: feet y=0, height 1
+                // Tint faces by region so the nude base reads as clothed: legs ->
+                // pants, torso -> shirt, arms/head/hands -> skin, feet -> shoes.
+                const float shoulderHalf = 0.19f;
+                m.triColors.clear();
+                m.triColors.reserve(m.TriangleCount());
+                for (std::size_t t = 0; t + 2 < m.triangles.size(); t += 3) {
+                    const Vec3& a = m.vertices[m.triangles[t]];
+                    const Vec3& b = m.vertices[m.triangles[t + 1]];
+                    const Vec3& d = m.vertices[m.triangles[t + 2]];
+                    float yy = (a.y + b.y + d.y) / 3.0f;
+                    float xx = (std::fabs(a.x) + std::fabs(b.x) + std::fabs(d.x)) / 3.0f;
+                    Color col;
+                    if (yy < 0.06f) col = shoes;
+                    else if (xx > shoulderHalf && yy > 0.42f && yy < 0.86f) col = color; // arms
+                    else if (yy < 0.50f) col = pants;
+                    else if (yy < 0.80f) col = outfit;
+                    else if (yy > 0.93f && hasHair) col = hair;   // skullcap
+                    else col = color;                     // face / neck
+                    m.triColors.push_back(col);
+                }
+                // Scale to the requested proportions (build widens, bodyDepth deepens).
+                float Hgt = 1.85f * pp.height;
+                float wx = Hgt * pp.build, wz = Hgt * pp.build * pp.bodyDepth;
+                for (Vec3& v : m.vertices) { v.x *= wx; v.y *= Hgt; v.z *= wz; }
+                usedBase = true;
+            }
+        }
+        if (usedBase) {
+            // base mesh ready
+        } else if (lowPoly) {
             m = BuildLowPolyHumanoid(pp, &c);             // flat-shaded modelled body
         } else if (smoothBody) {
             m = BuildSmoothHumanoid(pp, &c, smoothRes);   // seamless single-surface body
@@ -130,11 +168,11 @@ public:
         // doubleSided) — that lets the renderer backface-cull ~half the triangles,
         // a big win when several characters share a scene. (The part-based body
         // has mixed winding and must stay double-sided.)
-        if (smoothBody && !lowPoly)
+        if (smoothBody && !lowPoly && !usedBase)
             for (std::size_t i = 0; i + 2 < m.triangles.size(); i += 3)
                 std::swap(m.triangles[i + 1], m.triangles[i + 2]);
         ApplyPose(m, pp);           // bend the mesh to the posed skeleton (if any)
-        if (!lowPoly) m.ComputeSmoothNormals();   // smooth shading (low-poly stays flat/faceted)
+        if (usedBase || !lowPoly) m.ComputeSmoothNormals();   // smooth shading (low-poly stays flat)
         return m;
     }
     /// Build the mesh described by the current (rest) parameters.

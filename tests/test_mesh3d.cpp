@@ -603,7 +603,8 @@ int main() {
         cb->beard = true; cb->params.noseSize = 1.5f;
         cb->params.waist = 1.4f; cb->params.belly = 0.8f;
         cb->rootMotion = false;
-        cb->lowPoly = false;      // exercise the part-based subdivision path here
+        cb->realistic = false;    // exercise the part-based subdivision path here
+        cb->lowPoly = false;
         cb->smoothBody = false;
         cb->subdivisions    = 0;
         // Limb swing moves geometry (arms/legs front-to-back) without changing count.

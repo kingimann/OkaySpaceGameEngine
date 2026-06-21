@@ -10,6 +10,32 @@ namespace okay {
 // ---- Skeletal rig -----------------------------------------------------------
 // A 17-bone humanoid skeleton (FK hierarchy) whose joints match the seamless
 // body's geometry, plus linear-blend skinning so rotating a bone bends the mesh.
+// The anatomical base mesh is embedded in the binary (generated from the
+// MakeHuman CC0 base) so it ships inside the .exe — no external asset needed.
+extern const int   kHumanBaseVertCount;
+extern const float kHumanBaseVerts[];
+extern const int   kHumanBaseTriCount;
+extern const int   kHumanBaseTris[];
+
+const Mesh& CharacterBody::HumanBaseMesh() {
+    static Mesh cached;
+    static bool tried = false;
+    if (tried) return cached;
+    tried = true;
+    cached.vertices.reserve(kHumanBaseVertCount);
+    for (int i = 0; i < kHumanBaseVertCount; ++i)
+        cached.vertices.push_back({kHumanBaseVerts[i * 3], kHumanBaseVerts[i * 3 + 1], kHumanBaseVerts[i * 3 + 2]});
+    cached.triangles.assign(kHumanBaseTris, kHumanBaseTris + kHumanBaseTriCount * 3);
+    if (cached.vertices.empty()) return cached;
+    Vec3 lo, hi; cached.Bounds(lo, hi);
+    float h = hi.y - lo.y; if (h < 1e-4f) h = 1.0f;
+    float cx = (lo.x + hi.x) * 0.5f, cz = (lo.z + hi.z) * 0.5f;
+    for (Vec3& v : cached.vertices) {           // normalize: centered X/Z, feet y=0, height 1
+        v.x = (v.x - cx) / h; v.y = (v.y - lo.y) / h; v.z = (v.z - cz) / h;
+    }
+    return cached;
+}
+
 int CharacterBody::BoneCount() { return 17; }
 
 const char* CharacterBody::BoneName(int i) {
@@ -142,7 +168,7 @@ std::string CharacterBody::ToText() const {
     o << pose.size();                       // skeletal pose (euler per bone)
     for (const Vec3& r : pose) o << " " << r.x << " " << r.y << " " << r.z;
     o << "\n";
-    o << (lowPoly ? 1 : 0) << "\n";         // body style
+    o << (lowPoly ? 1 : 0) << " " << (realistic ? 1 : 0) << "\n";  // body style
     return o.str();
 }
 
@@ -187,6 +213,7 @@ void CharacterBody::FromText(const std::string& text) {
         for (std::size_t k = 0; k < np; ++k) in >> pose[k].x >> pose[k].y >> pose[k].z;
     }
     int lp = 1; if (in >> lp) lowPoly = (lp != 0);        // body style (optional)
+    int rl = 1; if (in >> rl) realistic = (rl != 0);
 }
 
 void CharacterBody::Apply() {
@@ -198,7 +225,7 @@ void CharacterBody::Apply() {
     // The seamless body is a closed, outward-wound surface -> render single-sided
     // so the renderer can backface-cull (much cheaper with several characters).
     // The part-based body has mixed winding and must be drawn double-sided.
-    mr->doubleSided = lowPoly || !smoothBody;
+    mr->doubleSided = realistic || lowPoly || !smoothBody;
     // A soft specular sheen gives skin and clothing a lifelike highlight instead
     // of looking like flat matte clay.
     mr->specular = 0.22f;

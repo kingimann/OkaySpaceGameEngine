@@ -115,10 +115,14 @@ public:
                 //      normalized mesh (feet y=0, head y=1, centered X/Z). ----
                 auto lerpf = [](float a, float b, float t) { return a + (b - a) * t; };
                 const float g = pp.gender;                 // 0 female .. 1 male
-                const float shoulderMul = pp.shoulderWidth * lerpf(0.88f, 1.14f, g);
-                const float hipMul      = pp.hipWidth      * lerpf(1.14f, 0.90f, g);
-                const float waistMul    = pp.waist         * lerpf(0.80f, 1.00f, g);
-                const float musc        = lerpf(0.86f, 1.14f, pp.muscle);
+                // Gender/muscle lerps are SYMMETRIC about 0.5, so at the default
+                // (gender 0.5, muscle 0.5, all sliders 1.0) every multiplier is
+                // exactly 1.0 and the base mesh passes through unchanged -> the
+                // default character is the MakeHuman base figure itself.
+                const float shoulderMul = pp.shoulderWidth * lerpf(0.90f, 1.10f, g);
+                const float hipMul      = pp.hipWidth      * lerpf(1.10f, 0.90f, g);
+                const float waistMul    = pp.waist         * lerpf(0.92f, 1.08f, g);
+                const float musc        = lerpf(0.88f, 1.12f, pp.muscle);
                 const float armTh = pp.armThickness * musc, legTh = pp.legThickness * musc;
                 // All morphs are CONTINUOUS functions of position (smooth weights),
                 // so neighbouring vertices always move together — the mesh never

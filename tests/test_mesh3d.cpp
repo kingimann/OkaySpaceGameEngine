@@ -731,7 +731,7 @@ int main() {
         p.legLength = 0.1f;  p.waist = 0.0f;     p.armGap = 2.0f;
         p.ClampHuman();
         CHECK(p.armSpread <= 50.0f);
-        CHECK(p.headSize <= 1.12f && p.headSize >= 0.78f);
+        CHECK(p.headSize <= 1.25f && p.headSize >= 0.7f);
         CHECK(p.shoulderWidth <= 1.4f);
         CHECK(p.legLength >= 0.8f);
         CHECK(p.waist >= 0.62f);

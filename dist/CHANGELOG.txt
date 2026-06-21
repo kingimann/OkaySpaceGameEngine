@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.26.0
+  - Character: the DEFAULT character is now the MakeHuman base figure itself,
+    with natural human proportions. Previously the default sliders (lean build,
+    long legs, narrow waist/hips) compounded and stretched the base mesh into a
+    thin, lanky shape that looked nothing like MakeHuman.
+    - All proportion sliders now default to 1.0 (= the unmodified base mesh).
+    - Gender and Muscle are symmetric about their midpoint, so the neutral
+      setting passes the base mesh through unchanged.
+    - The sliders still morph the body from this true-to-MakeHuman starting
+      point. Create a fresh Character (Create > 3D > Character) to see it.
+
 v2.25.1
   - Character: fixed the customization sliders tearing/deforming the base mesh.
     Morphs are now smooth, continuous deformations (gender, muscle, shoulders,

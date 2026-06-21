@@ -204,6 +204,92 @@ public:
             }
         }
     }
+
+    /// Per-pixel (Phong) lit triangle: interpolates the world normal + position
+    /// across the face and shades EACH pixel (diffuse from all scene lights +
+    /// Blinn-Phong specular), so curved/low-poly surfaces look smooth and specular
+    /// highlights land correctly instead of being smeared between vertices. An
+    /// optional texture (perspective-correct, bilinear) tints the surface.
+    void TrianglePhong(const float* X, const float* Y, const float* D, const float* IW,
+                       const float* U, const float* V,
+                       const float* NXa, const float* NYa, const float* NZa,
+                       const float* WXa, const float* WYa, const float* WZa,
+                       const Image* img, const Color& base, const Color& tint, const Vec3& eye,
+                       float shininess, float specularK, float er, float eg, float eb,
+                       float fog, float fr, float fg, float fb) {
+        int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
+        int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
+        int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
+        int maxY = (int)std::ceil (std::fmax(Y[0], std::fmax(Y[1], Y[2])));
+        if (minX < 0) minX = 0;
+        if (minY < 0) minY = 0;
+        if (maxX >= width) maxX = width - 1;
+        if (maxY >= height) maxY = height - 1;
+        float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
+        if (area == 0.0f) return;
+        float inv = 1.0f / area;
+        int tw = img ? img->Width() : 0, th = img ? img->Height() : 0;
+        Vec3 toLight = SceneLight::Direction() * -1.0f;
+        toLight = toLight.Normalized();
+        for (int y = minY; y <= maxY; ++y) {
+            for (int x = minX; x <= maxX; ++x) {
+                float px = x + 0.5f, py = y + 0.5f;
+                float w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * inv;
+                float w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * inv;
+                float w2 = 1.0f - w0 - w1;
+                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
+                std::size_t i = (std::size_t)y * width + x;
+                if (d >= depth[i]) continue;
+                // Interpolated world normal + position (affine; renormalized).
+                Vec3 n{w0 * NXa[0] + w1 * NXa[1] + w2 * NXa[2],
+                       w0 * NYa[0] + w1 * NYa[1] + w2 * NYa[2],
+                       w0 * NZa[0] + w1 * NZa[1] + w2 * NZa[2]};
+                n = n.Normalized();
+                Vec3 wpos{w0 * WXa[0] + w1 * WXa[1] + w2 * WXa[2],
+                          w0 * WYa[0] + w1 * WYa[1] + w2 * WYa[2],
+                          w0 * WZa[0] + w1 * WZa[1] + w2 * WZa[2]};
+                Vec3 lit = SceneLights::ShadeColor(wpos, n);
+                float spec = 0.0f;
+                if (specularK > 0.0f) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    Vec3 h = (toLight + toEye).Normalized();
+                    float nh = Vec3::Dot(n, h);
+                    if (nh > 0.0f) spec = std::pow(nh, shininess) * specularK;
+                }
+                float br = base.r, bg = base.g, bb2 = base.b;
+                if (img && tw > 0 && th > 0) {
+                    float iw = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                    if (iw != 0.0f) {
+                        float u = (w0 * U[0] + w1 * U[1] + w2 * U[2]) / iw;
+                        float vv = (w0 * V[0] + w1 * V[1] + w2 * V[2]) / iw;
+                        float fu = u * tw - 0.5f, fv = (1.0f - vv) * th - 0.5f;
+                        int x0 = (int)std::floor(fu), y0 = (int)std::floor(fv);
+                        float ax = fu - x0, ay = fv - y0;
+                        auto wr = [](int a, int n) { a %= n; return a < 0 ? a + n : a; };
+                        Color c00 = img->GetPixel(wr(x0, tw), wr(y0, th)), c10 = img->GetPixel(wr(x0 + 1, tw), wr(y0, th));
+                        Color c01 = img->GetPixel(wr(x0, tw), wr(y0 + 1, th)), c11 = img->GetPixel(wr(x0 + 1, tw), wr(y0 + 1, th));
+                        float r0 = c00.r + (c10.r - c00.r) * ax, r1 = c01.r + (c11.r - c01.r) * ax;
+                        float g0 = c00.g + (c10.g - c00.g) * ax, g1 = c01.g + (c11.g - c01.g) * ax;
+                        float b0 = c00.b + (c10.b - c00.b) * ax, b1 = c01.b + (c11.b - c01.b) * ax;
+                        br = (r0 + (r1 - r0) * ay) * tint.r;
+                        bg = (g0 + (g1 - g0) * ay) * tint.g;
+                        bb2 = (b0 + (b1 - b0) * ay) * tint.b;
+                    }
+                }
+                float cr = br * lit.x + spec + er;
+                float cg = bg * lit.y + spec + eg;
+                float cb = bb2 * lit.z + spec + eb;
+                if (fog > 0.0f) {
+                    cr = cr * (1.0f - fog) + fr * fog;
+                    cg = cg * (1.0f - fog) + fg * fog;
+                    cb = cb * (1.0f - fog) + fb * fog;
+                }
+                depth[i] = d;
+                color[i] = PackRGB(cr, cg, cb);
+            }
+        }
+    }
 };
 
 // Process-wide texture cache for the software renderer (path -> RGBA image).
@@ -230,6 +316,11 @@ inline Image* GetCachedTexture(const std::string& path) {
     }
     return it->second.Width() > 0 ? &it->second : nullptr;
 }
+
+/// Per-pixel (Phong) lighting toggle. On by default for quality (smooth shading
+/// + correct specular on every pixel); turn off to fall back to faster per-vertex
+/// (Gouraud) shading on very large scenes.
+inline bool& PerPixelLighting() { static bool v = true; return v; }
 
 /// Render all active MeshRenderers in `scene` into `r` with the given
 /// view-projection matrix and camera position. Two-sided + flat-shaded via the
@@ -278,7 +369,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // A clip-space vertex carrying its (unprojected) UV, for near-plane
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
-        struct CV { float x, y, z, w, u, v, lr, lg, lb; };
+        struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz; };
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
             Vec3 wp[3];
@@ -310,15 +401,19 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     else if (ay >= ax && ay >= az) { uu = p.x + 0.5f; vt = p.z + 0.5f; }
                     else { uu = p.x + 0.5f; vt = p.y + 0.5f; }
                 }
-                // Per-vertex light color (Gouraud) from the smoothed vertex
-                // normal; falls back to white when not smooth-shading.
+                // Per-vertex world normal (smoothed if the mesh has normals, else
+                // the face normal), flipped to match a culled back face.
+                Vec3 nk = mr->mesh.HasNormals()
+                              ? nrm.MultiplyVector(mr->mesh.normals[idx[k]]).Normalized()
+                              : normal;
+                if (facing < 0.0f) nk = nk * -1.0f;
+
+                // Per-vertex light color (Gouraud) from that normal; used by the
+                // matcap and Gouraud paths. Per-pixel (Phong) shading uses nk + the
+                // world position directly instead.
                 Vec3 lk{1.0f, 1.0f, 1.0f};
                 if (useMatcap) {
-                    // Matcap: sample the lit-sphere by the camera-space normal. Build
-                    // a view frame from the eye->vertex direction so the lookup is
-                    // stable as the camera orbits.
-                    Vec3 nk = nrm.MultiplyVector(mr->mesh.normals[idx[k]]).Normalized();
-                    if (facing < 0.0f) nk = nk * -1.0f;
+                    // Matcap: sample the lit-sphere by the camera-space normal.
                     Vec3 fwd = (wp[k] - eye).Normalized();
                     Vec3 rgt = Vec3::Cross(Vec3{0, 1, 0}, fwd);
                     float rl = rgt.Magnitude();
@@ -329,14 +424,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     Color mc = mcap->Sample(mu, mv);
                     lk = {mc.r, mc.g, mc.b};
                 } else if (!mr->unlit && mr->mesh.HasNormals()) {
-                    // Per-vertex (Gouraud) light for smooth AND textured meshes, so
-                    // textures are lit smoothly across each face instead of flat.
-                    Vec3 nk = nrm.MultiplyVector(mr->mesh.normals[idx[k]]).Normalized();
-                    if (facing < 0.0f) nk = nk * -1.0f;   // match the flipped face for back faces
                     lk = SceneLights::ShadeColor(wp[k], nk);
                 }
                 in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y,
-                         lk.x, lk.y, lk.z};
+                         lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z};
             }
 
             // Sutherland-Hodgman clip against the near plane (w > NEAR).
@@ -353,7 +444,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                   A.z + (B.z - A.z) * tt, A.w + (B.w - A.w) * tt,
                                   A.u + (B.u - A.u) * tt, A.v + (B.v - A.v) * tt,
                                   A.lr + (B.lr - A.lr) * tt, A.lg + (B.lg - A.lg) * tt,
-                                  A.lb + (B.lb - A.lb) * tt};
+                                  A.lb + (B.lb - A.lb) * tt,
+                                  A.nx + (B.nx - A.nx) * tt, A.ny + (B.ny - A.ny) * tt,
+                                  A.nz + (B.nz - A.nz) * tt, A.wx + (B.wx - A.wx) * tt,
+                                  A.wy + (B.wy - A.wy) * tt, A.wz + (B.wz - A.wz) * tt};
                 }
             }
             if (pn < 3) continue;   // entirely behind the camera
@@ -399,12 +493,27 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 sd = c.z * iw;
                 uo = c.u * iw; vo = c.v * iw;
             };
+            // Per-pixel (Phong) shading for lit meshes that carry normals — smooth
+            // surfaces + correct specular, textured or not. Matcap/unlit/no-normal
+            // meshes keep their existing paths.
+            const bool perPixel = PerPixelLighting() && !mr->unlit && !useMatcap && mr->mesh.HasNormals();
             for (int j = 1; j + 1 < pn; ++j) {
                 const CV* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
                 float sx[3], sy[3], sd[3], iw[3], uu[3], vv[3];
                 for (int k = 0; k < 3; ++k)
                     project(*tri[k], sx[k], sy[k], sd[k], iw[k], uu[k], vv[k]);
-                if (tex) {
+                if (perPixel) {
+                    float nx[3] = {tri[0]->nx, tri[1]->nx, tri[2]->nx};
+                    float ny[3] = {tri[0]->ny, tri[1]->ny, tri[2]->ny};
+                    float nz[3] = {tri[0]->nz, tri[1]->nz, tri[2]->nz};
+                    float wx[3] = {tri[0]->wx, tri[1]->wx, tri[2]->wx};
+                    float wy[3] = {tri[0]->wy, tri[1]->wy, tri[2]->wy};
+                    float wz[3] = {tri[0]->wz, tri[1]->wz, tri[2]->wz};
+                    r.TrianglePhong(sx, sy, sd, iw, uu, vv, nx, ny, nz, wx, wy, wz,
+                                    tex, base, mr->color, eye, mr->shininess, mr->specular,
+                                    mr->emissive.r, mr->emissive.g, mr->emissive.b,
+                                    fogF, fogR, fogG, fogB);
+                } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};

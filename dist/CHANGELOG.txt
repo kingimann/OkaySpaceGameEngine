@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.17.3
+  - Character Creator: FIXED the seamless body collapsing to just a tiny head.
+    The smooth-union (smooth-min) blend had its interpolation swapped, so the
+    distance field never went negative and the body surface was never generated
+    — only the appended head showed. The seamless body now builds the full
+    figure as one continuous skin, as intended.
+
 v2.17.2
   - Character Creator: the seamless single-surface body is now the DEFAULT for
     new characters — this is the fix for the "blobby"/snowman look. Instead of

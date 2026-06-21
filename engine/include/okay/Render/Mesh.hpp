@@ -22,10 +22,10 @@ namespace okay {
 /// as sliders. Multipliers are applied to a fixed base layout.
 struct HumanoidParams {
     float height       = 1.0f;   // overall vertical scale
-    float build        = 0.94f;  // limb/torso thickness (lean athletic base)
+    float build        = 0.92f;  // limb/torso thickness (lean, low body-fat base)
     float headSize     = 0.66f;  // realistic ~7.5-head proportions (small adult head)
-    float shoulderWidth= 1.12f;  // arm spacing + torso top width
-    float hipWidth     = 0.88f;  // leg spacing + hip width (narrower hips)
+    float shoulderWidth= 1.22f;  // arm spacing + torso top width (broad, bulky upper body)
+    float hipWidth     = 0.82f;  // leg spacing + hip width (narrow hips)
     float armLength    = 1.08f;  // arms reach toward mid-thigh
     float legLength    = 1.14f;  // long lean legs (taller, adult base-mesh build)
     float neckLength   = 1.0f;
@@ -34,7 +34,7 @@ struct HumanoidParams {
     float armSpread    = 26.0f;  // degrees arms angle out (A-pose, like a base mesh)
     float legSpread    = 6.0f;   // degrees legs angle out (stance width)
     float torsoLength  = 1.0f;   // lengthens the torso (raises the upper body)
-    float bodyDepth    = 0.92f;  // front-to-back thickness of torso + hips
+    float bodyDepth    = 0.88f;  // front-to-back thickness of torso + hips (lean)
     int   hairStyle    = 1;      // 0 cap, 1 short, 2 long, 3 spiky, 4 ponytail, 5 mohawk
     float eyeSpacing   = 1.0f;   // multiplier on the gap between the eyes
     float mouthWidth   = 1.0f;   // multiplier on mouth width (a wider "smile")
@@ -45,9 +45,9 @@ struct HumanoidParams {
     Vec3  rightArmRot  = {0, 0, 0}; // extra euler on the RIGHT arm only (wave)
     float eyeSize      = 1.0f;   // multiplier on eye + pupil size
     float noseSize     = 1.0f;   // multiplier on nose size
-    float armThickness = 1.0f;   // arm girth (independent of build)
-    float legThickness = 1.0f;   // leg girth (independent of build)
-    float waist        = 0.82f;  // hip/midsection width (tapered, athletic)
+    float armThickness = 1.08f;  // arm girth (independent of build) — muscular
+    float legThickness = 1.08f;  // leg girth (independent of build) — muscular
+    float waist        = 0.7f;   // hip/midsection width (lean, defined waist)
     float belly        = 0.0f;   // belly size (0 = none)
     float armGap       = 0.0f;   // lateral spacing of arms from the body (+out, -in)
     float legGap       = 0.0f;   // lateral spacing of legs (stance width; +apart, -together)

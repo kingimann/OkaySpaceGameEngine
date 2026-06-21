@@ -7,7 +7,9 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/ScriptComponent.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -102,13 +104,6 @@ void ActionList::Start() {
     if (trigger == Trigger::OnStart) Fire();
 }
 
-void ActionList::OnTriggerEnter2D(Collider2D*) {
-    if (trigger == Trigger::OnCollision) m_collided = true;
-}
-void ActionList::OnCollisionEnter2D(const Collision2D&) {
-    if (trigger == Trigger::OnCollision) m_collided = true;
-}
-
 bool ActionList::EvalConditions() {
     for (const Item& c : conditions) {
         const std::string& op = c.op;
@@ -158,11 +153,14 @@ void ActionList::Update(float dt) {
         if (trigger == Trigger::OnUpdate) Fire();
         else if (trigger == Trigger::OnKey && !triggerKey.empty() && Input::GetKeyDown(triggerKey[0])) Fire();
         else if (trigger == Trigger::OnKeyUp && !triggerKey.empty() && Input::GetKeyUp(triggerKey[0])) Fire();
-        else if (trigger == Trigger::OnCollision && m_collided) { m_collided = false; Fire(); }
         else if (trigger == Trigger::OnClick) {
+            // UI buttons report their own click; world objects arrive via m_pending
+            // (OnMouseClick). Either path fires the list.
             if (auto* b = gameObject ? gameObject->GetComponent<UIButton>() : nullptr)
                 if (b->WasClicked()) Fire();
         }
+        // Collision / trigger / mouse triggers are latched by the event callbacks.
+        if (!m_running && m_pending) { m_pending = false; Fire(); }
     }
     if (!m_running) return;
 
@@ -334,6 +332,50 @@ void ActionList::Update(float dt) {
         else if (op == "set_tag") { if (gameObject) gameObject->tag = Str(it, 0); }
         else if (op == "set_timescale_var") { Vars()[Str(it, 0)] = Time::TimeScale(); }
         else if (op == "log") { Log::Info("[actions] ", Rest(it, 0)); }
+        else if (op == "set_rotation")  { if (t) t->localRotation = Quat::Euler({0, 0, Num(it, 0)}); }
+        else if (op == "set_rotation3") { if (t) t->localRotation = Quat::Euler({Num(it, 0), Num(it, 1), Num(it, 2)}); }
+        else if (op == "velocity3") {
+            if (gameObject) if (auto* rb = gameObject->GetComponent<Rigidbody3D>())
+                rb->velocity = {Num(it, 0), Num(it, 1), Num(it, 2)};
+        }
+        else if (op == "impulse3") {
+            if (gameObject) if (auto* rb = gameObject->GetComponent<Rigidbody3D>())
+                rb->AddImpulse({Num(it, 0), Num(it, 1), Num(it, 2)});
+        }
+        else if (op == "force3") {
+            if (gameObject) if (auto* rb = gameObject->GetComponent<Rigidbody3D>())
+                rb->AddForce({Num(it, 0), Num(it, 1), Num(it, 2)});
+        }
+        else if (op == "set_sprite") {
+            if (gameObject) if (auto* sr = gameObject->GetComponent<SpriteRenderer>()) sr->texture = Str(it, 0);
+        }
+        else if (op == "set_visible") {
+            bool vis = it.args.empty() ? true : Num(it, 0) != 0.0f;
+            if (gameObject) {
+                if (auto* sr = gameObject->GetComponent<SpriteRenderer>()) sr->enabled = vis;
+                if (auto* mr = gameObject->GetComponent<MeshRenderer>())   mr->enabled = vis;
+                if (auto* tr = gameObject->GetComponent<TextRenderer>())   tr->enabled = vis;
+            }
+        }
+        else if (op == "call") {                 // call a script event on this object's ScriptComponent
+            if (gameObject) if (auto* scc = gameObject->GetComponent<ScriptComponent>())
+                if (scc->VM()) scc->VM()->CallEvent(Str(it, 0));
+        }
+        else if (op == "send_to") {              // message one named object's action lists
+            if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
+                for (ActionList* a : g->GetComponents<ActionList>()) a->ReceiveMessage(Str(it, 1));
+        }
+        else if (op == "if_goto") {              // conditional jump: var <op> value -> instruction line
+            const std::string& cmp = Str(it, 1);
+            float lhs = Vars()[Str(it, 0)], rhs = Num(it, 2); int line = (int)Num(it, 3);
+            bool pass = (cmp == "eq")  ? Mathf::Approximately(lhs, rhs)
+                      : (cmp == "neq") ? !Mathf::Approximately(lhs, rhs)
+                      : (cmp == "gt")  ? (lhs > rhs)
+                      : (cmp == "lt")  ? (lhs < rhs)
+                      : (cmp == "ge")  ? (lhs >= rhs)
+                      : (cmp == "le")  ? (lhs <= rhs) : false;
+            if (pass && line >= 0 && line < (int)instructions.size()) m_ip = (std::size_t)line;
+        }
         // unknown ops are ignored, so files stay forward-compatible
     }
 

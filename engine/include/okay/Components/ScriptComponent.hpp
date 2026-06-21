@@ -50,16 +50,35 @@ public:
     void Start() override;
     void Update(float dt) override;
 
-    // Forward physics messages to optional script handlers: a script can define
-    // on_trigger() and on_collision() to react to overlaps/contacts.
-    void OnTriggerEnter2D(Collider2D* /*other*/) override {
-        if (m_vm) m_vm->CallEvent("on_trigger");
-    }
-    void OnCollisionEnter2D(const Collision2D& /*c*/) override {
-        if (m_vm) m_vm->CallEvent("on_collision");
-    }
+    // Forward engine messages to optional script handlers. A script just defines a
+    // function with the matching name to react. Physics overlaps/contacts and
+    // pointer/mouse events all flow through here; 2D and 3D map to the same names,
+    // and the legacy on_trigger()/on_collision() still fire on enter (see the VM's
+    // alias table) so older scripts keep working.
+    void OnTriggerEnter2D(Collider2D*) override        { Fire("on_trigger_enter"); }
+    void OnTriggerStay2D (Collider2D*) override        { Fire("on_trigger_stay"); }
+    void OnTriggerExit2D (Collider2D*) override        { Fire("on_trigger_exit"); }
+    void OnCollisionEnter2D(const Collision2D&) override{ Fire("on_collision_enter"); }
+    void OnCollisionStay2D (const Collision2D&) override{ Fire("on_collision_stay"); }
+    void OnCollisionExit2D (const Collision2D&) override{ Fire("on_collision_exit"); }
+
+    void OnTriggerEnter3D(Collider3D*) override         { Fire("on_trigger_enter"); }
+    void OnTriggerStay3D (Collider3D*) override         { Fire("on_trigger_stay"); }
+    void OnTriggerExit3D (Collider3D*) override         { Fire("on_trigger_exit"); }
+    void OnCollisionEnter3D(const Collision3D&) override { Fire("on_collision_enter"); }
+    void OnCollisionStay3D (const Collision3D&) override { Fire("on_collision_stay"); }
+    void OnCollisionExit3D (const Collision3D&) override { Fire("on_collision_exit"); }
+
+    void OnMouseEnter() override { Fire("on_mouse_enter"); }
+    void OnMouseExit()  override { Fire("on_mouse_exit"); }
+    void OnMouseOver()  override { Fire("on_mouse_over"); }
+    void OnMouseDown()  override { Fire("on_mouse_down"); }
+    void OnMouseUp()    override { Fire("on_mouse_up"); }
+    void OnMouseClick() override { Fire("on_click"); }
 
 private:
+    void Fire(const char* event) { if (m_vm) m_vm->CallEvent(event); }
+
     std::string m_language;
     std::string m_source;
     std::string m_path;

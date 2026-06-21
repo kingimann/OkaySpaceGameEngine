@@ -8,6 +8,8 @@ namespace okay {
 
 class Collider2D;
 struct Collision2D;
+class Collider3D;
+struct Collision3D;
 
 /// A Game-Creator-style visual script: a **Trigger** fires the list, optional
 /// **Conditions** gate it, then **Instructions** run top-to-bottom (with Wait
@@ -15,8 +17,11 @@ struct Collision2D;
 /// from dropdowns in the editor.
 class ActionList : public Behaviour {
 public:
-    // Appended in order — existing values must stay stable for serialization.
-    enum class Trigger { OnStart, OnUpdate, OnKey, OnCollision, OnClick, OnKeyUp, OnMessage };
+    // Appended in order — existing values must stay stable for serialization
+    // (triggers serialize by integer index).
+    enum class Trigger { OnStart, OnUpdate, OnKey, OnCollision, OnClick, OnKeyUp, OnMessage,
+                         OnTriggerEnter, OnTriggerExit, OnMouseEnter, OnMouseExit,
+                         OnMouseDown, OnMouseUp, OnMouseOver };
 
     /// One condition or instruction: an op name + string args (numbers parsed
     /// on use, so the data stays uniform and easy to edit/serialize).
@@ -34,8 +39,20 @@ public:
 
     void Start() override;
     void Update(float dt) override;
-    void OnTriggerEnter2D(Collider2D* other) override;
-    void OnCollisionEnter2D(const Collision2D& c) override;
+
+    // Event-driven triggers latch a pending fire, run on the next Update tick.
+    void OnTriggerEnter2D(Collider2D*) override        { if (trigger == Trigger::OnCollision || trigger == Trigger::OnTriggerEnter) m_pending = true; }
+    void OnTriggerExit2D (Collider2D*) override        { if (trigger == Trigger::OnTriggerExit) m_pending = true; }
+    void OnCollisionEnter2D(const Collision2D&) override{ if (trigger == Trigger::OnCollision) m_pending = true; }
+    void OnTriggerEnter3D(Collider3D*) override        { if (trigger == Trigger::OnCollision || trigger == Trigger::OnTriggerEnter) m_pending = true; }
+    void OnTriggerExit3D (Collider3D*) override        { if (trigger == Trigger::OnTriggerExit) m_pending = true; }
+    void OnCollisionEnter3D(const Collision3D&) override{ if (trigger == Trigger::OnCollision) m_pending = true; }
+    void OnMouseEnter() override { if (trigger == Trigger::OnMouseEnter) m_pending = true; }
+    void OnMouseExit()  override { if (trigger == Trigger::OnMouseExit)  m_pending = true; }
+    void OnMouseOver()  override { if (trigger == Trigger::OnMouseOver)  m_pending = true; }
+    void OnMouseDown()  override { if (trigger == Trigger::OnMouseDown)  m_pending = true; }
+    void OnMouseUp()    override { if (trigger == Trigger::OnMouseUp)    m_pending = true; }
+    void OnMouseClick() override { if (trigger == Trigger::OnClick)      m_pending = true; }
 
     bool IsRunning() const { return m_running; }
 
@@ -63,7 +80,7 @@ private:
     std::size_t m_ip = 0;
     float m_wait = 0.0f;
     bool m_fired = false;
-    bool m_collided = false;   // latched by collision callbacks for OnCollision
+    bool m_pending = false;    // latched by event callbacks (collision/trigger/mouse)
 };
 
 } // namespace okay

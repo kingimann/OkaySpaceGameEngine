@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.66.0
+  - Scripting — many more event handlers. Physics now has distinct enter/stay/exit
+    for both triggers and collisions: on_trigger_enter/stay/exit and
+    on_collision_enter/stay/exit (work for 2D and 3D). New pointer/mouse events:
+    on_mouse_enter, on_mouse_exit, on_mouse_over, on_mouse_down, on_mouse_up, and
+    on_click (a full press+release on the object). The cursor is picked against an
+    object's sprite/2D-collider bounds via the main camera. Older on_trigger() and
+    on_collision() still work as the "enter" handlers.
+  - Visual scripting — new triggers: On Trigger Enter/Exit and On Mouse
+    Enter/Exit/Down/Up/Over (alongside the existing On Collision / On Click). New
+    instructions: if_goto (branch on a variable), call (run a script event on this
+    object), send_to (message one named object), set_rotation / set_rotation3,
+    velocity3 / impulse3 / force3 (3D rigidbody), set_sprite, and set_visible.
+
 v2.65.0
   - UI text z-order (fixed): screen-space text was drawn before UI panels, so a
     label placed on a panel was hidden behind it with no way to bring it forward.

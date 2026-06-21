@@ -3669,9 +3669,23 @@ void OkayScriptVM::CallEvent(const std::string& function) {
     // The requested (engine) name wins; otherwise accept a Unity-style alias so
     // scripts can name handlers the Unity way (OnCollisionEnter, OnClick, ...).
     static const std::unordered_map<std::string, std::vector<std::string>> kAliases = {
+        // Physics — distinct enter/stay/exit. The legacy on_trigger/on_collision
+        // are accepted as enter handlers so older scripts keep working.
+        {"on_trigger_enter",   {"OnTriggerEnter", "OnTriggerEnter2D", "on_trigger"}},
+        {"on_trigger_stay",    {"OnTriggerStay",  "OnTriggerStay2D"}},
+        {"on_trigger_exit",    {"OnTriggerExit",  "OnTriggerExit2D"}},
+        {"on_collision_enter", {"OnCollisionEnter", "OnCollisionEnter2D", "on_collision"}},
+        {"on_collision_stay",  {"OnCollisionStay", "OnCollisionStay2D"}},
+        {"on_collision_exit",  {"OnCollisionExit", "OnCollisionExit2D"}},
         {"on_collision", {"OnCollisionEnter", "OnCollisionEnter2D"}},
         {"on_trigger",   {"OnTriggerEnter",   "OnTriggerEnter2D"}},
-        {"on_click",     {"OnClick", "OnMouseDown", "OnPointerClick"}},
+        // Pointer / mouse.
+        {"on_mouse_enter", {"OnMouseEnter", "OnPointerEnter"}},
+        {"on_mouse_exit",  {"OnMouseExit",  "OnPointerExit"}},
+        {"on_mouse_over",  {"OnMouseOver"}},
+        {"on_mouse_down",  {"OnMouseDown"}},
+        {"on_mouse_up",    {"OnMouseUp", "OnMouseUpAsButton"}},
+        {"on_click",     {"OnClick", "OnMouseClick", "OnMouseUpAsButton", "OnPointerClick"}},
         {"on_change",    {"OnValueChanged"}},
         {"on_toggle",    {"OnToggle", "OnValueChanged"}},
         {"on_drop",      {"OnDrop"}},

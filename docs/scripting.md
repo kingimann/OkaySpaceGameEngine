@@ -133,11 +133,25 @@ What's supported:
 - **Comments:** `// ...` or `# ...`
 
 Top-level statements run once when the script loads (good for setup); `start()`
-runs when the scene starts and `update(dt)` runs every frame. Define
-`on_trigger()` or `on_collision()` to react when this object's collider
-overlaps or contacts another (pickups, damage), or `on_click()` to handle a
-UI Button press. Sibling UI widgets fire their own events too: `on_change()`
-when a UI Slider is dragged and `on_toggle()` when a UI Toggle is clicked.
+runs when the scene starts and `update(dt)` runs every frame.
+
+### Event handlers
+Define any of these functions and the engine calls them automatically. Physics
+events work for both 2D and 3D colliders; mouse events pick against the object's
+sprite (or 2D collider) bounds under the cursor, using the main camera.
+
+| Handler | Fires when |
+| --- | --- |
+| `on_trigger_enter()` / `on_trigger_stay()` / `on_trigger_exit()` | A trigger collider begins / continues / ends overlapping another |
+| `on_collision_enter()` / `on_collision_stay()` / `on_collision_exit()` | A solid collider starts / continues / stops touching another |
+| `on_mouse_enter()` / `on_mouse_exit()` | The cursor moves onto / off the object |
+| `on_mouse_over()` | Every frame the cursor is over the object |
+| `on_mouse_down()` / `on_mouse_up()` | The left button is pressed / released over it |
+| `on_click()` | A full press-and-release on the same object (or a UI Button press) |
+| `on_change()` / `on_toggle()` | A sibling UI Slider is dragged / UI Toggle is clicked |
+
+The older `on_trigger()` and `on_collision()` names still work — they're treated
+as the *enter* handlers.
 
 ## Built-in functions
 

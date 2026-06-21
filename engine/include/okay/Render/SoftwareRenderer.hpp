@@ -1079,9 +1079,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 uo = c.u * iw; vo = c.v * iw;
             };
             // Per-pixel (Phong) shading for lit meshes that carry normals — smooth
-            // surfaces + correct specular, textured or not. Matcap/unlit/no-normal
-            // meshes keep their existing paths.
-            const bool perPixel = PerPixelLighting() && !mr->unlit && !useMatcap && mr->mesh.HasNormals();
+            // surfaces + correct specular, textured or not. Matcap/unlit meshes
+            // keep their existing paths. Meshes WITHOUT normals still go per-pixel:
+            // each vertex carries the (constant) face normal, so they stay flat
+            // shaded but gain per-pixel shadows, reflections, rim and hemisphere
+            // ambient — which the basic flat path can't do. (This is what lets
+            // primitives like Cube/Plane and the flat-shaded Character receive
+            // cast shadows.)
+            const bool perPixel = PerPixelLighting() && !mr->unlit && !useMatcap;
             for (int j = 1; j + 1 < pn; ++j) {
                 const CV* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
                 float sx[3], sy[3], sd[3], iw[3], uu[3], vv[3];

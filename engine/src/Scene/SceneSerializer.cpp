@@ -187,17 +187,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
             << bc->offset.x << " " << bc->offset.y << " " << (bc->isTrigger ? 1 : 0)
-            << " " << bc->layer << "\n";
+            << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
     }
     if (auto* cc = go->GetComponent<CircleCollider2D>()) {
         out << "  circlecollider2d " << cc->radius << " "
             << cc->offset.x << " " << cc->offset.y << " " << (cc->isTrigger ? 1 : 0)
-            << " " << cc->layer << "\n";
+            << " " << cc->layer << " " << (cc->autoFit ? 1 : 0) << "\n";
     }
     if (auto* cap = go->GetComponent<CapsuleCollider2D>()) {
         out << "  capsulecollider2d " << cap->size.x << " " << cap->size.y << " "
             << (int)cap->direction << " " << cap->offset.x << " " << cap->offset.y << " "
-            << (cap->isTrigger ? 1 : 0) << " " << cap->layer << "\n";
+            << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
     if (auto* rb = go->GetComponent<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -208,17 +208,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* bc = go->GetComponent<BoxCollider3D>()) {
         out << "  boxcollider3d " << bc->size.x << " " << bc->size.y << " " << bc->size.z << " "
             << bc->offset.x << " " << bc->offset.y << " " << bc->offset.z << " "
-            << (bc->isTrigger ? 1 : 0) << " " << bc->layer << "\n";
+            << (bc->isTrigger ? 1 : 0) << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
     }
     if (auto* sc = go->GetComponent<SphereCollider3D>()) {
         out << "  spherecollider3d " << sc->radius << " "
             << sc->offset.x << " " << sc->offset.y << " " << sc->offset.z << " "
-            << (sc->isTrigger ? 1 : 0) << " " << sc->layer << "\n";
+            << (sc->isTrigger ? 1 : 0) << " " << sc->layer << " " << (sc->autoFit ? 1 : 0) << "\n";
     }
     if (auto* cap = go->GetComponent<CapsuleCollider3D>()) {
         out << "  capsulecollider3d " << cap->radius << " " << cap->height << " " << cap->axis << " "
             << cap->offset.x << " " << cap->offset.y << " " << cap->offset.z << " "
-            << (cap->isTrigger ? 1 : 0) << " " << cap->layer << "\n";
+            << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
@@ -715,24 +715,30 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rb->bodyType = (Rigidbody2D::BodyType)bt;
                     rb->gravityScale = gs; rb->mass = mass; rb->drag = drag; rb->bounciness = bounce;
                 } else if (field == "boxcollider2d") {
-                    Vec2 sz, off; int trig = 0, layer = 0;
+                    Vec2 sz, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;
                     in >> std::ws; if (std::isdigit(in.peek())) in >> layer; // optional
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;    // optional autoFit
                     auto* bc = go->AddComponent<BoxCollider2D>();
                     bc->size = sz; bc->offset = off; bc->isTrigger = (trig != 0); bc->layer = layer;
+                    bc->autoFit = (af != 0);
                 } else if (field == "circlecollider2d") {
-                    float r = 0.5f; Vec2 off; int trig = 0, layer = 0;
+                    float r = 0.5f; Vec2 off; int trig = 0, layer = 0, af = 0;
                     in >> r >> off.x >> off.y >> trig;
                     in >> std::ws; if (std::isdigit(in.peek())) in >> layer; // optional
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;    // optional autoFit
                     auto* cc = go->AddComponent<CircleCollider2D>();
                     cc->radius = r; cc->offset = off; cc->isTrigger = (trig != 0); cc->layer = layer;
+                    cc->autoFit = (af != 0);
                 } else if (field == "capsulecollider2d") {
-                    Vec2 sz{1, 2}, off; int dir = 0, trig = 0, layer = 0;
+                    Vec2 sz{1, 2}, off; int dir = 0, trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> dir >> off.x >> off.y >> trig;
                     in >> std::ws; if (std::isdigit(in.peek())) in >> layer; // optional
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;    // optional autoFit
                     auto* cap = go->AddComponent<CapsuleCollider2D>();
                     cap->size = sz; cap->direction = (CapsuleCollider2D::Direction)dir;
                     cap->offset = off; cap->isTrigger = (trig != 0); cap->layer = layer;
+                    cap->autoFit = (af != 0);
                 } else if (field == "rigidbody3d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;
                     int fx = 0, fy = 0, fz = 0;
@@ -742,24 +748,30 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rb->gravityScale = gs; rb->mass = mass; rb->drag = drag; rb->bounciness = bounce;
                     rb->freezeX = (fx != 0); rb->freezeY = (fy != 0); rb->freezeZ = (fz != 0);
                 } else if (field == "boxcollider3d") {
-                    Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0;
+                    Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> sz.z >> off.x >> off.y >> off.z >> trig;
                     in >> std::ws; if (std::isdigit(in.peek())) in >> layer;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;
                     auto* bc = go->AddComponent<BoxCollider3D>();
                     bc->size = sz; bc->offset = off; bc->isTrigger = (trig != 0); bc->layer = layer;
+                    bc->autoFit = (af != 0);
                 } else if (field == "spherecollider3d") {
-                    float r = 0.5f; Vec3 off; int trig = 0, layer = 0;
+                    float r = 0.5f; Vec3 off; int trig = 0, layer = 0, af = 0;
                     in >> r >> off.x >> off.y >> off.z >> trig;
                     in >> std::ws; if (std::isdigit(in.peek())) in >> layer;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;
                     auto* sc = go->AddComponent<SphereCollider3D>();
                     sc->radius = r; sc->offset = off; sc->isTrigger = (trig != 0); sc->layer = layer;
+                    sc->autoFit = (af != 0);
                 } else if (field == "capsulecollider3d") {
-                    float r = 0.5f, h = 2.0f; int ax = 1; Vec3 off; int trig = 0, layer = 0;
+                    float r = 0.5f, h = 2.0f; int ax = 1; Vec3 off; int trig = 0, layer = 0, af = 0;
                     in >> r >> h >> ax >> off.x >> off.y >> off.z >> trig;
                     in >> std::ws; if (std::isdigit(in.peek())) in >> layer;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;
                     auto* cap = go->AddComponent<CapsuleCollider3D>();
                     cap->radius = r; cap->height = h; cap->axis = ax;
                     cap->offset = off; cap->isTrigger = (trig != 0); cap->layer = layer;
+                    cap->autoFit = (af != 0);
                 } else if (field == "script") {
                     std::string lang = ReadQuoted(in);
                     std::string src  = ReadQuoted(in);

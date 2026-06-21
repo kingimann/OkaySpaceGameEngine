@@ -19,6 +19,9 @@ public:
     Vec3 offset = Vec3::Zero;
     /// Collision layer [0, 31]; the Physics3D matrix decides which interact.
     int layer = 0;
+    /// Keep the collider matched to the object's MeshRenderer bounds — refit each
+    /// frame so it tracks size changes (see FitColliders / ColliderFit.hpp).
+    bool autoFit = false;
 
     virtual Shape shape() const = 0;
 

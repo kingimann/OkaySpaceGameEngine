@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.68.0
+  - Colliders auto-fit the object. Adding a Box/Circle/Capsule 2D collider now
+    sizes it to the SpriteRenderer, and a Box/Sphere/Capsule 3D collider to the
+    MeshRenderer bounds — automatically, on add. Each collider also has a "Fit to
+    Object" button and an "Auto Fit" toggle that keeps it matched to the renderer
+    every frame (great for objects that change size at runtime). Saved with the scene.
+  - Third-Person camera: fixed the inverted vertical look — mouse-up now looks up
+    (matching first-person). Horizontal was already correct; pitch was reversed.
+
 v2.67.0
   - Character Controller 2D — greatly expanded with real platformer game-feel:
     run/sprint key, acceleration & deceleration, gamepad stick support, sprite

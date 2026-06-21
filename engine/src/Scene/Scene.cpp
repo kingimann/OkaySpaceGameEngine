@@ -6,6 +6,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"        // UICanvas::Width/Height (viewport)
 #include "okay/Physics/Collider2D.hpp"
+#include "okay/Physics/ColliderFit.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Renderer.hpp"
 #include <algorithm>
@@ -97,6 +98,10 @@ void Scene::Update(float deltaTime) {
     }
 
     DispatchPointer();   // OnMouseEnter/Exit/Over/Down/Up/Click against the cursor
+
+    // Keep auto-fit colliders matched to their renderer before the physics step.
+    for (const auto& go : m_objects)
+        if (go->active) FitColliders(go.get(), /*onlyAuto*/ true);
 
     if (physicsEnabled) { m_physics.Step(*this, deltaTime); m_physics3d.Step(*this, deltaTime); }
 

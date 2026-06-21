@@ -18,6 +18,9 @@ public:
     /// Collision layer [0, 31]. The Physics2D collision matrix decides which
     /// layers interact (all do by default).
     int layer = 0;
+    /// Keep the collider matched to the object's SpriteRenderer bounds — refit
+    /// each frame so it tracks size changes (see FitColliders / ColliderFit.hpp).
+    bool autoFit = false;
 
     virtual Shape shape() const = 0;
 

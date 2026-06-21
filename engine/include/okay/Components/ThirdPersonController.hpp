@@ -58,11 +58,13 @@ public:
 
         // ---- Camera orbit input ----
         // Mouse-right turns the view right and mouse-up looks up — matching the
-        // first-person controller's convention (the old code inverted both).
+        // first-person controller. `pitch` is the camera's height angle ABOVE the
+        // target (positive = above, looking down), so mouse-up must DECREASE it to
+        // look up; the previous sign raised the camera on mouse-up (felt inverted).
         Vec2 mp = Input::MousePosition();
         if (m_haveMouse) {
             yaw   -= (invertX ? -1.0f : 1.0f) * (mp.x - m_lastMouse.x) * mouseSensitivity;
-            pitch += (invertY ? 1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
+            pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
         m_lastMouse = mp; m_haveMouse = true;

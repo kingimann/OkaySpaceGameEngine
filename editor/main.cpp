@@ -5436,6 +5436,10 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc", &bc->layer, 0.1f, 0, 31);
+            if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##bc")) { FitColliders(go); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Auto Fit##bc", &bc->autoFit)) { if (bc->autoFit) FitColliders(go); ed.dirty = true; }
+            if (bc->autoFit) FitColliders(go, true);   // keep matched while editing
             if (ImGui::SmallButton("Remove##bc")) toRemove = bc;
         }
     }
@@ -5447,6 +5451,10 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cc", &cc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cc", &cc->layer, 0.1f, 0, 31);
+            if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cc")) { FitColliders(go); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Auto Fit##cc", &cc->autoFit)) { if (cc->autoFit) FitColliders(go); ed.dirty = true; }
+            if (cc->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cc")) toRemove = cc;
         }
     }
@@ -5462,6 +5470,10 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap2", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap2", &cap->layer, 0.1f, 0, 31);
+            if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cap2")) { FitColliders(go); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Auto Fit##cap2", &cap->autoFit)) { if (cap->autoFit) FitColliders(go); ed.dirty = true; }
+            if (cap->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cap2")) toRemove = cap;
         }
     }
@@ -5494,6 +5506,8 @@ void DrawInspector(EditorState& ed) {
                 FitBox(go, bc); ed.dirty = true;
             }
             ImGui::SameLine();
+            if (ImGui::Checkbox("Auto Fit##bc3", &bc->autoFit)) { if (bc->autoFit) FitColliders(go); ed.dirty = true; }
+            if (bc->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##bc3")) toRemove = bc;
         }
     }
@@ -5509,6 +5523,8 @@ void DrawInspector(EditorState& ed) {
                 FitSphere(go, sc); ed.dirty = true;
             }
             ImGui::SameLine();
+            if (ImGui::Checkbox("Auto Fit##sc3", &sc->autoFit)) { if (sc->autoFit) FitColliders(go); ed.dirty = true; }
+            if (sc->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##sc3")) toRemove = sc;
         }
     }
@@ -5527,6 +5543,8 @@ void DrawInspector(EditorState& ed) {
                 FitCapsule(go, cap); ed.dirty = true;
             }
             ImGui::SameLine();
+            if (ImGui::Checkbox("Auto Fit##cap3", &cap->autoFit)) { if (cap->autoFit) FitColliders(go); ed.dirty = true; }
+            if (cap->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
         }
     }
@@ -6625,18 +6643,18 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 2D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody2D>(), "Rigidbody2D")) { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<BoxCollider2D>(), "Box Collider 2D")) { go->AddComponent<BoxCollider2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<CircleCollider2D>(), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<CapsuleCollider2D>(), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BoxCollider2D>(), "Box Collider 2D")) { go->AddComponent<BoxCollider2D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<CircleCollider2D>(), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<CapsuleCollider2D>(), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); FitColliders(go); ed.dirty = true; }
             if (item(go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>(), "Tilemap Collider 2D")) { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Physics 3D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Lighting");

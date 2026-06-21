@@ -152,6 +152,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tr->color.r << " " << tr->color.g << " " << tr->color.b << " " << tr->color.a
             << " " << tr->heights.size();
         for (float h : tr->heights) out << " " << h;
+        // Auto-color "layers" (optional trailing fields; older scenes lack them).
+        auto wcol = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << " " << (tr->autoColor ? 1 : 0);
+        wcol(tr->waterColor); wcol(tr->sandColor); wcol(tr->grassColor);
+        wcol(tr->rockColor); wcol(tr->snowColor);
+        out << " " << tr->waterLevel << " " << tr->snowLevel << " " << tr->rockSlope;
         out << "\n";
     }
     if (auto* cb = go->GetComponent<CharacterBody>()) {
@@ -955,6 +961,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tr->Resize(res); tr->size = sz; tr->color = c;
                     for (std::size_t k = 0; k < count && k < tr->heights.size(); ++k)
                         in >> tr->heights[k];
+                    // Optional trailing auto-color fields (added later).
+                    auto tmore = [&]() -> bool {
+                        while (in.peek() == ' ' || in.peek() == '\t') in.get();
+                        int ch = in.peek();
+                        return ch != '\n' && ch != '\r' && ch != EOF;
+                    };
+                    auto rcol = [&](Color& col) { in >> col.r >> col.g >> col.b >> col.a; };
+                    if (tmore()) { int ac = 1; in >> ac; tr->autoColor = (ac != 0);
+                        rcol(tr->waterColor); rcol(tr->sandColor); rcol(tr->grassColor);
+                        rcol(tr->rockColor);  rcol(tr->snowColor);
+                        in >> tr->waterLevel >> tr->snowLevel >> tr->rockSlope;
+                    }
                     tr->Apply();   // rebuild the mesh into a MeshRenderer
                 } else if (field == "character") {
                     auto* cb = go->AddComponent<CharacterBody>();

@@ -2405,6 +2405,15 @@ void DrawStats(EditorState& ed) {
             ImGui::SliderFloat("Exposure", &Exposure(), 0.1f, 4.0f, "%.2f");
 
         ImGui::Checkbox("Anti-aliasing (FXAA)", &FXAAEnabled());
+
+        ImGui::Checkbox("Color grading", &ColorGradeEnabled());
+        if (ColorGradeEnabled()) {
+            ImGui::SliderFloat("Brightness", &Brightness(), 0.2f, 2.0f, "%.2f");
+            ImGui::SliderFloat("Contrast",   &Contrast(),   0.5f, 2.0f, "%.2f");
+            ImGui::SliderFloat("Saturation", &Saturation(), 0.0f, 2.0f, "%.2f");
+            ImGui::SliderFloat("Vignette",   &Vignette(),   0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Gamma",      &Gamma(),      0.5f, 2.4f, "%.2f");
+        }
     }
     ImGui::End();
 }

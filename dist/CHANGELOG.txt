@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.73.0
+  - Rendering: added a Color Grading post pass (Rendering panel) — Brightness,
+    Contrast, Saturation, Vignette and Gamma. Neutral/off by default, so existing
+    scenes look the same until you dial it in.
+
 v2.72.0
   - Fixed 3D face flickering (z-fighting): the depth test now uses a small bias so
     the first-drawn surface wins near-ties, stopping the shimmer between abutting

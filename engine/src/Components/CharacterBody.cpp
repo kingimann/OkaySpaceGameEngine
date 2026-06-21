@@ -36,7 +36,7 @@ std::vector<CharacterBody::Bone> CharacterBody::BuildSkeleton(const HumanoidPara
     for (int si = 0; si < 2; ++si) {
         int s = si == 0 ? -1 : 1;
         float aw = sw + p.armGap, lw = hw + p.legGap;
-        float shoulderY = 1.46f * H + up, armLen = 0.74f * aL * H;
+        float shoulderY = 1.46f * H + up, armLen = 0.82f * aL * H;
         Vec3 sh{(float)s * aw, shoulderY, 0};
         Quat q = Quat::Euler({(float)s * p.armSwing, 0, (float)s * p.armSpread});
         Vec3 elbow = sh + q * Vec3{0, -armLen * 0.5f, 0};

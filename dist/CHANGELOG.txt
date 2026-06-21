@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.69.0
+  - Third-Person camera: flipped both mouse-look axes to the expected orbit
+    direction (the prior default felt inverted both ways). Use the Invert X / Invert
+    Y toggles in the controller's inspector if you prefer the opposite.
+
 v2.68.0
   - Colliders auto-fit the object. Adding a Box/Circle/Capsule 2D collider now
     sizes it to the SpriteRenderer, and a Box/Sphere/Capsule 3D collider to the

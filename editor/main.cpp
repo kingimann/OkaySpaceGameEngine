@@ -5776,6 +5776,13 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
         if (CompHeader("Canvas", cv, &toRemove)) {
+            if (ImGui::Checkbox("Visible##cv", &cv->visible)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide/show every widget under this canvas at once.");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(150);
+            if (ImGui::SliderFloat("Opacity##cv", &cv->opacity, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Master fade for this canvas's UI (drive at runtime for fade in/out).");
+            ImGui::Separator();
             const char* modes[] = {"Constant Pixel Size", "Scale With Screen Size"};
             int m = (int)cv->scaleMode;
             if (ImGui::Combo("UI Scale Mode##cv", &m, modes, 2)) { cv->scaleMode = (Canvas::ScaleMode)m; ed.dirty = true; }
@@ -6681,7 +6688,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // Scroll View backgrounds (drawn behind their content) + a scrollbar.
     for (const auto& up : objs) {
         auto* sv = up->GetComponent<UIScrollView>();
-        if (!sv || !up->active) continue;
+        if (!sv || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
         Vec2 o = ResolveAnchor(sv->anchor, sv->position * s, sv->size * s, canvasSize.x, canvasSize.y);
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
@@ -6736,7 +6743,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI images (logos/icons): preview as a tinted rect with the path centered.
     for (const auto& up : objs) {
         auto* im = up->GetComponent<UIImage>();
-        if (!im || !up->active) continue;
+        if (!im || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
@@ -6753,7 +6760,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.
     for (const auto& up : objs) {
         auto* pn = up->GetComponent<UIPanel>();
-        if (!pn || !up->active) continue;
+        if (!pn || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
@@ -6773,7 +6780,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
     for (const auto& up : objs) {
         auto* pb = up->GetComponent<UIProgressBar>();
-        if (!pb || !up->active) continue;
+        if (!pb || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
@@ -6794,7 +6801,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI sliders: track + fill + knob.
     for (const auto& up : objs) {
         auto* sl = up->GetComponent<UISlider>();
-        if (!sl || !up->active) continue;
+        if (!sl || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
@@ -6824,7 +6831,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI toggles: box (+ inset check when on) and a label.
     for (const auto& up : objs) {
         auto* tg = up->GetComponent<UIToggle>();
-        if (!tg || !up->active) continue;
+        if (!tg || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
@@ -6855,7 +6862,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
     for (const auto& up : objs) {
         auto* btn = up->GetComponent<UIButton>();
-        if (!btn || !up->active) continue;
+        if (!btn || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
@@ -6892,7 +6899,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI input fields: box + the text (or placeholder) + a caret when focused.
     for (const auto& up : objs) {
         auto* in = up->GetComponent<UIInputField>();
-        if (!in || !up->active) continue;
+        if (!in || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
@@ -6924,7 +6931,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // widgets so an open list sits above its neighbours.
     for (const auto& up : objs) {
         auto* dd = up->GetComponent<UIDropdown>();
-        if (!dd || !up->active) continue;
+        if (!dd || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
@@ -7033,7 +7040,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
     if (hovered && io.MouseWheel != 0.0f && !ed.isPlaying()) {  // play mode scrolls via Input wheel
         for (const auto& up : ed.scene().Objects()) {
             auto* sv = up->GetComponent<UIScrollView>();
-            if (!sv || !up->active) continue;
+            if (!sv || !up->active || UIHidden(up.get())) continue;
             float s = UIScaleFor(up.get(), canvasSize.x, canvasSize.y);
             Vec2 o = ResolveAnchor(sv->anchor, sv->position * s, sv->size * s, canvasSize.x, canvasSize.y);
             if (mouseCanvas.x >= o.x && mouseCanvas.x <= o.x + sv->size.x * s &&
@@ -7264,7 +7271,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Tilemaps: filled cells, color keyed by tile id.
     for (const auto& up : objs) {
         auto* tm = up->GetComponent<Tilemap>();
-        if (!tm || !up->active) continue;
+        if (!tm || !up->active || UIHidden(up.get())) continue;
         float half = tm->tileSize * 0.5f * scale;
         for (int y = 0; y < tm->Height(); ++y)
             for (int x = 0; x < tm->Width(); ++x) {
@@ -7281,7 +7288,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Particles: filled circles (move during Play).
     for (const auto& up : objs) {
         auto* ps = up->GetComponent<ParticleSystem>();
-        if (!ps || !up->active) continue;
+        if (!ps || !up->active || UIHidden(up.get())) continue;
         for (const auto& p : ps->Particles()) {
             if (!p.alive) continue;
             ImVec2 sp = worldToScreen(p.position);

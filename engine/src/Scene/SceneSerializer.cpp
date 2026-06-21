@@ -420,7 +420,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* cv = go->GetComponent<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
             << cv->referenceResolution.x << " " << cv->referenceResolution.y << " "
-            << cv->matchWidthOrHeight << " " << cv->scaleFactor << " " << cv->sortOrder << "\n";
+            << cv->matchWidthOrHeight << " " << cv->scaleFactor << " " << cv->sortOrder
+            << " " << (cv->visible ? 1 : 0) << " " << cv->opacity << "\n";   // optional, back-compat
     }
     if (go->GetComponent<EventSystem>()) {
         out << "  eventsystem\n";
@@ -1110,6 +1111,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> sm >> cv->referenceResolution.x >> cv->referenceResolution.y
                        >> cv->matchWidthOrHeight >> cv->scaleFactor >> cv->sortOrder;
                     cv->scaleMode = (Canvas::ScaleMode)sm;
+                    in >> std::ws;                       // optional visible + opacity
+                    int p = in.peek();
+                    if (std::isdigit(p) || p == '-') { int vis = 1; in >> vis >> cv->opacity; cv->visible = (vis != 0); }
                 } else if (field == "eventsystem") {
                     go->AddComponent<EventSystem>();
                 } else if (field == "uiprogress") {

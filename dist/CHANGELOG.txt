@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.61.0
+  - Canvas: Visible toggle + master Opacity. "Visible" hides/shows every widget
+    under a canvas at once (works in the editor and the game). "Opacity" is a 0..1
+    master fade applied to the canvas's widgets in the built game (text, images,
+    panels, buttons, sliders, toggles, progress bars, scroll views) — drive it at
+    runtime for menu fade in/out. Both are in the Canvas inspector and saved with
+    the scene.
+
 v2.60.0
   - Canvas: more options. The Scale Factor is now a universal UI zoom (it applies
     in Scale-With-Screen mode too, not just Constant Pixel Size). The inspector

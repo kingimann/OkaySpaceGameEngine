@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.40.0
+  - Rendering: bloom (bright-pass glow). Pixels brighter than a threshold are
+    extracted, blurred (separable box, 3 passes ~ gaussian, resolution-scaled
+    radius) and added back, so highlights, light sources and emissive surfaces
+    bleed a soft halo. On by default (BloomEnabled / BloomThreshold /
+    BloomIntensity toggles), runs after SSAO and before FXAA.
+
 v2.39.0
   - Rendering: anti-aliasing (FXAA post-process). Edges are detected by local
     contrast and softened, smoothing the jaggies on geometry/shadow silhouettes

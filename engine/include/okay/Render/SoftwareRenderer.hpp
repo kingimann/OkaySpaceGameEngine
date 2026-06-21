@@ -634,6 +634,64 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
         }
 }
 
+// ---- Bloom -----------------------------------------------------------------
+inline bool&  BloomEnabled()   { static bool v = true; return v; }
+inline float& BloomThreshold() { static float v = 0.80f; return v; }  // 0..1 brightness
+inline float& BloomIntensity() { static float v = 0.6f; return v; }
+
+/// Glow on bright/emissive areas: extract pixels above a brightness threshold,
+/// blur them, and add back. Makes lights, neon and hot highlights bleed light.
+inline void ApplyBloom(Raster& r) {
+    if (!BloomEnabled()) return;
+    int W = r.width, H = r.height;
+    if (W < 4 || H < 4) return;
+    std::size_t N = (std::size_t)W * H;
+    static std::vector<float> br, tmp;   // bright pass (3 channels interleaved)
+    br.assign(N * 3, 0.0f); tmp.assign(N * 3, 0.0f);
+    float t = BloomThreshold() * 255.0f;
+    for (std::size_t i = 0; i < N; ++i) {
+        std::uint32_t v = r.color[i];
+        float c[3] = {(float)(v & 0xFF), (float)((v >> 8) & 0xFF), (float)((v >> 16) & 0xFF)};
+        for (int k = 0; k < 3; ++k) { float e = c[k] - t; br[i * 3 + k] = e > 0 ? e : 0.0f; }
+    }
+    // Separable box blur (3 passes ~ gaussian), radius scaled to resolution.
+    int rad = (W > 400 ? 6 : 4);
+    for (int pass = 0; pass < 3; ++pass) {
+        for (int y = 0; y < H; ++y)                       // horizontal
+            for (int k = 0; k < 3; ++k) {
+                float sum = 0; int cnt = 0;
+                for (int x = -rad; x <= rad; ++x) { int xx = x < 0 ? 0 : (x >= W ? W - 1 : x); sum += br[((std::size_t)y * W + xx) * 3 + k]; ++cnt; }
+                for (int x = 0; x < W; ++x) {
+                    tmp[((std::size_t)y * W + x) * 3 + k] = sum / cnt;
+                    int add = x + rad + 1, sub = x - rad;
+                    add = add >= W ? W - 1 : add; sub = sub < 0 ? 0 : sub;
+                    sum += br[((std::size_t)y * W + add) * 3 + k] - br[((std::size_t)y * W + sub) * 3 + k];
+                }
+            }
+        for (int x = 0; x < W; ++x)                       // vertical
+            for (int k = 0; k < 3; ++k) {
+                float sum = 0; int cnt = 0;
+                for (int y = -rad; y <= rad; ++y) { int yy = y < 0 ? 0 : (y >= H ? H - 1 : y); sum += tmp[((std::size_t)yy * W + x) * 3 + k]; ++cnt; }
+                for (int y = 0; y < H; ++y) {
+                    br[((std::size_t)y * W + x) * 3 + k] = sum / cnt;
+                    int add = y + rad + 1, sub = y - rad;
+                    add = add >= H ? H - 1 : add; sub = sub < 0 ? 0 : sub;
+                    sum += tmp[((std::size_t)add * W + x) * 3 + k] - tmp[((std::size_t)sub * W + x) * 3 + k];
+                }
+            }
+    }
+    float intensity = BloomIntensity();
+    for (std::size_t i = 0; i < N; ++i) {
+        std::uint32_t v = r.color[i];
+        float o[3];
+        for (int k = 0; k < 3; ++k) {
+            float c = (float)((v >> (k * 8)) & 0xFF) + br[i * 3 + k] * intensity;
+            o[k] = c > 255 ? 255 : c;
+        }
+        r.color[i] = (0xFFu << 24) | ((std::uint32_t)o[2] << 16) | ((std::uint32_t)o[1] << 8) | (std::uint32_t)o[0];
+    }
+}
+
 // ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
 inline bool& FXAAEnabled() { static bool v = true; return v; }
 
@@ -911,6 +969,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         }
     }
     if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
+    ApplyBloom(r);                                                   // bright-pass glow
     ApplyFXAA(r);                                                    // edge anti-aliasing
 }
 

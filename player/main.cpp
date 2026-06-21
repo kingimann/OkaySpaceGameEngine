@@ -477,14 +477,16 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Text (HUD / labels) — drawn last so it sits on top, in 2D or 3D scenes.
+        // World-space text only (sits with the 2D scene). Screen-space HUD text is
+        // drawn LATER (after the UI widgets) so labels sit ON TOP of panels instead
+        // of being hidden behind them — see the screen-space text pass below.
         {
             float ortho = cam ? cam->orthographicSize : 5.0f;
             Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
             float scale = h / (2.0f * ortho);
             for (const auto& up : scene.Objects()) {
                 auto* tr = up->GetComponent<TextRenderer>();
-                if (!tr || !up->active || UIHidden(up.get())) continue;
+                if (!tr || !up->active || tr->screenSpace || UIHidden(up.get())) continue;
                 float op = UIOpacity(up.get());   // canvas master fade
                 SDL_Color col{(Uint8)(tr->color.r * 255), (Uint8)(tr->color.g * 255),
                               (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255 * op)};
@@ -492,44 +494,19 @@ int main(int argc, char** argv) {
                              (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255 * op)};
                 SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
                              (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
-                if (tr->screenSpace) {
-                    if (tr->background) {                       // label background box
-                        Vec2 b = tr->BoxTopLeft((float)w, (float)h);
-                        SDL_Rect br{(int)b.x, (int)b.y, (int)tr->size.x, (int)tr->size.y};
-                        SDL_SetRenderDrawColor(renderer, (Uint8)(tr->backgroundColor.r * 255),
-                                               (Uint8)(tr->backgroundColor.g * 255), (Uint8)(tr->backgroundColor.b * 255),
-                                               (Uint8)(tr->backgroundColor.a * 255 * op));
-                        SDL_RenderFillRect(renderer, &br);
-                    }
-                    Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);   // align handled inside
-                    std::string disp = tr->DisplayText();
-                    float p = tr->pixelSize, ls = tr->letterSpacing, lp = tr->lineSpacing;
-                    if (tr->shadow)
-                        DrawText(renderer, disp, o.x + tr->shadowOffset.x * p,
-                                 o.y + tr->shadowOffset.y * p, p, sh, ls, lp);
-                    if (tr->outline) {
-                        DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp);
-                        DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp);
-                        DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp);
-                        DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp);
-                    }
-                    DrawText(renderer, disp, o.x, o.y, p, col, ls, lp);
-                    if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp);
-                } else {
-                    SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
-                    float px = tr->pixelSize * scale;
-                    if (tr->shadow)
-                        DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
-                                 o.y + tr->shadowOffset.y * px, px, sh);
-                    if (tr->outline) {
-                        DrawText(renderer, tr->text, o.x - px, o.y, px, ol);
-                        DrawText(renderer, tr->text, o.x + px, o.y, px, ol);
-                        DrawText(renderer, tr->text, o.x, o.y - px, px, ol);
-                        DrawText(renderer, tr->text, o.x, o.y + px, px, ol);
-                    }
-                    DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col);
-                    if (tr->bold) DrawText(renderer, tr->text, (float)o.x + px, (float)o.y, px, col);
+                SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
+                float px = tr->pixelSize * scale;
+                if (tr->shadow)
+                    DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
+                             o.y + tr->shadowOffset.y * px, px, sh);
+                if (tr->outline) {
+                    DrawText(renderer, tr->text, o.x - px, o.y, px, ol);
+                    DrawText(renderer, tr->text, o.x + px, o.y, px, ol);
+                    DrawText(renderer, tr->text, o.x, o.y - px, px, ol);
+                    DrawText(renderer, tr->text, o.x, o.y + px, px, ol);
                 }
+                DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col);
+                if (tr->bold) DrawText(renderer, tr->text, (float)o.x + px, (float)o.y, px, col);
             }
         }
 
@@ -825,6 +802,39 @@ int main(int argc, char** argv) {
             Color tcc = btn->CurrentTextColor();
             SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255 * op)};
             DrawText(renderer, btn->label, tx, ty, px, tc);
+        }
+        for (const auto& up : scene.Objects()) {           // screen-space text — on top of panels/controls
+            auto* tr = up->GetComponent<TextRenderer>();
+            if (!tr || !up->active || !tr->screenSpace || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());   // canvas master fade
+            SDL_Color col{(Uint8)(tr->color.r * 255), (Uint8)(tr->color.g * 255),
+                          (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255 * op)};
+            SDL_Color sh{(Uint8)(tr->shadowColor.r * 255), (Uint8)(tr->shadowColor.g * 255),
+                         (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255 * op)};
+            SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
+                         (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
+            if (tr->background) {                       // label background box
+                Vec2 b = tr->BoxTopLeft((float)w, (float)h);
+                SDL_Rect br{(int)b.x, (int)b.y, (int)tr->size.x, (int)tr->size.y};
+                SDL_SetRenderDrawColor(renderer, (Uint8)(tr->backgroundColor.r * 255),
+                                       (Uint8)(tr->backgroundColor.g * 255), (Uint8)(tr->backgroundColor.b * 255),
+                                       (Uint8)(tr->backgroundColor.a * 255 * op));
+                SDL_RenderFillRect(renderer, &br);
+            }
+            Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);   // align handled inside
+            std::string disp = tr->DisplayText();
+            float p = tr->pixelSize, ls = tr->letterSpacing, lp = tr->lineSpacing;
+            if (tr->shadow)
+                DrawText(renderer, disp, o.x + tr->shadowOffset.x * p,
+                         o.y + tr->shadowOffset.y * p, p, sh, ls, lp);
+            if (tr->outline) {
+                DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp);
+                DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp);
+                DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp);
+                DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp);
+            }
+            DrawText(renderer, disp, o.x, o.y, p, col, ls, lp);
+            if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp);
         }
         for (const auto& up : scene.Objects()) {           // dropdowns (header + open list)
             auto* dd = up->GetComponent<UIDropdown>();

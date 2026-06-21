@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.65.0
+  - UI text z-order (fixed): screen-space text was drawn before UI panels, so a
+    label placed on a panel was hidden behind it with no way to bring it forward.
+    Screen-space text now draws on top of panels/images/controls (below only
+    dropdown popups and tooltips), in both the editor and the built game.
+  - 2D Platformer template (fixed): the player had a physics body but no movement
+    script, so it just sat there. It now has a CharacterController2D in Platformer
+    mode — move left/right and jump (Space/W) with no scripting needed.
+  - New Project: removed the "3D Platformer" template. Coin Collector and Snake now
+    live in their own "Mini games" category instead of under 2D templates.
+
 v2.64.0
   - Skybox in the built game (fixed): the player drew the sky with a draw call that
     silently does nothing on some GPUs/drivers, leaving the game showing a black sky

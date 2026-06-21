@@ -3944,18 +3944,17 @@ void DrawNewProjectPopup(EditorState& ed) {
         // and the factory. The grid + footer are driven from this.
         struct Tpl { int cat; const char* title; const char* blurb; const char* desc;
                      void (EditorState::*fn)(); };
-        enum { C_BLANK, C_3D, C_2D, C_UI };
+        enum { C_BLANK, C_3D, C_2D, C_GAME, C_UI };
         static const Tpl tpls[] = {
             {C_BLANK, "2D Scene",   "Empty 2D + camera",  "An empty 2D scene with a camera. Good starting point for sprites and UI.", &EditorState::NewScene2D},
             {C_BLANK, "3D Scene",   "Empty 3D + cube",    "An empty 3D scene with a camera, a directional light and a cube.", &EditorState::NewScene3D},
             {C_BLANK, "Empty",      "Nothing at all",     "A totally empty scene (no camera or light). Build it up yourself.", &EditorState::NewScene},
             {C_3D,    "First Person","Character + FPS",    "A blocky Character you control in first person: mouse-look, WASD, jump. Camera at eye height, with crates to walk around.", &EditorState::NewFPS},
             {C_3D,    "Third Person","Orbit camera",       "Your blocky Character with an orbit camera behind it: WASD relative to the camera, Space to jump, with walk/run animation. You see and control the character.", &EditorState::NewThirdPerson},
-            {C_3D,    "3D Platformer","Physics + jump",    "The Character on a ground you move and jump around, with a follow camera.", &EditorState::NewPlatformer3D},
             {C_2D,    "Platformer",  "Side-scroller",      "A side-scroller: follow camera, a physics player on a wide ground, and a coin.", &EditorState::NewPlatformer},
             {C_2D,    "Top-Down",    "WASD movement",      "A WASD-driven player with a follow camera and a couple of walls.", &EditorState::NewTopDown},
-            {C_2D,    "Coin Collector","Mini game",        "A small complete game: drive the player to collect spinning coins; a HUD counts the score.", &EditorState::NewCoinCollector},
-            {C_2D,    "Snake",       "Classic arcade",     "The classic Snake, fully playable.", &EditorState::NewSnake},
+            {C_GAME,  "Coin Collector","Mini game",        "A small complete game: drive the player to collect spinning coins; a HUD counts the score.", &EditorState::NewCoinCollector},
+            {C_GAME,  "Snake",       "Classic arcade",     "The classic Snake, fully playable.", &EditorState::NewSnake},
             {C_UI,    "Main Menu",   "Title screen",       "A title screen with buttons wired to actions.", &EditorState::NewMainMenu},
             {C_UI,    "Inventory",   "Drag & drop grid",   "A drag & drop item grid.", &EditorState::NewInventory},
             {C_UI,    "Multiplayer", "Host / join",        "A host/join networked starter scene.", &EditorState::NewMultiplayer},
@@ -3964,12 +3963,14 @@ void DrawNewProjectPopup(EditorState& ed) {
         static int sel = 1;   // default: 3D Scene
         if (sel < 0 || sel >= N) sel = 1;
         auto catColor = [](int c) -> ImVec4 {
-            switch (c) { case C_3D: return ImVec4(0.30f, 0.55f, 0.85f, 1);
-                         case C_2D: return ImVec4(0.30f, 0.70f, 0.45f, 1);
-                         case C_UI: return ImVec4(0.62f, 0.45f, 0.80f, 1);
-                         default:   return ImVec4(0.45f, 0.47f, 0.55f, 1); }
+            switch (c) { case C_3D:   return ImVec4(0.30f, 0.55f, 0.85f, 1);
+                         case C_2D:   return ImVec4(0.30f, 0.70f, 0.45f, 1);
+                         case C_GAME: return ImVec4(0.90f, 0.65f, 0.25f, 1);
+                         case C_UI:   return ImVec4(0.62f, 0.45f, 0.80f, 1);
+                         default:     return ImVec4(0.45f, 0.47f, 0.55f, 1); }
         };
-        const char* catName[] = {"Blank canvas", "3D templates", "2D templates", "UI & systems"};
+        const char* catName[] = {"Blank canvas", "3D templates", "2D templates",
+                                 "Mini games", "UI & systems"};
 
         ImGui::TextColored(ImVec4(0.95f, 0.95f, 1.0f, 1), "Create a New Project");
         ImGui::TextDisabled("Pick a starting template, name it, and hit Create.");
@@ -6848,40 +6849,6 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
     }
 
-    // Screen-space text (world-anchored text stays with the 2D scene draw).
-    for (const auto& up : objs) {
-        auto* tr = up->GetComponent<TextRenderer>();
-        if (!tr || !up->active || !tr->screenSpace) continue;
-        float s = uiScale(up.get());
-        ImU32 col = ToColor(tr->color);
-        ImU32 sh = ToColor(tr->shadowColor);
-        Vec2 box = tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);   // box top-left
-        Vec2 boxSz{tr->size.x * s, tr->size.y * s};
-        if (UIScrollView* sv = OwningScrollView(up.get())) box.y -= sv->scroll * s;
-        if (svCull(up.get(), box, boxSz)) continue;
-        if (tr->background)
-            dl->AddRectFilled(ImVec2(canvasPos.x + box.x, canvasPos.y + box.y),
-                              ImVec2(canvasPos.x + box.x + boxSz.x, canvasPos.y + box.y + boxSz.y),
-                              ToColor(tr->backgroundColor), 4.0f);
-        Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s);   // text inside box
-        if (UIScrollView* sv = OwningScrollView(up.get())) o.y -= sv->scroll * s;
-        float px = tr->pixelSize * s, ls = tr->letterSpacing, lp = tr->lineSpacing;
-        std::string disp = tr->DisplayText();
-        float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
-        if (tr->shadow)
-            DrawBitmapText(dl, disp, bx + tr->shadowOffset.x * px,
-                           by + tr->shadowOffset.y * px, px, sh, ls, lp);
-        if (tr->outline) {                            // 4-direction outline
-            ImU32 oc = ToColor(tr->outlineColor);
-            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp);
-            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp);
-            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp);
-            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp);
-        }
-        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp);
-        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp);  // faux-bold
-    }
-
     // Drop-target slot backgrounds (behind items), so slots are visible while
     // designing — mirrors what the running game draws.
     for (const auto& up : objs) {
@@ -7078,6 +7045,42 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             float cx = a.x + pad + cw;
             dl->AddLine(ImVec2(cx, ty), ImVec2(cx, ty + Font8x8::Height * px), IM_COL32(255, 255, 255, 220), 1.5f);
         }
+    }
+
+    // Screen-space text (world-anchored text stays with the 2D scene draw). Drawn
+    // AFTER panels/images/controls so a label always sits ON TOP of a panel rather
+    // than being hidden behind it (only dropdown popups + tooltips go above it).
+    for (const auto& up : objs) {
+        auto* tr = up->GetComponent<TextRenderer>();
+        if (!tr || !up->active || !tr->screenSpace) continue;
+        float s = uiScale(up.get());
+        ImU32 col = ToColor(tr->color);
+        ImU32 sh = ToColor(tr->shadowColor);
+        Vec2 box = tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);   // box top-left
+        Vec2 boxSz{tr->size.x * s, tr->size.y * s};
+        if (UIScrollView* sv = OwningScrollView(up.get())) box.y -= sv->scroll * s;
+        if (svCull(up.get(), box, boxSz)) continue;
+        if (tr->background)
+            dl->AddRectFilled(ImVec2(canvasPos.x + box.x, canvasPos.y + box.y),
+                              ImVec2(canvasPos.x + box.x + boxSz.x, canvasPos.y + box.y + boxSz.y),
+                              ToColor(tr->backgroundColor), 4.0f);
+        Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s);   // text inside box
+        if (UIScrollView* sv = OwningScrollView(up.get())) o.y -= sv->scroll * s;
+        float px = tr->pixelSize * s, ls = tr->letterSpacing, lp = tr->lineSpacing;
+        std::string disp = tr->DisplayText();
+        float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
+        if (tr->shadow)
+            DrawBitmapText(dl, disp, bx + tr->shadowOffset.x * px,
+                           by + tr->shadowOffset.y * px, px, sh, ls, lp);
+        if (tr->outline) {                            // 4-direction outline
+            ImU32 oc = ToColor(tr->outlineColor);
+            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp);
+            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp);
+            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp);
+            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp);
+        }
+        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp);
+        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp);  // faux-bold
     }
 
     // UI dropdowns: header (shows the selection + a caret); when open, the option

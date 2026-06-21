@@ -13,6 +13,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
@@ -265,6 +266,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->minDistance << " " << tp->maxDistance << " " << tp->zoomSpeed
             << " " << tp->shoulderOffset << " " << tp->cameraDamping
             << " " << tp->minPitch << " " << tp->maxPitch << " " << (int)tp->faceMode << "\n";
+    }
+    if (auto* cm = go->GetComponent<ClickToMoveController>()) {
+        out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
+            << (cm->runKey ? cm->runKey : '-') << " " << cm->stopDistance << " " << cm->turnSpeed
+            << " " << cm->mouseButton << " " << (cm->holdToMove ? 1 : 0) << " "
+            << (cm->driveAnimation ? 1 : 0) << " " << (cm->usePlayerHeight ? 1 : 0)
+            << " " << cm->groundY << "\n";
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -830,6 +838,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cc->maxFallSpeed = (float)std::atof(mfs.c_str());
                         cc->extraFallGravity = (float)std::atof(efg.c_str());
                     }
+                } else if (field == "ctmctrl") {
+                    float ws = 4, rs = 7, sd = 0.15f, ts = 12, gy = 0; std::string rk = "-";
+                    int mb = 0, hold = 0, anim = 1, useH = 1;
+                    in >> ws >> rs >> rk >> sd >> ts >> mb >> hold >> anim >> useH >> gy;
+                    auto* cm = go->AddComponent<ClickToMoveController>();
+                    cm->walkSpeed = ws; cm->runSpeed = rs;
+                    cm->runKey = (rk == "-" || rk.empty()) ? 0 : rk[0];
+                    cm->stopDistance = sd; cm->turnSpeed = ts; cm->mouseButton = mb;
+                    cm->holdToMove = (hold != 0); cm->driveAnimation = (anim != 0);
+                    cm->usePlayerHeight = (useH != 0); cm->groundY = gy;
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
                     float sp = 3, sd = 0; in >> sp >> sd;

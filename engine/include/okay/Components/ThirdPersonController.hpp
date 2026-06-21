@@ -135,15 +135,11 @@ public:
         Vec3 offset{behind.x * cp, Mathf::Sin(pr), behind.z * cp};
         Vec3 desired = target + offset * distance;
 
-        // Over-the-shoulder lateral shift: move the camera and its look point
-        // sideways by the same amount so the view stays parallel.
-        Vec3 lookAt = target;
-        if (shoulderOffset != 0.0f) {
-            Vec3 viewDir = (desired - target).Normalized();
-            Vec3 side = Vec3::Cross(Vec3::Up, viewDir).Normalized();   // camera right
-            desired = desired + side * shoulderOffset;
-            lookAt  = target  + side * shoulderOffset;
-        }
+        // Over-the-shoulder: shift the camera sideways along its horizontal right.
+        // The rotation stays level (built from yaw/pitch below), so the view is a
+        // parallel offset — no roll.
+        if (shoulderOffset != 0.0f)
+            desired = desired + (Quat::Euler(0, yaw, 0) * Vec3::Right) * shoulderOffset;
 
         // Smooth the follow when damping is on (frame-rate independent).
         if (cameraDamping > 0.0f && m_haveCamPos) {
@@ -154,11 +150,13 @@ public:
         }
         m_haveCamPos = true;
 
-        // The camera looks down its local -Z; orient that toward the look point.
-        Vec3 toTarget = lookAt - m_camPos;
-        if (toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z > 1e-6f)
-            cam->localRotation = Quat::LookRotation((m_camPos - lookAt).Normalized());
         cam->SetPosition(m_camPos);
+        // Build the rotation straight from yaw/pitch with NO roll component (z = 0)
+        // so the horizon is always level. (LookRotation could tilt the horizon at
+        // steep angles — that was the slanted-view bug.) Euler(-pitch, yaw, 0)
+        // points the camera's -Z at the target: yaw matches the orbit, and a
+        // positive orbit pitch tilts the view down.
+        cam->localRotation = Quat::Euler(-pitch, yaw, 0.0f);
     }
 
 private:

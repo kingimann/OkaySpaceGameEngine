@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.71.0
+  - New: Click-To-Move controller (RuneScape / Diablo style) + a "Point & Click"
+    template. Click the ground and your Character walks there (unprojected onto the
+    ground plane via the main camera), turning to face travel with walk/run anim.
+    Full inspector + saved with the scene.
+  - Fixed: characters not falling off platforms. The 3D starter grounds had a
+    double-scaled box collider (Transform scale AND collider size both 40), making
+    the collider ~40x bigger than the visible floor, so you never left it. Grounds
+    now use a unit collider sized by the Transform.
+  - Fixed: third-person view had a slanted/rolled horizon at some angles — the
+    camera rotation is now built directly from yaw/pitch (no roll), so the horizon
+    stays level.
+
 v2.70.0
   - Third-Person camera: corrected vertical look so mouse-up looks up (only the
     pitch axis was reversed after v2.69; horizontal was already right).

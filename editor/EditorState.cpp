@@ -262,6 +262,18 @@ void EditorState::NewThirdPerson() {
     dirty = false;
 }
 
+void EditorState::NewPointAndClick() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::PointAndClick(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 1, 0};
+    camDist = 14.0f;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
 void EditorState::NewMultiplayer() {
     NewScene();
     m_suppressUndo = true;

@@ -102,6 +102,20 @@ inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
     return cv ? cv->ScaleFactor(screenW, screenH) : 1.0f;
 }
 
+/// True when the widget's owning Canvas is hidden (Canvas.visible == false) —
+/// the renderer skips drawing it. No Canvas / no flag = visible.
+inline bool UIHidden(GameObject* go) {
+    Canvas* cv = OwningCanvas(go);
+    return cv && !cv->visible;
+}
+
+/// The master opacity [0,1] the widget should be drawn at (its Canvas's opacity,
+/// or 1 if none). Multiply each widget's color alpha by this.
+inline float UIOpacity(GameObject* go) {
+    Canvas* cv = OwningCanvas(go);
+    return cv ? (cv->opacity < 0.0f ? 0.0f : (cv->opacity > 1.0f ? 1.0f : cv->opacity)) : 1.0f;
+}
+
 /// The Scroll View a widget lives in (nearest ancestor), or nullptr — used to
 /// offset and clip the widget so it scrolls with its container.
 inline UIScrollView* OwningScrollView(GameObject* go) {

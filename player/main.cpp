@@ -445,7 +445,7 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
             for (const auto& up : scene.Objects()) {
                 auto* tm = up->GetComponent<Tilemap>();
-                if (!tm || !up->active) continue;
+                if (!tm || !up->active || UIHidden(up.get())) continue;
                 for (int y = 0; y < tm->Height(); ++y)
                     for (int x = 0; x < tm->Width(); ++x) {
                         int id = tm->GetTile(x, y);
@@ -458,7 +458,7 @@ int main(int argc, char** argv) {
             // Particle systems: draw each live particle as a small fading quad.
             for (const auto& up : scene.Objects()) {
                 auto* ps = up->GetComponent<ParticleSystem>();
-                if (!ps || !up->active) continue;
+                if (!ps || !up->active || UIHidden(up.get())) continue;
                 for (const auto& p : ps->Particles()) {
                     if (!p.alive) continue;
                     SDL_Color col{(Uint8)(p.color.r * 255), (Uint8)(p.color.g * 255),
@@ -476,20 +476,21 @@ int main(int argc, char** argv) {
             float scale = h / (2.0f * ortho);
             for (const auto& up : scene.Objects()) {
                 auto* tr = up->GetComponent<TextRenderer>();
-                if (!tr || !up->active) continue;
+                if (!tr || !up->active || UIHidden(up.get())) continue;
+                float op = UIOpacity(up.get());   // canvas master fade
                 SDL_Color col{(Uint8)(tr->color.r * 255), (Uint8)(tr->color.g * 255),
-                              (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255)};
+                              (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255 * op)};
                 SDL_Color sh{(Uint8)(tr->shadowColor.r * 255), (Uint8)(tr->shadowColor.g * 255),
-                             (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255)};
+                             (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255 * op)};
                 SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
-                             (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255)};
+                             (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
                 if (tr->screenSpace) {
                     if (tr->background) {                       // label background box
                         Vec2 b = tr->BoxTopLeft((float)w, (float)h);
                         SDL_Rect br{(int)b.x, (int)b.y, (int)tr->size.x, (int)tr->size.y};
                         SDL_SetRenderDrawColor(renderer, (Uint8)(tr->backgroundColor.r * 255),
                                                (Uint8)(tr->backgroundColor.g * 255), (Uint8)(tr->backgroundColor.b * 255),
-                                               (Uint8)(tr->backgroundColor.a * 255));
+                                               (Uint8)(tr->backgroundColor.a * 255 * op));
                         SDL_RenderFillRect(renderer, &br);
                     }
                     Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);   // align handled inside
@@ -528,7 +529,8 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         for (const auto& up : scene.Objects()) {           // images (logos/icons) first
             auto* im = up->GetComponent<UIImage>();
-            if (!im || !up->active) continue;
+            if (!im || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());   // canvas master fade
             Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)im->size.x, (int)im->size.y};
@@ -541,7 +543,7 @@ int main(int argc, char** argv) {
             if (tex) {
                 SDL_SetTextureColorMod(tex, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
                                        (Uint8)(im->color.b * 255));
-                SDL_SetTextureAlphaMod(tex, (Uint8)(im->color.a * 255));
+                SDL_SetTextureAlphaMod(tex, (Uint8)(im->color.a * 255 * op));
                 if (im->nineSlice && im->border > 0.0f) {
                     int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
                     int sb = (int)im->border;                       // source border
@@ -579,14 +581,15 @@ int main(int argc, char** argv) {
         }
         for (const auto& up : scene.Objects()) {           // panels (backgrounds) first
             auto* pn = up->GetComponent<UIPanel>();
-            if (!pn || !up->active) continue;
+            if (!pn || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());   // canvas master fade
             Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
             if (pn->shadow) {                               // drop shadow behind
                 SDL_Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
                 SDL_SetRenderDrawColor(renderer, (Uint8)(pn->shadowColor.r * 255), (Uint8)(pn->shadowColor.g * 255),
-                                       (Uint8)(pn->shadowColor.b * 255), (Uint8)(pn->shadowColor.a * 255));
+                                       (Uint8)(pn->shadowColor.b * 255), (Uint8)(pn->shadowColor.a * 255 * op));
                 SDL_RenderFillRect(renderer, &sh);
             }
             if (pn->useGradient) {                          // top->bottom fade in bands
@@ -600,17 +603,17 @@ int main(int argc, char** argv) {
                     SDL_Rect band{r.x, r.y + i * r.h / bands, r.w,
                                   (r.h / bands) + 1};
                     SDL_SetRenderDrawColor(renderer, (Uint8)(cc.r * 255), (Uint8)(cc.g * 255),
-                                           (Uint8)(cc.b * 255), (Uint8)(cc.a * 255));
+                                           (Uint8)(cc.b * 255), (Uint8)(cc.a * 255 * op));
                     SDL_RenderFillRect(renderer, &band);
                 }
             } else {
                 SDL_SetRenderDrawColor(renderer, (Uint8)(pn->color.r * 255), (Uint8)(pn->color.g * 255),
-                                       (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255));
+                                       (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255 * op));
                 SDL_RenderFillRect(renderer, &r);
             }
             if (pn->borderWidth > 0.0f) {                   // outline (N nested rects)
                 SDL_SetRenderDrawColor(renderer, (Uint8)(pn->borderColor.r * 255), (Uint8)(pn->borderColor.g * 255),
-                                       (Uint8)(pn->borderColor.b * 255), (Uint8)(pn->borderColor.a * 255));
+                                       (Uint8)(pn->borderColor.b * 255), (Uint8)(pn->borderColor.a * 255 * op));
                 for (int bw = 0; bw < (int)pn->borderWidth; ++bw) {
                     SDL_Rect br{r.x + bw, r.y + bw, r.w - 2 * bw, r.h - 2 * bw};
                     SDL_RenderDrawRect(renderer, &br);
@@ -629,11 +632,12 @@ int main(int argc, char** argv) {
         }
         for (const auto& up : scene.Objects()) {           // scroll-view backgrounds + scrollbar
             auto* sv = up->GetComponent<UIScrollView>();
-            if (!sv || !up->active) continue;
+            if (!sv || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
             Vec2 o = ResolveAnchor(sv->anchor, sv->position, sv->size, (float)w, (float)h);
             SDL_Rect box{(int)o.x, (int)o.y, (int)sv->size.x, (int)sv->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sv->background.r * 255), (Uint8)(sv->background.g * 255),
-                                   (Uint8)(sv->background.b * 255), (Uint8)(sv->background.a * 255));
+                                   (Uint8)(sv->background.b * 255), (Uint8)(sv->background.a * 255 * op));
             SDL_RenderFillRect(renderer, &box);
             if (sv->ScrollMax() > 0.0f) {                   // scrollbar track + thumb
                 int barW = 6;
@@ -645,42 +649,44 @@ int main(int argc, char** argv) {
                 int thumbY = track.y + (int)((track.h - thumbH) * sv->Fraction());
                 SDL_Rect thumb{track.x, thumbY, barW, thumbH};
                 SDL_SetRenderDrawColor(renderer, (Uint8)(sv->barColor.r * 255), (Uint8)(sv->barColor.g * 255),
-                                       (Uint8)(sv->barColor.b * 255), (Uint8)(sv->barColor.a * 255));
+                                       (Uint8)(sv->barColor.b * 255), (Uint8)(sv->barColor.a * 255 * op));
                 SDL_RenderFillRect(renderer, &thumb);
             }
         }
         for (const auto& up : scene.Objects()) {           // progress bars
             auto* pb = up->GetComponent<UIProgressBar>();
-            if (!pb || !up->active) continue;
+            if (!pb || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
             Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(pb->background.r * 255), (Uint8)(pb->background.g * 255),
-                                   (Uint8)(pb->background.b * 255), (Uint8)(pb->background.a * 255));
+                                   (Uint8)(pb->background.b * 255), (Uint8)(pb->background.a * 255 * op));
             SDL_RenderFillRect(renderer, &bg);
             float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
             SDL_Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
             SDL_SetRenderDrawColor(renderer, (Uint8)(pb->fill.r * 255), (Uint8)(pb->fill.g * 255),
-                                   (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255));
+                                   (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255 * op));
             SDL_RenderFillRect(renderer, &fl);
             if (pb->showPercent) {
                 char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
                 float px = 2.0f;
                 float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
                 SDL_Color tc{(Uint8)(pb->textColor.r * 255), (Uint8)(pb->textColor.g * 255),
-                             (Uint8)(pb->textColor.b * 255), (Uint8)(pb->textColor.a * 255)};
+                             (Uint8)(pb->textColor.b * 255), (Uint8)(pb->textColor.a * 255 * op)};
                 DrawText(renderer, pct, o.x + (pb->size.x - tw) * 0.5f,
                          o.y + (pb->size.y - Font8x8::Height * px) * 0.5f, px, tc);
             }
         }
         for (const auto& up : scene.Objects()) {           // sliders
             auto* sl = up->GetComponent<UISlider>();
-            if (!sl || !up->active) continue;
+            if (!sl || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
             Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->background.r * 255), (Uint8)(sl->background.g * 255),
-                                   (Uint8)(sl->background.b * 255), (Uint8)(sl->background.a * 255));
+                                   (Uint8)(sl->background.b * 255), (Uint8)(sl->background.a * 255 * op));
             SDL_RenderFillRect(renderer, &bg);
             float f = sl->Fraction();
             SDL_Rect fl, kn;
@@ -694,16 +700,16 @@ int main(int argc, char** argv) {
                 kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
             }
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->fill.r * 255), (Uint8)(sl->fill.g * 255),
-                                   (Uint8)(sl->fill.b * 255), (Uint8)(sl->fill.a * 255));
+                                   (Uint8)(sl->fill.b * 255), (Uint8)(sl->fill.a * 255 * op));
             SDL_RenderFillRect(renderer, &fl);
             SDL_SetRenderDrawColor(renderer, (Uint8)(sl->knob.r * 255), (Uint8)(sl->knob.g * 255),
-                                   (Uint8)(sl->knob.b * 255), (Uint8)(sl->knob.a * 255));
+                                   (Uint8)(sl->knob.b * 255), (Uint8)(sl->knob.a * 255 * op));
             SDL_RenderFillRect(renderer, &kn);
             if (sl->showValue) {
                 char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
                 float px = 2.0f;
                 SDL_Color tc{(Uint8)(sl->textColor.r * 255), (Uint8)(sl->textColor.g * 255),
-                             (Uint8)(sl->textColor.b * 255), (Uint8)(sl->textColor.a * 255)};
+                             (Uint8)(sl->textColor.b * 255), (Uint8)(sl->textColor.a * 255 * op)};
                 DrawText(renderer, vbuf, o.x + sl->size.x + 8.0f,
                          o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
             }
@@ -712,30 +718,31 @@ int main(int argc, char** argv) {
         }
         for (const auto& up : scene.Objects()) {           // toggles (checkboxes)
             auto* tg = up->GetComponent<UIToggle>();
-            if (!tg || !up->active) continue;
+            if (!tg || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
             Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect box{(int)o.x, (int)o.y, (int)tg->size.x, (int)tg->size.y};
             if (tg->style == UIToggle::Style::Switch) {     // pill track + sliding knob
                 const Color& trk = tg->on ? tg->checkColor : tg->boxColor;
                 SDL_SetRenderDrawColor(renderer, (Uint8)(trk.r * 255), (Uint8)(trk.g * 255),
-                                       (Uint8)(trk.b * 255), (Uint8)(trk.a * 255));
+                                       (Uint8)(trk.b * 255), (Uint8)(trk.a * 255 * op));
                 SDL_RenderFillRect(renderer, &box);
                 int kd = box.h - 4;
                 int kx = tg->on ? (box.x + box.w - kd - 2) : (box.x + 2);
                 SDL_Rect knob{kx, box.y + 2, kd, kd};
                 SDL_SetRenderDrawColor(renderer, (Uint8)(tg->knobColor.r * 255), (Uint8)(tg->knobColor.g * 255),
-                                       (Uint8)(tg->knobColor.b * 255), (Uint8)(tg->knobColor.a * 255));
+                                       (Uint8)(tg->knobColor.b * 255), (Uint8)(tg->knobColor.a * 255 * op));
                 SDL_RenderFillRect(renderer, &knob);
             } else {
                 SDL_SetRenderDrawColor(renderer, (Uint8)(tg->boxColor.r * 255), (Uint8)(tg->boxColor.g * 255),
-                                       (Uint8)(tg->boxColor.b * 255), (Uint8)(tg->boxColor.a * 255));
+                                       (Uint8)(tg->boxColor.b * 255), (Uint8)(tg->boxColor.a * 255 * op));
                 SDL_RenderFillRect(renderer, &box);
                 if (tg->on) {                              // inset check fill
                     int pad = (int)(tg->size.x * 0.22f);
                     SDL_Rect chk{box.x + pad, box.y + pad, box.w - 2 * pad, box.h - 2 * pad};
                     SDL_SetRenderDrawColor(renderer, (Uint8)(tg->checkColor.r * 255), (Uint8)(tg->checkColor.g * 255),
-                                           (Uint8)(tg->checkColor.b * 255), (Uint8)(tg->checkColor.a * 255));
+                                           (Uint8)(tg->checkColor.b * 255), (Uint8)(tg->checkColor.a * 255 * op));
                     SDL_RenderFillRect(renderer, &chk);
                 }
             }
@@ -743,14 +750,15 @@ int main(int argc, char** argv) {
             float tx = o.x + tg->size.x + 8.0f;
             float ty = o.y + (tg->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(tg->textColor.r * 255), (Uint8)(tg->textColor.g * 255),
-                         (Uint8)(tg->textColor.b * 255), (Uint8)(tg->textColor.a * 255)};
+                         (Uint8)(tg->textColor.b * 255), (Uint8)(tg->textColor.a * 255 * op)};
             DrawText(renderer, tg->label, tx, ty, px, tc);
             if (!tg->interactable) { SDL_Rect dr{box.x, box.y, box.w, box.h};
                 SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
         for (const auto& up : scene.Objects()) {
             auto* btn = up->GetComponent<UIButton>();
-            if (!btn || !up->active) continue;
+            if (!btn || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
             Color bg = btn->DisplayColor();
             Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, (float)w, (float)h);
             enterScroll(up.get(), o);
@@ -761,11 +769,11 @@ int main(int argc, char** argv) {
                 r.x -= gx; r.y -= gy; r.w += 2 * gx; r.h += 2 * gy;
             }
             SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
-                                   (Uint8)(bg.b * 255), (Uint8)(bg.a * 255));
+                                   (Uint8)(bg.b * 255), (Uint8)(bg.a * 255 * op));
             SDL_RenderFillRect(renderer, &r);
             if (btn->borderWidth > 0.0f) {                  // outline (N nested rects)
                 SDL_SetRenderDrawColor(renderer, (Uint8)(btn->borderColor.r * 255), (Uint8)(btn->borderColor.g * 255),
-                                       (Uint8)(btn->borderColor.b * 255), (Uint8)(btn->borderColor.a * 255));
+                                       (Uint8)(btn->borderColor.b * 255), (Uint8)(btn->borderColor.a * 255 * op));
                 for (int bw = 0; bw < (int)btn->borderWidth; ++bw) {
                     SDL_Rect br{r.x + bw, r.y + bw, r.w - 2 * bw, r.h - 2 * bw};
                     SDL_RenderDrawRect(renderer, &br);
@@ -791,12 +799,12 @@ int main(int argc, char** argv) {
             float tx = left + ((right - left) - tw) * 0.5f;
             float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f + shift;
             Color tcc = btn->CurrentTextColor();
-            SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255)};
+            SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255 * op)};
             DrawText(renderer, btn->label, tx, ty, px, tc);
         }
         for (const auto& up : scene.Objects()) {           // dropdowns (header + open list)
             auto* dd = up->GetComponent<UIDropdown>();
-            if (!dd || !up->active) continue;
+            if (!dd || !up->active || UIHidden(up.get())) continue;
             Vec2 o = ResolveAnchor(dd->anchor, dd->position, dd->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect hdr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
@@ -829,7 +837,7 @@ int main(int argc, char** argv) {
         }
         for (const auto& up : scene.Objects()) {           // input fields (box + text + caret)
             auto* in = up->GetComponent<UIInputField>();
-            if (!in || !up->active) continue;
+            if (!in || !up->active || UIHidden(up.get())) continue;
             Vec2 o = ResolveAnchor(in->anchor, in->position, in->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect box{(int)o.x, (int)o.y, (int)in->size.x, (int)in->size.y};

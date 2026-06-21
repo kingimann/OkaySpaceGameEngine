@@ -26,6 +26,8 @@ public:
     float matchWidthOrHeight = 0.5f;   // 0 = width, 1 = height
     float scaleFactor = 1.0f;          // extra user multiplier (applied in BOTH modes)
     int   sortOrder = 0;
+    bool  visible = true;              // hide/show every widget under this canvas
+    float opacity = 1.0f;             // 0..1 master fade for this canvas's widgets
 
     /// The pixel-scale this canvas applies for an actual screen of w x h. The
     /// user `scaleFactor` multiplies the result in both modes, so it always works

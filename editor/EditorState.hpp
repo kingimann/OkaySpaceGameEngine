@@ -39,6 +39,7 @@ public:
     void NewPlatformer();
     void NewPlatformer3D();
     void NewFPS();
+    void NewThirdPerson();
     void NewMultiplayer();
     void NewTopDown();
     void NewCoinCollector();

@@ -3921,8 +3921,11 @@ void DrawNewProjectPopup(EditorState& ed) {
         card("First Person\n(character + FPS)",
              "A blocky Character you control in first person:\nmouse-look, WASD, jump. Camera at eye height,\nwith crates to walk around.",
              &EditorState::NewFPS);
+        card("Third Person\n(character)",
+             "Your blocky Character with an orbit camera behind:\nWASD relative to the camera, Space to jump, with\nwalk/run animation. You see and control the character.",
+             &EditorState::NewThirdPerson);
         card("3D Platformer\n(physics)",
-             "A physics player on a ground you move and jump\nwith a follow camera.",
+             "The Character on a ground you move and jump,\nwith a follow camera.",
              &EditorState::NewPlatformer3D);
 
         ImGui::SeparatorText("2D templates");
@@ -7575,7 +7578,20 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // In the Game view, honor the active camera's ignoreObject (first-person body);
     // the Scene view always shows everything (ignore = null).
     const GameObject* viewIgnore = nullptr;
-    if (gameView) { if (Camera* gc = SceneCamera(ed.scene())) viewIgnore = gc->ignoreObject; }
+    if (gameView) {
+        if (Camera* gc = SceneCamera(ed.scene())) {
+            viewIgnore = gc->ignoreObject;   // set at runtime by the controller (Play)
+            // In edit mode the controller hasn't run yet, so the Game preview would
+            // still show the body. Derive it: a first-person camera's owner (parent)
+            // with "Show Body" off should be ignored, matching how Play looks.
+            if (!viewIgnore && gc->transform && gc->transform->Parent() &&
+                gc->transform->Parent()->gameObject) {
+                GameObject* owner = gc->transform->Parent()->gameObject;
+                if (auto* fpc = owner->GetComponent<FirstPersonController>())
+                    if (!fpc->showBody) viewIgnore = owner;
+            }
+        }
+    }
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)canvasSize.x, (int)canvasSize.y,
                                            gameView ? 1 : 0, viewIgnore))

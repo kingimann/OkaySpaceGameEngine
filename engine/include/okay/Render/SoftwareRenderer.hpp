@@ -190,7 +190,11 @@ public:
                 float w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * inv;
                 float w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * inv;
                 float w2 = 1.0f - w0 - w1;
-                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                // Tiny edge bias: pixels right on a shared edge can fall just outside
+                // both triangles from float rounding, leaving 1px cracks (a dotted
+                // seam across the big ground quad). Accept a hair past the edge so
+                // adjacent triangles always overlap; the depth test resolves it.
+                if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
                 if (d >= depth[i]) continue;
@@ -296,7 +300,11 @@ public:
                 float w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * inv;
                 float w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * inv;
                 float w2 = 1.0f - w0 - w1;
-                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                // Tiny edge bias: pixels right on a shared edge can fall just outside
+                // both triangles from float rounding, leaving 1px cracks (a dotted
+                // seam across the big ground quad). Accept a hair past the edge so
+                // adjacent triangles always overlap; the depth test resolves it.
+                if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
                 if (d >= depth[i]) continue;
@@ -368,7 +376,11 @@ public:
                 float w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * inv;
                 float w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * inv;
                 float w2 = 1.0f - w0 - w1;
-                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                // Tiny edge bias: pixels right on a shared edge can fall just outside
+                // both triangles from float rounding, leaving 1px cracks (a dotted
+                // seam across the big ground quad). Accept a hair past the edge so
+                // adjacent triangles always overlap; the depth test resolves it.
+                if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
                 if (d >= depth[i]) continue;

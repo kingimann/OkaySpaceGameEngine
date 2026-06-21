@@ -169,6 +169,15 @@ void EditorState::NewScene() {
     StopNetwork();
     m_scene.Clear();
     m_scene.SetName("Untitled");
+    // Every scene starts with a Main Camera (Unity-like) so a fresh/empty scene can
+    // render and Play right away. Templates Clear() the scene and add their own, so
+    // this never doubles up.
+    GameObject* camObj = m_scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {0, 2, 10};
+    m_scene.mainCamera = cam;
     m_selected = nullptr;
     m_path.clear();
     dirty = false;
@@ -178,8 +187,7 @@ void EditorState::NewScene2D() {
     NewScene();
     m_suppressUndo = true; // batch the template objects into one undo step
     m_scene.SetName("Untitled 2D");
-    auto* cam = CreateCamera("MainCamera");
-    cam->GetComponent<Camera>()->projection = Camera::Projection::Orthographic;
+    if (Camera* c = m_scene.mainCamera) c->projection = Camera::Projection::Orthographic;
     GameObject* sp = CreateSprite("Sprite");
     sp->GetComponent<SpriteRenderer>()->color = Color::Green;
     m_suppressUndo = false;
@@ -192,9 +200,7 @@ void EditorState::NewScene3D() {
     NewScene();
     m_suppressUndo = true;
     m_scene.SetName("Untitled 3D");
-    auto* camObj = CreateCamera("MainCamera");
-    camObj->GetComponent<Camera>()->projection = Camera::Projection::Perspective;
-    camObj->transform->localPosition = {0, 2, 10};
+    // NewScene already made a perspective Main Camera at {0,2,10}; reuse it.
 
     // A single cube on the grid (clean, Unity-like default — neutral gray). Add a
     // ground/other objects from the GameObject menu as needed.

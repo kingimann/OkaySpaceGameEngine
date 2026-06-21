@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.50.0
+  - Rendering: smooth-shaded curved primitives. Sphere, Icosphere, Torus and
+    Capsule now ship with generated smooth per-vertex normals, so they render as
+    genuinely round surfaces instead of showing flat triangle facets. Combined
+    with per-pixel lighting this removes the visible faceting on curved meshes.
+
 v2.49.0
   - Rendering: metallic materials. MeshRenderer gained a Metallic property. Metals
     lose their diffuse term and tint both their specular highlight and their

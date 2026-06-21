@@ -557,7 +557,7 @@ int main() {
     //     pointing outward on a sphere (Dot(n, pos) > 0). ---
     {
         Mesh sph = Mesh::Sphere(1.0f, 12, 16);
-        CHECK(!sph.HasNormals());
+        CHECK(sph.HasNormals());            // curved primitives now ship smooth-shaded
         sph.ComputeSmoothNormals();
         CHECK(sph.HasNormals());
         CHECK(sph.normals.size() == sph.vertices.size());

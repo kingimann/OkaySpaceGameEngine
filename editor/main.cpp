@@ -681,6 +681,7 @@ float g_scatterMinH = -100.0f, g_scatterMaxH = 100.0f; // local height band to f
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
+int   g_spriteHandle = -1;   // 0..7 sprite resize handle being dragged in the 2D view
 
 // First connected game controller (opened in main); fed into Input during Play.
 SDL_GameController* g_pad = nullptr;
@@ -5636,10 +5637,38 @@ void DrawInspector(EditorState& ed) {
             int m = (int)cc->mode;
             const char* modes[] = {"Top-Down", "Platformer"};
             if (ImGui::Combo("Mode##cc2", &m, modes, 2)) { cc->mode = (CharacterController2D::Mode)m; ed.dirty = true; }
+
+            ImGui::SeparatorText("Movement");
             if (ImGui::DragFloat("Speed##cc2", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
-            if (cc->mode == CharacterController2D::Mode::Platformer)
+            if (ImGui::DragFloat("Run Speed##cc2", &cc->runSpeed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            int sk = cc->sprintKey ? cc->sprintKey : 0; char skb[2] = { (char)(sk ? sk : ' '), 0 };
+            if (ImGui::InputText("Sprint Key##cc2", skb, sizeof(skb))) { cc->sprintKey = skb[0] == ' ' ? 0 : skb[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold to run (blank = disabled)");
+            if (ImGui::DragFloat("Acceleration##cc2", &cc->acceleration, 0.5f, 0.0f, 500.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = instant; higher = snappier ramp-up");
+            if (ImGui::DragFloat("Deceleration##cc2", &cc->deceleration, 0.5f, 0.0f, 500.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Use Gamepad##cc2", &cc->useGamepad)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Flip Sprite##cc2", &cc->flipSprite)) ed.dirty = true;
+            if (cc->mode == CharacterController2D::Mode::TopDown) {
+                if (ImGui::Checkbox("Normalize Diagonal##cc2", &cc->normalizeDiagonal)) ed.dirty = true;
+            }
+
+            if (cc->mode == CharacterController2D::Mode::Platformer) {
+                ImGui::SeparatorText("Jump");
                 if (ImGui::DragFloat("Jump Force##cc2", &cc->jumpForce, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
-            ImGui::TextDisabled("WASD / arrows. Uses a Rigidbody2D if present.");
+                if (ImGui::DragInt("Max Jumps##cc2", &cc->maxJumps, 0.05f, 1, 5)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("2 = double jump (ground counts as one)");
+                if (ImGui::Checkbox("Variable Jump##cc2", &cc->variableJump)) ed.dirty = true;
+                if (cc->variableJump)
+                    if (ImGui::DragFloat("Jump Cut##cc2", &cc->jumpCutMultiplier, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Coyote Time##cc2", &cc->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Jump Buffer##cc2", &cc->jumpBuffer, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Air Control##cc2", &cc->airControl, 0.02f, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Max Fall Speed##cc2", &cc->maxFallSpeed, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Extra Fall Gravity##cc2", &cc->extraFallGravity, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
+            }
+            ImGui::TextDisabled("WASD / arrows / stick. Uses a Rigidbody2D if present.");
             if (ImGui::SmallButton("Remove##cc2")) toRemove = cc;
         }
     }
@@ -7412,20 +7441,29 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
 
     const auto& objs = ed.scene().Objects();
-    for (const auto& up : objs) {
-        GameObject* go = up.get();
-        auto* sr = go->GetComponent<SpriteRenderer>();
-        if (!sr || !go->active) continue;
-        Vec3 wp = go->transform->Position();
-        Vec3 ls = go->transform->LossyScale();
-        float hx = sr->size.x * ls.x * 0.5f * scale;
-        float hy = sr->size.y * ls.y * 0.5f * scale;
-        ImVec2 c = worldToScreen(wp);
-        ImVec2 a(c.x - hx, c.y - hy), b(c.x + hx, c.y + hy);
-        dl->AddRectFilled(a, b, ToColor(sr->color));
-        if (!gameView && go == ed.selected())
-            dl->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2),
-                        IM_COL32(255, 200, 0, 255), 0, 0, 2.0f);
+    // Draw sprites back-to-front by Sort Order (scene order breaks ties), so the
+    // editor preview layers them the same way the built game does.
+    {
+        std::vector<GameObject*> sprites;
+        for (const auto& up : objs)
+            if (up->active && up->GetComponent<SpriteRenderer>()) sprites.push_back(up.get());
+        std::stable_sort(sprites.begin(), sprites.end(), [](GameObject* x, GameObject* y) {
+            return x->GetComponent<SpriteRenderer>()->sortOrder <
+                   y->GetComponent<SpriteRenderer>()->sortOrder;
+        });
+        for (GameObject* go : sprites) {
+            auto* sr = go->GetComponent<SpriteRenderer>();
+            Vec3 wp = go->transform->Position();
+            Vec3 ls = go->transform->LossyScale();
+            float hx = sr->size.x * ls.x * 0.5f * scale;
+            float hy = sr->size.y * ls.y * 0.5f * scale;
+            ImVec2 c = worldToScreen(wp);
+            ImVec2 a(c.x - hx, c.y - hy), b(c.x + hx, c.y + hy);
+            dl->AddRectFilled(a, b, ToColor(sr->color));
+            if (!gameView && go == ed.selected())
+                dl->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2),
+                            IM_COL32(255, 200, 0, 255), 0, 0, 2.0f);
+        }
     }
 
     // Tilemaps: filled cells, color keyed by tile id.
@@ -7520,29 +7558,94 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    // Resize handles for a selected 2D sprite: drag a corner/edge to change its
+    // Size (the same 8-handle affordance UI widgets have, which sprites lacked).
+    if (!gameView && ed.selected() && !IsUIElement(ed.selected())) {
+        if (auto* sr = ed.selected()->GetComponent<SpriteRenderer>()) {
+            Vec3 c = ed.selected()->transform->Position();
+            Vec3 ls = ed.selected()->transform->LossyScale();
+            float hx = sr->size.x * ls.x * 0.5f, hy = sr->size.y * ls.y * 0.5f;
+            ImVec2 a = worldToScreen(Vec3{c.x - hx, c.y + hy, 0.0f});   // top-left (screen)
+            ImVec2 b = worldToScreen(Vec3{c.x + hx, c.y - hy, 0.0f});   // bottom-right
+            dl->AddRect(a, b, IM_COL32(255, 200, 0, 200), 0.0f, 0, 1.5f);
+            ImVec2 h[8]; UIHandlePositions(a, b, h);
+            for (int i = 0; i < 8; ++i)
+                dl->AddRectFilled(ImVec2(h[i].x - 4, h[i].y - 4),
+                                  ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 200, 0, 255));
+        }
+    }
+
     dl->PopClipRect();
 
     if (gameView) return;   // the Game view is non-interactive
 
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) g_spriteHandle = -1;
+
     if (hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        Vec2 world = screenToWorld(io.MousePos);
-        GameObject* hit = nullptr;
-        for (const auto& up : objs) {
-            GameObject* go = up.get();
-            auto* sr = go->GetComponent<SpriteRenderer>();
-            if (!sr || !go->active) continue;
-            Vec3 wp = go->transform->Position();
-            Vec3 ls = go->transform->LossyScale();
-            float hx = sr->size.x * ls.x * 0.5f, hy = sr->size.y * ls.y * 0.5f;
-            if (world.x >= wp.x - hx && world.x <= wp.x + hx &&
-                world.y >= wp.y - hy && world.y <= wp.y + hy)
-                hit = go;
+        // A resize handle on the selected sprite takes priority over (re)selection.
+        g_spriteHandle = -1;
+        if (ed.selected() && !IsUIElement(ed.selected())) {
+            if (auto* sr = ed.selected()->GetComponent<SpriteRenderer>()) {
+                Vec3 c = ed.selected()->transform->Position();
+                Vec3 ls = ed.selected()->transform->LossyScale();
+                float hx = sr->size.x * ls.x * 0.5f, hy = sr->size.y * ls.y * 0.5f;
+                ImVec2 a = worldToScreen(Vec3{c.x - hx, c.y + hy, 0.0f});
+                ImVec2 b = worldToScreen(Vec3{c.x + hx, c.y - hy, 0.0f});
+                ImVec2 h[8]; UIHandlePositions(a, b, h);
+                for (int i = 0; i < 8; ++i) {
+                    float dx = io.MousePos.x - h[i].x, dy = io.MousePos.y - h[i].y;
+                    if (dx * dx + dy * dy <= 9.0f * 9.0f) { ed.PushUndo(); g_spriteHandle = i; break; }
+                }
+            }
         }
-        ed.Select(hit);
+        if (g_spriteHandle < 0) {                       // no handle grabbed -> pick a sprite
+            Vec2 world = screenToWorld(io.MousePos);
+            GameObject* hit = nullptr;
+            for (const auto& up : objs) {
+                GameObject* go = up.get();
+                auto* sr = go->GetComponent<SpriteRenderer>();
+                if (!sr || !go->active) continue;
+                Vec3 wp = go->transform->Position();
+                Vec3 ls = go->transform->LossyScale();
+                float hx = sr->size.x * ls.x * 0.5f, hy = sr->size.y * ls.y * 0.5f;
+                if (world.x >= wp.x - hx && world.x <= wp.x + hx &&
+                    world.y >= wp.y - hy && world.y <= wp.y + hy)
+                    hit = go;
+            }
+            ed.Select(hit);
+        }
+    }
+    // Dragging a sprite resize handle changes its Size (opposite edge stays put).
+    if (g_spriteHandle >= 0 && ed.selected() &&
+        ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        Transform* t = ed.selected()->transform;
+        if (auto* sr = ed.selected()->GetComponent<SpriteRenderer>()) {
+            Vec3 ls = t->LossyScale();
+            if (Mathf::Abs(ls.x) < 1e-4f) ls.x = 1.0f;
+            if (Mathf::Abs(ls.y) < 1e-4f) ls.y = 1.0f;
+            Vec3 c = t->Position();
+            float hx = sr->size.x * ls.x * 0.5f, hy = sr->size.y * ls.y * 0.5f;
+            float left = c.x - hx, right = c.x + hx, bottom = c.y - hy, top = c.y + hy;
+            Vec2 mw = screenToWorld(io.MousePos);
+            bool L = (g_spriteHandle == 0 || g_spriteHandle == 6 || g_spriteHandle == 7);
+            bool R = (g_spriteHandle == 2 || g_spriteHandle == 3 || g_spriteHandle == 4);
+            bool T = (g_spriteHandle == 0 || g_spriteHandle == 1 || g_spriteHandle == 2);
+            bool B = (g_spriteHandle == 4 || g_spriteHandle == 5 || g_spriteHandle == 6);
+            if (L) left   = Mathf::Min(mw.x, right - 0.01f);
+            if (R) right  = Mathf::Max(mw.x, left + 0.01f);
+            if (T) top    = Mathf::Max(mw.y, bottom + 0.01f);
+            if (B) bottom = Mathf::Min(mw.y, top - 0.01f);
+            sr->size.x = (right - left) / ls.x;
+            sr->size.y = (top - bottom) / ls.y;
+            t->localPosition.x += (left + right) * 0.5f - c.x;   // keep the opposite edge fixed
+            t->localPosition.y += (bottom + top) * 0.5f - c.y;
+            ed.dirty = true;
+        }
     }
     // Selecting and dragging work in Play too (edits revert on Stop, like Unity).
-    // Skipped while a UI widget is being dragged (it owns the drag this frame).
-    if (ed.selected() && hovered && !g_uiHandled && !IsUIElement(ed.selected()) &&
+    // Skipped while a UI widget or a sprite handle is being dragged.
+    else if (ed.selected() && hovered && !g_uiHandled && g_spriteHandle < 0 &&
+        !IsUIElement(ed.selected()) &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         Transform* t = ed.selected()->transform;
         if (g_tool == Tool::Move) {

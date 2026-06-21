@@ -8033,6 +8033,10 @@ void DrawViewport(EditorState& ed) {
     // click so the world pickers below leave the selection alone.
     EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
 
+    // UI editing (pick/drag screen-space widgets) runs first and may consume the
+    // click so the world pickers below leave the selection alone.
+    EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
+
     if (ed.view3D) DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     else           DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
 

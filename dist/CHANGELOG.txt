@@ -1,5 +1,8 @@
 OkaySpace Game Engine — Changelog
 
+v2.34.0
+  - Merged the rendering and scripting lineages into a single engine release.
+
 v2.33.0
   - Rendering: per-pixel (Phong) lighting. Lit meshes are now shaded at every
     pixel using the interpolated surface normal, instead of shading per-vertex
@@ -1487,6 +1490,9 @@ v1.39.0
     all project scenes", and a development-build flag. Builds write a
     game.okayconfig the player reads for the window + scene list, and can bundle
     every project scene (so load_scene_index works in the shipped game).
+
+----------------------------------------------------------------------
+(scripting lineage history)
 
 v1.38.0
   - Added a placeholder OkaySpace logo (a ringed planet over a starfield), drawn

@@ -25,7 +25,7 @@ const char* CharacterBody::BoneName(int i) {
 
 std::vector<CharacterBody::Bone> CharacterBody::BuildSkeleton(const HumanoidParams& p) const {
     const float H = p.height, up = 0.78f * H * (p.torsoLength - 1.0f);
-    const float sw = 0.46f * p.shoulderWidth, hw = 0.20f * p.hipWidth;
+    const float sw = 0.24f * p.shoulderWidth, hw = 0.20f * p.hipWidth;
     const float aL = p.armLength, lL = p.legLength;
     std::vector<Bone> b(17);
     b[0] = {-1, {0, 0.60f * H, 0}, {0, 0.80f * H, 0}};                 // Hips (root)

@@ -23,8 +23,8 @@ namespace okay {
 struct HumanoidParams {
     float height       = 1.0f;   // overall vertical scale
     float build        = 0.94f;  // limb/torso thickness (lean athletic base)
-    float headSize     = 0.92f;  // realistic ~7.5-head proportions
-    float shoulderWidth= 1.08f;  // arm spacing + torso top width
+    float headSize     = 0.66f;  // realistic ~7.5-head proportions (small adult head)
+    float shoulderWidth= 1.12f;  // arm spacing + torso top width
     float hipWidth     = 0.88f;  // leg spacing + hip width (narrower hips)
     float armLength    = 1.08f;  // arms reach toward mid-thigh
     float legLength    = 1.14f;  // long lean legs (taller, adult base-mesh build)
@@ -58,7 +58,7 @@ struct HumanoidParams {
     void ClampHuman() {
         auto cl = [](float& v, float lo, float hi) { v = v < lo ? lo : (v > hi ? hi : v); };
         cl(height, 0.82f, 1.35f);     cl(build, 0.85f, 1.22f);
-        cl(headSize, 0.86f, 1.06f);   cl(neckLength, 0.8f, 1.18f);
+        cl(headSize, 0.55f, 0.95f);   cl(neckLength, 0.8f, 1.18f);
         cl(shoulderWidth, 0.95f, 1.28f); cl(hipWidth, 0.8f, 1.12f);
         cl(armLength, 0.9f, 1.1f);    cl(legLength, 0.92f, 1.14f);
         cl(armThickness, 0.82f, 1.18f);cl(legThickness, 0.85f, 1.18f);
@@ -866,7 +866,7 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
     parts.reserve(16);
     auto add = [&](const char* nm) -> Mesh& { parts.push_back({nm, Mesh{}}); return parts.back().mesh; };
     const float H = p.height, B = p.build, hd = p.headSize;
-    const float sw = 0.46f * p.shoulderWidth, hw = 0.20f * p.hipWidth;
+    const float sw = 0.24f * p.shoulderWidth, hw = 0.20f * p.hipWidth;
     const float aL = p.armLength, lL = p.legLength, bd = p.bodyDepth;
     const Color* skin  = c ? &c->skin  : nullptr;
     const Color* shirt = c ? &c->shirt : nullptr;
@@ -876,11 +876,17 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
     const float headY = 1.78f * H + up;
 
     Mesh& head = add("Head");
-    head.Add(Mesh::Sphere(0.5f, 11, 13), {0.0f, headY, 0.0f}, {0.34f * hd, 0.42f * hd, 0.36f * hd}, skin);  // cranium
-    head.Add(Mesh::Sphere(0.5f, 9, 11), {0.0f, headY - 0.15f * hd, 0.04f * hd},         // jaw / chin
-             {0.29f * hd, 0.26f * hd, 0.33f * hd}, skin);
-    head.Add(Mesh::Sphere(0.5f, 8, 10), {0.0f, headY - 0.06f * hd, 0.10f * hd},         // cheeks / face front
-             {0.28f * hd, 0.30f * hd, 0.26f * hd}, skin);
+    // Skull shaped like a human head: a tall rounded cranium, cheekbones at the
+    // widest point, tapering down to a narrower jaw and a small chin (an egg, not
+    // a ball).
+    head.Add(Mesh::Sphere(0.5f, 12, 14), {0.0f, headY + 0.05f * hd, -0.01f * hd},
+             {0.33f * hd, 0.40f * hd, 0.355f * hd}, skin);                              // cranium
+    head.Add(Mesh::Sphere(0.5f, 10, 12), {0.0f, headY - 0.04f * hd, 0.07f * hd},
+             {0.305f * hd, 0.28f * hd, 0.31f * hd}, skin);                              // brow / cheekbones (widest)
+    head.Add(Mesh::Sphere(0.5f, 9, 11), {0.0f, headY - 0.17f * hd, 0.05f * hd},
+             {0.225f * hd, 0.22f * hd, 0.26f * hd}, skin);                              // jaw (narrower)
+    head.Add(Mesh::Sphere(0.5f, 7, 8), {0.0f, headY - 0.255f * hd, 0.10f * hd},
+             {0.135f * hd, 0.13f * hd, 0.155f * hd}, skin);                             // chin
     if (c && c->hasHair) {
         const Color* h = &c->hair;
         head.Add(Mesh::Sphere(0.5f, 5, 8), {0.0f, headY + 0.10f * hd, 0.0f}, {0.44f * hd, 0.34f * hd, 0.44f * hd}, h);
@@ -1056,7 +1062,7 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     Color pants = c ? c->pants : Color::White;
     Color shoes = c ? c->shoes : Color::White;
     const float H = p.height, B = p.build, bd = p.bodyDepth;
-    const float sw = 0.46f * p.shoulderWidth, hw = 0.20f * p.hipWidth;
+    const float sw = 0.24f * p.shoulderWidth, hw = 0.20f * p.hipWidth;
     const float aL = p.armLength, lL = p.legLength;
     const float up = 0.78f * H * (p.torsoLength - 1.0f);
     const float sW = p.shoulderWidth, hW = p.hipWidth;

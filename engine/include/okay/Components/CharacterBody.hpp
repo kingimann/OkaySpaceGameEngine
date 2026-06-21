@@ -102,7 +102,7 @@ public:
                 case 6: pos = {0, torsoY, -0.34f * B * bd}; break;          // back
                 case 4: case 5: {                                          // hands
                     int s = (region == 4) ? -1 : 1;
-                    float sw = 0.46f * pp.shoulderWidth;
+                    float sw = 0.24f * pp.shoulderWidth;
                     Vec3 shoulder{s * sw, 1.50f * H + up, 0};
                     Vec3 handRest{s * sw, (1.18f - 0.54f * pp.armLength) * H + up, 0};
                     Vec3 armRot{(float)s * pp.armSwing, 0.0f, (float)s * -pp.armSpread};

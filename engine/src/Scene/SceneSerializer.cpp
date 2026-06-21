@@ -200,6 +200,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << cb->pose.size();          // skeletal pose (euler per bone)
         for (const Vec3& r : cb->pose) out << " " << r.x << " " << r.y << " " << r.z;
         out << " " << (cb->lowPoly ? 1 : 0) << " " << (cb->realistic ? 1 : 0);    // body style
+        out << " " << p.gender << " " << p.muscle;
         out << "\n";
     }
     if (auto* li = go->GetComponent<Light>()) {
@@ -1079,6 +1080,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     if (more()) { int lp = 1; in >> lp; cb->lowPoly = (lp != 0); }
                     if (more()) { int rl = 1; in >> rl; cb->realistic = (rl != 0); }
+                    if (more()) in >> p.gender;
+                    if (more()) in >> p.muscle;
                     cb->Apply();   // rebuild the humanoid mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();

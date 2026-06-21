@@ -169,6 +169,7 @@ std::string CharacterBody::ToText() const {
     for (const Vec3& r : pose) o << " " << r.x << " " << r.y << " " << r.z;
     o << "\n";
     o << (lowPoly ? 1 : 0) << " " << (realistic ? 1 : 0) << "\n";  // body style
+    o << p.gender << " " << p.muscle << "\n";
     return o.str();
 }
 
@@ -214,6 +215,8 @@ void CharacterBody::FromText(const std::string& text) {
     }
     int lp = 1; if (in >> lp) lowPoly = (lp != 0);        // body style (optional)
     int rl = 1; if (in >> rl) realistic = (rl != 0);
+    float gn = 0.5f; if (in >> gn) params.gender = gn;
+    float mus = 0.5f; if (in >> mus) params.muscle = mus;
 }
 
 void CharacterBody::Apply() {

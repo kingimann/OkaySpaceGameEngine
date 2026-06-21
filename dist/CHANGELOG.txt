@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.23.0
+  - Model import: File > "Import Model (.obj)..." loads a Wavefront .OBJ with its
+    UVs and .mtl diffuse texture (map_Kd) as a textured object. (Also the
+    mechanism a built-in base-mesh character generator would use.)
+
 v2.22.0
   - Character: new default "Low Poly" body — a real flat-shaded polygonal mesh
     built from cross-section loops (torso loft + tapered limb tubes + simple

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <functional>
 #include <fstream>
 #include <map>
@@ -523,25 +524,65 @@ struct Mesh {
     /// Load a Wavefront .OBJ (v positions + f faces; polygons are fan-triangulated,
     /// v/vt/vn and negative indices handled). Returns an empty mesh on failure;
     /// `ok` (if given) reports success.
-    static Mesh LoadOBJ(const std::string& path, bool* ok = nullptr) {
+    /// Load a Wavefront .OBJ. Parses positions + texture coords (UVs), splitting
+    /// vertices per unique position/UV pair so textures map correctly. If
+    /// `outTexture` is given, the referenced .mtl is read and its diffuse map
+    /// (map_Kd) is returned (resolved next to the .obj) so an imported, textured
+    /// model (e.g. a MakeHuman/Mixamo export) renders with its skin/clothing.
+    static Mesh LoadOBJ(const std::string& path, bool* ok = nullptr, std::string* outTexture = nullptr) {
         Mesh m;
         std::ifstream f(path);
         if (!f) { if (ok) *ok = false; return m; }
-        std::string line;
+        std::string dir;
+        { std::size_t s = path.find_last_of("/\\"); if (s != std::string::npos) dir = path.substr(0, s + 1); }
+        std::vector<Vec3> pos; std::vector<Vec2> uv;
+        std::vector<std::vector<std::pair<int, int>>> faces;   // per-corner (posIdx, uvIdx), 0-based
+        std::string mtllib, line;
         while (std::getline(f, line)) {
-            std::istringstream ss(line);
-            std::string tag; ss >> tag;
-            if (tag == "v") {
-                Vec3 v; ss >> v.x >> v.y >> v.z; m.vertices.push_back(v);
-            } else if (tag == "f") {
-                std::vector<int> idx; std::string tok;
+            std::istringstream ss(line); std::string tag; ss >> tag;
+            if (tag == "v") { Vec3 v; ss >> v.x >> v.y >> v.z; pos.push_back(v); }
+            else if (tag == "vt") { Vec2 t; ss >> t.x >> t.y; uv.push_back(t); }
+            else if (tag == "mtllib") { ss >> mtllib; }
+            else if (tag == "f") {
+                std::vector<std::pair<int, int>> face; std::string tok;
                 while (ss >> tok) {
-                    int vi = std::atoi(tok.c_str());      // stops at '/'
-                    if (vi < 0) vi = (int)m.vertices.size() + vi + 1; // relative
-                    idx.push_back(vi - 1);                 // 1-based -> 0-based
+                    int vi = 0, ti = 0; std::sscanf(tok.c_str(), "%d/%d", &vi, &ti);
+                    if (vi < 0) vi = (int)pos.size() + vi + 1;
+                    if (ti < 0) ti = (int)uv.size() + ti + 1;
+                    face.push_back({vi - 1, ti - 1});
                 }
-                for (std::size_t i = 2; i < idx.size(); ++i)
-                    m.triangles.insert(m.triangles.end(), {idx[0], idx[i - 1], idx[i]});
+                if (face.size() >= 3) faces.push_back(std::move(face));
+            }
+        }
+        auto tri = [&](int a, int b, int cc) { m.triangles.insert(m.triangles.end(), {a, b, cc}); };
+        if (uv.empty()) {                              // no texcoords: 1:1 with v lines
+            m.vertices = pos;
+            for (auto& fc : faces)
+                for (std::size_t i = 2; i < fc.size(); ++i) tri(fc[0].first, fc[i - 1].first, fc[i].first);
+        } else {                                       // de-index per (pos,uv) so UVs map right
+            std::map<std::pair<int, int>, int> remap;
+            auto corner = [&](std::pair<int, int> c) {
+                auto it = remap.find(c); if (it != remap.end()) return it->second;
+                int ni = (int)m.vertices.size();
+                m.vertices.push_back((c.first >= 0 && c.first < (int)pos.size()) ? pos[c.first] : Vec3{0, 0, 0});
+                m.uvs.push_back((c.second >= 0 && c.second < (int)uv.size()) ? uv[c.second] : Vec2{0, 0});
+                remap[c] = ni; return ni;
+            };
+            for (auto& fc : faces) {
+                std::vector<int> idx; for (auto& c : fc) idx.push_back(corner(c));
+                for (std::size_t i = 2; i < idx.size(); ++i) tri(idx[0], idx[i - 1], idx[i]);
+            }
+        }
+        if (outTexture && !mtllib.empty()) {                    // read .mtl for map_Kd
+            std::ifstream mf(dir + mtllib); std::string ml;
+            while (mf && std::getline(mf, ml)) {
+                std::istringstream ms(ml); std::string mt; ms >> mt;
+                if (mt == "map_Kd") { std::string tex; std::getline(ms, tex);
+                    std::size_t a = tex.find_first_not_of(" \t");
+                    if (a != std::string::npos) { tex = tex.substr(a);
+                        *outTexture = (tex.find_first_of("/\\") == std::string::npos) ? dir + tex : tex; }
+                    break;
+                }
             }
         }
         if (ok) *ok = true;

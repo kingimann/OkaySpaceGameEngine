@@ -1,5 +1,9 @@
 OkaySpace Game Engine — Changelog
 
+v1.38.0
+  - Added a placeholder OkaySpace logo (a ringed planet over a starfield), drawn
+    procedurally and set as the window icon for both the editor and the launcher.
+
 v1.37.0
   - Expanded scripting: SceneManager from OkayScript — load_scene_index(i),
     load_scene_name(n), load_next_scene(), reload_scene(), scene_count(),

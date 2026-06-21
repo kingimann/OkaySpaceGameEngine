@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.21.6
+  - Character: big silhouette fix (verified by rendering it directly). The figure
+    was far too WIDE (huge shoulders + flaring hips = a triangle/blob). Now: much
+    narrower shoulders/chest/hips, leaner arms held in a clear A-pose (so arms
+    read as separate from the torso), tapered limbs, and a defined waist. Reads
+    as a proper human.
+  - NOTE: this changes the DEFAULTS for new characters. An existing character in
+    your scene keeps its own saved sliders — click "Reset" in its Character
+    inspector (or create a new Character) to get the new proportions.
+
 v2.21.5
   - Character: default build is now athletic ("bulky but lean") instead of soft —
     broader shoulders/chest, a tighter defined waist, narrower hips, slightly

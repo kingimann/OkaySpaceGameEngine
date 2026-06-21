@@ -225,6 +225,12 @@ namespace fs = std::filesystem;
 // Raw GitHub URL of the published dist/ folder.
 const char* kRawBase =
     "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/main/dist/";
+// Repo raw root (a commit SHA or "main" is inserted between this and /dist/...).
+const char* kRawRepo =
+    "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/";
+// GitHub API endpoint for the latest commit on main (to pin downloads by SHA).
+const char* kApiCommit =
+    "https://api.github.com/repos/kingimann/OkaySpaceGameEngine/commits/main";
 
 bool pendingQuit = false; // set true after a successful self-update relaunch
 
@@ -260,7 +266,8 @@ std::string BustCache(const std::string& url) {
 bool Download(const std::string& url, const std::string& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
     std::string u = BustCache(url);
-    const char* noCache = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" ";
+    // No-cache headers + a User-Agent (the GitHub API rejects requests without one).
+    const char* noCache = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" -A \"OkaySpace-Updater\" ";
 #if defined(_WIN32)
     std::string c1 = "curl -L -s -f " + std::string(noCache) + "-o \"" + outPath + "\" \"" + u + "\"";
     if (std::system(c1.c_str()) == 0 && fs::exists(outPath)) return true;
@@ -275,6 +282,31 @@ bool Download(const std::string& url, const std::string& outPath) {
     std::string c2 = "wget -q --no-cache -O \"" + outPath + "\" \"" + u + "\" 2>/dev/null";
     return std::system(c2.c_str()) == 0 && fs::exists(outPath);
 #endif
+}
+
+// The SHA of the latest commit on main, or "main" if the API can't be reached.
+// Downloading from a commit-pinned raw URL is IMMUTABLE — it can never be served
+// stale by the CDN, which is the real reason "update" sometimes kept the old
+// version (the branch URL handed back a cached old binary).
+std::string LatestRef() {
+    std::error_code ec;
+    fs::path jf = fs::temp_directory_path(ec) / "okayspace_commit.json";
+    if (!Download(kApiCommit, jf.string())) return "main";
+    std::ifstream f(jf); std::stringstream ss; ss << f.rdbuf();
+    std::string s = ss.str(); fs::remove(jf, ec);
+    auto k = s.find("\"sha\"");                       // first sha = the commit's
+    if (k == std::string::npos) return "main";
+    auto colon = s.find(':', k);
+    auto q1 = colon == std::string::npos ? std::string::npos : s.find('"', colon);
+    auto q2 = q1 == std::string::npos ? std::string::npos : s.find('"', q1 + 1);
+    if (q2 == std::string::npos) return "main";
+    std::string sha = s.substr(q1 + 1, q2 - q1 - 1);
+    return sha.size() >= 7 ? sha : "main";
+}
+
+// A commit-pinned raw URL for a file in dist/ (ref is a SHA or "main").
+std::string RawUrl(const std::string& ref, const std::string& name) {
+    return std::string(kRawRepo) + ref + "/dist/" + name;
 }
 
 // Compare dotted versions ("1.4.0"); returns -1 / 0 / 1 for a<b / a==b / a>b.
@@ -303,6 +335,7 @@ struct UpdateInfo {
     bool checked = false;
     bool available = false;
     std::string current, latest, notes, error;
+    std::string ref = "main";   // commit the check resolved to (install uses the same)
 };
 
 // Query GitHub for the published version + release notes. No files are swapped;
@@ -313,8 +346,9 @@ UpdateInfo CheckLatest() {
     info.checked = true;
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec);
+    info.ref = LatestRef();                       // pin to the latest commit
     fs::path vf = tmp / "okayspace_version.txt";
-    if (!Download(std::string(kRawBase) + "VERSION.txt", vf.string())) {
+    if (!Download(RawUrl(info.ref, "VERSION.txt"), vf.string())) {
         info.error = "Couldn't reach GitHub (no internet, or curl/PowerShell missing).";
         return info;
     }
@@ -326,7 +360,7 @@ UpdateInfo CheckLatest() {
 
     // Optional human-readable release notes.
     fs::path cf = tmp / "okayspace_changelog.txt";
-    if (Download(std::string(kRawBase) + "CHANGELOG.txt", cf.string())) {
+    if (Download(RawUrl(info.ref, "CHANGELOG.txt"), cf.string())) {
         std::ifstream f(cf);
         std::stringstream ss; ss << f.rdbuf();
         info.notes = ss.str();
@@ -349,12 +383,14 @@ void Relaunch(const std::string& path) {
 // Download the published editor and swap it in for the running .exe, then
 // relaunch. Returns a human-readable status. Only call when an update is known
 // to be available (so this never loops on an already-current build).
-std::string InstallUpdate(const std::string& latest) {
+std::string InstallUpdate(const std::string& latest, const std::string& ref = "main") {
     std::error_code ec;
     fs::path self = SelfPath();
     if (self.empty()) return "Couldn't locate the running executable.";
     fs::path newFile = self; newFile += ".new";
-    if (!Download(std::string(kRawBase) + "OkaySpaceEngine.exe", newFile.string()))
+    // Download the new build from the commit-pinned URL so the CDN can never hand
+    // back the old binary (the cause of "it updated but stayed the same version").
+    if (!Download(RawUrl(ref, "OkaySpaceEngine.exe"), newFile.string()))
         return "Download of v" + latest + " failed.";
     if (fs::file_size(newFile, ec) < 100000) {
         fs::remove(newFile, ec);
@@ -369,19 +405,38 @@ std::string InstallUpdate(const std::string& latest) {
             return "Downloaded file wasn't a valid program (CDN cache?). Try again.";
         }
     }
+#if defined(_WIN32)
+    // A running .exe can't always be renamed in place (AV / file locks), which is
+    // why a swap could silently fail. Instead hand the swap to a tiny batch helper
+    // that waits for THIS process to exit (the move retries until the lock frees),
+    // overwrites the exe, and relaunches it.
+    fs::path bat = self.parent_path() / "okay_update.bat";
+    std::string sp = self.string(), np = newFile.string();
+    {
+        std::ofstream b(bat, std::ios::binary);
+        b << "@echo off\r\n"
+          << ":retry\r\n"
+          << "move /y \"" << np << "\" \"" << sp << "\" >nul 2>&1\r\n"
+          << "if errorlevel 1 ( ping -n 2 127.0.0.1 >nul & goto retry )\r\n"
+          << "start \"\" \"" << sp << "\"\r\n"
+          << "del \"%~f0\"\r\n";
+    }
+    std::system(("start \"\" /min cmd /c \"" + bat.string() + "\"").c_str());
+    pendingQuit = true;   // exit so the helper can replace the exe
+    return "Updating to v" + latest + "... reopening.";
+#else
     fs::path backup = self; backup += ".old";
     fs::remove(backup, ec);
     fs::rename(self, backup, ec);
     if (ec) { fs::remove(newFile, ec); return "Couldn't replace the app: " + ec.message(); }
     fs::rename(newFile, self, ec);
     if (ec) { fs::rename(backup, self, ec); return "Couldn't install the update: " + ec.message(); }
-#if !defined(_WIN32)
     fs::permissions(self, fs::perms::owner_exec | fs::perms::group_exec |
                     fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
     Relaunch(self.string());
     pendingQuit = true;
     return "Updated to v" + latest + "! Reopening...";
+#endif
 }
 
 } // namespace updater
@@ -4079,7 +4134,7 @@ void DrawUpdatePopup(EditorState& ed) {
                 g_updateStatus = "Downloading v" + u.latest + "...";
                 // Save first so nothing is lost when the new build relaunches.
                 SaveAllBeforeExit(ed);
-                g_updateStatus = updater::InstallUpdate(u.latest);
+                g_updateStatus = updater::InstallUpdate(u.latest, u.ref);
                 ConsoleLog(g_updateStatus);
                 g_installingUpdate = false;
             }
@@ -8343,7 +8398,7 @@ int main(int argc, char** argv) {
                     // and relaunch automatically (no prompt).
                     SaveAllBeforeExit(ed);
                     ConsoleLog("Auto-updating to v" + g_update.latest + "...");
-                    g_updateStatus = updater::InstallUpdate(g_update.latest);
+                    g_updateStatus = updater::InstallUpdate(g_update.latest, g_update.ref);
                     ConsoleLog(g_updateStatus);
                 } else {
                     g_openUpdatePopup = true;   // surface it for a manual choice

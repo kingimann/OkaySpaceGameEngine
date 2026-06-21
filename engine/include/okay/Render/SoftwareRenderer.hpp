@@ -307,7 +307,8 @@ public:
                        const std::vector<Image>* normalMips = nullptr,
                        const Vec3& tangent = Vec3{1, 0, 0}, float normalStrength = 1.0f,
                        float reflectivity = 0.0f,
-                       const std::vector<Image>* specMips = nullptr) {
+                       const std::vector<Image>* specMips = nullptr,
+                       float metallic = 0.0f) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -421,6 +422,15 @@ public:
                         br = tc.r * tint.r; bg = tc.g * tint.g; bb2 = tc.b * tint.b;
                     }
                 }
+                // Metallic workflow: metals have (almost) no diffuse, and they tint
+                // both their specular highlight and their environment reflection by
+                // the albedo color (so gold reflects gold). Dielectrics keep a white
+                // highlight/reflection. f0* = lerp(white, albedo, metallic).
+                float metal = metallic < 0 ? 0 : (metallic > 1 ? 1 : metallic);
+                float diff  = 1.0f - 0.9f * metal;                 // metals kill diffuse
+                float f0r = 1.0f + (br  - 1.0f) * metal;
+                float f0g = 1.0f + (bg  - 1.0f) * metal;
+                float f0b = 1.0f + (bb2 - 1.0f) * metal;
                 // Fresnel rim: brighten grazing-angle edges (1 - n·view)^power,
                 // tinted by the lit color so it reads as a soft backlight glow.
                 float rim = 0.0f;
@@ -429,13 +439,15 @@ public:
                     float f = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
                     rim = std::pow(f, RimPower()) * RimStrength();
                 }
-                float cr = br * lit.x + spec.x + rim * lit.x + er;
-                float cg = bg * lit.y + spec.y + rim * lit.y + eg;
-                float cb = bb2 * lit.z + spec.z + rim * lit.z + eb;
+                float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + er;
+                float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + eg;
+                float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + eb;
                 // Environment reflection: mirror the sky gradient about the normal
-                // and blend it in by a Fresnel-weighted reflectivity (Schlick), so
-                // edges reflect more than face-on — a cheap glossy/metal look.
-                float reflK = reflectivity * gloss;
+                // and blend it in by a Fresnel-weighted reflectivity (Schlick).
+                // Metals reflect strongly even without an explicit reflectivity, and
+                // their reflection is tinted by the albedo (f0).
+                float reflAmt = reflectivity > metal ? reflectivity : metal;
+                float reflK = reflAmt * gloss;
                 if (reflK > 0.0f && EnvSky().enabled) {
                     Vec3 toEye = (eye - wpos).Normalized();
                     float ndv = Vec3::Dot(n, toEye); if (ndv < 0.0f) ndv = 0.0f;
@@ -444,9 +456,9 @@ public:
                     Vec3 env = SampleEnvSky(R);
                     float f = 1.0f - ndv; f = f * f * f * f * f;            // (1-n·v)^5
                     float k = reflK + (1.0f - reflK) * f;                   // Schlick
-                    cr = cr * (1.0f - k) + env.x * k;
-                    cg = cg * (1.0f - k) + env.y * k;
-                    cb = cb * (1.0f - k) + env.z * k;
+                    cr = cr * (1.0f - k) + env.x * f0r * k;
+                    cg = cg * (1.0f - k) + env.y * f0g * k;
+                    cb = cb * (1.0f - k) + env.z * f0b * k;
                 }
                 if (fog > 0.0f) {
                     cr = cr * (1.0f - fog) + fr * fog;
@@ -1105,7 +1117,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
                                     fogF, fogR, fogG, fogB,
                                     normalMips, triTangent, mr->normalStrength,
-                                    mr->reflectivity, specMips);
+                                    mr->reflectivity, specMips, mr->metallic);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

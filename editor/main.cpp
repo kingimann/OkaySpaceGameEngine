@@ -4996,6 +4996,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SliderFloat("Bump Strength##mesh", &mr->normalStrength, 0.0f, 2.0f)) ed.dirty = true;
             }
             if (ImGui::SliderFloat("Reflectivity##mesh", &mr->reflectivity, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Metallic##mesh", &mr->metallic, 0.0f, 1.0f)) ed.dirty = true;
             char smap[260];
             std::strncpy(smap, mr->specularMap.c_str(), sizeof(smap) - 1);
             smap[sizeof(smap) - 1] = '\0';

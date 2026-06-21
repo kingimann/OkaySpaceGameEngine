@@ -250,6 +250,18 @@ void EditorState::NewFPS() {
     dirty = false;
 }
 
+void EditorState::NewThirdPerson() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::ThirdPerson(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 1, 0};
+    camDist = 8.0f;
+    m_selected = m_scene.Find("Player");
+    dirty = false;
+}
+
 void EditorState::NewMultiplayer() {
     NewScene();
     m_suppressUndo = true;

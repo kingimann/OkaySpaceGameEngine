@@ -91,6 +91,11 @@ inline void Platformer3D(Scene& scene) {
     cam->main = true;
     camObj->transform->localPosition = {0, 6, 12};
     camObj->transform->localRotation = Quat::Euler({-25, 0, 0});
+    // Follow the player (keeps the same down-tilt; just trails its position).
+    auto* follow = camObj->AddComponent<CameraFollow>();
+    follow->targetName = "Player";
+    follow->offset = {0, 6, 12};
+    follow->smoothing = 6.0f;
 
     GameObject* light = scene.CreateGameObject("Directional Light");
     light->AddComponent<Light>();
@@ -106,15 +111,69 @@ inline void Platformer3D(Scene& scene) {
     gbc->size = {24, 1, 24};
     ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
 
+    // The blocky Character as the player (instead of a plain cube).
     GameObject* player = scene.CreateGameObject("Player");
     player->transform->localPosition = {0, 2, 0};
-    auto* pmr = player->AddComponent<MeshRenderer>();
-    pmr->mesh = Mesh::Cube();
-    pmr->color = Color::FromBytes(80, 160, 240);
+    player->AddComponent<Character>()->Apply();
     player->AddComponent<Rigidbody3D>();
-    player->AddComponent<BoxCollider3D>();
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};   // origin is at the feet — wrap feet->head
+    }
     auto* cc = player->AddComponent<CharacterController3D>();
     cc->speed = 5.0f; cc->jumpForce = 7.0f;
+}
+
+/// A third-person starter: the blocky Character driven by a ThirdPersonController
+/// (orbit camera behind, WASD relative to the camera, Space to jump, walk/run
+/// animation), on a ground with a few crates. Lets you see and control your
+/// character directly.
+inline void ThirdPerson(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Third Person");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {40, 1, 40};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube();
+    gmr->color = Color::FromBytes(95, 110, 95);
+    ground->AddComponent<BoxCollider3D>()->size = {40, 1, 40};
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    const Vec3 crates[4] = {{3, 0.5f, -3}, {-3, 0.5f, -4}, {3, 0.5f, 3}, {-3, 0.5f, 4}};
+    for (int i = 0; i < 4; ++i) {
+        GameObject* c = scene.CreateGameObject("Crate");
+        c->transform->localPosition = crates[i];
+        auto* mr = c->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = Color::FromBytes(150, 120, 80);
+        c->AddComponent<BoxCollider3D>();
+        c->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = {0, 1.0f, 0};
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};   // wrap the body feet->head
+    }
+    player->AddComponent<ThirdPersonController>();
+
+    // The controller positions this camera behind the player each frame.
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {0, 3, 6};
 }
 
 /// A first-person starter: a blocky Character player with a FirstPersonController

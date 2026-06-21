@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.57.0
+  - Fix: dotted "crack" lines across the ground (and other large quads). Pixels on
+    a shared triangle edge could fall outside both triangles from float rounding;
+    the rasterizer now accepts a sub-pixel bias so adjacent triangles overlap and
+    the seam is gone.
+  - Fix: the Game preview now ignores the first-person player's body in edit mode
+    too (it used to only take effect after pressing Play).
+  - Templates: new Third Person template (your Character + orbit camera, WASD +
+    jump + walk/run animation — you see and control the character).
+  - Templates: 3D Platformer now uses the Character (was a plain cube) with a
+    fitted collider and a follow camera.
+  - Templates: player colliders are offset to wrap the body (feet->head) where the
+    player is a Character.
+
 v2.56.0
   - Fix: the camera frustum gizmo in the Scene view pointed the opposite way to the
     actual view. Cameras look down -Z, but the gizmo was drawn along +Z; it now

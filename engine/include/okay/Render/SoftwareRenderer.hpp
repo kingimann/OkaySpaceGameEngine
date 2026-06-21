@@ -18,6 +18,18 @@
 
 namespace okay {
 
+// Directional shadow map (depth from the light). Defined up here so the Raster's
+// per-pixel shading can consult it; the implementation lives below RenderMeshes.
+struct ShadowMap {
+    std::vector<float> depth;   // min light-space NDC depth per texel
+    int   size = 0;
+    Mat4  viewProj;
+    float texelWorld = 0.0f;    // world size of one shadow texel (for normal-offset bias)
+    bool  enabled = false;
+};
+inline ShadowMap& Shadows();
+inline float ShadowFactor(const Vec3& wpos, const Vec3& n);
+
 /// A tiny software rasterizer with a per-pixel depth buffer, so overlapping 3D
 /// triangles occlude correctly (unlike a painter's-algorithm sort). It fills an
 /// ABGR8888 pixel buffer that both the player (SDL texture) and the editor
@@ -284,10 +296,16 @@ public:
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
                 if (d >= depth[i]) continue;
-                // Interpolated world normal + position (affine; renormalized).
-                Vec3 n{w0 * NXa[0] + w1 * NXa[1] + w2 * NXa[2],
-                       w0 * NYa[0] + w1 * NYa[1] + w2 * NYa[2],
-                       w0 * NZa[0] + w1 * NZa[1] + w2 * NZa[2]};
+                // Perspective-correct interpolation of world normal + position
+                // (weight each vertex by 1/w). Affine interpolation is badly wrong
+                // for large triangles — e.g. a ground quad would sample shadows and
+                // point lights at the wrong world point.
+                float iws = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                if (iws == 0.0f) continue;
+                float a0 = w0 * IW[0] / iws, a1 = w1 * IW[1] / iws, a2 = w2 * IW[2] / iws;
+                Vec3 n{a0 * NXa[0] + a1 * NXa[1] + a2 * NXa[2],
+                       a0 * NYa[0] + a1 * NYa[1] + a2 * NYa[2],
+                       a0 * NZa[0] + a1 * NZa[1] + a2 * NZa[2]};
                 n = n.Normalized();
                 if (bump) {
                     float iwn = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
@@ -312,9 +330,9 @@ public:
                         }
                     }
                 }
-                Vec3 wpos{w0 * WXa[0] + w1 * WXa[1] + w2 * WXa[2],
-                          w0 * WYa[0] + w1 * WYa[1] + w2 * WYa[2],
-                          w0 * WZa[0] + w1 * WZa[1] + w2 * WZa[2]};
+                Vec3 wpos{a0 * WXa[0] + a1 * WXa[1] + a2 * WXa[2],
+                          a0 * WYa[0] + a1 * WYa[1] + a2 * WYa[2],
+                          a0 * WZa[0] + a1 * WZa[1] + a2 * WZa[2]};
                 Vec3 lit = SceneLights::ShadeColor(wpos, n);
                 float spec = 0.0f;
                 if (specularK > 0.0f) {
@@ -322,6 +340,18 @@ public:
                     Vec3 h = (toLight + toEye).Normalized();
                     float nh = Vec3::Dot(n, h);
                     if (nh > 0.0f) spec = std::pow(nh, shininess) * specularK;
+                }
+                // Cast shadows: fade the direct light toward the ambient floor for
+                // fragments occluded from the light, and kill the specular there.
+                if (Shadows().enabled) {
+                    float sh = ShadowFactor(wpos, n);
+                    if (sh < 0.999f) {
+                        Vec3 amb = SceneLights::AmbientColor();
+                        lit.x = amb.x + (lit.x - amb.x) * sh; if (lit.x < 0) lit.x = 0;
+                        lit.y = amb.y + (lit.y - amb.y) * sh; if (lit.y < 0) lit.y = 0;
+                        lit.z = amb.z + (lit.z - amb.z) * sh; if (lit.z < 0) lit.z = 0;
+                        spec *= sh;
+                    }
                 }
                 float br = base.r, bg = base.g, bb2 = base.b;
                 if (textured) {
@@ -423,6 +453,110 @@ inline const std::vector<Image>* GetCachedMips(const std::string& path) {
 /// (Gouraud) shading on very large scenes.
 inline bool& PerPixelLighting() { static bool v = true; return v; }
 
+// ---- Directional shadow mapping --------------------------------------------
+// A depth map rendered from the scene's directional light. Per-pixel shading
+// projects each fragment into this map and darkens it if something is closer to
+// the light (i.e. it's occluded), giving real cast shadows. (ShadowMap struct is
+// declared above the Raster class so shading can consult it.)
+inline ShadowMap& Shadows()      { static ShadowMap s; return s; }
+inline bool& ShadowsEnabled()    { static bool v = true; return v; }
+inline int&  ShadowMapResolution(){ static int s = 1024; return s; }
+
+/// Render the scene depth from the directional light into the shadow map. Call
+/// once before RenderMeshes (RenderMeshes does this automatically).
+inline void RenderShadowMap(const Scene& scene) {
+    ShadowMap& sm = Shadows();
+    if (!ShadowsEnabled()) { sm.enabled = false; return; }
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    bool any = false;
+    auto visible = [](const GameObject& go) {
+        auto* mr = go.GetComponent<MeshRenderer>();
+        return mr && go.active && mr->enabled && !mr->wireframe ? mr : nullptr;
+    };
+    for (const auto& go : scene.Objects()) {
+        auto* mr = visible(*go); if (!mr) continue;
+        Mat4 model = go->transform->LocalToWorldMatrix();
+        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+        for (int c = 0; c < 8; ++c) {
+            Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
+            lo.x = std::fmin(lo.x, w.x); lo.y = std::fmin(lo.y, w.y); lo.z = std::fmin(lo.z, w.z);
+            hi.x = std::fmax(hi.x, w.x); hi.y = std::fmax(hi.y, w.y); hi.z = std::fmax(hi.z, w.z);
+            any = true;
+        }
+    }
+    if (!any) { sm.enabled = false; return; }
+    Vec3 ctr{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+    float R = 0.5f * std::sqrt((hi.x - lo.x) * (hi.x - lo.x) + (hi.y - lo.y) * (hi.y - lo.y) +
+                               (hi.z - lo.z) * (hi.z - lo.z)) + 0.05f;
+    Vec3 L = SceneLight::Direction(); { float m = L.Magnitude(); L = m > 1e-6f ? L * (1.0f / m) : Vec3{0, -1, 0}; }
+    Vec3 eye = ctr - L * (R * 2.0f);
+    Vec3 up = std::fabs(L.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    sm.viewProj = Mat4::Ortho(-R, R, -R, R, 0.05f, R * 4.0f) * Mat4::LookAt(eye, ctr, up);
+    int S = ShadowMapResolution(); sm.size = S; sm.depth.assign((std::size_t)S * S, 2.0f);
+    sm.texelWorld = (2.0f * R) / (float)S;
+    for (const auto& go : scene.Objects()) {
+        auto* mr = visible(*go); if (!mr) continue;
+        Mat4 mvp = sm.viewProj * go->transform->LocalToWorldMatrix();
+        const auto& V = mr->mesh.vertices; const auto& T = mr->mesh.triangles;
+        for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+            float sxv[3], syv[3], szv[3]; bool ok = true;
+            for (int k = 0; k < 3; ++k) {
+                Vec4 c = mvp * Vec4{V[T[i + k]], 1.0f};
+                if (c.w == 0) { ok = false; break; }
+                float iw = 1.0f / c.w;
+                sxv[k] = (c.x * iw * 0.5f + 0.5f) * S;
+                syv[k] = (1.0f - (c.y * iw * 0.5f + 0.5f)) * S;
+                szv[k] = c.z * iw;
+            }
+            if (!ok) continue;
+            int minx = (int)std::floor(std::fmin(sxv[0], std::fmin(sxv[1], sxv[2])));
+            int maxx = (int)std::ceil (std::fmax(sxv[0], std::fmax(sxv[1], sxv[2])));
+            int miny = (int)std::floor(std::fmin(syv[0], std::fmin(syv[1], syv[2])));
+            int maxy = (int)std::ceil (std::fmax(syv[0], std::fmax(syv[1], syv[2])));
+            if (minx < 0) minx = 0; if (miny < 0) miny = 0;
+            if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
+            float area = (sxv[1] - sxv[0]) * (syv[2] - syv[0]) - (sxv[2] - sxv[0]) * (syv[1] - syv[0]);
+            if (area == 0.0f) continue;
+            float inv = 1.0f / area;
+            for (int y = miny; y <= maxy; ++y)
+                for (int x = minx; x <= maxx; ++x) {
+                    float px = x + 0.5f, py = y + 0.5f;
+                    float w0 = ((sxv[1] - px) * (syv[2] - py) - (sxv[2] - px) * (syv[1] - py)) * inv;
+                    float w1 = ((sxv[2] - px) * (syv[0] - py) - (sxv[0] - px) * (syv[2] - py)) * inv;
+                    float w2 = 1.0f - w0 - w1;
+                    if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                    float z = w0 * szv[0] + w1 * szv[1] + w2 * szv[2];
+                    float& dref = sm.depth[(std::size_t)y * S + x];
+                    if (z < dref) dref = z;
+                }
+        }
+    }
+    sm.enabled = true;
+}
+
+/// 0 = fully shadowed, 1 = fully lit, for a world position (3x3 PCF for soft edges).
+/// The sample point is pushed a couple of texels along the surface normal — this
+/// "normal-offset bias" is what stops a lit surface from shadowing itself (acne).
+inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
+    ShadowMap& sm = Shadows();
+    if (!sm.enabled || sm.size <= 0) return 1.0f;
+    Vec3 p = wpos + n * (sm.texelWorld * 2.5f);
+    Vec4 lc = sm.viewProj * Vec4{p, 1.0f};
+    if (lc.w == 0) return 1.0f;
+    float iw = 1.0f / lc.w, x = lc.x * iw, y = lc.y * iw, z = lc.z * iw;
+    if (x < -1 || x > 1 || y < -1 || y > 1 || z > 1) return 1.0f;
+    float fx = (x * 0.5f + 0.5f) * sm.size, fy = (1.0f - (y * 0.5f + 0.5f)) * sm.size;
+    const float bias = 0.0025f;
+    int lit = 0, total = 0;
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+            int px = (int)fx + dx, py = (int)fy + dy; ++total;
+            if (px < 0 || py < 0 || px >= sm.size || py >= sm.size) { ++lit; continue; }
+            if (z - bias <= sm.depth[(std::size_t)py * sm.size + px]) ++lit;
+        }
+    return total ? (float)lit / total : 1.0f;
+}
+
 /// Render all active MeshRenderers in `scene` into `r` with the given
 /// view-projection matrix and camera position. Two-sided + flat-shaded via the
 /// global SceneLight; depth-tested so overlapping meshes occlude correctly.
@@ -431,6 +565,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     const auto& rs = scene.renderSettings;
     const bool  fogOn = rs.fog && rs.fogEnd > rs.fogStart;
     const float fogR = rs.fogColor.r, fogG = rs.fogColor.g, fogB = rs.fogColor.b;
+    RenderShadowMap(scene);   // depth-from-light pre-pass for cast shadows
     for (const auto& go : scene.Objects()) {
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines

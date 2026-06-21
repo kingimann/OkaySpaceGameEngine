@@ -165,7 +165,7 @@ static long SceneTriangleLoad(const Scene& scene) {
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
 SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye,
-                             int w, int h, int slot = 0) {
+                             int w, int h, int slot = 0, const GameObject* ignore = nullptr) {
     if (!g_sdlRenderer) return nullptr;
     if (slot < 0 || slot >= kView3DSlots) slot = 0;
     w = w < 1 ? 1 : (w > 4096 ? 4096 : w);
@@ -180,7 +180,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     int ss = g_ssaa;
     if (g_autoPerf && ss > 1 && SceneTriangleLoad(scene) > 11000) ss = 1;
     const std::uint32_t* px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
-                                             scene, vp, eye, rw, rh, ss);
+                                             scene, vp, eye, rw, rh, ss, ignore);
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh) {
         if (g_view3DTex[slot]) SDL_DestroyTexture(g_view3DTex[slot]);
         g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
@@ -7570,9 +7570,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Solid meshes: render z-buffered into a texture (correct per-pixel
     // occlusion) and blit it; transparent where empty so the grid shows through.
+    // In the Game view, honor the active camera's ignoreObject (first-person body);
+    // the Scene view always shows everything (ignore = null).
+    const GameObject* viewIgnore = nullptr;
+    if (gameView) { if (Camera* gc = SceneCamera(ed.scene())) viewIgnore = gc->ignoreObject; }
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)canvasSize.x, (int)canvasSize.y,
-                                           gameView ? 1 : 0))
+                                           gameView ? 1 : 0, viewIgnore))
         dl->AddImage((ImTextureID)tex, canvasPos, canvasEnd);
 
     // Highlight the selection with a clean yellow bounding box (12 edges).
@@ -7634,7 +7638,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             Mat4 cvp = pc->ProjectionMatrix(pw / ph) * pc->ViewMatrix();
             Vec3 ceye = ed.selected()->transform->Position();
             if (SDL_Texture* ptex = Render3DTexture(ed.scene(), cvp, ceye,
-                                                    (int)pw, (int)ph, 2))
+                                                    (int)pw, (int)ph, 2, pc->ignoreObject))
                 dl->AddImage((ImTextureID)ptex, pmin, pmax);
             dl->AddRect(pmin, pmax, IM_COL32(255, 255, 255, 180));
             dl->AddText(ImVec2(pmin.x + 4, pmin.y - 16), IM_COL32(220, 220, 230, 255),

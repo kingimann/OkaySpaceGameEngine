@@ -377,7 +377,8 @@ int main(int argc, char** argv) {
                 // supersampling is 4x the pixels — far too slow with the full
                 // shadow/SSAO/bloom pipeline — so it's off by default.
                 static std::vector<std::uint32_t> mesh3DDown;
-                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h, 1);
+                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h, 1,
+                                                         cam ? cam->ignoreObject : nullptr);
                 if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
                     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
                     mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,

@@ -972,7 +972,8 @@ inline void ApplyFXAA(Raster& r) {
 /// Render all active MeshRenderers in `scene` into `r` with the given
 /// view-projection matrix and camera position. Two-sided + flat-shaded via the
 /// global SceneLight; depth-tested so overlapping meshes occlude correctly.
-inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Vec3& eye) {
+inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Vec3& eye,
+                         const GameObject* ignore = nullptr) {
     const float W = (float)r.width, H = (float)r.height;
     const auto& rs = scene.renderSettings;
     const bool  fogOn = rs.fog && rs.fogEnd > rs.fogStart;
@@ -1027,6 +1028,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Vertex transforms are repeated per band, but pixel fill dominates.
     auto renderBand = [&](int bandY0, int bandY1) {
     for (const auto& go : scene.Objects()) {
+        if (ignore && go.get() == ignore) continue;   // this camera skips this object (1st-person body)
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
         Mat4 model = go->transform->LocalToWorldMatrix();
@@ -1268,13 +1270,13 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
 /// Clears to transparent first; call ApplySceneLight() before this.
 inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32_t>& out,
                                            const Scene& scene, const Mat4& vp, const Vec3& eye,
-                                           int w, int h, int ss) {
+                                           int w, int h, int ss, const GameObject* ignore = nullptr) {
     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
     while (ss > 1 && ((long)w * ss > 4096 || (long)h * ss > 4096)) --ss;
     const int iw = w * ss, ih = h * ss;
     work.Resize(iw, ih);
     work.Clear(0u);
-    RenderMeshes(work, scene, vp, eye);
+    RenderMeshes(work, scene, vp, eye, ignore);
     if (ss == 1) return work.color.data();
     out.assign((std::size_t)w * h, 0u);
     const std::uint32_t* src = work.color.data();

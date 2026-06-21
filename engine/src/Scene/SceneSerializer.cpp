@@ -646,9 +646,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (in.peek() == '"') {
                         mr->meshPath = ReadQuoted(in);
                         if (!mr->meshPath.empty()) {
-                            bool ok = false;
-                            Mesh loaded = Mesh::LoadOBJ(mr->meshPath, &ok);
-                            if (ok && !loaded.vertices.empty()) mr->mesh = loaded;
+                            bool ok = false; std::string tex;
+                            Mesh loaded = Mesh::LoadOBJ(mr->meshPath, &ok, &tex);
+                            if (ok && !loaded.vertices.empty()) {
+                                mr->mesh = loaded;
+                                if (!tex.empty() && mr->texture.empty()) mr->texture = tex;
+                            }
                         }
                     }
                     in >> std::ws; // optional double-sided flag

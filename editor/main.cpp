@@ -458,7 +458,8 @@ void SaveAllBeforeExit(EditorState& ed) {
 }
 
 // File dialogs.
-bool g_showSaveAs = false, g_showOpen = false;
+bool g_showSaveAs = false, g_showOpen = false, g_showImportObj = false;
+char g_objPathBuf[256] = "model.obj";
 char g_pathBuf[256] = "scene.okayscene";
 
 // Data Asset (Scriptable Object) editor window.
@@ -1064,6 +1065,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("New 2D Scene")) { ed.NewScene2D(); ConsoleLog("New 2D project"); }
         if (ImGui::MenuItem("New 3D Scene")) { ed.NewScene3D(); ConsoleLog("New 3D project"); }
         ImGui::Separator();
+        if (ImGui::MenuItem("Import Model (.obj)...")) g_showImportObj = true;
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
         if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
             for (const std::string& p : g_recent) {
@@ -3664,7 +3666,36 @@ void HandleShortcuts(EditorState& ed) {
 void DrawFileDialogs(EditorState& ed) {
     if (g_showOpen)   { ImGui::OpenPopup("Open Scene");    g_showOpen = false; }
     if (g_showSaveAs) { ImGui::OpenPopup("Save Scene As"); g_showSaveAs = false; }
+    if (g_showImportObj) { ImGui::OpenPopup("Import Model"); g_showImportObj = false; }
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
+
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Import Model", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Import a Wavefront .OBJ (with its .mtl + texture next to it).");
+        ImGui::TextDisabled("Tip: export from MakeHuman / Mixamo / Blender as OBJ.");
+        ImGui::InputText("Path##obj", g_objPathBuf, sizeof(g_objPathBuf));
+        if (ImGui::Button("Import", ImVec2(120, 0))) {
+            bool okl = false; std::string tex;
+            Mesh im = Mesh::LoadOBJ(g_objPathBuf, &okl, &tex);
+            if (okl && im.TriangleCount() > 0) {
+                std::string nm = g_objPathBuf;
+                std::size_t sl = nm.find_last_of("/\\"); if (sl != std::string::npos) nm = nm.substr(sl + 1);
+                std::size_t dot = nm.find_last_of('.'); if (dot != std::string::npos) nm = nm.substr(0, dot);
+                GameObject* go = ed.CreateEmpty(nm.empty() ? "Model" : nm);
+                auto* mr = go->AddComponent<MeshRenderer>();
+                mr->mesh = im; mr->meshPath = g_objPathBuf; mr->doubleSided = true;
+                if (!tex.empty()) mr->texture = tex;
+                ed.Select(go); ed.view3D = true; ed.dirty = true;
+                ConsoleLog("Imported " + std::string(g_objPathBuf) + " (" +
+                           std::to_string(im.TriangleCount()) + " tris" +
+                           (tex.empty() ? ")" : ", textured)"));
+            } else ConsoleLog("Import failed: couldn't read " + std::string(g_objPathBuf), 2);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Open Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {

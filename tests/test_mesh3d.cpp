@@ -313,6 +313,23 @@ int main() {
         std::remove(path.c_str());
     }
 
+    // --- LoadOBJ reads UVs + the .mtl diffuse texture (textured import) ---
+    {
+        { std::ofstream mf("okay_test_tex.mtl"); mf << "newmtl m\nmap_Kd skin.png\n"; }
+        { std::ofstream of("okay_test_tex.obj");
+          of << "mtllib okay_test_tex.mtl\nusemtl m\n";
+          of << "v 0 0 0\nv 1 0 0\nv 1 1 0\n";
+          of << "vt 0 0\nvt 1 0\nvt 1 1\n";
+          of << "f 1/1 2/2 3/3\n"; }
+        bool ok = false; std::string tex;
+        Mesh m = Mesh::LoadOBJ("okay_test_tex.obj", &ok, &tex);
+        CHECK(ok);
+        CHECK(m.TriangleCount() == 1);
+        CHECK(m.uvs.size() == m.vertices.size());     // UVs imported
+        CHECK(tex.find("skin.png") != std::string::npos);  // texture resolved from .mtl
+        std::remove("okay_test_tex.obj"); std::remove("okay_test_tex.mtl");
+    }
+
     // --- Transformed / Combine build compound models ---
     {
         Mesh a = Mesh::Cube();

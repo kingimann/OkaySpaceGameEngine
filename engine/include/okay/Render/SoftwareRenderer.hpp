@@ -370,6 +370,14 @@ public:
         const bool glossMap = specMips && !specMips->empty() && (*specMips)[0].Width() > 0;
         int gw = glossMap ? (*specMips)[0].Width() : 0, gh = glossMap ? (*specMips)[0].Height() : 0;
         LodGrad lgG = glossMap ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
+        // Hoist the global render-state out of the per-pixel loop: these accessors
+        // each carry a function-call + thread-safe-static-guard cost that adds up
+        // over a million pixels.
+        const bool  rimOn     = RimLightEnabled() && RimStrength() > 0.0f;
+        const float rimStr    = RimStrength();
+        const float rimPow    = RimPower();
+        const bool  shadowsOn = Shadows().enabled;
+        const bool  envOn     = EnvSky().enabled;
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
                 float px = x + 0.5f, py = y + 0.5f;
@@ -421,7 +429,7 @@ public:
                 Vec3 wpos{a0 * WXa[0] + a1 * WXa[1] + a2 * WXa[2],
                           a0 * WYa[0] + a1 * WYa[1] + a2 * WYa[2],
                           a0 * WZa[0] + a1 * WZa[1] + a2 * WZa[2]};
-                Vec3 lit = SceneLights::ShadeColor(wpos, n);
+                Vec3 lit = SceneLights::ShadeNormalized(wpos, n);   // n already unit
                 // Specular/gloss map: a grayscale texture whose luminance scales the
                 // specular highlight + reflection per texel (shiny tape on a matte
                 // box, wet patches, worn metal). 1.0 (full) when no map is bound.
@@ -438,7 +446,7 @@ public:
                 // Cast shadows: fade the direct light toward the ambient floor for
                 // fragments occluded from the light (specular is shadowed below).
                 float sh = 1.0f;
-                if (Shadows().enabled) {
+                if (shadowsOn) {
                     sh = ShadowFactor(wpos, n);
                     if (sh < 0.999f) {
                         Vec3 amb = SceneLights::AmbientAt(n);
@@ -453,7 +461,7 @@ public:
                 Vec3 spec{0, 0, 0};
                 if (specularK > 0.0f) {
                     Vec3 toEye = (eye - wpos).Normalized();
-                    spec = SceneLights::Specular(wpos, n, toEye, shininess, sh);
+                    spec = SceneLights::SpecularN(wpos, n, toEye, shininess, sh);
                     float ks = specularK * gloss;
                     spec.x *= ks; spec.y *= ks; spec.z *= ks;
                 }
@@ -479,10 +487,15 @@ public:
                 // Fresnel rim: brighten grazing-angle edges (1 - n·view)^power,
                 // tinted by the lit color so it reads as a soft backlight glow.
                 float rim = 0.0f;
-                if (RimLightEnabled() && RimStrength() > 0.0f) {
+                if (rimOn) {
                     Vec3 toEye = (eye - wpos).Normalized();
                     float f = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
-                    rim = std::pow(f, RimPower()) * RimStrength();
+                    // Cheap integer powers for the common rim exponents (avoid pow).
+                    float fp = (rimPow == 3.0f) ? f * f * f
+                             : (rimPow == 2.0f) ? f * f
+                             : (rimPow == 4.0f) ? (f * f) * (f * f)
+                             : std::pow(f, rimPow);
+                    rim = fp * rimStr;
                 }
                 float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + er;
                 float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + eg;
@@ -493,7 +506,7 @@ public:
                 // their reflection is tinted by the albedo (f0).
                 float reflAmt = reflectivity > metal ? reflectivity : metal;
                 float reflK = reflAmt * gloss;
-                if (reflK > 0.0f && EnvSky().enabled) {
+                if (reflK > 0.0f && envOn) {
                     Vec3 toEye = (eye - wpos).Normalized();
                     float ndv = Vec3::Dot(n, toEye); if (ndv < 0.0f) ndv = 0.0f;
                     Vec3 R{n.x * (2.0f * ndv) - toEye.x, n.y * (2.0f * ndv) - toEye.y,

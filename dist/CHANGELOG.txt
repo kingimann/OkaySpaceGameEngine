@@ -1,5 +1,20 @@
 OkaySpace Game Engine — Changelog
 
+v2.53.0
+  - Performance (defaults): shadows, SSAO and bloom are now OFF by default — they
+    were the bulk of the frame cost. A basic scene roughly doubled in FPS. They're
+    all one click away in the Stats window's "Rendering (Lighting & Post FX)"
+    panel for when you want them.
+  - Performance: added a Render Scale slider (same panel). The 3D view renders at
+    that fraction of resolution and upscales — the single biggest FPS lever for
+    the software renderer (0.75x ~ +75% fps, 0.5x ~ 2x+), at the cost of sharpness.
+  - Fix: deleting the main camera then adding a new one no longer leaves the Game
+    tab black — the editor re-detects a live camera instead of using a stale one.
+  - Fix: Space now jumps in the Game tab instead of pausing (ImGui keyboard nav is
+    disabled while the game runs so input reaches the game).
+  - Note: the grazing-angle "zoom" speckle was directional-shadow acne; with
+    shadows off by default it's gone (bias also improved for when shadows are on).
+
 v2.52.0
   - Fix: the skybox no longer disappears in 3D scenes. The tone-map and bloom
     post passes were forcing every pixel opaque, so the transparent background

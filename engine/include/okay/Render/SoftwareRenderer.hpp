@@ -587,7 +587,7 @@ inline bool& PerPixelLighting() { static bool v = true; return v; }
 // the light (i.e. it's occluded), giving real cast shadows. (ShadowMap struct is
 // declared above the Raster class so shading can consult it.)
 inline ShadowMap& Shadows()      { static ShadowMap s; return s; }
-inline bool& ShadowsEnabled()    { static bool v = true; return v; }
+inline bool& ShadowsEnabled()    { static bool v = false; return v; }  // off by default (perf); opt-in
 inline int&  ShadowMapResolution(){ static int s = 1024; return s; }
 
 /// Render the scene depth from the directional light into the shadow map. Call
@@ -698,7 +698,7 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
 }
 
 // ---- Screen-space ambient occlusion ----------------------------------------
-inline bool&  SSAOEnabled()  { static bool v = true; return v; }
+inline bool&  SSAOEnabled()  { static bool v = false; return v; }     // off by default (perf); opt-in
 inline float& SSAORadius()   { static float v = 0.45f; return v; }  // world units
 inline float& SSAOStrength() { static float v = 0.6f; return v; }
 
@@ -797,7 +797,7 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
 }
 
 // ---- Bloom -----------------------------------------------------------------
-inline bool&  BloomEnabled()   { static bool v = true; return v; }
+inline bool&  BloomEnabled()   { static bool v = false; return v; }    // off by default (perf); opt-in
 inline float& BloomThreshold() { static float v = 0.80f; return v; }  // 0..1 brightness
 inline float& BloomIntensity() { static float v = 0.6f; return v; }
 

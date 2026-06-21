@@ -146,6 +146,7 @@ int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
 int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample
+float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
 
@@ -170,21 +171,25 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     w = w < 1 ? 1 : (w > 4096 ? 4096 : w);
     h = h < 1 ? 1 : (h > 4096 ? 4096 : h);
     ApplySceneLight(scene);                      // a Light object aims the shading
-    // Supersampled (anti-aliased) render: smoother edges than 1:1 rasterization.
-    // When the scene gets heavy (e.g. several characters), auto-drop to 1x so the
-    // editor stays responsive — 2x supersampling is 4x the pixels to fill.
+    // Render at a fraction of the panel resolution when render scale < 1: the
+    // texture is drawn STRETCHED to the panel, so a smaller buffer upscales for
+    // free (linear filtered) — a near-linear FPS win for the software renderer.
+    float scale = g_renderScale < 0.25f ? 0.25f : (g_renderScale > 1.0f ? 1.0f : g_renderScale);
+    int rw = (int)(w * scale); if (rw < 1) rw = 1;
+    int rh = (int)(h * scale); if (rh < 1) rh = 1;
     int ss = g_ssaa;
     if (g_autoPerf && ss > 1 && SceneTriangleLoad(scene) > 11000) ss = 1;
     const std::uint32_t* px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
-                                             scene, vp, eye, w, h, ss);
-    if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h) {
+                                             scene, vp, eye, rw, rh, ss);
+    if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh) {
         if (g_view3DTex[slot]) SDL_DestroyTexture(g_view3DTex[slot]);
         g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                              SDL_TEXTUREACCESS_STREAMING, w, h);
+                                              SDL_TEXTUREACCESS_STREAMING, rw, rh);
         SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
-        g_view3DW[slot] = w; g_view3DH[slot] = h;
+        SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);  // smooth upscale
+        g_view3DW[slot] = rw; g_view3DH[slot] = rh;
     }
-    SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, w * 4);
+    SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, rw * 4);
     return g_view3DTex[slot];
 }
 
@@ -439,13 +444,15 @@ void LoadSettings() {
         if (k == "autoupdate") g_autoUpdate = (v != 0);
         else if (k == "autoperf") g_autoPerf = (v != 0);
         else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
+        else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
     }
 }
 void SaveSettings() {
     std::ofstream f("okay_settings.txt");
     f << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
-      << "ssaa "       << g_ssaa << "\n";
+      << "ssaa "       << g_ssaa << "\n"
+      << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -2302,7 +2309,13 @@ void DrawStats(EditorState& ed) {
 
     // Global renderer pipeline switches (process-wide, not per-scene). These let
     // you toggle/tune the 3D post-processing & lighting features live.
-    if (ImGui::CollapsingHeader("Rendering (Lighting & Post FX)")) {
+    if (ImGui::CollapsingHeader("Rendering (Lighting & Post FX)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextDisabled("Performance");
+        if (ImGui::SliderFloat("Render scale", &g_renderScale, 0.25f, 1.0f, "%.2fx")) SaveSettings();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Renders the 3D view at this fraction of resolution and\nupscales. Lower = much faster (softer image). The biggest\nFPS lever for the software renderer.");
+        ImGui::TextDisabled("Effects below are OFF by default — turn on what you want.");
+        ImGui::Separator();
         ImGui::Checkbox("Per-pixel lighting (Phong)", &PerPixelLighting());
 
         ImGui::Checkbox("Hemisphere ambient", &HemisphereAmbient());
@@ -6591,10 +6604,18 @@ static void UIHandlePositions(ImVec2 a, ImVec2 b, ImVec2 out[8]) {
 // The camera to frame the Game view through: the scene's main camera if one is
 // active (set on Play), else the first Camera component found (edit mode).
 static Camera* SceneCamera(Scene& s) {
-    if (s.mainCamera) return s.mainCamera;
+    // Only trust mainCamera if it still points to a LIVE object — deleting the
+    // main camera leaves a dangling pointer, which made the Game view go black
+    // even after adding a replacement. Comparing pointers never dereferences the
+    // stale one; if it's gone we clear it and pick another camera.
+    if (s.mainCamera) {
+        for (const auto& go : s.Objects())
+            if (go->GetComponent<Camera>() == s.mainCamera) return s.mainCamera;
+        s.mainCamera = nullptr;   // it was deleted
+    }
     for (const auto& go : s.Objects())
         if (go->active)
-            if (auto* c = go->GetComponent<Camera>()) return c;
+            if (auto* c = go->GetComponent<Camera>()) { s.mainCamera = c; return c; }
     return nullptr;
 }
 
@@ -8406,6 +8427,15 @@ int main(int argc, char** argv) {
         std::string title = "OkaySpace Editor  -  " + ed.scene().Name() +
                             (ed.dirty ? " *" : "") + "   [v" OKAY_ENGINE_VERSION "]";
         if (title != lastTitle) { SDL_SetWindowTitle(window, title.c_str()); lastTitle = title; }
+
+        // While the game is actually running, turn OFF ImGui keyboard navigation:
+        // otherwise a toolbar button keeps nav-focus and pressing Space (jump)
+        // activates it — which is why Space was pausing the game. Restore it when
+        // stopped/paused so editor keyboard nav still works.
+        if (ed.isPlaying() && !g_paused)
+            ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+        else
+            ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();

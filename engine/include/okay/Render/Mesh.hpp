@@ -1050,12 +1050,16 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         Vec3 sh{s * aw, shoulderY, 0};
         Quat q = Quat::Euler({(float)s * p.armSwing, 0, (float)s * p.armSpread});
         Vec3 wrist = sh + q * Vec3{0, -armLen, 0};
+        // Deltoid/shoulder bridge: a blob spanning the chest edge to the shoulder
+        // so the smooth-union always closes the armpit, even when arms spread.
+        bl.push_back({1, {s * 0.18f * p.shoulderWidth * B, shoulderY, 0}, sh, {}, at * 1.25f, shirt}); // shoulder bridge
         bl.push_back({1, sh, wrist, {}, at, shirt});                              // upper+fore arm
         bl.push_back({0, wrist + q * Vec3{0, -at, 0}, {}, {}, at * 1.1f, skin});  // hand
         float lt = 0.20f * B * p.legThickness, lw = hw + p.legGap;
         Vec3 hip{s * lw, 0.60f * H, 0};
         Quat ql = Quat::Euler({(float)s * p.legSwing, 0, (float)s * p.legSpread});
         Vec3 ankle = hip + ql * Vec3{0, -(0.6f * H + 0.55f * lL * H), 0};
+        bl.push_back({1, {s * 0.10f * p.hipWidth * B, 0.60f * H, 0}, hip, {}, lt * 1.15f, pants}); // hip bridge
         bl.push_back({1, hip, ankle, {}, lt, pants});                            // leg
         bl.push_back({2, ankle + Vec3{0, -0.02f * H, 0.12f}, {}, {0.10f * B, 0.07f, 0.22f}, 0, shoes}); // foot
     }

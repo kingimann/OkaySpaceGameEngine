@@ -11,7 +11,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <future>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -365,6 +367,8 @@ std::string g_updateStatus;
 bool g_openUpdatePopup = false;
 updater::UpdateInfo g_update;     // last update check result
 bool g_installingUpdate = false;  // set while InstallUpdate runs
+std::future<updater::UpdateInfo> g_updateCheck;  // async startup check (non-blocking)
+bool g_autoCheckDone = false;     // consumed the async result yet?
 bool g_openAbout = false;
 bool g_showNewProject = true;   // show the project chooser on launch
 
@@ -8311,10 +8315,26 @@ int main(int argc, char** argv) {
     ConsoleLog("Welcome to OkaySpace v" OKAY_ENGINE_VERSION
                ". Choose a 2D or 3D project to begin.");
 
+    // Automatically check for a newer build at startup, in the background so it
+    // never blocks the editor. The result is picked up in the main loop and, if
+    // an update is available, the Update window pops up on its own.
+    g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
+
     bool running = true;
     std::string lastTitle;
     Uint64 last = SDL_GetPerformanceCounter();
     while (running) {
+        // Pick up the background update check when it finishes (once).
+        if (!g_autoCheckDone && g_updateCheck.valid() &&
+            g_updateCheck.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            g_update = g_updateCheck.get();
+            g_autoCheckDone = true;
+            if (g_update.available) {
+                g_openUpdatePopup = true;   // surface it immediately
+                ConsoleLog("Update available: v" + g_update.latest +
+                           " (you have v" + g_update.current + ").");
+            }
+        }
         Input::ClearTypedText();   // collect this frame's typed characters
         SDL_Event e;
         while (SDL_PollEvent(&e)) {

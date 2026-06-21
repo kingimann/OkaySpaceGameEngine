@@ -60,7 +60,7 @@ struct HumanoidParams {
     /// when the mesh is built (the underlying values are left untouched).
     void ClampHuman() {
         auto cl = [](float& v, float lo, float hi) { v = v < lo ? lo : (v > hi ? hi : v); };
-        cl(height, 0.82f, 1.35f);     cl(build, 0.85f, 1.22f);
+        cl(height, 0.80f, 1.50f);     cl(build, 0.85f, 1.22f);
         cl(headSize, 0.7f, 1.25f);    cl(neckLength, 0.8f, 1.18f);
         cl(shoulderWidth, 0.95f, 1.28f); cl(hipWidth, 0.8f, 1.12f);
         cl(armLength, 0.9f, 1.15f);   cl(legLength, 0.92f, 1.22f);

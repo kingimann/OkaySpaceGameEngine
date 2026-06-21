@@ -39,8 +39,8 @@ public:
     Color eye    = Color::FromBytes(40, 40, 50);     // eyes
     Color hat    = Color::FromBytes(150, 40, 40);    // hat
     Color glasses= Color::FromBytes(20, 20, 25);     // glasses frame
-    bool  hasHair = true;
-    bool  hasFace = true;
+    bool  hasHair = false;        // MakeHuman's default is bald; opt into hair
+    bool  hasFace = true;         // eyeballs + brows in the modelled sockets
     bool  hasHat = false;
     bool  hasGlasses = false;
     bool  beard = false;
@@ -75,6 +75,126 @@ public:
     /// The bundled CC0 anatomical human base mesh, loaded once and normalized
     /// (centered on X/Z, feet at y=0, height 1). Empty if the asset isn't found.
     static const Mesh& HumanBaseMesh();
+
+    /// Add facial features (eyes, brows, nose, mouth, ears), hair, facial hair and
+    /// accessories (glasses, hat) onto the head of an already-built body mesh.
+    /// Works in final coordinates: it measures the head from the mesh itself (the
+    /// top slice of the figure) so it tracks head size, height and proportions.
+    /// Faces are +Z. Every added piece carries a per-face color, keeping triColors
+    /// in sync with the triangle list.
+    static void AddHeadDetails(Mesh& m, const HumanoidParams& p, const HumanoidColors& c) {
+        if (m.vertices.empty()) return;
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        float H = hi.y - lo.y; if (H < 1e-4f) return;
+        // Isolate the head ball: the top ~15% of the figure.
+        float cut = hi.y - 0.15f * H;
+        Vec3 hlo{1e9f, 1e9f, 1e9f}, hhi{-1e9f, -1e9f, -1e9f};
+        for (const Vec3& v : m.vertices) if (v.y > cut) {
+            if (v.x < hlo.x) hlo.x = v.x; if (v.x > hhi.x) hhi.x = v.x;
+            if (v.y < hlo.y) hlo.y = v.y; if (v.y > hhi.y) hhi.y = v.y;
+            if (v.z < hlo.z) hlo.z = v.z; if (v.z > hhi.z) hhi.z = v.z;
+        }
+        if (hhi.x < hlo.x) return;
+        float hw = (hhi.x - hlo.x) * 0.5f;   // head half-width
+        float hh = (hhi.y - hlo.y) * 0.5f;   // head half-height
+        float hd = (hhi.z - hlo.z) * 0.5f;   // head half-depth
+        Vec3  hc{(hlo.x + hhi.x) * 0.5f, (hlo.y + hhi.y) * 0.5f, (hlo.z + hhi.z) * 0.5f};
+        float headTop = hhi.y, faceZ = hhi.z;
+        auto absf = [](float x) { return x < 0 ? -x : x; };
+
+        // The base mesh already has a fully-modelled face (nose, lips, ears, brow
+        // ridge) revealed by the skin matcap. We only add what the bare mesh lacks:
+        // eyeballs to fill the empty sockets, plus optional brows and hair.
+        if (c.hasFace) {
+            float eyeY = hc.y + 0.04f * hh;
+            float eyeX = 0.295f * hw * p.eyeSpacing;
+            float eyeZ = faceZ - 0.34f * hd;             // nestle the ball into the socket
+            float eR   = 0.115f * hw * p.eyeSize;
+            Color white = Color::FromBytes(240, 238, 234);
+            Color pupil = Color::FromBytes(18, 16, 16);
+            for (int s = -1; s <= 1; s += 2) {
+                Vec3 ep{s * eyeX, eyeY, eyeZ};
+                m.Add(Mesh::Sphere(0.5f, 9, 11), ep, {eR * 2.0f, eR * 2.0f, eR * 1.9f}, &white);
+                m.Add(Mesh::Sphere(0.5f, 8, 9), {ep.x, ep.y, ep.z + eR * 0.78f},
+                      {eR * 0.95f, eR * 0.95f, eR * 0.7f}, &c.eye);          // iris
+                m.Add(Mesh::Sphere(0.5f, 6, 6), {ep.x, ep.y, ep.z + eR * 0.95f},
+                      {eR * 0.45f, eR * 0.45f, eR * 0.35f}, &pupil);          // pupil
+            }
+            // Eyebrows: slim, low bars hugging the brow ridge, tilted by browAngle.
+            // A touch lighter than the hair so they don't read as hard black blocks.
+            Color brow = Color::FromBytes(
+                (unsigned char)(c.hair.r * 255 * 0.6f + c.skin.r * 255 * 0.4f),
+                (unsigned char)(c.hair.g * 255 * 0.6f + c.skin.g * 255 * 0.4f),
+                (unsigned char)(c.hair.b * 255 * 0.6f + c.skin.b * 255 * 0.4f));
+            float browY = eyeY + 0.12f * hw;
+            for (int s = -1; s <= 1; s += 2) {
+                Vec3 bp{s * eyeX, browY, faceZ - 0.14f * hd};
+                m.AddPosed(Mesh::Cube(1.0f), bp, {0.26f * hw, 0.028f * hw, 0.05f * hw},
+                           {0, 0, s * p.browAngle}, bp, &brow);
+            }
+        }
+
+        if (c.hasHair) {
+            // Carve a scalp cap out of a unit icosphere: keep the crown, back and
+            // sides, but open the face below the forehead so it reads as a hairline.
+            Mesh sph = Mesh::Icosphere(0.5f, 2), cap;
+            int style = p.hairStyle;
+            for (std::size_t t = 0; t + 2 < sph.triangles.size(); t += 3) {
+                const Vec3& a = sph.vertices[sph.triangles[t]];
+                const Vec3& b = sph.vertices[sph.triangles[t + 1]];
+                const Vec3& d = sph.vertices[sph.triangles[t + 2]];
+                Vec3 ctr{(a.x + b.x + d.x) / 3, (a.y + b.y + d.y) / 3, (a.z + b.z + d.z) / 3};
+                float x = ctr.x / 0.5f, y = ctr.y / 0.5f, z = ctr.z / 0.5f;
+                bool keep;
+                if (style == 0)      keep = y > 0.35f;                       // Cap / buzz: crown only
+                else if (style == 5) keep = absf(x) < 0.22f && y > 0.05f;    // Mohawk: centre strip
+                else if (z > -0.10f) keep = y > 0.28f;                       // front + sides: high hairline above the brows
+                else                 keep = y > -0.30f;                      // back: down to the nape
+                if (!keep) continue;
+                int bi = (int)cap.vertices.size();
+                cap.vertices.push_back(a); cap.vertices.push_back(b); cap.vertices.push_back(d);
+                cap.triangles.push_back(bi); cap.triangles.push_back(bi + 1); cap.triangles.push_back(bi + 2);
+            }
+            float vol = (style == 7) ? 1.5f : 1.0f;   // Afro: puffier
+            m.Add(cap, {hc.x, hc.y + 0.10f * hh, hc.z},
+                  {hw * 2.0f * 1.07f * vol, hh * 2.0f * 1.06f * vol, hd * 2.0f * 1.08f * vol}, &c.hair);
+            if (style == 2 || style == 4)   // Long / Ponytail: a panel down the back
+                m.Add(Mesh::Cube(1.0f), {hc.x, hc.y - 0.7f * hh, hc.z - 0.75f * hd},
+                      {hw * 1.3f, hh * 2.4f, hd * 0.5f}, &c.hair);
+            if (style == 4)                 // Ponytail: a tuft behind
+                m.Add(Mesh::Sphere(0.5f, 8, 8), {hc.x, hc.y + 0.2f * hh, hc.z - hd * 1.1f},
+                      {hw * 0.7f, hh * 0.7f, hd * 0.7f}, &c.hair);
+            if (style == 3)                 // Spiky: a few cones on top
+                for (int i = -1; i <= 1; ++i)
+                    m.Add(Mesh::Cone(0.5f, 1.0f, 6), {hc.x + i * 0.34f * hw, headTop, hc.z + (i ? 0 : 0.1f * hd)},
+                          {0.30f * hw, 0.55f * hh, 0.30f * hw}, &c.hair);
+            if (style == 6)                 // Bun on the back of the crown
+                m.Add(Mesh::Sphere(0.5f, 8, 10), {hc.x, headTop + 0.04f * hh, hc.z - 0.5f * hd},
+                      {hw, hh, hd}, &c.hair);
+        }
+
+        if (c.beard)                        // jaw / chin: a flat patch below the mouth
+            m.Add(Mesh::Sphere(0.5f, 9, 9), {0, hc.y - 0.70f * hh, hc.z + 0.22f * hd},
+                  {hw * 1.35f, hh * 0.62f, hd * 1.05f}, &c.hair);
+        if (c.mustache)                     // bar above the mouth
+            m.Add(Mesh::Cube(1.0f), {0, hc.y - 0.24f * hh, faceZ - 0.02f * hd},
+                  {0.34f * hw, 0.06f * hw, 0.10f * hw}, &c.hair);
+
+        if (c.hasGlasses) {
+            float eyeY = hc.y + 0.06f * hh, eyeX = 0.42f * hw * p.eyeSpacing, gz = faceZ + 0.02f * hd;
+            float eR = 0.22f * hw;
+            for (int s = -1; s <= 1; s += 2)
+                m.Add(Mesh::Torus(0.5f, 0.12f, 12, 6), {s * eyeX, eyeY, gz},
+                      {eR * 2.0f, eR * 2.0f, eR * 0.6f}, &c.glasses);
+            m.Add(Mesh::Cube(1.0f), {0, eyeY, gz}, {eyeX * 0.8f, 0.05f * hw, 0.05f * hw}, &c.glasses);
+        }
+        if (c.hasHat) {
+            m.Add(Mesh::Cylinder(0.5f, 1.0f, 16), {hc.x, headTop + 0.22f * hh, hc.z},
+                  {hw * 2.0f, hh * 1.0f, hd * 2.0f}, &c.hat);   // crown
+            m.Add(Mesh::Cylinder(0.5f, 1.0f, 16), {hc.x, headTop + 0.02f * hh, hc.z},
+                  {hw * 3.0f, hh * 0.16f, hd * 3.0f}, &c.hat);  // brim
+        }
+    }
 
     /// Build the mesh for an explicit parameter set (used for animation frames).
     Mesh Build(const HumanoidParams& pp0) const {
@@ -161,10 +281,16 @@ public:
                     if (g < 0.5f && v.z > 0.0f)
                         v.z += (0.5f - g) * 0.05f * sw(0.66f, 0.72f, v.y) * (1.0f - sw(0.78f, 0.84f, v.y));
                 }
-                // Global size: height, plus overall build thickness + body depth.
-                float Hgt = 1.85f * pp.height;
-                float wx = Hgt * pp.build, wz = Hgt * pp.build * pp.bodyDepth;
-                for (Vec3& v : m.vertices) { v.x *= wx; v.y *= Hgt; v.z *= wz; }
+                // Global size. Height scales mostly VERTICALLY — it makes a TALLER
+                // person, not a uniformly bigger one: full effect on Y, but only a
+                // gentle 35% on width/depth (taller people are a touch wider).
+                float Vgt    = 1.85f * pp.height;
+                float widthH = 1.0f + (pp.height - 1.0f) * 0.35f;
+                float wx = 1.85f * pp.build * widthH;
+                float wz = 1.85f * pp.build * pp.bodyDepth * widthH;
+                for (Vec3& v : m.vertices) { v.x *= wx; v.y *= Vgt; v.z *= wz; }
+                // Eyeballs (the modelled sockets are empty), optional brows + hair.
+                AddHeadDetails(m, pp, c);
                 usedBase = true;
             }
         }

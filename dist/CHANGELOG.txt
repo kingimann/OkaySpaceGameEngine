@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.52.0
+  - Fix: the skybox no longer disappears in 3D scenes. The tone-map and bloom
+    post passes were forcing every pixel opaque, so the transparent background
+    (where the skybox shows through) turned solid black. They now preserve the
+    background alpha.
+  - Performance: the mesh rasterizer is now multithreaded — the frame is split
+    into horizontal bands across CPU cores, each filling its own scanlines (no
+    locks). On top of v2.51's post-FX threading this roughly halves frame time
+    again on a 4-core machine (e.g. a busy scene ~103 ms -> ~65 ms).
+  - Fix: SSAO grain. The half-res AO pass got its blur back (3x3 at half res), so
+    contact shadows are smooth instead of speckled.
+  - Fix: reduced directional-shadow acne (larger normal-offset + depth bias).
+
 v2.51.0
   - Performance (major): the 3D renderer was far too slow with the full effect
     stack on (a simple scene could sit at ~1-3 fps). Fixes:

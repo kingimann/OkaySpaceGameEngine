@@ -148,6 +148,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
             << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << " "
             << mr->tiling.x << " " << mr->tiling.y << "\n";
+        // Normal map (separate record so older scenes still load).
+        if (!mr->normalMap.empty())
+            out << "  normalmap " << Quote(mr->normalMap) << " " << mr->normalStrength << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -638,6 +641,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int p = in.peek();
                         if (std::isdigit(p) || p == '-' || p == '.')
                             in >> mr->tiling.x >> mr->tiling.y;
+                    }
+                } else if (field == "normalmap") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->normalMap = ReadQuoted(in);
+                        in >> std::ws;
+                        int p = in.peek();
+                        if (std::isdigit(p) || p == '-' || p == '.') in >> mr->normalStrength;
                     }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();

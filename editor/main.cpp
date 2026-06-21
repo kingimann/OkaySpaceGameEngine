@@ -4947,6 +4947,16 @@ void DrawInspector(EditorState& ed) {
                     mr->tiling = {til[0], til[1]}; ed.dirty = true;
                 }
             }
+            char nmap[260];
+            std::strncpy(nmap, mr->normalMap.c_str(), sizeof(nmap) - 1);
+            nmap[sizeof(nmap) - 1] = '\0';
+            if (ImGui::InputText("Normal Map##mesh", nmap, sizeof(nmap))) { mr->normalMap = nmap; ed.dirty = true; }
+            if (AcceptAssetPathField(mr->normalMap)) ed.dirty = true;   // drop from Project
+            if (!mr->normalMap.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##nmap")) { mr->normalMap.clear(); ed.dirty = true; }
+                if (ImGui::SliderFloat("Bump Strength##mesh", &mr->normalStrength, 0.0f, 2.0f)) ed.dirty = true;
+            }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
             if (ImGui::SmallButton("Subdivide##mesh")) { mr->mesh.Subdivide(); ed.dirty = true; }

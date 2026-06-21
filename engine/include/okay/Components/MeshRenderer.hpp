@@ -35,6 +35,13 @@ public:
     /// Texture repeat across the surface (UVs are multiplied by this).
     Vec2 tiling = {1.0f, 1.0f};
 
+    /// Optional tangent-space normal map (PNG, RGB = XYZ in 0..1). Adds bumpy
+    /// surface detail (per-pixel lighting only) without extra geometry. Build Game
+    /// bundles the file alongside the exe.
+    std::string normalMap;
+    /// Strength of the normal map perturbation (0 = flat, 1 = full).
+    float normalStrength = 1.0f;
+
     /// Optional matcap (lit-sphere) image, sampled by the camera-space normal.
     /// This is the technique MakeHuman uses for soft, skin-like shading: it bakes
     /// the entire lighting response into a sphere image, so subtle surface relief

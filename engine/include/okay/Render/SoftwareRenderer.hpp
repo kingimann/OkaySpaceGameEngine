@@ -252,7 +252,9 @@ public:
                        const float* WXa, const float* WYa, const float* WZa,
                        const std::vector<Image>* mips, const Color& base, const Color& tint, const Vec3& eye,
                        float shininess, float specularK, float er, float eg, float eb,
-                       float fog, float fr, float fg, float fb) {
+                       float fog, float fr, float fg, float fb,
+                       const std::vector<Image>* normalMips = nullptr,
+                       const Vec3& tangent = Vec3{1, 0, 0}, float normalStrength = 1.0f) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -267,6 +269,9 @@ public:
         const bool textured = mips && !mips->empty() && (*mips)[0].Width() > 0;
         int tw = textured ? (*mips)[0].Width() : 0, th = textured ? (*mips)[0].Height() : 0;
         LodGrad lg2 = textured ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
+        const bool bump = normalMips && !normalMips->empty() && (*normalMips)[0].Width() > 0;
+        int nw = bump ? (*normalMips)[0].Width() : 0, nh = bump ? (*normalMips)[0].Height() : 0;
+        LodGrad lgN = bump ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
         Vec3 toLight = SceneLight::Direction() * -1.0f;
         toLight = toLight.Normalized();
         for (int y = minY; y <= maxY; ++y) {
@@ -284,6 +289,29 @@ public:
                        w0 * NYa[0] + w1 * NYa[1] + w2 * NYa[2],
                        w0 * NZa[0] + w1 * NZa[1] + w2 * NZa[2]};
                 n = n.Normalized();
+                if (bump) {
+                    float iwn = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                    if (iwn != 0.0f) {
+                        float un = (w0 * U[0] + w1 * U[1] + w2 * U[2]) / iwn;
+                        float vn = (w0 * V[0] + w1 * V[1] + w2 * V[2]) / iwn;
+                        Color nc = SampleMips(*normalMips, un, vn,
+                                              PixelLod(un * iwn, vn * iwn, iwn, lgN, nw, nh));
+                        // Tangent-space normal (0..1 -> -1..1), scaled by strength.
+                        Vec3 tn{(nc.r * 2.0f - 1.0f) * normalStrength,
+                                (nc.g * 2.0f - 1.0f) * normalStrength,
+                                 nc.b * 2.0f - 1.0f};
+                        // Build an orthonormal TBN around the interpolated normal.
+                        Vec3 T = tangent - n * Vec3::Dot(n, tangent);
+                        float tl = T.Magnitude();
+                        if (tl > 1e-6f) {
+                            T = T * (1.0f / tl);
+                            Vec3 B = Vec3::Cross(n, T);
+                            Vec3 pn = T * tn.x + B * tn.y + n * tn.z;
+                            float pl = pn.Magnitude();
+                            if (pl > 1e-6f) n = pn * (1.0f / pl);
+                        }
+                    }
+                }
                 Vec3 wpos{w0 * WXa[0] + w1 * WXa[1] + w2 * WXa[2],
                           w0 * WYa[0] + w1 * WYa[1] + w2 * WYa[2],
                           w0 * WZa[0] + w1 * WZa[1] + w2 * WZa[2]};
@@ -412,6 +440,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const bool hasUV = mr->mesh.uvs.size() == v.size();
         const bool faceCols = mr->mesh.HasFaceColors();   // per-triangle colors?
         const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
+        const std::vector<Image>* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         Image* mcap = (mr->matcap.empty() || mr->unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
         const bool useMatcap = mcap && mr->mesh.HasNormals();
@@ -464,6 +493,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             Vec3 ln = Vec3::Cross(v[idx[1]] - v[idx[0]], v[idx[2]] - v[idx[0]]);
             float ax = std::fabs(ln.x), ay = std::fabs(ln.y), az = std::fabs(ln.z);
             CV in[3];
+            float uvx[3], uvy[3];
             for (int k = 0; k < 3; ++k) {
                 Vec4 c = vp * Vec4{wp[k], 1.0f};
                 float uu, vt;
@@ -474,6 +504,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     else if (ay >= ax && ay >= az) { uu = p.x + 0.5f; vt = p.z + 0.5f; }
                     else { uu = p.x + 0.5f; vt = p.y + 0.5f; }
                 }
+                uvx[k] = uu; uvy[k] = vt;
                 // Per-vertex world normal (smoothed if the mesh has normals, else
                 // the face normal), flipped to match a culled back face.
                 Vec3 nk = mr->mesh.HasNormals()
@@ -501,6 +532,19 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 }
                 in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y,
                          lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z};
+            }
+
+            // Per-triangle world-space tangent (from edges + UV deltas) for normal
+            // mapping; constant across the face, so it survives near-plane clipping.
+            Vec3 triTangent{1, 0, 0};
+            if (normalMips) {
+                Vec3 e1 = wp[1] - wp[0], e2 = wp[2] - wp[0];
+                float du1 = uvx[1] - uvx[0], dv1 = uvy[1] - uvy[0];
+                float du2 = uvx[2] - uvx[0], dv2 = uvy[2] - uvy[0];
+                float det = du1 * dv2 - du2 * dv1;
+                Vec3 T = std::fabs(det) > 1e-8f ? (e1 * dv2 - e2 * dv1) * (1.0f / det) : e1;
+                float tl = T.Magnitude();
+                triTangent = tl > 1e-6f ? T * (1.0f / tl) : Vec3{1, 0, 0};
             }
 
             // Sutherland-Hodgman clip against the near plane (w > NEAR).
@@ -585,7 +629,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     r.TrianglePhong(sx, sy, sd, iw, uu, vv, nx, ny, nz, wx, wy, wz,
                                     tex, base, mr->color, eye, mr->shininess, mr->specular,
                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
-                                    fogF, fogR, fogG, fogB);
+                                    fogF, fogR, fogG, fogB,
+                                    normalMips, triTangent, mr->normalStrength);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.33.0
+  - Rendering: per-pixel (Phong) lighting. Lit meshes are now shaded at every
+    pixel using the interpolated surface normal, instead of shading per-vertex
+    and smearing the result across each triangle. The payoff: low-poly and
+    curved surfaces look smooth, and specular highlights are clean and round
+    instead of faceted/blocky. Works for textured and untextured meshes.
+    On by default; falls back to faster per-vertex shading if turned off.
+
 v2.32.0
   - Rendering: better 3D model + texture quality.
     - Textured meshes are now lit SMOOTHLY (per-vertex/Gouraud) instead of one

@@ -81,7 +81,10 @@ inline void ApplySceneLight(const Scene& scene) {
     if (!any) {
         // No Light object: keep the script-controllable global light + the
         // scene's ambient so a built game still has the author's base lighting.
+        // No Light object: fall back to the scene's ambient render setting so a
+        // built game still has the base lighting the author chose.
         SceneLights::SetAmbient(scene.renderSettings.ambient);
+        SceneLight::SetDirection(DefaultLightDir());
         SceneLight::SetAmbient(scene.renderSettings.ambient);
     }
 }

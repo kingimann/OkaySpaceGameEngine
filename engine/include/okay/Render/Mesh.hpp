@@ -1078,7 +1078,7 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         for (const Blob& b2 : bl) {
             float dd = one(b2, pt);
             float h = 0.5f + 0.5f * (dr - dd) / kk; h = h < 0 ? 0 : (h > 1 ? 1 : h);
-            dr = (dd * (1 - h) + dr * h) - kk * h * (1 - h);
+            dr = (dr * (1 - h) + dd * h) - kk * h * (1 - h);   // smooth-min: blend toward the nearer surface
         }
         return dr;
     };

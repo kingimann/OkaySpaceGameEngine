@@ -669,10 +669,18 @@ int main() {
         for (auto& v : s.vertices) worst = std::fmax(worst, std::fabs(v.Magnitude() - 1.0f));
         CHECK(worst < 0.2f);
 
-        // The seamless humanoid builds a single non-empty connected body.
+        // The seamless humanoid builds a single non-empty connected body that
+        // spans the WHOLE figure (not just the appended head) — guards against
+        // the smooth-union ever collapsing the body away again.
         Mesh sh = BuildSmoothHumanoid(HumanoidParams{}, nullptr, 28);
         CHECK(sh.TriangleCount() > 100);
         CHECK(sh.name == "Human");
+        Vec3 slo, shi; sh.Bounds(slo, shi);
+        CHECK((shi.y - slo.y) > 2.0f);          // full body height, not a lone head
+        CHECK(slo.y < 0.5f);                     // legs reach down past the torso
+        // Higher resolution yields a finer (more triangles) surface.
+        Mesh shHi = BuildSmoothHumanoid(HumanoidParams{}, nullptr, 44);
+        CHECK(shHi.TriangleCount() > sh.TriangleCount());
     }
 
     // --- Smooth (Gouraud) vertex normals: one per vertex, unit length, and

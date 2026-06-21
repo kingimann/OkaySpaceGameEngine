@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.17.1
+  - Terrain: prop scattering (trees, rocks, bushes) — like Unity's tree/detail
+    painting. In the Terrain inspector pick a prop (Tree / Pine / Rock / Bush),
+    a count, a random scale range, a max slope and a height band, then hit
+    Scatter to drop them onto the surface (each placed on the ground with random
+    yaw + scale, skipping slopes that are too steep). "Clear Scattered" removes
+    them again. Scattered props are real child objects, so they save with the
+    scene and can be edited individually.
+  - New procedural primitives: Tree, Pine, Rock and Bush — colored and
+    smooth-shaded — also available under Create > 3D.
+
 v2.17.0
   - Terrain Creator (Unity-style) — a big upgrade to the Terrain component:
     - Procedural generation from Perlin/fractal noise, with one-click presets:

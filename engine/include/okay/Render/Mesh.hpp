@@ -367,8 +367,67 @@ struct Mesh {
         return m;
     }
 
+    /// A broadleaf tree: a tapered trunk under a rounded leafy canopy. Sits on
+    /// the ground (base at y=0), ~2 units tall. Per-face colored + smooth-shaded
+    /// so it drops onto terrain and looks right immediately.
+    static Mesh Tree() {
+        Mesh m; m.name = "Tree";
+        Color bark = Color::FromBytes(102, 72, 46);
+        Color leaf = Color::FromBytes(60, 122, 56);
+        m.Add(Cylinder(0.5f, 1.0f, 8), {0.0f, 0.45f, 0.0f}, {0.16f, 0.9f, 0.16f}, &bark);  // trunk
+        m.Add(Sphere(0.5f, 8, 10), {0.0f, 1.30f, 0.0f},  {1.05f, 1.10f, 1.05f}, &leaf);    // canopy
+        m.Add(Sphere(0.5f, 7, 9),  {-0.35f, 1.05f, 0.18f}, {0.7f, 0.7f, 0.7f}, &leaf);
+        m.Add(Sphere(0.5f, 7, 9),  {0.34f, 1.12f, -0.2f}, {0.66f, 0.66f, 0.66f}, &leaf);
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A conifer / pine: a trunk under stacked cones. Base at y=0, ~2.3 tall.
+    static Mesh Pine() {
+        Mesh m; m.name = "Pine";
+        Color bark = Color::FromBytes(96, 66, 42);
+        Color leaf = Color::FromBytes(42, 104, 64);
+        m.Add(Cylinder(0.5f, 1.0f, 8), {0.0f, 0.35f, 0.0f}, {0.13f, 0.7f, 0.13f}, &bark);  // trunk
+        m.Add(Cone(0.5f, 1.0f, 10), {0.0f, 1.05f, 0.0f}, {1.10f, 1.0f, 1.10f}, &leaf);
+        m.Add(Cone(0.5f, 1.0f, 10), {0.0f, 1.55f, 0.0f}, {0.85f, 0.9f, 0.85f}, &leaf);
+        m.Add(Cone(0.5f, 1.0f, 10), {0.0f, 2.00f, 0.0f}, {0.55f, 0.8f, 0.55f}, &leaf);
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A boulder: a low, irregularly-lumped dome. Base near y=0, ~0.8 tall.
+    static Mesh Rock() {
+        Mesh m = Icosphere(0.5f, 2);
+        Color stone = Color::FromBytes(124, 118, 110);
+        // Lump it: push each vertex by a smooth pseudo-random amount, then squash.
+        for (Vec3& v : m.vertices) {
+            float n = std::sin(v.x * 7.3f + 1.1f) * std::cos(v.z * 6.1f + 2.7f)
+                    + std::sin(v.y * 5.7f + 0.5f) * 0.5f;
+            float s = 1.0f + 0.22f * n;
+            v = {v.x * s, v.y * s * 0.62f, v.z * s};   // squashed boulder
+        }
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        for (Vec3& v : m.vertices) v.y -= lo.y;        // rest on the ground
+        m.triColors.assign(m.TriangleCount(), stone);
+        m.name = "Rock";
+        m.ComputeSmoothNormals();
+        return m;
+    }
+    /// A small shrub: a cluster of leafy spheres at ground level, ~0.7 tall.
+    static Mesh Bush() {
+        Mesh m; m.name = "Bush";
+        Color leaf = Color::FromBytes(70, 128, 62);
+        m.Add(Sphere(0.5f, 6, 8), {0.0f, 0.28f, 0.0f},   {0.9f, 0.8f, 0.9f}, &leaf);
+        m.Add(Sphere(0.5f, 6, 8), {-0.28f, 0.22f, 0.1f}, {0.6f, 0.55f, 0.6f}, &leaf);
+        m.Add(Sphere(0.5f, 6, 8), {0.26f, 0.24f, -0.12f},{0.62f, 0.6f, 0.62f}, &leaf);
+        m.ComputeSmoothNormals();
+        return m;
+    }
+
     /// Recreate a primitive mesh from its name.
     static Mesh FromName(const std::string& n) {
+        if (n == "Tree")      return Tree();
+        if (n == "Pine")      return Pine();
+        if (n == "Rock")      return Rock();
+        if (n == "Bush")      return Bush();
         if (n == "Pyramid")   return Pyramid();
         if (n == "Quad")      return Quad();
         if (n == "Plane")     return Plane();

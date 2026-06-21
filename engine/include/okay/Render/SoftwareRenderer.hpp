@@ -134,7 +134,8 @@ public:
     /// (camera distance; smaller = nearer), depth-tested per pixel.
     void Triangle(float x0, float y0, float d0,
                   float x1, float y1, float d1,
-                  float x2, float y2, float d2, std::uint32_t abgr) {
+                  float x2, float y2, float d2, std::uint32_t abgr,
+                  int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(x0, std::fmin(x1, x2)));
         int maxX = (int)std::ceil (std::fmax(x0, std::fmax(x1, x2)));
         int minY = (int)std::floor(std::fmin(y0, std::fmin(y1, y2)));
@@ -143,6 +144,7 @@ public:
         if (minY < 0) minY = 0;
         if (maxX >= width) maxX = width - 1;
         if (maxY >= height) maxY = height - 1;
+        if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
 
         float area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
         if (area == 0.0f) return;
@@ -168,7 +170,8 @@ public:
     void TriangleSmooth(const float* X, const float* Y, const float* D,
                         const float* LR, const float* LG, const float* LB,
                         const Color& base, float spec, float er, float eg, float eb,
-                        float fog, float fr, float fg, float fb) {
+                        float fog, float fr, float fg, float fb,
+                        int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -177,6 +180,7 @@ public:
         if (minY < 0) minY = 0;
         if (maxX >= width) maxX = width - 1;
         if (maxY >= height) maxY = height - 1;
+        if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
         float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
         if (area == 0.0f) return;
         float inv = 1.0f / area;
@@ -269,7 +273,8 @@ public:
                      const std::vector<Image>& mips, const Color& tint,
                      const float* LR, const float* LG, const float* LB, float spec,
                      float er, float eg, float eb,
-                     float fog, float fr, float fg, float fb) {
+                     float fog, float fr, float fg, float fb,
+                     int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -278,6 +283,7 @@ public:
         if (minY < 0) minY = 0;
         if (maxX >= width) maxX = width - 1;
         if (maxY >= height) maxY = height - 1;
+        if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
         float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
         if (area == 0.0f || mips.empty()) return;
         float inv = 1.0f / area;
@@ -333,7 +339,8 @@ public:
                        const Vec3& tangent = Vec3{1, 0, 0}, float normalStrength = 1.0f,
                        float reflectivity = 0.0f,
                        const std::vector<Image>* specMips = nullptr,
-                       float metallic = 0.0f) {
+                       float metallic = 0.0f,
+                       int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -342,6 +349,7 @@ public:
         if (minY < 0) minY = 0;
         if (maxX >= width) maxX = width - 1;
         if (maxY >= height) maxY = height - 1;
+        if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
         float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
         if (area == 0.0f) return;
         float inv = 1.0f / area;
@@ -664,13 +672,13 @@ inline float& ShadowSoftness() { static float v = 2.5f; return v; }
 inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
     ShadowMap& sm = Shadows();
     if (!sm.enabled || sm.size <= 0) return 1.0f;
-    Vec3 p = wpos + n * (sm.texelWorld * 2.5f);
+    Vec3 p = wpos + n * (sm.texelWorld * 3.5f);     // normal-offset bias (anti-acne)
     Vec4 lc = sm.viewProj * Vec4{p, 1.0f};
     if (lc.w == 0) return 1.0f;
     float iw = 1.0f / lc.w, x = lc.x * iw, y = lc.y * iw, z = lc.z * iw;
     if (x < -1 || x > 1 || y < -1 || y > 1 || z > 1) return 1.0f;
     float fx = (x * 0.5f + 0.5f) * sm.size, fy = (1.0f - (y * 0.5f + 0.5f)) * sm.size;
-    const float bias = 0.0025f;
+    const float bias = 0.004f;
     // 6-tap Poisson-disk PCF (center + 5 ring taps): scattered samples give a
     // smoother penumbra than a rigid grid, at roughly half the cost of a 12-tap
     // kernel — this runs per shaded pixel so the tap count matters for FPS.
@@ -748,6 +756,25 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
             if (tot > 0) { float a = 1.0f - strength * occWeighted / tot; ao[(std::size_t)hy * hw + hx] = a < 0 ? 0 : a; }
         }
     });
+    // Blur the half-res AO (3x3 box) to kill the hemisphere-sampling noise — SSAO
+    // is inherently grainy and needs this smoothing pass. Cheap at half resolution.
+    {
+        static std::vector<float> aob; aob = ao;
+        ParallelRows(0, hh, [&](int ya, int yb) {
+            for (int y = ya; y < yb; ++y)
+            for (int x = 0; x < hw; ++x) {
+                float s = 0; int c = 0;
+                for (int dy = -1; dy <= 1; ++dy) {
+                    int ny = y + dy; if (ny < 0 || ny >= hh) continue;
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        int nx = x + dx; if (nx < 0 || nx >= hw) continue;
+                        s += aob[(std::size_t)ny * hw + nx]; ++c;
+                    }
+                }
+                ao[(std::size_t)y * hw + x] = c ? s / c : 1.0f;
+            }
+        });
+    }
     // Bilinear-upsample the half-res AO and modulate the full-res color.
     ParallelRows(0, H, [&](int ya, int yb) {
         for (int y = ya; y < yb; ++y) {
@@ -856,7 +883,7 @@ inline void ApplyBloom(Raster& r) {
                 float c = (float)((v >> (k * 8)) & 0xFF) + bl * intensity;
                 o[k] = c > 255 ? 255 : c;
             }
-            r.color[(std::size_t)y * W + x] = (0xFFu << 24) | ((std::uint32_t)o[2] << 16) | ((std::uint32_t)o[1] << 8) | (std::uint32_t)o[0];
+            r.color[(std::size_t)y * W + x] = (v & 0xFF000000u) | ((std::uint32_t)o[2] << 16) | ((std::uint32_t)o[1] << 8) | (std::uint32_t)o[0];
         }
         }
     });
@@ -892,7 +919,7 @@ inline void ApplyToneMap(Raster& r) {
             float c1 = (float)((v >> 8)  & 0xFF) / 255.0f;
             float c2 = (float)((v >> 16) & 0xFF) / 255.0f;
             float o0 = aces(c0 * e), o1 = aces(c1 * e), o2 = aces(c2 * e);
-            r.color[i] = (0xFFu << 24)
+            r.color[i] = (v & 0xFF000000u)            // keep alpha (transparent bg = skybox)
                        | ((std::uint32_t)(o2 * 255.0f + 0.5f) << 16)
                        | ((std::uint32_t)(o1 * 255.0f + 0.5f) << 8)
                        |  (std::uint32_t)(o0 * 255.0f + 0.5f);
@@ -983,6 +1010,22 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     } else if (!r.gvalid.empty()) {
         r.gpos.clear(); r.gnrm.clear(); r.gvalid.clear();
     }
+    // Pre-warm the texture / mip caches single-threaded: the lazy caches insert
+    // into shared unordered_maps, which is not safe to do from the worker threads
+    // below. After this, the parallel band render only READS them.
+    for (const auto& go : scene.Objects()) {
+        auto* mr = go->GetComponent<MeshRenderer>();
+        if (!mr) continue;
+        if (!mr->texture.empty())     GetCachedMips(mr->texture);
+        if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
+        if (!mr->specularMap.empty()) GetCachedMips(mr->specularMap);
+        if (!mr->matcap.empty() && !mr->unlit) GetCachedTexture(mr->matcap);
+    }
+    // Rasterize the meshes across CPU cores: each worker owns a horizontal band
+    // of scanlines [bandY0, bandY1] and only fills pixels inside it, so colour /
+    // depth / G-buffer writes never overlap between threads (no locks needed).
+    // Vertex transforms are repeated per band, but pixel fill dominates.
+    auto renderBand = [&](int bandY0, int bandY1) {
     for (const auto& go : scene.Objects()) {
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
@@ -1189,27 +1232,30 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
                                     fogF, fogR, fogG, fogB,
                                     normalMips, triTangent, mr->normalStrength,
-                                    mr->reflectivity, specMips, mr->metallic);
+                                    mr->reflectivity, specMips, mr->metallic, bandY0, bandY1);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
                     r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, lr, lg, lb, spec,
                                   mr->emissive.r, mr->emissive.g, mr->emissive.b,
-                                  fogF, fogR, fogG, fogB);
+                                  fogF, fogR, fogG, fogB, bandY0, bandY1);
                 } else if (smooth) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
                     r.TriangleSmooth(sx, sy, sd, lr, lg, lb, base, spec,
                                      mr->emissive.r, mr->emissive.g, mr->emissive.b,
-                                     fogF, fogR, fogG, fogB);
+                                     fogF, fogR, fogG, fogB, bandY0, bandY1);
                 } else
                     r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1],
-                               sx[2], sy[2], sd[2], abgr);
+                               sx[2], sy[2], sd[2], abgr, bandY0, bandY1);
             }
         }
     }
+    };  // renderBand
+    // Split the frame into horizontal bands across hardware threads.
+    ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); });
     if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
     ApplyBloom(r);                                                   // bright-pass glow
     ApplyToneMap(r);                                                 // filmic highlight rolloff

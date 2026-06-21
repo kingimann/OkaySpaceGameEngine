@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.21.2
+  - Character: real separated FINGERS — each digit is now a slim two-segment
+    capsule (with a knuckle curl) plus an opposed thumb, so the hand reads as a
+    proper hand, not a lump.
+  - Toward a clean anatomical "base mesh" look: leaner athletic default build,
+    longer arms and legs, narrower waist, and an A-pose stance (arms angled out).
+    Arm Spread now goes up to 50 deg for a full T/A pose.
+  - New "Base Mesh" preset: a lean, uniform-gray, A-posed clay figure (like a 3D
+    modelling reference) in one click.
+
 v2.21.1
   - Character proportion refit (less "blobby balloon", more human):
     - Slimmer torso (narrower chest/ribcage/waist/pelvis and less front-to-back

@@ -22,17 +22,17 @@ namespace okay {
 /// as sliders. Multipliers are applied to a fixed base layout.
 struct HumanoidParams {
     float height       = 1.0f;   // overall vertical scale
-    float build        = 1.0f;   // limb/torso thickness
-    float headSize     = 0.95f;  // realistic ~7.5-head proportions
-    float shoulderWidth= 1.06f;  // arm spacing + torso top width
-    float hipWidth     = 0.9f;   // leg spacing + hip width (narrower hips)
-    float armLength    = 1.05f;  // arms reach toward mid-thigh
-    float legLength    = 1.08f;  // longer legs read as a taller, adult build
+    float build        = 0.94f;  // limb/torso thickness (lean athletic base)
+    float headSize     = 0.92f;  // realistic ~7.5-head proportions
+    float shoulderWidth= 1.08f;  // arm spacing + torso top width
+    float hipWidth     = 0.88f;  // leg spacing + hip width (narrower hips)
+    float armLength    = 1.08f;  // arms reach toward mid-thigh
+    float legLength    = 1.14f;  // long lean legs (taller, adult base-mesh build)
     float neckLength   = 1.0f;
     float handSize     = 1.0f;
     float footSize     = 1.0f;
-    float armSpread    = 7.0f;   // degrees arms angle out from the body (A/T-pose)
-    float legSpread    = 4.0f;   // degrees legs angle out (stance width)
+    float armSpread    = 26.0f;  // degrees arms angle out (A-pose, like a base mesh)
+    float legSpread    = 6.0f;   // degrees legs angle out (stance width)
     float torsoLength  = 1.0f;   // lengthens the torso (raises the upper body)
     float bodyDepth    = 0.92f;  // front-to-back thickness of torso + hips
     int   hairStyle    = 1;      // 0 cap, 1 short, 2 long, 3 spiky, 4 ponytail, 5 mohawk
@@ -47,7 +47,7 @@ struct HumanoidParams {
     float noseSize     = 1.0f;   // multiplier on nose size
     float armThickness = 1.0f;   // arm girth (independent of build)
     float legThickness = 1.0f;   // leg girth (independent of build)
-    float waist        = 0.86f;  // hip/midsection width (tapered, athletic)
+    float waist        = 0.82f;  // hip/midsection width (tapered, athletic)
     float belly        = 0.0f;   // belly size (0 = none)
     float armGap       = 0.0f;   // lateral spacing of arms from the body (+out, -in)
     float legGap       = 0.0f;   // lateral spacing of legs (stance width; +apart, -together)
@@ -65,7 +65,7 @@ struct HumanoidParams {
         cl(torsoLength, 0.9f, 1.12f); cl(bodyDepth, 0.82f, 1.08f);
         cl(handSize, 0.8f, 1.18f);    cl(footSize, 0.82f, 1.25f);
         cl(waist, 0.8f, 1.15f);       cl(belly, 0.0f, 0.85f);
-        cl(armSpread, 0.0f, 25.0f);   cl(legSpread, 0.0f, 12.0f);
+        cl(armSpread, 0.0f, 50.0f);   cl(legSpread, 0.0f, 14.0f);
         cl(armGap, -0.05f, 0.10f);    cl(legGap, -0.05f, 0.14f);
         cl(eyeSpacing, 0.75f, 1.3f);  cl(eyeSize, 0.75f, 1.35f);
         cl(mouthWidth, 0.65f, 1.4f);  cl(noseSize, 0.7f, 1.5f);
@@ -1169,32 +1169,47 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     // off the silhouette without inflating the body into a balloon.
     body.Smooth(0.32f); body.Smooth(-0.34f);
     for (const HumanoidPart& pt : BuildHumanoidParts(p, c)) if (pt.name == "Head") body.Append(pt.mesh);
-    // Fingers: too thin to resolve in the SDF grid, so they're appended at full
-    // detail — four fingers + a thumb, oriented along each forearm. They read as a
+    // Fingers: too thin to resolve in the SDF grid, so each digit is appended at
+    // full detail as a slim capsule oriented along the hand — four separated
+    // fingers (with a knuckle bend) + an opposed thumb, so the hand reads as a
     // real hand instead of a featureless stump.
     {
         Color skinC = skin;
-        float hs = 0.125f * B * p.handSize;
+        float hs = 0.098f * B * p.handSize;
+        // Append a capsule from `a` along unit `dir` for `len`, radius `rad`,
+        // oriented by rotation `rot` (its local Y axis runs along the digit).
+        auto digit = [&](const Vec3& a, const Quat& rot, const Vec3& dir, float len, float rad) {
+            Mesh cap = Mesh::Capsule(0.5f, 1.0f, 6, 2);
+            Vec3 center = a + dir * (len * 0.5f);
+            std::size_t base = body.vertices.size();
+            for (Vec3 v : cap.vertices) {
+                v = Vec3{v.x * rad, v.y * len, v.z * rad};
+                body.vertices.push_back(rot * v + center);
+            }
+            for (int t : cap.triangles) body.triangles.push_back((int)base + t);
+            for (int f = 0, n = cap.TriangleCount(); f < n; ++f) body.triColors.push_back(skinC);
+        };
         for (const HandRec& hd : hands) {
             Vec3 dn = hd.fq * Vec3{0, -1, 0};   // along the fingers
-            Vec3 sd = hd.fq * Vec3{1, 0, 0};    // across the palm
-            Vec3 palmTip = hd.wrist + dn * (hs * 1.95f);
+            Vec3 sd = hd.fq * Vec3{1, 0, 0};    // across the knuckles
+            // Curl the fingers slightly forward (toward the palm front) for a
+            // natural relaxed hand rather than rigid spikes.
+            Quat curl = hd.fq * Quat::Euler({22.0f, 0.0f, 0.0f});
+            Vec3 cdn = curl * Vec3{0, -1, 0};
+            Vec3 knuckle = hd.wrist + dn * (hs * 1.7f);
             for (int f = 0; f < 4; ++f) {       // four fingers, middle longest
-                float off = (f - 1.5f) * hs * 0.40f;
-                float len = hs * (1.30f - 0.12f * std::fabs(f - 1.5f));
-                Vec3 root = palmTip + sd * off;
-                for (int seg = 0; seg < 3; ++seg) {
-                    Vec3 cc = root + dn * (len * (0.16f + 0.32f * seg));
-                    float r = hs * (0.20f - 0.018f * seg);
-                    body.Add(Mesh::Sphere(0.5f, 5, 6), cc, {r, r, r}, &skinC);
-                }
+                float off = (f - 1.5f) * hs * 0.42f;
+                float len = hs * (1.45f - 0.14f * std::fabs(f - 1.5f));
+                Vec3 root = knuckle + sd * off;
+                digit(root, hd.fq, dn, len * 0.55f, hs * 0.34f);             // proximal (straight)
+                Vec3 mid = root + dn * (len * 0.55f);
+                digit(mid, curl, cdn, len * 0.52f, hs * 0.29f);             // distal (curled)
             }
-            Vec3 tdir = (dn - sd * ((float)hd.s * 0.9f)).Normalized();   // thumb angles inward
-            Vec3 troot = hd.wrist + dn * (hs * 1.0f) - sd * ((float)hd.s * hs * 0.55f);
-            for (int seg = 0; seg < 2; ++seg) {
-                Vec3 cc = troot + tdir * (hs * (0.30f + 0.42f * seg));
-                body.Add(Mesh::Sphere(0.5f, 5, 6), cc, {hs * 0.22f, hs * 0.22f, hs * 0.22f}, &skinC);
-            }
+            // Thumb: opposed, lower on the hand, angled across toward the body.
+            Vec3 tdir = (dn - sd * ((float)hd.s * 1.1f)).Normalized();
+            Quat trot = hd.fq * Quat::AngleAxis((float)hd.s * 55.0f, Vec3{0, 0, 1});
+            Vec3 troot = hd.wrist + dn * (hs * 0.7f) - sd * ((float)hd.s * hs * 0.5f);
+            digit(troot, trot, tdir, hs * 0.95f, hs * 0.40f);
         }
     }
     body.name = "Human";

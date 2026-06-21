@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.21.5
+  - Character: default build is now athletic ("bulky but lean") instead of soft —
+    broader shoulders/chest, a tighter defined waist, narrower hips, slightly
+    thicker (muscular) arms and legs, and less front-to-back bulk. Reads as a
+    fit, low-body-fat figure rather than a chubby one.
+
 v2.21.4
   - Character: major proportion fix so the body reads as an adult human, not a
     chibi/Roblox figure.

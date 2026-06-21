@@ -4939,8 +4939,8 @@ void DrawInspector(EditorState& ed) {
             ch |= ImGui::SliderFloat("Foot Size##char",     &p.footSize,      0.4f, 2.0f);
             ImGui::Spacing();
             ImGui::TextDisabled("Pose");
-            ch |= ImGui::SliderFloat("Arm Spread##char",    &p.armSpread,     0.0f, 80.0f, "%.0f deg");
-            ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 30.0f, "%.0f deg");
+            ch |= ImGui::SliderFloat("Arm Spread##char",    &p.armSpread,     0.0f, 35.0f, "%.0f deg");
+            ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 18.0f, "%.0f deg");
             ch |= ImGui::SliderFloat("Arm Gap##char",       &p.armGap,       -0.20f, 0.40f, "%.2f");
             ch |= ImGui::SliderFloat("Leg Gap##char",       &p.legGap,       -0.15f, 0.40f, "%.2f");
             ImGui::Spacing();

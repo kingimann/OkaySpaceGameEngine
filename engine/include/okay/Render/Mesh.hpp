@@ -57,19 +57,24 @@ struct HumanoidParams {
     /// when the mesh is built (the underlying values are left untouched).
     void ClampHuman() {
         auto cl = [](float& v, float lo, float hi) { v = v < lo ? lo : (v > hi ? hi : v); };
-        cl(height, 0.7f, 1.5f);       cl(build, 0.78f, 1.35f);
-        cl(headSize, 0.82f, 1.10f);   cl(neckLength, 0.7f, 1.35f);
-        cl(shoulderWidth, 0.9f, 1.32f); cl(hipWidth, 0.75f, 1.2f);
-        cl(armLength, 0.85f, 1.15f);  cl(legLength, 0.85f, 1.2f);
-        cl(armThickness, 0.78f, 1.3f);cl(legThickness, 0.78f, 1.3f);
-        cl(torsoLength, 0.85f, 1.18f);cl(bodyDepth, 0.78f, 1.15f);
-        cl(handSize, 0.7f, 1.35f);    cl(footSize, 0.72f, 1.45f);
-        cl(waist, 0.7f, 1.25f);       cl(belly, 0.0f, 1.0f);
-        cl(armSpread, 0.0f, 30.0f);   cl(legSpread, 0.0f, 15.0f);
-        cl(armGap, -0.06f, 0.14f);    cl(legGap, -0.06f, 0.18f);
-        cl(eyeSpacing, 0.7f, 1.4f);   cl(eyeSize, 0.7f, 1.45f);
-        cl(mouthWidth, 0.6f, 1.5f);   cl(noseSize, 0.6f, 1.6f);
-        cl(browAngle, -28.0f, 28.0f);
+        cl(height, 0.8f, 1.4f);       cl(build, 0.82f, 1.3f);
+        cl(headSize, 0.85f, 1.08f);   cl(neckLength, 0.78f, 1.22f);
+        cl(shoulderWidth, 0.92f, 1.3f); cl(hipWidth, 0.78f, 1.15f);
+        cl(armLength, 0.88f, 1.12f);  cl(legLength, 0.9f, 1.16f);
+        cl(armThickness, 0.8f, 1.25f);cl(legThickness, 0.82f, 1.25f);
+        cl(torsoLength, 0.88f, 1.15f);cl(bodyDepth, 0.8f, 1.12f);
+        cl(handSize, 0.78f, 1.22f);   cl(footSize, 0.8f, 1.3f);
+        cl(waist, 0.78f, 1.2f);       cl(belly, 0.0f, 0.9f);
+        cl(armSpread, 0.0f, 25.0f);   cl(legSpread, 0.0f, 12.0f);
+        cl(armGap, -0.05f, 0.10f);    cl(legGap, -0.05f, 0.14f);
+        cl(eyeSpacing, 0.75f, 1.3f);  cl(eyeSize, 0.75f, 1.35f);
+        cl(mouthWidth, 0.65f, 1.4f);  cl(noseSize, 0.7f, 1.5f);
+        cl(browAngle, -25.0f, 25.0f);
+        // Realism coupling: hips never read much wider than the shoulders, and the
+        // waist can't be wider than the chest (keeps a natural human taper).
+        if (hipWidth > shoulderWidth + 0.10f) hipWidth = shoulderWidth + 0.10f;
+        float maxWaist = shoulderWidth * 1.15f;
+        if (waist > maxWaist) waist = maxWaist;
     }
 };
 
@@ -1055,15 +1060,16 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     const float aL = p.armLength, lL = p.legLength;
     const float up = 0.78f * H * (p.torsoLength - 1.0f);
     const float sW = p.shoulderWidth, hW = p.hipWidth;
-    // ---- Neck: a tapered column blending head to shoulders. ----
-    bl.push_back({1, {0, 1.40f * H + up, 0}, {0, 1.61f * H + up, 0}, {}, 0.085f * p.neckLength + 0.035f, skin});
+    // ---- Neck: a slim tapered column blending head to shoulders. ----
+    bl.push_back({1, {0, 1.40f * H + up, 0}, {0, 1.61f * H + up, 0}, {}, 0.072f * p.neckLength + 0.034f, skin});
     // ---- Torso: anatomical V-taper — broad shoulders/clavicle, pecs/ribcage,
     //      a narrow waist, then the pelvis. Each mass overlaps its neighbour so
     //      the smooth-union makes one continuous trunk. ----
     bl.push_back({2, {0, 1.40f * H + up, 0}, {}, {0.210f * sW * B, 0.115f * H, 0.160f * B * bd}, 0, shirt}); // base of neck (narrow; shoulders slope out via traps)
     bl.push_back({2, {0, 1.29f * H + up, 0.01f * bd}, {}, {0.300f * sW * B, 0.150f * H, 0.200f * B * bd}, 0, shirt}); // upper chest (pecs)
     bl.push_back({2, {0, 1.12f * H + up * 0.7f, 0}, {}, {0.255f * sW * B, 0.160f * H, 0.180f * B * bd}, 0, shirt}); // lower ribcage
-    bl.push_back({2, {0, 0.92f * H + up * 0.3f, 0}, {}, {0.205f * B * p.waist, 0.150f * H, 0.160f * B * bd}, 0, shirt}); // waist (narrowest)
+    bl.push_back({2, {0, 1.00f * H + up * 0.45f, 0}, {}, {0.215f * sW * B, 0.110f * H, 0.165f * B * bd}, 0, shirt}); // upper abdomen
+    bl.push_back({2, {0, 0.88f * H + up * 0.25f, 0}, {}, {0.190f * B * p.waist, 0.140f * H, 0.150f * B * bd}, 0, shirt}); // waist (narrowest)
     if (p.belly > 0.05f)
         bl.push_back({2, {0, 0.95f * H, 0.14f * bd}, {}, {0.22f * B * p.belly, 0.18f * H * p.belly, 0.17f * bd * p.belly}, 0, shirt}); // belly
     bl.push_back({2, {0, 0.66f * H, 0}, {}, {0.265f * hW * B, 0.150f * H, 0.190f * B * bd}, 0, pants}); // pelvis
@@ -1106,7 +1112,7 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         // Calf muscle: a bulge on the upper-back of the shin for leg definition.
         bl.push_back({2, knee + ql * Vec3{0, -legLen * 0.30f, 0} + Vec3{0, 0, -0.05f * bd}, {},
                       {lt * 0.78f, lt * 1.30f, lt * 0.95f}, 0, pants});
-        bl.push_back({0, ankle, {}, {}, lt * 0.55f, skin});                        // ankle (slim)
+        bl.push_back({0, ankle, {}, {}, lt * 0.55f, pants});                       // ankle (slim; trouser cuff)
         // Foot: a flat, elongated shoe shape (heel under the ankle to a tapered
         // toe) instead of a bulbous blob.
         bl.push_back({2, ankle + Vec3{0, -0.075f * H, 0.085f}, {}, {0.070f * B, 0.045f, 0.205f}, 0, shoes}); // sole (long, flat)

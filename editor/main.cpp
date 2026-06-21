@@ -174,7 +174,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // When the scene gets heavy (e.g. several characters), auto-drop to 1x so the
     // editor stays responsive — 2x supersampling is 4x the pixels to fill.
     int ss = g_ssaa;
-    if (g_autoPerf && ss > 1 && SceneTriangleLoad(scene) > 16000) ss = 1;
+    if (g_autoPerf && ss > 1 && SceneTriangleLoad(scene) > 11000) ss = 1;
     const std::uint32_t* px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
                                              scene, vp, eye, w, h, ss);
     if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h) {

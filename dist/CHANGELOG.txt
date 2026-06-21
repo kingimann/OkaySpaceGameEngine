@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.19.2
+  - Character: more realistic + more constrained.
+    - Slimmer neck, a defined upper-abdomen, and a narrower waist for a clearer
+      natural torso taper.
+    - Fixed bare "orange ankle" gap between trousers and shoes (the ankle now
+      matches the trousers).
+    - Tighter "stays human" limits across every slider, plus new coupling: hips
+      can't read wider than the shoulders and the waist can't exceed the chest,
+      so proportions always stay believable.
+  - Performance: auto-performance now engages a little sooner, and the seamless
+    body uses a slightly lighter resolution — smoother frame rate per character.
+
 v2.19.1
   - Character: more human, less "square/blobby" silhouette.
     - Shoulders now SLOPE from the neck down to rounded deltoids (added a

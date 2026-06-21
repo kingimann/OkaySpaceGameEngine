@@ -56,7 +56,7 @@ public:
         // ---- Movement relative to the camera's yaw ----
         Vec2 axis = Input::AxisWASD();
         Quat flat = Quat::Euler(0, yaw, 0);
-        Vec3 fwd = flat * Vec3::Forward, right = flat * Vec3::Right;
+        Vec3 fwd = flat * Vec3{0, 0, -1}, right = flat * Vec3::Right;   // forward = into the view (-Z)
         Vec3 dir = fwd * axis.y + right * axis.x;
         float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
         bool moving = len > 0.01f;
@@ -98,9 +98,11 @@ public:
         Vec3 target = transform->Position();
         target.y += cameraHeight;
         Quat camRot = Quat::Euler(pitch, yaw, 0);
+        // The camera looks down its local -Z, so place it on the +Z side of the
+        // target at `distance` and it looks back at the target.
         Vec3 camFwd = camRot * Vec3::Forward;
         cam->localRotation = camRot;
-        cam->SetPosition(target - camFwd * distance);
+        cam->SetPosition(target + camFwd * distance);
     }
 
 private:

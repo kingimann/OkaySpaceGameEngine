@@ -39,6 +39,11 @@ public:
     int width = 0, height = 0;
     std::vector<std::uint32_t> color;   // ABGR8888 (matches SDL_PIXELFORMAT_ABGR8888)
     std::vector<float>         depth;    // smaller = nearer; cleared to +inf
+    // Optional G-buffer for screen-space ambient occlusion (filled by the
+    // per-pixel path when SSAO is enabled; empty otherwise).
+    std::vector<Vec3>          gpos;     // world position per pixel
+    std::vector<Vec3>          gnrm;     // world normal per pixel
+    std::vector<std::uint8_t>  gvalid;   // 1 where gpos/gnrm were written
 
     void Resize(int w, int h) {
         width = w < 1 ? 1 : w;
@@ -373,6 +378,7 @@ public:
                 }
                 depth[i] = d;
                 color[i] = PackRGB(cr, cg, cb);
+                if (!gvalid.empty()) { gpos[i] = wpos; gnrm[i] = n; gvalid[i] = 1; }
             }
         }
     }
@@ -557,6 +563,77 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
     return total ? (float)lit / total : 1.0f;
 }
 
+// ---- Screen-space ambient occlusion ----------------------------------------
+inline bool&  SSAOEnabled()  { static bool v = true; return v; }
+inline float& SSAORadius()   { static float v = 0.45f; return v; }  // world units
+inline float& SSAOStrength() { static float v = 0.6f; return v; }
+
+/// Darken creases/contacts using the per-pixel world position + normal G-buffer:
+/// sample a hemisphere around each pixel and count how many samples are occluded
+/// by nearer geometry. Adds soft contact shadows / depth that flat lighting can't.
+inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
+    if (r.gvalid.empty()) return;
+    const int W = r.width, H = r.height;
+    const float radius = SSAORadius(), strength = SSAOStrength();
+    static const int K = 12;
+    static Vec3 kern[K];
+    static bool init = false;
+    if (!init) {
+        init = true; unsigned s = 1469598103u;
+        auto rnd = [&]() { s = s * 1664525u + 1013904223u; return (float)((s >> 8) & 0xFFFFFF) / 16777216.0f; };
+        for (int k = 0; k < K; ++k) {
+            float x = rnd() * 2 - 1, y = rnd() * 2 - 1, z = rnd() * 0.85f + 0.15f;
+            float l = std::sqrt(x * x + y * y + z * z); if (l < 1e-4f) l = 1;
+            float sc = 0.2f + 0.8f * ((float)(k + 1) / K) * ((float)(k + 1) / K);
+            kern[k] = Vec3{x / l, y / l, z / l} * sc;
+        }
+    }
+    std::vector<float> ao((std::size_t)W * H, 1.0f);
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            std::size_t i = (std::size_t)y * W + x;
+            if (!r.gvalid[i]) continue;
+            Vec3 P = r.gpos[i], N = r.gnrm[i];
+            Vec3 up = std::fabs(N.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+            Vec3 T = Vec3::Cross(up, N); { float l = T.Magnitude(); T = l > 1e-5f ? T * (1.0f / l) : Vec3{1, 0, 0}; }
+            Vec3 B = Vec3::Cross(N, T);
+            float occWeighted = 0.0f; int tot = 0;
+            for (int k = 0; k < K; ++k) {
+                Vec3 sp = P + (T * kern[k].x + B * kern[k].y + N * kern[k].z) * radius;
+                Vec4 c = vp * Vec4{sp, 1.0f}; if (c.w <= 0) continue;
+                float iw = 1.0f / c.w;
+                int sx = (int)((c.x * iw * 0.5f + 0.5f) * W), sy = (int)((1.0f - (c.y * iw * 0.5f + 0.5f)) * H);
+                if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+                std::size_t j = (std::size_t)sy * W + sx; ++tot;
+                if (!r.gvalid[j]) continue;
+                float diff = (sp - eye).Magnitude() - (r.gpos[j] - eye).Magnitude();
+                // Smooth range falloff so distant geometry doesn't cast wide halos.
+                if (diff > 0.015f) {
+                    float w = 1.0f - diff / radius;       // fades out past `radius`
+                    if (w > 0.0f) occWeighted += w;
+                }
+            }
+            if (tot > 0) { float a = 1.0f - strength * occWeighted / tot; ao[i] = a < 0 ? 0 : a; }
+        }
+    // 3x3 blur + modulate color.
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            std::size_t i = (std::size_t)y * W + x;
+            if (!r.gvalid[i]) continue;
+            float a = 0; int n = 0;
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) {
+                    int nx = x + dx, ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+                    a += ao[(std::size_t)ny * W + nx]; ++n;
+                }
+            a = n ? a / n : 1.0f;
+            std::uint32_t v = r.color[i];
+            std::uint32_t R = (std::uint32_t)((v & 0xFF) * a), G = (std::uint32_t)(((v >> 8) & 0xFF) * a), Bc = (std::uint32_t)(((v >> 16) & 0xFF) * a);
+            r.color[i] = (0xFFu << 24) | (Bc << 16) | (G << 8) | R;
+        }
+}
+
 /// Render all active MeshRenderers in `scene` into `r` with the given
 /// view-projection matrix and camera position. Two-sided + flat-shaded via the
 /// global SceneLight; depth-tested so overlapping meshes occlude correctly.
@@ -566,6 +643,13 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     const bool  fogOn = rs.fog && rs.fogEnd > rs.fogStart;
     const float fogR = rs.fogColor.r, fogG = rs.fogColor.g, fogB = rs.fogColor.b;
     RenderShadowMap(scene);   // depth-from-light pre-pass for cast shadows
+    if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
+        std::size_t n = (std::size_t)r.width * r.height;
+        r.gpos.assign(n, Vec3{0, 0, 0}); r.gnrm.assign(n, Vec3{0, 0, 0});
+        r.gvalid.assign(n, 0);
+    } else if (!r.gvalid.empty()) {
+        r.gpos.clear(); r.gnrm.clear(); r.gvalid.clear();
+    }
     for (const auto& go : scene.Objects()) {
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
@@ -786,6 +870,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             }
         }
     }
+    if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
 }
 
 /// Supersampled render for smoother (anti-aliased) edges: draw the scene at `ss`x

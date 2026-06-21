@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.38.0
+  - Rendering: screen-space ambient occlusion (SSAO). A per-pixel position/normal
+    G-buffer drives a hemisphere occlusion pass that softly darkens creases,
+    contacts and corners, adding depth that flat lighting misses. Tunable
+    (SSAORadius/SSAOStrength), blurred, on by default.
+  - First/Third Person Controllers: fixed inverted look + backwards movement.
+    Forward now follows where the camera looks (its -Z), mouse-right turns right,
+    and the third-person camera sits behind the player looking at it. Added an
+    Invert Y option to the first-person controller.
+
 v2.37.0
   - Rendering: real-time shadows. A depth pre-pass from the directional light
     builds a 1024px shadow map; per-pixel shading projects each fragment into it

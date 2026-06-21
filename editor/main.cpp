@@ -5495,6 +5495,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Mouse Sensitivity##fp", &fp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Invert Y##fp", &fp->invertY)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##fp", &fp->canJump)) ed.dirty = true;
             if (ImGui::Checkbox("Drive Animation##fp", &fp->driveAnimation)) ed.dirty = true;
             ImGui::TextDisabled("Mouse look + WASD. Put a Camera as a child (eye height).");

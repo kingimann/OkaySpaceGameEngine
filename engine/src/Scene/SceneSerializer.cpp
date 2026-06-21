@@ -238,7 +238,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
-            << fp->mouseSensitivity << " " << (fp->canJump ? 1 : 0) << " " << (fp->driveAnimation ? 1 : 0) << "\n";
+            << fp->mouseSensitivity << " " << (fp->canJump ? 1 : 0) << " " << (fp->driveAnimation ? 1 : 0)
+            << " " << (fp->invertY ? 1 : 0) << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
@@ -769,11 +770,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* cc = go->AddComponent<CharacterController3D>();
                     cc->speed = sp; cc->jumpForce = jf; cc->canJump = (cj != 0);
                 } else if (field == "fpctrl") {
-                    float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1;
+                    float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> iy;   // optional invertY
                     auto* fp = go->AddComponent<FirstPersonController>();
                     fp->walkSpeed = ws; fp->runSpeed = rs; fp->jumpForce = jf;
                     fp->mouseSensitivity = ms; fp->canJump = (cj != 0); fp->driveAnimation = (da != 0);
+                    fp->invertY = (iy != 0);
                 } else if (field == "tpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.2f, ts = 12, ds = 5, ch = 1.5f; int cj = 1, da = 1;
                     in >> ws >> rs >> jf >> ms >> ts >> ds >> ch >> cj >> da;

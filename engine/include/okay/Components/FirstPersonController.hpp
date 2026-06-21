@@ -28,6 +28,7 @@ public:
     float jumpForce = 6.0f;
     float mouseSensitivity = 0.15f;     // degrees per pixel of mouse movement
     float minPitch = -85.0f, maxPitch = 85.0f;
+    bool  invertY = false;              // invert vertical mouse look
     char  sprintKey = 0;                // hold to run (0 = disabled)
     bool  canJump = true;
     bool  driveAnimation = true;        // set a sibling Character's anim from movement
@@ -49,10 +50,12 @@ public:
             if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = showBody;
 
         // ---- Mouse look ----
+        // Mouse-right turns right and mouse-up looks up. The camera looks down its
+        // local -Z, so yaw decreases with rightward mouse movement.
         Vec2 mp = Input::MousePosition();
         if (m_haveMouse) {
-            yaw   += (mp.x - m_lastMouse.x) * mouseSensitivity;
-            pitch -= (mp.y - m_lastMouse.y) * mouseSensitivity;
+            yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;
+            pitch += (invertY ? 1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
         m_lastMouse = mp; m_haveMouse = true;
@@ -64,10 +67,10 @@ public:
             transform->localRotation = Quat::Euler(pitch, yaw, 0); // no child cam: tilt self
         }
 
-        // ---- Movement (horizontal, relative to yaw only) ----
+        // ---- Movement: forward is where the camera looks (its -Z), flattened. ----
         Vec2 axis = Input::AxisWASD();                 // x strafe, y forward
         Quat flat = Quat::Euler(0, yaw, 0);
-        Vec3 fwd = flat * Vec3::Forward, right = flat * Vec3::Right;
+        Vec3 fwd = flat * Vec3{0, 0, -1}, right = flat * Vec3::Right;
         Vec3 dir = fwd * axis.y + right * axis.x;
         float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
         bool moving = len > 0.01f;

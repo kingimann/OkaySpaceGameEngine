@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.60.0
+  - Canvas: more options. The Scale Factor is now a universal UI zoom (it applies
+    in Scale-With-Screen mode too, not just Constant Pixel Size). The inspector
+    gained reference-resolution presets (1080p/720p/1440p + portrait), Match
+    Width/Height preset buttons, tooltips, and a live "current scale" readout.
+
 v2.59.0
   - Change: the Play/Stop shortcut moved from Space to Ctrl+P, so Space is free
     to jump while the game is running (pressing Space used to stop the game).

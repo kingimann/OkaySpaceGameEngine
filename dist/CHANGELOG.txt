@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.17.2
+  - Character Creator: the seamless single-surface body is now the DEFAULT for
+    new characters — this is the fix for the "blobby"/snowman look. Instead of
+    assembling separate overlapping balls (chest, waist, hips, shoulders), the
+    whole body is now fused into ONE continuous skin via smooth-union SDFs +
+    Surface Nets, so there are no pinches between parts. Stronger blend and a
+    bit more resolution (44) too.
+  - NOTE for existing characters: a character saved before this update keeps its
+    old setting. Turn on "Seamless Body" in the Character inspector to convert
+    it (it's on by default for new ones). The seamless body doesn't animate its
+    limbs — uncheck it if you need Walk/Run/Wave/etc.
+
 v2.17.1
   - Terrain: prop scattering (trees, rocks, bushes) — like Unity's tree/detail
     painting. In the Terrain inspector pick a prop (Tree / Pine / Rock / Bush),

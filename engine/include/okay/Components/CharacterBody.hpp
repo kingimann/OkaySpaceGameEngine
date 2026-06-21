@@ -44,8 +44,8 @@ public:
     bool  hasGlasses = false;
     bool  beard = false;
     bool  mustache = false;
-    bool  smoothBody = false;     // seamless single-surface body (SDF + Surface Nets)
-    int   smoothRes = 40;         // grid resolution for the seamless body
+    bool  smoothBody = true;      // seamless single-surface body (SDF + Surface Nets)
+    int   smoothRes = 44;         // grid resolution for the seamless body
 
     // Limb animation, played during Play. 0 None,1 Idle,2 Walk,3 Run,4 Wave,5 Jump.
     int   anim = 0;

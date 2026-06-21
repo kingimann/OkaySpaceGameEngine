@@ -923,24 +923,26 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         if (c->hasGlasses) head.Add(Mesh::Cube(1.0f), {0.0f, headY + 0.04f * hd, fz + 0.03f * hd}, {(0.18f * p.eyeSpacing + 0.14f) * hd, 0.06f * hd, 0.03f * hd}, &c->glasses);
     }
 
-    add("Neck").Add(Mesh::Cylinder(0.5f, 1.0f, 10), {0.0f, 1.52f * H + up, 0.0f}, {0.15f, 0.20f * p.neckLength, 0.15f}, skin);
+    add("Neck").Add(Mesh::Cylinder(0.5f, 1.0f, 10), {0.0f, 1.50f * H + up, 0.0f}, {0.105f, 0.22f * p.neckLength, 0.105f}, skin);
 
     Mesh& torso = add("Torso");
-    {   // Tapered torso: broad chest over a narrower waist (V-shape).
-        float ty = (0.71f * H) + 0.39f * H * p.torsoLength, tl2 = p.torsoLength;
-        torso.Add(Mesh::Sphere(0.5f, 10, 12), {0.0f, ty + 0.22f * H * tl2, 0.0f},
-                  {0.62f * p.shoulderWidth * B, 0.46f * H * tl2, 0.40f * B * bd}, shirt);   // chest
-        torso.Add(Mesh::Sphere(0.5f, 10, 12), {0.0f, ty - 0.20f * H * tl2, 0.0f},
-                  {0.46f * p.shoulderWidth * B * p.waist, 0.44f * H * tl2, 0.36f * B * bd}, shirt); // waist
-        // Trapezius: soft slope from the neck base out to the shoulders so the
-        // neck/shoulder join doesn't look like a peg in a hole.
-        torso.Add(Mesh::Sphere(0.5f, 8, 10), {0.0f, 1.44f * H + up, 0.0f},
-                  {0.40f * p.shoulderWidth * B, 0.16f * H, 0.32f * B * bd}, shirt);
+    {   // Anatomical V-taper (matches the seamless body's proportions): a tall
+        // chest/ribcage narrowing to a defined waist. Sphere scale = 2x the
+        // seamless ellipsoid radii (a unit sphere has radius 0.5).
+        const float sW = p.shoulderWidth;
+        torso.Add(Mesh::Sphere(0.5f, 10, 12), {0.0f, 1.40f * H + up, 0.0f},
+                  {0.30f * sW * B, 0.23f * H, 0.27f * B * bd}, shirt);          // clavicle/traps
+        torso.Add(Mesh::Sphere(0.5f, 10, 12), {0.0f, 1.29f * H + up, 0.01f * bd},
+                  {0.44f * sW * B, 0.30f * H, 0.32f * B * bd}, shirt);          // chest
+        torso.Add(Mesh::Sphere(0.5f, 10, 12), {0.0f, 1.12f * H + up * 0.7f, 0.0f},
+                  {0.376f * sW * B, 0.33f * H, 0.30f * B * bd}, shirt);         // ribcage
+        torso.Add(Mesh::Sphere(0.5f, 9, 11), {0.0f, 0.98f * H + up * 0.35f, 0.0f},
+                  {0.30f * B * p.waist, 0.30f * H, 0.27f * B * bd}, shirt);     // waist (narrow)
     }
     if (p.belly > 0.05f)
-        torso.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, 0.92f * H, 0.18f * bd}, {0.46f * B * p.belly, 0.40f * H * p.belly, 0.34f * bd * p.belly}, shirt);
+        torso.Add(Mesh::Sphere(0.5f, 6, 8), {0.0f, 0.92f * H, 0.18f * bd}, {0.42f * B * p.belly, 0.36f * H * p.belly, 0.32f * bd * p.belly}, shirt);
 
-    add("Hips").Add(Mesh::Sphere(0.5f, 8, 12), {0.0f, 0.62f * H, 0.0f}, {0.52f * p.hipWidth * B * p.waist, 0.40f * H, 0.36f * B * bd}, pants);
+    add("Hips").Add(Mesh::Sphere(0.5f, 9, 12), {0.0f, 0.68f * H, 0.0f}, {0.41f * p.hipWidth * B, 0.30f * H, 0.33f * B * bd}, pants);
 
     for (int s = -1; s <= 1; s += 2) {
         Mesh& arm = add(s < 0 ? "Arm.L" : "Arm.R");
@@ -949,8 +951,8 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         Vec3 shoulder{s * aw, shoulderY, 0.0f};
         Vec3 armRot{(float)s * p.armSwing, 0.0f, (float)s * p.armSpread};   // + spreads outward
         if (s == 1) { armRot.x += p.rightArmRot.x; armRot.y += p.rightArmRot.y; armRot.z += p.rightArmRot.z; }
-        float at = 0.22f * B * p.armThickness;
-        float armLen = 0.74f * aL * H;
+        float at = 0.155f * B * p.armThickness;
+        float armLen = 0.82f * aL * H;
         float armCY = shoulderY - armLen * 0.5f;       // arm hangs from the shoulder
         float wristY = shoulderY - armLen;             // bottom of the arm
         // Small shoulder joint that just fills the arm/torso seam.
@@ -958,7 +960,7 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         arm.AddPosed(Mesh::Capsule(0.5f, 1.0f, 9, 3), {s * aw, armCY, 0.0f}, {at, armLen, at}, armRot, shoulder, shirt);
         // Relaxed hand: a rounded palm with the fingers softly closed into a
         // single mitt (the old splayed cubes read as a claw) plus a thumb.
-        float hsz = 0.145f * B * p.handSize;
+        float hsz = 0.115f * B * p.handSize;
         Vec3 hp{s * aw, wristY + hsz * 0.15f, 0.0f};   // hand at the wrist (overlaps the arm)
         arm.AddPosed(Mesh::Sphere(0.5f, 6, 7), hp, {hsz * 0.82f, hsz * 0.78f, hsz * 0.52f}, armRot, shoulder, skin);  // palm
         arm.AddPosed(Mesh::Sphere(0.5f, 6, 7), {hp.x, hp.y - hsz * 0.66f, hp.z + hsz * 0.04f},
@@ -971,8 +973,8 @@ inline std::vector<HumanoidPart> BuildHumanoidParts(const HumanoidParams& p,
         float lw = hw + p.legGap;                       // hip x incl. lateral spacing
         Vec3 hip{s * lw, 0.60f * H, 0.0f};
         Vec3 legRot{(float)s * p.legSwing, 0.0f, (float)s * p.legSpread};   // + spreads outward
-        float lt = 0.25f * B * p.legThickness;
-        leg.Add(Mesh::Sphere(0.5f, 6, 7), {s * lw, 0.52f * H, 0.0f}, {lt * 1.15f, lt * 1.1f, lt * 1.15f}, pants);
+        float lt = 0.20f * B * p.legThickness;
+        leg.Add(Mesh::Sphere(0.5f, 6, 7), {s * lw, 0.54f * H, 0.0f}, {lt * 1.05f, lt * 1.05f, lt * 1.05f}, pants);
         leg.AddPosed(Mesh::Capsule(0.5f, 1.0f, 9, 3), {s * lw, 0.06f * H, 0.0f}, {lt, 1.15f * lL * H, lt}, legRot, hip, pants);
         float fsz = p.footSize, fy = (0.06f - 0.57f * lL) * H;
         leg.AddPosed(Mesh::Sphere(0.5f, 5, 6), {s * lw, fy, 0.0f}, {lt * 0.9f, lt * 0.9f, lt * 0.9f}, legRot, hip, skin);     // ankle
@@ -1235,6 +1237,123 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     }
     body.name = "Human";
     return body;
+}
+
+// ---- Low-poly humanoid: a hand-authored-style polygonal mesh built from
+// cross-section loops (a torso loft + tapered limb tubes + a simple head),
+// FLAT-shaded so it reads like a clean low-poly game character (the look of a
+// modelled mesh, not a smooth blob). Double-sided, so winding is forgiving. ----
+inline Mesh BuildLowPolyHumanoid(const HumanoidParams& p, const HumanoidColors* c) {
+    Mesh m; m.name = "Human";
+    Color skin  = c ? c->skin  : Color::White;
+    Color shirt = c ? c->shirt : Color::White;
+    Color pants = c ? c->pants : Color::White;
+    Color shoes = c ? c->shoes : Color::White;
+    Color hair  = c ? c->hair  : Color::FromBytes(60, 40, 30);
+    const float H = p.height, B = p.build, bd = p.bodyDepth;
+    const float up = 0.78f * H * (p.torsoLength - 1.0f);
+    const float sW = p.shoulderWidth, hW = p.hipWidth, kPi = 3.14159265f;
+
+    auto ring = [&](Vec3 ctr, Vec3 ax, Vec3 az, float rx, float rz, int K) {
+        int base = (int)m.vertices.size();
+        for (int k = 0; k < K; ++k) {
+            float a = 2.0f * kPi * k / K;
+            m.vertices.push_back(ctr + ax * (rx * std::cos(a)) + az * (rz * std::sin(a)));
+        }
+        return base;
+    };
+    auto bridge = [&](int b0, int b1, int K, Color col) {
+        for (int k = 0; k < K; ++k) {
+            int n = (k + 1) % K;
+            m.triangles.insert(m.triangles.end(), {b0 + k, b1 + k, b0 + n, b0 + n, b1 + k, b1 + n});
+            m.triColors.push_back(col); m.triColors.push_back(col);
+        }
+    };
+    auto capFan = [&](int b, int K, Vec3 apex, Color col, bool up) {
+        int ci = (int)m.vertices.size(); m.vertices.push_back(apex);
+        for (int k = 0; k < K; ++k) {
+            int n = (k + 1) % K;
+            if (up) m.triangles.insert(m.triangles.end(), {b + k, b + n, ci});
+            else    m.triangles.insert(m.triangles.end(), {b + n, b + k, ci});
+            m.triColors.push_back(col);
+        }
+    };
+    // A straight tapered tube from a->b (K-gon), flat low-poly limb segment.
+    auto seg = [&](Vec3 a, Vec3 b, float rA, float rB, int K, Color col) {
+        Vec3 d = (b - a).Normalized();
+        Vec3 ax = (std::fabs(d.y) < 0.9f) ? Vec3::Cross(d, {0, 1, 0}).Normalized()
+                                          : Vec3::Cross(d, {1, 0, 0}).Normalized();
+        Vec3 az = Vec3::Cross(d, ax).Normalized();
+        int b0 = ring(a, ax, az, rA, rA, K), b1 = ring(b, ax, az, rB, rB, K);
+        bridge(b0, b1, K, col);
+        return std::make_pair(b0, b1);
+    };
+
+    // ---- Torso: a vertical loft of elliptical rings (V-taper). ----
+    const Vec3 AX{1, 0, 0}, AZ{0, 0, 1};
+    struct R { float y, rx, rz; Color col; };
+    R rings[] = {
+        {0.56f * H,        0.150f * hW * B, 0.120f * bd * B, pants},  // pelvis bottom
+        {0.70f * H,        0.150f * hW * B, 0.125f * bd * B, pants},  // hips
+        {0.84f * H,        0.120f * B * p.waist, 0.105f * bd * B, shirt}, // waist (narrow)
+        {1.00f * H + up*0.3f, 0.150f * sW * B, 0.120f * bd * B, shirt}, // abdomen
+        {1.16f * H + up*0.6f, 0.188f * sW * B, 0.140f * bd * B, shirt}, // chest
+        {1.33f * H + up,   0.205f * sW * B, 0.140f * bd * B, shirt},  // upper chest
+        {1.43f * H + up,   0.150f * sW * B, 0.120f * bd * B, shirt},  // shoulders -> neck
+        {1.52f * H + up,   0.066f, 0.066f, skin},                    // neck
+    };
+    const int KT = 14, NR = (int)(sizeof(rings) / sizeof(rings[0]));
+    int rb[16];
+    for (int i = 0; i < NR; ++i) rb[i] = ring({0, rings[i].y, 0}, AX, AZ, rings[i].rx, rings[i].rz, KT);
+    for (int i = 0; i + 1 < NR; ++i) bridge(rb[i], rb[i + 1], KT, rings[i + 1].col);
+    capFan(rb[0], KT, {0, rings[0].y - 0.03f * H, 0}, pants, false);
+
+    // ---- Head: a low-poly skull (flattened icosphere) + hair cap. ----
+    float headY = 1.66f * H + up, hd = p.headSize;
+    m.Add(Mesh::Icosphere(0.5f, 2), {0.0f, headY, 0.02f * hd}, {0.30f * hd, 0.40f * hd, 0.34f * hd}, &skin);
+    m.Add(Mesh::Icosphere(0.5f, 1), {0.0f, headY - 0.16f * hd, 0.05f * hd}, {0.22f * hd, 0.22f * hd, 0.26f * hd}, &skin); // jaw/chin
+    if (!c || c->hasHair)
+        m.Add(Mesh::Icosphere(0.5f, 1), {0.0f, headY + 0.12f * hd, -0.02f * hd}, {0.33f * hd, 0.30f * hd, 0.36f * hd}, &hair);
+    if (!c || c->hasFace) {                                  // simple face
+        Color eyeC = c ? c->eye : Color::FromBytes(30, 30, 40);
+        for (int s = -1; s <= 1; s += 2)
+            m.Add(Mesh::Icosphere(0.5f, 0), {s * 0.10f * hd, headY + 0.02f * hd, 0.30f * hd}, {0.05f * hd, 0.06f * hd, 0.04f * hd}, &eyeC);
+        m.Add(Mesh::Cube(1.0f), {0.0f, headY - 0.04f * hd, 0.32f * hd}, {0.05f * hd, 0.08f * hd, 0.06f * hd}, &skin); // nose
+    }
+
+    // ---- Arms: A-pose tapered tubes (upper arm + forearm) + a block hand. ----
+    const float aL = p.armLength, lL = p.legLength;
+    for (int s = -1; s <= 1; s += 2) {
+        float aw = 0.20f * sW * B, shoulderY = 1.40f * H + up;
+        float at = 0.062f * B * p.armThickness, armLen = 0.82f * aL * H;
+        Vec3 sh{s * aw, shoulderY, 0};
+        Quat q = Quat::Euler({(float)s * p.armSwing, 0, (float)s * p.armSpread});
+        Vec3 elbow = sh + q * Vec3{0, -armLen * 0.5f, 0};
+        Quat fq = q * Quat::Euler({14.0f, 0, (float)s * -6.0f});
+        Vec3 dn = fq * Vec3{0, -1, 0};
+        Vec3 wrist = elbow + dn * (armLen * 0.5f);
+        m.Add(Mesh::Icosphere(0.5f, 1), {sh.x, sh.y - 0.01f * H, 0}, {at * 2.0f, at * 1.9f, at * 2.0f}, &shirt); // shoulder
+        seg(sh, elbow, at * 1.05f, at * 0.85f, 8, shirt);
+        seg(elbow, wrist, at * 0.85f, at * 0.62f, 8, skin);
+        Vec3 hc = wrist + dn * (at * 1.6f);
+        m.Add(Mesh::Icosphere(0.5f, 1), hc, {at * 1.3f, at * 1.9f, at * 0.9f}, &skin); // hand block
+    }
+
+    // ---- Legs: tapered tubes (thigh + calf) + a block foot. ----
+    for (int s = -1; s <= 1; s += 2) {
+        float lw = 0.105f * hW * B, lt = 0.095f * B * p.legThickness;
+        float legLen = 0.60f * H + 0.52f * lL * H;
+        Vec3 hip{s * lw, 0.60f * H, 0};
+        Quat ql = Quat::Euler({(float)s * p.legSwing, 0, (float)s * (p.legSpread * 0.4f)});
+        Vec3 knee = hip + ql * Vec3{0, -legLen * 0.5f, 0};
+        Vec3 ankle = hip + ql * Vec3{0, -legLen, 0};
+        m.Add(Mesh::Icosphere(0.5f, 1), {hip.x, hip.y, 0}, {lt * 1.7f, lt * 1.7f, lt * 1.7f}, &pants); // hip
+        seg(hip, knee, lt * 1.15f, lt * 0.82f, 8, pants);
+        seg(knee, ankle, lt * 0.86f, lt * 0.55f, 8, pants);
+        float fy = ankle.y - 0.04f * H, fsz = p.footSize;
+        m.Add(Mesh::Cube(1.0f), {ankle.x, fy, 0.10f * fsz}, {0.085f * B * fsz, 0.07f * fsz, 0.26f * fsz}, &shoes); // foot
+    }
+    return m;   // flat-shaded (no smooth normals) -> low-poly facets
 }
 
 } // namespace okay

@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.22.0
+  - Character: new default "Low Poly" body — a real flat-shaded polygonal mesh
+    built from cross-section loops (torso loft + tapered limb tubes + simple
+    head), rather than a smooth blob. Toggle in the Character inspector
+    ("Body style": Low Poly / Seamless / Parts). Saved with scenes & presets.
+
 v2.21.6
   - Character: big silhouette fix (verified by rendering it directly). The figure
     was far too WIDE (huge shoulders + flaring hips = a triangle/blob). Now: much

@@ -5025,16 +5025,21 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::SmallButton("Reset Pose##rig")) { for (Vec3& q : cb->pose) q = {0, 0, 0}; ch = true; }
             ImGui::Spacing();
-            ImGui::TextDisabled("Detail (low-poly -> high-poly)");
-            ch |= ImGui::Checkbox("Seamless Body (smooth skin)##char", &cb->smoothBody);
+            ImGui::TextDisabled("Body style");
+            ch |= ImGui::Checkbox("Low Poly (flat-shaded model)##char", &cb->lowPoly);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Fuse the body into ONE continuous surface (no visible joined parts).\nHeavier to build; animation is disabled in this mode.");
-            if (cb->smoothBody) {
-                ch |= ImGui::SliderInt("Smooth Quality##char", &cb->smoothRes, 24, 72);
-            } else {
-                ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 4);
-                if (cb->subdivisions > 0)
-                    ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
+                ImGui::SetTooltip("Clean low-poly modelled body (a proper polygonal mesh,\nflat-shaded) — the recommended look.");
+            if (!cb->lowPoly) {
+                ch |= ImGui::Checkbox("Seamless Body (smooth skin)##char", &cb->smoothBody);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Fuse the body into ONE continuous smooth surface.\nHeavier; animation is disabled in this mode.");
+                if (cb->smoothBody) {
+                    ch |= ImGui::SliderInt("Smooth Quality##char", &cb->smoothRes, 24, 72);
+                } else {
+                    ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 4);
+                    if (cb->subdivisions > 0)
+                        ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
+                }
             }
             ImGui::Spacing();
             ImGui::TextDisabled("Colors");

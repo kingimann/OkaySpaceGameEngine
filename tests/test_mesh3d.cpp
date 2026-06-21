@@ -674,5 +674,27 @@ int main() {
         CHECK(sh.name == "Human");
     }
 
+    // --- Smooth (Gouraud) vertex normals: one per vertex, unit length, and
+    //     pointing outward on a sphere (Dot(n, pos) > 0). ---
+    {
+        Mesh sph = Mesh::Sphere(1.0f, 12, 16);
+        CHECK(!sph.HasNormals());
+        sph.ComputeSmoothNormals();
+        CHECK(sph.HasNormals());
+        CHECK(sph.normals.size() == sph.vertices.size());
+        // On a sphere the smooth normal at each vertex is radial: parallel (or
+        // anti-parallel, depending on winding — the renderer flips per face)
+        // to the direction from the center. Check unit length + radial alignment.
+        float worstLen = 0.0f; int radial = 0, total = 0;
+        for (std::size_t i = 0; i < sph.vertices.size(); ++i) {
+            worstLen = std::fmax(worstLen, std::fabs(sph.normals[i].Magnitude() - 1.0f));
+            Vec3 dir = sph.vertices[i].Normalized();
+            if (std::fabs(Vec3::Dot(sph.normals[i], dir)) > 0.9f) ++radial;
+            ++total;
+        }
+        CHECK(worstLen < 1e-3f);
+        CHECK(radial == total);    // every sphere normal is (anti)radial
+    }
+
     TEST_MAIN_RESULT();
 }

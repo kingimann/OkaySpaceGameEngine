@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.16.42
+  - Renderer: smooth (Gouraud) shading. Meshes that carry per-vertex normals are
+    now lit per-pixel across each face instead of one flat color per triangle —
+    so curved surfaces look genuinely round, not faceted. This is the real fix
+    for "blocky": it needs no extra geometry, so it costs no frames.
+  - Character Creator: characters now ship smooth normals (computed across part
+    seams, so the joins between body parts disappear too) and the default
+    subdivision is back to 1 — smoother-looking AND faster than the previous
+    flat-shaded subdivision-2 build (which had tanked the FPS).
+  - Per-face material colors stay crisp (skin vs. shirt vs. hair) while the
+    lighting is smooth — best of both.
+
 v2.16.41
   - Character Creator: a big step toward a realistic ("GTA-style"), less-blocky
     character:

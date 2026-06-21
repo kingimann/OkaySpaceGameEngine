@@ -85,6 +85,52 @@ public:
         }
     }
 
+    /// Gouraud triangle: per-vertex light color (LR/LG/LB) interpolated across
+    /// the face and multiplied by a constant per-face albedo `base`, plus a
+    /// constant specular + emissive, with optional per-tri fog. This is what
+    /// makes low-poly organic meshes look smooth without extra geometry.
+    void TriangleSmooth(const float* X, const float* Y, const float* D,
+                        const float* LR, const float* LG, const float* LB,
+                        const Color& base, float spec, float er, float eg, float eb,
+                        float fog, float fr, float fg, float fb) {
+        int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
+        int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
+        int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
+        int maxY = (int)std::ceil (std::fmax(Y[0], std::fmax(Y[1], Y[2])));
+        if (minX < 0) minX = 0;
+        if (minY < 0) minY = 0;
+        if (maxX >= width) maxX = width - 1;
+        if (maxY >= height) maxY = height - 1;
+        float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
+        if (area == 0.0f) return;
+        float inv = 1.0f / area;
+        for (int y = minY; y <= maxY; ++y) {
+            for (int x = minX; x <= maxX; ++x) {
+                float px = x + 0.5f, py = y + 0.5f;
+                float w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * inv;
+                float w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * inv;
+                float w2 = 1.0f - w0 - w1;
+                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
+                std::size_t i = (std::size_t)y * width + x;
+                if (d >= depth[i]) continue;
+                float lr = w0 * LR[0] + w1 * LR[1] + w2 * LR[2];
+                float lg = w0 * LG[0] + w1 * LG[1] + w2 * LG[2];
+                float lb = w0 * LB[0] + w1 * LB[1] + w2 * LB[2];
+                float cr = base.r * lr + spec + er;
+                float cg = base.g * lg + spec + eg;
+                float cb = base.b * lb + spec + eb;
+                if (fog > 0.0f) {
+                    cr = cr * (1.0f - fog) + fr * fog;
+                    cg = cg * (1.0f - fog) + fg * fog;
+                    cb = cb * (1.0f - fog) + fb * fog;
+                }
+                depth[i] = d;
+                color[i] = PackRGB(cr, cg, cb);
+            }
+        }
+    }
+
     /// Textured triangle: perspective-correct UVs (pass u/w, v/w and 1/w per
     /// vertex). Samples `img` (wrapped), multiplies by `tint` and lighting
     /// `shade`, adds `spec` + emissive `(er,eg,eb)`. Depth-tested per pixel.
@@ -161,6 +207,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const bool hasUV = mr->mesh.uvs.size() == v.size();
         const bool faceCols = mr->mesh.HasFaceColors();   // per-triangle colors?
         Image* tex = mr->texture.empty() ? nullptr : GetCachedTexture(mr->texture);
+        // Smooth (Gouraud) shading when the mesh carries per-vertex normals and
+        // isn't textured/unlit — interpolated lighting across each face.
+        const bool smooth = !tex && mr->mesh.HasNormals();
+        const Mat4 nrm = model;   // linear part transforms normals (rigid/uniform)
 
         // --- Per-mesh frustum cull: project the 8 AABB corners to clip space and
         // skip the whole mesh when every corner is outside one frustum plane
@@ -183,7 +233,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // A clip-space vertex carrying its (unprojected) UV, for near-plane
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
-        struct CV { float x, y, z, w, u, v; };
+        struct CV { float x, y, z, w, u, v, lr, lg, lb; };
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
             Vec3 wp[3];
@@ -215,7 +265,16 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     else if (ay >= ax && ay >= az) { uu = p.x + 0.5f; vt = p.z + 0.5f; }
                     else { uu = p.x + 0.5f; vt = p.y + 0.5f; }
                 }
-                in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y};
+                // Per-vertex light color (Gouraud) from the smoothed vertex
+                // normal; falls back to white when not smooth-shading.
+                Vec3 lk{1.0f, 1.0f, 1.0f};
+                if (smooth && !mr->unlit) {
+                    Vec3 nk = nrm.MultiplyVector(mr->mesh.normals[idx[k]]).Normalized();
+                    if (facing < 0.0f) nk = nk * -1.0f;   // match the flipped face for back faces
+                    lk = SceneLights::ShadeColor(wp[k], nk);
+                }
+                in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y,
+                         lk.x, lk.y, lk.z};
             }
 
             // Sutherland-Hodgman clip against the near plane (w > NEAR).
@@ -230,7 +289,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float tt = (NEAR - A.w) / (B.w - A.w);
                     poly[pn++] = {A.x + (B.x - A.x) * tt, A.y + (B.y - A.y) * tt,
                                   A.z + (B.z - A.z) * tt, A.w + (B.w - A.w) * tt,
-                                  A.u + (B.u - A.u) * tt, A.v + (B.v - A.v) * tt};
+                                  A.u + (B.u - A.u) * tt, A.v + (B.v - A.v) * tt,
+                                  A.lr + (B.lr - A.lr) * tt, A.lg + (B.lg - A.lg) * tt,
+                                  A.lb + (B.lb - A.lb) * tt};
                 }
             }
             if (pn < 3) continue;   // entirely behind the camera
@@ -255,15 +316,16 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             float cr = base.r * lit.x + spec + mr->emissive.r;
             float cg = base.g * lit.y + spec + mr->emissive.g;
             float cb = base.b * lit.z + spec + mr->emissive.b;
-            // Distance fog: blend the (flat-shaded) color toward the fog color by
-            // how far the triangle is, between fogStart and fogEnd.
+            // Distance fog: blend the color toward the fog color by how far the
+            // triangle is, between fogStart and fogEnd (per-tri factor).
+            float fogF = 0.0f;
             if (fogOn) {
                 float dist = (centroid - eye).Magnitude();
-                float f = (dist - rs.fogStart) / (rs.fogEnd - rs.fogStart);
-                f = f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
-                cr = cr * (1.0f - f) + fogR * f;
-                cg = cg * (1.0f - f) + fogG * f;
-                cb = cb * (1.0f - f) + fogB * f;
+                fogF = (dist - rs.fogStart) / (rs.fogEnd - rs.fogStart);
+                fogF = fogF < 0.0f ? 0.0f : (fogF > 1.0f ? 1.0f : fogF);
+                cr = cr * (1.0f - fogF) + fogR * fogF;
+                cg = cg * (1.0f - fogF) + fogG * fogF;
+                cb = cb * (1.0f - fogF) + fogB * fogF;
             }
             std::uint32_t abgr = Raster::PackRGB(cr, cg, cb);
 
@@ -284,7 +346,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 if (tex)
                     r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, shade, spec,
                                   mr->emissive.r, mr->emissive.g, mr->emissive.b);
-                else
+                else if (smooth) {
+                    float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
+                    float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
+                    float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
+                    r.TriangleSmooth(sx, sy, sd, lr, lg, lb, base, spec,
+                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
+                                     fogF, fogR, fogG, fogB);
+                } else
                     r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1],
                                sx[2], sy[2], sd[2], abgr);
             }

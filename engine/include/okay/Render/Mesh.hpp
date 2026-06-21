@@ -83,9 +83,43 @@ struct Mesh {
     std::vector<Vec2> uvs;        // optional per-vertex UVs (parallel to vertices)
     std::vector<Color> triColors; // optional per-triangle colors (parallel to faces);
                                   // used by the renderer only when fully populated.
+    std::vector<Vec3> normals;    // optional per-vertex normals (parallel to vertices);
+                                  // when present the renderer smooth (Gouraud) shades.
 
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
     bool HasFaceColors() const { return (int)triColors.size() == TriangleCount() && !triColors.empty(); }
+    bool HasNormals() const { return normals.size() == vertices.size() && !vertices.empty(); }
+
+    /// Compute per-vertex smooth normals for Gouraud shading. Vertices sharing a
+    /// position (even across separately-built parts) are grouped so the normal is
+    /// averaged across the seam — this both rounds curved surfaces and hides the
+    /// joins between assembled body parts. Area-weighted (uses un-normalized face
+    /// normals) for a natural result.
+    void ComputeSmoothNormals() {
+        normals.assign(vertices.size(), Vec3{0, 0, 0});
+        std::map<std::tuple<int, int, int>, int> rep;
+        std::vector<int> grp(vertices.size());
+        auto key = [](const Vec3& p) {
+            return std::make_tuple((int)std::lround(p.x * 2048.0f),
+                                   (int)std::lround(p.y * 2048.0f),
+                                   (int)std::lround(p.z * 2048.0f));
+        };
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            auto k = key(vertices[i]);
+            auto it = rep.find(k);
+            grp[i] = (it == rep.end()) ? (rep[k] = (int)i) : it->second;
+        }
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
+            int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            Vec3 fn = Vec3::Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]);
+            normals[grp[a]] += fn; normals[grp[b]] += fn; normals[grp[c]] += fn;
+        }
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            Vec3 n = normals[grp[i]];
+            float m = n.Magnitude();
+            normals[i] = m > 1e-8f ? n * (1.0f / m) : Vec3{0, 1, 0};
+        }
+    }
 
     // ---- Primitive generators -----------------------------------------
     static Mesh Quad(float size = 1.0f) {

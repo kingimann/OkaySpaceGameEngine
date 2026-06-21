@@ -1332,13 +1332,13 @@ void DrawMenuAndToolbar(EditorState& ed) {
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
         ImGui::PopStyleColor(2);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play (Space) — runs the scene in the Game view");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play (Ctrl+P) — runs the scene in the Game view");
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
         if (ImGui::Button("[]  Stop", ImVec2(btnW, 0))) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         ImGui::PopStyleColor(2);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop (Space) — return to the edit state");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop (Ctrl+P) — return to the edit state");
         ImGui::SameLine();
         if (g_paused) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.45f, 0.15f, 1.0f));
@@ -3698,7 +3698,9 @@ void HandleShortcuts(EditorState& ed) {
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
         ed.DeleteSelected(); ConsoleLog("Deleted selection");
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+    // Play/Stop toggle is Ctrl+P (Unity-style). It used to be plain Space, which
+    // clashed with the in-game jump — pressing Space in play mode stopped the game.
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
         if (ed.isPlaying()) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
         else {
             if (g_clearConsoleOnPlay) ConsoleClear();

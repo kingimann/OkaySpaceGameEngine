@@ -1,5 +1,9 @@
 OkaySpace Game Engine — Changelog
 
+v2.59.0
+  - Change: the Play/Stop shortcut moved from Space to Ctrl+P, so Space is free
+    to jump while the game is running (pressing Space used to stop the game).
+
 v2.58.0
   - Performance: per-pixel shading micro-optimizations. Global render-state
     accessors (rim/shadow/sky toggles) are hoisted out of the inner loop, the rim

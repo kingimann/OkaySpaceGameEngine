@@ -15,8 +15,33 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <thread>
 
 namespace okay {
+
+/// Run `fn(rowStart, rowEnd)` over [y0, y1) split across hardware threads. Used to
+/// parallelize the embarrassingly-parallel full-screen passes (post-processing and
+/// downsample), where each row writes independent pixels. Falls back to a single
+/// call for small ranges so tiny images don't pay thread-spawn overhead.
+template <class Fn>
+inline void ParallelRows(int y0, int y1, Fn&& fn) {
+    int rows = y1 - y0;
+    if (rows <= 0) return;
+    unsigned hc = std::thread::hardware_concurrency();
+    int n = (int)(hc == 0 ? 1 : hc);
+    if (n > 8) n = 8;
+    if (n <= 1 || rows < 64) { fn(y0, y1); return; }
+    std::vector<std::thread> ts; ts.reserve(n - 1);
+    int chunk = (rows + n - 1) / n;
+    for (int t = 1; t < n; ++t) {
+        int a = y0 + t * chunk, b = a + chunk; if (b > y1) b = y1;
+        if (a >= b) break;
+        ts.emplace_back([&fn, a, b] { fn(a, b); });
+    }
+    int firstEnd = y0 + chunk; if (firstEnd > y1) firstEnd = y1;
+    fn(y0, firstEnd);                 // this thread does the first chunk
+    for (auto& th : ts) th.join();
+}
 
 // Directional shadow map (depth from the light). Defined up here so the Raster's
 // per-pixel shading can consult it; the implementation lives below RenderMeshes.
@@ -646,22 +671,22 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
     if (x < -1 || x > 1 || y < -1 || y > 1 || z > 1) return 1.0f;
     float fx = (x * 0.5f + 0.5f) * sm.size, fy = (1.0f - (y * 0.5f + 0.5f)) * sm.size;
     const float bias = 0.0025f;
-    // 12-tap Poisson-disk PCF: taps scattered on a disk (not a rigid grid) give
-    // smoother, less-banded penumbrae than a 3x3 box for the same sample count.
-    static const float kPoisson[12][2] = {
-        {-0.326f, -0.406f}, {-0.840f, -0.074f}, {-0.696f,  0.457f}, {-0.203f,  0.621f},
-        { 0.962f, -0.195f}, { 0.473f, -0.480f}, { 0.519f,  0.767f}, { 0.185f, -0.893f},
-        { 0.507f,  0.064f}, { 0.896f,  0.412f}, {-0.322f, -0.933f}, {-0.792f, -0.598f},
+    // 6-tap Poisson-disk PCF (center + 5 ring taps): scattered samples give a
+    // smoother penumbra than a rigid grid, at roughly half the cost of a 12-tap
+    // kernel — this runs per shaded pixel so the tap count matters for FPS.
+    static const float kPoisson[6][2] = {
+        { 0.000f,  0.000f}, {-0.326f, -0.406f}, { 0.840f, -0.074f},
+        {-0.696f,  0.457f}, { 0.185f,  0.893f}, { 0.507f, -0.640f},
     };
     float radius = ShadowSoftness();
     float lit = 0.0f;
-    for (int s = 0; s < 12; ++s) {
+    for (int s = 0; s < 6; ++s) {
         int px = (int)(fx + kPoisson[s][0] * radius);
         int py = (int)(fy + kPoisson[s][1] * radius);
         if (px < 0 || py < 0 || px >= sm.size || py >= sm.size) { lit += 1.0f; continue; }
         if (z - bias <= sm.depth[(std::size_t)py * sm.size + px]) lit += 1.0f;
     }
-    return lit / 12.0f;
+    return lit / 6.0f;
 }
 
 // ---- Screen-space ambient occlusion ----------------------------------------
@@ -676,7 +701,7 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
     if (r.gvalid.empty()) return;
     const int W = r.width, H = r.height;
     const float radius = SSAORadius(), strength = SSAOStrength();
-    static const int K = 12;
+    static const int K = 8;
     static Vec3 kern[K];
     static bool init = false;
     if (!init) {
@@ -689,9 +714,15 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
             kern[k] = Vec3{x / l, y / l, z / l} * sc;
         }
     }
-    std::vector<float> ao((std::size_t)W * H, 1.0f);
-    for (int y = 0; y < H; ++y)
-        for (int x = 0; x < W; ++x) {
+    // Compute AO at HALF resolution (1/4 the hemisphere evaluations), then
+    // bilinear-upsample when modulating the full-res color. The G-buffer stays
+    // full-res; each half-res texel samples the G-buffer pixel under it.
+    const int hw = (W + 1) / 2, hh = (H + 1) / 2;
+    std::vector<float> ao((std::size_t)hw * hh, 1.0f);
+    ParallelRows(0, hh, [&](int hya, int hyb) {
+        for (int hy = hya; hy < hyb; ++hy)
+        for (int hx = 0; hx < hw; ++hx) {
+            int x = hx * 2, y = hy * 2;
             std::size_t i = (std::size_t)y * W + x;
             if (!r.gvalid[i]) continue;
             Vec3 P = r.gpos[i], N = r.gnrm[i];
@@ -714,25 +745,28 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
                     if (w > 0.0f) occWeighted += w;
                 }
             }
-            if (tot > 0) { float a = 1.0f - strength * occWeighted / tot; ao[i] = a < 0 ? 0 : a; }
+            if (tot > 0) { float a = 1.0f - strength * occWeighted / tot; ao[(std::size_t)hy * hw + hx] = a < 0 ? 0 : a; }
         }
-    // 3x3 blur + modulate color.
-    for (int y = 0; y < H; ++y)
+    });
+    // Bilinear-upsample the half-res AO and modulate the full-res color.
+    ParallelRows(0, H, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y) {
+        float fy = y * 0.5f; int y0 = (int)fy; float ay = fy - y0; int y1 = y0 + 1;
+        if (y1 >= hh) y1 = hh - 1;
         for (int x = 0; x < W; ++x) {
             std::size_t i = (std::size_t)y * W + x;
             if (!r.gvalid[i]) continue;
-            float a = 0; int n = 0;
-            for (int dy = -1; dy <= 1; ++dy)
-                for (int dx = -1; dx <= 1; ++dx) {
-                    int nx = x + dx, ny = y + dy;
-                    if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-                    a += ao[(std::size_t)ny * W + nx]; ++n;
-                }
-            a = n ? a / n : 1.0f;
+            float fx = x * 0.5f; int x0 = (int)fx; float ax = fx - x0; int x1 = x0 + 1;
+            if (x1 >= hw) x1 = hw - 1;
+            float a00 = ao[(std::size_t)y0 * hw + x0], a10 = ao[(std::size_t)y0 * hw + x1];
+            float a01 = ao[(std::size_t)y1 * hw + x0], a11 = ao[(std::size_t)y1 * hw + x1];
+            float a = (a00 + (a10 - a00) * ax) + ((a01 + (a11 - a01) * ax) - (a00 + (a10 - a00) * ax)) * ay;
             std::uint32_t v = r.color[i];
             std::uint32_t R = (std::uint32_t)((v & 0xFF) * a), G = (std::uint32_t)(((v >> 8) & 0xFF) * a), Bc = (std::uint32_t)(((v >> 16) & 0xFF) * a);
             r.color[i] = (0xFFu << 24) | (Bc << 16) | (G << 8) | R;
         }
+        }
+    });
 }
 
 // ---- Bloom -----------------------------------------------------------------
@@ -742,55 +776,90 @@ inline float& BloomIntensity() { static float v = 0.6f; return v; }
 
 /// Glow on bright/emissive areas: extract pixels above a brightness threshold,
 /// blur them, and add back. Makes lights, neon and hot highlights bleed light.
+///
+/// For speed the blur runs at QUARTER resolution (1/4 W x 1/4 H): the bright pass
+/// is box-downsampled into a small buffer, blurred there (the blur is ~16x cheaper
+/// than at full res), then bilinearly upsampled when added back. A wide full-res
+/// gaussian would otherwise dominate the frame time.
 inline void ApplyBloom(Raster& r) {
     if (!BloomEnabled()) return;
     int W = r.width, H = r.height;
-    if (W < 4 || H < 4) return;
-    std::size_t N = (std::size_t)W * H;
-    static std::vector<float> br, tmp;   // bright pass (3 channels interleaved)
-    br.assign(N * 3, 0.0f); tmp.assign(N * 3, 0.0f);
+    if (W < 8 || H < 8) return;
+    const int DS = 4;                       // downsample factor
+    int dw = W / DS, dh = H / DS;
+    if (dw < 2 || dh < 2) return;
+    std::size_t dN = (std::size_t)dw * dh;
+    static std::vector<float> br, tmp;       // low-res bright pass (3ch interleaved)
+    br.assign(dN * 3, 0.0f); tmp.assign(dN * 3, 0.0f);
     float t = BloomThreshold() * 255.0f;
-    for (std::size_t i = 0; i < N; ++i) {
-        std::uint32_t v = r.color[i];
-        float c[3] = {(float)(v & 0xFF), (float)((v >> 8) & 0xFF), (float)((v >> 16) & 0xFF)};
-        for (int k = 0; k < 3; ++k) { float e = c[k] - t; br[i * 3 + k] = e > 0 ? e : 0.0f; }
-    }
-    // Separable box blur (3 passes ~ gaussian), radius scaled to resolution.
-    int rad = (W > 400 ? 6 : 4);
-    for (int pass = 0; pass < 3; ++pass) {
-        for (int y = 0; y < H; ++y)                       // horizontal
-            for (int k = 0; k < 3; ++k) {
-                float sum = 0; int cnt = 0;
-                for (int x = -rad; x <= rad; ++x) { int xx = x < 0 ? 0 : (x >= W ? W - 1 : x); sum += br[((std::size_t)y * W + xx) * 3 + k]; ++cnt; }
-                for (int x = 0; x < W; ++x) {
-                    tmp[((std::size_t)y * W + x) * 3 + k] = sum / cnt;
-                    int add = x + rad + 1, sub = x - rad;
-                    add = add >= W ? W - 1 : add; sub = sub < 0 ? 0 : sub;
-                    sum += br[((std::size_t)y * W + add) * 3 + k] - br[((std::size_t)y * W + sub) * 3 + k];
+    // Downsample + threshold: average each DS x DS block's over-threshold energy.
+    const float invBlock = 1.0f / (float)(DS * DS);
+    for (int dy = 0; dy < dh; ++dy)
+        for (int dx = 0; dx < dw; ++dx) {
+            float acc[3] = {0, 0, 0};
+            int sy0 = dy * DS, sx0 = dx * DS;
+            for (int yy = 0; yy < DS; ++yy) {
+                const std::uint32_t* row = &r.color[(std::size_t)(sy0 + yy) * W + sx0];
+                for (int xx = 0; xx < DS; ++xx) {
+                    std::uint32_t v = row[xx];
+                    float c0 = (float)(v & 0xFF) - t, c1 = (float)((v >> 8) & 0xFF) - t, c2 = (float)((v >> 16) & 0xFF) - t;
+                    if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
                 }
             }
-        for (int x = 0; x < W; ++x)                       // vertical
-            for (int k = 0; k < 3; ++k) {
-                float sum = 0; int cnt = 0;
-                for (int y = -rad; y <= rad; ++y) { int yy = y < 0 ? 0 : (y >= H ? H - 1 : y); sum += tmp[((std::size_t)yy * W + x) * 3 + k]; ++cnt; }
-                for (int y = 0; y < H; ++y) {
-                    br[((std::size_t)y * W + x) * 3 + k] = sum / cnt;
-                    int add = y + rad + 1, sub = y - rad;
-                    add = add >= H ? H - 1 : add; sub = sub < 0 ? 0 : sub;
-                    sum += tmp[((std::size_t)add * W + x) * 3 + k] - tmp[((std::size_t)sub * W + x) * 3 + k];
-                }
-            }
-    }
-    float intensity = BloomIntensity();
-    for (std::size_t i = 0; i < N; ++i) {
-        std::uint32_t v = r.color[i];
-        float o[3];
-        for (int k = 0; k < 3; ++k) {
-            float c = (float)((v >> (k * 8)) & 0xFF) + br[i * 3 + k] * intensity;
-            o[k] = c > 255 ? 255 : c;
+            std::size_t di = ((std::size_t)dy * dw + dx) * 3;
+            br[di] = acc[0] * invBlock; br[di + 1] = acc[1] * invBlock; br[di + 2] = acc[2] * invBlock;
         }
-        r.color[i] = (0xFFu << 24) | ((std::uint32_t)o[2] << 16) | ((std::uint32_t)o[1] << 8) | (std::uint32_t)o[0];
+    // Separable box blur (3 passes ~ gaussian) at low res — cheap.
+    int rad = 3;
+    for (int pass = 0; pass < 3; ++pass) {
+        for (int y = 0; y < dh; ++y)                      // horizontal
+            for (int k = 0; k < 3; ++k) {
+                float sum = 0; int cnt = 2 * rad + 1;
+                for (int x = -rad; x <= rad; ++x) { int xx = x < 0 ? 0 : (x >= dw ? dw - 1 : x); sum += br[((std::size_t)y * dw + xx) * 3 + k]; }
+                for (int x = 0; x < dw; ++x) {
+                    tmp[((std::size_t)y * dw + x) * 3 + k] = sum / cnt;
+                    int add = x + rad + 1, sub = x - rad;
+                    add = add >= dw ? dw - 1 : add; sub = sub < 0 ? 0 : sub;
+                    sum += br[((std::size_t)y * dw + add) * 3 + k] - br[((std::size_t)y * dw + sub) * 3 + k];
+                }
+            }
+        for (int x = 0; x < dw; ++x)                      // vertical
+            for (int k = 0; k < 3; ++k) {
+                float sum = 0; int cnt = 2 * rad + 1;
+                for (int y = -rad; y <= rad; ++y) { int yy = y < 0 ? 0 : (y >= dh ? dh - 1 : y); sum += tmp[((std::size_t)yy * dw + x) * 3 + k]; }
+                for (int y = 0; y < dh; ++y) {
+                    br[((std::size_t)y * dw + x) * 3 + k] = sum / cnt;
+                    int add = y + rad + 1, sub = y - rad;
+                    add = add >= dh ? dh - 1 : add; sub = sub < 0 ? 0 : sub;
+                    sum += tmp[((std::size_t)add * dw + x) * 3 + k] - tmp[((std::size_t)sub * dw + x) * 3 + k];
+                }
+            }
     }
+    // Bilinear-upsample the low-res bloom and add it back at full resolution.
+    float intensity = BloomIntensity();
+    float sxScale = (float)dw / W, syScale = (float)dh / H;
+    ParallelRows(0, H, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y) {
+        float fy = (y + 0.5f) * syScale - 0.5f; int y0 = (int)std::floor(fy); float ay = fy - y0;
+        int y1 = y0 + 1; if (y0 < 0) { y0 = 0; } if (y1 < 0) y1 = 0; if (y0 >= dh) y0 = dh - 1; if (y1 >= dh) y1 = dh - 1;
+        for (int x = 0; x < W; ++x) {
+            float fx = (x + 0.5f) * sxScale - 0.5f; int x0 = (int)std::floor(fx); float ax = fx - x0;
+            int x1 = x0 + 1; if (x0 < 0) { x0 = 0; } if (x1 < 0) x1 = 0; if (x0 >= dw) x0 = dw - 1; if (x1 >= dw) x1 = dw - 1;
+            std::size_t i00 = ((std::size_t)y0 * dw + x0) * 3, i10 = ((std::size_t)y0 * dw + x1) * 3;
+            std::size_t i01 = ((std::size_t)y1 * dw + x0) * 3, i11 = ((std::size_t)y1 * dw + x1) * 3;
+            std::uint32_t v = r.color[(std::size_t)y * W + x];
+            float o[3];
+            for (int k = 0; k < 3; ++k) {
+                float top = br[i00 + k] + (br[i10 + k] - br[i00 + k]) * ax;
+                float bot = br[i01 + k] + (br[i11 + k] - br[i01 + k]) * ax;
+                float bl = top + (bot - top) * ay;
+                float c = (float)((v >> (k * 8)) & 0xFF) + bl * intensity;
+                o[k] = c > 255 ? 255 : c;
+            }
+            r.color[(std::size_t)y * W + x] = (0xFFu << 24) | ((std::uint32_t)o[2] << 16) | ((std::uint32_t)o[1] << 8) | (std::uint32_t)o[0];
+        }
+        }
+    });
 }
 
 // ---- Tone mapping (filmic) -------------------------------------------------
@@ -816,18 +885,19 @@ inline void ApplyToneMap(Raster& r) {
         float o = d > 1e-6f ? n / d : 0.0f;
         return o < 0.0f ? 0.0f : (o > 1.0f ? 1.0f : o);
     };
-    std::size_t N = (std::size_t)W * H;
-    for (std::size_t i = 0; i < N; ++i) {
-        std::uint32_t v = r.color[i];
-        float c0 = (float)( v        & 0xFF) / 255.0f;
-        float c1 = (float)((v >> 8)  & 0xFF) / 255.0f;
-        float c2 = (float)((v >> 16) & 0xFF) / 255.0f;
-        float o0 = aces(c0 * e), o1 = aces(c1 * e), o2 = aces(c2 * e);
-        r.color[i] = (0xFFu << 24)
-                   | ((std::uint32_t)(o2 * 255.0f + 0.5f) << 16)
-                   | ((std::uint32_t)(o1 * 255.0f + 0.5f) << 8)
-                   |  (std::uint32_t)(o0 * 255.0f + 0.5f);
-    }
+    ParallelRows(0, H, [&](int ya, int yb) {
+        for (std::size_t i = (std::size_t)ya * W, end = (std::size_t)yb * W; i < end; ++i) {
+            std::uint32_t v = r.color[i];
+            float c0 = (float)( v        & 0xFF) / 255.0f;
+            float c1 = (float)((v >> 8)  & 0xFF) / 255.0f;
+            float c2 = (float)((v >> 16) & 0xFF) / 255.0f;
+            float o0 = aces(c0 * e), o1 = aces(c1 * e), o2 = aces(c2 * e);
+            r.color[i] = (0xFFu << 24)
+                       | ((std::uint32_t)(o2 * 255.0f + 0.5f) << 16)
+                       | ((std::uint32_t)(o1 * 255.0f + 0.5f) << 8)
+                       |  (std::uint32_t)(o0 * 255.0f + 0.5f);
+        }
+    });
 }
 
 // ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
@@ -845,7 +915,8 @@ inline void ApplyFXAA(Raster& r) {
     auto luma = [](std::uint32_t v) {
         return 0.299f * (v & 0xFF) + 0.587f * ((v >> 8) & 0xFF) + 0.114f * ((v >> 16) & 0xFF);
     };
-    for (int y = 1; y < H - 1; ++y)
+    ParallelRows(1, H - 1, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y)
         for (int x = 1; x < W - 1; ++x) {
             std::size_t i = (std::size_t)y * W + x;
             float m = luma(src[i]), n = luma(src[i - W]), s = luma(src[i + W]),
@@ -868,6 +939,7 @@ inline void ApplyFXAA(Raster& r) {
                 r.color[i] = (r.color[i] & ~(0xFFu << sh)) | (oi << sh);
             }
         }
+    });
 }
 
 /// Render all active MeshRenderers in `scene` into `r` with the given

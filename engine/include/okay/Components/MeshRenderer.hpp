@@ -13,6 +13,8 @@ class MeshRenderer : public Component {
 public:
     Mesh  mesh;
     Color color = Color::White;        // base (albedo) color
+    bool  enabled = true;      // when false the mesh is not drawn (e.g. the local
+                               // player's own body in first person)
     bool  wireframe = false;   // solid by default (Unity-like); true = edges only
     /// Render both faces of each triangle (no back-face culling) — for planes,
     /// flags, foliage cards, and the insides of open meshes like Tube.

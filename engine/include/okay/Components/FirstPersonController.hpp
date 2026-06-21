@@ -31,11 +31,22 @@ public:
     char  sprintKey = 0;                // hold to run (0 = disabled)
     bool  canJump = true;
     bool  driveAnimation = true;        // set a sibling Character's anim from movement
+    bool  showBody = false;             // first person: hide your own body (no head clipping)
 
     float yaw = 0.0f, pitch = 0.0f;     // look angles (degrees)
 
+    void Start() override {
+        // In first person you look out through your own eyes, so hide the body
+        // mesh on this object (it would otherwise clip the camera / show its
+        // insides). It stays visible in the editor (Start only runs in Play).
+        if (gameObject)
+            if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = showBody;
+    }
+
     void Update(float dt) override {
         if (!transform) return;
+        if (gameObject)
+            if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = showBody;
 
         // ---- Mouse look ----
         Vec2 mp = Input::MousePosition();

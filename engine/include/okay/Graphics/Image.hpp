@@ -43,13 +43,22 @@ public:
             for (int x = 0; x < m_w; ++x) SetPixel(x, y, c);
     }
 
-    /// Sample by normalized UV (0..1), clamped to the edges. Nearest-neighbour.
+    /// Sample by normalized UV (0..1), clamped to the edges, bilinearly filtered.
     Color Sample(float u, float v) const {
         if (m_w <= 0 || m_h <= 0) return Color(1, 1, 1, 1);
         u = u < 0 ? 0 : (u > 1 ? 1 : u);
         v = v < 0 ? 0 : (v > 1 ? 1 : v);
-        int x = (int)(u * (m_w - 1) + 0.5f), y = (int)(v * (m_h - 1) + 0.5f);
-        return GetPixel(x, y);
+        float fx = u * (m_w - 1), fy = v * (m_h - 1);
+        int x0 = (int)fx, y0 = (int)fy;
+        int x1 = x0 + 1 < m_w ? x0 + 1 : x0, y1 = y0 + 1 < m_h ? y0 + 1 : y0;
+        float ax = fx - x0, ay = fy - y0;
+        Color c00 = GetPixel(x0, y0), c10 = GetPixel(x1, y0);
+        Color c01 = GetPixel(x0, y1), c11 = GetPixel(x1, y1);
+        auto lp = [](float a, float b, float t) { return a + (b - a) * t; };
+        return Color(lp(lp(c00.r, c10.r, ax), lp(c01.r, c11.r, ax), ay),
+                     lp(lp(c00.g, c10.g, ax), lp(c01.g, c11.g, ax), ay),
+                     lp(lp(c00.b, c10.b, ax), lp(c01.b, c11.b, ax), ay),
+                     lp(lp(c00.a, c10.a, ax), lp(c01.a, c11.a, ax), ay));
     }
 
     /// Load any stb-supported image as RGBA. Returns false (and leaves the image

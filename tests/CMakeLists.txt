@@ -308,3 +308,7 @@ add_test(NAME uidocument COMMAND test_uidocument)
 add_executable(test_collider_fit test_collider_fit.cpp)
 target_link_libraries(test_collider_fit PRIVATE okay::engine)
 add_test(NAME collider_fit COMMAND test_collider_fit)
+
+add_executable(test_clicktomove test_clicktomove.cpp)
+target_link_libraries(test_clicktomove PRIVATE okay::engine)
+add_test(NAME clicktomove COMMAND test_clicktomove)

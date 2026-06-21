@@ -18,6 +18,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
@@ -115,7 +116,7 @@ inline void Platformer3D(Scene& scene) {
     gmr->mesh = Mesh::Cube();
     gmr->color = Color::FromBytes(90, 110, 90);
     auto* gbc = ground->AddComponent<BoxCollider3D>();
-    gbc->size = {24, 1, 24};
+    gbc->size = {1, 1, 1};   // unit cube; Transform scale (24) sizes the collider
     ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
 
     // The blocky Character as the player (instead of a plain cube).
@@ -150,7 +151,7 @@ inline void ThirdPerson(Scene& scene) {
     auto* gmr = ground->AddComponent<MeshRenderer>();
     gmr->mesh = Mesh::Cube();
     gmr->color = Color::FromBytes(95, 110, 95);
-    ground->AddComponent<BoxCollider3D>()->size = {40, 1, 40};
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};   // unit cube; Transform scale sizes it
     ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
 
     const Vec3 crates[4] = {{3, 0.5f, -3}, {-3, 0.5f, -4}, {3, 0.5f, 3}, {-3, 0.5f, 4}};
@@ -183,6 +184,57 @@ inline void ThirdPerson(Scene& scene) {
     camObj->transform->localPosition = {0, 3, 6};
 }
 
+/// A point-and-click starter (RuneScape / Diablo style): the blocky Character
+/// driven by a ClickToMoveController — click the ground and it walks there — under
+/// a high, angled camera, on a ground with a few crates.
+inline void PointAndClick(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Point & Click");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({55, -30, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {40, 1, 40};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube();
+    gmr->color = Color::FromBytes(95, 110, 95);
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};   // unit cube; Transform scale sizes it
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    const Vec3 crates[4] = {{4, 0.5f, -3}, {-4, 0.5f, -4}, {4, 0.5f, 4}, {-4, 0.5f, 3}};
+    for (int i = 0; i < 4; ++i) {
+        GameObject* c = scene.CreateGameObject("Crate");
+        c->transform->localPosition = crates[i];
+        auto* mr = c->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = Color::FromBytes(150, 120, 80);
+        c->AddComponent<BoxCollider3D>();
+        c->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = {0, 1.0f, 0};
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};
+    }
+    player->AddComponent<ClickToMoveController>();
+
+    // A high, angled camera reads the click target well (isometric-ish).
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {0, 12, 10};
+    camObj->transform->localRotation = Quat::Euler({50, 0, 0});
+}
+
 /// A first-person starter: a blocky Character player with a FirstPersonController
 /// (mouse-look + WASD + jump) and a Camera mounted at eye height, on a ground
 /// with a few crates to walk around. Press Play, then mouse + WASD.
@@ -200,7 +252,7 @@ inline void FPS(Scene& scene) {
     auto* gmr = ground->AddComponent<MeshRenderer>();
     gmr->mesh = Mesh::Cube();
     gmr->color = Color::FromBytes(95, 110, 95);
-    ground->AddComponent<BoxCollider3D>()->size = {40, 1, 40};
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};   // unit cube; Transform scale sizes it
     ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
 
     const Vec3 crates[5] = {{4, 0.5f, -2}, {-4, 0.5f, -3}, {2, 0.5f, -6}, {-2, 0.5f, -7}, {0, 0.5f, -10}};

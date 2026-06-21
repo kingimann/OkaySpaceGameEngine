@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.35.0
+  - Rendering: mipmapping. Each texture now builds a downsampled pyramid, and the
+    renderer picks the right level PER PIXEL from the texture's screen-space
+    density (trilinear-filtered between levels). Distant / grazing-angle textures
+    are smooth instead of a shimmering moire mess, while up-close detail stays
+    sharp. Applies to both the textured and per-pixel-lit paths.
+
 v2.34.0
   - Merged the rendering and scripting lineages into a single engine release.
 

@@ -30,6 +30,14 @@ struct ShadowMap {
 inline ShadowMap& Shadows();
 inline float ShadowFactor(const Vec3& wpos, const Vec3& n);
 
+// Fresnel rim light: a soft glow on surfaces facing away from the camera (grazing
+// angles), which separates objects from the background and reads as a subtle
+// backlight. Tunable; applied in the per-pixel path. Defined here so the Raster's
+// shading can use them.
+inline bool&  RimLightEnabled() { static bool v = true; return v; }
+inline float& RimStrength()     { static float v = 0.25f; return v; }
+inline float& RimPower()        { static float v = 3.0f; return v; }
+
 /// A tiny software rasterizer with a per-pixel depth buffer, so overlapping 3D
 /// triangles occlude correctly (unlike a painter's-algorithm sort). It fills an
 /// ABGR8888 pixel buffer that both the player (SDL texture) and the editor
@@ -368,9 +376,17 @@ public:
                         br = tc.r * tint.r; bg = tc.g * tint.g; bb2 = tc.b * tint.b;
                     }
                 }
-                float cr = br * lit.x + spec + er;
-                float cg = bg * lit.y + spec + eg;
-                float cb = bb2 * lit.z + spec + eb;
+                // Fresnel rim: brighten grazing-angle edges (1 - n·view)^power,
+                // tinted by the lit color so it reads as a soft backlight glow.
+                float rim = 0.0f;
+                if (RimLightEnabled() && RimStrength() > 0.0f) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    float f = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
+                    rim = std::pow(f, RimPower()) * RimStrength();
+                }
+                float cr = br * lit.x + spec + rim * lit.x + er;
+                float cg = bg * lit.y + spec + rim * lit.y + eg;
+                float cb = bb2 * lit.z + spec + rim * lit.z + eb;
                 if (fog > 0.0f) {
                     cr = cr * (1.0f - fog) + fr * fog;
                     cg = cg * (1.0f - fog) + fg * fog;

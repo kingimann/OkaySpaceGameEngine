@@ -2299,6 +2299,40 @@ void DrawStats(EditorState& ed) {
             if (ImGui::DragFloat("Fog End", &rs.fogEnd, 0.5f, 0.0f, 8000.0f)) ed.dirty = true;
         }
     }
+
+    // Global renderer pipeline switches (process-wide, not per-scene). These let
+    // you toggle/tune the 3D post-processing & lighting features live.
+    if (ImGui::CollapsingHeader("Rendering (Lighting & Post FX)")) {
+        ImGui::Checkbox("Per-pixel lighting (Phong)", &PerPixelLighting());
+
+        ImGui::Checkbox("Shadows", &ShadowsEnabled());
+        if (ShadowsEnabled())
+            ImGui::SliderFloat("Shadow softness", &ShadowSoftness(), 0.0f, 6.0f, "%.1f tx");
+
+        ImGui::Checkbox("Ambient occlusion (SSAO)", &SSAOEnabled());
+        if (SSAOEnabled()) {
+            ImGui::SliderFloat("AO radius", &SSAORadius(), 0.05f, 2.0f, "%.2f");
+            ImGui::SliderFloat("AO strength", &SSAOStrength(), 0.0f, 2.0f, "%.2f");
+        }
+
+        ImGui::Checkbox("Rim light (Fresnel)", &RimLightEnabled());
+        if (RimLightEnabled()) {
+            ImGui::SliderFloat("Rim strength", &RimStrength(), 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Rim power", &RimPower(), 0.5f, 8.0f, "%.1f");
+        }
+
+        ImGui::Checkbox("Bloom", &BloomEnabled());
+        if (BloomEnabled()) {
+            ImGui::SliderFloat("Bloom threshold", &BloomThreshold(), 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Bloom intensity", &BloomIntensity(), 0.0f, 2.0f, "%.2f");
+        }
+
+        ImGui::Checkbox("Tone mapping (ACES)", &ToneMapEnabled());
+        if (ToneMapEnabled())
+            ImGui::SliderFloat("Exposure", &Exposure(), 0.1f, 4.0f, "%.2f");
+
+        ImGui::Checkbox("Anti-aliasing (FXAA)", &FXAAEnabled());
+    }
     ImGui::End();
 }
 

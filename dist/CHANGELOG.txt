@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.43.0
+  - Rendering: Fresnel rim light. The per-pixel path adds a soft (1 - n·view)^p
+    glow at grazing angles, tinted by the lit color, which separates objects from
+    the background and reads as a subtle backlight. On by default (RimLightEnabled
+    / RimStrength / RimPower).
+  - Editor: new "Rendering (Lighting & Post FX)" panel in the Stats window with
+    live toggles + sliders for per-pixel lighting, shadows (softness), SSAO
+    (radius/strength), rim light, bloom (threshold/intensity), tone mapping
+    (exposure) and FXAA — so the whole pipeline is tunable without recompiling.
+
 v2.42.0
   - Rendering: softer shadows. The shadow filter moved from a rigid 3x3 box to a
     12-tap Poisson-disk PCF, giving smoother, less-banded penumbrae for the same

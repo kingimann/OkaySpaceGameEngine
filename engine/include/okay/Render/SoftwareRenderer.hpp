@@ -38,6 +38,11 @@ inline bool&  RimLightEnabled() { static bool v = true; return v; }
 inline float& RimStrength()     { static float v = 0.25f; return v; }
 inline float& RimPower()        { static float v = 3.0f; return v; }
 
+// Hemisphere ambient: tint the ambient term by sky (up) vs ground (down). Strength
+// scales how far each hemisphere departs from the flat ambient level.
+inline bool&  HemisphereAmbient()  { static bool v = true; return v; }
+inline float& HemisphereStrength() { static float v = 0.7f; return v; }
+
 // Environment sky for reflections: the renderer keeps its own copy of the scene's
 // sky gradient (the actual sky is drawn screen-space by the player/editor, so the
 // renderer can't see it). The per-pixel path mirrors this on glossy/reflective
@@ -398,7 +403,7 @@ public:
                 if (Shadows().enabled) {
                     float sh = ShadowFactor(wpos, n);
                     if (sh < 0.999f) {
-                        Vec3 amb = SceneLights::AmbientColor();
+                        Vec3 amb = SceneLights::AmbientAt(n);
                         lit.x = amb.x + (lit.x - amb.x) * sh; if (lit.x < 0) lit.x = 0;
                         lit.y = amb.y + (lit.y - amb.y) * sh; if (lit.y < 0) lit.y = 0;
                         lit.z = amb.z + (lit.z - amb.z) * sh; if (lit.z < 0) lit.z = 0;
@@ -865,6 +870,26 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     EnvSky().top     = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
     EnvSky().horizon = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
     EnvSky().bottom  = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+    // Hemisphere ambient: split the flat ambient into a sky-tinted (up) and
+    // ground-tinted (down) term, keeping the midpoint equal to the current
+    // ambient so the overall level is unchanged — only its direction is added.
+    SceneLights::Hemisphere() = HemisphereAmbient();
+    if (HemisphereAmbient()) {
+        Vec3 a = SceneLights::AmbientColor();
+        Vec3 skyC{(rs.skyTop.r + rs.skyHorizon.r) * 0.5f,
+                  (rs.skyTop.g + rs.skyHorizon.g) * 0.5f,
+                  (rs.skyTop.b + rs.skyHorizon.b) * 0.5f};
+        Vec3 grdC{rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+        Vec3 mid{(skyC.x + grdC.x) * 0.5f, (skyC.y + grdC.y) * 0.5f, (skyC.z + grdC.z) * 0.5f};
+        float k = HemisphereStrength();
+        auto cl = [](float v) { return v < 0.0f ? 0.0f : v; };
+        SceneLights::SkyAmbient()    = {cl(a.x + (skyC.x - mid.x) * k),
+                                        cl(a.y + (skyC.y - mid.y) * k),
+                                        cl(a.z + (skyC.z - mid.z) * k)};
+        SceneLights::GroundAmbient() = {cl(a.x + (grdC.x - mid.x) * k),
+                                        cl(a.y + (grdC.y - mid.y) * k),
+                                        cl(a.z + (grdC.z - mid.z) * k)};
+    }
     RenderShadowMap(scene);   // depth-from-light pre-pass for cast shadows
     if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;

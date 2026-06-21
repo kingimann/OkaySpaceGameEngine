@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.46.0
+  - Rendering: hemisphere ambient light. The ambient term is no longer one flat
+    color — up-facing surfaces pick up the sky color and down-facing ones pick up
+    the ground color (from the scene's sky gradient), with the horizontal midpoint
+    kept at the previous ambient level so overall brightness is unchanged. Shaded
+    sides and undersides now read as three-dimensional instead of dead-flat. On by
+    default (HemisphereAmbient / HemisphereStrength), with an editor toggle.
+
 v2.45.0
   - Rendering: specular/gloss maps. MeshRenderer gained a Specular Map slot — a
     grayscale texture whose per-texel luminance scales the specular highlight and

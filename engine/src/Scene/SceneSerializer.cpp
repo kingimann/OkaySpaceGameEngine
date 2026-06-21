@@ -42,6 +42,7 @@
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -134,7 +135,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
     if (auto* mr = go->GetComponent<MeshRenderer>();
-        mr && !go->GetComponent<Terrain>()) {
+        mr && !go->GetComponent<Terrain>() && !go->GetComponent<Character>()) {
         out << "  mesh " << Quote(mr->mesh.name.empty() ? "Cube" : mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
@@ -159,6 +160,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << tr->waterLevel << " " << tr->snowLevel << " " << tr->rockSlope;
         out << "\n";
     }
+    if (auto* ch = go->GetComponent<Character>()) out << "  character " << ch->ToText() << "\n";
     if (auto* li = go->GetComponent<Light>()) {
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
             << li->color.a << " " << li->ambient << " " << li->intensity
@@ -937,6 +939,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> tr->waterLevel >> tr->snowLevel >> tr->rockSlope;
                     }
                     tr->Apply();   // rebuild the mesh into a MeshRenderer
+                } else if (field == "character") {
+                    std::string rest; std::getline(in, rest);   // rest of the line after the field token
+                    if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
+                    auto* ch = go->AddComponent<Character>();
+                    ch->FromText(rest);
+                    ch->Apply();    // rebuild the mesh into a MeshRenderer
                 } else if (field == "network") {
                     auto* nm = go->AddComponent<NetworkManager>();
                     int as = 0, port = 45000;

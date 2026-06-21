@@ -3935,7 +3935,8 @@ void DrawNewProjectPopup(EditorState& ed) {
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(760, 580), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("New Project", nullptr, ImGuiWindowFlags_NoResize)) {
+    ImGui::SetNextWindowSizeConstraints(ImVec2(560, 420), ImVec2(2000, 1600));
+    if (ImGui::BeginPopupModal("New Project")) {   // resizable
         static char nameBuf[128] = "MyGame";
         static char locBuf[400]  = ".";
 
@@ -3974,8 +3975,10 @@ void DrawNewProjectPopup(EditorState& ed) {
         ImGui::TextDisabled("Pick a starting template, name it, and hit Create.");
         ImGui::Spacing();
 
-        // ---- Card grid (scrollable) ----
-        ImGui::BeginChild("tpl_grid", ImVec2(0, 360), true);
+        // ---- Card grid (scrollable; grows with the window) ----
+        float gridH = ImGui::GetContentRegionAvail().y - 196.0f;   // leave room for desc + fields + footer
+        if (gridH < 120.0f) gridH = 120.0f;
+        ImGui::BeginChild("tpl_grid", ImVec2(0, gridH), true);
         const float CARD_W = 150.0f, CARD_H = 60.0f;
         const int COLS = 4;
         for (int cat = 0; cat <= C_UI; ++cat) {
@@ -5664,16 +5667,35 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         if (CompHeader("Third Person Controller", tp, &toRemove)) {
+            ImGui::SeparatorText("Movement");
             if (ImGui::DragFloat("Walk Speed##tp", &tp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Mouse Sensitivity##tp", &tp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Turn Speed##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Camera Distance##tp", &tp->distance, 0.1f, 1.0f, 20.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Camera Height##tp", &tp->cameraHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##tp", &tp->canJump)) ed.dirty = true;
+            ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##tp", &tp->driveAnimation)) ed.dirty = true;
-            ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD. Uses the main Camera.");
+            const char* faceModes[] = {"Face Movement", "Face Camera"};
+            int fm = (int)tp->faceMode;
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::Combo("Body Facing##tp", &fm, faceModes, 2)) { tp->faceMode = (ThirdPersonController::FaceMode)fm; ed.dirty = true; }
+
+            ImGui::SeparatorText("Camera");
+            if (ImGui::DragFloat("Mouse Sensitivity##tp", &tp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Invert X##tp", &tp->invertX)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Invert Y##tp", &tp->invertY)) ed.dirty = true;
+            if (ImGui::DragFloat("Distance##tp", &tp->distance, 0.1f, 1.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Min Distance##tp", &tp->minDistance, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Distance##tp", &tp->maxDistance, 0.1f, 1.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Zoom Speed##tp", &tp->zoomSpeed, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Camera Height##tp", &tp->cameraHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Shoulder Offset##tp", &tp->shoulderOffset, 0.02f, -3.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Damping##tp", &tp->cameraDamping, 0.1f, 0.0f, 30.0f, "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = instant follow; higher = smoother lag");
+            if (ImGui::DragFloat("Min Pitch##tp", &tp->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Pitch##tp", &tp->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
+            ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD/stick. Uses the main Camera.");
             if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
         }
     }
@@ -6238,7 +6260,11 @@ void DrawInspector(EditorState& ed) {
 
             ImGui::SeparatorText("Drop");
             if (ImGui::Checkbox("Snap dropped item to center##udt", &dt->snapToCenter)) ed.dirty = true;
-            ImGui::TextDisabled("Draggables dropped here call this object's on_receive().");
+            ImGui::TextDisabled("Script events (on a ScriptComponent here):");
+            ImGui::BulletText("on_receive  — an item is dropped on this slot");
+            ImGui::BulletText("on_remove   — an item is dragged out of this slot");
+            ImGui::BulletText("on_drag_enter / on_drag_exit — item hovers/leaves");
+            ImGui::TextDisabled("Items expose prefs: ui_drop_source, ui_drag_item, ui_remove_item.");
             if (ImGui::SmallButton("Remove##udt")) toRemove = dt;
         }
     }

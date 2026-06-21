@@ -1,5 +1,25 @@
 OkaySpace Game Engine — Changelog
 
+v2.64.0
+  - Skybox in the built game (fixed): the player drew the sky with a draw call that
+    silently does nothing on some GPUs/drivers, leaving the game showing a black sky
+    even though the editor previewed it correctly. It's now painted as plain
+    horizontal color strips that render everywhere. The player also honors the
+    camera's "Solid Color" clear flag (skybox suppressed) just like the editor.
+  - Third-Person Controller (fixed + expanded): the camera look was inverted (mouse
+    moved the view the wrong way vs. first-person) and pitch placed the camera BELOW
+    the player looking up. Look now matches first-person, and a positive pitch lifts
+    the camera so it looks DOWN. New options: Invert X/Y, min/max distance, zoom
+    speed, min/max pitch, over-the-shoulder Shoulder Offset, follow Damping
+    (smoothing), and Body Facing mode (Face Movement vs. Face Camera for aim/shooter
+    feel). Left-stick now drives movement too. All saved with the scene.
+  - UI: children parented under another UI widget now follow their parent (Unity
+    rect-in-rect) — move/resize a panel and its children move with it.
+  - UI Drop Target: drop actions — a dragged item's script gets on_drag_start/
+    on_drag/on_drop; a slot gets on_drag_enter/on_drag_exit/on_receive/on_remove, so
+    you can trigger functions when something is dropped on or dragged off a slot.
+  - New Project window is now resizable.
+
 v2.63.0
   - New Project: redesigned the chooser — categorized template cards (color-coded
     by type) with selection, a description panel, and a clear Create/Cancel footer.

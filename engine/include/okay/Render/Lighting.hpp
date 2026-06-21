@@ -66,6 +66,24 @@ struct SceneLights {
         Ambient() = (AmbientColor().x + AmbientColor().y + AmbientColor().z) / 3.0f;
     }
 
+    // ---- Hemisphere ambient ----
+    // Instead of one flat ambient color, the indirect/ambient term can blend
+    // between a "sky" color (for up-facing surfaces) and a "ground" color (for
+    // down-facing ones). The renderer fills these from the scene's sky gradient;
+    // the midpoint (horizontal surfaces) is kept equal to AmbientColor() so the
+    // overall ambient level is unchanged — it just gains direction.
+    static bool& Hemisphere()    { static bool b = false; return b; }
+    static Vec3& SkyAmbient()    { static Vec3 c{0.25f, 0.25f, 0.25f}; return c; }
+    static Vec3& GroundAmbient() { static Vec3 c{0.25f, 0.25f, 0.25f}; return c; }
+    /// Ambient color for a surface with world normal `n` (hemisphere if enabled).
+    static Vec3 AmbientAt(const Vec3& n) {
+        if (!Hemisphere()) return AmbientColor();
+        float t = n.y * 0.5f + 0.5f;            // 1 = up (sky), 0 = down (ground)
+        const Vec3& g = GroundAmbient();
+        const Vec3& s = SkyAmbient();
+        return Vec3{g.x + (s.x - g.x) * t, g.y + (s.y - g.y) * t, g.z + (s.z - g.z) * t};
+    }
+
     /// Accumulated light color (RGB multipliers, clamped to 1) at a world point
     /// with the given surface normal. When no lights were gathered, falls back to
     /// the single global SceneLight so scripts' set_light still works.
@@ -76,7 +94,7 @@ struct SceneLights {
             float s = LambertShade(nn, SceneLight::Direction(), SceneLight::Ambient());
             return Vec3{s, s, s};
         }
-        Vec3 acc = AmbientColor();
+        Vec3 acc = AmbientAt(nn);
         for (const auto& L : lights) {
             float ndl, atten = 1.0f;
             if (L.type == 0) {

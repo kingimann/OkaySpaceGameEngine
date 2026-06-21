@@ -2305,6 +2305,10 @@ void DrawStats(EditorState& ed) {
     if (ImGui::CollapsingHeader("Rendering (Lighting & Post FX)")) {
         ImGui::Checkbox("Per-pixel lighting (Phong)", &PerPixelLighting());
 
+        ImGui::Checkbox("Hemisphere ambient", &HemisphereAmbient());
+        if (HemisphereAmbient())
+            ImGui::SliderFloat("Hemisphere strength", &HemisphereStrength(), 0.0f, 1.5f, "%.2f");
+
         ImGui::Checkbox("Shadows", &ShadowsEnabled());
         if (ShadowsEnabled())
             ImGui::SliderFloat("Shadow softness", &ShadowSoftness(), 0.0f, 6.0f, "%.1f tx");

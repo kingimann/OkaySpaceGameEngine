@@ -13,6 +13,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FirstPersonController.hpp"
@@ -60,6 +61,12 @@ inline void Platformer(Scene& scene) {
     auto* rb = player->AddComponent<Rigidbody2D>();
     rb->bodyType = Rigidbody2D::BodyType::Dynamic;
     player->AddComponent<BoxCollider2D>();
+    // Movement: left/right + jump (Space / W), no scripting needed. This was the
+    // missing piece — the player had a body but nothing drove it.
+    auto* cc = player->AddComponent<CharacterController2D>();
+    cc->mode = CharacterController2D::Mode::Platformer;
+    cc->speed = 5.0f;
+    cc->jumpForce = 9.0f;
 
     GameObject* ground = scene.CreateGameObject("Ground");
     ground->transform->localPosition = {0, -3, 0};

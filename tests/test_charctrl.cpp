@@ -44,6 +44,7 @@ int main() {
         GameObject* o = s.CreateGameObject("C");
         auto* cc = o->AddComponent<CharacterController2D>();
         cc->mode = CharacterController2D::Mode::Platformer; cc->speed = 8.5f; cc->jumpForce = 12.0f;
+        cc->runSpeed = 11.0f; cc->maxJumps = 2; cc->coyoteTime = 0.12f; cc->airControl = 0.5f;
         std::string txt = SceneSerializer::Serialize(s);
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
         auto* c2 = s2.Find("C") ? s2.Find("C")->GetComponent<CharacterController2D>() : nullptr;
@@ -52,6 +53,10 @@ int main() {
             CHECK(c2->mode == CharacterController2D::Mode::Platformer);
             CHECK_NEAR(c2->speed, 8.5f, 1e-4f);
             CHECK_NEAR(c2->jumpForce, 12.0f, 1e-4f);
+            CHECK_NEAR(c2->runSpeed, 11.0f, 1e-4f);   // extended fields round-trip
+            CHECK(c2->maxJumps == 2);
+            CHECK_NEAR(c2->coyoteTime, 0.12f, 1e-4f);
+            CHECK_NEAR(c2->airControl, 0.5f, 1e-4f);
         }
     }
 

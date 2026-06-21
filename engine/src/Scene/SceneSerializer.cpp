@@ -238,7 +238,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  mover " << mv->velocity.x << " " << mv->velocity.y << " " << mv->velocity.z << "\n";
     }
     if (auto* cc = go->GetComponent<CharacterController2D>()) {
-        out << "  charctrl2d " << (int)cc->mode << " " << cc->speed << " " << cc->jumpForce << "\n";
+        out << "  charctrl2d " << (int)cc->mode << " " << cc->speed << " " << cc->jumpForce
+            // extended (optional, back-compatible trailing fields)
+            << " " << cc->runSpeed << " " << (cc->sprintKey ? cc->sprintKey : '-')
+            << " " << cc->acceleration << " " << cc->deceleration
+            << " " << (cc->normalizeDiagonal ? 1 : 0) << " " << (cc->useGamepad ? 1 : 0)
+            << " " << (cc->flipSprite ? 1 : 0) << " " << cc->maxJumps
+            << " " << (cc->variableJump ? 1 : 0) << " " << cc->jumpCutMultiplier
+            << " " << cc->coyoteTime << " " << cc->jumpBuffer << " " << cc->airControl
+            << " " << cc->maxFallSpeed << " " << cc->extraFallGravity << "\n";
     }
     if (auto* cc = go->GetComponent<CharacterController3D>()) {
         out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0) << "\n";
@@ -791,6 +799,25 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> m >> sp >> jf;
                     auto* cc = go->AddComponent<CharacterController2D>();
                     cc->mode = (CharacterController2D::Mode)m; cc->speed = sp; cc->jumpForce = jf;
+                    // extended (optional): only overrides defaults when present.
+                    std::string rs, skTok, ac, de, nd, ug, fs, mj, vj, jc, ct, jb, air, mfs, efg;
+                    if (in >> rs >> skTok >> ac >> de >> nd >> ug >> fs >> mj >> vj >> jc >> ct >> jb >> air >> mfs >> efg) {
+                        cc->runSpeed = (float)std::atof(rs.c_str());
+                        cc->sprintKey = (skTok == "-" || skTok.empty()) ? 0 : skTok[0];
+                        cc->acceleration = (float)std::atof(ac.c_str());
+                        cc->deceleration = (float)std::atof(de.c_str());
+                        cc->normalizeDiagonal = (nd != "0");
+                        cc->useGamepad = (ug != "0");
+                        cc->flipSprite = (fs != "0");
+                        cc->maxJumps = std::atoi(mj.c_str());
+                        cc->variableJump = (vj != "0");
+                        cc->jumpCutMultiplier = (float)std::atof(jc.c_str());
+                        cc->coyoteTime = (float)std::atof(ct.c_str());
+                        cc->jumpBuffer = (float)std::atof(jb.c_str());
+                        cc->airControl = (float)std::atof(air.c_str());
+                        cc->maxFallSpeed = (float)std::atof(mfs.c_str());
+                        cc->extraFallGravity = (float)std::atof(efg.c_str());
+                    }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
                     float sp = 3, sd = 0; in >> sp >> sd;

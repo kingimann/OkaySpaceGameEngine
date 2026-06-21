@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.67.0
+  - Character Controller 2D — greatly expanded with real platformer game-feel:
+    run/sprint key, acceleration & deceleration, gamepad stick support, sprite
+    facing flip, and (top-down) diagonal normalization. Platformer adds multi-jump
+    (double jump), variable/hold-for-higher jumps, coyote time, jump buffering, air
+    control, a fall-speed clamp and extra fall gravity. Grounded state now comes
+    from real collisions (correct on slopes/platforms) with the old velocity
+    heuristic kept as a fallback. All new fields are in the inspector and saved.
+  - 2D sprites — resize handles in the Scene view: select a sprite and drag the 8
+    corner/edge handles to change its size, the same affordance UI widgets have
+    (you previously could only nudge it with the uniform-scale gizmo).
+  - 2D sprites — Sort Order now works in the editor preview: sprites are drawn
+    back-to-front by Sort Order (matching the built game) instead of scene order.
+
 v2.66.0
   - Scripting — many more event handlers. Physics now has distinct enter/stay/exit
     for both triggers and collisions: on_trigger_enter/stay/exit and

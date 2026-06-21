@@ -88,8 +88,10 @@ struct SceneLights {
     /// Accumulated light color (RGB multipliers, clamped to 1) at a world point
     /// with the given surface normal. When no lights were gathered, falls back to
     /// the single global SceneLight so scripts' set_light still works.
-    static Vec3 ShadeColor(const Vec3& p, const Vec3& n) {
-        Vec3 nn = n.Normalized();
+    static Vec3 ShadeColor(const Vec3& p, const Vec3& n) { return ShadeNormalized(p, n.Normalized()); }
+    /// Same as ShadeColor but assumes `nn` is already unit length (skips the
+    /// per-pixel sqrt) — the per-pixel renderer passes a normalized normal.
+    static Vec3 ShadeNormalized(const Vec3& p, const Vec3& nn) {
         const auto& lights = List();
         if (lights.empty()) {
             float s = LambertShade(nn, SceneLight::Direction(), SceneLight::Ambient());
@@ -134,7 +136,11 @@ struct SceneLights {
     /// material's specular strength — the caller applies that (and any gloss map).
     static Vec3 Specular(const Vec3& p, const Vec3& n, const Vec3& toEye,
                          float shininess, float dirShadow = 1.0f) {
-        Vec3 nn = n.Normalized();
+        return SpecularN(p, n.Normalized(), toEye, shininess, dirShadow);
+    }
+    /// Specular variant that assumes `nn` is already unit length (skips the sqrt).
+    static Vec3 SpecularN(const Vec3& p, const Vec3& nn, const Vec3& toEye,
+                          float shininess, float dirShadow = 1.0f) {
         const auto& lights = List();
         if (lights.empty()) {
             Vec3 ld = SceneLight::Direction().Normalized() * -1.0f;

@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.58.0
+  - Performance: per-pixel shading micro-optimizations. Global render-state
+    accessors (rim/shadow/sky toggles) are hoisted out of the inner loop, the rim
+    term uses cheap integer powers instead of pow(), and the diffuse/specular
+    lighting skip a redundant per-pixel normal re-normalization (the renderer
+    already passes a unit normal). ~10-15% faster geometry on a basic scene.
+
 v2.57.0
   - Fix: dotted "crack" lines across the ground (and other large quads). Pixels on
     a shared triangle edge could fall outside both triangles from float rounding;

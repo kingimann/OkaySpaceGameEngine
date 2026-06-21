@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.55.0
+  - Fix: walk/run animations no longer play backwards. The character was modelled
+    facing +Z while the cameras/controllers use -Z as forward, so the body walked
+    backwards relative to its facing (moonwalk). The character mesh now faces -Z to
+    match, and the third-person controller aims accordingly. Walking forward now
+    animates forward (and vice-versa) in both first- and third-person.
+
 v2.54.0
   - Fix: first-person no longer makes your character vanish. Instead of hiding the
     body mesh globally, the first-person camera now simply IGNORES the player's own

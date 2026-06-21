@@ -78,7 +78,9 @@ public:
 
         // ---- Turn the body to face movement (smoothly) ----
         if (moving) {
-            Quat want = Quat::LookRotation({dir.x, 0, dir.z});
+            // The character mesh faces -Z (engine camera/controller convention),
+            // so aim its -Z down the movement direction (LookRotation aligns +Z).
+            Quat want = Quat::LookRotation({-dir.x, 0, -dir.z});
             float t = 1.0f - std::exp(-turnSpeed * dt);
             transform->localRotation = Quat::Slerp(transform->localRotation, want, t);
         }

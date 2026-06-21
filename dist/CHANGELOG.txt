@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.49.0
+  - Rendering: metallic materials. MeshRenderer gained a Metallic property. Metals
+    lose their diffuse term and tint both their specular highlight and their
+    environment (sky) reflection by the albedo color, so gold reflects gold and
+    chrome mirrors the sky, while dielectrics keep a white highlight. Metals also
+    reflect strongly without needing an explicit reflectivity. Exposed in the
+    inspector and saved with the scene.
+
 v2.48.0
   - Rendering: colored, multi-light specular. Highlights used to come only from
     the directional sun and were always white. The per-pixel path now accumulates

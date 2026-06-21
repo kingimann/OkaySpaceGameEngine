@@ -52,6 +52,11 @@ public:
     /// matte regions (per-pixel lighting only). Build Game bundles the file.
     std::string specularMap;
 
+    /// Metalness [0,1]: metals lose their diffuse and tint both their specular
+    /// highlight and their environment reflection by the albedo color (so gold
+    /// reflects gold). 0 = dielectric (plastic/wood), 1 = pure metal.
+    float metallic = 0.0f;
+
     /// Optional matcap (lit-sphere) image, sampled by the camera-space normal.
     /// This is the technique MakeHuman uses for soft, skin-like shading: it bakes
     /// the entire lighting response into a sphere image, so subtle surface relief

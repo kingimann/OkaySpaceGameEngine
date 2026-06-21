@@ -952,6 +952,60 @@ inline void ApplyToneMap(Raster& r) {
     });
 }
 
+// ---- Color grading (brightness / contrast / saturation / vignette / gamma) --
+// All neutral by default, so the look is unchanged until you opt in. A cheap final
+// "look" pass: lets a game warm/cool the palette, punch up contrast, desaturate
+// for a grim mood, darken the frame edges, or apply gamma — without shaders.
+inline bool&  ColorGradeEnabled() { static bool v = false; return v; }
+inline float& Brightness()  { static float v = 1.0f; return v; }   // multiply (1 = no change)
+inline float& Contrast()    { static float v = 1.0f; return v; }   // around mid-grey (1 = no change)
+inline float& Saturation()  { static float v = 1.0f; return v; }   // 0 = greyscale, 1 = normal
+inline float& Vignette()    { static float v = 0.0f; return v; }   // 0 = off .. 1 = strong edge darkening
+inline float& Gamma()       { static float v = 1.0f; return v; }   // 1 = none; 2.2 = linear->sRGB-ish
+
+inline void ApplyColorGrade(Raster& r) {
+    if (!ColorGradeEnabled()) return;
+    int W = r.width, H = r.height;
+    if (W < 1 || H < 1) return;
+    const float br = Brightness(), ct = Contrast(), sat = Saturation();
+    const float vig = Vignette() < 0.0f ? 0.0f : (Vignette() > 1.0f ? 1.0f : Vignette());
+    const float invG = Gamma() > 1e-3f ? 1.0f / Gamma() : 1.0f;
+    const bool doGamma = Mathf::Abs(Gamma() - 1.0f) > 1e-3f;
+    const float cx = (W - 1) * 0.5f, cy = (H - 1) * 0.5f;
+    const float maxR2 = cx * cx + cy * cy + 1e-6f;
+    ParallelRows(0, H, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y) {
+            float dy = (y - cy);
+            for (int x = 0; x < W; ++x) {
+                std::size_t i = (std::size_t)y * W + x;
+                std::uint32_t v = r.color[i];
+                float cr = (float)( v        & 0xFF) / 255.0f;
+                float cg = (float)((v >> 8)  & 0xFF) / 255.0f;
+                float cb = (float)((v >> 16) & 0xFF) / 255.0f;
+                cr *= br; cg *= br; cb *= br;                       // brightness
+                cr = (cr - 0.5f) * ct + 0.5f;                       // contrast about mid-grey
+                cg = (cg - 0.5f) * ct + 0.5f;
+                cb = (cb - 0.5f) * ct + 0.5f;
+                if (sat != 1.0f) {                                  // saturation toward luma
+                    float l = 0.2126f * cr + 0.7152f * cg + 0.0722f * cb;
+                    cr = l + (cr - l) * sat; cg = l + (cg - l) * sat; cb = l + (cb - l) * sat;
+                }
+                if (vig > 0.0f) {                                  // edge darkening
+                    float dx = (x - cx);
+                    float f = 1.0f - vig * ((dx * dx + dy * dy) / maxR2);
+                    if (f < 0.0f) f = 0.0f;
+                    cr *= f; cg *= f; cb *= f;
+                }
+                if (doGamma) { cr = std::pow(cr < 0 ? 0 : cr, invG);
+                               cg = std::pow(cg < 0 ? 0 : cg, invG);
+                               cb = std::pow(cb < 0 ? 0 : cb, invG); }
+                auto cl = [](float c) { return (std::uint32_t)((c < 0 ? 0 : (c > 1 ? 1 : c)) * 255.0f + 0.5f); };
+                r.color[i] = (v & 0xFF000000u) | (cl(cb) << 16) | (cl(cg) << 8) | cl(cr);
+            }
+        }
+    });
+}
+
 // ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
 inline bool& FXAAEnabled() { static bool v = true; return v; }
 
@@ -1286,6 +1340,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
     ApplyBloom(r);                                                   // bright-pass glow
     ApplyToneMap(r);                                                 // filmic highlight rolloff
+    ApplyColorGrade(r);                                              // brightness/contrast/sat/vignette/gamma
     ApplyFXAA(r);                                                    // edge anti-aliasing
 }
 

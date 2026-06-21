@@ -328,8 +328,6 @@ public:
         const bool glossMap = specMips && !specMips->empty() && (*specMips)[0].Width() > 0;
         int gw = glossMap ? (*specMips)[0].Width() : 0, gh = glossMap ? (*specMips)[0].Height() : 0;
         LodGrad lgG = glossMap ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
-        Vec3 toLight = SceneLight::Direction() * -1.0f;
-        toLight = toLight.Normalized();
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
                 float px = x + 0.5f, py = y + 0.5f;
@@ -391,24 +389,27 @@ public:
                         gloss = 0.2126f * gc.r + 0.7152f * gc.g + 0.0722f * gc.b;
                     }
                 }
-                float spec = 0.0f;
-                if (specularK > 0.0f) {
-                    Vec3 toEye = (eye - wpos).Normalized();
-                    Vec3 h = (toLight + toEye).Normalized();
-                    float nh = Vec3::Dot(n, h);
-                    if (nh > 0.0f) spec = std::pow(nh, shininess) * specularK * gloss;
-                }
                 // Cast shadows: fade the direct light toward the ambient floor for
-                // fragments occluded from the light, and kill the specular there.
+                // fragments occluded from the light (specular is shadowed below).
+                float sh = 1.0f;
                 if (Shadows().enabled) {
-                    float sh = ShadowFactor(wpos, n);
+                    sh = ShadowFactor(wpos, n);
                     if (sh < 0.999f) {
                         Vec3 amb = SceneLights::AmbientAt(n);
                         lit.x = amb.x + (lit.x - amb.x) * sh; if (lit.x < 0) lit.x = 0;
                         lit.y = amb.y + (lit.y - amb.y) * sh; if (lit.y < 0) lit.y = 0;
                         lit.z = amb.z + (lit.z - amb.z) * sh; if (lit.z < 0) lit.z = 0;
-                        spec *= sh;
                     }
+                }
+                // Colored Blinn-Phong specular from every light (sun + point + spot),
+                // each tinted by its own color and attenuation; the sun's part is
+                // shadowed. Scaled by the material strength and the gloss map.
+                Vec3 spec{0, 0, 0};
+                if (specularK > 0.0f) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    spec = SceneLights::Specular(wpos, n, toEye, shininess, sh);
+                    float ks = specularK * gloss;
+                    spec.x *= ks; spec.y *= ks; spec.z *= ks;
                 }
                 float br = base.r, bg = base.g, bb2 = base.b;
                 if (textured) {
@@ -428,9 +429,9 @@ public:
                     float f = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
                     rim = std::pow(f, RimPower()) * RimStrength();
                 }
-                float cr = br * lit.x + spec + rim * lit.x + er;
-                float cg = bg * lit.y + spec + rim * lit.y + eg;
-                float cb = bb2 * lit.z + spec + rim * lit.z + eb;
+                float cr = br * lit.x + spec.x + rim * lit.x + er;
+                float cg = bg * lit.y + spec.y + rim * lit.y + eg;
+                float cb = bb2 * lit.z + spec.z + rim * lit.z + eb;
                 // Environment reflection: mirror the sky gradient about the normal
                 // and blend it in by a Fresnel-weighted reflectivity (Schlick), so
                 // edges reflect more than face-on — a cheap glossy/metal look.

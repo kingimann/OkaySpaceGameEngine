@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
 #include <vector>
+#include <cmath>
 
 namespace okay {
 
@@ -124,6 +125,58 @@ struct SceneLights {
         if (acc.y > 1.0f) acc.y = 1.0f;
         if (acc.z > 1.0f) acc.z = 1.0f;
         return acc;
+    }
+
+    /// Colored Blinn-Phong specular accumulated over every light (directional +
+    /// point + spot), with each light's color and distance/cone attenuation. The
+    /// directional contribution is scaled by `dirShadow` (the shadow factor) so
+    /// highlights vanish in shadow. Returned value is NOT multiplied by the
+    /// material's specular strength — the caller applies that (and any gloss map).
+    static Vec3 Specular(const Vec3& p, const Vec3& n, const Vec3& toEye,
+                         float shininess, float dirShadow = 1.0f) {
+        Vec3 nn = n.Normalized();
+        const auto& lights = List();
+        if (lights.empty()) {
+            Vec3 ld = SceneLight::Direction().Normalized() * -1.0f;
+            Vec3 h = ld + toEye; float hl = h.Magnitude();
+            if (hl < 1e-6f) return Vec3{0, 0, 0};
+            h = h * (1.0f / hl);
+            float nh = Vec3::Dot(nn, h);
+            if (nh <= 0.0f) return Vec3{0, 0, 0};
+            float s = std::pow(nh, shininess) * dirShadow;
+            return Vec3{s, s, s};
+        }
+        Vec3 spec{0, 0, 0};
+        for (const auto& L : lights) {
+            Vec3 ld; float atten = 1.0f;
+            if (L.type == 0) {
+                ld = L.dir.Normalized() * -1.0f;
+            } else {
+                Vec3 toL = L.pos - p; float d = toL.Magnitude();
+                ld = d > 1e-5f ? toL * (1.0f / d) : Vec3{0, 1, 0};
+                atten = (L.range > 0.0f) ? (1.0f - d / L.range) : 0.0f;
+                if (atten < 0.0f) atten = 0.0f;
+                atten *= atten;
+                if (L.type == 2) {
+                    float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
+                    float denom = L.cosInner - L.cosOuter;
+                    float spot = denom > 1e-4f ? (cs - L.cosOuter) / denom
+                                               : (cs >= L.cosOuter ? 1.0f : 0.0f);
+                    if (spot < 0.0f) spot = 0.0f; else if (spot > 1.0f) spot = 1.0f;
+                    atten *= spot * spot;
+                }
+            }
+            if (atten <= 0.0f) continue;
+            Vec3 h = ld + toEye; float hl = h.Magnitude();
+            if (hl < 1e-6f) continue;
+            h = h * (1.0f / hl);
+            float nh = Vec3::Dot(nn, h);
+            if (nh <= 0.0f) continue;
+            float s = std::pow(nh, shininess) * atten;
+            if (L.type == 0) s *= dirShadow;          // only the sun is shadow-mapped
+            spec.x += L.color.x * s; spec.y += L.color.y * s; spec.z += L.color.z * s;
+        }
+        return spec;
     }
 };
 

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.45.0
+  - Rendering: specular/gloss maps. MeshRenderer gained a Specular Map slot — a
+    grayscale texture whose per-texel luminance scales the specular highlight and
+    the environment reflection, so one material can blend shiny and matte regions
+    (per-pixel lighting). Exposed in the inspector and saved with the scene.
+  - Build/fix: builds now bundle the normal map and specular map alongside the
+    base texture (previously normal maps were referenced but not copied into the
+    shipped game folder).
+
 v2.44.0
   - Rendering: environment reflections. Materials gained a Reflectivity property
     (per-pixel path): the surface mirrors the scene's sky gradient about its

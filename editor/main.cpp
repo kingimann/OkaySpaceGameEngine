@@ -4992,6 +4992,15 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SliderFloat("Bump Strength##mesh", &mr->normalStrength, 0.0f, 2.0f)) ed.dirty = true;
             }
             if (ImGui::SliderFloat("Reflectivity##mesh", &mr->reflectivity, 0.0f, 1.0f)) ed.dirty = true;
+            char smap[260];
+            std::strncpy(smap, mr->specularMap.c_str(), sizeof(smap) - 1);
+            smap[sizeof(smap) - 1] = '\0';
+            if (ImGui::InputText("Specular Map##mesh", smap, sizeof(smap))) { mr->specularMap = smap; ed.dirty = true; }
+            if (AcceptAssetPathField(mr->specularMap)) ed.dirty = true;   // drop from Project
+            if (!mr->specularMap.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##smap")) { mr->specularMap.clear(); ed.dirty = true; }
+            }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
             if (ImGui::SmallButton("Subdivide##mesh")) { mr->mesh.Subdivide(); ed.dirty = true; }

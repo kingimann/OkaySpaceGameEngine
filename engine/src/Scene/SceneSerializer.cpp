@@ -154,6 +154,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Environment reflectivity (separate record so older scenes still load).
         if (mr->reflectivity > 0.0f)
             out << "  reflect " << mr->reflectivity << "\n";
+        // Specular/gloss map (separate record so older scenes still load).
+        if (!mr->specularMap.empty())
+            out << "  specmap " << Quote(mr->specularMap) << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -657,6 +660,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "reflect") {
                     if (auto* mr = go->GetComponent<MeshRenderer>())
                         in >> mr->reflectivity;
+                } else if (field == "specmap") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->specularMap = ReadQuoted(in);
+                    }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();
                     Color c;
@@ -1286,7 +1294,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     for (const auto& go : scene.Objects()) {
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
-        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); }
+        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); }
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
         if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
         if (auto* an = go->GetComponent<SpriteAnimator>())

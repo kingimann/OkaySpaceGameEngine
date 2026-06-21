@@ -60,6 +60,49 @@ int main() {
         CHECK_NEAR(t.GetHeight(3, 3), 1.5f, 1e-4f);
     }
 
+    // --- Procedural generation + smooth normals + auto-color layers ----
+    {
+        Terrain t; t.Resize(32);
+        t.Generate(0, 15.0f, 4.0f, 5, 99u);   // Mountains
+        float maxH = 0.0f, minH = 1e9f;
+        for (float h : t.heights) { if (h > maxH) maxH = h; if (h < minH) minH = h; }
+        CHECK(maxH > 1.0f);                    // produced relief
+        CHECK(maxH > minH);
+
+        // Same seed is deterministic; a different type yields a different surface.
+        Terrain a; a.Resize(32); a.Generate(0, 15.0f, 4.0f, 5, 99u);
+        CHECK_NEAR(a.GetHeight(10, 10), t.GetHeight(10, 10), 1e-4f);
+        Terrain b; b.Resize(32); b.Generate(2, 15.0f, 4.0f, 5, 99u);  // Plains
+        bool differ = false;
+        for (int i = 0; i < (int)b.heights.size(); ++i)
+            if (std::fabs(b.heights[i] - t.heights[i]) > 1e-3f) { differ = true; break; }
+        CHECK(differ);
+
+        // BuildMesh emits per-face colors + per-vertex smooth normals when autoColor.
+        Mesh m = t.BuildMesh();
+        CHECK(m.HasFaceColors());
+        CHECK(m.HasNormals());
+        CHECK((int)m.normals.size() == (int)m.vertices.size());
+
+        // Disabling autoColor drops the face colors (single albedo).
+        t.autoColor = false;
+        Mesh m2 = t.BuildMesh();
+        CHECK(!m2.HasFaceColors());
+    }
+
+    // --- Smooth + Flatten brushes -------------------------------------
+    {
+        Terrain t; t.Resize(16); t.size = 16.0f; t.Flatten(0.0f);
+        t.SetHeight(8, 8, 10.0f);              // a single spike
+        float spike = t.GetHeight(8, 8);
+        t.SmoothAt(0.0f, 0.0f, 4.0f, 1.0f);    // relax around the center
+        CHECK(t.GetHeight(8, 8) < spike);      // spike pulled down toward neighbors
+
+        Terrain f; f.Resize(16); f.size = 16.0f; f.Randomize(5.0f, 3u);
+        f.FlattenAt(0.0f, 0.0f, 5.0f, 2.0f, 1.0f);  // full-strength flatten to 2.0
+        CHECK_NEAR(f.GetHeight(8, 8), 2.0f, 1e-3f); // center reaches the target
+    }
+
     // --- Terrain serializes (heights round-trip; mesh rebuilt on load) -
     {
         Scene s("T2"); s.physicsEnabled = false;
@@ -67,6 +110,8 @@ int main() {
         auto* t = go->AddComponent<Terrain>();
         t->Resize(6); t->size = 30.0f; t->color = Color::FromBytes(120, 90, 60);
         t->SetHeight(2, 3, 4.5f);
+        t->snowLevel = 22.0f; t->rockSlope = 0.72f; t->autoColor = true;
+        t->snowColor = Color::FromBytes(250, 250, 255);
 
         std::string txt = SceneSerializer::Serialize(s);
         Scene s2("x"); SceneSerializer::Deserialize(s2, txt);
@@ -78,6 +123,10 @@ int main() {
             CHECK(t2->resolution == 6);
             CHECK_NEAR(t2->size, 30.0f, 1e-3f);
             CHECK_NEAR(t2->GetHeight(2, 3), 4.5f, 1e-3f);
+            CHECK(t2->autoColor);
+            CHECK_NEAR(t2->snowLevel, 22.0f, 1e-3f);
+            CHECK_NEAR(t2->rockSlope, 0.72f, 1e-3f);
+            CHECK_NEAR(t2->snowColor.r, t->snowColor.r, 0.02f);
             // Apply ran on load: the MeshRenderer exists with the right vert count.
             auto* mr2 = g2->GetComponent<MeshRenderer>();
             CHECK(mr2 != nullptr);

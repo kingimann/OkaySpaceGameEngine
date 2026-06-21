@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.17.0
+  - Terrain Creator (Unity-style) — a big upgrade to the Terrain component:
+    - Procedural generation from Perlin/fractal noise, with one-click presets:
+      Mountains, Hills, Plains, Plateau (mesas), Islands — plus Amplitude,
+      Frequency and Detail (octaves) controls and a re-roll Generate button.
+    - Sculpt brush modes: Raise/Lower (Shift inverts), Smooth, Flatten (level to
+      the height under the cursor) and Set Height (level to a target). Drag in
+      the 3D view; Radius + Strength sliders.
+    - Auto-color "layers": each face is tinted by elevation and slope — water,
+      sand, grass, rock (on steep faces) and snow (on peaks) — with editable
+      layer colors and Water/Snow level + Rock slope thresholds.
+    - Terrain now uses smooth (Gouraud) shading, so rolling hills look rounded
+      instead of faceted.
+    - New terrains start as an 80m rolling-hills landscape at 64 resolution.
+    All new settings are saved with the scene (older scenes still load).
+
 v2.16.42
   - Renderer: smooth (Gouraud) shading. Meshes that carry per-vertex normals are
     now lit per-pixel across each face instead of one flat color per triangle —

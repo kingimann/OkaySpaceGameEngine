@@ -556,6 +556,12 @@ bool  g_gizmoLocal = false; // gizmo axes in the object's local space (Unity's L
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
 float g_terrainRadius = 6.0f;
 float g_terrainStrength = 4.0f;
+int   g_terrainBrush = 0;      // 0 Raise/Lower, 1 Smooth, 2 Flatten, 3 Set Height
+float g_terrainFlattenH = 0.0f;// target height for the Flatten/Set-Height brush
+int   g_terrainGenType = 0;    // 0 Mountains,1 Hills,2 Plains,3 Plateau,4 Islands
+float g_terrainGenAmp = 12.0f; // generation amplitude (peak height)
+float g_terrainGenFreq = 3.0f; // generation frequency (feature density)
+int   g_terrainGenOct = 5;     // generation octaves (detail)
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
@@ -1121,8 +1127,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Terrain")) {
                 GameObject* go = ed.CreateEmpty("Terrain");
                 auto* tr = go->AddComponent<Terrain>();
-                tr->Resize(32); tr->size = 50.0f;
-                tr->Hills(6, 6.0f, (unsigned)ImGui::GetTime());   // start with gentle hills
+                tr->Resize(64); tr->size = 80.0f;
+                tr->Generate(1, 10.0f, 3.0f, 5, (unsigned)(ImGui::GetTime() * 1000.0)); // rolling hills
                 tr->Apply();
                 ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
                 ConsoleLog("Created Terrain");
@@ -5225,18 +5231,51 @@ void DrawInspector(EditorState& ed) {
 
             ImGui::SeparatorText("Sculpt brush (drag in the 3D view)");
             ImGui::Checkbox("Sculpt##terr", &g_terrainSculpt);
-            ImGui::SameLine(); ImGui::TextDisabled("(Shift = lower)");
+            ImGui::SameLine(); ImGui::TextDisabled("(Shift = lower/invert)");
+            const char* brushes[] = {"Raise / Lower", "Smooth", "Flatten", "Set Height"};
+            ImGui::SetNextItemWidth(160);
+            ImGui::Combo("Mode##terrbr", &g_terrainBrush, brushes, 4);
             ImGui::SliderFloat("Radius##terr", &g_terrainRadius, 0.5f, 30.0f);
             ImGui::SliderFloat("Strength##terr", &g_terrainStrength, 0.1f, 20.0f);
+            if (g_terrainBrush == 3)
+                ImGui::DragFloat("Target Height##terr", &g_terrainFlattenH, 0.1f, -100.0f, 100.0f);
 
-            ImGui::SeparatorText("Generate");
-            if (ImGui::SmallButton("Flatten##terr"))   { tr->Flatten(0.0f); tr->Apply(); ed.dirty = true; }
+            ImGui::SeparatorText("Generate (Perlin noise)");
+            const char* gens[] = {"Mountains", "Hills", "Plains", "Plateau", "Islands"};
+            ImGui::SetNextItemWidth(160);
+            ImGui::Combo("Type##terrgen", &g_terrainGenType, gens, 5);
+            ImGui::SliderFloat("Amplitude##terrgen", &g_terrainGenAmp, 1.0f, 60.0f);
+            ImGui::SliderFloat("Frequency##terrgen", &g_terrainGenFreq, 0.5f, 12.0f);
+            ImGui::SliderInt("Detail##terrgen", &g_terrainGenOct, 1, 8);
+            if (ImGui::Button("Generate##terrgen")) {
+                tr->Generate(g_terrainGenType, g_terrainGenAmp, g_terrainGenFreq,
+                             g_terrainGenOct, (unsigned)(ImGui::GetTime() * 1000.0));
+                tr->Apply(); ed.dirty = true;
+            }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Smooth##terr"))    { tr->Smooth(); tr->Apply(); ed.dirty = true; }
+            if (ImGui::Button("Flatten##terr")) { tr->Flatten(0.0f); tr->Apply(); ed.dirty = true; }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Randomize##terr")) { tr->Randomize(2.0f, (unsigned)ImGui::GetTime()); tr->Apply(); ed.dirty = true; }
-            if (ImGui::SmallButton("Hills##terr"))     { tr->Flatten(0.0f); tr->Hills(8, 8.0f, (unsigned)ImGui::GetTime()); tr->Apply(); ed.dirty = true; }
-            ImGui::SameLine();
+            if (ImGui::Button("Smooth All##terr")) { tr->Smooth(); tr->Apply(); ed.dirty = true; }
+
+            ImGui::SeparatorText("Layers (auto-color by height & slope)");
+            if (ImGui::Checkbox("Auto Color##terr", &tr->autoColor)) { tr->Apply(); ed.dirty = true; }
+            if (tr->autoColor) {
+                auto layerCol = [&](const char* lbl, Color& col) {
+                    float v[3] = {col.r, col.g, col.b};
+                    if (ImGui::ColorEdit3(lbl, v, ImGuiColorEditFlags_NoInputs)) {
+                        col = {v[0], v[1], v[2], 1.0f}; tr->Apply(); ed.dirty = true;
+                    }
+                };
+                layerCol("Water##terr", tr->waterColor); ImGui::SameLine();
+                layerCol("Sand##terr",  tr->sandColor);  ImGui::SameLine();
+                layerCol("Grass##terr", tr->grassColor);
+                layerCol("Rock##terr",  tr->rockColor);  ImGui::SameLine();
+                layerCol("Snow##terr",  tr->snowColor);
+                if (ImGui::SliderFloat("Water Level##terr", &tr->waterLevel, -20.0f, 40.0f)) { tr->Apply(); ed.dirty = true; }
+                if (ImGui::SliderFloat("Snow Level##terr",  &tr->snowLevel,  0.0f, 80.0f))   { tr->Apply(); ed.dirty = true; }
+                if (ImGui::SliderFloat("Rock Slope##terr",  &tr->rockSlope,  0.1f, 1.0f))    { tr->Apply(); ed.dirty = true; }
+            }
+
             if (ImGui::SmallButton("Remove##terr")) toRemove = tr;
         }
     }
@@ -7626,8 +7665,24 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 float t = (op.y - a.y) / rdir.y;
                 if (t > 0.0f) {
                     Vec3 hit = a + rdir * t;
-                    float delta = g_terrainStrength * io.DeltaTime * (io.KeyShift ? -1.0f : 1.0f);
-                    terr->RaiseAt(hit.x - op.x, hit.z - op.z, g_terrainRadius, delta);
+                    float lx = hit.x - op.x, lz = hit.z - op.z;
+                    float dt = io.DeltaTime, sign = io.KeyShift ? -1.0f : 1.0f;
+                    switch (g_terrainBrush) {
+                        case 1:  // Smooth
+                            terr->SmoothAt(lx, lz, g_terrainRadius, std::min(1.0f, g_terrainStrength * dt));
+                            break;
+                        case 2:  // Flatten: pull toward the height under the cursor
+                            terr->FlattenAt(lx, lz, g_terrainRadius, terr->SampleHeight(lx, lz),
+                                            std::min(1.0f, g_terrainStrength * dt));
+                            break;
+                        case 3:  // Set Height: pull toward the explicit target
+                            terr->FlattenAt(lx, lz, g_terrainRadius, g_terrainFlattenH,
+                                            std::min(1.0f, g_terrainStrength * dt));
+                            break;
+                        default: // Raise / Lower
+                            terr->RaiseAt(lx, lz, g_terrainRadius, g_terrainStrength * dt * sign);
+                            break;
+                    }
                     terr->Apply();
                     ed.dirty = true;
                 }

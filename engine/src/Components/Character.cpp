@@ -240,7 +240,10 @@ void Character::Apply() {
     m_built = false; EnsureRest();
     Mesh m = m_rest;
     Skin(m, m_bone, PoseAt(animTime));
-    for (Vec3& v : m.vertices) v.y *= height;
+    // Face -Z: the engine's cameras look down -Z and the controllers move along
+    // -Z, so the body (modelled facing +Z) is turned 180° about Y to match — this
+    // is what stops the walk looking backwards (moonwalk).
+    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }
     m.normals.clear();                     // boxy -> flat shading
     mr->mesh = std::move(m);
     mr->doubleSided = true;
@@ -254,7 +257,7 @@ void Character::Update(float dt) {
     EnsureRest();
     Mesh m = m_rest;
     Skin(m, m_bone, PoseAt(animTime));
-    for (Vec3& v : m.vertices) v.y *= height;
+    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }   // face -Z (see Apply)
     m.normals.clear();
     mr->mesh = std::move(m);
     mr->doubleSided = true;

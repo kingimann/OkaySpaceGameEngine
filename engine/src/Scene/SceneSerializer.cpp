@@ -390,7 +390,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  uidroptarget " << Quote(dt->acceptTag)
             << " " << (dt->showHighlight ? 1 : 0)
             << " " << dt->highlight.r << " " << dt->highlight.g
-            << " " << dt->highlight.b << " " << dt->highlight.a << "\n";
+            << " " << dt->highlight.b << " " << dt->highlight.a
+            // extended (optional, back-compat): bg + border + reject + snap
+            << " " << (dt->drawBackground ? 1 : 0)
+            << " " << dt->background.r << " " << dt->background.g << " " << dt->background.b << " " << dt->background.a
+            << " " << dt->cornerRadius << " " << dt->borderWidth
+            << " " << dt->borderColor.r << " " << dt->borderColor.g << " " << dt->borderColor.b << " " << dt->borderColor.a
+            << " " << dt->rejectHighlight.r << " " << dt->rejectHighlight.g << " " << dt->rejectHighlight.b << " " << dt->rejectHighlight.a
+            << " " << (dt->snapToCenter ? 1 : 0) << "\n";
     }
     if (auto* dg = go->GetComponent<Draggable>()) {
         out << "  draggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
@@ -1069,6 +1076,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int sh = 1; in >> sh; dt->showHighlight = (sh != 0);
                         in >> dt->highlight.r >> dt->highlight.g
                            >> dt->highlight.b >> dt->highlight.a;
+                    }
+                    in >> std::ws;               // extended fields (optional)
+                    if (std::isdigit(in.peek())) {
+                        int bg = 0, sc = 1;
+                        in >> bg >> dt->background.r >> dt->background.g >> dt->background.b >> dt->background.a
+                           >> dt->cornerRadius >> dt->borderWidth
+                           >> dt->borderColor.r >> dt->borderColor.g >> dt->borderColor.b >> dt->borderColor.a
+                           >> dt->rejectHighlight.r >> dt->rejectHighlight.g >> dt->rejectHighlight.b >> dt->rejectHighlight.a
+                           >> sc;
+                        dt->drawBackground = (bg != 0); dt->snapToCenter = (sc != 0);
                     }
                 } else if (field == "draggable") {
                     auto* dg = go->AddComponent<Draggable>();

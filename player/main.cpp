@@ -527,6 +527,21 @@ int main(int argc, char** argv) {
 
         // In-game UI (screen space), drawn on top of everything.
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        for (const auto& up : scene.Objects()) {           // drop-target slot backgrounds (behind items)
+            auto* dt = up->GetComponent<UIDropTarget>();
+            if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;
+            Vec2 o, sz; if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
+            SDL_Rect r{(int)o.x, (int)o.y, (int)sz.x, (int)sz.y};
+            SDL_SetRenderDrawColor(renderer, (Uint8)(dt->background.r*255), (Uint8)(dt->background.g*255),
+                                   (Uint8)(dt->background.b*255), (Uint8)(dt->background.a*255));
+            SDL_RenderFillRect(renderer, &r);
+            for (int b = 0; b < (int)dt->borderWidth; ++b) {   // outline
+                SDL_Rect br{r.x+b, r.y+b, r.w-2*b, r.h-2*b};
+                SDL_SetRenderDrawColor(renderer, (Uint8)(dt->borderColor.r*255), (Uint8)(dt->borderColor.g*255),
+                                       (Uint8)(dt->borderColor.b*255), (Uint8)(dt->borderColor.a*255));
+                SDL_RenderDrawRect(renderer, &br);
+            }
+        }
         for (const auto& up : scene.Objects()) {           // images (logos/icons) first
             auto* im = up->GetComponent<UIImage>();
             if (!im || !up->active || UIHidden(up.get())) continue;
@@ -626,8 +641,9 @@ int main(int argc, char** argv) {
             Vec2 o, sz;
             if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
             SDL_Rect hr{(int)o.x, (int)o.y, (int)sz.x, (int)sz.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(dt->highlight.r * 255), (Uint8)(dt->highlight.g * 255),
-                                   (Uint8)(dt->highlight.b * 255), (Uint8)(dt->highlight.a * 255));
+            const Color& hc = dt->HasValid() ? dt->highlight : dt->rejectHighlight;  // green-ish vs reject
+            SDL_SetRenderDrawColor(renderer, (Uint8)(hc.r * 255), (Uint8)(hc.g * 255),
+                                   (Uint8)(hc.b * 255), (Uint8)(hc.a * 255));
             SDL_RenderFillRect(renderer, &hr);
         }
         for (const auto& up : scene.Objects()) {           // scroll-view backgrounds + scrollbar

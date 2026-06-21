@@ -57,19 +57,19 @@ struct HumanoidParams {
     /// when the mesh is built (the underlying values are left untouched).
     void ClampHuman() {
         auto cl = [](float& v, float lo, float hi) { v = v < lo ? lo : (v > hi ? hi : v); };
-        cl(height, 0.6f, 1.7f);       cl(build, 0.7f, 1.5f);
-        cl(headSize, 0.78f, 1.12f);   cl(neckLength, 0.6f, 1.5f);
-        cl(shoulderWidth, 0.85f, 1.4f); cl(hipWidth, 0.7f, 1.25f);
-        cl(armLength, 0.8f, 1.2f);    cl(legLength, 0.8f, 1.25f);
-        cl(armThickness, 0.7f, 1.4f); cl(legThickness, 0.7f, 1.4f);
-        cl(torsoLength, 0.82f, 1.22f);cl(bodyDepth, 0.72f, 1.18f);
-        cl(handSize, 0.6f, 1.5f);     cl(footSize, 0.6f, 1.6f);
-        cl(waist, 0.62f, 1.3f);       cl(belly, 0.0f, 1.0f);
-        cl(armSpread, 0.0f, 35.0f);   cl(legSpread, 0.0f, 18.0f);
-        cl(armGap, -0.08f, 0.18f);    cl(legGap, -0.08f, 0.22f);
-        cl(eyeSpacing, 0.6f, 1.5f);   cl(eyeSize, 0.6f, 1.6f);
-        cl(mouthWidth, 0.5f, 1.6f);   cl(noseSize, 0.5f, 1.8f);
-        cl(browAngle, -30.0f, 30.0f);
+        cl(height, 0.7f, 1.5f);       cl(build, 0.78f, 1.35f);
+        cl(headSize, 0.82f, 1.10f);   cl(neckLength, 0.7f, 1.35f);
+        cl(shoulderWidth, 0.9f, 1.32f); cl(hipWidth, 0.75f, 1.2f);
+        cl(armLength, 0.85f, 1.15f);  cl(legLength, 0.85f, 1.2f);
+        cl(armThickness, 0.78f, 1.3f);cl(legThickness, 0.78f, 1.3f);
+        cl(torsoLength, 0.85f, 1.18f);cl(bodyDepth, 0.78f, 1.15f);
+        cl(handSize, 0.7f, 1.35f);    cl(footSize, 0.72f, 1.45f);
+        cl(waist, 0.7f, 1.25f);       cl(belly, 0.0f, 1.0f);
+        cl(armSpread, 0.0f, 30.0f);   cl(legSpread, 0.0f, 15.0f);
+        cl(armGap, -0.06f, 0.14f);    cl(legGap, -0.06f, 0.18f);
+        cl(eyeSpacing, 0.7f, 1.4f);   cl(eyeSize, 0.7f, 1.45f);
+        cl(mouthWidth, 0.6f, 1.5f);   cl(noseSize, 0.6f, 1.6f);
+        cl(browAngle, -28.0f, 28.0f);
     }
 };
 
@@ -1078,6 +1078,9 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         Vec3 wrist = sh + q * Vec3{0, -armLen, 0};
         bl.push_back({1, {s * 0.17f * sW * B, shoulderY, 0}, sh, {}, at * 1.25f, shirt}); // shoulder bridge (closes armpit)
         bl.push_back({0, sh, {}, {}, at * 1.45f, shirt});                          // deltoid
+        // Pectoral: a soft chest plate on the front, one per side, for definition.
+        bl.push_back({2, {s * 0.12f * sW * B, 1.27f * H + up, 0.12f * B * bd}, {},
+                      {0.135f * sW * B, 0.105f * H, 0.105f * B * bd}, 0, shirt});
         bl.push_back({1, sh, elbow, {}, at * 1.02f, shirt});                       // upper arm (bicep)
         bl.push_back({0, elbow, {}, {}, at * 0.88f, shirt});                       // elbow
         bl.push_back({1, elbow, wrist, {}, at * 0.80f, skin});                     // forearm
@@ -1097,6 +1100,9 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         bl.push_back({1, hip, knee, {}, lt * 1.05f, pants});                       // thigh
         bl.push_back({0, knee, {}, {}, lt * 0.82f, pants});                        // knee
         bl.push_back({1, knee, ankle, {}, lt * 0.78f, pants});                     // calf / shin
+        // Calf muscle: a bulge on the upper-back of the shin for leg definition.
+        bl.push_back({2, knee + ql * Vec3{0, -legLen * 0.30f, 0} + Vec3{0, 0, -0.05f * bd}, {},
+                      {lt * 0.78f, lt * 1.30f, lt * 0.95f}, 0, pants});
         bl.push_back({0, ankle, {}, {}, lt * 0.66f, shoes});                       // ankle
         bl.push_back({2, ankle + Vec3{0, -0.05f * H, 0.10f}, {}, {0.090f * B, 0.060f, 0.165f}, 0, shoes}); // foot sole (forward)
         bl.push_back({2, ankle + Vec3{0, -0.055f * H, 0.215f}, {}, {0.075f * B, 0.050f, 0.075f}, 0, shoes}); // toe

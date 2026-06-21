@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.19.0
+  - Performance: big FPS win with several characters in a scene.
+    - The seamless character body is now drawn single-sided (it's a closed
+      surface), so the renderer backface-culls ~half its triangles.
+    - New "Auto performance" (View menu, on by default): when a scene gets heavy
+      it automatically drops 2x anti-aliasing to keep the editor smooth.
+  - Auto-update: "Automatically install future updates" option (in the Update
+    window). When on, the engine checks at startup and — after SAVING your open
+    scene — downloads and installs the new build on its own, then relaunches.
+    Your AA / performance / auto-update preferences now persist between sessions.
+  - Character: more anatomical detail (pectorals + calf muscles) and stricter
+    "stays human" limits — every proportion clamps to a tighter human range.
+
 v2.18.0
   - Character Creator: a thorough anatomical pass on the seamless body so it
     reads as a real human:

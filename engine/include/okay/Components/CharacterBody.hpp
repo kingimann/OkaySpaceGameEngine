@@ -110,6 +110,14 @@ public:
             Vec3 eul{ae.x + a.rotation.x, ae.y + a.rotation.y, ae.z + a.rotation.z};
             m.AddPosed(Mesh::FromName(a.shape), world, a.scale, eul, world, &a.color);
         }
+        // The seamless body is a single CLOSED, consistently-wound surface, so we
+        // flip it to outward winding and render it single-sided (Apply() turns off
+        // doubleSided) — that lets the renderer backface-cull ~half the triangles,
+        // a big win when several characters share a scene. (The part-based body
+        // has mixed winding and must stay double-sided.)
+        if (smoothBody)
+            for (std::size_t i = 0; i + 2 < m.triangles.size(); i += 3)
+                std::swap(m.triangles[i + 1], m.triangles[i + 2]);
         m.ComputeSmoothNormals();   // smooth (Gouraud) shading + seam hiding
         return m;
     }

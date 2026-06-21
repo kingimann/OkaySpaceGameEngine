@@ -89,8 +89,10 @@ void CharacterBody::Apply() {
     if (!mr) mr = gameObject->AddComponent<MeshRenderer>();
     mr->mesh = Build();
     mr->color = color;
-    mr->doubleSided = true;   // the assembled parts have mixed winding; draw solid
-                              // from both sides so the body never looks see-through.
+    // The seamless body is a closed, outward-wound surface -> render single-sided
+    // so the renderer can backface-cull (much cheaper with several characters).
+    // The part-based body has mixed winding and must be drawn double-sided.
+    mr->doubleSided = !smoothBody;
 }
 
 void CharacterBody::Update(float dt) {

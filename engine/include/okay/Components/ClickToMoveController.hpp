@@ -38,6 +38,20 @@ public:
     float groundY     = 0.0f;       // ground plane height when usePlayerHeight is off
     bool  usePlayerHeight = true;   // pick on the plane at the player's current Y
 
+    // ---- Follow camera (RuneScape-style: trails the player, looks at it) ----
+    bool  followCamera   = true;    // position the main Camera each frame
+    float cameraHeight   = 1.0f;    // look target height above the player origin
+    float cameraDistance = 12.0f;   // distance from the player
+    float minDistance    = 4.0f, maxDistance = 24.0f;
+    float cameraYaw      = 0.0f;    // orbit angle (degrees); rotate with middle-drag / Q,E
+    float cameraPitch    = 50.0f;   // downward tilt (degrees)
+    float minPitch       = 15.0f, maxPitch = 85.0f;
+    float rotateSpeed    = 0.3f;    // degrees per pixel of middle-drag
+    float keyRotateSpeed = 90.0f;   // degrees/sec for the rotate keys
+    char  rotateLeftKey  = 0;       // e.g. 'q' (0 = disabled)
+    char  rotateRightKey = 0;       // e.g. 'e'
+    float cameraDamping  = 0.0f;    // 0 = snap; higher = smoother follow
+
     bool HasDestination() const { return m_hasDest; }
     Vec3 Destination()    const { return m_dest; }
     void ClearDestination() { m_hasDest = false; }
@@ -91,9 +105,54 @@ public:
         Animate(true, running);
     }
 
+    // RuneScape-style follow camera: trail the player and keep looking at it.
+    // Rotate with a middle-mouse drag (or the rotate keys), zoom with the wheel.
+    void LateUpdate(float dt) override {
+        if (!followCamera || !transform || !gameObject || !gameObject->scene()) return;
+        Scene* sc = gameObject->scene();
+        if (!sc->mainCamera || !sc->mainCamera->transform) return;
+        Transform* cam = sc->mainCamera->transform;
+
+        // Orbit input: middle-drag rotates yaw/pitch; keys rotate yaw; wheel zooms.
+        Vec2 mp = Input::MousePosition();
+        if (Input::GetMouseButton(2)) {
+            if (m_haveDrag) {
+                cameraYaw   += (mp.x - m_lastDrag.x) * rotateSpeed;
+                cameraPitch -= (mp.y - m_lastDrag.y) * rotateSpeed;
+            }
+            m_lastDrag = mp; m_haveDrag = true;
+        } else m_haveDrag = false;
+        if (rotateLeftKey  && Input::GetKey(rotateLeftKey))  cameraYaw -= keyRotateSpeed * dt;
+        if (rotateRightKey && Input::GetKey(rotateRightKey)) cameraYaw += keyRotateSpeed * dt;
+        float wheel = Input::MouseWheel();
+        if (wheel != 0.0f) cameraDistance = Mathf::Clamp(cameraDistance - wheel, minDistance, maxDistance);
+        cameraPitch = Mathf::Clamp(cameraPitch, minPitch, maxPitch);
+
+        Vec3 targetC = transform->Position(); targetC.y += cameraHeight;
+        float pr = cameraPitch * Mathf::Deg2Rad;
+        Vec3 behind = Quat::Euler(0, cameraYaw, 0) * Vec3{0, 0, 1};
+        float cp = Mathf::Cos(pr);
+        Vec3 offset{behind.x * cp, Mathf::Sin(pr), behind.z * cp};
+        Vec3 desired = targetC + offset * cameraDistance;
+
+        if (cameraDamping > 0.0f && m_haveCamPos) {
+            float t = 1.0f - std::exp(-cameraDamping * dt);
+            m_camPos = m_camPos + (desired - m_camPos) * t;
+        } else m_camPos = desired;
+        m_haveCamPos = true;
+
+        cam->SetPosition(m_camPos);
+        // Level rotation from yaw/pitch (z = 0, no roll) that looks at the player.
+        cam->localRotation = Quat::Euler(-cameraPitch, cameraYaw, 0.0f);
+    }
+
 private:
     bool m_hasDest = false;
     Vec3 m_dest{0, 0, 0};
+    Vec2 m_lastDrag{0, 0};
+    bool m_haveDrag = false;
+    Vec3 m_camPos{0, 0, 0};
+    bool m_haveCamPos = false;
 
     void StopXZ() {
         if (auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr) {

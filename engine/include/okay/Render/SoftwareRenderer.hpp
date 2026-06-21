@@ -158,7 +158,7 @@ public:
                 if (w0 < 0 || w1 < 0 || w2 < 0) continue;       // outside triangle
                 float d = w0 * d0 + w1 * d1 + w2 * d2;
                 std::size_t i = (std::size_t)y * width + x;
-                if (d < depth[i]) { depth[i] = d; color[i] = abgr; }
+                if (d < depth[i] - 1.5e-5f) { depth[i] = d; color[i] = abgr; }   // bias: stable winner on near-ties
             }
         }
     }
@@ -197,7 +197,7 @@ public:
                 if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
-                if (d >= depth[i]) continue;
+                if (d >= depth[i] - 1.5e-5f) continue;   // small bias: first-drawn wins near-ties (kills z-fighting flicker)
                 float lr = w0 * LR[0] + w1 * LR[1] + w2 * LR[2];
                 float lg = w0 * LG[0] + w1 * LG[1] + w2 * LG[2];
                 float lb = w0 * LB[0] + w1 * LB[1] + w2 * LB[2];
@@ -307,7 +307,7 @@ public:
                 if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
-                if (d >= depth[i]) continue;
+                if (d >= depth[i] - 1.5e-5f) continue;   // small bias: first-drawn wins near-ties (kills z-fighting flicker)
                 float A = w0 * U[0] + w1 * U[1] + w2 * U[2];
                 float Av = w0 * V[0] + w1 * V[1] + w2 * V[2];
                 float iw = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
@@ -391,7 +391,7 @@ public:
                 if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
-                if (d >= depth[i]) continue;
+                if (d >= depth[i] - 1.5e-5f) continue;   // small bias: first-drawn wins near-ties (kills z-fighting flicker)
                 // Perspective-correct interpolation of world normal + position
                 // (weight each vertex by 1/w). Affine interpolation is badly wrong
                 // for large triangles — e.g. a ground quad would sample shadows and

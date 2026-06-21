@@ -36,18 +36,23 @@ public:
 
     float yaw = 0.0f, pitch = 0.0f;     // look angles (degrees)
 
-    void Start() override {
-        // In first person you look out through your own eyes, so hide the body
-        // mesh on this object (it would otherwise clip the camera / show its
-        // insides). It stays visible in the editor (Start only runs in Play).
+    void Start() override { ApplyBodyVisibility(); }
+
+    // First person: the player's own camera should IGNORE the body (so you don't
+    // see the inside of your own head) — but the body must still exist for the
+    // Scene view, shadows and other cameras. So instead of hiding the mesh, we
+    // tell the child camera to skip this object. showBody=true clears that.
+    void ApplyBodyVisibility() {
         if (gameObject)
-            if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = showBody;
+            if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = true;  // never hide globally
+        if (Transform* camT = FindCameraChild())
+            if (auto* cam = camT->gameObject->GetComponent<Camera>())
+                cam->ignoreObject = showBody ? nullptr : gameObject;
     }
 
     void Update(float dt) override {
         if (!transform) return;
-        if (gameObject)
-            if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = showBody;
+        ApplyBodyVisibility();
 
         // ---- Mouse look ----
         // Mouse-right turns right and mouse-up looks up. The camera looks down its

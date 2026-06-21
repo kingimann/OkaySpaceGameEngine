@@ -5,6 +5,8 @@
 
 namespace okay {
 
+class GameObject;
+
 /// A camera supporting both 2D (orthographic) and 3D (perspective) projection.
 /// The first one created registers itself as the scene's main camera (mirroring
 /// Unity's "MainCamera" convention).
@@ -31,6 +33,12 @@ public:
     float depth = 0.0f;
     /// Whether this camera should become the scene's main camera on Awake.
     bool main = true;
+
+    /// Optional object this camera does NOT render (e.g. a first-person player's
+    /// own body): the mesh stays in the scene — visible to other cameras and the
+    /// Scene view, and it still casts shadows — this camera just skips drawing it.
+    /// Transient (set at runtime by controllers; not serialized).
+    GameObject* ignoreObject = nullptr;
 
     /// World-to-camera matrix (inverse of the Transform's world matrix).
     Mat4 ViewMatrix() const;

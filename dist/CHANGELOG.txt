@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.54.0
+  - Fix: first-person no longer makes your character vanish. Instead of hiding the
+    body mesh globally, the first-person camera now simply IGNORES the player's own
+    body — so it still shows in the Scene view, casts shadows, and renders for any
+    other camera; only the eye-camera skips drawing it. (New Camera.ignoreObject.)
+
 v2.53.0
   - Performance (defaults): shadows, SSAO and bloom are now OFF by default — they
     were the bulk of the frame cost. A basic scene roughly doubled in FPS. They're

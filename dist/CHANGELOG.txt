@@ -1,5 +1,9 @@
 OkaySpace Game Engine — Changelog
 
+v2.70.0
+  - Third-Person camera: corrected vertical look so mouse-up looks up (only the
+    pitch axis was reversed after v2.69; horizontal was already right).
+
 v2.69.0
   - Third-Person camera: flipped both mouse-look axes to the expected orbit
     direction (the prior default felt inverted both ways). Use the Invert X / Invert

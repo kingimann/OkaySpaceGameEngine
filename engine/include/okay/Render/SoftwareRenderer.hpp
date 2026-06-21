@@ -692,6 +692,43 @@ inline void ApplyBloom(Raster& r) {
     }
 }
 
+// ---- Tone mapping (filmic) -------------------------------------------------
+inline bool&  ToneMapEnabled() { static bool v = true; return v; }
+inline float& Exposure()       { static float v = 1.0f; return v; }  // brightness multiplier
+
+/// Filmic tone mapping (ACES approximation, Narkowicz 2015). The renderer shades
+/// in roughly-linear light and used to just clamp at white, so any highlight past
+/// 1.0 (specular, emissive, bloom) flattened into a hard, posterized white. ACES
+/// instead rolls highlights off along an S-curve: bright areas keep their hue and
+/// gradient, shadows gain a touch of contrast, and the whole frame reads more like
+/// film than a flat clamp. Exposure scales the input first so the image can be
+/// brightened/darkened as a whole. Runs after bloom, before edge AA.
+inline void ApplyToneMap(Raster& r) {
+    if (!ToneMapEnabled()) return;
+    int W = r.width, H = r.height;
+    if (W < 1 || H < 1) return;
+    float e = Exposure();
+    auto aces = [](float x) {
+        // x in linear light; returns display value in [0,1].
+        float n = x * (2.51f * x + 0.03f);
+        float d = x * (2.43f * x + 0.59f) + 0.14f;
+        float o = d > 1e-6f ? n / d : 0.0f;
+        return o < 0.0f ? 0.0f : (o > 1.0f ? 1.0f : o);
+    };
+    std::size_t N = (std::size_t)W * H;
+    for (std::size_t i = 0; i < N; ++i) {
+        std::uint32_t v = r.color[i];
+        float c0 = (float)( v        & 0xFF) / 255.0f;
+        float c1 = (float)((v >> 8)  & 0xFF) / 255.0f;
+        float c2 = (float)((v >> 16) & 0xFF) / 255.0f;
+        float o0 = aces(c0 * e), o1 = aces(c1 * e), o2 = aces(c2 * e);
+        r.color[i] = (0xFFu << 24)
+                   | ((std::uint32_t)(o2 * 255.0f + 0.5f) << 16)
+                   | ((std::uint32_t)(o1 * 255.0f + 0.5f) << 8)
+                   |  (std::uint32_t)(o0 * 255.0f + 0.5f);
+    }
+}
+
 // ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
 inline bool& FXAAEnabled() { static bool v = true; return v; }
 
@@ -970,6 +1007,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     }
     if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
     ApplyBloom(r);                                                   // bright-pass glow
+    ApplyToneMap(r);                                                 // filmic highlight rolloff
     ApplyFXAA(r);                                                    // edge anti-aliasing
 }
 

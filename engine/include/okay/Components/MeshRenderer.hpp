@@ -42,6 +42,11 @@ public:
     /// Strength of the normal map perturbation (0 = flat, 1 = full).
     float normalStrength = 1.0f;
 
+    /// Environment reflectivity [0,1]: how much the surface mirrors the scene's
+    /// sky gradient (per-pixel lighting only). 0 = matte, higher = glossy/metal.
+    /// Fresnel-weighted, so edges always reflect a little more than face-on.
+    float reflectivity = 0.0f;
+
     /// Optional matcap (lit-sphere) image, sampled by the camera-space normal.
     /// This is the technique MakeHuman uses for soft, skin-like shading: it bakes
     /// the entire lighting response into a sphere image, so subtle surface relief

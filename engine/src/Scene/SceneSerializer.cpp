@@ -151,6 +151,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Normal map (separate record so older scenes still load).
         if (!mr->normalMap.empty())
             out << "  normalmap " << Quote(mr->normalMap) << " " << mr->normalStrength << "\n";
+        // Environment reflectivity (separate record so older scenes still load).
+        if (mr->reflectivity > 0.0f)
+            out << "  reflect " << mr->reflectivity << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -651,6 +654,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int p = in.peek();
                         if (std::isdigit(p) || p == '-' || p == '.') in >> mr->normalStrength;
                     }
+                } else if (field == "reflect") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>())
+                        in >> mr->reflectivity;
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();
                     Color c;

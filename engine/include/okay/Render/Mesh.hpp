@@ -22,16 +22,16 @@ namespace okay {
 /// as sliders. Multipliers are applied to a fixed base layout.
 struct HumanoidParams {
     float height       = 1.0f;   // overall vertical scale
-    float build        = 0.92f;  // limb/torso thickness (lean, low body-fat base)
+    float build        = 0.86f;  // limb/torso thickness (lean, low body-fat base)
     float headSize     = 0.66f;  // realistic ~7.5-head proportions (small adult head)
-    float shoulderWidth= 1.22f;  // arm spacing + torso top width (broad, bulky upper body)
-    float hipWidth     = 0.82f;  // leg spacing + hip width (narrow hips)
-    float armLength    = 1.08f;  // arms reach toward mid-thigh
-    float legLength    = 1.14f;  // long lean legs (taller, adult base-mesh build)
+    float shoulderWidth= 0.98f;  // arm spacing + torso top width
+    float hipWidth     = 0.8f;   // leg spacing + hip width (narrow hips)
+    float armLength    = 1.1f;   // arms reach toward mid-thigh
+    float legLength    = 1.16f;  // long lean legs (taller, adult build)
     float neckLength   = 1.0f;
-    float handSize     = 1.0f;
+    float handSize     = 0.95f;
     float footSize     = 1.0f;
-    float armSpread    = 26.0f;  // degrees arms angle out (A-pose, like a base mesh)
+    float armSpread    = 34.0f;  // degrees arms angle out (A-pose; clear arm/torso separation)
     float legSpread    = 6.0f;   // degrees legs angle out (stance width)
     float torsoLength  = 1.0f;   // lengthens the torso (raises the upper body)
     float bodyDepth    = 0.88f;  // front-to-back thickness of torso + hips (lean)
@@ -45,9 +45,9 @@ struct HumanoidParams {
     Vec3  rightArmRot  = {0, 0, 0}; // extra euler on the RIGHT arm only (wave)
     float eyeSize      = 1.0f;   // multiplier on eye + pupil size
     float noseSize     = 1.0f;   // multiplier on nose size
-    float armThickness = 1.08f;  // arm girth (independent of build) — muscular
-    float legThickness = 1.08f;  // leg girth (independent of build) — muscular
-    float waist        = 0.7f;   // hip/midsection width (lean, defined waist)
+    float armThickness = 0.9f;   // arm girth (independent of build)
+    float legThickness = 0.98f;  // leg girth (independent of build)
+    float waist        = 0.8f;   // hip/midsection width (lean, defined waist)
     float belly        = 0.0f;   // belly size (0 = none)
     float armGap       = 0.0f;   // lateral spacing of arms from the body (+out, -in)
     float legGap       = 0.0f;   // lateral spacing of legs (stance width; +apart, -together)
@@ -60,7 +60,7 @@ struct HumanoidParams {
         cl(height, 0.82f, 1.35f);     cl(build, 0.85f, 1.22f);
         cl(headSize, 0.55f, 0.95f);   cl(neckLength, 0.8f, 1.18f);
         cl(shoulderWidth, 0.95f, 1.28f); cl(hipWidth, 0.8f, 1.12f);
-        cl(armLength, 0.9f, 1.1f);    cl(legLength, 0.92f, 1.14f);
+        cl(armLength, 0.9f, 1.15f);   cl(legLength, 0.92f, 1.22f);
         cl(armThickness, 0.82f, 1.18f);cl(legThickness, 0.85f, 1.18f);
         cl(torsoLength, 0.9f, 1.12f); cl(bodyDepth, 0.82f, 1.08f);
         cl(handSize, 0.8f, 1.18f);    cl(footSize, 0.82f, 1.25f);
@@ -1071,14 +1071,14 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     // ---- Torso: anatomical V-taper — broad shoulders/clavicle, pecs/ribcage,
     //      a narrow waist, then the pelvis. Each mass overlaps its neighbour so
     //      the smooth-union makes one continuous trunk. ----
-    bl.push_back({2, {0, 1.40f * H + up, 0}, {}, {0.185f * sW * B, 0.115f * H, 0.145f * B * bd}, 0, shirt}); // base of neck (narrow; shoulders slope out via traps)
-    bl.push_back({2, {0, 1.29f * H + up, 0.01f * bd}, {}, {0.262f * sW * B, 0.150f * H, 0.170f * B * bd}, 0, shirt}); // upper chest (pecs)
-    bl.push_back({2, {0, 1.12f * H + up * 0.7f, 0}, {}, {0.222f * sW * B, 0.165f * H, 0.158f * B * bd}, 0, shirt}); // lower ribcage
-    bl.push_back({2, {0, 1.00f * H + up * 0.45f, 0}, {}, {0.192f * sW * B, 0.115f * H, 0.148f * B * bd}, 0, shirt}); // upper abdomen
-    bl.push_back({2, {0, 0.88f * H + up * 0.25f, 0}, {}, {0.172f * B * p.waist, 0.140f * H, 0.140f * B * bd}, 0, shirt}); // waist (narrowest)
+    bl.push_back({2, {0, 1.40f * H + up, 0}, {}, {0.150f * sW * B, 0.115f * H, 0.135f * B * bd}, 0, shirt}); // base of neck (narrow; shoulders slope out via traps)
+    bl.push_back({2, {0, 1.29f * H + up, 0.01f * bd}, {}, {0.220f * sW * B, 0.150f * H, 0.160f * B * bd}, 0, shirt}); // upper chest (pecs)
+    bl.push_back({2, {0, 1.12f * H + up * 0.7f, 0}, {}, {0.188f * sW * B, 0.165f * H, 0.150f * B * bd}, 0, shirt}); // lower ribcage
+    bl.push_back({2, {0, 1.00f * H + up * 0.45f, 0}, {}, {0.160f * sW * B, 0.120f * H, 0.140f * B * bd}, 0, shirt}); // upper abdomen
+    bl.push_back({2, {0, 0.88f * H + up * 0.25f, 0}, {}, {0.150f * B * p.waist, 0.140f * H, 0.132f * B * bd}, 0, shirt}); // waist (narrowest)
     if (p.belly > 0.05f)
         bl.push_back({2, {0, 0.95f * H, 0.14f * bd}, {}, {0.21f * B * p.belly, 0.18f * H * p.belly, 0.16f * bd * p.belly}, 0, shirt}); // belly
-    bl.push_back({2, {0, 0.66f * H, 0}, {}, {0.246f * hW * B, 0.150f * H, 0.178f * B * bd}, 0, pants}); // pelvis
+    bl.push_back({2, {0, 0.68f * H, 0}, {}, {0.205f * hW * B, 0.135f * H, 0.165f * B * bd}, 0, pants}); // pelvis
     struct HandRec { Vec3 wrist; Quat fq; int s; };
     std::vector<HandRec> hands;   // fingers are appended at full detail after meshing
     for (int s = -1; s <= 1; s += 2) {
@@ -1098,8 +1098,8 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         // Trapezius: a muscle sloping from the neck base DOWN to the shoulder, so
         // the shoulder line slopes naturally instead of forming a flat square bar.
         bl.push_back({1, {0, 1.52f * H + up, -0.01f * bd}, {s * aw * 0.80f, shoulderY + 0.01f * H, 0}, {}, 0.075f, shirt});
-        bl.push_back({1, {s * 0.17f * sW * B, shoulderY, 0}, sh, {}, at * 1.20f, shirt}); // shoulder bridge (closes armpit)
-        bl.push_back({1, sh, Vec3{s * aw, shoulderY - 0.06f * H, 0}, {}, at * 1.20f, shirt}); // deltoid (rounded, drops to upper arm)
+        bl.push_back({1, {s * 0.14f * sW * B, shoulderY, 0}, sh, {}, at * 1.05f, shirt}); // shoulder bridge (closes armpit)
+        bl.push_back({1, sh, Vec3{s * aw, shoulderY - 0.06f * H, 0}, {}, at * 1.05f, shirt}); // deltoid (rounded, drops to upper arm)
         // Pectoral: a soft chest plate on the front, one per side, for definition.
         bl.push_back({2, {s * 0.10f * sW * B, 1.27f * H + up, 0.10f * B * bd}, {},
                       {0.110f * sW * B, 0.095f * H, 0.085f * B * bd}, 0, shirt});
@@ -1117,9 +1117,9 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         float legLen = 0.6f * H + 0.55f * lL * H;
         Vec3 knee = hip + ql * Vec3{0, -legLen * 0.5f, 0};
         Vec3 ankle = hip + ql * Vec3{0, -legLen, 0};
-        bl.push_back({1, {s * 0.10f * hW * B, 0.60f * H, 0}, hip, {}, lt * 1.15f, pants}); // hip bridge
-        bl.push_back({0, hip, {}, {}, lt * 1.20f, pants});                         // glute / hip
-        bl.push_back({3, hip, knee, {lt * 0.80f, 0, 0}, lt * 1.20f, pants});       // thigh (taper to knee)
+        bl.push_back({1, {s * 0.08f * hW * B, 0.64f * H, 0}, hip, {}, lt * 0.92f, pants}); // hip bridge
+        bl.push_back({0, hip, {}, {}, lt * 0.95f, pants});                         // glute / hip
+        bl.push_back({3, hip, knee, {lt * 0.78f, 0, 0}, lt * 1.05f, pants});       // thigh (taper to knee)
         bl.push_back({0, knee, {}, {}, lt * 0.80f, pants});                        // knee
         bl.push_back({3, knee, ankle, {lt * 0.48f, 0, 0}, lt * 0.92f, pants});     // calf -> thin ankle
         // Calf muscle: a bulge on the upper-back of the shin for leg definition.

@@ -69,11 +69,16 @@ void UIDraggable::Update(float) {
         if (axis != Axis::Vertical)   r.position->x += (m.x - m_prevMouse.x) / s;
         if (axis != Axis::Horizontal) r.position->y += (m.y - m_prevMouse.y) / s;
         m_prevMouse = m;
-        // Highlight the slot we're currently hovering (clear the rest).
-        GameObject* hover = ValidTarget(PickOther(scene, gameObject, m, w, h), gameObject, anyTarget);
+        // Highlight the slot we're hovering (clear the rest). The raw topmost target
+        // is highlighted whether or not the tag matches, so the slot can show a
+        // reject tint for a wrong item; validity is recorded for the renderer.
+        GameObject* raw = PickOther(scene, gameObject, m, w, h);
         for (const auto& up : scene.Objects())
-            if (auto* dt = up->GetComponent<UIDropTarget>())
-                dt->SetHovered(up.get() == hover);
+            if (auto* dt = up->GetComponent<UIDropTarget>()) {
+                bool over = (up.get() == raw);
+                dt->SetHovered(over);
+                if (over) dt->SetValid(dt->acceptTag.empty() || dt->acceptTag == gameObject->tag);
+            }
         Fire(gameObject, "on_drag");
     } else {                                   // released: resolve a drop
         m_dragging = false;
@@ -83,7 +88,9 @@ void UIDraggable::Update(float) {
         m_dropTarget = target;
         if (target) {
             // Snap-to-slot: center this item in the slot (zero-script inventory).
-            if (snapToSlot) {
+            // Honored if the draggable wants it OR the target requests centering.
+            auto* tdt = target->GetComponent<UIDropTarget>();
+            if (snapToSlot || (tdt && tdt->snapToCenter)) {
                 UIRect tr = GetUIRect(target);
                 if (tr.valid && tr.position && r.anchorPtr) {
                     *r.anchorPtr = tr.anchor;

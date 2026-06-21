@@ -3934,17 +3934,91 @@ void DrawNewProjectPopup(EditorState& ed) {
     if (g_showNewProject) { ImGui::OpenPopup("New Project"); g_showNewProject = false; }
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("New Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::SetNextWindowSize(ImVec2(760, 580), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("New Project", nullptr, ImGuiWindowFlags_NoResize)) {
         static char nameBuf[128] = "MyGame";
         static char locBuf[400]  = ".";
-        ImGui::Text("Create a new project");
-        ImGui::TextDisabled("A folder <Location>/<Name> is created with an Assets/ subfolder;");
-        ImGui::TextDisabled("the starting scene is saved into Assets/.");
-        ImGui::SetNextItemWidth(330); ImGui::InputText("Name", nameBuf, sizeof(nameBuf));
-        ImGui::SetNextItemWidth(330); ImGui::InputText("Location", locBuf, sizeof(locBuf));
-        ImGui::Separator();
 
-        // After a NewScene*/template call, lay down the project folder and save.
+        // Template registry: category, title, one-line blurb, longer description,
+        // and the factory. The grid + footer are driven from this.
+        struct Tpl { int cat; const char* title; const char* blurb; const char* desc;
+                     void (EditorState::*fn)(); };
+        enum { C_BLANK, C_3D, C_2D, C_UI };
+        static const Tpl tpls[] = {
+            {C_BLANK, "2D Scene",   "Empty 2D + camera",  "An empty 2D scene with a camera. Good starting point for sprites and UI.", &EditorState::NewScene2D},
+            {C_BLANK, "3D Scene",   "Empty 3D + cube",    "An empty 3D scene with a camera, a directional light and a cube.", &EditorState::NewScene3D},
+            {C_BLANK, "Empty",      "Nothing at all",     "A totally empty scene (no camera or light). Build it up yourself.", &EditorState::NewScene},
+            {C_3D,    "First Person","Character + FPS",    "A blocky Character you control in first person: mouse-look, WASD, jump. Camera at eye height, with crates to walk around.", &EditorState::NewFPS},
+            {C_3D,    "Third Person","Orbit camera",       "Your blocky Character with an orbit camera behind it: WASD relative to the camera, Space to jump, with walk/run animation. You see and control the character.", &EditorState::NewThirdPerson},
+            {C_3D,    "3D Platformer","Physics + jump",    "The Character on a ground you move and jump around, with a follow camera.", &EditorState::NewPlatformer3D},
+            {C_2D,    "Platformer",  "Side-scroller",      "A side-scroller: follow camera, a physics player on a wide ground, and a coin.", &EditorState::NewPlatformer},
+            {C_2D,    "Top-Down",    "WASD movement",      "A WASD-driven player with a follow camera and a couple of walls.", &EditorState::NewTopDown},
+            {C_2D,    "Coin Collector","Mini game",        "A small complete game: drive the player to collect spinning coins; a HUD counts the score.", &EditorState::NewCoinCollector},
+            {C_2D,    "Snake",       "Classic arcade",     "The classic Snake, fully playable.", &EditorState::NewSnake},
+            {C_UI,    "Main Menu",   "Title screen",       "A title screen with buttons wired to actions.", &EditorState::NewMainMenu},
+            {C_UI,    "Inventory",   "Drag & drop grid",   "A drag & drop item grid.", &EditorState::NewInventory},
+            {C_UI,    "Multiplayer", "Host / join",        "A host/join networked starter scene.", &EditorState::NewMultiplayer},
+        };
+        const int N = (int)(sizeof(tpls) / sizeof(tpls[0]));
+        static int sel = 1;   // default: 3D Scene
+        if (sel < 0 || sel >= N) sel = 1;
+        auto catColor = [](int c) -> ImVec4 {
+            switch (c) { case C_3D: return ImVec4(0.30f, 0.55f, 0.85f, 1);
+                         case C_2D: return ImVec4(0.30f, 0.70f, 0.45f, 1);
+                         case C_UI: return ImVec4(0.62f, 0.45f, 0.80f, 1);
+                         default:   return ImVec4(0.45f, 0.47f, 0.55f, 1); }
+        };
+        const char* catName[] = {"Blank canvas", "3D templates", "2D templates", "UI & systems"};
+
+        ImGui::TextColored(ImVec4(0.95f, 0.95f, 1.0f, 1), "Create a New Project");
+        ImGui::TextDisabled("Pick a starting template, name it, and hit Create.");
+        ImGui::Spacing();
+
+        // ---- Card grid (scrollable) ----
+        ImGui::BeginChild("tpl_grid", ImVec2(0, 360), true);
+        const float CARD_W = 150.0f, CARD_H = 60.0f;
+        const int COLS = 4;
+        for (int cat = 0; cat <= C_UI; ++cat) {
+            ImGui::PushStyleColor(ImGuiCol_Text, catColor(cat));
+            ImGui::SeparatorText(catName[cat]);
+            ImGui::PopStyleColor();
+            int col = 0;
+            for (int i = 0; i < N; ++i) {
+                if (tpls[i].cat != cat) continue;
+                if (col > 0) ImGui::SameLine();
+                ImGui::PushID(i);
+                bool selected = (sel == i);
+                ImVec4 ac = catColor(cat);
+                ImVec4 base = selected ? ImVec4(ac.x, ac.y, ac.z, 0.55f) : ImVec4(ac.x, ac.y, ac.z, 0.18f);
+                ImGui::PushStyleColor(ImGuiCol_Button, base);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(ac.x, ac.y, ac.z, 0.40f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(ac.x, ac.y, ac.z, 0.65f));
+                if (selected) { ImGui::PushStyleColor(ImGuiCol_Border, ac); ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f); }
+                std::string label = std::string(tpls[i].title) + "\n";
+                if (ImGui::Button((label + tpls[i].blurb + "##c").c_str(), ImVec2(CARD_W, CARD_H))) sel = i;
+                if (selected) { ImGui::PopStyleColor(); ImGui::PopStyleVar(); }
+                ImGui::PopStyleColor(3);
+                ImGui::PopID();
+                if (++col >= COLS) col = 0;
+            }
+        }
+        ImGui::EndChild();
+
+        // ---- Selected template description ----
+        ImGui::TextColored(catColor(tpls[sel].cat), "%s", tpls[sel].title);
+        ImGui::SameLine(); ImGui::TextDisabled("— %s", tpls[sel].blurb);
+        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
+        ImGui::TextWrapped("%s", tpls[sel].desc);
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing(); ImGui::Separator();
+
+        // ---- Name / Location ----
+        ImGui::SetNextItemWidth(300); ImGui::InputText("Name", nameBuf, sizeof(nameBuf));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1); ImGui::InputText("Location", locBuf, sizeof(locBuf));
+        ImGui::TextDisabled("Creates <Location>/<Name>/ with an Assets/ folder and the starting scene.");
+        ImGui::Spacing();
+
         auto finishProject = [&]() {
             namespace fs = std::filesystem;
             std::string name = nameBuf[0] ? nameBuf : "MyGame";
@@ -3959,49 +4033,13 @@ void DrawNewProjectPopup(EditorState& ed) {
             ImGui::CloseCurrentPopup();
         };
 
-        // A consistent two-column grid of template "cards", each with a short
-        // description on hover. `left` controls which column the next card lands in.
-        const float CARD_W = 184.0f, CARD_H = 48.0f;
-        bool left = true;
-        auto card = [&](const char* title, const char* desc, void (EditorState::*fn)()) {
-            if (!left) ImGui::SameLine();
-            if (ImGui::Button(title, ImVec2(CARD_W, CARD_H))) { (ed.*fn)(); finishProject(); }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", desc);
-            left = !left;
-        };
-
-        ImGui::SeparatorText("Blank canvas");
-        card("2D Scene", "An empty 2D scene with a camera.\nGood for sprites and UI.", &EditorState::NewScene2D);
-        card("3D Scene", "An empty 3D scene with a camera,\nlight and a cube.", &EditorState::NewScene3D);
-
-        ImGui::SeparatorText("3D templates");
-        card("First Person\n(character + FPS)",
-             "A blocky Character you control in first person:\nmouse-look, WASD, jump. Camera at eye height,\nwith crates to walk around.",
-             &EditorState::NewFPS);
-        card("Third Person\n(character)",
-             "Your blocky Character with an orbit camera behind:\nWASD relative to the camera, Space to jump, with\nwalk/run animation. You see and control the character.",
-             &EditorState::NewThirdPerson);
-        card("3D Platformer\n(physics)",
-             "The Character on a ground you move and jump,\nwith a follow camera.",
-             &EditorState::NewPlatformer3D);
-
-        ImGui::SeparatorText("2D templates");
-        card("Platformer", "Side-scroller: a follow camera, a physics\nplayer on a wide ground, and a coin.", &EditorState::NewPlatformer);
-        card("Top-Down", "WASD-driven player with a follow camera\nand a couple of walls.", &EditorState::NewTopDown);
-        card("Coin Collector", "A small complete game: collect the coins\nto win.", &EditorState::NewCoinCollector);
-        card("Snake", "The classic Snake, fully playable.", &EditorState::NewSnake);
-
-        ImGui::SeparatorText("UI & systems");
-        card("Main Menu", "A title screen with buttons wired to actions.", &EditorState::NewMainMenu);
-        card("Inventory", "A drag & drop item grid.", &EditorState::NewInventory);
-        card("Multiplayer", "A host/join networked starter scene.", &EditorState::NewMultiplayer);
-        if (!left) ImGui::SameLine();
-
-        ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
-        if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) { ed.NewScene(); finishProject(); }
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Totally empty scene (no camera).");
+        // ---- Footer buttons ----
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.68f, 0.38f, 1));
+        if (ImGui::Button("Create Project", ImVec2(170, 32))) { (ed.*tpls[sel].fn)(); finishProject(); }
+        ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 32))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -6174,9 +6212,32 @@ void DrawInspector(EditorState& ed) {
             char tb[64]; std::strncpy(tb, dt->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Accept Tag##udt", tb, sizeof(tb))) { dt->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
+
+            ImGui::SeparatorText("Slot background");
+            if (ImGui::Checkbox("Draw background##udt", &dt->drawBackground)) ed.dirty = true;
+            if (dt->drawBackground) {
+                float bgc[4] = {dt->background.r, dt->background.g, dt->background.b, dt->background.a};
+                if (ImGui::ColorEdit4("Background##udt", bgc)) { dt->background = {bgc[0],bgc[1],bgc[2],bgc[3]}; ed.dirty = true; }
+                if (ImGui::DragFloat("Corner Radius##udt", &dt->cornerRadius, 0.2f, 0.0f, 32.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Border Width##udt", &dt->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                if (dt->borderWidth > 0.0f) {
+                    float bc[4] = {dt->borderColor.r, dt->borderColor.g, dt->borderColor.b, dt->borderColor.a};
+                    if (ImGui::ColorEdit4("Border Color##udt", bc)) { dt->borderColor = {bc[0],bc[1],bc[2],bc[3]}; ed.dirty = true; }
+                }
+            }
+
+            ImGui::SeparatorText("Hover feedback");
             if (ImGui::Checkbox("Highlight on hover##udt", &dt->showHighlight)) ed.dirty = true;
-            float hl[4] = {dt->highlight.r, dt->highlight.g, dt->highlight.b, dt->highlight.a};
-            if (ImGui::ColorEdit4("Highlight##udt", hl)) { dt->highlight = {hl[0],hl[1],hl[2],hl[3]}; ed.dirty = true; }
+            if (dt->showHighlight) {
+                float hl[4] = {dt->highlight.r, dt->highlight.g, dt->highlight.b, dt->highlight.a};
+                if (ImGui::ColorEdit4("Accept tint##udt", hl)) { dt->highlight = {hl[0],hl[1],hl[2],hl[3]}; ed.dirty = true; }
+                float rj[4] = {dt->rejectHighlight.r, dt->rejectHighlight.g, dt->rejectHighlight.b, dt->rejectHighlight.a};
+                if (ImGui::ColorEdit4("Reject tint##udt", rj)) { dt->rejectHighlight = {rj[0],rj[1],rj[2],rj[3]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shown when a wrong-tag item hovers over the slot.");
+            }
+
+            ImGui::SeparatorText("Drop");
+            if (ImGui::Checkbox("Snap dropped item to center##udt", &dt->snapToCenter)) ed.dirty = true;
             ImGui::TextDisabled("Draggables dropped here call this object's on_receive().");
             if (ImGui::SmallButton("Remove##udt")) toRemove = dt;
         }
@@ -6793,6 +6854,18 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
         DrawBitmapText(dl, disp, bx, by, px, col, ls, lp);
         if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp);  // faux-bold
+    }
+
+    // Drop-target slot backgrounds (behind items), so slots are visible while
+    // designing — mirrors what the running game draws.
+    for (const auto& up : objs) {
+        auto* dt = up->GetComponent<UIDropTarget>();
+        if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y), b(a.x + sz.x, a.y + sz.y);
+        dl->AddRectFilled(a, b, ToColor(dt->background), dt->cornerRadius);
+        if (dt->borderWidth > 0.0f)
+            dl->AddRect(a, b, ToColor(dt->borderColor), dt->cornerRadius, 0, dt->borderWidth);
     }
 
     // UI images (logos/icons): preview as a tinted rect with the path centered.

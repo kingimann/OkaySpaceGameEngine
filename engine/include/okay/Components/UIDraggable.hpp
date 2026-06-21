@@ -54,15 +54,31 @@ private:
 /// over the slot for feedback (enable with `showHighlight`).
 class UIDropTarget : public Component {
 public:
-    std::string acceptTag;
-    bool  showHighlight = true;                  // tint the slot while a valid item hovers
-    Color highlight = {1.0f, 1.0f, 1.0f, 0.25f}; // overlay color
+    std::string acceptTag;                       // only items with this tag are accepted (empty = any)
+
+    // ---- Slot background (drawn always, behind items) ----
+    bool  drawBackground = false;                // show a slot background box
+    Color background = {0.20f, 0.22f, 0.28f, 0.60f};
+    float cornerRadius = 4.0f;                   // rounded corners (editor/player rounding)
+    float borderWidth = 0.0f;                    // outline thickness in px (0 = none)
+    Color borderColor = {1.0f, 1.0f, 1.0f, 0.25f};
+
+    // ---- Hover feedback ----
+    bool  showHighlight = true;                  // tint the slot while an item hovers
+    Color highlight = {1.0f, 1.0f, 1.0f, 0.25f}; // overlay when a VALID item hovers
+    Color rejectHighlight = {1.0f, 0.35f, 0.35f, 0.30f}; // overlay when a WRONG-tag item hovers
+
+    // ---- Drop behavior ----
+    bool  snapToCenter = true;                   // center a dropped item in the slot
 
     bool IsHovered() const { return m_hover; }
     void SetHovered(bool v) { m_hover = v; }
+    bool HasValid() const { return m_valid; }    // is the hovering item accepted?
+    void SetValid(bool v) { m_valid = v; }
 
 private:
     bool m_hover = false;
+    bool m_valid = true;
 };
 
 } // namespace okay

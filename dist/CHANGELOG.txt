@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.63.0
+  - New Project: redesigned the chooser — categorized template cards (color-coded
+    by type) with selection, a description panel, and a clear Create/Cancel footer.
+  - UI Drop Target: much more customization — a slot background (color, rounded
+    corners, border), separate accept vs reject hover tints (reject shows when a
+    wrong-tag item hovers), and snap-dropped-item-to-center. Drawn in both the
+    editor and the game; all saved with the scene.
+
 v2.62.0
   - Updater (fixed): the core bug was that the version baked into the editor lagged
     one release behind VERSION.txt — the build was stamped BEFORE the version bump —

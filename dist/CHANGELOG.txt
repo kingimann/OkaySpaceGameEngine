@@ -1,13 +1,15 @@
 OkaySpace Game Engine — Changelog
 
 v2.62.0
-  - Updater (fixed): updates could download a stale copy and "succeed" while
-    staying on the same version. Two fixes: (1) downloads are now pinned to the
-    latest commit's SHA (an immutable URL the CDN can't serve stale), and (2) on
-    Windows the swap is handed to a small batch helper that waits for the editor
-    to close, replaces the exe, and relaunches — instead of renaming a running
-    exe (which antivirus/file locks could block). NOTE: this fix is in the editor,
-    so you must install 2.62 directly once; updates from 2.62 onward will work.
+  - Updater (fixed): the core bug was that the version baked into the editor lagged
+    one release behind VERSION.txt — the build was stamped BEFORE the version bump —
+    so after updating, the app still reported the old version and kept offering the
+    update (looked like it "never updated"). Builds are now stamped correctly.
+    Also hardened the download/swap: (1) downloads are pinned to the latest commit's
+    SHA (an immutable URL the CDN can't serve stale), and (2) on Windows the swap is
+    handed to a small batch helper that waits for the editor to close, replaces the
+    exe, and relaunches — instead of renaming a running exe (which antivirus/file
+    locks could block). NOTE: install 2.62 directly once; updates from 2.62 work.
 
 v2.61.0
   - Canvas: Visible toggle + master Opacity. "Visible" hides/shows every widget

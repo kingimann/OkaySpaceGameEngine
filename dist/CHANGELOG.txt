@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.19.1
+  - Character: more human, less "square/blobby" silhouette.
+    - Shoulders now SLOPE from the neck down to rounded deltoids (added a
+      trapezius muscle + narrowed the flat clavicle slab) instead of forming a
+      square shoulder bar.
+    - Feet are now flat, elongated shoe shapes (heel -> tapered toe) rather than
+      bulbous blobs; slimmer ankles.
+    - Higher seamless-body resolution (52) for a smoother surface.
+
 v2.19.0
   - Performance: big FPS win with several characters in a scene.
     - The seamless character body is now drawn single-sided (it's a closed

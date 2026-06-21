@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.19.3
+  - Character: a more natural, lifelike pose. The arms now rest with a soft
+    elbow bend (forearms angled slightly forward and inward) instead of hanging
+    as stiff straight rods — the figure reads as a relaxed person rather than a
+    mannequin.
+
 v2.19.2
   - Character: more realistic + more constrained.
     - Slimmer neck, a defined upper-abdomen, and a narrower waist for a clearer

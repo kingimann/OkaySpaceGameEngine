@@ -634,6 +634,46 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
         }
 }
 
+// ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
+inline bool& FXAAEnabled() { static bool v = true; return v; }
+
+/// Cheap post-process anti-aliasing: where local contrast is high (a geometry
+/// edge), blend the pixel toward its neighbourhood average by an amount scaled by
+/// the contrast. Smooths jaggies without a full supersample.
+inline void ApplyFXAA(Raster& r) {
+    if (!FXAAEnabled()) return;
+    int W = r.width, H = r.height;
+    if (W < 3 || H < 3) return;
+    static std::vector<std::uint32_t> src;
+    src = r.color;
+    auto luma = [](std::uint32_t v) {
+        return 0.299f * (v & 0xFF) + 0.587f * ((v >> 8) & 0xFF) + 0.114f * ((v >> 16) & 0xFF);
+    };
+    for (int y = 1; y < H - 1; ++y)
+        for (int x = 1; x < W - 1; ++x) {
+            std::size_t i = (std::size_t)y * W + x;
+            float m = luma(src[i]), n = luma(src[i - W]), s = luma(src[i + W]),
+                  e = luma(src[i + 1]), w = luma(src[i - 1]);
+            float lo = std::fmin(m, std::fmin(std::fmin(n, s), std::fmin(e, w)));
+            float hi = std::fmax(m, std::fmax(std::fmax(n, s), std::fmax(e, w)));
+            float contrast = hi - lo;
+            if (contrast < 26.0f) continue;                 // not an edge
+            float amt = contrast / (hi + 1.0f);
+            if (amt > 0.7f) amt = 0.7f;
+            auto ch = [&](std::uint32_t v, int sh) { return (float)((v >> sh) & 0xFF); };
+            std::size_t nb[4] = {i - 1, i + 1, i - (std::size_t)W, i + (std::size_t)W};
+            for (int c = 0; c < 3; ++c) {
+                int sh = c * 8;
+                float cv = ch(src[i], sh), av = cv;
+                for (std::size_t k : nb) av += ch(src[k], sh);
+                av /= 5.0f;
+                float o = cv + (av - cv) * amt;
+                std::uint32_t oi = (std::uint32_t)(o < 0 ? 0 : (o > 255 ? 255 : o));
+                r.color[i] = (r.color[i] & ~(0xFFu << sh)) | (oi << sh);
+            }
+        }
+}
+
 /// Render all active MeshRenderers in `scene` into `r` with the given
 /// view-projection matrix and camera position. Two-sided + flat-shaded via the
 /// global SceneLight; depth-tested so overlapping meshes occlude correctly.
@@ -871,6 +911,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         }
     }
     if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
+    ApplyFXAA(r);                                                    // edge anti-aliasing
 }
 
 /// Supersampled render for smoother (anti-aliased) edges: draw the scene at `ss`x

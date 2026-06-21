@@ -705,6 +705,24 @@ int main() {
         CHECK(radial == total);    // every sphere normal is (anti)radial
     }
 
+    // --- ClampHuman keeps wild slider values in a human range ----------
+    {
+        HumanoidParams p;
+        p.armSpread = 90.0f; p.headSize = 3.0f; p.shoulderWidth = 5.0f;
+        p.legLength = 0.1f;  p.waist = 0.0f;     p.armGap = 2.0f;
+        p.ClampHuman();
+        CHECK(p.armSpread <= 35.0f);
+        CHECK(p.headSize <= 1.12f && p.headSize >= 0.78f);
+        CHECK(p.shoulderWidth <= 1.4f);
+        CHECK(p.legLength >= 0.8f);
+        CHECK(p.waist >= 0.62f);
+        CHECK(p.armGap <= 0.18f);
+        // A sane character is left essentially untouched.
+        HumanoidParams q;  HumanoidParams q0 = q; q.ClampHuman();
+        CHECK_NEAR(q.shoulderWidth, q0.shoulderWidth, 1e-4f);
+        CHECK_NEAR(q.legLength, q0.legLength, 1e-4f);
+    }
+
     // --- Vegetation / rock primitives: colored, smooth, ground-resting -----
     {
         for (const char* nm : {"Tree", "Pine", "Rock", "Bush"}) {

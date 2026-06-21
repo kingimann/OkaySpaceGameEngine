@@ -51,6 +51,26 @@ struct HumanoidParams {
     float belly        = 0.0f;   // belly size (0 = none)
     float armGap       = 0.0f;   // lateral spacing of arms from the body (+out, -in)
     float legGap       = 0.0f;   // lateral spacing of legs (stance width; +apart, -together)
+
+    /// Constrain every proportion to a believable human range so the character
+    /// always reads as a person — no matter how the sliders are dragged. Applied
+    /// when the mesh is built (the underlying values are left untouched).
+    void ClampHuman() {
+        auto cl = [](float& v, float lo, float hi) { v = v < lo ? lo : (v > hi ? hi : v); };
+        cl(height, 0.6f, 1.7f);       cl(build, 0.7f, 1.5f);
+        cl(headSize, 0.78f, 1.12f);   cl(neckLength, 0.6f, 1.5f);
+        cl(shoulderWidth, 0.85f, 1.4f); cl(hipWidth, 0.7f, 1.25f);
+        cl(armLength, 0.8f, 1.2f);    cl(legLength, 0.8f, 1.25f);
+        cl(armThickness, 0.7f, 1.4f); cl(legThickness, 0.7f, 1.4f);
+        cl(torsoLength, 0.82f, 1.22f);cl(bodyDepth, 0.72f, 1.18f);
+        cl(handSize, 0.6f, 1.5f);     cl(footSize, 0.6f, 1.6f);
+        cl(waist, 0.62f, 1.3f);       cl(belly, 0.0f, 1.0f);
+        cl(armSpread, 0.0f, 35.0f);   cl(legSpread, 0.0f, 18.0f);
+        cl(armGap, -0.08f, 0.18f);    cl(legGap, -0.08f, 0.22f);
+        cl(eyeSpacing, 0.6f, 1.5f);   cl(eyeSize, 0.6f, 1.6f);
+        cl(mouthWidth, 0.5f, 1.6f);   cl(noseSize, 0.5f, 1.8f);
+        cl(browAngle, -30.0f, 30.0f);
+    }
 };
 
 /// Per-region colors for the procedural humanoid (Mesh::Humanoid). When passed,
@@ -1034,34 +1054,52 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     const float sw = 0.46f * p.shoulderWidth, hw = 0.20f * p.hipWidth;
     const float aL = p.armLength, lL = p.legLength;
     const float up = 0.78f * H * (p.torsoLength - 1.0f);
-    bl.push_back({0, {0, 1.50f * H + up, 0}, {}, {}, 0.13f, skin});                                   // neck
-    {   // Tapered torso: broad chest blob over a narrower waist blob (V-shape),
-        // smooth-unioned into one seamless surface.
-        float ty = (0.71f * H) + 0.39f * H * p.torsoLength, tl2 = p.torsoLength;
-        bl.push_back({2, {0, ty + 0.18f * H * tl2, 0}, {},
-                      {0.32f * p.shoulderWidth * B, 0.26f * H * tl2, 0.21f * B * bd}, 0, shirt});      // chest
-        bl.push_back({2, {0, ty - 0.16f * H * tl2, 0}, {},
-                      {0.25f * p.shoulderWidth * B * p.waist, 0.26f * H * tl2, 0.18f * B * bd}, 0, shirt}); // waist
-    }
-    bl.push_back({2, {0, 0.60f * H, 0}, {}, {0.28f * p.hipWidth * B * p.waist, 0.22f * H, 0.20f * B * bd}, 0, pants}); // hips
+    const float sW = p.shoulderWidth, hW = p.hipWidth;
+    // ---- Neck: a tapered column blending head to shoulders. ----
+    bl.push_back({1, {0, 1.40f * H + up, 0}, {0, 1.61f * H + up, 0}, {}, 0.085f * p.neckLength + 0.035f, skin});
+    // ---- Torso: anatomical V-taper — broad shoulders/clavicle, pecs/ribcage,
+    //      a narrow waist, then the pelvis. Each mass overlaps its neighbour so
+    //      the smooth-union makes one continuous trunk. ----
+    bl.push_back({2, {0, 1.42f * H + up, 0}, {}, {0.345f * sW * B, 0.090f * H, 0.165f * B * bd}, 0, shirt}); // clavicle / traps
+    bl.push_back({2, {0, 1.29f * H + up, 0.01f * bd}, {}, {0.300f * sW * B, 0.150f * H, 0.200f * B * bd}, 0, shirt}); // upper chest (pecs)
+    bl.push_back({2, {0, 1.12f * H + up * 0.7f, 0}, {}, {0.255f * sW * B, 0.160f * H, 0.180f * B * bd}, 0, shirt}); // lower ribcage
+    bl.push_back({2, {0, 0.92f * H + up * 0.3f, 0}, {}, {0.205f * B * p.waist, 0.150f * H, 0.160f * B * bd}, 0, shirt}); // waist (narrowest)
+    if (p.belly > 0.05f)
+        bl.push_back({2, {0, 0.95f * H, 0.14f * bd}, {}, {0.22f * B * p.belly, 0.18f * H * p.belly, 0.17f * bd * p.belly}, 0, shirt}); // belly
+    bl.push_back({2, {0, 0.66f * H, 0}, {}, {0.265f * hW * B, 0.150f * H, 0.190f * B * bd}, 0, pants}); // pelvis
     for (int s = -1; s <= 1; s += 2) {
+        // ---- Arm: deltoid cap, tapering bicep -> forearm, then a hand with a
+        //      flattened palm + thumb (no more featureless stump). ----
         float aw = sw + p.armGap;
-        float shoulderY = 1.46f * H + up, at = 0.16f * B * p.armThickness, armLen = 0.74f * aL * H;
+        float shoulderY = 1.46f * H + up, at = 0.150f * B * p.armThickness, armLen = 0.74f * aL * H;
         Vec3 sh{s * aw, shoulderY, 0};
         Quat q = Quat::Euler({(float)s * p.armSwing, 0, (float)s * p.armSpread});
+        Vec3 elbow = sh + q * Vec3{0, -armLen * 0.5f, 0};
         Vec3 wrist = sh + q * Vec3{0, -armLen, 0};
-        // Deltoid/shoulder bridge: a blob spanning the chest edge to the shoulder
-        // so the smooth-union always closes the armpit, even when arms spread.
-        bl.push_back({1, {s * 0.18f * p.shoulderWidth * B, shoulderY, 0}, sh, {}, at * 1.25f, shirt}); // shoulder bridge
-        bl.push_back({1, sh, wrist, {}, at, shirt});                              // upper+fore arm
-        bl.push_back({0, wrist + q * Vec3{0, -at, 0}, {}, {}, at * 1.1f, skin});  // hand
-        float lt = 0.20f * B * p.legThickness, lw = hw + p.legGap;
+        bl.push_back({1, {s * 0.17f * sW * B, shoulderY, 0}, sh, {}, at * 1.25f, shirt}); // shoulder bridge (closes armpit)
+        bl.push_back({0, sh, {}, {}, at * 1.45f, shirt});                          // deltoid
+        bl.push_back({1, sh, elbow, {}, at * 1.02f, shirt});                       // upper arm (bicep)
+        bl.push_back({0, elbow, {}, {}, at * 0.88f, shirt});                       // elbow
+        bl.push_back({1, elbow, wrist, {}, at * 0.80f, skin});                     // forearm
+        Vec3 hdir = q * Vec3{0, -1, 0};
+        float hs = 0.125f * B * p.handSize;
+        bl.push_back({2, wrist + hdir * (hs * 1.05f), {}, {hs * 0.95f, hs * 1.20f, hs * 0.50f}, 0, skin}); // palm
+        bl.push_back({0, wrist + hdir * (hs * 0.7f) + Vec3{s * hs * 0.55f, 0, hs * 0.25f}, {}, {}, hs * 0.42f, skin}); // thumb
+        // ---- Leg: glute, tapering thigh -> knee -> calf, ankle, forward foot. ----
+        float lt = 0.195f * B * p.legThickness, lw = hw + p.legGap;
         Vec3 hip{s * lw, 0.60f * H, 0};
         Quat ql = Quat::Euler({(float)s * p.legSwing, 0, (float)s * p.legSpread});
-        Vec3 ankle = hip + ql * Vec3{0, -(0.6f * H + 0.55f * lL * H), 0};
-        bl.push_back({1, {s * 0.10f * p.hipWidth * B, 0.60f * H, 0}, hip, {}, lt * 1.15f, pants}); // hip bridge
-        bl.push_back({1, hip, ankle, {}, lt, pants});                            // leg
-        bl.push_back({2, ankle + Vec3{0, -0.02f * H, 0.12f}, {}, {0.10f * B, 0.07f, 0.22f}, 0, shoes}); // foot
+        float legLen = 0.6f * H + 0.55f * lL * H;
+        Vec3 knee = hip + ql * Vec3{0, -legLen * 0.5f, 0};
+        Vec3 ankle = hip + ql * Vec3{0, -legLen, 0};
+        bl.push_back({1, {s * 0.10f * hW * B, 0.60f * H, 0}, hip, {}, lt * 1.15f, pants}); // hip bridge
+        bl.push_back({0, hip, {}, {}, lt * 1.20f, pants});                         // glute / hip
+        bl.push_back({1, hip, knee, {}, lt * 1.05f, pants});                       // thigh
+        bl.push_back({0, knee, {}, {}, lt * 0.82f, pants});                        // knee
+        bl.push_back({1, knee, ankle, {}, lt * 0.78f, pants});                     // calf / shin
+        bl.push_back({0, ankle, {}, {}, lt * 0.66f, shoes});                       // ankle
+        bl.push_back({2, ankle + Vec3{0, -0.05f * H, 0.10f}, {}, {0.090f * B, 0.060f, 0.165f}, 0, shoes}); // foot sole (forward)
+        bl.push_back({2, ankle + Vec3{0, -0.055f * H, 0.215f}, {}, {0.075f * B, 0.050f, 0.075f}, 0, shoes}); // toe
     }
     auto segd = [](const Vec3& pt, const Vec3& a, const Vec3& b) {
         Vec3 ab = b - a, ap = pt - a; float dd = Vec3::Dot(ab, ab);
@@ -1076,7 +1114,7 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         float mn = std::min(b2.rad.x, std::min(b2.rad.y, b2.rad.z));
         return (e.Magnitude() - 1.0f) * mn;
     };
-    const float kk = 0.14f;   // smooth-union radius: larger = masses fuse more
+    const float kk = 0.10f;   // smooth-union radius: larger = masses fuse more
     auto field = [&](const Vec3& pt) -> float {
         float dr = 1e9f;
         for (const Blob& b2 : bl) {

@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.18.0
+  - Character Creator: a thorough anatomical pass on the seamless body so it
+    reads as a real human:
+    - Torso now has proper structure — clavicle/traps, pecs/upper chest, ribcage,
+      a narrow waist and a pelvis, blended into one continuous trunk (a natural
+      male V-taper instead of two stacked balls).
+    - Limbs are anatomical: deltoid shoulder caps, a bicep tapering to a forearm,
+      defined elbows; glutes, thighs tapering through the knee to the calf.
+    - Real hands (flattened palm + thumb) instead of round stumps, and proper
+      forward-pointing feet (sole + toe).
+  - "Stays human" restrictions: every proportion is now clamped to a believable
+    human range when the character is built, so dragging any slider to an extreme
+    can't turn it into a blob. (Arm/Leg Spread sliders tightened to match.)
+
 v2.17.4
   - Updates now check automatically on startup, in the background (no UI freeze).
     If a newer build is published, the Update window pops up on its own — no need

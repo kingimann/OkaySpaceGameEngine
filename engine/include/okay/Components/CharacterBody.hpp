@@ -60,7 +60,8 @@ public:
     std::vector<Accessory> accessories;   // user-added custom parts
 
     /// Build the mesh for an explicit parameter set (used for animation frames).
-    Mesh Build(const HumanoidParams& pp) const {
+    Mesh Build(const HumanoidParams& pp0) const {
+        HumanoidParams pp = pp0; pp.ClampHuman();   // keep proportions human
         HumanoidColors c;
         c.skin = color; c.shirt = outfit; c.pants = pants; c.shoes = shoes;
         c.hair = hair;  c.eye = eye;      c.hasHair = hasHair; c.hasFace = hasFace;

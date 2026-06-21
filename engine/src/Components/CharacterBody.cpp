@@ -142,6 +142,7 @@ std::string CharacterBody::ToText() const {
     o << pose.size();                       // skeletal pose (euler per bone)
     for (const Vec3& r : pose) o << " " << r.x << " " << r.y << " " << r.z;
     o << "\n";
+    o << (lowPoly ? 1 : 0) << "\n";         // body style
     return o.str();
 }
 
@@ -185,6 +186,7 @@ void CharacterBody::FromText(const std::string& text) {
         pose.assign(np, Vec3{0, 0, 0});
         for (std::size_t k = 0; k < np; ++k) in >> pose[k].x >> pose[k].y >> pose[k].z;
     }
+    int lp = 1; if (in >> lp) lowPoly = (lp != 0);        // body style (optional)
 }
 
 void CharacterBody::Apply() {
@@ -196,7 +198,7 @@ void CharacterBody::Apply() {
     // The seamless body is a closed, outward-wound surface -> render single-sided
     // so the renderer can backface-cull (much cheaper with several characters).
     // The part-based body has mixed winding and must be drawn double-sided.
-    mr->doubleSided = !smoothBody;
+    mr->doubleSided = lowPoly || !smoothBody;
     // A soft specular sheen gives skin and clothing a lifelike highlight instead
     // of looking like flat matte clay.
     mr->specular = 0.22f;

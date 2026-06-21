@@ -45,6 +45,7 @@ public:
     bool  hasGlasses = false;
     bool  beard = false;
     bool  mustache = false;
+    bool  lowPoly = true;         // flat-shaded low-poly modelled body (default look)
     bool  smoothBody = true;      // seamless single-surface body (SDF + Surface Nets)
     int   smoothRes = 48;         // grid resolution for the seamless body
 
@@ -80,7 +81,9 @@ public:
         c.hat = hat; c.glasses = glasses; c.hasHat = hasHat; c.hasGlasses = hasGlasses;
         c.beard = beard; c.mustache = mustache;
         Mesh m;
-        if (smoothBody) {
+        if (lowPoly) {
+            m = BuildLowPolyHumanoid(pp, &c);             // flat-shaded modelled body
+        } else if (smoothBody) {
             m = BuildSmoothHumanoid(pp, &c, smoothRes);   // seamless single-surface body
         } else {
             m = Mesh::Humanoid(pp, &c);
@@ -127,11 +130,11 @@ public:
         // doubleSided) — that lets the renderer backface-cull ~half the triangles,
         // a big win when several characters share a scene. (The part-based body
         // has mixed winding and must stay double-sided.)
-        if (smoothBody)
+        if (smoothBody && !lowPoly)
             for (std::size_t i = 0; i + 2 < m.triangles.size(); i += 3)
                 std::swap(m.triangles[i + 1], m.triangles[i + 2]);
         ApplyPose(m, pp);           // bend the mesh to the posed skeleton (if any)
-        m.ComputeSmoothNormals();   // smooth (Gouraud) shading + seam hiding
+        if (!lowPoly) m.ComputeSmoothNormals();   // smooth shading (low-poly stays flat/faceted)
         return m;
     }
     /// Build the mesh described by the current (rest) parameters.

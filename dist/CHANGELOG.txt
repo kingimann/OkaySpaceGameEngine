@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.24.0
+  - Character: REAL human body. The Character creator now uses a proper
+    anatomical human base mesh (the MakeHuman CC0 base, embedded in the engine)
+    instead of procedural blobs — correct anatomy, hands with fingers, feet, a
+    real head. It's tinted by region into clothing (shirt / trousers / shoes /
+    skin / hair) and scaled by the Height / Build / Body Depth sliders.
+  - This is the default ("Realistic" body style). The old Low Poly / Seamless /
+    Parts styles are still available (uncheck Realistic in the Character
+    inspector). The base mesh is embedded in the .exe, so it ships via the normal
+    auto-update with no extra files.
+
 v2.23.0
   - Model import: File > "Import Model (.obj)..." loads a Wavefront .OBJ with its
     UVs and .mtl diffuse texture (map_Kd) as a textured object. (Also the

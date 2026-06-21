@@ -5057,10 +5057,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Reset Pose##rig")) { for (Vec3& q : cb->pose) q = {0, 0, 0}; ch = true; }
             ImGui::Spacing();
             ImGui::TextDisabled("Body style");
-            ch |= ImGui::Checkbox("Low Poly (flat-shaded model)##char", &cb->lowPoly);
+            ch |= ImGui::Checkbox("Realistic (human base mesh)##char", &cb->realistic);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Clean low-poly modelled body (a proper polygonal mesh,\nflat-shaded) — the recommended look.");
-            if (!cb->lowPoly) {
+                ImGui::SetTooltip("Use the bundled anatomical human base mesh (a real modelled body),\ntinted into clothing by region. The recommended, most human look.");
+            if (!cb->realistic)
+            ch |= ImGui::Checkbox("Low Poly (flat-shaded model)##char", &cb->lowPoly);
+            if (!cb->realistic && ImGui::IsItemHovered())
+                ImGui::SetTooltip("Clean low-poly modelled body (a proper polygonal mesh,\nflat-shaded).");
+            if (!cb->realistic && !cb->lowPoly) {
                 ch |= ImGui::Checkbox("Seamless Body (smooth skin)##char", &cb->smoothBody);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Fuse the body into ONE continuous smooth surface.\nHeavier; animation is disabled in this mode.");

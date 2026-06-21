@@ -6,6 +6,7 @@ add_library(okay_engine
     src/Core/DataAsset.cpp
     src/Input/Input.cpp
     src/Render/ConsoleRenderer.cpp
+    src/Render/HumanBaseMeshData.cpp
     src/Scene/Component.cpp
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp

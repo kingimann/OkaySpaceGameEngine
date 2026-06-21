@@ -134,12 +134,66 @@ public:
     /// Textured triangle: perspective-correct UVs (pass u/w, v/w and 1/w per
     /// vertex). Samples `img` (wrapped), multiplies by `tint` and lighting
     /// `shade`, adds `spec` + emissive `(er,eg,eb)`. Depth-tested per pixel.
+    // Bilinear texture lookup with wrapping (one mip level).
+    static Color BilerpWrap(const Image& img, float u, float v) {
+        int tw = img.Width(), th = img.Height();
+        if (tw <= 0 || th <= 0) return Color(1, 1, 1, 1);
+        auto wr = [](int a, int n) { a %= n; return a < 0 ? a + n : a; };
+        float fu = u * tw - 0.5f, fv = (1.0f - v) * th - 0.5f;
+        int x0 = (int)std::floor(fu), y0 = (int)std::floor(fv);
+        float ax = fu - x0, ay = fv - y0;
+        Color c00 = img.GetPixel(wr(x0, tw), wr(y0, th)), c10 = img.GetPixel(wr(x0 + 1, tw), wr(y0, th));
+        Color c01 = img.GetPixel(wr(x0, tw), wr(y0 + 1, th)), c11 = img.GetPixel(wr(x0 + 1, tw), wr(y0 + 1, th));
+        float r0 = c00.r + (c10.r - c00.r) * ax, r1 = c01.r + (c11.r - c01.r) * ax;
+        float g0 = c00.g + (c10.g - c00.g) * ax, g1 = c01.g + (c11.g - c01.g) * ax;
+        float b0 = c00.b + (c10.b - c00.b) * ax, b1 = c01.b + (c11.b - c01.b) * ax;
+        return Color(r0 + (r1 - r0) * ay, g0 + (g1 - g0) * ay, b0 + (b1 - b0) * ay, 1.0f);
+    }
+    // Trilinear mipmap sample: bilinear within the two nearest mip levels, blended.
+    static Color SampleMips(const std::vector<Image>& mips, float u, float v, float lod) {
+        int n = (int)mips.size();
+        if (n == 0) return Color(1, 1, 1, 1);
+        float maxl = (float)(n - 1);
+        lod = lod < 0 ? 0 : (lod > maxl ? maxl : lod);
+        int l0 = (int)lod, l1 = l0 + 1 < n ? l0 + 1 : l0;
+        float f = lod - l0;
+        Color a = BilerpWrap(mips[l0], u, v);
+        if (f <= 0.001f || l1 == l0) return a;
+        Color b = BilerpWrap(mips[l1], u, v);
+        return Color(a.r + (b.r - a.r) * f, a.g + (b.g - a.g) * f, a.b + (b.b - a.b) * f, 1.0f);
+    }
+    // Per-vertex screen-space gradients of the (perspective) barycentric-weighted
+    // attribute numerators/denominator, used to pick the mip level PER PIXEL. The
+    // perspective-correct texcoord is u = A/B with A = interp(U/w), B = interp(1/w),
+    // both affine in screen (px,py); their constant gradients come from the edge
+    // functions. (Per-pixel LOD is essential for big triangles like a ground plane,
+    // where one LOD for the whole triangle would leave the far end aliased.)
+    struct LodGrad { float dAx, dAy, dVx, dVy, dBx, dBy; };
+    static LodGrad MakeLodGrad(const float* X, const float* Y, float inv,
+                               const float* U, const float* V, const float* IW) {
+        float g0x = (Y[1] - Y[2]) * inv, g0y = (X[2] - X[1]) * inv;
+        float g1x = (Y[2] - Y[0]) * inv, g1y = (X[0] - X[2]) * inv;
+        float g2x = (Y[0] - Y[1]) * inv, g2y = (X[1] - X[0]) * inv;
+        return {U[0]*g0x + U[1]*g1x + U[2]*g2x, U[0]*g0y + U[1]*g1y + U[2]*g2y,
+                V[0]*g0x + V[1]*g1x + V[2]*g2x, V[0]*g0y + V[1]*g1y + V[2]*g2y,
+                IW[0]*g0x + IW[1]*g1x + IW[2]*g2x, IW[0]*g0y + IW[1]*g1y + IW[2]*g2y};
+    }
+    static float PixelLod(float A, float Av, float B, const LodGrad& g, int tw, int th) {
+        float B2 = B * B;
+        if (B2 < 1e-20f) return 0.0f;
+        float dudx = (g.dAx * B - A * g.dBx) / B2, dvdx = (g.dVx * B - Av * g.dBx) / B2;
+        float dudy = (g.dAy * B - A * g.dBy) / B2, dvdy = (g.dVy * B - Av * g.dBy) / B2;
+        float l2x = dudx * dudx + dvdx * dvdx, l2y = dudy * dudy + dvdy * dvdy;
+        float m = (l2x > l2y ? l2x : l2y) * (float)tw * (float)th;
+        return 0.5f * std::log2(m > 1e-12f ? m : 1e-12f);
+    }
+
     void TriangleTex(const float* X, const float* Y, const float* D,
                      const float* IW, const float* U, const float* V,
-                     const Image& img, const Color& tint,
+                     const std::vector<Image>& mips, const Color& tint,
                      const float* LR, const float* LG, const float* LB, float spec,
                      float er, float eg, float eb,
-                     float fog, float fr, float fg, float fb, bool bilinear) {
+                     float fog, float fr, float fg, float fb) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -149,11 +203,11 @@ public:
         if (maxX >= width) maxX = width - 1;
         if (maxY >= height) maxY = height - 1;
         float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
-        if (area == 0.0f) return;
+        if (area == 0.0f || mips.empty()) return;
         float inv = 1.0f / area;
-        int tw = img.Width(), th = img.Height();
+        int tw = mips[0].Width(), th = mips[0].Height();
         if (tw <= 0 || th <= 0) return;
-        auto wrap = [](int a, int n) { a %= n; return a < 0 ? a + n : a; };
+        LodGrad lg2 = MakeLodGrad(X, Y, inv, U, V, IW);
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
                 float px = x + 0.5f, py = y + 0.5f;
@@ -164,36 +218,18 @@ public:
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
                 if (d >= depth[i]) continue;
+                float A = w0 * U[0] + w1 * U[1] + w2 * U[2];
+                float Av = w0 * V[0] + w1 * V[1] + w2 * V[2];
                 float iw = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
                 if (iw == 0.0f) continue;
-                float u = (w0 * U[0] + w1 * U[1] + w2 * U[2]) / iw;
-                float v = (w0 * V[0] + w1 * V[1] + w2 * V[2]) / iw;
-                float tr, tg, tb;
-                if (bilinear) {
-                    // Bilinear filtering: blend the 4 nearest texels for smooth,
-                    // non-pixelated textures.
-                    float fu = u * tw - 0.5f, fv = (1.0f - v) * th - 0.5f;
-                    int x0 = (int)std::floor(fu), y0 = (int)std::floor(fv);
-                    float ax = fu - x0, ay = fv - y0;
-                    Color c00 = img.GetPixel(wrap(x0, tw),     wrap(y0, th));
-                    Color c10 = img.GetPixel(wrap(x0 + 1, tw), wrap(y0, th));
-                    Color c01 = img.GetPixel(wrap(x0, tw),     wrap(y0 + 1, th));
-                    Color c11 = img.GetPixel(wrap(x0 + 1, tw), wrap(y0 + 1, th));
-                    float r0 = c00.r + (c10.r - c00.r) * ax, r1 = c01.r + (c11.r - c01.r) * ax;
-                    float g0 = c00.g + (c10.g - c00.g) * ax, g1 = c01.g + (c11.g - c01.g) * ax;
-                    float b0 = c00.b + (c10.b - c00.b) * ax, b1 = c01.b + (c11.b - c01.b) * ax;
-                    tr = r0 + (r1 - r0) * ay; tg = g0 + (g1 - g0) * ay; tb = b0 + (b1 - b0) * ay;
-                } else {
-                    Color tc = img.GetPixel(wrap((int)std::floor(u * tw), tw),
-                                            wrap((int)std::floor((1.0f - v) * th), th));
-                    tr = tc.r; tg = tc.g; tb = tc.b;
-                }
+                float u = A / iw, v = Av / iw;
+                Color tc = SampleMips(mips, u, v, PixelLod(A, Av, iw, lg2, tw, th));
                 float lr = w0 * LR[0] + w1 * LR[1] + w2 * LR[2];
                 float lg = w0 * LG[0] + w1 * LG[1] + w2 * LG[2];
                 float lb = w0 * LB[0] + w1 * LB[1] + w2 * LB[2];
-                float cr = tr * tint.r * lr + spec + er;
-                float cg = tg * tint.g * lg + spec + eg;
-                float cb = tb * tint.b * lb + spec + eb;
+                float cr = tc.r * tint.r * lr + spec + er;
+                float cg = tc.g * tint.g * lg + spec + eg;
+                float cb = tc.b * tint.b * lb + spec + eb;
                 if (fog > 0.0f) {
                     cr = cr * (1.0f - fog) + fr * fog;
                     cg = cg * (1.0f - fog) + fg * fog;
@@ -214,7 +250,7 @@ public:
                        const float* U, const float* V,
                        const float* NXa, const float* NYa, const float* NZa,
                        const float* WXa, const float* WYa, const float* WZa,
-                       const Image* img, const Color& base, const Color& tint, const Vec3& eye,
+                       const std::vector<Image>* mips, const Color& base, const Color& tint, const Vec3& eye,
                        float shininess, float specularK, float er, float eg, float eb,
                        float fog, float fr, float fg, float fb) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
@@ -228,7 +264,9 @@ public:
         float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
         if (area == 0.0f) return;
         float inv = 1.0f / area;
-        int tw = img ? img->Width() : 0, th = img ? img->Height() : 0;
+        const bool textured = mips && !mips->empty() && (*mips)[0].Width() > 0;
+        int tw = textured ? (*mips)[0].Width() : 0, th = textured ? (*mips)[0].Height() : 0;
+        LodGrad lg2 = textured ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
         Vec3 toLight = SceneLight::Direction() * -1.0f;
         toLight = toLight.Normalized();
         for (int y = minY; y <= maxY; ++y) {
@@ -258,23 +296,13 @@ public:
                     if (nh > 0.0f) spec = std::pow(nh, shininess) * specularK;
                 }
                 float br = base.r, bg = base.g, bb2 = base.b;
-                if (img && tw > 0 && th > 0) {
+                if (textured) {
+                    float A = w0 * U[0] + w1 * U[1] + w2 * U[2];
+                    float Av = w0 * V[0] + w1 * V[1] + w2 * V[2];
                     float iw = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
                     if (iw != 0.0f) {
-                        float u = (w0 * U[0] + w1 * U[1] + w2 * U[2]) / iw;
-                        float vv = (w0 * V[0] + w1 * V[1] + w2 * V[2]) / iw;
-                        float fu = u * tw - 0.5f, fv = (1.0f - vv) * th - 0.5f;
-                        int x0 = (int)std::floor(fu), y0 = (int)std::floor(fv);
-                        float ax = fu - x0, ay = fv - y0;
-                        auto wr = [](int a, int n) { a %= n; return a < 0 ? a + n : a; };
-                        Color c00 = img->GetPixel(wr(x0, tw), wr(y0, th)), c10 = img->GetPixel(wr(x0 + 1, tw), wr(y0, th));
-                        Color c01 = img->GetPixel(wr(x0, tw), wr(y0 + 1, th)), c11 = img->GetPixel(wr(x0 + 1, tw), wr(y0 + 1, th));
-                        float r0 = c00.r + (c10.r - c00.r) * ax, r1 = c01.r + (c11.r - c01.r) * ax;
-                        float g0 = c00.g + (c10.g - c00.g) * ax, g1 = c01.g + (c11.g - c01.g) * ax;
-                        float b0 = c00.b + (c10.b - c00.b) * ax, b1 = c01.b + (c11.b - c01.b) * ax;
-                        br = (r0 + (r1 - r0) * ay) * tint.r;
-                        bg = (g0 + (g1 - g0) * ay) * tint.g;
-                        bb2 = (b0 + (b1 - b0) * ay) * tint.b;
+                        Color tc = SampleMips(*mips, A / iw, Av / iw, PixelLod(A, Av, iw, lg2, tw, th));
+                        br = tc.r * tint.r; bg = tc.g * tint.g; bb2 = tc.b * tint.b;
                     }
                 }
                 float cr = br * lit.x + spec + er;
@@ -317,6 +345,51 @@ inline Image* GetCachedTexture(const std::string& path) {
     return it->second.Width() > 0 ? &it->second : nullptr;
 }
 
+// Build the mipmap pyramid for `levels` (which already holds the base at [0]):
+// box-downsample by 2 until 1x1. Mip levels let the renderer pick a smaller,
+// pre-filtered texture for far-away/minified triangles, which kills the harsh
+// shimmer/aliasing you get sampling a full-res texture at a distance.
+inline void BuildMips(std::vector<Image>& levels) {
+    if (levels.empty()) return;
+    while (levels.back().Width() > 1 || levels.back().Height() > 1) {
+        const Image& s = levels.back();
+        int sw = s.Width(), sh = s.Height();
+        int dw = sw > 1 ? sw / 2 : 1, dh = sh > 1 ? sh / 2 : 1;
+        Image dimg(dw, dh);
+        for (int y = 0; y < dh; ++y)
+            for (int x = 0; x < dw; ++x) {
+                int sx = x * 2, sy = y * 2;
+                int sx1 = sx + 1 < sw ? sx + 1 : sx, sy1 = sy + 1 < sh ? sy + 1 : sy;
+                Color a = s.GetPixel(sx, sy), b = s.GetPixel(sx1, sy);
+                Color c = s.GetPixel(sx, sy1), e = s.GetPixel(sx1, sy1);
+                dimg.SetPixel(x, y, Color((a.r + b.r + c.r + e.r) * 0.25f,
+                                          (a.g + b.g + c.g + e.g) * 0.25f,
+                                          (a.b + b.b + c.b + e.b) * 0.25f,
+                                          (a.a + b.a + c.a + e.a) * 0.25f));
+            }
+        levels.push_back(std::move(dimg));
+    }
+}
+
+inline std::unordered_map<std::string, std::vector<Image>>& MipCacheMap() {
+    static std::unordered_map<std::string, std::vector<Image>> cache;
+    return cache;
+}
+
+// A texture's mip chain (built lazily from the base image). Returns null if the
+// texture failed to load / is empty.
+inline const std::vector<Image>* GetCachedMips(const std::string& path) {
+    auto& cache = MipCacheMap();
+    auto it = cache.find(path);
+    if (it == cache.end()) {
+        std::vector<Image> levels;
+        Image* base = GetCachedTexture(path);
+        if (base && base->Width() > 0) { levels.push_back(*base); BuildMips(levels); }
+        it = cache.emplace(path, std::move(levels)).first;
+    }
+    return (!it->second.empty() && it->second[0].Width() > 0) ? &it->second : nullptr;
+}
+
 /// Per-pixel (Phong) lighting toggle. On by default for quality (smooth shading
 /// + correct specular on every pixel); turn off to fall back to faster per-vertex
 /// (Gouraud) shading on very large scenes.
@@ -338,7 +411,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const auto& t = mr->mesh.triangles;
         const bool hasUV = mr->mesh.uvs.size() == v.size();
         const bool faceCols = mr->mesh.HasFaceColors();   // per-triangle colors?
-        Image* tex = mr->texture.empty() ? nullptr : GetCachedTexture(mr->texture);
+        const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
         Image* mcap = (mr->matcap.empty() || mr->unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
         const bool useMatcap = mcap && mr->mesh.HasNormals();
@@ -519,7 +592,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
                     r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, lr, lg, lb, spec,
                                   mr->emissive.r, mr->emissive.g, mr->emissive.b,
-                                  fogF, fogR, fogG, fogB, true);
+                                  fogF, fogR, fogG, fogB);
                 } else if (smooth) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

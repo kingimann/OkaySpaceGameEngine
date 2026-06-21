@@ -28,7 +28,7 @@ struct Accessory {
 class CharacterBody : public Component {
 public:
     HumanoidParams params;
-    int   subdivisions = 2;        // 0..3 Subdivide+Smooth passes (low -> high poly)
+    int   subdivisions = 1;        // 0..3 Subdivide+Smooth passes (low -> high poly)
     float smoothAmount = 0.5f;     // Laplacian relax strength per pass
     Color color  = Color::FromBytes(214, 178, 150);  // skin (head/neck/hands/nose)
     Color outfit = Color::FromBytes(70, 110, 170);   // shirt (torso/arms)
@@ -109,6 +109,7 @@ public:
             Vec3 eul{ae.x + a.rotation.x, ae.y + a.rotation.y, ae.z + a.rotation.z};
             m.AddPosed(Mesh::FromName(a.shape), world, a.scale, eul, world, &a.color);
         }
+        m.ComputeSmoothNormals();   // smooth (Gouraud) shading + seam hiding
         return m;
     }
     /// Build the mesh described by the current (rest) parameters.

@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.25.1
+  - Character: fixed the customization sliders tearing/deforming the base mesh.
+    Morphs are now smooth, continuous deformations (gender, muscle, shoulders,
+    hips, waist, leg length, head, height, build) so the body stays intact.
+
 v2.25.0
   - Character: MakeHuman-style customization of the real human base mesh.
     - NEW Gender slider (Female <-> Male): reshapes shoulders, hips, waist and

@@ -61,7 +61,7 @@ public:
         Vec2 mp = Input::MousePosition();
         if (m_haveMouse) {
             yaw   += (invertX ? -1.0f : 1.0f) * (mp.x - m_lastMouse.x) * mouseSensitivity;
-            pitch += (invertY ?  1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
+            pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
         m_lastMouse = mp; m_haveMouse = true;

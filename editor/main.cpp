@@ -5000,9 +5000,13 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Character", cb, &toRemove)) {
             HumanoidParams& p = cb->params;
             bool ch = false;
+            ImGui::TextDisabled("Main (MakeHuman-style)");
+            ch |= ImGui::SliderFloat("Gender (F - M)##char", &p.gender,       0.0f, 1.0f, p.gender < 0.34f ? "Female" : (p.gender > 0.66f ? "Male" : "Androgynous"));
+            ch |= ImGui::SliderFloat("Muscle##char",        &p.muscle,        0.0f, 1.0f, p.muscle < 0.34f ? "Slim" : (p.muscle > 0.66f ? "Muscular" : "Average"));
+            ImGui::Spacing();
             ImGui::TextDisabled("Body proportions");
             ch |= ImGui::SliderFloat("Height##char",        &p.height,        0.5f, 2.0f);
-            ch |= ImGui::SliderFloat("Build##char",         &p.build,         0.4f, 2.2f);
+            ch |= ImGui::SliderFloat("Build (weight)##char",&p.build,         0.4f, 2.2f);
             ch |= ImGui::SliderFloat("Head Size##char",     &p.headSize,      0.5f, 1.8f);
             ch |= ImGui::SliderFloat("Shoulder Width##char",&p.shoulderWidth, 0.5f, 1.8f);
             ch |= ImGui::SliderFloat("Hip Width##char",     &p.hipWidth,      0.5f, 1.8f);
@@ -5055,27 +5059,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Reset Bone##rig")) { cb->pose[s_bone] = {0, 0, 0}; ch = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("Reset Pose##rig")) { for (Vec3& q : cb->pose) q = {0, 0, 0}; ch = true; }
-            ImGui::Spacing();
-            ImGui::TextDisabled("Body style");
-            ch |= ImGui::Checkbox("Realistic (human base mesh)##char", &cb->realistic);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Use the bundled anatomical human base mesh (a real modelled body),\ntinted into clothing by region. The recommended, most human look.");
-            if (!cb->realistic)
-            ch |= ImGui::Checkbox("Low Poly (flat-shaded model)##char", &cb->lowPoly);
-            if (!cb->realistic && ImGui::IsItemHovered())
-                ImGui::SetTooltip("Clean low-poly modelled body (a proper polygonal mesh,\nflat-shaded).");
-            if (!cb->realistic && !cb->lowPoly) {
-                ch |= ImGui::Checkbox("Seamless Body (smooth skin)##char", &cb->smoothBody);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Fuse the body into ONE continuous smooth surface.\nHeavier; animation is disabled in this mode.");
-                if (cb->smoothBody) {
-                    ch |= ImGui::SliderInt("Smooth Quality##char", &cb->smoothRes, 24, 72);
-                } else {
-                    ch |= ImGui::SliderInt("Subdivisions##char", &cb->subdivisions, 0, 4);
-                    if (cb->subdivisions > 0)
-                        ch |= ImGui::SliderFloat("Smoothness##char", &cb->smoothAmount, 0.0f, 1.0f);
-                }
-            }
+            cb->realistic = true;   // anatomical human base mesh is the only body now
             ImGui::Spacing();
             ImGui::TextDisabled("Colors");
             // Quick skin-tone swatches.

@@ -52,6 +52,8 @@ struct HumanoidParams {
     float belly        = 0.0f;   // belly size (0 = none)
     float armGap       = 0.0f;   // lateral spacing of arms from the body (+out, -in)
     float legGap       = 0.0f;   // lateral spacing of legs (stance width; +apart, -together)
+    float gender       = 0.5f;   // 0 = female, 1 = male (shoulders/hips/waist/bust)
+    float muscle       = 0.5f;   // 0 = slim, 1 = muscular (limb + torso girth)
 
     /// Constrain every proportion to a believable human range so the character
     /// always reads as a person — no matter how the sliders are dragged. Applied
@@ -70,7 +72,7 @@ struct HumanoidParams {
         cl(armGap, -0.05f, 0.10f);    cl(legGap, -0.05f, 0.14f);
         cl(eyeSpacing, 0.75f, 1.3f);  cl(eyeSize, 0.75f, 1.35f);
         cl(mouthWidth, 0.65f, 1.4f);  cl(noseSize, 0.7f, 1.5f);
-        cl(browAngle, -25.0f, 25.0f);
+        cl(browAngle, -25.0f, 25.0f); cl(gender, 0.0f, 1.0f); cl(muscle, 0.0f, 1.0f);
         // Realism coupling: hips never read much wider than the shoulders, and the
         // waist can't be wider than the chest (keeps a natural human taper).
         if (hipWidth > shoulderWidth + 0.10f) hipWidth = shoulderWidth + 0.10f;

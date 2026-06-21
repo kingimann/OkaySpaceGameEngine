@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.25.0
+  - Character: MakeHuman-style customization of the real human base mesh.
+    - NEW Gender slider (Female <-> Male): reshapes shoulders, hips, waist and
+      adds a bust toward female — one slider visibly switches body type.
+    - NEW Muscle slider (Slim <-> Muscular): limb + torso girth.
+    - All the proportion sliders now actually MORPH the base mesh by region —
+      Shoulder Width, Hip Width, Waist, Arm/Leg Length & Thickness, Head Size,
+      Neck Length, Height, Build — instead of just scaling a blob.
+  - Removed the old body styles (Low Poly / Seamless / Parts); the anatomical
+    human base mesh is now the one and only body.
+
 v2.24.0
   - Character: REAL human body. The Character creator now uses a proper
     anatomical human base mesh (the MakeHuman CC0 base, embedded in the engine)

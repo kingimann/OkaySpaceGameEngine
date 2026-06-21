@@ -110,7 +110,55 @@ public:
                     else col = color;                     // face / neck
                     m.triColors.push_back(col);
                 }
-                // Scale to the requested proportions (build widens, bodyDepth deepens).
+                // ---- Parametric morph: reshape the base mesh per region from the
+                //      sliders + gender, MakeHuman-style. Operates on the
+                //      normalized mesh (feet y=0, head y=1, centered X/Z). ----
+                auto lerpf = [](float a, float b, float t) { return a + (b - a) * t; };
+                const float g = pp.gender;                 // 0 female .. 1 male
+                const float shoulderMul = pp.shoulderWidth * lerpf(0.88f, 1.14f, g);
+                const float hipMul      = pp.hipWidth      * lerpf(1.14f, 0.90f, g);
+                const float waistMul    = pp.waist         * lerpf(0.80f, 1.00f, g);
+                const float musc        = lerpf(0.86f, 1.14f, pp.muscle);
+                const float armTh = pp.armThickness * musc, legTh = pp.legThickness * musc;
+                // vertical width profile of the trunk (hips -> waist -> shoulders)
+                auto wprofile = [&](float y) {
+                    if (y >= 0.81f) return shoulderMul;
+                    if (y >= 0.62f) return lerpf(waistMul, shoulderMul, (y - 0.62f) / 0.19f);
+                    if (y >= 0.50f) return lerpf(hipMul, waistMul, (y - 0.50f) / 0.12f);
+                    return hipMul;
+                };
+                for (Vec3& v : m.vertices) {
+                    float y = v.y, ax = std::fabs(v.x);
+                    if (y < 0.47f) {                       // ---- LEG ----
+                        float s = v.x < 0 ? -1.0f : 1.0f, lc = s * 0.09f * hipMul;
+                        v.x += (hipMul - 1.0f) * 0.09f * s;        // follow the hips outward
+                        v.y = 0.50f + (v.y - 0.50f) * pp.legLength;// length
+                        v.x = lc + (v.x - lc) * legTh; v.z *= legTh;// girth
+                    } else if (y > 0.86f) {                // ---- HEAD ----
+                        Vec3 C{0.0f, 0.86f, 0.0f};
+                        v = C + (v - C) * pp.headSize;
+                        v.y += (pp.neckLength - 1.0f) * 0.04f;
+                    } else if (ax > 0.18f) {               // ---- ARM ----
+                        float s = v.x < 0 ? -1.0f : 1.0f;
+                        v.x += (shoulderMul - 1.0f) * 0.18f * s;   // follow the shoulders
+                        Vec3 S{s * 0.18f * shoulderMul, 0.80f, 0.0f};
+                        Vec3 dir{s * 0.34f, -0.34f, 0.0f}; float dl = std::sqrt(dir.x*dir.x+dir.y*dir.y);
+                        dir.x /= dl; dir.y /= dl;
+                        Vec3 rel = v - S; float t = rel.x * dir.x + rel.y * dir.y;
+                        Vec3 axis{S.x + dir.x * t, S.y + dir.y * t, 0.0f};
+                        Vec3 perp = v - axis;
+                        axis = {S.x + dir.x * (t * pp.armLength), S.y + dir.y * (t * pp.armLength), 0.0f};
+                        v = {axis.x + perp.x * armTh, axis.y + perp.y * armTh, axis.z + v.z * armTh};
+                        v.z *= armTh;
+                    } else {                               // ---- TORSO ----
+                        float w = wprofile(y);
+                        v.x *= w;
+                        if (y > 0.54f && y < 0.70f) v.z *= waistMul;            // waist depth
+                        if (g < 0.5f && y > 0.66f && y < 0.80f && v.z > 0.0f)   // female bust
+                            v.z += (0.5f - g) * 0.05f;
+                    }
+                }
+                // Global size: height, plus overall build thickness + body depth.
                 float Hgt = 1.85f * pp.height;
                 float wx = Hgt * pp.build, wz = Hgt * pp.build * pp.bodyDepth;
                 for (Vec3& v : m.vertices) { v.x *= wx; v.y *= Hgt; v.z *= wz; }

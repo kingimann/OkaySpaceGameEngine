@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.47.0
+  - Rendering (important fix): per-pixel features now work on meshes without
+    explicit normals. The per-pixel path was gated behind HasNormals(), so the
+    built-in primitives (Cube, Plane, Cylinder, ...) and the flat-shaded Character
+    silently fell back to a basic path with NO cast shadows, reflections, rim
+    light or per-pixel hemisphere ambient. They now go through the per-pixel path
+    using the face normal (so they stay crisply flat-shaded) and receive all of
+    those — e.g. a plain cube on a plane finally casts a real soft shadow.
+
 v2.46.0
   - Rendering: hemisphere ambient light. The ambient term is no longer one flat
     color — up-facing surfaces pick up the sky color and down-facing ones pick up

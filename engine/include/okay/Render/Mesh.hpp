@@ -1081,7 +1081,11 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         Vec3 sh{s * aw, shoulderY, 0};
         Quat q = Quat::Euler({(float)s * p.armSwing, 0, (float)s * p.armSpread});
         Vec3 elbow = sh + q * Vec3{0, -armLen * 0.5f, 0};
-        Vec3 wrist = sh + q * Vec3{0, -armLen, 0};
+        // Relaxed pose: the forearm bends slightly forward and inward at the elbow
+        // so the arm rests naturally instead of hanging like a stiff straight rod.
+        Quat fq = q * Quat::Euler({16.0f, 0.0f, (float)s * -7.0f});
+        Vec3 foreDir = fq * Vec3{0, -1, 0};
+        Vec3 wrist = elbow + foreDir * (armLen * 0.5f);
         // Trapezius: a muscle sloping from the neck base DOWN to the shoulder, so
         // the shoulder line slopes naturally instead of forming a flat square bar.
         bl.push_back({1, {0, 1.52f * H + up, -0.01f * bd}, {s * aw * 0.80f, shoulderY + 0.01f * H, 0}, {}, 0.075f, shirt});
@@ -1093,7 +1097,7 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         bl.push_back({1, sh, elbow, {}, at * 1.02f, shirt});                       // upper arm (bicep)
         bl.push_back({0, elbow, {}, {}, at * 0.88f, shirt});                       // elbow
         bl.push_back({1, elbow, wrist, {}, at * 0.80f, skin});                     // forearm
-        Vec3 hdir = q * Vec3{0, -1, 0};
+        Vec3 hdir = foreDir;
         float hs = 0.125f * B * p.handSize;
         bl.push_back({2, wrist + hdir * (hs * 1.05f), {}, {hs * 0.95f, hs * 1.20f, hs * 0.50f}, 0, skin}); // palm
         bl.push_back({0, wrist + hdir * (hs * 0.7f) + Vec3{s * hs * 0.55f, 0, hs * 0.25f}, {}, {}, hs * 0.42f, skin}); // thumb

@@ -7496,7 +7496,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (up->GetComponent<Camera>()) {
                 ImU32 col = (up.get() == ed.selected()) ? IM_COL32(255, 220, 90, 255)
                                                         : IM_COL32(120, 200, 255, 255);
-                Vec3 f = t->Forward(), r = t->Right(), u = t->Up();
+                // A camera looks down its local -Z, so the frustum must extend along
+                // -Forward (it used to point the opposite way to the actual view).
+                Vec3 f = t->Forward() * -1.0f, r = t->Right(), u = t->Up();
                 float d = 1.4f, w = 0.5f, h = 0.35f;
                 Vec3 c[4] = { p + f * d + r * w + u * h, p + f * d - r * w + u * h,
                               p + f * d - r * w - u * h, p + f * d + r * w - u * h };

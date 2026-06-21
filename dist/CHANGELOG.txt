@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.56.0
+  - Fix: the camera frustum gizmo in the Scene view pointed the opposite way to the
+    actual view. Cameras look down -Z, but the gizmo was drawn along +Z; it now
+    points where the camera actually looks.
+  - Fix: the FPS template player's collider sat too low (centered on the feet). It
+    now has an offset so the box wraps the body from feet to head. Existing scenes:
+    set the collider's Offset Y (or use Fit) in the inspector.
+
 v2.55.0
   - Fix: walk/run animations no longer play backwards. The character was modelled
     facing +Z while the cameras/controllers use -Z as forward, so the body walked

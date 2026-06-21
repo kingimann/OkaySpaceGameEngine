@@ -153,7 +153,12 @@ inline void FPS(Scene& scene) {
     player->transform->localPosition = {0, 1.0f, 0};
     player->AddComponent<Character>()->Apply();
     player->AddComponent<Rigidbody3D>();
-    player->AddComponent<BoxCollider3D>()->size = {0.6f, 1.8f, 0.6f};
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};   // the character's origin is at its feet,
+                                            // so lift the box to wrap feet->head
+    }
     player->AddComponent<FirstPersonController>();
 
     // Camera mounted on the player at eye height, just in front of the face so you

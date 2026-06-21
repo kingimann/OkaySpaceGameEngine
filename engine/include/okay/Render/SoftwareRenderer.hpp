@@ -137,7 +137,9 @@ public:
     void TriangleTex(const float* X, const float* Y, const float* D,
                      const float* IW, const float* U, const float* V,
                      const Image& img, const Color& tint,
-                     float shade, float spec, float er, float eg, float eb) {
+                     const float* LR, const float* LG, const float* LB, float spec,
+                     float er, float eg, float eb,
+                     float fog, float fr, float fg, float fb, bool bilinear) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -151,6 +153,7 @@ public:
         float inv = 1.0f / area;
         int tw = img.Width(), th = img.Height();
         if (tw <= 0 || th <= 0) return;
+        auto wrap = [](int a, int n) { a %= n; return a < 0 ? a + n : a; };
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
                 float px = x + 0.5f, py = y + 0.5f;
@@ -165,13 +168,39 @@ public:
                 if (iw == 0.0f) continue;
                 float u = (w0 * U[0] + w1 * U[1] + w2 * U[2]) / iw;
                 float v = (w0 * V[0] + w1 * V[1] + w2 * V[2]) / iw;
-                int tx = (int)std::floor(u * tw) % tw; if (tx < 0) tx += tw;
-                int ty = (int)std::floor((1.0f - v) * th) % th; if (ty < 0) ty += th;
-                Color tc = img.GetPixel(tx, ty);
+                float tr, tg, tb;
+                if (bilinear) {
+                    // Bilinear filtering: blend the 4 nearest texels for smooth,
+                    // non-pixelated textures.
+                    float fu = u * tw - 0.5f, fv = (1.0f - v) * th - 0.5f;
+                    int x0 = (int)std::floor(fu), y0 = (int)std::floor(fv);
+                    float ax = fu - x0, ay = fv - y0;
+                    Color c00 = img.GetPixel(wrap(x0, tw),     wrap(y0, th));
+                    Color c10 = img.GetPixel(wrap(x0 + 1, tw), wrap(y0, th));
+                    Color c01 = img.GetPixel(wrap(x0, tw),     wrap(y0 + 1, th));
+                    Color c11 = img.GetPixel(wrap(x0 + 1, tw), wrap(y0 + 1, th));
+                    float r0 = c00.r + (c10.r - c00.r) * ax, r1 = c01.r + (c11.r - c01.r) * ax;
+                    float g0 = c00.g + (c10.g - c00.g) * ax, g1 = c01.g + (c11.g - c01.g) * ax;
+                    float b0 = c00.b + (c10.b - c00.b) * ax, b1 = c01.b + (c11.b - c01.b) * ax;
+                    tr = r0 + (r1 - r0) * ay; tg = g0 + (g1 - g0) * ay; tb = b0 + (b1 - b0) * ay;
+                } else {
+                    Color tc = img.GetPixel(wrap((int)std::floor(u * tw), tw),
+                                            wrap((int)std::floor((1.0f - v) * th), th));
+                    tr = tc.r; tg = tc.g; tb = tc.b;
+                }
+                float lr = w0 * LR[0] + w1 * LR[1] + w2 * LR[2];
+                float lg = w0 * LG[0] + w1 * LG[1] + w2 * LG[2];
+                float lb = w0 * LB[0] + w1 * LB[1] + w2 * LB[2];
+                float cr = tr * tint.r * lr + spec + er;
+                float cg = tg * tint.g * lg + spec + eg;
+                float cb = tb * tint.b * lb + spec + eb;
+                if (fog > 0.0f) {
+                    cr = cr * (1.0f - fog) + fr * fog;
+                    cg = cg * (1.0f - fog) + fg * fog;
+                    cb = cb * (1.0f - fog) + fb * fog;
+                }
                 depth[i] = d;
-                color[i] = PackRGB(tc.r * tint.r * shade + spec + er,
-                                   tc.g * tint.g * shade + spec + eg,
-                                   tc.b * tint.b * shade + spec + eb);
+                color[i] = PackRGB(cr, cg, cb);
             }
         }
     }
@@ -212,7 +241,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     const float fogR = rs.fogColor.r, fogG = rs.fogColor.g, fogB = rs.fogColor.b;
     for (const auto& go : scene.Objects()) {
         auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || !go->active || mr->wireframe) continue;   // wireframe drawn as lines
+        if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
         Mat4 model = go->transform->LocalToWorldMatrix();
         const auto& v = mr->mesh.vertices;
         const auto& t = mr->mesh.triangles;
@@ -299,7 +328,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float mu = mx * 0.5f + 0.5f, mv = 1.0f - (my * 0.5f + 0.5f);
                     Color mc = mcap->Sample(mu, mv);
                     lk = {mc.r, mc.g, mc.b};
-                } else if (smooth && !mr->unlit) {
+                } else if (!mr->unlit && mr->mesh.HasNormals()) {
+                    // Per-vertex (Gouraud) light for smooth AND textured meshes, so
+                    // textures are lit smoothly across each face instead of flat.
                     Vec3 nk = nrm.MultiplyVector(mr->mesh.normals[idx[k]]).Normalized();
                     if (facing < 0.0f) nk = nk * -1.0f;   // match the flipped face for back faces
                     lk = SceneLights::ShadeColor(wp[k], nk);
@@ -332,7 +363,6 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // Colored multi-light diffuse (directional + point + spot + ambient).
             Vec3 lit = mr->unlit ? Vec3{1.0f, 1.0f, 1.0f}
                                  : SceneLights::ShadeColor(centroid, normal);
-            float shade = (lit.x + lit.y + lit.z) * (1.0f / 3.0f);  // scalar for textured tris
             float spec = 0.0f;
             if (!mr->unlit && mr->specular > 0.0f) {
                 Vec3 toLight = SceneLight::Direction() * -1.0f;
@@ -374,10 +404,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 float sx[3], sy[3], sd[3], iw[3], uu[3], vv[3];
                 for (int k = 0; k < 3; ++k)
                     project(*tri[k], sx[k], sy[k], sd[k], iw[k], uu[k], vv[k]);
-                if (tex)
-                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, shade, spec,
-                                  mr->emissive.r, mr->emissive.g, mr->emissive.b);
-                else if (smooth) {
+                if (tex) {
+                    float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
+                    float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
+                    float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
+                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, lr, lg, lb, spec,
+                                  mr->emissive.r, mr->emissive.g, mr->emissive.b,
+                                  fogF, fogR, fogG, fogB, true);
+                } else if (smooth) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};

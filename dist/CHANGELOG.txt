@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.32.0
+  - Rendering: better 3D model + texture quality.
+    - Textured meshes are now lit SMOOTHLY (per-vertex/Gouraud) instead of one
+      flat shade per face — textures get proper soft shading and specular
+      highlights across each surface.
+    - Bilinear texture filtering: textures are smooth instead of blocky /
+      pixelated (both regular textures and matcap/lit-sphere sampling).
+    - MeshRenderer gained an `enabled` flag to hide a single mesh without
+      deactivating the object.
+  - First person fix: the First Person Controller now hides your own character's
+    body while playing (you look out through its eyes — no more seeing/clipping
+    your own model). It stays visible in the editor. The First Person template's
+    camera is centered at eye height to match.
+
 v2.31.0
   - NEW player movement controllers (Add Component > ...):
     - First Person Controller: mouse-look (yaw turns the body, pitch tilts a

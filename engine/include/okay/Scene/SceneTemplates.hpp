@@ -163,7 +163,7 @@ inline void FPS(Scene& scene) {
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
     camObj->transform->SetParent(player->transform, false);
-    camObj->transform->localPosition = {0, 1.62f, 0.20f};
+    camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height (body hidden in first person)
 }
 
 /// A top-down starter: a follow camera and a script-driven player that walks

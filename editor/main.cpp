@@ -146,6 +146,20 @@ int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
 int g_ssaa = 2;   // 3D anti-aliasing: 1 = off, 2 = 2x supersample
+bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
+bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
+
+// Sum the triangles of all active, visible solid meshes — a cheap proxy for how
+// expensive this frame is to rasterize (used to auto-scale anti-aliasing).
+static long SceneTriangleLoad(const Scene& scene) {
+    long n = 0;
+    for (const auto& go : scene.Objects()) {
+        if (!go->active) continue;
+        auto* mr = go->GetComponent<MeshRenderer>();
+        if (mr && !mr->wireframe) n += mr->mesh.TriangleCount();
+    }
+    return n;
+}
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
@@ -157,8 +171,12 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     h = h < 1 ? 1 : (h > 4096 ? 4096 : h);
     ApplySceneLight(scene);                      // a Light object aims the shading
     // Supersampled (anti-aliased) render: smoother edges than 1:1 rasterization.
+    // When the scene gets heavy (e.g. several characters), auto-drop to 1x so the
+    // editor stays responsive — 2x supersampling is 4x the pixels to fill.
+    int ss = g_ssaa;
+    if (g_autoPerf && ss > 1 && SceneTriangleLoad(scene) > 16000) ss = 1;
     const std::uint32_t* px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
-                                             scene, vp, eye, w, h, g_ssaa);
+                                             scene, vp, eye, w, h, ss);
     if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h) {
         if (g_view3DTex[slot]) SDL_DestroyTexture(g_view3DTex[slot]);
         g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
@@ -411,6 +429,32 @@ void AddRecent(const std::string& path) {
     g_recent.insert(g_recent.begin(), path);
     if (g_recent.size() > 10) g_recent.resize(10);
     SaveRecent();
+}
+
+// Persisted editor preferences (a tiny key/value file beside the working dir).
+void LoadSettings() {
+    std::ifstream f("okay_settings.txt");
+    std::string k; int v;
+    while (f >> k >> v) {
+        if (k == "autoupdate") g_autoUpdate = (v != 0);
+        else if (k == "autoperf") g_autoPerf = (v != 0);
+        else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
+    }
+}
+void SaveSettings() {
+    std::ofstream f("okay_settings.txt");
+    f << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
+      << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
+      << "ssaa "       << g_ssaa << "\n";
+}
+
+// Save the open scene so an auto-update relaunch never loses work. Uses the
+// current path when known, otherwise a recovery file (added to Recent).
+void ConsoleLog(const std::string& msg, int level);   // (defined below)
+void SaveAllBeforeExit(EditorState& ed) {
+    std::string p = ed.path().empty() ? "autosaved_scene.okayscene" : ed.path();
+    if (ed.Save(p)) { AddRecent(p); ConsoleLog("Saved before updating: " + p, 0); }
+    ed.dirty = false;
 }
 
 // File dialogs.
@@ -1081,8 +1125,10 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
         ImGui::Separator();
         bool aa = g_ssaa > 1;
-        if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) g_ssaa = aa ? 2 : 1;
+        if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
+        if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
         ImGui::Separator();
         ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
         if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
@@ -3892,7 +3938,7 @@ void DrawProjectSettings(EditorState& ed) {
     ImGui::End();
 }
 
-void DrawUpdatePopup() {
+void DrawUpdatePopup(EditorState& ed) {
     if (g_openUpdatePopup) { ImGui::OpenPopup("Engine Update"); g_openUpdatePopup = false; }
     ImGui::SetNextWindowSizeConstraints(ImVec2(420, 0), ImVec2(560, 520));
     if (ImGui::BeginPopupModal("Engine Update", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -3913,6 +3959,9 @@ void DrawUpdatePopup() {
                 ImGui::EndChild();
             }
             ImGui::Separator();
+            if (ImGui::Checkbox("Automatically install future updates", &g_autoUpdate)) SaveSettings();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("On launch, save your work and update on its own —\nno need to confirm next time.");
             if (!g_updateStatus.empty())
                 ImGui::TextWrapped("%s", g_updateStatus.c_str());
             ImGui::BeginDisabled(g_installingUpdate);
@@ -3920,8 +3969,8 @@ void DrawUpdatePopup() {
                               ImVec2(180, 0))) {
                 g_installingUpdate = true;
                 g_updateStatus = "Downloading v" + u.latest + "...";
-                // Synchronous: the editor briefly blocks while the new build is
-                // fetched and swapped in, then relaunches.
+                // Save first so nothing is lost when the new build relaunches.
+                SaveAllBeforeExit(ed);
                 g_updateStatus = updater::InstallUpdate(u.latest);
                 ConsoleLog(g_updateStatus);
                 g_installingUpdate = false;
@@ -4939,8 +4988,8 @@ void DrawInspector(EditorState& ed) {
             ch |= ImGui::SliderFloat("Foot Size##char",     &p.footSize,      0.4f, 2.0f);
             ImGui::Spacing();
             ImGui::TextDisabled("Pose");
-            ch |= ImGui::SliderFloat("Arm Spread##char",    &p.armSpread,     0.0f, 35.0f, "%.0f deg");
-            ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 18.0f, "%.0f deg");
+            ch |= ImGui::SliderFloat("Arm Spread##char",    &p.armSpread,     0.0f, 30.0f, "%.0f deg");
+            ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 15.0f, "%.0f deg");
             ch |= ImGui::SliderFloat("Arm Gap##char",       &p.armGap,       -0.20f, 0.40f, "%.2f");
             ch |= ImGui::SliderFloat("Leg Gap##char",       &p.legGap,       -0.15f, 0.40f, "%.2f");
             ImGui::Spacing();
@@ -8304,6 +8353,7 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     LoadRecent();
+    LoadSettings();
 
     // Route engine logs (and script print/log/debug output) into the Console
     // with the matching severity (Unity-style info/warning/error).
@@ -8330,9 +8380,18 @@ int main(int argc, char** argv) {
             g_update = g_updateCheck.get();
             g_autoCheckDone = true;
             if (g_update.available) {
-                g_openUpdatePopup = true;   // surface it immediately
                 ConsoleLog("Update available: v" + g_update.latest +
                            " (you have v" + g_update.current + ").");
+                if (g_autoUpdate) {
+                    // User opted into auto-updates: save their work, then install
+                    // and relaunch automatically (no prompt).
+                    SaveAllBeforeExit(ed);
+                    ConsoleLog("Auto-updating to v" + g_update.latest + "...");
+                    g_updateStatus = updater::InstallUpdate(g_update.latest);
+                    ConsoleLog(g_updateStatus);
+                } else {
+                    g_openUpdatePopup = true;   // surface it for a manual choice
+                }
             }
         }
         Input::ClearTypedText();   // collect this frame's typed characters
@@ -8480,7 +8539,7 @@ int main(int argc, char** argv) {
         DrawNewProjectPopup(ed);
         DrawFileDialogs(ed);
         DrawQuitPrompt(ed, running);
-        DrawUpdatePopup();
+        DrawUpdatePopup(ed);
         DrawAboutPopup();
         DrawRecoveryPopup(ed);
         DrawProjectSettings(ed);

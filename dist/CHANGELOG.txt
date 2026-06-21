@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.21.3
+  - Character: limbs are no longer uniform "capsules" — arms and legs now TAPER
+    organically (thick shoulder/thigh -> thin wrist/ankle) via a proper tapered-
+    capsule shape, so the body reads far more humanoid and less tube-like.
+
 v2.21.2
   - Character: real separated FINGERS — each digit is now a slim two-segment
     capsule (with a knuckle curl) plus an opposed thumb, so the hand reads as a

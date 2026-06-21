@@ -1097,9 +1097,9 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         // Pectoral: a soft chest plate on the front, one per side, for definition.
         bl.push_back({2, {s * 0.10f * sW * B, 1.27f * H + up, 0.10f * B * bd}, {},
                       {0.110f * sW * B, 0.095f * H, 0.085f * B * bd}, 0, shirt});
-        bl.push_back({1, sh, elbow, {}, at * 1.02f, shirt});                       // upper arm (bicep)
-        bl.push_back({0, elbow, {}, {}, at * 0.88f, shirt});                       // elbow
-        bl.push_back({1, elbow, wrist, {}, at * 0.78f, skin});                     // forearm
+        bl.push_back({3, sh, elbow, {at * 0.80f, 0, 0}, at * 1.10f, shirt});       // upper arm (taper to elbow)
+        bl.push_back({0, elbow, {}, {}, at * 0.84f, shirt});                       // elbow
+        bl.push_back({3, elbow, wrist, {at * 0.50f, 0, 0}, at * 0.90f, skin});     // forearm (taper to thin wrist)
         Vec3 hdir = foreDir;
         float hs = 0.098f * B * p.handSize;
         bl.push_back({2, wrist + hdir * (hs * 1.0f), {}, {hs * 0.90f, hs * 1.15f, hs * 0.48f}, 0, skin}); // palm
@@ -1113,9 +1113,9 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         Vec3 ankle = hip + ql * Vec3{0, -legLen, 0};
         bl.push_back({1, {s * 0.10f * hW * B, 0.60f * H, 0}, hip, {}, lt * 1.15f, pants}); // hip bridge
         bl.push_back({0, hip, {}, {}, lt * 1.20f, pants});                         // glute / hip
-        bl.push_back({1, hip, knee, {}, lt * 1.05f, pants});                       // thigh
-        bl.push_back({0, knee, {}, {}, lt * 0.82f, pants});                        // knee
-        bl.push_back({1, knee, ankle, {}, lt * 0.78f, pants});                     // calf / shin
+        bl.push_back({3, hip, knee, {lt * 0.80f, 0, 0}, lt * 1.20f, pants});       // thigh (taper to knee)
+        bl.push_back({0, knee, {}, {}, lt * 0.80f, pants});                        // knee
+        bl.push_back({3, knee, ankle, {lt * 0.48f, 0, 0}, lt * 0.92f, pants});     // calf -> thin ankle
         // Calf muscle: a bulge on the upper-back of the shin for leg definition.
         bl.push_back({2, knee + ql * Vec3{0, -legLen * 0.30f, 0} + Vec3{0, 0, -0.05f * bd}, {},
                       {lt * 0.78f, lt * 1.30f, lt * 0.95f}, 0, pants});
@@ -1135,6 +1135,19 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     auto one = [&](const Blob& b2, const Vec3& pt) -> float {
         if (b2.kind == 0) return (pt - b2.a).Magnitude() - b2.r;
         if (b2.kind == 1) return segd(pt, b2.a, b2.b) - b2.r;
+        if (b2.kind == 3) {   // tapered capsule (round cone): radius r at a -> rad.x at b
+            float r1 = b2.r, r2 = b2.rad.x;
+            Vec3 ba = b2.b - b2.a, pa = pt - b2.a;
+            float l2 = Vec3::Dot(ba, ba); if (l2 < 1e-9f) return pa.Magnitude() - r1;
+            float rr = r1 - r2, a2 = l2 - rr * rr, il2 = 1.0f / l2;
+            float y = Vec3::Dot(pa, ba), z = y - l2;
+            Vec3 xv = pa * l2 - ba * y; float x2 = Vec3::Dot(xv, xv);
+            float y2 = y * y * l2, z2 = z * z * l2;
+            float k = (rr < 0 ? -1.0f : 1.0f) * rr * rr * x2;
+            if ((z < 0 ? -1.0f : 1.0f) * a2 * z2 > k) return std::sqrt(x2 + z2) * il2 - r2;
+            if ((y < 0 ? -1.0f : 1.0f) * a2 * y2 < k) return std::sqrt(x2 + y2) * il2 - r1;
+            return (std::sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
+        }
         Vec3 e{(pt.x - b2.a.x) / b2.rad.x, (pt.y - b2.a.y) / b2.rad.y, (pt.z - b2.a.z) / b2.rad.z};
         float mn = std::min(b2.rad.x, std::min(b2.rad.y, b2.rad.z));
         return (e.Magnitude() - 1.0f) * mn;
@@ -1161,7 +1174,9 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     };
     for (const Blob& b2 : bl) {
         float r = b2.kind == 2 ? std::max(b2.rad.x, std::max(b2.rad.y, b2.rad.z)) : b2.r;
-        expand(b2.a, r); if (b2.kind == 1) expand(b2.b, r);
+        expand(b2.a, r);
+        if (b2.kind == 1) expand(b2.b, r);
+        if (b2.kind == 3) expand(b2.b, b2.rad.x);   // tapered capsule: radius at b
     }
     Vec3 m2{0.25f, 0.25f, 0.25f}; lo = lo - m2; hi = hi + m2;
     Mesh body = SurfaceNets(field, colorAt, lo, hi, res);

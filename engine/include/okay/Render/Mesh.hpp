@@ -1072,7 +1072,7 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         float mn = std::min(b2.rad.x, std::min(b2.rad.y, b2.rad.z));
         return (e.Magnitude() - 1.0f) * mn;
     };
-    const float kk = 0.10f;
+    const float kk = 0.14f;   // smooth-union radius: larger = masses fuse more
     auto field = [&](const Vec3& pt) -> float {
         float dr = 1e9f;
         for (const Blob& b2 : bl) {

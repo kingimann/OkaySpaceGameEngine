@@ -540,7 +540,11 @@ inline void RenderShadowMap(const Scene& scene) {
     sm.enabled = true;
 }
 
-/// 0 = fully shadowed, 1 = fully lit, for a world position (3x3 PCF for soft edges).
+/// Shadow softness in shadow-map texels (the Poisson disk's radius). Larger =
+/// softer, fuzzier shadow edges; smaller = crisp/hard. ~2.5 reads as soft-ish.
+inline float& ShadowSoftness() { static float v = 2.5f; return v; }
+
+/// 0 = fully shadowed, 1 = fully lit, for a world position (Poisson-disk PCF).
 /// The sample point is pushed a couple of texels along the surface normal — this
 /// "normal-offset bias" is what stops a lit surface from shadowing itself (acne).
 inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
@@ -553,14 +557,22 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
     if (x < -1 || x > 1 || y < -1 || y > 1 || z > 1) return 1.0f;
     float fx = (x * 0.5f + 0.5f) * sm.size, fy = (1.0f - (y * 0.5f + 0.5f)) * sm.size;
     const float bias = 0.0025f;
-    int lit = 0, total = 0;
-    for (int dy = -1; dy <= 1; ++dy)
-        for (int dx = -1; dx <= 1; ++dx) {
-            int px = (int)fx + dx, py = (int)fy + dy; ++total;
-            if (px < 0 || py < 0 || px >= sm.size || py >= sm.size) { ++lit; continue; }
-            if (z - bias <= sm.depth[(std::size_t)py * sm.size + px]) ++lit;
-        }
-    return total ? (float)lit / total : 1.0f;
+    // 12-tap Poisson-disk PCF: taps scattered on a disk (not a rigid grid) give
+    // smoother, less-banded penumbrae than a 3x3 box for the same sample count.
+    static const float kPoisson[12][2] = {
+        {-0.326f, -0.406f}, {-0.840f, -0.074f}, {-0.696f,  0.457f}, {-0.203f,  0.621f},
+        { 0.962f, -0.195f}, { 0.473f, -0.480f}, { 0.519f,  0.767f}, { 0.185f, -0.893f},
+        { 0.507f,  0.064f}, { 0.896f,  0.412f}, {-0.322f, -0.933f}, {-0.792f, -0.598f},
+    };
+    float radius = ShadowSoftness();
+    float lit = 0.0f;
+    for (int s = 0; s < 12; ++s) {
+        int px = (int)(fx + kPoisson[s][0] * radius);
+        int py = (int)(fy + kPoisson[s][1] * radius);
+        if (px < 0 || py < 0 || px >= sm.size || py >= sm.size) { lit += 1.0f; continue; }
+        if (z - bias <= sm.depth[(std::size_t)py * sm.size + px]) lit += 1.0f;
+    }
+    return lit / 12.0f;
 }
 
 // ---- Screen-space ambient occlusion ----------------------------------------

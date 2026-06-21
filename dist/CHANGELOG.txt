@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.42.0
+  - Rendering: softer shadows. The shadow filter moved from a rigid 3x3 box to a
+    12-tap Poisson-disk PCF, giving smoother, less-banded penumbrae for the same
+    sample count. Edge softness is tunable (ShadowSoftness, in shadow-map texels).
+
 v2.41.0
   - Rendering: filmic tone mapping (ACES) + exposure. Instead of clamping bright
     pixels to a flat white, highlights now roll off along a filmic S-curve so

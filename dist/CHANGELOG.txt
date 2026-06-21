@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.74.0
+  - Every new scene now starts with a Main Camera (including the Empty template),
+    so a fresh scene renders and Plays right away. The 2D/3D starters reuse it
+    (set to Orthographic / Perspective) instead of adding a second camera.
+
 v2.73.0
   - Rendering: added a Color Grading post pass (Rendering panel) — Brightness,
     Contrast, Saturation, Vignette and Gamma. Neutral/off by default, so existing

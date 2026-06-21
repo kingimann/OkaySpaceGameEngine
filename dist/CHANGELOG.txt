@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.36.0
+  - Rendering: normal (bump) maps. MeshRenderer has a Normal Map slot (+ Bump
+    Strength); the per-pixel lighting path builds a per-triangle tangent frame,
+    samples the map and perturbs the surface normal, so flat geometry shows
+    convincing bumps/detail that react to light. Saves/loads with the scene and
+    has an inspector field (drag a PNG from the Project panel).
+
 v2.35.0
   - Rendering: mipmapping. Each texture now builds a downsampled pyramid, and the
     renderer picks the right level PER PIXEL from the texture's screen-space

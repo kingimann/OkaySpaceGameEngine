@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.31.0
+  - NEW player movement controllers (Add Component > ...):
+    - First Person Controller: mouse-look (yaw turns the body, pitch tilts a
+      child Camera) + WASD + jump. Uses a Rigidbody3D if present.
+    - Third Person Controller: an orbit camera (mouse + wheel zoom), WASD
+      movement relative to the camera, and the body turns to face where it moves.
+    - Both drive a sibling Character's animation from movement automatically
+      (idle / walk / run / jump), and both save/load with the scene.
+  - NEW "First Person" starter template (New Project): a blocky Character you
+    control in first person, with a camera at eye height and crates to explore.
+  - Polished the New Project template picker: organized into sections (Blank /
+    3D / 2D / UI & systems) as a tidy two-column grid of cards with descriptions
+    on hover.
+
 v2.30.0
   - Character creator: focused on the Unturned (blocky) body and went deep on
     customization.

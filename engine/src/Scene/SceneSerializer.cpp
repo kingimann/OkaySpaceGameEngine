@@ -11,6 +11,8 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
+#include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
@@ -230,6 +232,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* cc = go->GetComponent<CharacterController3D>()) {
         out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0) << "\n";
+    }
+    if (auto* fp = go->GetComponent<FirstPersonController>()) {
+        out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
+            << fp->mouseSensitivity << " " << (fp->canJump ? 1 : 0) << " " << (fp->driveAnimation ? 1 : 0) << "\n";
+    }
+    if (auto* tp = go->GetComponent<ThirdPersonController>()) {
+        out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
+            << tp->mouseSensitivity << " " << tp->turnSpeed << " " << tp->distance << " "
+            << tp->cameraHeight << " " << (tp->canJump ? 1 : 0) << " " << (tp->driveAnimation ? 1 : 0) << "\n";
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -746,6 +757,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> sp >> jf >> cj;
                     auto* cc = go->AddComponent<CharacterController3D>();
                     cc->speed = sp; cc->jumpForce = jf; cc->canJump = (cj != 0);
+                } else if (field == "fpctrl") {
+                    float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1;
+                    in >> ws >> rs >> jf >> ms >> cj >> da;
+                    auto* fp = go->AddComponent<FirstPersonController>();
+                    fp->walkSpeed = ws; fp->runSpeed = rs; fp->jumpForce = jf;
+                    fp->mouseSensitivity = ms; fp->canJump = (cj != 0); fp->driveAnimation = (da != 0);
+                } else if (field == "tpctrl") {
+                    float ws = 4.5f, rs = 8, jf = 6, ms = 0.2f, ts = 12, ds = 5, ch = 1.5f; int cj = 1, da = 1;
+                    in >> ws >> rs >> jf >> ms >> ts >> ds >> ch >> cj >> da;
+                    auto* tp = go->AddComponent<ThirdPersonController>();
+                    tp->walkSpeed = ws; tp->runSpeed = rs; tp->jumpForce = jf; tp->mouseSensitivity = ms;
+                    tp->turnSpeed = ts; tp->distance = ds; tp->cameraHeight = ch;
+                    tp->canJump = (cj != 0); tp->driveAnimation = (da != 0);
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
                     go->AddComponent<Mover>()->velocity = v;

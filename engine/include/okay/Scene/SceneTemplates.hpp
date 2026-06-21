@@ -14,6 +14,9 @@
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/CharacterController3D.hpp"
+#include "okay/Components/Character.hpp"
+#include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
@@ -112,6 +115,55 @@ inline void Platformer3D(Scene& scene) {
     player->AddComponent<BoxCollider3D>();
     auto* cc = player->AddComponent<CharacterController3D>();
     cc->speed = 5.0f; cc->jumpForce = 7.0f;
+}
+
+/// A first-person starter: a blocky Character player with a FirstPersonController
+/// (mouse-look + WASD + jump) and a Camera mounted at eye height, on a ground
+/// with a few crates to walk around. Press Play, then mouse + WASD.
+inline void FPS(Scene& scene) {
+    scene.Clear();
+    scene.SetName("First Person");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {40, 1, 40};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube();
+    gmr->color = Color::FromBytes(95, 110, 95);
+    ground->AddComponent<BoxCollider3D>()->size = {40, 1, 40};
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    const Vec3 crates[5] = {{4, 0.5f, -2}, {-4, 0.5f, -3}, {2, 0.5f, -6}, {-2, 0.5f, -7}, {0, 0.5f, -10}};
+    for (int i = 0; i < 5; ++i) {
+        GameObject* c = scene.CreateGameObject("Crate");
+        c->transform->localPosition = crates[i];
+        auto* mr = c->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = Color::FromBytes(150, 120, 80);
+        c->AddComponent<BoxCollider3D>();
+        c->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+
+    // Player: the blocky Character + a first-person controller + physics body.
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = {0, 1.0f, 0};
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    player->AddComponent<BoxCollider3D>()->size = {0.6f, 1.8f, 0.6f};
+    player->AddComponent<FirstPersonController>();
+
+    // Camera mounted on the player at eye height, just in front of the face so you
+    // don't see the inside of your own head.
+    GameObject* camObj = scene.CreateGameObject("FPS Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->SetParent(player->transform, false);
+    camObj->transform->localPosition = {0, 1.62f, 0.20f};
 }
 
 /// A top-down starter: a follow camera and a script-driven player that walks

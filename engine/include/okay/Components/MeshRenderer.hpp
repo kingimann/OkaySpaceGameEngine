@@ -47,6 +47,11 @@ public:
     /// Fresnel-weighted, so edges always reflect a little more than face-on.
     float reflectivity = 0.0f;
 
+    /// Optional specular/gloss map (grayscale PNG): its per-texel luminance scales
+    /// the specular highlight and reflection, so one material can mix shiny and
+    /// matte regions (per-pixel lighting only). Build Game bundles the file.
+    std::string specularMap;
+
     /// Optional matcap (lit-sphere) image, sampled by the camera-space normal.
     /// This is the technique MakeHuman uses for soft, skin-like shading: it bakes
     /// the entire lighting response into a sphere image, so subtle surface relief

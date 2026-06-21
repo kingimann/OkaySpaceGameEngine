@@ -301,7 +301,8 @@ public:
                        float fog, float fr, float fg, float fb,
                        const std::vector<Image>* normalMips = nullptr,
                        const Vec3& tangent = Vec3{1, 0, 0}, float normalStrength = 1.0f,
-                       float reflectivity = 0.0f) {
+                       float reflectivity = 0.0f,
+                       const std::vector<Image>* specMips = nullptr) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -319,6 +320,9 @@ public:
         const bool bump = normalMips && !normalMips->empty() && (*normalMips)[0].Width() > 0;
         int nw = bump ? (*normalMips)[0].Width() : 0, nh = bump ? (*normalMips)[0].Height() : 0;
         LodGrad lgN = bump ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
+        const bool glossMap = specMips && !specMips->empty() && (*specMips)[0].Width() > 0;
+        int gw = glossMap ? (*specMips)[0].Width() : 0, gh = glossMap ? (*specMips)[0].Height() : 0;
+        LodGrad lgG = glossMap ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
         Vec3 toLight = SceneLight::Direction() * -1.0f;
         toLight = toLight.Normalized();
         for (int y = minY; y <= maxY; ++y) {
@@ -369,12 +373,25 @@ public:
                           a0 * WYa[0] + a1 * WYa[1] + a2 * WYa[2],
                           a0 * WZa[0] + a1 * WZa[1] + a2 * WZa[2]};
                 Vec3 lit = SceneLights::ShadeColor(wpos, n);
+                // Specular/gloss map: a grayscale texture whose luminance scales the
+                // specular highlight + reflection per texel (shiny tape on a matte
+                // box, wet patches, worn metal). 1.0 (full) when no map is bound.
+                float gloss = 1.0f;
+                if (glossMap) {
+                    float iwg = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                    if (iwg != 0.0f) {
+                        float ug = (w0 * U[0] + w1 * U[1] + w2 * U[2]) / iwg;
+                        float vg = (w0 * V[0] + w1 * V[1] + w2 * V[2]) / iwg;
+                        Color gc = SampleMips(*specMips, ug, vg, PixelLod(ug * iwg, vg * iwg, iwg, lgG, gw, gh));
+                        gloss = 0.2126f * gc.r + 0.7152f * gc.g + 0.0722f * gc.b;
+                    }
+                }
                 float spec = 0.0f;
                 if (specularK > 0.0f) {
                     Vec3 toEye = (eye - wpos).Normalized();
                     Vec3 h = (toLight + toEye).Normalized();
                     float nh = Vec3::Dot(n, h);
-                    if (nh > 0.0f) spec = std::pow(nh, shininess) * specularK;
+                    if (nh > 0.0f) spec = std::pow(nh, shininess) * specularK * gloss;
                 }
                 // Cast shadows: fade the direct light toward the ambient floor for
                 // fragments occluded from the light, and kill the specular there.
@@ -412,14 +429,15 @@ public:
                 // Environment reflection: mirror the sky gradient about the normal
                 // and blend it in by a Fresnel-weighted reflectivity (Schlick), so
                 // edges reflect more than face-on — a cheap glossy/metal look.
-                if (reflectivity > 0.0f && EnvSky().enabled) {
+                float reflK = reflectivity * gloss;
+                if (reflK > 0.0f && EnvSky().enabled) {
                     Vec3 toEye = (eye - wpos).Normalized();
                     float ndv = Vec3::Dot(n, toEye); if (ndv < 0.0f) ndv = 0.0f;
                     Vec3 R{n.x * (2.0f * ndv) - toEye.x, n.y * (2.0f * ndv) - toEye.y,
                            n.z * (2.0f * ndv) - toEye.z};
                     Vec3 env = SampleEnvSky(R);
                     float f = 1.0f - ndv; f = f * f * f * f * f;            // (1-n·v)^5
-                    float k = reflectivity + (1.0f - reflectivity) * f;     // Schlick
+                    float k = reflK + (1.0f - reflK) * f;                   // Schlick
                     cr = cr * (1.0f - k) + env.x * k;
                     cg = cg * (1.0f - k) + env.y * k;
                     cb = cb * (1.0f - k) + env.z * k;
@@ -865,6 +883,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const bool faceCols = mr->mesh.HasFaceColors();   // per-triangle colors?
         const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
         const std::vector<Image>* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
+        const std::vector<Image>* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
         Image* mcap = (mr->matcap.empty() || mr->unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
         const bool useMatcap = mcap && mr->mesh.HasNormals();
@@ -1055,7 +1074,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
                                     fogF, fogR, fogG, fogB,
                                     normalMips, triTangent, mr->normalStrength,
-                                    mr->reflectivity);
+                                    mr->reflectivity, specMips);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

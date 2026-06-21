@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.41.0
+  - Rendering: filmic tone mapping (ACES) + exposure. Instead of clamping bright
+    pixels to a flat white, highlights now roll off along a filmic S-curve so
+    speculars, emissives and bloom keep their hue and gradient; shadows/midtones
+    gain a little contrast. Exposure scales the whole frame. Runs after bloom and
+    before AA. On by default (ToneMapEnabled / Exposure toggles).
+
 v2.40.0
   - Rendering: bloom (bright-pass glow). Pixels brighter than a threshold are
     extracted, blurred (separable box, 3 passes ~ gaussian, resolution-scaled

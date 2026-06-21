@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.48.0
+  - Rendering: colored, multi-light specular. Highlights used to come only from
+    the directional sun and were always white. The per-pixel path now accumulates
+    Blinn-Phong specular from every light (directional + point + spot), each tinted
+    by its own color and distance/cone attenuation, with the sun's contribution
+    shadowed. So a red point light gives a red highlight, a blue one a blue
+    highlight, and point/spot lights produce highlights at all (they didn't before).
+
 v2.47.0
   - Rendering (important fix): per-pixel features now work on meshes without
     explicit normals. The per-pixel path was gated behind HasNormals(), so the

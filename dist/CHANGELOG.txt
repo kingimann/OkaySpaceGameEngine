@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.29.0
+  - NEW stylized Character creator (Create > 3D > Character), the kind of
+    character maker games ship with:
+    - 3 art styles in one component, switchable from a Style dropdown:
+      Minecraft (boxy, big cubic head), Unturned (boxy with detail), and
+      RuneScape (rounded low-poly with a detailed face + fingered hands).
+    - Rigged: a 15-bone humanoid skeleton with rigid skinning, so the character
+      can be posed and plays procedural animations -- Idle, Walk, Run, Wave, Jump.
+    - Lots of customization: height, build and head-size sliders; skin, shirt,
+      pants, shoes, hair, eyes, hat and backpack colors; hair styles
+      (short/long/mohawk/bun), shirt styles (tank/short/long sleeve), hat styles
+      (cap/helmet/top hat/wizard), plus glasses, backpack, cape and beard toggles.
+    - Saves/loads with the scene.
+
 v2.28.0
   - Removed the procedural Character creator (the CharacterBody component, the
     humanoid mesh generators, the bundled MakeHuman base mesh, and its editor UI

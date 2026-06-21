@@ -1187,6 +1187,12 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
                 ConsoleLog("Created Terrain");
             }
+            if (ImGui::MenuItem("Character")) {
+                GameObject* g = ed.CreateEmpty("Character");
+                g->AddComponent<Character>()->Apply();
+                ed.Select(g); ed.view3D = true; ed.dirty = true; created = true;
+                ConsoleLog("Created Character");
+            }
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Create Directional Light")) {
@@ -5084,6 +5090,34 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##terr")) toRemove = tr;
         }
     }
+    if (auto* ch = go->GetComponent<Character>()) {
+        if (CompHeader("Character", ch, &toRemove)) {
+            bool c = false;
+            const char* styles[] = {"Minecraft (boxy)", "Unturned (boxy)", "RuneScape (rounded)"};
+            ImGui::SetNextItemWidth(180); c |= ImGui::Combo("Style##char", &ch->style, styles, 3);
+            c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
+            c |= ImGui::SliderFloat("Build##char", &ch->build, 0.6f, 1.8f);
+            c |= ImGui::SliderFloat("Head Size##char", &ch->headSize, 0.6f, 1.6f);
+            auto coledit = [&](const char* lbl, Color& col){ float v[3]={col.r,col.g,col.b}; if (ImGui::ColorEdit3(lbl, v)) { col={v[0],v[1],v[2],1.0f}; c=true; } };
+            coledit("Skin##char", ch->skin); coledit("Shirt##char", ch->shirt); coledit("Pants##char", ch->pants);
+            coledit("Shoes##char", ch->shoes); coledit("Hair##char", ch->hair); coledit("Eyes##char", ch->eyes);
+            const char* shirts[] = {"Tank (bare arms)","Short sleeve","Long sleeve"};
+            ImGui::SetNextItemWidth(160); c |= ImGui::Combo("Shirt Style##char", &ch->shirtStyle, shirts, 3);
+            c |= ImGui::Checkbox("Hair##char", &ch->hasHair);
+            if (ch->hasHair) { const char* hs[]={"Short","Long","Mohawk","Bun"}; ImGui::SameLine(); ImGui::SetNextItemWidth(110); c |= ImGui::Combo("##hairstyle", &ch->hairStyle, hs, 4); }
+            c |= ImGui::Checkbox("Beard##char", &ch->hasBeard);
+            c |= ImGui::Checkbox("Hat##char", &ch->hasHat);
+            if (ch->hasHat) { const char* ht[]={"Cap","Helmet","Top Hat","Wizard"}; ImGui::SameLine(); ImGui::SetNextItemWidth(110); c |= ImGui::Combo("##hatstyle", &ch->hatStyle, ht, 4); coledit("Hat Color##char", ch->hat); }
+            c |= ImGui::Checkbox("Glasses##char", &ch->hasGlasses);
+            c |= ImGui::Checkbox("Backpack##char", &ch->hasBackpack);
+            if (ch->hasBackpack) coledit("Pack Color##char", ch->pack);
+            c |= ImGui::Checkbox("Cape##char", &ch->hasCape);
+            const char* anims[] = {"None","Idle","Walk","Run","Wave","Jump"};
+            ImGui::SetNextItemWidth(160); ImGui::Combo("Animation##char", &ch->anim, anims, 6);
+            if (ch->anim != 0) ImGui::SliderFloat("Anim Speed##char", &ch->animSpeed, 0.1f, 3.0f);
+            if (c) { ch->Apply(); ed.dirty = true; }
+        }
+    }
     if (auto* li = go->GetComponent<Light>()) {
         if (CompHeader("Light", li, &toRemove)) {
             const char* types[] = {"Directional", "Point", "Spot"};
@@ -6210,6 +6244,7 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<SpriteRenderer>(), "Sprite Renderer")) { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<MeshRenderer>(), "Mesh Renderer (3D)")) { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<Character>(), "Character")) { go->AddComponent<Character>()->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }

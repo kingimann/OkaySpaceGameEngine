@@ -590,5 +590,17 @@ int main() {
         }
     }
 
+    // --- Character: all styles build non-empty rigged meshes ---
+    {
+        CHECK(Character::BoneCount() == 15);
+        for (int s = 0; s < 3; ++s) {
+            Character ch; ch.style = s;
+            Mesh m = ch.Build();
+            CHECK(!m.vertices.empty());
+            CHECK(m.TriangleCount() > 0);
+            CHECK(m.HasFaceColors());
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

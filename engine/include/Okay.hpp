@@ -66,6 +66,7 @@
 // More components
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/Character.hpp"
 #include "okay/Render/Material.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/TilemapCollider2D.hpp"

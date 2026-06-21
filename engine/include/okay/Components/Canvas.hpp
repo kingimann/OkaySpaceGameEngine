@@ -24,10 +24,12 @@ public:
     ScaleMode scaleMode = ScaleMode::ConstantPixelSize;
     Vec2  referenceResolution{1280.0f, 720.0f};
     float matchWidthOrHeight = 0.5f;   // 0 = width, 1 = height
-    float scaleFactor = 1.0f;          // extra multiplier (ConstantPixelSize)
+    float scaleFactor = 1.0f;          // extra user multiplier (applied in BOTH modes)
     int   sortOrder = 0;
 
-    /// The pixel-scale this canvas applies for an actual screen of w x h.
+    /// The pixel-scale this canvas applies for an actual screen of w x h. The
+    /// user `scaleFactor` multiplies the result in both modes, so it always works
+    /// as an extra UI zoom.
     float ScaleFactor(float screenW, float screenH) const {
         if (scaleMode == ScaleMode::ConstantPixelSize)
             return scaleFactor;
@@ -37,7 +39,7 @@ public:
         float logH = std::log2((screenH > 1.0f ? screenH : 1.0f) / rh);
         float m = matchWidthOrHeight < 0.0f ? 0.0f : (matchWidthOrHeight > 1.0f ? 1.0f : matchWidthOrHeight);
         float t = logW * (1.0f - m) + logH * m;
-        return std::pow(2.0f, t);
+        return std::pow(2.0f, t) * scaleFactor;
     }
 };
 

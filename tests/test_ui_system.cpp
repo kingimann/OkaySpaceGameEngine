@@ -16,6 +16,7 @@ int main() {
         CHECK_NEAR(cv.ScaleFactor(640, 480), 2.0f, 1e-5f);
 
         cv.scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+        cv.scaleFactor = 1.0f;             // scaleFactor now multiplies in BOTH modes
         cv.referenceResolution = {1280, 720};
         // At the reference resolution the factor is exactly 1.
         cv.matchWidthOrHeight = 0.5f;
@@ -26,6 +27,9 @@ int main() {
         // Double the height, match=1 (follow height) -> 2x.
         cv.matchWidthOrHeight = 1.0f;
         CHECK_NEAR(cv.ScaleFactor(1280, 1440), 2.0f, 1e-3f);
+        // The user scaleFactor multiplies the screen-size scale too.
+        cv.scaleFactor = 1.5f;
+        CHECK_NEAR(cv.ScaleFactor(1280, 720), 1.5f, 1e-4f);
     }
 
     // --- GetUIRect collapses any widget to a uniform rect ---------------

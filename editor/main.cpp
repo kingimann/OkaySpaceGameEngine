@@ -5779,15 +5779,42 @@ void DrawInspector(EditorState& ed) {
             const char* modes[] = {"Constant Pixel Size", "Scale With Screen Size"};
             int m = (int)cv->scaleMode;
             if (ImGui::Combo("UI Scale Mode##cv", &m, modes, 2)) { cv->scaleMode = (Canvas::ScaleMode)m; ed.dirty = true; }
-            if (cv->scaleMode == Canvas::ScaleMode::ConstantPixelSize) {
-                if (ImGui::DragFloat("Scale Factor##cv", &cv->scaleFactor, 0.01f, 0.1f, 10.0f)) ed.dirty = true;
-            } else {
+
+            if (cv->scaleMode == Canvas::ScaleMode::ScaleWithScreenSize) {
                 float ref[2] = {cv->referenceResolution.x, cv->referenceResolution.y};
                 if (ImGui::DragFloat2("Reference Res##cv", ref, 1.0f, 1.0f, 8000.0f)) { cv->referenceResolution = {ref[0], ref[1]}; ed.dirty = true; }
-                if (ImGui::SliderFloat("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f)) ed.dirty = true;
+                // Quick presets for the most common authoring resolutions.
+                ImGui::TextDisabled("Presets:");
+                auto preset = [&](const char* label, float w, float h) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(label)) { cv->referenceResolution = {w, h}; ed.dirty = true; }
+                };
+                preset("1080p", 1920, 1080); preset("720p", 1280, 720); preset("1440p", 2560, 1440);
+                ImGui::TextDisabled("Portrait:");
+                auto presetP = [&](const char* label, float w, float h) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(label)) { cv->referenceResolution = {w, h}; ed.dirty = true; }
+                };
+                presetP("9:16", 1080, 1920); presetP("phone", 720, 1280);
+
+                if (ImGui::SliderFloat("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f,
+                                       cv->matchWidthOrHeight < 0.25f ? "Width" :
+                                       cv->matchWidthOrHeight > 0.75f ? "Height" : "%.2f")) ed.dirty = true;
+                if (ImGui::SmallButton("Width##cvm"))  { cv->matchWidthOrHeight = 0.0f; ed.dirty = true; }
+                ImGui::SameLine(); if (ImGui::SmallButton("Match##cvm")) { cv->matchWidthOrHeight = 0.5f; ed.dirty = true; }
+                ImGui::SameLine(); if (ImGui::SmallButton("Height##cvm")) { cv->matchWidthOrHeight = 1.0f; ed.dirty = true; }
             }
+
+            // Universal extra UI zoom (now applies in both scale modes).
+            if (ImGui::DragFloat("Scale Factor##cv", &cv->scaleFactor, 0.01f, 0.05f, 10.0f, "%.2fx")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra UI zoom on top of the scale mode.");
             if (ImGui::DragInt("Sort Order##cv", &cv->sortOrder)) ed.dirty = true;
-            ImGui::TextDisabled("scales screen-space UI to the window (Unity CanvasScaler)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher canvases draw on top of lower ones.");
+
+            // Live readout of the resulting scale for the current view.
+            float liveScale = cv->ScaleFactor(UICanvas::Width(), UICanvas::Height());
+            ImGui::TextDisabled("Current scale: %.2fx  (canvas %.0f x %.0f)",
+                                liveScale, UICanvas::Width(), UICanvas::Height());
             if (ImGui::SmallButton("Remove##cv")) toRemove = cv;
         }
     }

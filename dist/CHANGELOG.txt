@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.21.1
+  - Character proportion refit (less "blobby balloon", more human):
+    - Slimmer torso (narrower chest/ribcage/waist/pelvis and less front-to-back
+      bulk) so it no longer reads as a wide balloon.
+    - Longer arms and thinner forearms; noticeably smaller, better-proportioned
+      hands (they were oversized mitts).
+    - Slightly larger head and narrower default shoulders so the head reads in
+      proportion.
+    - Backed the body smoothing down to one gentle pass (two passes had inflated
+      it).
+
 v2.21.0
   - NEW: Skeletal rig — pose the character by rotating bones. The body is skinned
     to a 17-bone humanoid skeleton (linear-blend skinning), so bending a bone

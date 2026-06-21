@@ -23,10 +23,10 @@ namespace okay {
 struct HumanoidParams {
     float height       = 1.0f;   // overall vertical scale
     float build        = 1.0f;   // limb/torso thickness
-    float headSize     = 0.88f;  // realistic ~7.5-head proportions (smaller head)
-    float shoulderWidth= 1.15f;  // arm spacing + torso top width (broad shoulders)
-    float hipWidth     = 0.92f;  // leg spacing + hip width (narrower hips)
-    float armLength    = 1.0f;
+    float headSize     = 0.95f;  // realistic ~7.5-head proportions
+    float shoulderWidth= 1.06f;  // arm spacing + torso top width
+    float hipWidth     = 0.9f;   // leg spacing + hip width (narrower hips)
+    float armLength    = 1.05f;  // arms reach toward mid-thigh
     float legLength    = 1.08f;  // longer legs read as a taller, adult build
     float neckLength   = 1.0f;
     float handSize     = 1.0f;
@@ -1065,21 +1065,21 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     // ---- Torso: anatomical V-taper — broad shoulders/clavicle, pecs/ribcage,
     //      a narrow waist, then the pelvis. Each mass overlaps its neighbour so
     //      the smooth-union makes one continuous trunk. ----
-    bl.push_back({2, {0, 1.40f * H + up, 0}, {}, {0.210f * sW * B, 0.115f * H, 0.160f * B * bd}, 0, shirt}); // base of neck (narrow; shoulders slope out via traps)
-    bl.push_back({2, {0, 1.29f * H + up, 0.01f * bd}, {}, {0.300f * sW * B, 0.150f * H, 0.200f * B * bd}, 0, shirt}); // upper chest (pecs)
-    bl.push_back({2, {0, 1.12f * H + up * 0.7f, 0}, {}, {0.255f * sW * B, 0.160f * H, 0.180f * B * bd}, 0, shirt}); // lower ribcage
-    bl.push_back({2, {0, 1.00f * H + up * 0.45f, 0}, {}, {0.215f * sW * B, 0.110f * H, 0.165f * B * bd}, 0, shirt}); // upper abdomen
-    bl.push_back({2, {0, 0.88f * H + up * 0.25f, 0}, {}, {0.190f * B * p.waist, 0.140f * H, 0.150f * B * bd}, 0, shirt}); // waist (narrowest)
+    bl.push_back({2, {0, 1.40f * H + up, 0}, {}, {0.185f * sW * B, 0.115f * H, 0.145f * B * bd}, 0, shirt}); // base of neck (narrow; shoulders slope out via traps)
+    bl.push_back({2, {0, 1.29f * H + up, 0.01f * bd}, {}, {0.262f * sW * B, 0.150f * H, 0.170f * B * bd}, 0, shirt}); // upper chest (pecs)
+    bl.push_back({2, {0, 1.12f * H + up * 0.7f, 0}, {}, {0.222f * sW * B, 0.165f * H, 0.158f * B * bd}, 0, shirt}); // lower ribcage
+    bl.push_back({2, {0, 1.00f * H + up * 0.45f, 0}, {}, {0.192f * sW * B, 0.115f * H, 0.148f * B * bd}, 0, shirt}); // upper abdomen
+    bl.push_back({2, {0, 0.88f * H + up * 0.25f, 0}, {}, {0.172f * B * p.waist, 0.140f * H, 0.140f * B * bd}, 0, shirt}); // waist (narrowest)
     if (p.belly > 0.05f)
-        bl.push_back({2, {0, 0.95f * H, 0.14f * bd}, {}, {0.22f * B * p.belly, 0.18f * H * p.belly, 0.17f * bd * p.belly}, 0, shirt}); // belly
-    bl.push_back({2, {0, 0.66f * H, 0}, {}, {0.265f * hW * B, 0.150f * H, 0.190f * B * bd}, 0, pants}); // pelvis
+        bl.push_back({2, {0, 0.95f * H, 0.14f * bd}, {}, {0.21f * B * p.belly, 0.18f * H * p.belly, 0.16f * bd * p.belly}, 0, shirt}); // belly
+    bl.push_back({2, {0, 0.66f * H, 0}, {}, {0.246f * hW * B, 0.150f * H, 0.178f * B * bd}, 0, pants}); // pelvis
     struct HandRec { Vec3 wrist; Quat fq; int s; };
     std::vector<HandRec> hands;   // fingers are appended at full detail after meshing
     for (int s = -1; s <= 1; s += 2) {
         // ---- Arm: deltoid cap, tapering bicep -> forearm, then a hand with a
         //      flattened palm + thumb (no more featureless stump). ----
         float aw = sw + p.armGap;
-        float shoulderY = 1.46f * H + up, at = 0.150f * B * p.armThickness, armLen = 0.74f * aL * H;
+        float shoulderY = 1.46f * H + up, at = 0.140f * B * p.armThickness, armLen = 0.82f * aL * H;
         Vec3 sh{s * aw, shoulderY, 0};
         Quat q = Quat::Euler({(float)s * p.armSwing, 0, (float)s * p.armSpread});
         Vec3 elbow = sh + q * Vec3{0, -armLen * 0.5f, 0};
@@ -1095,15 +1095,15 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         bl.push_back({1, {s * 0.17f * sW * B, shoulderY, 0}, sh, {}, at * 1.20f, shirt}); // shoulder bridge (closes armpit)
         bl.push_back({1, sh, Vec3{s * aw, shoulderY - 0.06f * H, 0}, {}, at * 1.20f, shirt}); // deltoid (rounded, drops to upper arm)
         // Pectoral: a soft chest plate on the front, one per side, for definition.
-        bl.push_back({2, {s * 0.12f * sW * B, 1.27f * H + up, 0.12f * B * bd}, {},
-                      {0.135f * sW * B, 0.105f * H, 0.105f * B * bd}, 0, shirt});
+        bl.push_back({2, {s * 0.10f * sW * B, 1.27f * H + up, 0.10f * B * bd}, {},
+                      {0.110f * sW * B, 0.095f * H, 0.085f * B * bd}, 0, shirt});
         bl.push_back({1, sh, elbow, {}, at * 1.02f, shirt});                       // upper arm (bicep)
         bl.push_back({0, elbow, {}, {}, at * 0.88f, shirt});                       // elbow
-        bl.push_back({1, elbow, wrist, {}, at * 0.80f, skin});                     // forearm
+        bl.push_back({1, elbow, wrist, {}, at * 0.78f, skin});                     // forearm
         Vec3 hdir = foreDir;
-        float hs = 0.125f * B * p.handSize;
-        bl.push_back({2, wrist + hdir * (hs * 1.05f), {}, {hs * 0.95f, hs * 1.20f, hs * 0.50f}, 0, skin}); // palm
-        bl.push_back({0, wrist + hdir * (hs * 0.7f) + Vec3{s * hs * 0.55f, 0, hs * 0.25f}, {}, {}, hs * 0.42f, skin}); // thumb
+        float hs = 0.098f * B * p.handSize;
+        bl.push_back({2, wrist + hdir * (hs * 1.0f), {}, {hs * 0.90f, hs * 1.15f, hs * 0.48f}, 0, skin}); // palm
+        bl.push_back({0, wrist + hdir * (hs * 0.6f) + Vec3{s * hs * 0.5f, 0, hs * 0.2f}, {}, {}, hs * 0.40f, skin}); // thumb
         // ---- Leg: glute, tapering thigh -> knee -> calf, ankle, forward foot. ----
         float lt = 0.195f * B * p.legThickness, lw = hw + p.legGap;
         Vec3 hip{s * lw, 0.60f * H, 0};
@@ -1165,10 +1165,9 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     }
     Vec3 m2{0.25f, 0.25f, 0.25f}; lo = lo - m2; hi = hi + m2;
     Mesh body = SurfaceNets(field, colorAt, lo, hi, res);
-    // Taubin smooth (relax, then anti-shrink) twice to melt the voxel facets off
-    // the silhouette — rounds the body without adding any triangles.
-    body.Smooth(0.50f); body.Smooth(-0.53f);
-    body.Smooth(0.50f); body.Smooth(-0.53f);
+    // One gentle Taubin pass (relax, then anti-shrink) to take the voxel facets
+    // off the silhouette without inflating the body into a balloon.
+    body.Smooth(0.32f); body.Smooth(-0.34f);
     for (const HumanoidPart& pt : BuildHumanoidParts(p, c)) if (pt.name == "Head") body.Append(pt.mesh);
     // Fingers: too thin to resolve in the SDF grid, so they're appended at full
     // detail — four fingers + a thumb, oriented along each forearm. They read as a

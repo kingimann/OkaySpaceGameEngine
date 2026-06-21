@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.37.0
+  - Rendering: real-time shadows. A depth pre-pass from the directional light
+    builds a 1024px shadow map; per-pixel shading projects each fragment into it
+    and darkens fragments the light can't see, so objects cast soft (3x3 PCF)
+    shadows onto each other and the ground. Normal-offset bias avoids self-
+    shadowing acne. On by default (ShadowsEnabled() toggle).
+  - Rendering: per-pixel world position/normal interpolation is now perspective-
+    correct, fixing point-light and shadow sampling on large triangles.
+
 v2.36.0
   - Rendering: normal (bump) maps. MeshRenderer has a Normal Map slot (+ Bump
     Strength); the per-pixel lighting path builds a per-triangle tangent frame,

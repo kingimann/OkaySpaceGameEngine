@@ -5715,7 +5715,9 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Actions (Visual Script)", al, &toRemove)) {
             // Trigger -> Conditions -> Instructions, Game-Creator style.
             const char* trigs[] = {"On Start", "On Update", "On Key", "On Collision",
-                                   "On Click", "On Key Up", "On Message"};
+                                   "On Click", "On Key Up", "On Message",
+                                   "On Trigger Enter", "On Trigger Exit", "On Mouse Enter",
+                                   "On Mouse Exit", "On Mouse Down", "On Mouse Up", "On Mouse Over"};
             int ti = (int)al->trigger;
             ImGui::SetNextItemWidth(150);
             if (ImGui::Combo("Trigger", &ti, trigs, IM_ARRAYSIZE(trigs))) { al->trigger = (ActionList::Trigger)ti; ed.dirty = true; }
@@ -5740,12 +5742,13 @@ void DrawInspector(EditorState& ed) {
                 "mouse_down", "chance", "var_eq", "var_neq", "var_gt", "var_lt",
                 "prefs_eq", "prefs_gt", "has_tag", "is_active",
                 "dist_lt", "dist_gt", "exists"};
-            static const char* instOps[] = {"move", "set_pos", "rotate", "set_scale",
-                "set_scale3", "move_toward", "look_at", "wait", "goto", "stop",
+            static const char* instOps[] = {"move", "set_pos", "rotate", "set_rotation",
+                "set_rotation3", "set_scale", "set_scale3", "move_toward", "look_at",
+                "wait", "goto", "if_goto", "stop", "call", "send", "send_to",
                 "set_var", "add_var", "mul_var", "div_var", "copy_var", "rand_var",
-                "set_active", "set_text", "set_color", "velocity",
-                "impulse", "emit", "play_anim", "play_sound", "set_cam", "set_bg",
-                "set_light", "set_ambient", "set_timescale", "send", "spawn", "spawn3",
+                "set_active", "set_visible", "set_text", "set_sprite", "set_color", "velocity",
+                "impulse", "velocity3", "impulse3", "force3", "emit", "play_anim", "play_sound",
+                "set_cam", "set_bg", "set_light", "set_ambient", "set_timescale", "spawn", "spawn3",
                 "destroy", "destroy_obj", "activate", "deactivate", "set_tag",
                 "set_prefs", "add_prefs", "save_prefs",
                 "net_host", "net_join", "net_send", "net_send_reliable", "net_set", "net_spawn",

@@ -126,6 +126,13 @@ private:
     void QueuePending(Component* component);
     void NotifyComponentRemoved(Component* component);
     void FlushPending();
+    /// Pick the object under the cursor (main camera, 2D bounds) and dispatch the
+    /// OnMouseEnter/Exit/Over/Down/Up/Click messages, tracking state across frames.
+    void DispatchPointer();
+
+    GameObject* m_mouseHover = nullptr;   // object the cursor was over last frame
+    GameObject* m_mousePress = nullptr;   // object a press began on (for click)
+    bool        m_mouseWasDown = false;   // left button state last frame
 
     std::string m_name;
     Scheduler   m_scheduler;

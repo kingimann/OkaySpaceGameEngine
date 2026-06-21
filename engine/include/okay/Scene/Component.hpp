@@ -55,6 +55,16 @@ public:
     virtual void OnTriggerStay3D(Collider3D* /*other*/) {}
     virtual void OnTriggerExit3D(Collider3D* /*other*/) {}
 
+    // ---- Pointer/mouse messages (dispatched by the Scene against the main
+    //      camera, like Unity's OnMouseX). The cursor is picked against each
+    //      object's sprite/2D-collider bounds. ----
+    virtual void OnMouseEnter() {}   // cursor moved onto the object
+    virtual void OnMouseExit()  {}   // cursor moved off it
+    virtual void OnMouseOver()  {}   // every frame the cursor is over it
+    virtual void OnMouseDown()  {}   // a press began over it
+    virtual void OnMouseUp()    {}   // the button released after pressing on it
+    virtual void OnMouseClick() {}   // press + release both on it (a full click)
+
     Scene* GetScene() const;
 
 private:

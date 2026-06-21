@@ -3,9 +3,14 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Components/UIAnchor.hpp"        // UICanvas::Width/Height (viewport)
+#include "okay/Physics/Collider2D.hpp"
+#include "okay/Input/Input.hpp"
 #include "okay/Render/Renderer.hpp"
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <vector>
 
 namespace okay {
@@ -91,6 +96,8 @@ void Scene::Update(float deltaTime) {
             c->Update(deltaTime);
     }
 
+    DispatchPointer();   // OnMouseEnter/Exit/Over/Down/Up/Click against the cursor
+
     if (physicsEnabled) { m_physics.Step(*this, deltaTime); m_physics3d.Step(*this, deltaTime); }
 
     for (Component* c : m_active) {
@@ -114,6 +121,8 @@ void Scene::Update(float deltaTime) {
             m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(), isOwned),
                             m_pending.end());
             if (mainCamera && mainCamera->gameObject == go) mainCamera = nullptr;
+            if (m_mouseHover == go) m_mouseHover = nullptr;   // avoid dangling pointers
+            if (m_mousePress == go) m_mousePress = nullptr;
             m_objects.erase(
                 std::remove_if(m_objects.begin(), m_objects.end(),
                                [go](const std::unique_ptr<GameObject>& o) {
@@ -134,6 +143,73 @@ void Scene::Update(float deltaTime) {
             Start(); // run Awake/Start for the freshly loaded objects
         }
     }
+}
+
+void Scene::DispatchPointer() {
+    const float w = UICanvas::Width(), h = UICanvas::Height();
+    if (w < 1.0f || h < 1.0f) return;
+
+    // Cursor -> world XY using the same 2D projection the player/editor draw with.
+    float ortho = (mainCamera && mainCamera->orthographicSize > 1e-3f)
+                      ? mainCamera->orthographicSize : 5.0f;
+    Vec3 camPos = (mainCamera && mainCamera->transform) ? mainCamera->transform->Position()
+                                                        : Vec3::Zero;
+    float scale = h / (2.0f * ortho);
+    if (scale < 1e-6f) scale = 1.0f;
+    Vec2 mp = Input::MousePosition();
+    Vec3 world{camPos.x + (mp.x - w * 0.5f) / scale,
+               camPos.y + (h * 0.5f - mp.y) / scale, 0.0f};
+
+    // Topmost object under the cursor: highest sprite sortOrder, then scene order.
+    // A SpriteRenderer's size or, failing that, a BoxCollider2D defines the bounds.
+    GameObject* hit = nullptr;
+    int best = std::numeric_limits<int>::min();
+    for (const auto& up : m_objects) {
+        GameObject* go = up.get();
+        if (!go->active || !go->transform) continue;
+        Vec3 c = go->transform->Position();
+        Vec3 ls = go->transform->LossyScale();
+        Vec2 half; int order = 0;
+        if (auto* sr = go->GetComponent<SpriteRenderer>()) {
+            half = {sr->size.x * ls.x * 0.5f, sr->size.y * ls.y * 0.5f};
+            order = sr->sortOrder;
+        } else if (auto* bc = go->GetComponent<BoxCollider2D>()) {
+            half = {bc->size.x * ls.x * 0.5f, bc->size.y * ls.y * 0.5f};
+        } else {
+            continue;
+        }
+        if (world.x >= c.x - half.x && world.x <= c.x + half.x &&
+            world.y >= c.y - half.y && world.y <= c.y + half.y && order >= best) {
+            best = order; hit = go;
+        }
+    }
+
+    auto send = [](GameObject* go, void (Component::*fn)()) {
+        if (!go) return;
+        for (Component* c : go->GetComponents<Component>())
+            if (c && c->enabled) (c->*fn)();
+    };
+
+    // Enter / exit as the hovered object changes.
+    if (hit != m_mouseHover) {
+        send(m_mouseHover, &Component::OnMouseExit);
+        send(hit,          &Component::OnMouseEnter);
+        m_mouseHover = hit;
+    }
+    if (hit) send(hit, &Component::OnMouseOver);
+
+    // Press / release / click on the left button.
+    bool down = Input::GetMouseButton(0);
+    if (down && !m_mouseWasDown) {            // press edge
+        m_mousePress = hit;
+        send(hit, &Component::OnMouseDown);
+    } else if (!down && m_mouseWasDown) {     // release edge
+        send(m_mousePress, &Component::OnMouseUp);
+        if (m_mousePress && m_mousePress == hit)   // released on the same object = click
+            send(hit, &Component::OnMouseClick);
+        m_mousePress = nullptr;
+    }
+    m_mouseWasDown = down;
 }
 
 void Scene::Render(IRenderer& renderer) {

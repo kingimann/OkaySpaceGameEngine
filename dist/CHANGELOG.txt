@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.51.0
+  - Performance (major): the 3D renderer was far too slow with the full effect
+    stack on (a simple scene could sit at ~1-3 fps). Fixes:
+      * Native-resolution render by default instead of 2x supersampling (4x fewer
+        pixels; FXAA still smooths edges). Editor "3D AA" and the player now
+        default to 1x.
+      * Bloom now runs at quarter resolution (downsample -> blur -> bilinear
+        upsample) instead of a full-res multi-pass blur (~10x faster bloom).
+      * SSAO now computes at half resolution and uses 8 samples (~4-5x faster).
+      * The full-screen post passes (SSAO, bloom, tone map, FXAA) are now
+        multithreaded across CPU cores.
+      * Shadow PCF reduced from 12 to 6 disk taps (per shaded pixel).
+    Net: a heavy test scene went from ~1540 ms/frame to ~100 ms/frame on a 4-core
+    machine (~15x), and lighter scenes are well within real-time. All effects stay
+    on by default and remain individually toggleable.
+
 v2.50.0
   - Rendering: smooth-shaded curved primitives. Sphere, Icosphere, Torus and
     Capsule now ship with generated smooth per-vertex normals, so they render as

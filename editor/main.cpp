@@ -145,7 +145,7 @@ SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
-int g_ssaa = 2;   // 3D anti-aliasing: 1 = off, 2 = 2x supersample
+int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
 

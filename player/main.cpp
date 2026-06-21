@@ -373,9 +373,11 @@ int main(int argc, char** argv) {
             Mat4 vp = cam->ProjectionMatrix(h > 0 ? (float)w / h : 1.0f) * cam->ViewMatrix();
             if (w > 0 && h > 0) {
                 ApplySceneLight(scene);                 // a Light object aims the shading
-                // 2x supersampled (anti-aliased) software render.
+                // Native-resolution software render (FXAA handles edge AA). 2x
+                // supersampling is 4x the pixels — far too slow with the full
+                // shadow/SSAO/bloom pipeline — so it's off by default.
                 static std::vector<std::uint32_t> mesh3DDown;
-                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h, 2);
+                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h, 1);
                 if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
                     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
                     mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,

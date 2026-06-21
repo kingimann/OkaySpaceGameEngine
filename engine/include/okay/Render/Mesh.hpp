@@ -23,19 +23,19 @@ namespace okay {
 /// as sliders. Multipliers are applied to a fixed base layout.
 struct HumanoidParams {
     float height       = 1.0f;   // overall vertical scale
-    float build        = 0.86f;  // limb/torso thickness (lean, low body-fat base)
-    float headSize     = 0.66f;  // realistic ~7.5-head proportions (small adult head)
-    float shoulderWidth= 0.98f;  // arm spacing + torso top width
-    float hipWidth     = 0.8f;   // leg spacing + hip width (narrow hips)
-    float armLength    = 1.1f;   // arms reach toward mid-thigh
-    float legLength    = 1.16f;  // long lean legs (taller, adult build)
+    float build        = 1.0f;   // limb/torso thickness (1 = base mesh, MakeHuman default)
+    float headSize     = 1.0f;   // 1 = base mesh head (correct ~7.5-head proportions)
+    float shoulderWidth= 1.0f;   // arm spacing + torso top width
+    float hipWidth     = 1.0f;   // leg spacing + hip width
+    float armLength    = 1.0f;   // arms reach toward mid-thigh
+    float legLength    = 1.0f;   // 1 = base mesh leg length
     float neckLength   = 1.0f;
     float handSize     = 0.95f;
     float footSize     = 1.0f;
     float armSpread    = 34.0f;  // degrees arms angle out (A-pose; clear arm/torso separation)
     float legSpread    = 6.0f;   // degrees legs angle out (stance width)
     float torsoLength  = 1.0f;   // lengthens the torso (raises the upper body)
-    float bodyDepth    = 0.88f;  // front-to-back thickness of torso + hips (lean)
+    float bodyDepth    = 1.0f;   // front-to-back thickness of torso + hips (1 = base mesh)
     int   hairStyle    = 1;      // 0 cap, 1 short, 2 long, 3 spiky, 4 ponytail, 5 mohawk
     float eyeSpacing   = 1.0f;   // multiplier on the gap between the eyes
     float mouthWidth   = 1.0f;   // multiplier on mouth width (a wider "smile")
@@ -46,9 +46,9 @@ struct HumanoidParams {
     Vec3  rightArmRot  = {0, 0, 0}; // extra euler on the RIGHT arm only (wave)
     float eyeSize      = 1.0f;   // multiplier on eye + pupil size
     float noseSize     = 1.0f;   // multiplier on nose size
-    float armThickness = 0.9f;   // arm girth (independent of build)
-    float legThickness = 0.98f;  // leg girth (independent of build)
-    float waist        = 0.8f;   // hip/midsection width (lean, defined waist)
+    float armThickness = 1.0f;   // arm girth (independent of build)
+    float legThickness = 1.0f;   // leg girth (independent of build)
+    float waist        = 1.0f;   // hip/midsection width (1 = base mesh)
     float belly        = 0.0f;   // belly size (0 = none)
     float armGap       = 0.0f;   // lateral spacing of arms from the body (+out, -in)
     float legGap       = 0.0f;   // lateral spacing of legs (stance width; +apart, -together)
@@ -61,7 +61,7 @@ struct HumanoidParams {
     void ClampHuman() {
         auto cl = [](float& v, float lo, float hi) { v = v < lo ? lo : (v > hi ? hi : v); };
         cl(height, 0.82f, 1.35f);     cl(build, 0.85f, 1.22f);
-        cl(headSize, 0.55f, 0.95f);   cl(neckLength, 0.8f, 1.18f);
+        cl(headSize, 0.7f, 1.25f);    cl(neckLength, 0.8f, 1.18f);
         cl(shoulderWidth, 0.95f, 1.28f); cl(hipWidth, 0.8f, 1.12f);
         cl(armLength, 0.9f, 1.15f);   cl(legLength, 0.92f, 1.22f);
         cl(armThickness, 0.82f, 1.18f);cl(legThickness, 0.85f, 1.18f);

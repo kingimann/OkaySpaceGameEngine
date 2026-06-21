@@ -93,6 +93,10 @@ void CharacterBody::Apply() {
     // so the renderer can backface-cull (much cheaper with several characters).
     // The part-based body has mixed winding and must be drawn double-sided.
     mr->doubleSided = !smoothBody;
+    // A soft specular sheen gives skin and clothing a lifelike highlight instead
+    // of looking like flat matte clay.
+    mr->specular = 0.22f;
+    mr->shininess = 24.0f;
 }
 
 void CharacterBody::Update(float dt) {

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.20.0
+  - Character realism pass:
+    - Real HANDS: four fingers + a thumb on each hand (built at full detail and
+      oriented along the forearm) instead of a featureless stump.
+    - Skin & clothing now have a soft specular SHEEN (a lifelike highlight)
+      rather than looking like flat matte clay.
+  - (Toward a fully rigged/skinned character: that's a larger system; for now
+    "Split into Parts" on a character gives you a poseable per-limb rig.)
+
 v2.19.3
   - Character: a more natural, lifelike pose. The arms now rest with a soft
     elbow bend (forearms angled slightly forward and inward) instead of hanging

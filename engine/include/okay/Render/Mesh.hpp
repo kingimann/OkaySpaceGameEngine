@@ -1073,6 +1073,8 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     if (p.belly > 0.05f)
         bl.push_back({2, {0, 0.95f * H, 0.14f * bd}, {}, {0.22f * B * p.belly, 0.18f * H * p.belly, 0.17f * bd * p.belly}, 0, shirt}); // belly
     bl.push_back({2, {0, 0.66f * H, 0}, {}, {0.265f * hW * B, 0.150f * H, 0.190f * B * bd}, 0, pants}); // pelvis
+    struct HandRec { Vec3 wrist; Quat fq; int s; };
+    std::vector<HandRec> hands;   // fingers are appended at full detail after meshing
     for (int s = -1; s <= 1; s += 2) {
         // ---- Arm: deltoid cap, tapering bicep -> forearm, then a hand with a
         //      flattened palm + thumb (no more featureless stump). ----
@@ -1086,6 +1088,7 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
         Quat fq = q * Quat::Euler({16.0f, 0.0f, (float)s * -7.0f});
         Vec3 foreDir = fq * Vec3{0, -1, 0};
         Vec3 wrist = elbow + foreDir * (armLen * 0.5f);
+        hands.push_back({wrist, fq, s});
         // Trapezius: a muscle sloping from the neck base DOWN to the shoulder, so
         // the shoulder line slopes naturally instead of forming a flat square bar.
         bl.push_back({1, {0, 1.52f * H + up, -0.01f * bd}, {s * aw * 0.80f, shoulderY + 0.01f * H, 0}, {}, 0.075f, shirt});
@@ -1163,6 +1166,34 @@ inline Mesh BuildSmoothHumanoid(const HumanoidParams& p, const HumanoidColors* c
     Vec3 m2{0.25f, 0.25f, 0.25f}; lo = lo - m2; hi = hi + m2;
     Mesh body = SurfaceNets(field, colorAt, lo, hi, res);
     for (const HumanoidPart& pt : BuildHumanoidParts(p, c)) if (pt.name == "Head") body.Append(pt.mesh);
+    // Fingers: too thin to resolve in the SDF grid, so they're appended at full
+    // detail — four fingers + a thumb, oriented along each forearm. They read as a
+    // real hand instead of a featureless stump.
+    {
+        Color skinC = skin;
+        float hs = 0.125f * B * p.handSize;
+        for (const HandRec& hd : hands) {
+            Vec3 dn = hd.fq * Vec3{0, -1, 0};   // along the fingers
+            Vec3 sd = hd.fq * Vec3{1, 0, 0};    // across the palm
+            Vec3 palmTip = hd.wrist + dn * (hs * 1.95f);
+            for (int f = 0; f < 4; ++f) {       // four fingers, middle longest
+                float off = (f - 1.5f) * hs * 0.40f;
+                float len = hs * (1.30f - 0.12f * std::fabs(f - 1.5f));
+                Vec3 root = palmTip + sd * off;
+                for (int seg = 0; seg < 3; ++seg) {
+                    Vec3 cc = root + dn * (len * (0.16f + 0.32f * seg));
+                    float r = hs * (0.20f - 0.018f * seg);
+                    body.Add(Mesh::Sphere(0.5f, 5, 6), cc, {r, r, r}, &skinC);
+                }
+            }
+            Vec3 tdir = (dn - sd * ((float)hd.s * 0.9f)).Normalized();   // thumb angles inward
+            Vec3 troot = hd.wrist + dn * (hs * 1.0f) - sd * ((float)hd.s * hs * 0.55f);
+            for (int seg = 0; seg < 2; ++seg) {
+                Vec3 cc = troot + tdir * (hs * (0.30f + 0.42f * seg));
+                body.Add(Mesh::Sphere(0.5f, 5, 6), cc, {hs * 0.22f, hs * 0.22f, hs * 0.22f}, &skinC);
+            }
+        }
+    }
     body.name = "Human";
     return body;
 }

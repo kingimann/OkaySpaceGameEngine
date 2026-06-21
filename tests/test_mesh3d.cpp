@@ -590,16 +590,21 @@ int main() {
         }
     }
 
-    // --- Character: all styles build non-empty rigged meshes ---
+    // --- Character: builds a non-empty rigged mesh, with accessories ---
     {
         CHECK(Character::BoneCount() == 15);
-        for (int s = 0; s < 3; ++s) {
-            Character ch; ch.style = s;
-            Mesh m = ch.Build();
-            CHECK(!m.vertices.empty());
-            CHECK(m.TriangleCount() > 0);
-            CHECK(m.HasFaceColors());
-        }
+        Character ch;
+        Mesh m = ch.Build();
+        CHECK(!m.vertices.empty());
+        CHECK(m.TriangleCount() > 0);
+        CHECK(m.HasFaceColors());
+        // Accessories add geometry.
+        Character ch2;
+        ch2.hasHat = true; ch2.hasBackpack = true; ch2.hasCape = true; ch2.hasJacket = true;
+        CHECK(ch2.Build().TriangleCount() > m.TriangleCount());
+        // Serialization round-trips.
+        Character ch3; ch3.FromText(ch2.ToText());
+        CHECK(ch3.hasHat && ch3.hasBackpack && ch3.hasJacket);
     }
 
     TEST_MAIN_RESULT();

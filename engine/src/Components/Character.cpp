@@ -7,7 +7,6 @@
 
 namespace okay {
 
-// Bone indices (15-bone humanoid).
 enum { B_HIPS, B_TORSO, B_HEAD,
        B_LUPARM, B_LFORE, B_LHAND, B_RUPARM, B_RFORE, B_RHAND,
        B_LTHIGH, B_LSHIN, B_LFOOT, B_RTHIGH, B_RSHIN, B_RFOOT, B_COUNT };
@@ -49,145 +48,130 @@ Color mul(Color c, float f) { return Color(c.r * f, c.g * f, c.b * f, 1.0f); }
 Mesh Character::BuildRig(std::vector<int>& bone) const {
     Mesh m;
     bone.clear();
-    const bool round = (style == 2);
-    const Color belt  = mul(shirt, 0.55f);
-    const Color mouth = Color::FromBytes(150, 95, 90);
+    const Color mouth    = Color::FromBytes(150, 95, 90);
+    const Color maskCol  = Color::FromBytes(58, 58, 64);
     const Color upperArmCol = (shirtStyle >= 1) ? shirt : skin;
     const Color foreArmCol  = (shirtStyle >= 2) ? shirt : skin;
+    const Color handCol     = hasGloves ? gloves : skin;
+    const Color shinCol     = (legStyle == 1) ? skin : pants;   // shorts -> bare shins
 
-    // Primitive helpers that tag every emitted vertex with a bone. `build` scales
-    // girth (x/z); height is applied later, uniformly.
     auto add = [&](const Mesh& prim, Vec3 c, Vec3 s, Color col, int b) {
         int before = (int)m.vertices.size();
         m.Add(prim, c, s, &col);
         for (int i = before; i < (int)m.vertices.size(); ++i) bone.push_back(b);
     };
-    auto box  = [&](Vec3 c, Vec3 s, Color col, int b) {
-        add(Mesh::Cube(1.0f), c, {s.x * build, s.y, s.z * build}, col, b); };
-    auto cyl  = [&](Vec3 c, float rx, float rz, float h, Color col, int b) {
-        add(Mesh::Cylinder(0.5f, 1.0f, 12), c, {rx * 2 * build, h, rz * 2 * build}, col, b); };
-    auto ball = [&](Vec3 c, Vec3 s, Color col, int b) {
-        add(Mesh::Icosphere(0.5f, 2), c, {s.x * 2 * build, s.y * 2, s.z * 2 * build}, col, b); };
-    // Style-agnostic blob: a box for the boxy styles, an ellipsoid for RuneScape.
-    auto blob = [&](Vec3 c, Vec3 half, Color col, int b) {
-        if (round) ball(c, half, col, b);
-        else       box(c, {half.x * 2, half.y * 2, half.z * 2}, col, b); };
+    auto box = [&](Vec3 c, Vec3 s, Color col, int b) { add(Mesh::Cube(1.0f), c, s, col, b); };
 
-    const float hY = 1.62f;                 // head centre (build units)
-    auto hpos = [&](Vec3 p) {               // head-part position, scaled about the neck
-        return Vec3{p.x * headSize, 1.48f + (p.y - 1.48f) * headSize, p.z * headSize}; };
-    auto hsz = [&](Vec3 s) { return Vec3{s.x * headSize, s.y * headSize, s.z * headSize}; };
-
-    if (style == 0) {
-        // ---- Minecraft: a handful of boxes, big cubic head, flat shaded ----
-        box({0, 0.95f, 0}, {0.40f, 0.20f, 0.22f}, pants, B_HIPS);
-        box({0, 1.24f, 0}, {0.40f, 0.50f, 0.22f}, shirt, B_TORSO);
-        for (int s = -1; s <= 1; s += 2) {
-            int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
-            box({s * 0.27f, 1.28f, 0}, {0.16f, 0.30f, 0.18f}, upperArmCol, up);
-            box({s * 0.27f, 0.99f, 0}, {0.15f, 0.30f, 0.16f}, foreArmCol, fo);
-            box({s * 0.27f, 0.80f, 0}, {0.15f, 0.12f, 0.16f}, skin, ha);
-            int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
-            box({s * 0.105f, 0.73f, 0}, {0.19f, 0.40f, 0.20f}, pants, th);
-            box({s * 0.105f, 0.33f, 0}, {0.18f, 0.42f, 0.18f}, pants, sh);
-            box({s * 0.105f, 0.06f, 0.03f}, {0.19f, 0.12f, 0.26f}, shoes, ft);
-        }
-        box(hpos({0, hY, 0}), hsz({0.44f, 0.44f, 0.42f}), skin, B_HEAD);
-        for (int s = -1; s <= 1; s += 2)
-            box(hpos({s * 0.10f, 1.64f, 0.21f}), hsz({0.07f, 0.08f, 0.03f}), eyes, B_HEAD);
-    } else if (style == 1) {
-        // ---- Unturned: boxy but more segments + smaller head, flat shaded ----
-        box({0, 0.95f, 0}, {0.40f, 0.22f, 0.235f}, pants, B_HIPS);
-        box({0, 1.25f, 0}, {0.44f, 0.50f, 0.25f}, shirt, B_TORSO);
-        box({0, 1.00f, 0}, {0.41f, 0.06f, 0.255f}, belt, B_HIPS);
-        for (int s = -1; s <= 1; s += 2) {
-            int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
-            box({s * 0.27f, 1.30f, 0}, {0.13f, 0.34f, 0.18f}, upperArmCol, up);
-            box({s * 0.27f, 0.99f, 0}, {0.12f, 0.32f, 0.16f}, foreArmCol, fo);
-            box({s * 0.27f, 0.80f, 0.02f}, {0.12f, 0.12f, 0.17f}, skin, ha);
-            int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
-            box({s * 0.105f, 0.74f, 0}, {0.18f, 0.42f, 0.20f}, pants, th);
-            box({s * 0.105f, 0.34f, 0}, {0.16f, 0.44f, 0.18f}, pants, sh);
-            box({s * 0.105f, 0.05f, 0.05f}, {0.17f, 0.10f, 0.30f}, shoes, ft);
-        }
-        box({0, 1.50f, 0}, {0.15f, 0.10f, 0.15f}, skin, B_TORSO);
-        box(hpos({0, hY, 0}), hsz({0.30f, 0.32f, 0.30f}), skin, B_HEAD);
-        for (int s = -1; s <= 1; s += 2)
-            box(hpos({s * 0.07f, 1.64f, 0.16f}), hsz({0.05f, 0.06f, 0.03f}), eyes, B_HEAD);
-    } else {
-        // ---- RuneScape: rounded low-poly, smooth shaded, fingered hands ----
-        cyl({0, 1.27f, 0}, 0.235f, 0.15f, 0.34f, shirt, B_TORSO);   // chest
-        cyl({0, 1.05f, 0}, 0.195f, 0.135f, 0.20f, shirt, B_HIPS);   // waist
-        box({0, 1.00f, 0}, {0.40f, 0.06f, 0.275f}, belt, B_HIPS);
-        for (int s = -1; s <= 1; s += 2) ball({s * 0.20f, 1.38f, 0}, {0.10f, 0.10f, 0.125f}, shirt, B_TORSO);
-        for (int s = -1; s <= 1; s += 2) {
-            int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
-            cyl({s * 0.255f, 1.27f, 0}, 0.072f, 0.072f, 0.30f, upperArmCol, up);
-            ball({s * 0.27f, 1.11f, 0}, {0.068f, 0.07f, 0.068f}, foreArmCol, fo);
-            cyl({s * 0.285f, 0.99f, 0}, 0.062f, 0.062f, 0.27f, foreArmCol, fo);
-            // hand: palm + 4 fingers + thumb
-            float hx = s * 0.285f;
-            box({hx, 0.80f, 0}, {0.105f, 0.09f, 0.075f}, skin, ha);
-            for (int f = 0; f < 4; ++f) cyl({hx + (-1.5f + f) * 0.028f, 0.715f, 0.012f}, 0.018f, 0.02f, 0.09f, skin, ha);
-            cyl({hx - s * 0.062f, 0.78f, 0.03f}, 0.02f, 0.022f, 0.065f, skin, ha);
-            int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
-            cyl({s * 0.105f, 0.75f, 0}, 0.105f, 0.105f, 0.40f, pants, th);
-            ball({s * 0.105f, 0.55f, 0}, {0.10f, 0.09f, 0.10f}, pants, sh);
-            cyl({s * 0.105f, 0.335f, 0}, 0.085f, 0.085f, 0.45f, pants, sh);
-            ball({s * 0.105f, 0.10f, 0}, {0.095f, 0.085f, 0.10f}, shoes, ft);
-            box({s * 0.105f, 0.045f, 0.05f}, {0.17f, 0.09f, 0.27f}, shoes, ft);
-        }
-        cyl({0, 1.49f, 0}, 0.07f, 0.07f, 0.10f, skin, B_TORSO);
-        ball(hpos({0, 1.66f, 0}), hsz({0.165f, 0.195f, 0.17f}), skin, B_HEAD);
-        ball(hpos({0, 1.585f, 0.02f}), hsz({0.10f, 0.07f, 0.10f}), skin, B_HEAD);   // jaw
-        box(hpos({0, 1.63f, 0.165f}), hsz({0.045f, 0.06f, 0.06f}), skin, B_HEAD);   // nose
-        box(hpos({0, 1.585f, 0.155f}), hsz({0.06f, 0.022f, 0.04f}), mouth, B_HEAD); // mouth
-        for (int s = -1; s <= 1; s += 2) ball(hpos({s * 0.165f, 1.66f, 0}), hsz({0.03f, 0.05f, 0.04f}), skin, B_HEAD);
-        for (int s = -1; s <= 1; s += 2) ball(hpos({s * 0.058f, 1.67f, 0.15f}), hsz({0.026f, 0.034f, 0.02f}), eyes, B_HEAD);
+    // ---- Body (Unturned: boxy, segmented, flat-shaded) ----
+    box({0, 0.95f, 0}, {0.40f, 0.22f, 0.235f}, pants, B_HIPS);
+    box({0, 1.25f, 0}, {0.44f, 0.50f, 0.25f}, shirt, B_TORSO);
+    if (hasBelt) box({0, 1.00f, 0}, {0.41f, 0.06f, 0.255f}, belt, B_HIPS);
+    for (int s = -1; s <= 1; s += 2) {
+        int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
+        box({s * 0.27f, 1.30f, 0}, {0.13f, 0.34f, 0.18f}, upperArmCol, up);
+        box({s * 0.27f, 0.99f, 0}, {0.12f, 0.32f, 0.16f}, foreArmCol, fo);
+        box({s * 0.27f, 0.80f, 0.02f}, {0.12f, 0.12f, 0.17f}, handCol, ha);
+        int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
+        box({s * 0.105f, 0.74f, 0}, {0.18f, 0.42f, 0.20f}, pants, th);
+        box({s * 0.105f, 0.34f, 0}, {0.16f, 0.44f, 0.18f}, shinCol, sh);
+        box({s * 0.105f, 0.05f, 0.05f}, {0.17f, 0.10f, 0.30f}, shoes, ft);
     }
+    box({0, 1.50f, 0}, {0.15f, 0.10f, 0.15f}, skin, B_TORSO);                 // neck
+    box({0, 1.62f, 0}, {0.30f, 0.32f, 0.30f}, skin, B_HEAD);                  // head
+    for (int s = -1; s <= 1; s += 2)
+        box({s * 0.07f, 1.64f, 0.16f}, {0.05f, 0.06f, 0.03f}, eyes, B_HEAD);  // eyes
 
-    // ---- Hair (style-aware shape) ----
+    // ---- Jacket: a slightly larger shell over torso + upper arms ----
+    if (hasJacket) {
+        box({0, 1.24f, 0}, {0.47f, 0.46f, 0.28f}, jacket, B_TORSO);
+        for (int s = -1; s <= 1; s += 2)
+            box({s * 0.27f, 1.31f, 0}, {0.16f, 0.33f, 0.21f}, jacket, s < 0 ? B_LUPARM : B_RUPARM);
+    }
+    if (hasShoulderPads)
+        for (int s = -1; s <= 1; s += 2)
+            box({s * 0.27f, 1.44f, 0}, {0.20f, 0.12f, 0.24f}, jacket, s < 0 ? B_LUPARM : B_RUPARM);
+
+    // ---- Hair ----
     if (hasHair) {
-        if (hairStyle == 2) {            // mohawk: a centre strip
-            for (int i = 0; i < 3; ++i)
-                blob(hpos({0, 1.80f + i * 0.0f, -0.04f + i * 0.04f}), hsz({0.05f, 0.12f - i * 0.02f, 0.12f}), hair, B_HEAD);
-        } else {
-            blob(hpos({0, 1.78f, -0.01f}), hsz({0.20f, 0.10f, 0.20f}), hair, B_HEAD);     // top cap
-            blob(hpos({0, 1.70f, -0.12f}), hsz({0.20f, 0.13f, 0.07f}), hair, B_HEAD);     // back
-            if (hairStyle == 1)          // long: down the back/neck
-                box(hpos({0, 1.52f, -0.14f}), hsz({0.30f, 0.34f, 0.08f}), hair, B_HEAD);
-            if (hairStyle == 3)          // bun
-                blob(hpos({0, 1.86f, -0.10f}), hsz({0.09f, 0.09f, 0.09f}), hair, B_HEAD);
+        switch (hairStyle) {
+            case 0:  // short
+                box({0, 1.80f, -0.01f}, {0.33f, 0.10f, 0.32f}, hair, B_HEAD);
+                box({0, 1.70f, -0.14f}, {0.33f, 0.22f, 0.06f}, hair, B_HEAD);
+                box({0, 1.74f, 0.14f},  {0.33f, 0.07f, 0.06f}, hair, B_HEAD); break;
+            case 1:  // long
+                box({0, 1.80f, -0.01f}, {0.33f, 0.10f, 0.32f}, hair, B_HEAD);
+                box({0, 1.50f, -0.15f}, {0.34f, 0.50f, 0.07f}, hair, B_HEAD);
+                for (int s = -1; s <= 1; s += 2) box({s * 0.165f, 1.58f, 0}, {0.05f, 0.34f, 0.30f}, hair, B_HEAD); break;
+            case 2:  // mohawk
+                for (int i = 0; i < 4; ++i) box({0, 1.84f, -0.12f + i * 0.08f}, {0.06f, 0.16f - i * 0.015f, 0.07f}, hair, B_HEAD); break;
+            case 3:  // bun
+                box({0, 1.80f, -0.01f}, {0.33f, 0.10f, 0.32f}, hair, B_HEAD);
+                box({0, 1.86f, -0.14f}, {0.15f, 0.16f, 0.15f}, hair, B_HEAD); break;
+            case 4:  // spiky
+                box({0, 1.78f, 0}, {0.33f, 0.08f, 0.32f}, hair, B_HEAD);
+                for (int sx = -1; sx <= 1; ++sx) for (int sz = -1; sz <= 1; sz += 2)
+                    box({sx * 0.10f, 1.88f, sz * 0.09f}, {0.07f, 0.14f, 0.07f}, hair, B_HEAD); break;
+            case 5:  // afro
+                box({0, 1.82f, 0}, {0.46f, 0.34f, 0.46f}, hair, B_HEAD);
+                box({0, 1.66f, -0.16f}, {0.40f, 0.34f, 0.14f}, hair, B_HEAD); break;
+            case 6:  // ponytail
+                box({0, 1.80f, -0.01f}, {0.33f, 0.10f, 0.32f}, hair, B_HEAD);
+                box({0, 1.70f, -0.14f}, {0.30f, 0.20f, 0.07f}, hair, B_HEAD);
+                box({0, 1.52f, -0.20f}, {0.12f, 0.42f, 0.12f}, hair, B_HEAD); break;
+            default: // 7 buzz
+                box({0, 1.79f, 0}, {0.32f, 0.06f, 0.31f}, hair, B_HEAD);
+                box({0, 1.71f, -0.13f}, {0.32f, 0.18f, 0.05f}, hair, B_HEAD); break;
         }
     }
-    if (hasBeard)
-        blob(hpos({0, 1.56f, 0.12f}), hsz({0.16f, 0.10f, 0.10f}), hair, B_HEAD);
 
-    // ---- Accessories ----
+    // ---- Facial hair ----
+    if (beardStyle == 1)      box({0, 1.54f, 0.10f}, {0.30f, 0.16f, 0.12f}, hair, B_HEAD);     // full
+    else if (beardStyle == 2) box({0, 1.52f, 0.14f}, {0.10f, 0.12f, 0.06f}, hair, B_HEAD);     // goatee
+    else if (beardStyle == 3) box({0, 1.585f, 0.16f}, {0.16f, 0.04f, 0.04f}, hair, B_HEAD);    // mustache
+
+    // ---- Headgear ----
     if (hasHat) {
-        if (hatStyle == 0) {                                  // cap
-            blob(hpos({0, 1.83f, 0}), hsz({0.23f, 0.07f, 0.23f}), hat, B_HEAD);
-            box(hpos({0, 1.82f, 0.20f}), hsz({0.30f, 0.04f, 0.20f}), hat, B_HEAD);   // brim
-        } else if (hatStyle == 1) {                           // helmet
-            blob(hpos({0, 1.74f, 0}), hsz({0.24f, 0.20f, 0.24f}), hat, B_HEAD);
-        } else if (hatStyle == 2) {                           // top hat
-            box(hpos({0, 1.84f, 0}), hsz({0.40f, 0.04f, 0.40f}), hat, B_HEAD);       // brim
-            box(hpos({0, 1.98f, 0}), hsz({0.26f, 0.26f, 0.26f}), hat, B_HEAD);       // crown
-        } else {                                              // wizard hat (cone)
-            box(hpos({0, 1.84f, 0}), hsz({0.40f, 0.04f, 0.40f}), hat, B_HEAD);
-            add(Mesh::Cone(0.5f, 1.0f, 12), hpos({0, 2.05f, 0}), hsz({0.34f, 0.42f, 0.34f}), hat, B_HEAD);
+        switch (hatStyle) {
+            case 0:  // cap
+                box({0, 1.83f, 0}, {0.34f, 0.10f, 0.32f}, hat, B_HEAD);
+                box({0, 1.82f, 0.22f}, {0.30f, 0.04f, 0.18f}, hat, B_HEAD); break;
+            case 1:  // helmet
+                box({0, 1.80f, 0}, {0.38f, 0.30f, 0.36f}, hat, B_HEAD); break;
+            case 2:  // top hat
+                box({0, 1.84f, 0}, {0.50f, 0.04f, 0.50f}, hat, B_HEAD);
+                box({0, 2.00f, 0}, {0.30f, 0.30f, 0.30f}, hat, B_HEAD); break;
+            case 3:  // wizard
+                box({0, 1.84f, 0}, {0.46f, 0.04f, 0.46f}, hat, B_HEAD);
+                add(Mesh::Cone(0.5f, 1.0f, 10), {0, 2.06f, 0}, {0.40f, 0.46f, 0.40f}, hat, B_HEAD); break;
+            case 4:  // beanie
+                box({0, 1.82f, 0}, {0.36f, 0.22f, 0.34f}, hat, B_HEAD); break;
+            case 5:  // cowboy
+                box({0, 1.83f, 0}, {0.58f, 0.04f, 0.48f}, hat, B_HEAD);
+                box({0, 1.92f, 0}, {0.30f, 0.18f, 0.30f}, hat, B_HEAD); break;
+            case 6:  // crown
+                box({0, 1.83f, 0}, {0.34f, 0.10f, 0.32f}, hat, B_HEAD);
+                for (int sx = -1; sx <= 1; ++sx) for (int sz = -1; sz <= 1; sz += 2)
+                    box({sx * 0.13f, 1.91f, sz * 0.13f}, {0.05f, 0.08f, 0.05f}, hat, B_HEAD); break;
+            default: // 7 bandana
+                box({0, 1.77f, 0.02f}, {0.34f, 0.09f, 0.33f}, hat, B_HEAD); break;
         }
     }
-    if (hasGlasses) {
-        Color gl = Color::FromBytes(25, 25, 30);
-        for (int s = -1; s <= 1; s += 2)
-            box(hpos({s * 0.058f, 1.67f, 0.17f}), hsz({0.07f, 0.07f, 0.02f}), gl, B_HEAD);
-        box(hpos({0, 1.67f, 0.17f}), hsz({0.05f, 0.02f, 0.02f}), gl, B_HEAD);
+
+    // ---- Glasses / mask ----
+    if (glassesStyle == 1) {
+        Color gl = Color::FromBytes(28, 28, 34);
+        for (int s = -1; s <= 1; s += 2) box({s * 0.07f, 1.64f, 0.17f}, {0.08f, 0.07f, 0.02f}, gl, B_HEAD);
+        box({0, 1.64f, 0.17f}, {0.05f, 0.02f, 0.02f}, gl, B_HEAD);
+    } else if (glassesStyle == 2) {
+        Color gl = Color::FromBytes(15, 15, 18);
+        box({0, 1.64f, 0.17f}, {0.30f, 0.08f, 0.03f}, gl, B_HEAD);
     }
-    if (hasBackpack)
-        box({0, 1.22f, -0.20f}, {0.34f, 0.40f, 0.16f}, pack, B_TORSO);
-    if (hasCape)
-        box({0, 1.10f, -0.18f}, {0.40f, 0.70f, 0.04f}, mul(pack, 1.1f), B_TORSO);
+    if (hasMask) box({0, 1.55f, 0.13f}, {0.30f, 0.18f, 0.08f}, maskCol, B_HEAD);
+    if (hasScarf) box({0, 1.50f, 0.0f}, {0.24f, 0.12f, 0.24f}, mul(shirt, 0.8f), B_TORSO);
+
+    // ---- Back accessories ----
+    if (hasBackpack) box({0, 1.22f, -0.21f}, {0.34f, 0.42f, 0.16f}, pack, B_TORSO);
+    if (hasCape)     box({0, 1.10f, -0.18f}, {0.42f, 0.74f, 0.04f}, mul(pack, 1.1f), B_TORSO);
 
     return m;
 }
@@ -201,12 +185,11 @@ void Character::EnsureRest() const {
 
 std::vector<Vec3> Character::PoseAt(float t) const {
     std::vector<Vec3> r(B_COUNT, Vec3{0, 0, 0});
-    auto deg = [](float x) { return x; };
-    if (anim == 0) {                       // manual pose
+    if (anim == 0) {
         for (int i = 0; i < B_COUNT && i < (int)pose.size(); ++i) r[i] = pose[i];
         return r;
     }
-    if (anim == 1) {                       // idle: gentle breathing + arm sway
+    if (anim == 1) {                       // idle
         float s = std::sin(t * 1.8f);
         r[B_TORSO] = {1.5f * s, 0, 0};
         r[B_LUPARM] = {0, 0, 4 + 1.5f * s};
@@ -221,16 +204,15 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LUPARM] = {-0.8f * amp * s, 0, 5};   r[B_RUPARM] = {0.8f * amp * s, 0, -5};
         r[B_LFORE]  = {18, 0, 0};   r[B_RFORE] = {18, 0, 0};
         r[B_TORSO]  = {(anim == 3 ? 12.0f : 4.0f) + 2.0f * std::fabs(s), 0, 0};
-    } else if (anim == 4) {                // wave (right arm)
+    } else if (anim == 4) {                // wave
         r[B_RUPARM] = {0, 0, -150};
         r[B_RFORE]  = {0, 0, -15 + 28 * std::sin(t * 8.0f)};
         r[B_LUPARM] = {0, 0, 6};
-    } else if (anim == 5) {                // jump pose
+    } else if (anim == 5) {                // jump
         r[B_LUPARM] = {0, 0, 140};   r[B_RUPARM] = {0, 0, -140};
         r[B_LTHIGH] = {-22, 0, 0};   r[B_RTHIGH] = {-22, 0, 0};
         r[B_LSHIN]  = {35, 0, 0};    r[B_RSHIN]  = {35, 0, 0};
     }
-    (void)deg;
     return r;
 }
 
@@ -259,7 +241,7 @@ void Character::Apply() {
     Mesh m = m_rest;
     Skin(m, m_bone, PoseAt(animTime));
     for (Vec3& v : m.vertices) v.y *= height;
-    if (style == 2) m.ComputeSmoothNormals(); else m.normals.clear();
+    m.normals.clear();                     // boxy -> flat shading
     mr->mesh = std::move(m);
     mr->doubleSided = true;
 }
@@ -273,43 +255,41 @@ void Character::Update(float dt) {
     Mesh m = m_rest;
     Skin(m, m_bone, PoseAt(animTime));
     for (Vec3& v : m.vertices) v.y *= height;
-    if (style == 2) m.ComputeSmoothNormals(); else m.normals.clear();
+    m.normals.clear();
     mr->mesh = std::move(m);
     mr->doubleSided = true;
 }
 
 std::string Character::ToText() const {
     std::ostringstream o;
-    o << style << ' ' << height << ' ' << build << ' ' << headSize << ' '
-      << skin.r << ' ' << skin.g << ' ' << skin.b << ' '
-      << shirt.r << ' ' << shirt.g << ' ' << shirt.b << ' '
-      << pants.r << ' ' << pants.g << ' ' << pants.b << ' '
-      << shoes.r << ' ' << shoes.g << ' ' << shoes.b << ' '
-      << hair.r << ' ' << hair.g << ' ' << hair.b << ' '
-      << eyes.r << ' ' << eyes.g << ' ' << eyes.b << ' '
-      << hat.r << ' ' << hat.g << ' ' << hat.b << ' '
-      << pack.r << ' ' << pack.g << ' ' << pack.b << ' '
-      << (hasHair ? 1 : 0) << ' ' << hairStyle << ' ' << shirtStyle << ' '
-      << (hasHat ? 1 : 0) << ' ' << hatStyle << ' ' << (hasGlasses ? 1 : 0) << ' '
-      << (hasBackpack ? 1 : 0) << ' ' << (hasCape ? 1 : 0) << ' ' << (hasBeard ? 1 : 0) << ' '
+    auto col = [&](const Color& c) { o << c.r << ' ' << c.g << ' ' << c.b << ' '; };
+    o << height << ' ';
+    col(skin); col(shirt); col(pants); col(shoes); col(hair); col(eyes);
+    col(hat); col(pack); col(gloves); col(jacket); col(belt);
+    o << (hasHair ? 1 : 0) << ' ' << hairStyle << ' ' << beardStyle << ' '
+      << shirtStyle << ' ' << legStyle << ' ' << (hasBelt ? 1 : 0) << ' '
+      << (hasJacket ? 1 : 0) << ' ' << (hasGloves ? 1 : 0) << ' '
+      << (hasHat ? 1 : 0) << ' ' << hatStyle << ' ' << glassesStyle << ' '
+      << (hasMask ? 1 : 0) << ' ' << (hasScarf ? 1 : 0) << ' ' << (hasShoulderPads ? 1 : 0) << ' '
+      << (hasBackpack ? 1 : 0) << ' ' << (hasCape ? 1 : 0) << ' '
       << anim << ' ' << animSpeed;
     return o.str();
 }
 
 void Character::FromText(const std::string& text) {
     std::istringstream in(text);
-    int hh, hhat, hgl, hbp, hc, hb;
-    in >> style >> height >> build >> headSize
-       >> skin.r >> skin.g >> skin.b >> shirt.r >> shirt.g >> shirt.b
-       >> pants.r >> pants.g >> pants.b >> shoes.r >> shoes.g >> shoes.b
-       >> hair.r >> hair.g >> hair.b >> eyes.r >> eyes.g >> eyes.b
-       >> hat.r >> hat.g >> hat.b >> pack.r >> pack.g >> pack.b
-       >> hh >> hairStyle >> shirtStyle >> hhat >> hatStyle >> hgl >> hbp >> hc >> hb
-       >> anim >> animSpeed;
+    auto col = [&](Color& c) { in >> c.r >> c.g >> c.b; c.a = 1.0f; };
+    in >> height;
+    col(skin); col(shirt); col(pants); col(shoes); col(hair); col(eyes);
+    col(hat); col(pack); col(gloves); col(jacket); col(belt);
+    int hh, hbelt, hj, hg, hhat, hm, hs, hsp, hbp, hc;
+    in >> hh >> hairStyle >> beardStyle >> shirtStyle >> legStyle >> hbelt
+       >> hj >> hg >> hhat >> hatStyle >> glassesStyle >> hm >> hs >> hsp
+       >> hbp >> hc >> anim >> animSpeed;
     if (in.fail()) return;
-    skin.a = shirt.a = pants.a = shoes.a = hair.a = eyes.a = hat.a = pack.a = 1.0f;
-    hasHair = hh != 0; hasHat = hhat != 0; hasGlasses = hgl != 0;
-    hasBackpack = hbp != 0; hasCape = hc != 0; hasBeard = hb != 0;
+    hasHair = hh != 0; hasBelt = hbelt != 0; hasJacket = hj != 0; hasGloves = hg != 0;
+    hasHat = hhat != 0; hasMask = hm != 0; hasScarf = hs != 0; hasShoulderPads = hsp != 0;
+    hasBackpack = hbp != 0; hasCape = hc != 0;
     m_built = false;
 }
 

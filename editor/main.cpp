@@ -3851,23 +3851,46 @@ void DrawNewProjectPopup(EditorState& ed) {
             ImGui::CloseCurrentPopup();
         };
 
-        ImGui::TextDisabled("Pick a starting scene type.");
-        if (ImGui::Button("2D Scene", ImVec2(160, 60))) { ed.NewScene2D(); finishProject(); }
-        ImGui::SameLine();
-        if (ImGui::Button("3D Scene", ImVec2(160, 60))) { ed.NewScene3D(); finishProject(); }
+        // A consistent two-column grid of template "cards", each with a short
+        // description on hover. `left` controls which column the next card lands in.
+        const float CARD_W = 184.0f, CARD_H = 48.0f;
+        bool left = true;
+        auto card = [&](const char* title, const char* desc, void (EditorState::*fn)()) {
+            if (!left) ImGui::SameLine();
+            if (ImGui::Button(title, ImVec2(CARD_W, CARD_H))) { (ed.*fn)(); finishProject(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", desc);
+            left = !left;
+        };
+
+        ImGui::SeparatorText("Blank canvas");
+        card("2D Scene", "An empty 2D scene with a camera.\nGood for sprites and UI.", &EditorState::NewScene2D);
+        card("3D Scene", "An empty 3D scene with a camera,\nlight and a cube.", &EditorState::NewScene3D);
+
+        ImGui::SeparatorText("3D templates");
+        card("First Person\n(character + FPS)",
+             "A blocky Character you control in first person:\nmouse-look, WASD, jump. Camera at eye height,\nwith crates to walk around.",
+             &EditorState::NewFPS);
+        card("3D Platformer\n(physics)",
+             "A physics player on a ground you move and jump\nwith a follow camera.",
+             &EditorState::NewPlatformer3D);
+
+        ImGui::SeparatorText("2D templates");
+        card("Platformer", "Side-scroller: a follow camera, a physics\nplayer on a wide ground, and a coin.", &EditorState::NewPlatformer);
+        card("Top-Down", "WASD-driven player with a follow camera\nand a couple of walls.", &EditorState::NewTopDown);
+        card("Coin Collector", "A small complete game: collect the coins\nto win.", &EditorState::NewCoinCollector);
+        card("Snake", "The classic Snake, fully playable.", &EditorState::NewSnake);
+
+        ImGui::SeparatorText("UI & systems");
+        card("Main Menu", "A title screen with buttons wired to actions.", &EditorState::NewMainMenu);
+        card("Inventory", "A drag & drop item grid.", &EditorState::NewInventory);
+        card("Multiplayer", "A host/join networked starter scene.", &EditorState::NewMultiplayer);
+        if (!left) ImGui::SameLine();
+
         ImGui::Spacing();
-        ImGui::TextDisabled("Or start from a playable template:");
-        if (ImGui::Button("Platformer", ImVec2(160, 44))) { ed.NewPlatformer(); finishProject(); }
-        ImGui::SameLine();
-        if (ImGui::Button("Top-Down", ImVec2(160, 44)))   { ed.NewTopDown(); finishProject(); }
-        if (ImGui::Button("3D Platformer (physics)", ImVec2(-1, 44))) { ed.NewPlatformer3D(); finishProject(); }
-        if (ImGui::Button("Multiplayer (host/join)", ImVec2(-1, 44))) { ed.NewMultiplayer(); finishProject(); }
-        if (ImGui::Button("Coin Collector (full game)", ImVec2(-1, 36))) { ed.NewCoinCollector(); finishProject(); }
-        if (ImGui::Button("Main Menu (UI)", ImVec2(-1, 36)))            { ed.NewMainMenu(); finishProject(); }
-        if (ImGui::Button("Inventory (drag & drop)", ImVec2(-1, 36)))   { ed.NewInventory(); finishProject(); }
-        if (ImGui::Button("Snake (full game)", ImVec2(-1, 36)))         { ed.NewSnake(); finishProject(); }
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
         if (ImGui::Button("Empty Scene", ImVec2(-1, 0))) { ed.NewScene(); finishProject(); }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Totally empty scene (no camera).");
         ImGui::EndPopup();
     }
 }
@@ -5456,6 +5479,33 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cc3")) toRemove = cc;
         }
     }
+    if (auto* fp = go->GetComponent<FirstPersonController>()) {
+        if (CompHeader("First Person Controller", fp, &toRemove)) {
+            if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Mouse Sensitivity##fp", &fp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Can Jump##fp", &fp->canJump)) ed.dirty = true;
+            if (ImGui::Checkbox("Drive Animation##fp", &fp->driveAnimation)) ed.dirty = true;
+            ImGui::TextDisabled("Mouse look + WASD. Put a Camera as a child (eye height).");
+            if (ImGui::SmallButton("Remove##fp")) toRemove = fp;
+        }
+    }
+    if (auto* tp = go->GetComponent<ThirdPersonController>()) {
+        if (CompHeader("Third Person Controller", tp, &toRemove)) {
+            if (ImGui::DragFloat("Walk Speed##tp", &tp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Mouse Sensitivity##tp", &tp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Turn Speed##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Camera Distance##tp", &tp->distance, 0.1f, 1.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Camera Height##tp", &tp->cameraHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Can Jump##tp", &tp->canJump)) ed.dirty = true;
+            if (ImGui::Checkbox("Drive Animation##tp", &tp->driveAnimation)) ed.dirty = true;
+            ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD. Uses the main Camera.");
+            if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
+        }
+    }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         if (CompHeader("Follow Target 2D", ft, &toRemove)) {
             char tb[64];
@@ -6355,6 +6405,8 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<CharacterController2D>(), "Character Controller 2D")) { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { go->AddComponent<FirstPersonController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { go->AddComponent<ThirdPersonController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }

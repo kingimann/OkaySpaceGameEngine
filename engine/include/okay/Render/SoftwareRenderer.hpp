@@ -38,6 +38,27 @@ inline bool&  RimLightEnabled() { static bool v = true; return v; }
 inline float& RimStrength()     { static float v = 0.25f; return v; }
 inline float& RimPower()        { static float v = 3.0f; return v; }
 
+// Environment sky for reflections: the renderer keeps its own copy of the scene's
+// sky gradient (the actual sky is drawn screen-space by the player/editor, so the
+// renderer can't see it). The per-pixel path mirrors this on glossy/reflective
+// surfaces. RenderMeshes refreshes it from the scene's RenderSettings each frame.
+struct EnvSkyData {
+    Vec3 top{0.27f, 0.47f, 0.78f}, horizon{0.59f, 0.73f, 0.88f}, bottom{0.47f, 0.47f, 0.51f};
+    bool enabled = false;
+};
+inline EnvSkyData& EnvSky() { static EnvSkyData e; return e; }
+
+/// Sample the sky gradient by a world-space direction's vertical component:
+/// horizon at the equator, fading to `top` looking up and `bottom` looking down.
+inline Vec3 SampleEnvSky(const Vec3& dir) {
+    EnvSkyData& e = EnvSky();
+    float y = dir.y < -1.0f ? -1.0f : (dir.y > 1.0f ? 1.0f : dir.y);
+    const Vec3& a = e.horizon;
+    const Vec3& b = y >= 0.0f ? e.top : e.bottom;
+    float t = y >= 0.0f ? y : -y;
+    return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t};
+}
+
 /// A tiny software rasterizer with a per-pixel depth buffer, so overlapping 3D
 /// triangles occlude correctly (unlike a painter's-algorithm sort). It fills an
 /// ABGR8888 pixel buffer that both the player (SDL texture) and the editor
@@ -279,7 +300,8 @@ public:
                        float shininess, float specularK, float er, float eg, float eb,
                        float fog, float fr, float fg, float fb,
                        const std::vector<Image>* normalMips = nullptr,
-                       const Vec3& tangent = Vec3{1, 0, 0}, float normalStrength = 1.0f) {
+                       const Vec3& tangent = Vec3{1, 0, 0}, float normalStrength = 1.0f,
+                       float reflectivity = 0.0f) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -387,6 +409,21 @@ public:
                 float cr = br * lit.x + spec + rim * lit.x + er;
                 float cg = bg * lit.y + spec + rim * lit.y + eg;
                 float cb = bb2 * lit.z + spec + rim * lit.z + eb;
+                // Environment reflection: mirror the sky gradient about the normal
+                // and blend it in by a Fresnel-weighted reflectivity (Schlick), so
+                // edges reflect more than face-on — a cheap glossy/metal look.
+                if (reflectivity > 0.0f && EnvSky().enabled) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    float ndv = Vec3::Dot(n, toEye); if (ndv < 0.0f) ndv = 0.0f;
+                    Vec3 R{n.x * (2.0f * ndv) - toEye.x, n.y * (2.0f * ndv) - toEye.y,
+                           n.z * (2.0f * ndv) - toEye.z};
+                    Vec3 env = SampleEnvSky(R);
+                    float f = 1.0f - ndv; f = f * f * f * f * f;            // (1-n·v)^5
+                    float k = reflectivity + (1.0f - reflectivity) * f;     // Schlick
+                    cr = cr * (1.0f - k) + env.x * k;
+                    cg = cg * (1.0f - k) + env.y * k;
+                    cb = cb * (1.0f - k) + env.z * k;
+                }
                 if (fog > 0.0f) {
                     cr = cr * (1.0f - fog) + fr * fog;
                     cg = cg * (1.0f - fog) + fg * fog;
@@ -805,6 +842,11 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     const auto& rs = scene.renderSettings;
     const bool  fogOn = rs.fog && rs.fogEnd > rs.fogStart;
     const float fogR = rs.fogColor.r, fogG = rs.fogColor.g, fogB = rs.fogColor.b;
+    // Refresh the environment sky (for reflective materials) from the scene.
+    EnvSky().enabled = rs.skybox;
+    EnvSky().top     = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
+    EnvSky().horizon = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
+    EnvSky().bottom  = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
     RenderShadowMap(scene);   // depth-from-light pre-pass for cast shadows
     if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;
@@ -1012,7 +1054,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     tex, base, mr->color, eye, mr->shininess, mr->specular,
                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
                                     fogF, fogR, fogG, fogB,
-                                    normalMips, triTangent, mr->normalStrength);
+                                    normalMips, triTangent, mr->normalStrength,
+                                    mr->reflectivity);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

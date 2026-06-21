@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.44.0
+  - Rendering: environment reflections. Materials gained a Reflectivity property
+    (per-pixel path): the surface mirrors the scene's sky gradient about its
+    normal, blended in with a Fresnel (Schlick) weight so edges reflect more than
+    face-on — a cheap glossy/metal look that responds to the normal map. Tunable
+    in the MeshRenderer inspector; saved with the scene.
+
 v2.43.0
   - Rendering: Fresnel rim light. The per-pixel path adds a soft (1 - n·view)^p
     glow at grazing angles, tinted by the lit color, which separates objects from

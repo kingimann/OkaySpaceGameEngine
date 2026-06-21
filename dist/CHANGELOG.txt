@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.30.0
+  - Character creator: focused on the Unturned (blocky) body and went deep on
+    customization.
+    - Removed the Minecraft and RuneScape styles, and the Build / Head Size
+      sliders. The body is the blocky Unturned style; Height is the one
+      proportion slider.
+    - TONS more options:
+      - Clothing: shirt (tank / short / long sleeve), legs (trousers / shorts),
+        belt, jacket, gloves.
+      - Hair: 8 styles (short, long, mohawk, bun, spiky, afro, ponytail, buzz)
+        and beards (full / goatee / mustache).
+      - Accessories: 8 hats (cap, helmet, top hat, wizard, beanie, cowboy, crown,
+        bandana), eyewear (glasses / sunglasses), mask, scarf, shoulder pads,
+        backpack, cape.
+      - 11 colors: skin, shirt, pants, shoes, hair, eyes, hat, jacket, gloves,
+        belt, backpack.
+    - Still rigged with the 15-bone skeleton + idle / walk / run / wave / jump.
+
 v2.29.0
   - NEW stylized Character creator (Create > 3D > Character), the kind of
     character maker games ship with:

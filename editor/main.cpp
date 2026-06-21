@@ -5093,28 +5093,55 @@ void DrawInspector(EditorState& ed) {
     if (auto* ch = go->GetComponent<Character>()) {
         if (CompHeader("Character", ch, &toRemove)) {
             bool c = false;
-            const char* styles[] = {"Minecraft (boxy)", "Unturned (boxy)", "RuneScape (rounded)"};
-            ImGui::SetNextItemWidth(180); c |= ImGui::Combo("Style##char", &ch->style, styles, 3);
-            c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
-            c |= ImGui::SliderFloat("Build##char", &ch->build, 0.6f, 1.8f);
-            c |= ImGui::SliderFloat("Head Size##char", &ch->headSize, 0.6f, 1.6f);
             auto coledit = [&](const char* lbl, Color& col){ float v[3]={col.r,col.g,col.b}; if (ImGui::ColorEdit3(lbl, v)) { col={v[0],v[1],v[2],1.0f}; c=true; } };
-            coledit("Skin##char", ch->skin); coledit("Shirt##char", ch->shirt); coledit("Pants##char", ch->pants);
-            coledit("Shoes##char", ch->shoes); coledit("Hair##char", ch->hair); coledit("Eyes##char", ch->eyes);
+
+            c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
+
+            ImGui::SeparatorText("Clothing");
             const char* shirts[] = {"Tank (bare arms)","Short sleeve","Long sleeve"};
-            ImGui::SetNextItemWidth(160); c |= ImGui::Combo("Shirt Style##char", &ch->shirtStyle, shirts, 3);
+            ImGui::SetNextItemWidth(150); c |= ImGui::Combo("Shirt##char", &ch->shirtStyle, shirts, 3);
+            const char* legs[] = {"Trousers","Shorts"};
+            ImGui::SetNextItemWidth(150); c |= ImGui::Combo("Legs##char", &ch->legStyle, legs, 2);
+            c |= ImGui::Checkbox("Belt##char", &ch->hasBelt);
+            ImGui::SameLine(); c |= ImGui::Checkbox("Jacket##char", &ch->hasJacket);
+            ImGui::SameLine(); c |= ImGui::Checkbox("Gloves##char", &ch->hasGloves);
+
+            ImGui::SeparatorText("Hair");
             c |= ImGui::Checkbox("Hair##char", &ch->hasHair);
-            if (ch->hasHair) { const char* hs[]={"Short","Long","Mohawk","Bun"}; ImGui::SameLine(); ImGui::SetNextItemWidth(110); c |= ImGui::Combo("##hairstyle", &ch->hairStyle, hs, 4); }
-            c |= ImGui::Checkbox("Beard##char", &ch->hasBeard);
+            if (ch->hasHair) {
+                const char* hs[]={"Short","Long","Mohawk","Bun","Spiky","Afro","Ponytail","Buzz"};
+                ImGui::SameLine(); ImGui::SetNextItemWidth(120); c |= ImGui::Combo("##hairstyle", &ch->hairStyle, hs, 8);
+            }
+            const char* beards[] = {"None","Full","Goatee","Mustache"};
+            ImGui::SetNextItemWidth(150); c |= ImGui::Combo("Beard##char", &ch->beardStyle, beards, 4);
+
+            ImGui::SeparatorText("Accessories");
             c |= ImGui::Checkbox("Hat##char", &ch->hasHat);
-            if (ch->hasHat) { const char* ht[]={"Cap","Helmet","Top Hat","Wizard"}; ImGui::SameLine(); ImGui::SetNextItemWidth(110); c |= ImGui::Combo("##hatstyle", &ch->hatStyle, ht, 4); coledit("Hat Color##char", ch->hat); }
-            c |= ImGui::Checkbox("Glasses##char", &ch->hasGlasses);
+            if (ch->hasHat) {
+                const char* ht[]={"Cap","Helmet","Top Hat","Wizard","Beanie","Cowboy","Crown","Bandana"};
+                ImGui::SameLine(); ImGui::SetNextItemWidth(120); c |= ImGui::Combo("##hatstyle", &ch->hatStyle, ht, 8);
+            }
+            const char* gl[] = {"None","Glasses","Sunglasses"};
+            ImGui::SetNextItemWidth(150); c |= ImGui::Combo("Eyewear##char", &ch->glassesStyle, gl, 3);
+            c |= ImGui::Checkbox("Mask##char", &ch->hasMask);
+            ImGui::SameLine(); c |= ImGui::Checkbox("Scarf##char", &ch->hasScarf);
+            c |= ImGui::Checkbox("Shoulder Pads##char", &ch->hasShoulderPads);
             c |= ImGui::Checkbox("Backpack##char", &ch->hasBackpack);
-            if (ch->hasBackpack) coledit("Pack Color##char", ch->pack);
-            c |= ImGui::Checkbox("Cape##char", &ch->hasCape);
+            ImGui::SameLine(); c |= ImGui::Checkbox("Cape##char", &ch->hasCape);
+
+            ImGui::SeparatorText("Colors");
+            coledit("Skin##char", ch->skin);     coledit("Shirt##char", ch->shirt);
+            coledit("Pants##char", ch->pants);   coledit("Shoes##char", ch->shoes);
+            coledit("Hair##char", ch->hair);     coledit("Eyes##char", ch->eyes);
+            coledit("Hat##char", ch->hat);       coledit("Jacket##char", ch->jacket);
+            coledit("Gloves##char", ch->gloves); coledit("Belt##char", ch->belt);
+            coledit("Backpack##char", ch->pack);
+
+            ImGui::SeparatorText("Animation (plays in Play mode)");
             const char* anims[] = {"None","Idle","Walk","Run","Wave","Jump"};
-            ImGui::SetNextItemWidth(160); ImGui::Combo("Animation##char", &ch->anim, anims, 6);
+            ImGui::SetNextItemWidth(150); ImGui::Combo("Animation##char", &ch->anim, anims, 6);
             if (ch->anim != 0) ImGui::SliderFloat("Anim Speed##char", &ch->animSpeed, 0.1f, 3.0f);
+
             if (c) { ch->Apply(); ed.dirty = true; }
         }
     }

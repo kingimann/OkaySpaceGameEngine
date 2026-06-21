@@ -4988,8 +4988,8 @@ void DrawInspector(EditorState& ed) {
             ch |= ImGui::SliderFloat("Foot Size##char",     &p.footSize,      0.4f, 2.0f);
             ImGui::Spacing();
             ImGui::TextDisabled("Pose");
-            ch |= ImGui::SliderFloat("Arm Spread##char",    &p.armSpread,     0.0f, 30.0f, "%.0f deg");
-            ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 15.0f, "%.0f deg");
+            ch |= ImGui::SliderFloat("Arm Spread##char",    &p.armSpread,     0.0f, 50.0f, "%.0f deg");
+            ch |= ImGui::SliderFloat("Leg Spread##char",    &p.legSpread,     0.0f, 14.0f, "%.0f deg");
             ch |= ImGui::SliderFloat("Arm Gap##char",       &p.armGap,       -0.20f, 0.40f, "%.2f");
             ch |= ImGui::SliderFloat("Leg Gap##char",       &p.legGap,       -0.15f, 0.40f, "%.2f");
             ImGui::Spacing();
@@ -5184,6 +5184,15 @@ void DrawInspector(EditorState& ed) {
             ImGui::Spacing();
             ImGui::TextDisabled("Presets");
             if (ImGui::SmallButton("Reset##char"))    { p = HumanoidParams{}; ch = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Base Mesh##char")) {   // lean anatomical clay model (A-pose, uniform gray)
+                p = HumanoidParams{};
+                p.armSpread = 38.0f; p.build = 0.92f; p.waist = 0.8f;
+                Color clay = Color::FromBytes(180, 178, 176);
+                cb->color = clay; cb->outfit = clay; cb->pants = clay; cb->shoes = clay;
+                cb->hair = Color::FromBytes(150,148,146); cb->hasHair = false; cb->hasFace = true;
+                cb->smoothBody = true; ch = true;
+            }
             ImGui::SameLine();
             if (ImGui::SmallButton("Slim##char"))     { p.build = 0.7f; p.shoulderWidth = 0.9f; p.hipWidth = 0.85f; ch = true; }
             ImGui::SameLine();

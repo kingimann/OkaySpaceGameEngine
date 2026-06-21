@@ -57,6 +57,13 @@ void UIDraggable::Update(float) {
             m_dragging = true; m_armed = false; m_prevMouse = m_press;
             if (bringToFront && gameObject->scene()) gameObject->scene()->MoveToFront(gameObject);
             Fire(gameObject, "on_drag_start");
+            // Leaving the slot it was sitting in: tell that slot (on_remove).
+            if (m_dropTarget) {
+                Prefs::SetString("ui_remove_item", gameObject->name);
+                Prefs::SetString("ui_remove_target", m_dropTarget->name);
+                Fire(m_dropTarget, "on_remove");
+                m_dropTarget = nullptr;
+            }
         } else {
             return;
         }
@@ -76,8 +83,16 @@ void UIDraggable::Update(float) {
         for (const auto& up : scene.Objects())
             if (auto* dt = up->GetComponent<UIDropTarget>()) {
                 bool over = (up.get() == raw);
+                bool was = dt->IsHovered();
                 dt->SetHovered(over);
                 if (over) dt->SetValid(dt->acceptTag.empty() || dt->acceptTag == gameObject->tag);
+                // Fire enter/exit on the slot as the item moves over it.
+                if (over && !was) {
+                    Prefs::SetString("ui_drag_item", gameObject->name);
+                    Fire(up.get(), "on_drag_enter");
+                } else if (!over && was) {
+                    Fire(up.get(), "on_drag_exit");
+                }
             }
         Fire(gameObject, "on_drag");
     } else {                                   // released: resolve a drop

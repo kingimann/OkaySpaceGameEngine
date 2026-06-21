@@ -342,28 +342,36 @@ int main(int argc, char** argv) {
         SDL_RenderClear(renderer);
 
         bool perspective = cam && cam->projection == Camera::Projection::Perspective;
+        // A camera set to "Solid Color" clear flags suppresses the skybox (the
+        // background color from the clear above shows through) — matches the editor.
+        bool solidClear = cam && cam->clearFlags == Camera::ClearFlags::SolidColor;
 
         // Skybox: the same vertical sky gradient the editor previews, baked into
-        // the scene's render settings so a built game looks identical. Drawn
-        // first (behind everything) for 3D/perspective scenes.
-        if (perspective && scene.renderSettings.skybox && w > 0 && h > 0) {
+        // the scene's render settings so a built game looks identical. Drawn first
+        // (behind everything) for 3D/perspective scenes. Painted as solid-color
+        // horizontal strips (SDL_RenderFillRect) rather than SDL_RenderGeometry so
+        // it renders on every driver — RenderGeometry can silently no-op on some
+        // GPUs/backends, which left the game showing a black sky.
+        if (perspective && scene.renderSettings.skybox && !solidClear && w > 0 && h > 0) {
             const auto& rs = scene.renderSettings;
-            auto sc = [](const Color& c) {
-                SDL_Color o; o.r = (Uint8)(c.r * 255); o.g = (Uint8)(c.g * 255);
-                o.b = (Uint8)(c.b * 255); o.a = 255; return o;
+            auto lerp = [](const Color& a, const Color& b, float t) {
+                return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
+                             a.b + (b.b - a.b) * t, 1.0f};
             };
-            SDL_Color top = sc(rs.skyTop), mid = sc(rs.skyHorizon), bot = sc(rs.skyBottom);
-            float my = h * 0.5f;
-            auto band = [&](float y0, float y1, SDL_Color c0, SDL_Color c1) {
-                SDL_Vertex v[4] = {
-                    {{0.0f, y0}, c0, {0, 0}}, {{(float)w, y0}, c0, {0, 0}},
-                    {{(float)w, y1}, c1, {0, 0}}, {{0.0f, y1}, c1, {0, 0}},
-                };
-                int idx[6] = {0, 1, 2, 0, 2, 3};
-                SDL_RenderGeometry(renderer, nullptr, v, 4, idx, 6);
-            };
-            band(0.0f, my, top, mid);
-            band(my, (float)h, mid, bot);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            const int strips = h < 128 ? h : 128;     // smooth enough, cheap
+            for (int s = 0; s < strips; ++s) {
+                float t = (float)s / (float)(strips - 1);   // 0 (top) .. 1 (bottom)
+                // Two-stop gradient: top->horizon for the upper half, horizon->bottom below.
+                Color c = (t < 0.5f) ? lerp(rs.skyTop, rs.skyHorizon, t * 2.0f)
+                                     : lerp(rs.skyHorizon, rs.skyBottom, (t - 0.5f) * 2.0f);
+                SDL_SetRenderDrawColor(renderer, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
+                                       (Uint8)(c.b * 255), 255);
+                int y0 = (int)((float)s / strips * h);
+                int y1 = (int)((float)(s + 1) / strips * h);
+                SDL_Rect rrect{0, y0, w, (y1 > y0 ? y1 - y0 : 1)};
+                SDL_RenderFillRect(renderer, &rrect);
+            }
         }
 
         if (perspective) {

@@ -251,7 +251,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
             << tp->mouseSensitivity << " " << tp->turnSpeed << " " << tp->distance << " "
-            << tp->cameraHeight << " " << (tp->canJump ? 1 : 0) << " " << (tp->driveAnimation ? 1 : 0) << "\n";
+            << tp->cameraHeight << " " << (tp->canJump ? 1 : 0) << " " << (tp->driveAnimation ? 1 : 0)
+            // extended (optional, back-compatible trailing fields)
+            << " " << (tp->invertX ? 1 : 0) << " " << (tp->invertY ? 1 : 0)
+            << " " << tp->minDistance << " " << tp->maxDistance << " " << tp->zoomSpeed
+            << " " << tp->shoulderOffset << " " << tp->cameraDamping
+            << " " << tp->minPitch << " " << tp->maxPitch << " " << (int)tp->faceMode << "\n";
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -811,6 +816,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tp->walkSpeed = ws; tp->runSpeed = rs; tp->jumpForce = jf; tp->mouseSensitivity = ms;
                     tp->turnSpeed = ts; tp->distance = ds; tp->cameraHeight = ch;
                     tp->canJump = (cj != 0); tp->driveAnimation = (da != 0);
+                    // extended (optional): defaults preserved when absent in older scenes
+                    int ix = 0, iy = 0, fmode = (int)tp->faceMode;
+                    float mnd = tp->minDistance, mxd = tp->maxDistance, zs = tp->zoomSpeed,
+                          so = tp->shoulderOffset, cd = tp->cameraDamping,
+                          mnp = tp->minPitch, mxp = tp->maxPitch;
+                    if (in >> ix >> iy >> mnd >> mxd >> zs >> so >> cd >> mnp >> mxp >> fmode) {
+                        tp->invertX = (ix != 0); tp->invertY = (iy != 0);
+                        tp->minDistance = mnd; tp->maxDistance = mxd; tp->zoomSpeed = zs;
+                        tp->shoulderOffset = so; tp->cameraDamping = cd;
+                        tp->minPitch = mnp; tp->maxPitch = mxp;
+                        tp->faceMode = (ThirdPersonController::FaceMode)fmode;
+                    }
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
                     go->AddComponent<Mover>()->velocity = v;

@@ -126,16 +126,41 @@ inline UIScrollView* OwningScrollView(GameObject* go) {
     return nullptr;
 }
 
-/// Resolve a widget to its final screen rect, accounting for the owning Canvas's
-/// scale: offsets and sizes scale by the canvas factor, then anchor against the
-/// screen. This is the single source of truth shared by rendering, hit-testing
-/// and the editor's pick/drag so they always agree.
+/// The nearest ancestor that is itself a UI widget (so a child can be positioned
+/// RELATIVE to its parent, Unity-style). Scroll Views are skipped — they manage
+/// their own content offset/clip — so this is for panels/images/buttons/etc.
+inline GameObject* OwningUIParent(GameObject* go) {
+    if (!go || !go->transform) return nullptr;
+    for (Transform* t = go->transform->Parent(); t; t = t->Parent()) {
+        GameObject* p = t->gameObject;
+        if (!p) continue;
+        if (p->GetComponent<UIScrollView>()) continue;
+        if (GetUIRect(p).valid) return p;
+    }
+    return nullptr;
+}
+
+/// Resolve a widget to its final screen rect. Offsets/sizes scale by the owning
+/// Canvas factor. If the widget is parented under another UI widget, its anchor
+/// resolves WITHIN the parent's rect (so moving/resizing the parent moves the
+/// child — like Unity); otherwise it anchors against the whole screen. This is the
+/// single source of truth shared by rendering, hit-testing and the editor.
 inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
                             Vec2& origin, Vec2& size, float* outScale = nullptr) {
     UIRect r = GetUIRect(go);
     if (!r.valid) return false;
     float s = UIScaleFor(go, screenW, screenH);
     size = r.size * s;
+    if (GameObject* parent = OwningUIParent(go)) {
+        Vec2 po, ps;                                  // resolve inside the parent's rect
+        if (GetUIScreenRect(parent, screenW, screenH, po, ps)) {
+            Vec2 local = ResolveAnchor(r.anchor, *r.position * s, size, ps.x, ps.y);
+            origin = po + local;
+            if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll * s;
+            if (outScale) *outScale = s;
+            return true;
+        }
+    }
     origin = ResolveAnchor(r.anchor, *r.position * s, size, screenW, screenH);
     // Widgets inside a Scroll View move up as it scrolls.
     if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll * s;

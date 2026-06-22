@@ -5239,6 +5239,11 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat2("Tiling##mesh", til, 0.05f, 0.01f, 64.0f)) {
                     mr->tiling = {til[0], til[1]}; ed.dirty = true;
                 }
+                float sc[2] = {mr->uvScroll.x, mr->uvScroll.y};
+                if (ImGui::DragFloat2("UV Scroll##mesh", sc, 0.01f)) { mr->uvScroll = {sc[0], sc[1]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Animated texture: UV units/second (flowing water, lava, belts).");
+                if (ImGui::Checkbox("Triplanar##mesh", &mr->triplanar)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Project the texture on the 3 world axes (no UV seams; great for terrain/cliffs).\nTiling is the world-space scale.");
             }
             char nmap[260];
             std::strncpy(nmap, mr->normalMap.c_str(), sizeof(nmap) - 1);

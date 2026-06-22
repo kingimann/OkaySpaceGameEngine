@@ -34,6 +34,15 @@ public:
     bool   outline      = false;
     Color  outlineColor = Color::Black;
     float  outlineWidth = 0.03f;   // world units the hull is pushed out along normals
+
+    /// Scrolling UV (animated texture): the texture offset advances by this many UV
+    /// units per second — flowing water, lava, conveyor belts, scrolling skies.
+    Vec2   uvScroll{0.0f, 0.0f};
+
+    /// Triplanar mapping: project the texture along the three world axes and blend by
+    /// the surface normal, so terrain, cliffs and arbitrary meshes texture cleanly
+    /// with NO UV seams or stretching. Uses `tiling` as world-space scale.
+    bool   triplanar = false;
     bool  enabled = true;      // when false the mesh is not drawn (e.g. the local
                                // player's own body in first person)
     bool  wireframe = false;   // solid by default (Unity-like); true = edges only

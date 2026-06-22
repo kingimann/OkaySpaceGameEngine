@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.105.0  (shaders, cont.: triplanar + scrolling UV)
+  - Triplanar mapping: project a texture along the three world axes and blend by the
+    surface normal, so terrain, cliffs and arbitrary meshes texture with NO UV seams
+    or stretching. Tiling is the world-space scale.
+  - Scrolling UV: animate a texture by a per-second UV speed (flowing water, lava,
+    conveyor belts, scrolling skies) — driven by elapsed time, applied to every
+    textured path.
+  - Both exposed in the Mesh Renderer inspector, saved on .okaymat materials and in
+    scenes (back-compatible). shaders suite extended (round-trips + render checks that
+    scrolling changes over time and triplanar differs from UV mapping); 77 tests pass.
+
 v2.104.0  (shaders, cont.: rim light + outline)
   - Per-material Rim (Fresnel) backlight: a colored glow that strengthens toward
     grazing angles (strength, power, color). Works with any shader and auto-uses the

@@ -178,6 +178,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (mr->outline)
             out << "  outline " << mr->outlineWidth << " "
                 << mr->outlineColor.r << " " << mr->outlineColor.g << " " << mr->outlineColor.b << "\n";
+        // Scrolling UV + triplanar mapping (separate record).
+        if (mr->uvScroll.x != 0.0f || mr->uvScroll.y != 0.0f || mr->triplanar)
+            out << "  uvanim " << mr->uvScroll.x << " " << mr->uvScroll.y << " "
+                << (mr->triplanar ? 1 : 0) << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -782,6 +786,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         in >> mr->outlineWidth >> mr->outlineColor.r >> mr->outlineColor.g >> mr->outlineColor.b;
                         mr->outline = true;
+                    }
+                } else if (field == "uvanim") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        int tp = 0; in >> mr->uvScroll.x >> mr->uvScroll.y >> tp;
+                        mr->triplanar = (tp != 0);
                     }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();

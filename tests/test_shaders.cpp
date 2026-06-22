@@ -144,5 +144,73 @@ int main() {
         CHECK(outlined > plain);   // the hull shell adds a silhouette ring of pixels
     }
 
+    // Material + scene round-trip the scrolling-UV speed and triplanar flag.
+    {
+        Material m; m.uvScroll = {0.25f, -0.5f}; m.triplanar = true;
+        Material r = Material::FromText(m.ToText());
+        CHECK_NEAR(r.uvScroll.x, 0.25f, 1e-4f);
+        CHECK_NEAR(r.uvScroll.y, -0.5f, 1e-4f);
+        CHECK(r.triplanar);
+
+        Scene s("UV"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("Q")->AddComponent<MeshRenderer>();
+        mr->uvScroll = {1.0f, 2.0f}; mr->triplanar = true;
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* mr2 = s2.Find("Q") ? s2.Find("Q")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) { CHECK_NEAR(mr2->uvScroll.y, 2.0f, 1e-4f); CHECK(mr2->triplanar); }
+    }
+
+    // A high-contrast split texture used by the render tests below.
+    {
+        Image img(16, 16);
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 16; ++x)
+                img.SetPixel(x, y, x < 8 ? Color::White : Color::FromBytes(20, 20, 20));
+        RegisterTexture("@uvtest", img);
+    }
+
+    auto renderQuad = [](float scrollX, bool triplanar) {
+        Scene scene("UVR"); scene.physicsEnabled = false;
+        auto* mr = scene.CreateGameObject("Q")->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::FromName("Quad");
+        mr->unlit = !triplanar;          // triplanar needs the lit per-pixel path
+        mr->texture = "@uvtest";
+        mr->uvScroll = {scrollX, 0.0f};
+        mr->triplanar = triplanar;
+        Raster r; r.Resize(48, 48); r.Clear(0xFF000000u);
+        Mat4 view = Mat4::LookAt({0, 0, 3}, {0, 0, 0}, Vec3::Up);
+        Mat4 proj = Mat4::Perspective(50.0f, 1.0f, 0.1f, 100.0f);
+        RenderMeshes(r, scene, proj * view, {0, 0, 3});
+        return r;
+    };
+
+    // Scrolling UV: advancing time shifts the texture, so the image changes.
+    {
+        Time::Step(-Time::ElapsedTime());      // reset elapsed time to 0 (timeScale = 1)
+        Raster a = renderQuad(0.5f, false);
+        Time::Step(1.0f);                      // +1s -> +0.5 UV shift (half the texture)
+        Raster b = renderQuad(0.5f, false);
+        int diff = 0;
+        for (int i = 0; i < 48 * 48; ++i)
+            if (a.Get(i % 48, i / 48) != b.Get(i % 48, i / 48)) ++diff;
+        CHECK(diff > 0);                       // the texture scrolled
+    }
+
+    // Triplanar maps by world position, giving a different pattern than plain UVs.
+    {
+        Time::Step(-Time::ElapsedTime());
+        Raster uv  = renderQuad(0.0f, false);
+        Raster tri = renderQuad(0.0f, true);
+        int covered = 0, diff = 0;
+        for (int i = 0; i < 48 * 48; ++i) {
+            std::uint32_t cu = uv.Get(i % 48, i / 48), ct = tri.Get(i % 48, i / 48);
+            if (cu != 0xFF000000u || ct != 0xFF000000u) ++covered;
+            if (cu != ct) ++diff;
+        }
+        CHECK(covered > 0);
+        CHECK(diff > 0);                       // triplanar differs from UV mapping
+    }
+
     TEST_MAIN_RESULT();
 }

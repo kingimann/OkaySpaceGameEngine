@@ -8,6 +8,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Graphics/Image.hpp"
+#include "okay/Core/Time.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -375,6 +376,7 @@ public:
                        int toonBands = 0,
                        float matRimStr = 0.0f, float matRimPow = 3.0f,
                        float rimR = 1.0f, float rimG = 1.0f, float rimB = 1.0f,
+                       bool triplanar = false, float triTileX = 1.0f, float triTileY = 1.0f,
                        int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
@@ -509,7 +511,22 @@ public:
                     }
                 }
                 float br = base.r, bg = base.g, bb2 = base.b;
-                if (textured) {
+                if (textured && triplanar) {
+                    // Triplanar: blend three world-axis projections by |normal|, so the
+                    // texture wraps cliffs/terrain with no UV seams or stretching.
+                    auto frac = [](float x) { return x - std::floor(x); };
+                    const Image& img = (*mips)[0];
+                    float ax = std::fabs(n.x), ay = std::fabs(n.y), az = std::fabs(n.z);
+                    float s = ax + ay + az; if (s < 1e-5f) s = 1.0f;
+                    ax /= s; ay /= s; az /= s;
+                    Color cx = img.Sample(frac(wpos.z * triTileX), frac(wpos.y * triTileY)); // x-facing
+                    Color cy = img.Sample(frac(wpos.x * triTileX), frac(wpos.z * triTileY)); // y-facing
+                    Color cz = img.Sample(frac(wpos.x * triTileX), frac(wpos.y * triTileY)); // z-facing
+                    float tr = cx.r * ax + cy.r * ay + cz.r * az;
+                    float tg = cx.g * ax + cy.g * ay + cz.g * az;
+                    float tb = cx.b * ax + cy.b * ay + cz.b * az;
+                    br = tr * tint.r; bg = tg * tint.g; bb2 = tb * tint.b;
+                } else if (textured) {
                     float A = w0 * U[0] + w1 * U[1] + w2 * U[2];
                     float Av = w0 * V[0] + w1 * V[1] + w2 * V[2];
                     float iw = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
@@ -1175,6 +1192,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
         // The Unlit shader is equivalent to the unlit flag for the renderer.
         const bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        // Scrolling-UV offset (animated textures): advance the texture coordinates by
+        // the scroll speed * elapsed time. Added after tiling, like Unity's offset.
+        const float scrollU = mr->uvScroll.x * Time::ElapsedTime();
+        const float scrollV = mr->uvScroll.y * Time::ElapsedTime();
         Mat4 model = go->transform->LocalToWorldMatrix();
         const auto& v = mr->mesh.vertices;
         const auto& t = mr->mesh.triangles;
@@ -1351,7 +1372,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float nh = Vec3::Dot(nk, hv);
                     if (nh > 0.0f) spk = std::pow(nh, mr->shininess) * mr->specular;
                 }
-                in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y,
+                in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x + scrollU, vt * mr->tiling.y + scrollV,
                          lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok, spk};
             }
 
@@ -1451,7 +1472,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // Toon needs the per-pixel path (that's where the cel banding lives), so
             // it forces per-pixel lighting for its mesh regardless of the global toggle.
             const bool perPixel = (PerPixelLighting() || mr->shader == MeshRenderer::Shader::Toon
-                                   || mr->rimStrength > 0.0f)
+                                   || mr->rimStrength > 0.0f || mr->triplanar)
                                   && !unlit && !useMatcap;
             for (int j = 1; j + 1 < pn; ++j) {
                 const CV* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
@@ -1476,6 +1497,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     (mr->shader == MeshRenderer::Shader::Toon ? mr->toonBands : 0),
                                     mr->rimStrength, mr->rimPower,
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
+                                    mr->triplanar, mr->tiling.x, mr->tiling.y,
                                     bandY0, bandY1);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};

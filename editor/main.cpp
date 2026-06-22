@@ -473,6 +473,8 @@ bool g_wireframeAll = false;     // debug: draw every mesh as wireframe (Scene v
 bool g_showWorldAxes = false;    // debug: draw the world X/Y/Z axes at the origin
 bool g_showCamHud = true;        // debug: on-screen readout of Scene camera zoom/angle/position
 float g_editorFov = 50.0f;       // Scene-view camera vertical FOV (degrees)
+float g_editorNear = 0.3f;       // Scene-view camera near clip (Unity-like). Adjustable
+                                 // in Stats > Rendering > Debug view.
 // Debug capture: stash the last Scene-view camera so a button can re-render the
 // exact frame straight to a PNG (the true engine output, bypassing the display).
 Mat4 g_lastSceneVP; Vec3 g_lastSceneEye{0,0,0};
@@ -528,6 +530,7 @@ void LoadSettings() {
         else if (k == "showworldaxes") g_showWorldAxes = (v != 0);
         else if (k == "showcamhud") g_showCamHud = (v != 0);
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
+        else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
     }
 }
 void SaveSettings() {
@@ -542,7 +545,8 @@ void SaveSettings() {
       << "wireframeall " << (g_wireframeAll ? 1 : 0) << "\n"
       << "showworldaxes " << (g_showWorldAxes ? 1 : 0) << "\n"
       << "showcamhud " << (g_showCamHud ? 1 : 0) << "\n"
-      << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n";
+      << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n"
+      << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -2469,6 +2473,9 @@ void DrawStats(EditorState& ed) {
         if (ImGui::SliderFloat("Scene camera FOV", &g_editorFov, 20.0f, 110.0f, "%.0f deg")) SaveSettings();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Vertical field of view for the editor Scene camera.\nLower = flatter / more zoomed (less perspective\ndistortion); higher = wider / more stretched at edges.");
+        if (ImGui::SliderFloat("Scene near clip", &g_editorNear, 0.05f, 20.0f, "%.2f")) SaveSettings();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Near clip plane for the Scene camera. Higher = better depth\nprecision (stops surfaces z-fighting/flickering as you move),\nbut you can't view things closer than this. Default 5.");
         ImGui::Spacing();
         if (ImGui::Button("Save Scene view -> PNG (debug)") && g_lastSceneW > 0)
             g_captureScene = true;
@@ -7850,7 +7857,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
              Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
     Vec3 eye = ed.camTarget + dir * ed.camDist;
     Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
-    Mat4 proj = Mat4::Perspective(g_editorFov, canvasSize.x / canvasSize.y, 0.1f, 2000.0f);
+    Mat4 proj = Mat4::Perspective(g_editorFov, canvasSize.x / canvasSize.y, g_editorNear, 2000.0f);
     // The Game view renders through the scene's main camera instead.
     if (gameView) {
         if (Camera* mc = SceneCamera(ed.scene())) {
@@ -7882,14 +7889,21 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // their near edges and no longer matched the geometry. Clipping the segment to
     // the near plane keeps the visible part and the outline aligned with the mesh.
     auto clipLine = [&](Vec4 a, Vec4 b, ImU32 col, float th = 1.5f) {
-        const float wEps = 0.05f;
-        if (a.w < wEps && b.w < wEps) return;          // wholly behind the camera
+        // Clip to the TRUE near plane (z + w >= 0), exactly like the mesh renderer —
+        // NOT w > small. Clipping on w alone left endpoints between the camera and
+        // the near plane in play, where 1/w explodes; gizmo/grid lines then projected
+        // to enormous coordinates and SNAPPED/SWUNG as the camera zoomed (glitchy
+        // lines while moving). Clipping at the near plane lands endpoints at w≈near,
+        // so coordinates stay sane and the lines move smoothly.
+        float da = a.z + a.w, db = b.z + b.w;          // >0 = in front of near plane
+        if (da <= 0.0f && db <= 0.0f) return;          // wholly clipped
         auto lerp = [](const Vec4& p, const Vec4& q, float t) {
             return Vec4{p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t,
                         p.z + (q.z - p.z) * t, p.w + (q.w - p.w) * t};
         };
-        if (a.w < wEps)      a = lerp(a, b, (wEps - a.w) / (b.w - a.w));
-        else if (b.w < wEps) b = lerp(b, a, (wEps - b.w) / (a.w - b.w));
+        float t = da / (da - db);                      // param a->b where z+w crosses 0
+        if (da <= 0.0f)      a = lerp(a, b, t);
+        else if (db <= 0.0f) b = lerp(a, b, t);
         dl->AddLine(projClip(a), projClip(b), col, th);
     };
 

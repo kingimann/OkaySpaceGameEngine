@@ -16,13 +16,13 @@ public:
     /// How the background is filled each frame (Unity's Clear Flags).
     enum class ClearFlags { Skybox, SolidColor };
 
-    Projection projection = Projection::Orthographic;
+    Projection projection = Projection::Perspective;   // Unity default (2D scenes set Orthographic)
 
     /// Half the vertical viewing volume, in world units (orthographic).
     float orthographicSize = 5.0f;
     /// Vertical field of view in degrees (perspective).
     float fieldOfView = 60.0f;
-    float nearClip = 0.03f;
+    float nearClip = 0.3f;   // Unity-like near plane
     float farClip  = 1000.0f;
 
     /// Background fill mode and the color used when SolidColor.

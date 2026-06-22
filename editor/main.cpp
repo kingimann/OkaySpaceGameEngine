@@ -115,6 +115,7 @@ int main(int argc, char** argv) {
 #  include <windows.h>
 #else
 #  include <unistd.h>
+#  include <csignal>
 #endif
 
 #ifndef OKAY_ENGINE_VERSION
@@ -9043,9 +9044,68 @@ void DrawGameView(EditorState& ed) {
 
 } // namespace
 
+// ---- Launcher gate ---------------------------------------------------------
+// The editor may only be opened through the OkaySpace Launcher, and only while
+// that launcher is still running. The launcher passes "--launcher <pid>"; we
+// verify the token is present and that process is alive. Double-clicking the
+// editor directly (no token) bounces the user to the launcher instead.
+static bool ProcessAlive(unsigned long pid) {
+    if (pid == 0) return false;
+#if defined(_WIN32)
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
+    if (!h) return false;
+    bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    CloseHandle(h);
+    return alive;
+#else
+    return ::kill((pid_t)pid, 0) == 0;
+#endif
+}
+
+// Returns true if the editor is allowed to run. When not, it tries to open the
+// launcher (found next to this exe) and returns false so main() can exit.
+static bool PassesLauncherGate(int argc, char** argv) {
+    // Development / CI escape hatch: OKAY_DEV=1 or a --dev flag bypasses the gate.
+    if (const char* dev = std::getenv("OKAY_DEV"); dev && dev[0] && dev[0] != '0') return true;
+    unsigned long launcherPid = 0;
+    bool haveToken = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--dev") return true;
+        if (a == "--launcher" && i + 1 < argc) { launcherPid = std::strtoul(argv[i + 1], nullptr, 10); haveToken = true; }
+        else if (a.rfind("--launcher=", 0) == 0) { launcherPid = std::strtoul(a.c_str() + 11, nullptr, 10); haveToken = true; }
+    }
+    if (haveToken && ProcessAlive(launcherPid)) return true;
+
+    // Not launched by a live launcher: bounce to the launcher and refuse.
+    namespace sfs = std::filesystem;
+    std::error_code ec;
+    sfs::path dir = sfs::absolute(argv[0], ec).parent_path();
+    const char* names[] = {"okayspace-launcher.exe", "OkaySpaceLauncher.exe", "okayspace-launcher"};
+    sfs::path launcher;
+    for (const char* n : names) { sfs::path p = dir / n; if (sfs::exists(p, ec)) { launcher = p; break; } }
+    const char* msg = "OkaySpace Editor must be opened from the OkaySpace Launcher.\n\n"
+                      "Starting the launcher now...";
+    if (launcher.empty())
+        msg = "OkaySpace Editor must be opened from the OkaySpace Launcher,\n"
+              "but the launcher was not found next to the editor.";
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "OkaySpace", msg, nullptr);
+    if (!launcher.empty()) {
+#if defined(_WIN32)
+        std::string cmd = "start \"\" \"" + launcher.string() + "\"";
+#else
+        std::string cmd = "\"" + launcher.string() + "\" >/dev/null 2>&1 &";
+#endif
+        std::system(cmd.c_str());
+    }
+    return false;
+}
+
 int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
+
+    if (!PassesLauncherGate(argc, argv)) return 0;
 
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO |

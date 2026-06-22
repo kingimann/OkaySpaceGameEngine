@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.91.0  (camera + gizmo fixes)
+  - Editor grid/gizmo/selection lines now clip to the true near plane (z+w>=0)
+    like the mesh, instead of the camera plane (w>0.05). Before, a line endpoint
+    just in front of the camera projected with an exploding 1/w, so ground lines
+    snapped/swung while zooming.
+  - Camera component now defaults to Perspective (matching Unity; 2D scenes still
+    set Orthographic). Near clip back to a Unity-like 0.3.
+  - Scene view near clip is adjustable (Stats > Rendering > Debug view).
+
+v2.91.0  (bug-hunt batch)
+  - Fixed glitchy grid/gizmo lines on the ground while zooming. The editor's line
+    clipper (added when the selection box was made to hug geometry) clipped at the
+    camera plane (w > 0.05) instead of the true near plane, so a line endpoint just
+    in front of the camera projected with an exploding 1/w and the lines SNAPPED/
+    swung as you zoomed -- a regression that began when those ground lines were
+    fixed. Now clips at the real near plane (z + w >= 0) like the mesh, so grid and
+    selection lines stay put and move smoothly during zoom. (75 tests pass.)
+
 v2.90.0  (bug-hunt batch)
   - Fixed the 3D "glitchy zoom" on high-DPI / Windows-scaled displays. The window
     is high-DPI aware (renderer scales by the framebuffer scale), but the 3D view

@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.90.0  (bug-hunt batch)
+  - Fixed the 3D "glitchy zoom" on high-DPI / Windows-scaled displays. The window
+    is high-DPI aware (renderer scales by the framebuffer scale), but the 3D view
+    was rendered at LOGICAL resolution and then linearly UPSCALED to physical
+    pixels -- so the image was soft and, crucially, the whole surface shimmered/
+    crawled while the camera moved (the resample shifts sub-pixel each frame). It
+    didn't show in a still. Real engines render at native pixels; now this one does
+    too: the 3D view renders at the true physical resolution and maps 1:1 to the
+    screen -- sharp and stable in motion. (No-op on non-scaled displays.)
+  - Reverted v2.89's "render at half-res while the camera moves" (it traded sharp
+    motion for FPS; that softness during motion was itself a zoom artifact).
+
 v2.89.0  (bug-hunt batch)
   - Fixed the real "glitch when zooming in" -- it was FRAME-RATE STUTTER, not a
     rendering artifact. Zoomed in, a big surface (the ground) fills the whole view,

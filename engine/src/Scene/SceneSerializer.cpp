@@ -23,6 +23,8 @@
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/VirtualCamera.hpp"
+#include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Animator.hpp"
@@ -301,6 +303,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  camerafollow " << Quote(cf->targetName) << " "
             << cf->offset.x << " " << cf->offset.y << " " << cf->offset.z << " "
             << cf->smoothing << "\n";
+    }
+    if (auto* vc = go->GetComponent<VirtualCamera>()) {
+        out << "  vcam " << vc->priority << " " << Quote(vc->follow) << " " << Quote(vc->lookAt)
+            << " " << vc->followOffset.x << " " << vc->followOffset.y << " " << vc->followOffset.z
+            << " " << vc->positionDamping << " " << vc->rotationDamping
+            << " " << vc->fieldOfView << " " << vc->shakeAmplitude << " " << vc->shakeFrequency << "\n";
+    }
+    if (auto* cb = go->GetComponent<CinemachineBrain>()) {
+        out << "  cmbrain " << cb->blendTime << "\n";
     }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "
@@ -939,6 +950,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> off.x >> off.y >> off.z >> sm;
                     auto* cf = go->AddComponent<CameraFollow>();
                     cf->targetName = tgt; cf->offset = off; cf->smoothing = sm;
+                } else if (field == "vcam") {
+                    auto* vc = go->AddComponent<VirtualCamera>();
+                    in >> vc->priority;
+                    vc->follow = ReadQuoted(in);
+                    vc->lookAt = ReadQuoted(in);
+                    in >> vc->followOffset.x >> vc->followOffset.y >> vc->followOffset.z
+                       >> vc->positionDamping >> vc->rotationDamping
+                       >> vc->fieldOfView >> vc->shakeAmplitude >> vc->shakeFrequency;
+                } else if (field == "cmbrain") {
+                    auto* cb = go->AddComponent<CinemachineBrain>();
+                    in >> cb->blendTime;
                 } else if (field == "text") {
                     std::string str = ReadQuoted(in);
                     Color c; float px = 0.1f; int ss = 0; Vec2 sp;

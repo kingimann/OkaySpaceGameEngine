@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.99.0  (Cinemachine-style virtual cameras)
+  - New VirtualCamera component (Cinemachine-style): describes a *shot* — a Follow
+    target + offset (the body), a LookAt target (the aim), a lens (field of view),
+    position/rotation damping, and optional handheld noise (shake). It never renders.
+  - New CinemachineBrain component (lives on the main camera): each frame it solves
+    every virtual camera, makes the highest-priority enabled one "live", and eases the
+    real camera's pose + FOV toward it over a Blend Time when the live shot changes.
+  - Author several vcams and cut/blend between them just by changing priorities —
+    chase cams, cutscene framing, screen shake, etc.
+  - Full Inspector UI, GameObject > Create Virtual Camera, Add Component entries, and
+    scene serialization. New test suite (cinemachine); 76 tests pass.
+
 v2.98.0  (camera: layers, culling mask, physical camera)
   - Added Unity-style named Layers (32 layers; GameObject.layer). Each GameObject now
     sits on a layer, editable from a new Layer dropdown in the Inspector header.

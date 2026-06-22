@@ -1262,6 +1262,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
         if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
         if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
+        if (ImGui::MenuItem("Create Virtual Camera")) {
+            GameObject* g = ed.CreateEmpty("Virtual Camera");
+            g->AddComponent<VirtualCamera>();
+            ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
+        }
         ImGui::Separator();
         if (ImGui::BeginMenu("3D Object")) {       // every built-in primitive
             if (ImGui::MenuItem("Cube"))      { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
@@ -6079,6 +6084,43 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cf")) toRemove = cf;
         }
     }
+    if (auto* vc = go->GetComponent<VirtualCamera>()) {
+        if (CompHeader("Virtual Camera", vc, &toRemove)) {
+            if (ImGui::DragInt("Priority##vc", &vc->priority, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Highest enabled vcam becomes live (the brain blends to it).");
+            char fb[128];
+            std::strncpy(fb, vc->follow.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
+            if (ImGui::InputText("Follow##vc", fb, sizeof(fb))) { vc->follow = fb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject to position relative to (the body).");
+            char lb[128];
+            std::strncpy(lb, vc->lookAt.c_str(), sizeof(lb) - 1); lb[sizeof(lb) - 1] = '\0';
+            if (ImGui::InputText("Look At##vc", lb, sizeof(lb))) { vc->lookAt = lb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject to aim at (the aim).");
+            float off[3] = {vc->followOffset.x, vc->followOffset.y, vc->followOffset.z};
+            if (ImGui::DragFloat3("Follow Offset##vc", off, 0.05f)) { vc->followOffset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            ImGui::SeparatorText("Damping");
+            if (ImGui::DragFloat("Position##vcd", &vc->positionDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Rotation##vcd", &vc->rotationDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            ImGui::SeparatorText("Lens");
+            if (ImGui::SliderFloat("Field of View##vc", &vc->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+            ImGui::SeparatorText("Noise (handheld shake)");
+            if (ImGui::DragFloat("Amplitude##vcn", &vc->shakeAmplitude, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Frequency##vcn", &vc->shakeFrequency, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
+            ImGui::TextDisabled("Needs a Cinemachine Brain on the main camera.");
+            if (ImGui::SmallButton("Remove##vc")) toRemove = vc;
+        }
+    }
+    if (auto* cb = go->GetComponent<CinemachineBrain>()) {
+        if (CompHeader("Cinemachine Brain", cb, &toRemove)) {
+            if (ImGui::DragFloat("Blend Time##cb", &cb->blendTime, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to ease between virtual cameras (0 = cut).");
+            if (VirtualCamera* live = cb->LiveCamera())
+                ImGui::TextDisabled("Live: %s", live->gameObject ? live->gameObject->name.c_str() : "?");
+            else
+                ImGui::TextDisabled("Drives this Camera from virtual cameras.");
+            if (ImGui::SmallButton("Remove##cb")) toRemove = cb;
+        }
+    }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
         if (CompHeader("Text", tr, &toRemove)) {
             char buf[512];
@@ -6862,6 +6904,8 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<Camera>(), "Camera")) { go->AddComponent<Camera>(); ed.dirty = true; }
             if (item(!go->GetComponent<CameraFollow>(), "Camera Follow")) { go->AddComponent<CameraFollow>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VirtualCamera>(), "Virtual Camera")) { go->AddComponent<VirtualCamera>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CinemachineBrain>(), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Scripts");

@@ -176,7 +176,7 @@ public:
     void TriangleSmooth(const float* X, const float* Y, const float* D,
                         const float* LR, const float* LG, const float* LB,
                         const Color& base, float spec, float er, float eg, float eb,
-                        float fog, float fr, float fg, float fb,
+                        const float* FOG, float fr, float fg, float fb,
                         int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
@@ -212,6 +212,7 @@ public:
                 float cr = base.r * lr + spec + er;
                 float cg = base.g * lg + spec + eg;
                 float cb = base.b * lb + spec + eb;
+                float fog = (float)(w0 * FOG[0] + w1 * FOG[1] + w2 * FOG[2]);   // per-vertex (no seam)
                 if (fog > 0.0f) {
                     cr = cr * (1.0f - fog) + fr * fog;
                     cg = cg * (1.0f - fog) + fg * fog;
@@ -285,7 +286,7 @@ public:
                      const std::vector<Image>& mips, const Color& tint,
                      const float* LR, const float* LG, const float* LB, float spec,
                      float er, float eg, float eb,
-                     float fog, float fr, float fg, float fb,
+                     const float* FOG, float fr, float fg, float fb,
                      int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
@@ -330,6 +331,7 @@ public:
                 float cr = tc.r * tint.r * lr + spec + er;
                 float cg = tc.g * tint.g * lg + spec + eg;
                 float cb = tc.b * tint.b * lb + spec + eb;
+                float fog = (float)(w0 * FOG[0] + w1 * FOG[1] + w2 * FOG[2]);   // per-vertex (no seam)
                 if (fog > 0.0f) {
                     cr = cr * (1.0f - fog) + fr * fog;
                     cg = cg * (1.0f - fog) + fg * fog;
@@ -352,7 +354,7 @@ public:
                        const float* WXa, const float* WYa, const float* WZa,
                        const std::vector<Image>* mips, const Color& base, const Color& tint, const Vec3& eye,
                        float shininess, float specularK, float er, float eg, float eb,
-                       float fog, float fr, float fg, float fb,
+                       const float* FOG, float fr, float fg, float fb,
                        const std::vector<Image>* normalMips = nullptr,
                        const Vec3& tangent = Vec3{1, 0, 0}, float normalStrength = 1.0f,
                        float reflectivity = 0.0f,
@@ -530,6 +532,7 @@ public:
                     cg = cg * (1.0f - k) + env.y * f0g * k;
                     cb = cb * (1.0f - k) + env.z * f0b * k;
                 }
+                float fog = (float)(w0 * FOG[0] + w1 * FOG[1] + w2 * FOG[2]);   // per-vertex (no seam)
                 if (fog > 0.0f) {
                     cr = cr * (1.0f - fog) + fr * fog;
                     cg = cg * (1.0f - fog) + fg * fog;
@@ -1179,7 +1182,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // A clip-space vertex carrying its (unprojected) UV, for near-plane
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
-        struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz; };
+        struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz, fo; };
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
             Vec3 wp[3];
@@ -1243,8 +1246,17 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     // triangle diagonal even without per-pixel lighting.
                     lk = SceneLights::ShadeColor(wp[k], nk);
                 }
+                // Per-vertex fog factor (distance from the eye), interpolated across
+                // the triangle by the rasterizer. A single per-triangle factor made a
+                // hard diagonal seam on big quads (e.g. the ground) when fog was on.
+                float fok = 0.0f;
+                if (fogOn) {
+                    float dd = (wp[k] - eye).Magnitude();
+                    fok = (dd - rs.fogStart) / (rs.fogEnd - rs.fogStart);
+                    fok = fok < 0.0f ? 0.0f : (fok > 1.0f ? 1.0f : fok);
+                }
                 in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y,
-                         lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z};
+                         lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok};
             }
 
             // Per-triangle world-space tangent (from edges + UV deltas) for normal
@@ -1285,7 +1297,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                   A.lb + (B.lb - A.lb) * tt,
                                   A.nx + (B.nx - A.nx) * tt, A.ny + (B.ny - A.ny) * tt,
                                   A.nz + (B.nz - A.nz) * tt, A.wx + (B.wx - A.wx) * tt,
-                                  A.wy + (B.wy - A.wy) * tt, A.wz + (B.wz - A.wz) * tt};
+                                  A.wy + (B.wy - A.wy) * tt, A.wz + (B.wz - A.wz) * tt,
+                                  A.fo + (B.fo - A.fo) * tt};
                 }
             }
             if (pn < 3) continue;   // entirely behind the camera
@@ -1345,6 +1358,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 float sx[3], sy[3], sd[3], iw[3], uu[3], vv[3];
                 for (int k = 0; k < 3; ++k)
                     project(*tri[k], sx[k], sy[k], sd[k], iw[k], uu[k], vv[k]);
+                float fo[3] = {tri[0]->fo, tri[1]->fo, tri[2]->fo};   // per-vertex fog
                 if (perPixel) {
                     float nx[3] = {tri[0]->nx, tri[1]->nx, tri[2]->nx};
                     float ny[3] = {tri[0]->ny, tri[1]->ny, tri[2]->ny};
@@ -1355,7 +1369,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     r.TrianglePhong(sx, sy, sd, iw, uu, vv, nx, ny, nz, wx, wy, wz,
                                     tex, base, mr->color, eye, mr->shininess, mr->specular,
                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
-                                    fogF, fogR, fogG, fogB,
+                                    fo, fogR, fogG, fogB,
                                     normalMips, triTangent, mr->normalStrength,
                                     mr->reflectivity, specMips, mr->metallic, bandY0, bandY1);
                 } else if (tex) {
@@ -1364,14 +1378,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
                     r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, lr, lg, lb, spec,
                                   mr->emissive.r, mr->emissive.g, mr->emissive.b,
-                                  fogF, fogR, fogG, fogB, bandY0, bandY1);
+                                  fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else if (smooth) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
                     r.TriangleSmooth(sx, sy, sd, lr, lg, lb, base, spec,
                                      mr->emissive.r, mr->emissive.g, mr->emissive.b,
-                                     fogF, fogR, fogG, fogB, bandY0, bandY1);
+                                     fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else
                     r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1],
                                sx[2], sy[2], sd[2], abgr, bandY0, bandY1);

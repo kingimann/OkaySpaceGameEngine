@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.95.0  (renderer optimization, cont.)
+  - Extended the incremental-barycentric fast path to the remaining rasterizers
+    (flat/unlit and per-pixel/Phong), so every triangle path now advances the edge
+    functions by a constant per pixel instead of recomputing them. Unlit meshes and
+    per-pixel-lit scenes get the same fill-rate win. Output identical; 75 tests pass.
+
 v2.94.0  (renderer optimization)
   - Faster software rasterizer. The lit and textured triangle paths now use
     INCREMENTAL barycentric coordinates (computed once per scanline, then advanced

@@ -175,7 +175,7 @@ public:
     /// makes low-poly organic meshes look smooth without extra geometry.
     void TriangleSmooth(const float* X, const float* Y, const float* D,
                         const float* LR, const float* LG, const float* LB,
-                        const Color& base, float spec, float er, float eg, float eb,
+                        const Color& base, const float* SP, float er, float eg, float eb,
                         const float* FOG, float fr, float fg, float fb,
                         int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
@@ -209,6 +209,7 @@ public:
                 float lr = w0 * LR[0] + w1 * LR[1] + w2 * LR[2];
                 float lg = w0 * LG[0] + w1 * LG[1] + w2 * LG[2];
                 float lb = w0 * LB[0] + w1 * LB[1] + w2 * LB[2];
+                float spec = (float)(w0 * SP[0] + w1 * SP[1] + w2 * SP[2]);   // per-vertex (no seam)
                 float cr = base.r * lr + spec + er;
                 float cg = base.g * lg + spec + eg;
                 float cb = base.b * lb + spec + eb;
@@ -284,7 +285,7 @@ public:
     void TriangleTex(const float* X, const float* Y, const float* D,
                      const float* IW, const float* U, const float* V,
                      const std::vector<Image>& mips, const Color& tint,
-                     const float* LR, const float* LG, const float* LB, float spec,
+                     const float* LR, const float* LG, const float* LB, const float* SP,
                      float er, float eg, float eb,
                      const float* FOG, float fr, float fg, float fb,
                      int clipY0 = 0, int clipY1 = (1 << 30)) {
@@ -328,6 +329,7 @@ public:
                 float lr = w0 * LR[0] + w1 * LR[1] + w2 * LR[2];
                 float lg = w0 * LG[0] + w1 * LG[1] + w2 * LG[2];
                 float lb = w0 * LB[0] + w1 * LB[1] + w2 * LB[2];
+                float spec = (float)(w0 * SP[0] + w1 * SP[1] + w2 * SP[2]);   // per-vertex (no seam)
                 float cr = tc.r * tint.r * lr + spec + er;
                 float cg = tc.g * tint.g * lg + spec + eg;
                 float cb = tc.b * tint.b * lb + spec + eb;
@@ -1182,7 +1184,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // A clip-space vertex carrying its (unprojected) UV, for near-plane
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
-        struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz, fo; };
+        struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz, fo, sp; };
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
             Vec3 wp[3];
@@ -1255,8 +1257,19 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     fok = (dd - rs.fogStart) / (rs.fogEnd - rs.fogStart);
                     fok = fok < 0.0f ? 0.0f : (fok > 1.0f ? 1.0f : fok);
                 }
+                // Per-vertex Blinn-Phong specular, interpolated by the rasterizer. A
+                // single per-triangle value (from the centroid) made a hard diagonal
+                // highlight seam on big quads like a shiny ground.
+                float spk = 0.0f;
+                if (!mr->unlit && mr->specular > 0.0f) {
+                    Vec3 toL = SceneLight::Direction() * -1.0f;
+                    Vec3 toE = (eye - wp[k]).Normalized();
+                    Vec3 hv = (toL.Normalized() + toE).Normalized();
+                    float nh = Vec3::Dot(nk, hv);
+                    if (nh > 0.0f) spk = std::pow(nh, mr->shininess) * mr->specular;
+                }
                 in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y,
-                         lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok};
+                         lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok, spk};
             }
 
             // Per-triangle world-space tangent (from edges + UV deltas) for normal
@@ -1298,7 +1311,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                   A.nx + (B.nx - A.nx) * tt, A.ny + (B.ny - A.ny) * tt,
                                   A.nz + (B.nz - A.nz) * tt, A.wx + (B.wx - A.wx) * tt,
                                   A.wy + (B.wy - A.wy) * tt, A.wz + (B.wz - A.wz) * tt,
-                                  A.fo + (B.fo - A.fo) * tt};
+                                  A.fo + (B.fo - A.fo) * tt, A.sp + (B.sp - A.sp) * tt};
                 }
             }
             if (pn < 3) continue;   // entirely behind the camera
@@ -1359,6 +1372,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 for (int k = 0; k < 3; ++k)
                     project(*tri[k], sx[k], sy[k], sd[k], iw[k], uu[k], vv[k]);
                 float fo[3] = {tri[0]->fo, tri[1]->fo, tri[2]->fo};   // per-vertex fog
+                float sp3[3] = {tri[0]->sp, tri[1]->sp, tri[2]->sp};  // per-vertex specular
                 if (perPixel) {
                     float nx[3] = {tri[0]->nx, tri[1]->nx, tri[2]->nx};
                     float ny[3] = {tri[0]->ny, tri[1]->ny, tri[2]->ny};
@@ -1376,14 +1390,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
-                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, lr, lg, lb, spec,
+                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, lr, lg, lb, sp3,
                                   mr->emissive.r, mr->emissive.g, mr->emissive.b,
                                   fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else if (smooth) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
-                    r.TriangleSmooth(sx, sy, sd, lr, lg, lb, base, spec,
+                    r.TriangleSmooth(sx, sy, sd, lr, lg, lb, base, sp3,
                                      mr->emissive.r, mr->emissive.g, mr->emissive.b,
                                      fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.80.0
+  - The 3D ground is now a flat PLANE instead of a 1-unit-thick cube slab. The old
+    slab had vertical side walls; when the follow camera dropped near an edge you
+    saw that wall edge-on as a dark wedge, which read as "the floor isn't square /
+    there's a glitch at the edge." A plane has no sides, so the floor is just a flat
+    square surface from every angle. Same 40×40 footprint (24×24 for 3D Platformer) —
+    NOT enlarged. The collider is unchanged: a thin box whose top is still flush at
+    y=0 (offset down by 0.5), so the player stands and falls exactly as before.
+
 v2.79.0
   - Added a "Gizmos" toggle (View menu): hide the editor-only Scene overlays — the
     yellow selection bounding box, camera frustum, and light icons — for a clean

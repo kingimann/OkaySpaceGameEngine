@@ -3,8 +3,11 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Math/Mathf.hpp"
+#include "okay/Input/Input.hpp"
 #include <cmath>
 #include <string>
 
@@ -60,6 +63,21 @@ public:
     /// (explosion, landing, hit) and the live camera kicks, then settles. Additive.
     void AddImpulse(float strength) { m_impulse += strength; }
 
+    /// FreeLook (Cinemachine's orbital rig): orbit the Follow target on a sphere,
+    /// driven by yaw/pitch. When on, this overrides the body offset and aim — the
+    /// camera always frames the target. Great for 3rd-person player cameras.
+    bool freeLook = false;
+    float orbitYaw = 0.0f;       ///< horizontal orbit angle (deg)
+    float orbitPitch = 15.0f;    ///< vertical orbit angle (deg), clamped below
+    float orbitRadius = 8.0f;    ///< distance from the target
+    float orbitHeight = 1.0f;    ///< height of the orbit pivot above the target
+    float orbitMinPitch = -20.0f, orbitMaxPitch = 70.0f;
+    /// Drive yaw/pitch from the mouse. orbitButton = mouse button to hold (-1 = always);
+    /// mouseSensitivity scales the look speed.
+    bool orbitInput = true;
+    int  orbitButton = 1;        ///< 1 = right mouse button
+    float mouseSensitivity = 0.2f;
+
     /// Advance the solved pose one step toward the targets. Driven by the brain so
     /// every vcam solves exactly once per frame, in a defined order.
     void Solve(float dt) {
@@ -69,8 +87,28 @@ public:
         GameObject* f = follow.empty() ? nullptr : s->Find(follow);
         GameObject* l = lookAt.empty() ? nullptr : s->Find(lookAt);
 
+        // FreeLook orbit rig: position is a point on a sphere around the target pivot.
+        bool freeLookActive = freeLook && f && f->transform;
+        Vec3 flPivot{0.0f, 0.0f, 0.0f};
+
         Vec3 desiredPos = transform->Position();
-        if (f && f->transform) {
+        if (freeLookActive) {
+            if (orbitInput) {
+                Vec2 m = Input::MousePosition();
+                if (!m_mouseInit) { m_lastMouse = m; m_mouseInit = true; }
+                Vec2 d = m - m_lastMouse;
+                m_lastMouse = m;
+                bool active = (orbitButton < 0) || Input::GetMouseButton(orbitButton);
+                if (active) {
+                    orbitYaw   += d.x * mouseSensitivity;
+                    orbitPitch -= d.y * mouseSensitivity;
+                }
+            }
+            orbitPitch = Mathf::Clamp(orbitPitch, orbitMinPitch, orbitMaxPitch);
+            flPivot = f->transform->Position() + Vec3{0.0f, orbitHeight, 0.0f};
+            Quat orot = Quat::Euler(orbitPitch, orbitYaw, 0.0f);
+            desiredPos = flPivot + orot * Vec3{0.0f, 0.0f, -orbitRadius};
+        } else if (f && f->transform) {
             // LockToTarget orbits the offset with the target's heading (chase cam);
             // WorldSpace keeps it axis-aligned (a fixed framing).
             Vec3 worldOffset = (bindingMode == BindingMode::LockToTarget)
@@ -86,7 +124,10 @@ public:
 
         // Aim from the (damped) body position so the shot stays framed while easing.
         Quat desiredRot = m_rot;
-        if (l && l->transform) {
+        if (freeLookActive) {
+            Vec3 dir = flPivot - m_pos;
+            if (dir.SqrMagnitude() > 1e-8f) desiredRot = Quat::LookRotation(dir);
+        } else if (l && l->transform) {
             Vec3 dir = (l->transform->Position() + lookAtOffset) - m_pos;
             if (dir.SqrMagnitude() > 1e-8f) {
                 // Composer dead zone: keep the current aim while the target stays within
@@ -142,6 +183,8 @@ private:
     float m_noiseT = 0.0f;
     float m_impulse = 0.0f;   // current one-shot impulse amplitude (decays)
     float m_impulseT = 0.0f;
+    Vec2 m_lastMouse{0.0f, 0.0f};
+    bool m_mouseInit = false;
 
     /// Smooth 1-D value noise in [-1,1] (interpolated hash). Good enough for shake.
     static float Noise(float t, float seed) {

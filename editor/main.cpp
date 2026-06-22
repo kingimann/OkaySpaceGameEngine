@@ -6099,6 +6099,23 @@ void DrawInspector(EditorState& ed) {
             const char* bms[] = {"World Space", "Lock To Target (orbital)"};
             if (ImGui::Combo("Binding Mode##vc", &bm, bms, 2)) { vc->bindingMode = (VirtualCamera::BindingMode)bm; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock To Target orbits the offset with the target's facing\n(3rd-person chase cam).");
+            ImGui::SeparatorText("FreeLook (orbit rig)");
+            if (ImGui::Checkbox("FreeLook##vc", &vc->freeLook)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Orbit the Follow target on a sphere (overrides offset + aim).\nGreat for 3rd-person player cameras.");
+            if (vc->freeLook) {
+                if (ImGui::DragFloat("Radius##vcfl", &vc->orbitRadius, 0.1f, 0.1f, 200.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Pivot Height##vcfl", &vc->orbitHeight, 0.05f)) ed.dirty = true;
+                if (ImGui::DragFloat("Yaw##vcfl", &vc->orbitYaw, 0.5f)) ed.dirty = true;
+                if (ImGui::DragFloat("Pitch##vcfl", &vc->orbitPitch, 0.5f)) ed.dirty = true;
+                float pc[2] = {vc->orbitMinPitch, vc->orbitMaxPitch};
+                if (ImGui::DragFloat2("Pitch Min/Max##vcfl", pc, 0.5f, -89.0f, 89.0f)) { vc->orbitMinPitch = pc[0]; vc->orbitMaxPitch = pc[1]; ed.dirty = true; }
+                if (ImGui::Checkbox("Mouse Look##vcfl", &vc->orbitInput)) ed.dirty = true;
+                if (vc->orbitInput) {
+                    if (ImGui::DragInt("Mouse Button##vcfl", &vc->orbitButton, 0.1f, -1, 4)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold this mouse button to orbit (-1 = always; 1 = right button).");
+                    if (ImGui::DragFloat("Sensitivity##vcfl", &vc->mouseSensitivity, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+                }
+            }
             ImGui::SeparatorText("Aim");
             char lb[128];
             std::strncpy(lb, vc->lookAt.c_str(), sizeof(lb) - 1); lb[sizeof(lb) - 1] = '\0';

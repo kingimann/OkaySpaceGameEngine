@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.101.0  (Cinemachine, cont.: FreeLook orbital rig)
+  - Virtual cameras gained a FreeLook mode (Cinemachine's orbital rig): orbit the
+    Follow target on a sphere by yaw/pitch at a fixed radius, with a pivot height and
+    pitch clamp. When on, it overrides the body offset and aim — the camera always
+    frames the target. Ideal for 3rd-person player cameras.
+  - Optional mouse-look drives yaw/pitch (hold a configurable button, with adjustable
+    sensitivity), or set the angles from a script/controller.
+  - Full Inspector UI and back-compatible serialization. Cinemachine test suite
+    extended (orbit stays on the sphere as yaw sweeps); 76 tests pass.
+
 v2.100.0  (Cinemachine, cont.: binding modes, composer, impulse)
   - Virtual cameras gained a Binding Mode: World Space (fixed framing) or Lock To
     Target — an orbital/3rd-person chase cam whose offset rotates with the target's

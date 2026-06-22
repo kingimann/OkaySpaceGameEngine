@@ -312,7 +312,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended (back-compatible trailing fields)
             << " " << (int)vc->bindingMode
             << " " << vc->lookAtOffset.x << " " << vc->lookAtOffset.y << " " << vc->lookAtOffset.z
-            << " " << vc->aimDeadZone << " " << vc->impulseDecay << "\n";
+            << " " << vc->aimDeadZone << " " << vc->impulseDecay
+            // freelook block (back-compatible trailing fields)
+            << " " << (vc->freeLook ? 1 : 0) << " " << vc->orbitYaw << " " << vc->orbitPitch
+            << " " << vc->orbitRadius << " " << vc->orbitHeight
+            << " " << vc->orbitMinPitch << " " << vc->orbitMaxPitch
+            << " " << (vc->orbitInput ? 1 : 0) << " " << vc->orbitButton << " " << vc->mouseSensitivity << "\n";
     }
     if (auto* cb = go->GetComponent<CinemachineBrain>()) {
         out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
@@ -969,6 +974,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> bm >> vc->lookAtOffset.x >> vc->lookAtOffset.y >> vc->lookAtOffset.z
                            >> vc->aimDeadZone >> vc->impulseDecay;
                         vc->bindingMode = (VirtualCamera::BindingMode)bm;
+                    }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int fl = 0, oi = 1;
+                        in >> fl >> vc->orbitYaw >> vc->orbitPitch >> vc->orbitRadius >> vc->orbitHeight
+                           >> vc->orbitMinPitch >> vc->orbitMaxPitch >> oi >> vc->orbitButton >> vc->mouseSensitivity;
+                        vc->freeLook = (fl != 0);
+                        vc->orbitInput = (oi != 0);
                     }
                 } else if (field == "cmbrain") {
                     auto* cb = go->AddComponent<CinemachineBrain>();

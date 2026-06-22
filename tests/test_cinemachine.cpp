@@ -150,5 +150,34 @@ int main() {
         CHECK_NEAR((camGO->transform->Position() - base).Magnitude(), 0.0f, 0.05f);  // settled
     }
 
+    // FreeLook orbits the target at a fixed radius; yaw moves the camera around it.
+    {
+        Scene s("CM6"); s.physicsEnabled = false;
+        GameObject* t = s.CreateGameObject("T");
+        t->transform->localPosition = {0, 0, 0};
+        GameObject* camGO = s.CreateGameObject("Cam");
+        camGO->AddComponent<Camera>();
+        camGO->AddComponent<CinemachineBrain>()->blendTime = 0.0f;
+        GameObject* v = s.CreateGameObject("V");
+        auto* vc = v->AddComponent<VirtualCamera>();
+        vc->follow = "T"; vc->freeLook = true; vc->orbitInput = false;  // drive angles directly
+        vc->orbitRadius = 10.0f; vc->orbitHeight = 0.0f; vc->orbitPitch = 0.0f;
+        vc->positionDamping = 0.0f; vc->rotationDamping = 0.0f; vc->priority = 10;
+
+        vc->orbitYaw = 0.0f;
+        s.Start();
+        s.Update(0.016f);
+        Vec3 p0 = camGO->transform->Position();
+        // Pitch 0, yaw 0 => directly behind on -Z at radius 10.
+        CHECK_NEAR(p0.z, -10.0f, 0.2f);
+        CHECK_NEAR((p0 - Vec3{0,0,0}).Magnitude(), 10.0f, 0.2f);   // on the orbit sphere
+
+        vc->orbitYaw = 90.0f;
+        s.Update(0.016f);
+        Vec3 p1 = camGO->transform->Position();
+        CHECK(std::fabs(p1.x) > 9.0f);                            // swung onto the X axis
+        CHECK_NEAR((p1 - Vec3{0,0,0}).Magnitude(), 10.0f, 0.2f);  // still on the sphere
+    }
+
     TEST_MAIN_RESULT();
 }

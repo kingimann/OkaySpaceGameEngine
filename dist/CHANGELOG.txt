@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.87.0  (bug-hunt batch)
+  - Fixed specular highlights computed PER-TRIANGLE: a single Blinn-Phong value
+    from the triangle centroid made a hard diagonal highlight seam on big quads
+    (e.g. a shiny ground). Specular is now per-vertex and interpolated across the
+    triangle in the smooth/textured paths, so highlights are smooth. Verified
+    before/after on a shiny ground. (75 tests pass.)
+
 v2.86.0  (bug-hunt batch)
   - Fixed distance fog computed PER-TRIANGLE: each triangle got one fog value from
     its centroid distance, so a big 2-triangle quad (e.g. the ground) showed a hard

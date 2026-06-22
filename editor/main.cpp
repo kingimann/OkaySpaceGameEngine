@@ -145,11 +145,16 @@ SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
-int g_ssaa = 2;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
-                  // ON by default: without it, 3D edges are hard 1px stair-steps that
-                  // CRAWL/shimmer as the camera moves (reads as a "glitch when zooming").
-                  // Auto-performance drops it to 1 on heavy/large views to keep FPS.
+int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
+                  // Default OFF: 2x quadruples the pixels the software renderer must
+                  // fill, which tanks FPS when a big surface (the ground) fills the
+                  // view zoomed in — turning camera motion choppy. Opt in if you have
+                  // the headroom (View > "3D Anti-aliasing (2x)").
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
+// While the Scene camera is moving, the 3D view renders at reduced resolution for a
+// few frames so motion stays smooth even when a big surface fills the screen; it
+// snaps back to full resolution the moment the camera settles. >0 = still moving.
+int  g_camMotionFrames = 0;
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
 
@@ -178,9 +183,17 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // texture is drawn STRETCHED to the panel, so a smaller buffer upscales for
     // free (linear filtered) — a near-linear FPS win for the software renderer.
     float scale = g_renderScale < 0.25f ? 0.25f : (g_renderScale > 1.0f ? 1.0f : g_renderScale);
+    int ss = g_ssaa;
+    // Dynamic resolution while the Scene camera moves: a big surface (the ground)
+    // can fill the whole view when zoomed in, so the per-pixel fill cost spikes and
+    // FPS drops — making motion choppy. Halve the buffer (and drop supersampling)
+    // during motion for smooth panning/zooming; it snaps back to full res on settle.
+    if (slot == 0 && g_camMotionFrames > 0) {
+        scale *= 0.5f;
+        ss = 1;
+    }
     int rw = (int)(w * scale); if (rw < 1) rw = 1;
     int rh = (int)(h * scale); if (rh < 1) rh = 1;
-    int ss = g_ssaa;
     // Auto-performance: drop supersampling on heavy scenes OR very large viewports
     // (the supersampled buffer is rw*rh*ss*ss pixels — keep that within a budget so
     // 2x AA never tanks FPS on a big window).
@@ -7862,6 +7875,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView) {   // remember this exact frame for the debug PNG capture
         g_lastSceneVP = vp; g_lastSceneEye = eye;
         g_lastSceneW = (int)canvasSize.x; g_lastSceneH = (int)canvasSize.y;
+        // Detect Scene-camera motion to drive dynamic resolution (smooth panning).
+        static float pYaw = 1e9f, pPitch = 0, pDist = 0; static Vec3 pTgt{1e9f, 0, 0};
+        bool moved = std::fabs(ed.camYaw - pYaw) > 1e-3f || std::fabs(ed.camPitch - pPitch) > 1e-3f ||
+                     std::fabs(ed.camDist - pDist) > 1e-3f || (ed.camTarget - pTgt).Magnitude() > 1e-3f;
+        pYaw = ed.camYaw; pPitch = ed.camPitch; pDist = ed.camDist; pTgt = ed.camTarget;
+        if (moved) g_camMotionFrames = 5;
+        else if (g_camMotionFrames > 0) --g_camMotionFrames;
     }
 
     auto toScreen = [&](const Vec4& c, ImVec2& out) -> bool {

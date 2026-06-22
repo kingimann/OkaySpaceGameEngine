@@ -26,8 +26,19 @@ public:
     bool  showPercent = false;
     Color textColor = Color::White;
 
+    /// Indeterminate spinner: spin the arc continuously (loading, busy). With a small
+    /// `value` (e.g. 0.25) this is the classic rotating loader. spinSpeed is deg/sec.
+    bool  spin = false;
+    float spinSpeed = 220.0f;
+
     float Fraction() const { return Mathf::Clamp01(value); }
     void SetValue(float v) { value = Mathf::Clamp01(v); }
+
+    void Update(float dt) override {
+        if (spin) { m_spin += spinSpeed * dt; m_spin = std::fmod(m_spin, 360.0f); }
+    }
+    /// The start angle the renderer should use (includes the spinner rotation).
+    float EffectiveStart() const { return startAngle + m_spin; }
 
     /// Classify a local pixel (px,py) within the w x h box: 0 = outside the ring,
     /// 1 = ring background (unfilled), 2 = ring fill. Shared by the renderer (and
@@ -48,6 +59,9 @@ public:
         a = std::fmod(a, 360.0f); if (a < 0.0f) a += 360.0f;
         return (a <= Mathf::Clamp01(value) * 360.0f) ? Fill : Track;
     }
+
+private:
+    float m_spin = 0.0f;   // accumulated spinner rotation (degrees)
 };
 
 } // namespace okay

@@ -6801,6 +6801,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ring width in px (0 = filled pie)");
             if (ImGui::DragFloat("Start Angle##urp", &rp->startAngle, 1.0f, -360.0f, 360.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::Checkbox("Clockwise##urp", &rp->clockwise)) ed.dirty = true;
+            if (ImGui::Checkbox("Spin (loader)##urp", &rp->spin)) ed.dirty = true;
+            if (rp->spin)
+                if (ImGui::DragFloat("Spin Speed##urp", &rp->spinSpeed, 2.0f, -1080.0f, 1080.0f, "%.0f deg/s")) ed.dirty = true;
             float bgc[4] = {rp->background.r, rp->background.g, rp->background.b, rp->background.a};
             if (ImGui::ColorEdit4("Track##urp", bgc)) { rp->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
             float flc[4] = {rp->fill.r, rp->fill.g, rp->fill.b, rp->fill.a};

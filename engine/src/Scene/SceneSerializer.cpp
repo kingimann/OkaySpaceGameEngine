@@ -546,7 +546,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << rp->background.r << " " << rp->background.g << " " << rp->background.b << " " << rp->background.a << " "
             << rp->fill.r << " " << rp->fill.g << " " << rp->fill.b << " " << rp->fill.a
             << " " << (int)rp->anchor << " " << (rp->showPercent ? 1 : 0) << " "
-            << rp->textColor.r << " " << rp->textColor.g << " " << rp->textColor.b << " " << rp->textColor.a << "\n";
+            << rp->textColor.r << " " << rp->textColor.g << " " << rp->textColor.b << " " << rp->textColor.a
+            << " " << (rp->spin ? 1 : 0) << " " << rp->spinSpeed << "\n";   // extended (back-compatible)
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -1442,6 +1443,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> an >> sp >> tc.r >> tc.g >> tc.b >> tc.a;
                     rp->clockwise = (cw != 0); rp->background = bg; rp->fill = fl;
                     rp->anchor = (UIAnchor)an; rp->showPercent = (sp != 0); rp->textColor = tc;
+                    in >> std::ws; // optional spinner (added later)
+                    if (std::isdigit(in.peek())) { int sn = 0; in >> sn >> rp->spinSpeed; rp->spin = (sn != 0); }
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
                     Color c;

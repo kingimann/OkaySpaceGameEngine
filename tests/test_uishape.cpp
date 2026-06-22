@@ -169,5 +169,20 @@ int main() {
         }
     }
 
+    // Radial spinner: the effective start angle advances over time and round-trips.
+    {
+        Scene s("SP"); s.physicsEnabled = false;
+        auto* rp = s.CreateGameObject("R")->AddComponent<UIRadialProgress>();
+        rp->spin = true; rp->spinSpeed = 360.0f; rp->startAngle = 0.0f;
+        CHECK_NEAR(rp->EffectiveStart(), 0.0f, 1e-4f);
+        for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);   // ~0.5s -> ~180 deg
+        CHECK(rp->EffectiveStart() > 90.0f);
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* r2 = s2.Find("R") ? s2.Find("R")->GetComponent<UIRadialProgress>() : nullptr;
+        CHECK(r2 && r2->spin);
+        if (r2) CHECK_NEAR(r2->spinSpeed, 360.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

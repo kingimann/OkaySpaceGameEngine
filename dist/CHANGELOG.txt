@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.112.0  (UI: radial spinner / indeterminate loader)
+  - UIRadialProgress gains a Spin mode: the arc rotates continuously (spinSpeed deg/s)
+    for an indeterminate loading spinner — with a small value it's the classic loader.
+    EffectiveStart() feeds the renderer the live rotation; a Update() advances it.
+  - Inspector Spin + Spin Speed controls, back-compatible serialization. uishape suite
+    extended (spinner advance + round-trip); 78 tests pass.
+
 v2.111.0  (UI: new Radial Progress widget — rings & pies)
   - New UIRadialProgress component: a circular/ring progress indicator (cooldowns,
     loaders, skill timers, score dials) — the radial counterpart to UIProgressBar.

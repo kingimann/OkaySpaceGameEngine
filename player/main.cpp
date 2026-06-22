@@ -715,7 +715,7 @@ int main(int argc, char** argv) {
             for (int y = 0; y < bh; ++y)
                 for (int x = 0; x < bw; ++x) {
                     int reg = UIRadialProgress::Sample((float)bw, (float)bh, rp->thickness,
-                                                       rp->startAngle, rp->clockwise, rp->value,
+                                                       rp->EffectiveStart(), rp->clockwise, rp->value,
                                                        x + 0.5f, y + 0.5f);
                     if (reg == UIRadialProgress::Outside) continue;
                     const Color& c = (reg == UIRadialProgress::Fill) ? rp->fill : rp->background;

@@ -1244,16 +1244,24 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 triTangent = tl > 1e-6f ? T * (1.0f / tl) : Vec3{1, 0, 0};
             }
 
-            // Sutherland-Hodgman clip against the near plane (w > NEAR).
-            const float NEAR = 1e-4f;
+            // Sutherland-Hodgman clip against the true near plane. The plane is
+            // z_clip >= -w_clip (NDC z >= -1), NOT just w > 0. Clipping on w alone
+            // left geometry BETWEEN the camera and the near plane in the pipeline,
+            // where 1/w explodes (up to ~1e4x) and projects vertices to gigantic
+            // screen coordinates — precision blows up and the surface glitches when
+            // you zoom in very close. Using the real near plane removes that zone
+            // and keeps every drawn fragment's depth inside [-1,1].
+            const float CLIP_EPS = 1e-5f;
+            auto nearDist = [](const CV& c) { return c.z + c.w; };   // >0 = in front of near
             CV poly[8]; int pn = 0;
             for (int e = 0; e < 3; ++e) {
                 const CV& A = in[e];
                 const CV& B = in[(e + 1) % 3];
-                bool inA = A.w > NEAR, inB = B.w > NEAR;
+                float dA = nearDist(A), dB = nearDist(B);
+                bool inA = dA > CLIP_EPS, inB = dB > CLIP_EPS;
                 if (inA) poly[pn++] = A;
                 if (inA != inB) {
-                    float tt = (NEAR - A.w) / (B.w - A.w);
+                    float tt = dA / (dA - dB);
                     poly[pn++] = {A.x + (B.x - A.x) * tt, A.y + (B.y - A.y) * tt,
                                   A.z + (B.z - A.z) * tt, A.w + (B.w - A.w) * tt,
                                   A.u + (B.u - A.u) * tt, A.v + (B.v - A.v) * tt,

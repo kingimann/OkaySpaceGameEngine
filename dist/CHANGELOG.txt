@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.84.0
+  - Fixed a real near-plane clipping bug: triangles were clipped on w > 1e-4
+    (the camera plane) instead of the true near plane (z_clip >= -w_clip). That
+    left geometry BETWEEN the camera and the near plane in the pipeline, where
+    1/w explodes (~1e4x) and projects vertices to gigantic screen coordinates —
+    precision breaks down and surfaces can glitch when you zoom in very close.
+    Now clips on the actual near plane, so close-up geometry stays stable and
+    every drawn fragment's depth is inside [-1,1]. (75 tests pass; verified no
+    regression across normal, grazing, and camera-in-plane views.)
+  - New debug tool: Stats > Rendering > Debug view > "Save Scene view -> PNG".
+    Writes the EXACT pixels the engine renders for the current Scene view to
+    scene_capture.png, bypassing the screen/monitor. Lets a glitch be captured
+    as true engine output (rules out camera-photo moire / display artifacts).
+
 v2.83.0
   - Scene view: on-screen Camera HUD (top-left) showing the orbit camera's zoom
     distance, yaw/pitch angle, eye position, target, and FOV. A screenshot now

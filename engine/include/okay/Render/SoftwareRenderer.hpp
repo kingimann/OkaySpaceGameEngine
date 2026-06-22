@@ -153,21 +153,23 @@ public:
         float area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
         if (area == 0.0f) return;
         float inv = 1.0f / area;
+        // Incremental barycentric (linear in x): compute per scanline, step per pixel.
+        // Double precision avoids float cancellation across screen-filling triangles.
+        const double dInv = (double)inv;
+        const double dw0 = (double)(y1 - y2) * dInv;
+        const double dw1 = (double)(y2 - y0) * dInv;
         for (int y = minY; y <= maxY; ++y) {
-            for (int x = minX; x <= maxX; ++x) {
-                // Double precision avoids catastrophic float cancellation near edges
-                // of very large (screen-filling) triangles — the cause of the torn
-                // ground silhouette, dashed edge cracks and faint depth banding.
-                double px = x + 0.5, py = y + 0.5;
-                double w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * (double)inv;
-                double w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * (double)inv;
+            const double py = y + 0.5, pxs = minX + 0.5;
+            double w0 = ((x1 - pxs) * (y2 - py) - (x2 - pxs) * (y1 - py)) * dInv;
+            double w1 = ((x2 - pxs) * (y0 - py) - (x0 - pxs) * (y2 - py)) * dInv;
+            const std::size_t rowBase = (std::size_t)y * width;
+            for (int x = minX; x <= maxX; ++x, w0 += dw0, w1 += dw1) {
                 double w2 = 1.0 - w0 - w1;
                 // Edge bias: accept pixels a hair past an edge so adjacent triangles
-                // overlap by ~1px instead of leaving a crack that shows the sky
-                // through (the dashed seams). The depth test resolves the overlap.
-                if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
-                float d = w0 * d0 + w1 * d1 + w2 * d2;
-                std::size_t i = (std::size_t)y * width + x;
+                // overlap by ~1px instead of leaving a crack (dashed seams).
+                if (w0 < -1e-3 || w1 < -1e-3 || w2 < -1e-3) continue;
+                float d = (float)(w0 * d0 + w1 * d1 + w2 * d2);
+                std::size_t i = rowBase + x;
                 if (d > depth[i] + 1e-6f) { depth[i] = d; color[i] = abgr; }   // W-buffer: larger 1/w = nearer
             }
         }
@@ -400,22 +402,22 @@ public:
         const float rimPow    = RimPower();
         const bool  shadowsOn = Shadows().enabled;
         const bool  envOn     = EnvSky().enabled;
+        // Incremental barycentric (linear in x): per-scanline init, per-pixel step.
+        // Double precision avoids float cancellation across screen-filling triangles.
+        const double dInv = (double)inv;
+        const double dw0 = (double)(Y[1] - Y[2]) * dInv;
+        const double dw1 = (double)(Y[2] - Y[0]) * dInv;
         for (int y = minY; y <= maxY; ++y) {
-            for (int x = minX; x <= maxX; ++x) {
-                // Double precision avoids float cancellation across huge triangles
-                // (torn silhouettes / edge cracks / depth banding on big grounds).
-                double px = x + 0.5, py = y + 0.5;
-                double w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * (double)inv;
-                double w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * (double)inv;
+            const double py = y + 0.5, pxs = minX + 0.5;
+            double w0 = ((X[1] - pxs) * (Y[2] - py) - (X[2] - pxs) * (Y[1] - py)) * dInv;
+            double w1 = ((X[2] - pxs) * (Y[0] - py) - (X[0] - pxs) * (Y[2] - py)) * dInv;
+            const std::size_t rowBase = (std::size_t)y * width;
+            for (int x = minX; x <= maxX; ++x, w0 += dw0, w1 += dw1) {
                 double w2 = 1.0 - w0 - w1;
-                // Tiny edge bias: pixels right on a shared edge can fall just outside
-                // both triangles from float rounding, leaving 1px cracks (a dotted
-                // seam across the big ground quad). Accept a hair past the edge so
-                // adjacent triangles always overlap; the depth test resolves it.
-                if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
-                float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
-                std::size_t i = (std::size_t)y * width + x;
-                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer; small bias = first-drawn wins ties
+                if (w0 < -1e-3 || w1 < -1e-3 || w2 < -1e-3) continue;
+                float d = (float)(w0 * D[0] + w1 * D[1] + w2 * D[2]);
+                std::size_t i = rowBase + x;
+                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer
                 // Perspective-correct interpolation of world normal + position
                 // (weight each vertex by 1/w). Affine interpolation is badly wrong
                 // for large triangles — e.g. a ground quad would sample shadows and

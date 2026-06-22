@@ -59,7 +59,7 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n);
 // angles), which separates objects from the background and reads as a subtle
 // backlight. Tunable; applied in the per-pixel path. Defined here so the Raster's
 // shading can use them.
-inline bool&  RimLightEnabled() { static bool v = true; return v; }
+inline bool&  RimLightEnabled() { static bool v = false; return v; }  // off by default: the grazing-angle glow swept across big floors as the camera moved (opt-in in the Rendering panel)
 inline float& RimStrength()     { static float v = 0.25f; return v; }
 inline float& RimPower()        { static float v = 3.0f; return v; }
 
@@ -616,7 +616,7 @@ inline const std::vector<Image>* GetCachedMips(const std::string& path) {
 /// Per-pixel (Phong) lighting toggle. On by default for quality (smooth shading
 /// + correct specular on every pixel); turn off to fall back to faster per-vertex
 /// (Gouraud) shading on very large scenes.
-inline bool& PerPixelLighting() { static bool v = true; return v; }
+inline bool& PerPixelLighting() { static bool v = false; return v; }  // default off (per request); flat/Gouraud path, now crack-free via double-precision rasterization. Opt-in in the Rendering panel.
 
 // ---- Directional shadow mapping --------------------------------------------
 // A depth map rendered from the scene's directional light. Per-pixel shading

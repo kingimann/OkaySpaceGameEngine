@@ -92,12 +92,6 @@ inline void Platformer(Scene& scene) {
 inline void Platformer3D(Scene& scene) {
     scene.Clear();
     scene.SetName("Platformer 3D");
-    // Distance fog blends the ground into the horizon so its far edge isn't a hard
-    // line against the sky (an endless-looking floor without a huge mesh).
-    scene.renderSettings.fog = true;
-    scene.renderSettings.fogColor = scene.renderSettings.skyHorizon;
-    scene.renderSettings.fogStart = 18.0f;
-    scene.renderSettings.fogEnd = 36.0f;
 
     GameObject* camObj = scene.CreateGameObject("MainCamera");
     auto* cam = camObj->AddComponent<Camera>();
@@ -146,12 +140,6 @@ inline void Platformer3D(Scene& scene) {
 inline void ThirdPerson(Scene& scene) {
     scene.Clear();
     scene.SetName("Third Person");
-    // Distance fog blends the ground into the horizon so its far edge isn't a hard
-    // line against the sky (an endless-looking floor without a huge mesh).
-    scene.renderSettings.fog = true;
-    scene.renderSettings.fogColor = scene.renderSettings.skyHorizon;
-    scene.renderSettings.fogStart = 18.0f;
-    scene.renderSettings.fogEnd = 36.0f;
 
     GameObject* light = scene.CreateGameObject("Directional Light");
     light->AddComponent<Light>();
@@ -202,12 +190,6 @@ inline void ThirdPerson(Scene& scene) {
 inline void PointAndClick(Scene& scene) {
     scene.Clear();
     scene.SetName("Point & Click");
-    // Distance fog blends the ground into the horizon so its far edge isn't a hard
-    // line against the sky (an endless-looking floor without a huge mesh).
-    scene.renderSettings.fog = true;
-    scene.renderSettings.fogColor = scene.renderSettings.skyHorizon;
-    scene.renderSettings.fogStart = 18.0f;
-    scene.renderSettings.fogEnd = 36.0f;
 
     GameObject* light = scene.CreateGameObject("Directional Light");
     light->AddComponent<Light>();
@@ -259,12 +241,6 @@ inline void PointAndClick(Scene& scene) {
 inline void FPS(Scene& scene) {
     scene.Clear();
     scene.SetName("First Person");
-    // Distance fog blends the ground into the horizon so its far edge isn't a hard
-    // line against the sky (an endless-looking floor without a huge mesh).
-    scene.renderSettings.fog = true;
-    scene.renderSettings.fogColor = scene.renderSettings.skyHorizon;
-    scene.renderSettings.fogStart = 18.0f;
-    scene.renderSettings.fogEnd = 36.0f;
 
     GameObject* light = scene.CreateGameObject("Directional Light");
     light->AddComponent<Light>();

@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <algorithm>
+#include <cmath>
 
 using namespace okay;
 
@@ -93,6 +95,59 @@ int main() {
         auto* cb2 = s2.Find("Cam") ? s2.Find("Cam")->GetComponent<CinemachineBrain>() : nullptr;
         CHECK(cb2 != nullptr);
         if (cb2) CHECK_NEAR(cb2->blendTime, 2.5f, 1e-4f);
+    }
+
+    // LockToTarget binding orbits the offset with the target's heading.
+    {
+        Scene s("CM4"); s.physicsEnabled = false;
+        GameObject* t = s.CreateGameObject("T");
+        // Yaw the target 90 deg: its local -Z (the offset's forward) now points along world -X.
+        t->transform->localRotation = Quat::Euler(0, 90, 0);
+
+        GameObject* camGO = s.CreateGameObject("Cam");
+        camGO->AddComponent<Camera>();
+        camGO->AddComponent<CinemachineBrain>()->blendTime = 0.0f;
+
+        GameObject* v = s.CreateGameObject("V");
+        auto* vc = v->AddComponent<VirtualCamera>();
+        vc->follow = "T"; vc->followOffset = {0, 0, -5};
+        vc->bindingMode = VirtualCamera::BindingMode::LockToTarget;
+        vc->positionDamping = 0.0f; vc->priority = 10;
+
+        s.Start();
+        s.Update(0.016f);
+        // Offset (0,0,-5) rotated by yaw 90 => roughly (-5,0,0) in world (sign per handedness).
+        Vec3 p = camGO->transform->Position();
+        CHECK(std::fabs(p.x) > 4.0f);            // moved onto the X axis
+        CHECK_NEAR(p.z, 0.0f, 0.5f);             // no longer purely behind on Z
+    }
+
+    // An impulse kicks the camera off its base, then it settles back.
+    {
+        Scene s("CM5"); s.physicsEnabled = false;
+        GameObject* t = s.CreateGameObject("T");
+        GameObject* camGO = s.CreateGameObject("Cam");
+        camGO->AddComponent<Camera>();
+        camGO->AddComponent<CinemachineBrain>()->blendTime = 0.0f;
+        GameObject* v = s.CreateGameObject("V");
+        auto* vc = v->AddComponent<VirtualCamera>();
+        vc->follow = "T"; vc->followOffset = {0, 0, -5};
+        vc->positionDamping = 0.0f; vc->impulseDecay = 5.0f; vc->priority = 10;
+
+        s.Start();
+        s.Update(0.016f);
+        Vec3 base = camGO->transform->Position();
+
+        vc->AddImpulse(3.0f);
+        float maxDev = 0.0f;
+        for (int i = 0; i < 10; ++i) {
+            s.Update(0.016f);
+            maxDev = std::max(maxDev, (camGO->transform->Position() - base).Magnitude());
+        }
+        CHECK(maxDev > 0.1f);                     // the impulse visibly moved the camera
+
+        for (int i = 0; i < 200; ++i) s.Update(0.016f);
+        CHECK_NEAR((camGO->transform->Position() - base).Magnitude(), 0.0f, 0.05f);  // settled
     }
 
     TEST_MAIN_RESULT();

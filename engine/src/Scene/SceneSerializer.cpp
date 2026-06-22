@@ -308,10 +308,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  vcam " << vc->priority << " " << Quote(vc->follow) << " " << Quote(vc->lookAt)
             << " " << vc->followOffset.x << " " << vc->followOffset.y << " " << vc->followOffset.z
             << " " << vc->positionDamping << " " << vc->rotationDamping
-            << " " << vc->fieldOfView << " " << vc->shakeAmplitude << " " << vc->shakeFrequency << "\n";
+            << " " << vc->fieldOfView << " " << vc->shakeAmplitude << " " << vc->shakeFrequency
+            // extended (back-compatible trailing fields)
+            << " " << (int)vc->bindingMode
+            << " " << vc->lookAtOffset.x << " " << vc->lookAtOffset.y << " " << vc->lookAtOffset.z
+            << " " << vc->aimDeadZone << " " << vc->impulseDecay << "\n";
     }
     if (auto* cb = go->GetComponent<CinemachineBrain>()) {
-        out << "  cmbrain " << cb->blendTime << "\n";
+        out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
     }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "
@@ -958,9 +962,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> vc->followOffset.x >> vc->followOffset.y >> vc->followOffset.z
                        >> vc->positionDamping >> vc->rotationDamping
                        >> vc->fieldOfView >> vc->shakeAmplitude >> vc->shakeFrequency;
+                    // Optional extended fields (absent in older scenes).
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int bm = 0;
+                        in >> bm >> vc->lookAtOffset.x >> vc->lookAtOffset.y >> vc->lookAtOffset.z
+                           >> vc->aimDeadZone >> vc->impulseDecay;
+                        vc->bindingMode = (VirtualCamera::BindingMode)bm;
+                    }
                 } else if (field == "cmbrain") {
                     auto* cb = go->AddComponent<CinemachineBrain>();
                     in >> cb->blendTime;
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int e = 1; in >> e; cb->easeInOut = (e != 0); }
                 } else if (field == "text") {
                     std::string str = ReadQuoted(in);
                     Color c; float px = 0.1f; int ss = 0; Vec2 sp;

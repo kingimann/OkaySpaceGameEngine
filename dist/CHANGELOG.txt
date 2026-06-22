@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.100.0  (Cinemachine, cont.: binding modes, composer, impulse)
+  - Virtual cameras gained a Binding Mode: World Space (fixed framing) or Lock To
+    Target — an orbital/3rd-person chase cam whose offset rotates with the target's
+    facing, so it stays behind as the target turns.
+  - Aim got a Look Offset (Tracked Object Offset — aim at the head, not the feet) and
+    a Dead Zone (degrees): the camera holds its aim until the target drifts beyond the
+    angle, removing micro-jitter (a simplified Composer dead zone).
+  - Added a one-shot Impulse system: VirtualCamera::AddImpulse(strength) fires a
+    decaying camera shake on an event (explosion, landing, hit), with per-vcam Impulse
+    Decay. An Inspector "Test Impulse" button previews it.
+  - CinemachineBrain blends now ease-in/ease-out by default (toggle) for softer cuts.
+  - All new fields serialize (back-compatible) and have Inspector controls. 76 tests
+    pass (cinemachine suite extended: orbital binding, impulse settle).
+
 v2.99.0  (Cinemachine-style virtual cameras)
   - New VirtualCamera component (Cinemachine-style): describes a *shot* — a Follow
     target + offset (the body), a LookAt target (the aim), a lens (field of view),

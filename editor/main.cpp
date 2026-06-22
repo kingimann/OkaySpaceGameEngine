@@ -6088,24 +6088,38 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Virtual Camera", vc, &toRemove)) {
             if (ImGui::DragInt("Priority##vc", &vc->priority, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Highest enabled vcam becomes live (the brain blends to it).");
+            ImGui::SeparatorText("Body");
             char fb[128];
             std::strncpy(fb, vc->follow.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
             if (ImGui::InputText("Follow##vc", fb, sizeof(fb))) { vc->follow = fb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject to position relative to (the body).");
+            float off[3] = {vc->followOffset.x, vc->followOffset.y, vc->followOffset.z};
+            if (ImGui::DragFloat3("Follow Offset##vc", off, 0.05f)) { vc->followOffset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            int bm = (int)vc->bindingMode;
+            const char* bms[] = {"World Space", "Lock To Target (orbital)"};
+            if (ImGui::Combo("Binding Mode##vc", &bm, bms, 2)) { vc->bindingMode = (VirtualCamera::BindingMode)bm; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock To Target orbits the offset with the target's facing\n(3rd-person chase cam).");
+            ImGui::SeparatorText("Aim");
             char lb[128];
             std::strncpy(lb, vc->lookAt.c_str(), sizeof(lb) - 1); lb[sizeof(lb) - 1] = '\0';
             if (ImGui::InputText("Look At##vc", lb, sizeof(lb))) { vc->lookAt = lb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject to aim at (the aim).");
-            float off[3] = {vc->followOffset.x, vc->followOffset.y, vc->followOffset.z};
-            if (ImGui::DragFloat3("Follow Offset##vc", off, 0.05f)) { vc->followOffset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            float lo[3] = {vc->lookAtOffset.x, vc->lookAtOffset.y, vc->lookAtOffset.z};
+            if (ImGui::DragFloat3("Look Offset##vc", lo, 0.05f)) { vc->lookAtOffset = {lo[0], lo[1], lo[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Added to the LookAt target before aiming (e.g. aim at the head).");
+            if (ImGui::DragFloat("Dead Zone##vc", &vc->aimDeadZone, 0.1f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Don't re-aim until the target drifts beyond this angle (reduces jitter).");
             ImGui::SeparatorText("Damping");
             if (ImGui::DragFloat("Position##vcd", &vc->positionDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Rotation##vcd", &vc->rotationDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             ImGui::SeparatorText("Lens");
             if (ImGui::SliderFloat("Field of View##vc", &vc->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
-            ImGui::SeparatorText("Noise (handheld shake)");
+            ImGui::SeparatorText("Noise / Impulse");
             if (ImGui::DragFloat("Amplitude##vcn", &vc->shakeAmplitude, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Frequency##vcn", &vc->shakeFrequency, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Impulse Decay##vcn", &vc->impulseDecay, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Test Impulse##vc")) vc->AddImpulse(1.0f);
             ImGui::TextDisabled("Needs a Cinemachine Brain on the main camera.");
             if (ImGui::SmallButton("Remove##vc")) toRemove = vc;
         }
@@ -6114,6 +6128,8 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Cinemachine Brain", cb, &toRemove)) {
             if (ImGui::DragFloat("Blend Time##cb", &cb->blendTime, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to ease between virtual cameras (0 = cut).");
+            if (ImGui::Checkbox("Ease In/Out##cb", &cb->easeInOut)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth the blend curve instead of a linear ramp.");
             if (VirtualCamera* live = cb->LiveCamera())
                 ImGui::TextDisabled("Live: %s", live->gameObject ? live->gameObject->name.c_str() : "?");
             else

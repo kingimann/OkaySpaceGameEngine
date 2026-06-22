@@ -21,6 +21,8 @@ class CinemachineBrain : public Behaviour {
 public:
     /// Seconds to ease between virtual cameras when the live one changes (0 = cut).
     float blendTime = 1.0f;
+    /// Smooth (ease-in/ease-out) the blend instead of a linear ramp — softer cuts.
+    bool easeInOut = true;
 
     void LateUpdate(float dt) override {
         Scene* s = GetScene();
@@ -48,12 +50,15 @@ public:
         }
         if (m_blend < 1.0f) m_blend = std::min(1.0f, m_blend + dt / std::max(blendTime, 1e-4f));
 
+        // Optionally smoothstep the blend for a softer ease-in/ease-out.
+        float t = easeInOut ? (m_blend * m_blend * (3.0f - 2.0f * m_blend)) : m_blend;
+
         // Ease the real camera toward the live vcam's solved pose + lens.
-        transform->SetPosition(Vec3::Lerp(m_fromPos, live->SolvedPosition(), m_blend));
+        transform->SetPosition(Vec3::Lerp(m_fromPos, live->SolvedPosition(), t));
         if (!transform->Parent())
-            transform->localRotation = Quat::Slerp(m_fromRot, live->SolvedRotation(), m_blend);
+            transform->localRotation = Quat::Slerp(m_fromRot, live->SolvedRotation(), t);
         if (cam)
-            cam->fieldOfView = m_fromFov + (live->fieldOfView - m_fromFov) * m_blend;
+            cam->fieldOfView = m_fromFov + (live->fieldOfView - m_fromFov) * t;
     }
 
     /// The virtual camera currently driving the brain (read-only; runtime).

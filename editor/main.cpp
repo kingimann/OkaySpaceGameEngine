@@ -462,6 +462,7 @@ bool g_showGrid = true;          // draw the XZ ground grid in the Scene view
 bool g_sceneSkybox = true;       // draw the sky gradient in the Scene view (Game view always uses the camera)
 bool g_wireframeAll = false;     // debug: draw every mesh as wireframe (Scene view)
 bool g_showWorldAxes = false;    // debug: draw the world X/Y/Z axes at the origin
+bool g_showCamHud = true;        // debug: on-screen readout of Scene camera zoom/angle/position
 float g_editorFov = 50.0f;       // Scene-view camera vertical FOV (degrees)
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
@@ -511,6 +512,7 @@ void LoadSettings() {
         else if (k == "sceneskybox") g_sceneSkybox = (v != 0);
         else if (k == "wireframeall") g_wireframeAll = (v != 0);
         else if (k == "showworldaxes") g_showWorldAxes = (v != 0);
+        else if (k == "showcamhud") g_showCamHud = (v != 0);
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
     }
 }
@@ -525,6 +527,7 @@ void SaveSettings() {
       << "sceneskybox " << (g_sceneSkybox ? 1 : 0) << "\n"
       << "wireframeall " << (g_wireframeAll ? 1 : 0) << "\n"
       << "showworldaxes " << (g_showWorldAxes ? 1 : 0) << "\n"
+      << "showcamhud " << (g_showCamHud ? 1 : 0) << "\n"
       << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n";
 }
 
@@ -2448,6 +2451,7 @@ void DrawStats(EditorState& ed) {
         if (ImGui::Checkbox("Gizmos (selection / camera / lights)", &g_showGizmos)) SaveSettings();
         if (ImGui::Checkbox("Wireframe (all meshes)", &g_wireframeAll)) SaveSettings();
         if (ImGui::Checkbox("World axes (origin)", &g_showWorldAxes)) SaveSettings();
+        if (ImGui::Checkbox("Camera HUD (zoom / angle / pos)", &g_showCamHud)) SaveSettings();
         if (ImGui::SliderFloat("Scene camera FOV", &g_editorFov, 20.0f, 110.0f, "%.0f deg")) SaveSettings();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Vertical field of view for the editor Scene camera.\nLower = flatter / more zoomed (less perspective\ndistortion); higher = wider / more stretched at edges.");
@@ -8055,6 +8059,28 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             clipLine(c1, c2, col, 1.0f);
             clipLine(c2, c0, col, 1.0f);
         }
+    }
+
+    // Camera HUD (Scene view debug): on-screen readout of the orbit camera so a
+    // screenshot tells you the exact zoom / angle / position you're looking from.
+    // Editor-only; never drawn in the Game view or a build.
+    if (!gameView && g_showCamHud) {
+        char l1[64], l2[64], l3[80], l4[80], l5[48];
+        std::snprintf(l1, sizeof(l1), "Zoom (dist): %.1f", ed.camDist);
+        std::snprintf(l2, sizeof(l2), "Yaw: %.0f%s  Pitch: %.0f%s",
+                      ed.camYaw, "\xc2\xb0", ed.camPitch, "\xc2\xb0");
+        std::snprintf(l3, sizeof(l3), "Eye: (%.1f, %.1f, %.1f)", eye.x, eye.y, eye.z);
+        std::snprintf(l4, sizeof(l4), "Target: (%.1f, %.1f, %.1f)",
+                      ed.camTarget.x, ed.camTarget.y, ed.camTarget.z);
+        std::snprintf(l5, sizeof(l5), "FOV: %.0f%s", g_editorFov, "\xc2\xb0");
+        const char* lines[5] = {l1, l2, l3, l4, l5};
+        float lh = ImGui::GetTextLineHeight();
+        ImVec2 box0(canvasPos.x + 8, canvasPos.y + 8);
+        ImVec2 box1(box0.x + 188, box0.y + lh * 5 + 12);
+        dl->AddRectFilled(box0, box1, IM_COL32(0, 0, 0, 140), 4.0f);
+        for (int i = 0; i < 5; ++i)
+            dl->AddText(ImVec2(box0.x + 8, box0.y + 6 + lh * i),
+                        IM_COL32(120, 230, 150, 255), lines[i]);
     }
 
     // Screen-space UI draws on top of the 3D view too, so UI added to a 3D

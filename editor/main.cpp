@@ -458,6 +458,11 @@ bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
+bool g_showGrid = true;          // draw the XZ ground grid in the Scene view
+bool g_sceneSkybox = true;       // draw the sky gradient in the Scene view (Game view always uses the camera)
+bool g_wireframeAll = false;     // debug: draw every mesh as wireframe (Scene view)
+bool g_showWorldAxes = false;    // debug: draw the world X/Y/Z axes at the origin
+float g_editorFov = 50.0f;       // Scene-view camera vertical FOV (degrees)
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
@@ -502,6 +507,11 @@ void LoadSettings() {
         else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
         else if (k == "showgizmos") g_showGizmos = (v != 0);
+        else if (k == "showgrid") g_showGrid = (v != 0);
+        else if (k == "sceneskybox") g_sceneSkybox = (v != 0);
+        else if (k == "wireframeall") g_wireframeAll = (v != 0);
+        else if (k == "showworldaxes") g_showWorldAxes = (v != 0);
+        else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
     }
 }
 void SaveSettings() {
@@ -510,7 +520,12 @@ void SaveSettings() {
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
       << "ssaa "       << g_ssaa << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
-      << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n";
+      << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n"
+      << "showgrid " << (g_showGrid ? 1 : 0) << "\n"
+      << "sceneskybox " << (g_sceneSkybox ? 1 : 0) << "\n"
+      << "wireframeall " << (g_wireframeAll ? 1 : 0) << "\n"
+      << "showworldaxes " << (g_showWorldAxes ? 1 : 0) << "\n"
+      << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -2420,6 +2435,22 @@ void DrawStats(EditorState& ed) {
             ImGui::SliderFloat("Vignette",   &Vignette(),   0.0f, 1.0f, "%.2f");
             ImGui::SliderFloat("Gamma",      &Gamma(),      0.5f, 2.4f, "%.2f");
         }
+
+        // Debug View: Scene-view overlays and camera knobs to inspect 3D geometry
+        // yourself. These are editor-only (Scene view) and never affect the Game
+        // view or a build. All persist across sessions.
+        ImGui::SeparatorText("Debug view (Scene only)");
+        if (ImGui::Checkbox("Ground grid", &g_showGrid)) SaveSettings();
+        if (ImGui::Checkbox("Sky gradient", &g_sceneSkybox)) SaveSettings();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Turn off to see meshes against a flat background\n(isolates what's geometry vs. the sky behind it).");
+        if (ImGui::Checkbox("Colliders", &g_showColliders)) SaveSettings();
+        if (ImGui::Checkbox("Gizmos (selection / camera / lights)", &g_showGizmos)) SaveSettings();
+        if (ImGui::Checkbox("Wireframe (all meshes)", &g_wireframeAll)) SaveSettings();
+        if (ImGui::Checkbox("World axes (origin)", &g_showWorldAxes)) SaveSettings();
+        if (ImGui::SliderFloat("Scene camera FOV", &g_editorFov, 20.0f, 110.0f, "%.0f deg")) SaveSettings();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Vertical field of view for the editor Scene camera.\nLower = flatter / more zoomed (less perspective\ndistortion); higher = wider / more stretched at edges.");
     }
     ImGui::End();
 }
@@ -7775,7 +7806,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
              Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
     Vec3 eye = ed.camTarget + dir * ed.camDist;
     Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
-    Mat4 proj = Mat4::Perspective(50.0f, canvasSize.x / canvasSize.y, 0.1f, 2000.0f);
+    Mat4 proj = Mat4::Perspective(g_editorFov, canvasSize.x / canvasSize.y, 0.1f, 2000.0f);
     // The Game view renders through the scene's main camera instead.
     if (gameView) {
         if (Camera* mc = SceneCamera(ed.scene())) {
@@ -7827,7 +7858,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (Camera* gmc = SceneCamera(ed.scene()))
             solidClear = gmc->clearFlags == Camera::ClearFlags::SolidColor;
     }
-    if (rs.skybox && !solidClear) {
+    if (rs.skybox && !solidClear && (gameView || g_sceneSkybox)) {
         ImU32 top = ToColor(rs.skyTop);
         ImU32 mid = ToColor(rs.skyHorizon);
         ImU32 bot = ToColor(rs.skyBottom);
@@ -7837,12 +7868,18 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
 
     // Ground grid on the XZ plane (Scene view only; the Game view is clean).
-    if (!gameView)
+    if (!gameView && g_showGrid)
     for (int i = -10; i <= 10; ++i) {
         clipLine(vp * Vec4{Vec3{(float)i, 0, -10}, 1},
                  vp * Vec4{Vec3{(float)i, 0, 10}, 1}, IM_COL32(50, 50, 64, 255), 1.0f);
         clipLine(vp * Vec4{Vec3{-10, 0, (float)i}, 1},
                  vp * Vec4{Vec3{10, 0, (float)i}, 1}, IM_COL32(50, 50, 64, 255), 1.0f);
+    }
+    // World axes at the origin (debug): X red, Y green, Z blue.
+    if (!gameView && g_showWorldAxes) {
+        clipLine(vp * Vec4{Vec3{0,0,0},1}, vp * Vec4{Vec3{5,0,0},1}, IM_COL32(230,70,70,255), 2.0f);
+        clipLine(vp * Vec4{Vec3{0,0,0},1}, vp * Vec4{Vec3{0,5,0},1}, IM_COL32(90,220,90,255), 2.0f);
+        clipLine(vp * Vec4{Vec3{0,0,0},1}, vp * Vec4{Vec3{0,0,5},1}, IM_COL32(90,150,255,255), 2.0f);
     }
 
     const auto& objs = ed.scene().Objects();
@@ -8000,24 +8037,23 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
-    // Wireframe meshes (wireframe == true): edges only, drawn over the solids.
+    // Wireframe meshes (wireframe == true), plus the debug "Wireframe (all meshes)"
+    // toggle which draws EVERY mesh as edges in the Scene view. Edges only, over the
+    // solids, near-plane clipped so close-up geometry stays correct.
     for (const auto& up : objs) {
         GameObject* go = up.get();
         auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || !go->active || !mr->wireframe) continue;
+        if (!mr || !go->active) continue;
+        if (!mr->wireframe && !(g_wireframeAll && !gameView)) continue;
         Mat4 m = vp * go->transform->LocalToWorldMatrix();
         ImU32 col = (go == ed.selected()) ? IM_COL32(255, 200, 0, 255) : ToColor(mr->color);
         const auto& v = mr->mesh.vertices;
         const auto& t = mr->mesh.triangles;
         for (size_t i = 0; i + 2 < t.size(); i += 3) {
-            ImVec2 p0, p1, p2;
-            if (toScreen(m * Vec4{v[t[i]], 1}, p0) &&
-                toScreen(m * Vec4{v[t[i + 1]], 1}, p1) &&
-                toScreen(m * Vec4{v[t[i + 2]], 1}, p2)) {
-                dl->AddLine(p0, p1, col);
-                dl->AddLine(p1, p2, col);
-                dl->AddLine(p2, p0, col);
-            }
+            Vec4 c0 = m * Vec4{v[t[i]], 1}, c1 = m * Vec4{v[t[i + 1]], 1}, c2 = m * Vec4{v[t[i + 2]], 1};
+            clipLine(c0, c1, col, 1.0f);
+            clipLine(c1, c2, col, 1.0f);
+            clipLine(c2, c0, col, 1.0f);
         }
     }
 

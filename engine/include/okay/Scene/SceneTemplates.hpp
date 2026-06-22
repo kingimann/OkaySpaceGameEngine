@@ -110,16 +110,13 @@ inline void Platformer3D(Scene& scene) {
     light->transform->localRotation = Quat::Euler({50, -30, 0});
 
     GameObject* ground = scene.CreateGameObject("Ground");
-    ground->transform->localPosition = {0, 0, 0};
+    ground->transform->localPosition = {0, -0.5f, 0};
     ground->transform->localScale = {24, 1, 24};
     auto* gmr = ground->AddComponent<MeshRenderer>();
-    gmr->mesh = Mesh::Plane(1.0f);   // flat quad floor: a plane has no thick side walls,
-                                     // so the edge can't read as a dark wedge / "not square"
-    gmr->doubleSided = true;         // stays visible even if the camera dips below the floor
+    gmr->mesh = Mesh::Cube();        // solid block floor (visible ground == collider shape)
     gmr->color = Color::FromBytes(90, 110, 90);
     auto* gbc = ground->AddComponent<BoxCollider3D>();
-    gbc->size = {1, 1, 1};           // Transform scale (24) sizes the collider
-    gbc->offset = {0, -0.5f, 0};     // sink the box so its top sits flush with the plane at y=0
+    gbc->size = {1, 1, 1};   // unit cube; Transform scale (24) sizes the collider
     ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
 
     // The blocky Character as the player (instead of a plain cube).
@@ -149,16 +146,13 @@ inline void ThirdPerson(Scene& scene) {
     light->transform->localRotation = Quat::Euler({50, -30, 0});
 
     GameObject* ground = scene.CreateGameObject("Ground");
-    ground->transform->localPosition = {0, 0, 0};
+    ground->transform->localPosition = {0, -0.5f, 0};
     ground->transform->localScale = {40, 1, 40};
     auto* gmr = ground->AddComponent<MeshRenderer>();
-    gmr->mesh = Mesh::Plane(1.0f);   // flat quad floor: a plane has no thick side walls,
-                                     // so the edge can't read as a dark wedge / "not square"
-    gmr->doubleSided = true;         // stays visible even if the camera dips below the floor
+    gmr->mesh = Mesh::Cube();        // solid block floor: the visible ground and the
+                                     // collider are the same solid shape (no hanging box)
     gmr->color = Color::FromBytes(95, 110, 95);
-    auto* gbc = ground->AddComponent<BoxCollider3D>();
-    gbc->size = {1, 1, 1};           // Transform scale (40) sizes the collider
-    gbc->offset = {0, -0.5f, 0};     // sink the box so its top sits flush with the plane at y=0
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};   // unit cube; Transform scale sizes it
     ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
 
     const Vec3 crates[4] = {{3, 0.5f, -3}, {-3, 0.5f, -4}, {3, 0.5f, 3}, {-3, 0.5f, 4}};
@@ -203,16 +197,13 @@ inline void PointAndClick(Scene& scene) {
     light->transform->localRotation = Quat::Euler({55, -30, 0});
 
     GameObject* ground = scene.CreateGameObject("Ground");
-    ground->transform->localPosition = {0, 0, 0};
+    ground->transform->localPosition = {0, -0.5f, 0};
     ground->transform->localScale = {40, 1, 40};
     auto* gmr = ground->AddComponent<MeshRenderer>();
-    gmr->mesh = Mesh::Plane(1.0f);   // flat quad floor: a plane has no thick side walls,
-                                     // so the edge can't read as a dark wedge / "not square"
-    gmr->doubleSided = true;         // stays visible even if the camera dips below the floor
+    gmr->mesh = Mesh::Cube();        // solid block floor: the visible ground and the
+                                     // collider are the same solid shape (no hanging box)
     gmr->color = Color::FromBytes(95, 110, 95);
-    auto* gbc = ground->AddComponent<BoxCollider3D>();
-    gbc->size = {1, 1, 1};           // Transform scale (40) sizes the collider
-    gbc->offset = {0, -0.5f, 0};     // sink the box so its top sits flush with the plane at y=0
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};   // unit cube; Transform scale sizes it
     ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
 
     const Vec3 crates[4] = {{4, 0.5f, -3}, {-4, 0.5f, -4}, {4, 0.5f, 4}, {-4, 0.5f, 3}};
@@ -258,16 +249,13 @@ inline void FPS(Scene& scene) {
     light->transform->localRotation = Quat::Euler({50, -30, 0});
 
     GameObject* ground = scene.CreateGameObject("Ground");
-    ground->transform->localPosition = {0, 0, 0};
+    ground->transform->localPosition = {0, -0.5f, 0};
     ground->transform->localScale = {40, 1, 40};
     auto* gmr = ground->AddComponent<MeshRenderer>();
-    gmr->mesh = Mesh::Plane(1.0f);   // flat quad floor: a plane has no thick side walls,
-                                     // so the edge can't read as a dark wedge / "not square"
-    gmr->doubleSided = true;         // stays visible even if the camera dips below the floor
+    gmr->mesh = Mesh::Cube();        // solid block floor: the visible ground and the
+                                     // collider are the same solid shape (no hanging box)
     gmr->color = Color::FromBytes(95, 110, 95);
-    auto* gbc = ground->AddComponent<BoxCollider3D>();
-    gbc->size = {1, 1, 1};           // Transform scale (40) sizes the collider
-    gbc->offset = {0, -0.5f, 0};     // sink the box so its top sits flush with the plane at y=0
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};   // unit cube; Transform scale sizes it
     ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
 
     const Vec3 crates[5] = {{4, 0.5f, -2}, {-4, 0.5f, -3}, {2, 0.5f, -6}, {-2, 0.5f, -7}, {0, 0.5f, -10}};

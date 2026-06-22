@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.82.0
+  - Reverted the 3D ground back to a SOLID block (it was briefly a flat plane with
+    the collider offset below it, which looked like a thin sheet floating over a
+    wireframe cage once the gizmo box drew fully). Now the visible ground and its
+    collider are the same solid shape again — no box hanging underneath.
+  - New "Debug view" tools in Stats > Rendering (Scene view only, never affect the
+    Game view or a build; all persist):
+      * Ground grid on/off
+      * Sky gradient on/off (turn off to see meshes against a flat background and
+        tell geometry apart from the sky behind it)
+      * Colliders on/off, Gizmos on/off
+      * Wireframe (all meshes) — draw every mesh as edges
+      * World axes at the origin (X red, Y green, Z blue)
+      * Scene camera FOV slider (20-110 deg) — lower = flatter/less perspective
+        distortion, higher = wider/more edge stretch
+
 v2.81.0
   - Fixed: the yellow selection box (and the grid / camera / light gizmos) didn't
     match the geometry — the rendered ground would spill past the yellow outline.

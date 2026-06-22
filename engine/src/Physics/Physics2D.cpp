@@ -7,6 +7,7 @@
 #include "okay/Math/Mathf.hpp"
 
 #include <vector>
+#include <unordered_set>
 
 namespace okay {
 
@@ -187,8 +188,19 @@ void Physics2D::Step(Scene& scene, float dt) {
     auto colliders = scene.FindObjectsOfType<Collider2D>();
     std::set<Pair> current;
 
-    for (std::size_t i = 0; i < colliders.size(); ++i) {
-        for (std::size_t j = i + 1; j < colliders.size(); ++j) {
+    // Precompute world AABBs once per step (were recomputed O(n) times per collider)
+    // and a membership set for the exit-message cleanup (was an O(contacts*n) scan).
+    const std::size_t nc = colliders.size();
+    std::vector<Vec2> aabbMin(nc), aabbMax(nc);
+    std::unordered_set<Collider2D*> aliveSet;
+    aliveSet.reserve(nc * 2 + 1);
+    for (std::size_t i = 0; i < nc; ++i) {
+        colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
+        aliveSet.insert(colliders[i]);
+    }
+
+    for (std::size_t i = 0; i < nc; ++i) {
+        for (std::size_t j = i + 1; j < nc; ++j) {
             Collider2D* a = colliders[i];
             Collider2D* b = colliders[j];
             if (!a->enabled || !b->enabled) continue;
@@ -196,9 +208,8 @@ void Physics2D::Step(Scene& scene, float dt) {
             if (a->gameObject == b->gameObject) continue;
             if (!LayersCollide(a->layer, b->layer)) continue; // collision matrix
 
-            // Broad phase: AABB reject.
-            Vec2 aMin, aMax, bMin, bMax;
-            a->WorldAABB(aMin, aMax); b->WorldAABB(bMin, bMax);
+            // Broad phase: AABB reject (precomputed AABBs).
+            const Vec2 &aMin = aabbMin[i], &aMax = aabbMax[i], &bMin = aabbMin[j], &bMax = aabbMax[j];
             if (aMax.x < bMin.x || aMin.x > bMax.x || aMax.y < bMin.y || aMin.y > bMax.y)
                 continue;
 
@@ -267,9 +278,7 @@ void Physics2D::Step(Scene& scene, float dt) {
         Collider2D* a = p.first;
         Collider2D* b = p.second;
         // The colliders may have been destroyed; guard via the live list.
-        bool aAlive = false, bAlive = false;
-        for (Collider2D* c : colliders) { if (c == a) aAlive = true; if (c == b) bAlive = true; }
-        if (!aAlive || !bAlive) continue;
+        if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
         if (a->isTrigger || b->isTrigger) {
             DispatchTrigger(a->gameObject, &Component::OnTriggerExit2D, b);
             DispatchTrigger(b->gameObject, &Component::OnTriggerExit2D, a);

@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.96.0  (physics optimization)
+  - Faster collision broadphase (2D + 3D). Each collider's world AABB was being
+    recomputed O(n) times per frame inside the all-pairs loop; it's now computed
+    once per step. The end-of-contact cleanup did an O(contacts x colliders) linear
+    "still alive?" scan; it now uses a hash set (O(1) lookup). ~3.8x faster physics
+    step with 200 colliders; scales much better with collider count. 75 tests pass.
+
 v2.95.0  (renderer optimization, cont.)
   - Extended the incremental-barycentric fast path to the remaining rasterizers
     (flat/unlit and per-pixel/Phong), so every triangle path now advances the edge

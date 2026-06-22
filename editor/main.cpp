@@ -6116,6 +6116,19 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::DragFloat("Sensitivity##vcfl", &vc->mouseSensitivity, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
                 }
             }
+            ImGui::SeparatorText("Tracked Dolly");
+            if (ImGui::Checkbox("Dolly##vc", &vc->dolly)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Constrain the body to a Dolly Path rail (aim still tracks LookAt/Follow).");
+            if (vc->dolly) {
+                char db[128];
+                std::strncpy(db, vc->dollyPath.c_str(), sizeof(db) - 1); db[sizeof(db) - 1] = '\0';
+                if (ImGui::InputText("Path##vcd", db, sizeof(db))) { vc->dollyPath = db; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject holding a Dolly Path component.");
+                if (ImGui::Checkbox("Auto Dolly##vcd", &vc->autoDolly)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide to the path point nearest the Follow target.");
+                if (!vc->autoDolly)
+                    if (ImGui::SliderFloat("Position##vcd", &vc->dollyPosition, 0.0f, 1.0f)) ed.dirty = true;
+            }
             ImGui::SeparatorText("Aim");
             char lb[128];
             std::strncpy(lb, vc->lookAt.c_str(), sizeof(lb) - 1); lb[sizeof(lb) - 1] = '\0';
@@ -6152,6 +6165,36 @@ void DrawInspector(EditorState& ed) {
             else
                 ImGui::TextDisabled("Drives this Camera from virtual cameras.");
             if (ImGui::SmallButton("Remove##cb")) toRemove = cb;
+        }
+    }
+    if (auto* dp = go->GetComponent<DollyPath>()) {
+        if (CompHeader("Dolly Path", dp, &toRemove)) {
+            if (ImGui::Checkbox("Looped##dp", &dp->looped)) ed.dirty = true;
+            ImGui::Text("Waypoints: %d (local space)", (int)dp->waypoints.size());
+            for (int i = 0; i < (int)dp->waypoints.size(); ++i) {
+                float w[3] = {dp->waypoints[i].x, dp->waypoints[i].y, dp->waypoints[i].z};
+                ImGui::PushID(i);
+                if (ImGui::DragFloat3("##wp", w, 0.1f)) { dp->waypoints[i] = {w[0], w[1], w[2]}; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) { dp->waypoints.erase(dp->waypoints.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("Add Waypoint##dp")) {
+                Vec3 last = dp->waypoints.empty() ? Vec3{0, 0, 0} : dp->waypoints.back();
+                dp->waypoints.push_back(last + Vec3{0, 0, 5}); ed.dirty = true;
+            }
+            if (ImGui::SmallButton("Remove##dp")) toRemove = dp;
+        }
+    }
+    if (auto* dc = go->GetComponent<DollyCart>()) {
+        if (CompHeader("Dolly Cart", dc, &toRemove)) {
+            char db[128];
+            std::strncpy(db, dc->path.c_str(), sizeof(db) - 1); db[sizeof(db) - 1] = '\0';
+            if (ImGui::InputText("Path##dc", db, sizeof(db))) { dc->path = db; ed.dirty = true; }
+            if (ImGui::SliderFloat("Position##dc", &dc->position, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Speed##dc", &dc->speed, 0.01f)) ed.dirty = true;
+            if (ImGui::Checkbox("Auto Move##dc", &dc->autoMove)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##dc")) toRemove = dc;
         }
     }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
@@ -6939,6 +6982,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CameraFollow>(), "Camera Follow")) { go->AddComponent<CameraFollow>(); ed.dirty = true; }
             if (item(!go->GetComponent<VirtualCamera>(), "Virtual Camera")) { go->AddComponent<VirtualCamera>(); ed.dirty = true; }
             if (item(!go->GetComponent<CinemachineBrain>(), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
+            if (item(!go->GetComponent<DollyPath>(), "Dolly Path")) { go->AddComponent<DollyPath>(); ed.dirty = true; }
+            if (item(!go->GetComponent<DollyCart>(), "Dolly Cart")) { go->AddComponent<DollyCart>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Scripts");

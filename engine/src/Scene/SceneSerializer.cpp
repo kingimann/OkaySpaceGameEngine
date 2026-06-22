@@ -23,6 +23,7 @@
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/DollyPath.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/TextRenderer.hpp"
@@ -317,10 +318,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (vc->freeLook ? 1 : 0) << " " << vc->orbitYaw << " " << vc->orbitPitch
             << " " << vc->orbitRadius << " " << vc->orbitHeight
             << " " << vc->orbitMinPitch << " " << vc->orbitMaxPitch
-            << " " << (vc->orbitInput ? 1 : 0) << " " << vc->orbitButton << " " << vc->mouseSensitivity << "\n";
+            << " " << (vc->orbitInput ? 1 : 0) << " " << vc->orbitButton << " " << vc->mouseSensitivity
+            // dolly block (back-compatible trailing fields)
+            << " " << (vc->dolly ? 1 : 0) << " " << Quote(vc->dollyPath)
+            << " " << vc->dollyPosition << " " << (vc->autoDolly ? 1 : 0) << "\n";
     }
     if (auto* cb = go->GetComponent<CinemachineBrain>()) {
         out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
+    }
+    if (auto* dp = go->GetComponent<DollyPath>()) {
+        out << "  dollypath " << (dp->looped ? 1 : 0) << " " << dp->waypoints.size();
+        for (const auto& w : dp->waypoints) out << " " << w.x << " " << w.y << " " << w.z;
+        out << "\n";
+    }
+    if (auto* dc = go->GetComponent<DollyCart>()) {
+        out << "  dollycart " << Quote(dc->path) << " " << dc->position << " "
+            << dc->speed << " " << (dc->autoMove ? 1 : 0) << "\n";
     }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "
@@ -983,6 +996,29 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         vc->freeLook = (fl != 0);
                         vc->orbitInput = (oi != 0);
                     }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        int dl = 0, ad = 0;
+                        in >> dl;
+                        vc->dollyPath = ReadQuoted(in);
+                        in >> vc->dollyPosition >> ad;
+                        vc->dolly = (dl != 0);
+                        vc->autoDolly = (ad != 0);
+                    }
+                } else if (field == "dollypath") {
+                    auto* dp = go->AddComponent<DollyPath>();
+                    int lp = 0; std::size_t cnt = 0;
+                    in >> lp >> cnt;
+                    dp->looped = (lp != 0);
+                    dp->waypoints.resize(cnt);
+                    for (std::size_t k = 0; k < cnt; ++k)
+                        in >> dp->waypoints[k].x >> dp->waypoints[k].y >> dp->waypoints[k].z;
+                } else if (field == "dollycart") {
+                    auto* dc = go->AddComponent<DollyCart>();
+                    dc->path = ReadQuoted(in);
+                    int am = 1;
+                    in >> dc->position >> dc->speed >> am;
+                    dc->autoMove = (am != 0);
                 } else if (field == "cmbrain") {
                     auto* cb = go->AddComponent<CinemachineBrain>();
                     in >> cb->blendTime;

@@ -8,6 +8,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Components/DollyPath.hpp"
 #include <cmath>
 #include <string>
 
@@ -78,6 +79,14 @@ public:
     int  orbitButton = 1;        ///< 1 = right mouse button
     float mouseSensitivity = 0.2f;
 
+    /// Tracked Dolly (Cinemachine): constrain the body to a DollyPath rail. The aim
+    /// still uses LookAt/Follow, so the camera can glide along a track while framing a
+    /// subject. autoDolly slides to the path point nearest the Follow target.
+    bool dolly = false;
+    std::string dollyPath;       ///< name of the GameObject holding a DollyPath
+    float dollyPosition = 0.0f;  ///< normalized position along the path (0..1)
+    bool  autoDolly = false;     ///< track the Follow target's nearest path point
+
     /// Advance the solved pose one step toward the targets. Driven by the brain so
     /// every vcam solves exactly once per frame, in a defined order.
     void Solve(float dt) {
@@ -108,6 +117,17 @@ public:
             flPivot = f->transform->Position() + Vec3{0.0f, orbitHeight, 0.0f};
             Quat orot = Quat::Euler(orbitPitch, orbitYaw, 0.0f);
             desiredPos = flPivot + orot * Vec3{0.0f, 0.0f, -orbitRadius};
+        } else if (dolly) {
+            // Tracked Dolly: constrain the body to a rail; aim is handled below.
+            GameObject* pg = dollyPath.empty() ? nullptr : s->Find(dollyPath);
+            DollyPath* dp = pg ? pg->GetComponent<DollyPath>() : nullptr;
+            if (dp) {
+                if (autoDolly && f && f->transform)
+                    dollyPosition = dp->NearestPosition(f->transform->Position());
+                desiredPos = dp->EvaluatePosition(dollyPosition);
+            } else if (f && f->transform) {
+                desiredPos = f->transform->Position() + followOffset;
+            }
         } else if (f && f->transform) {
             // LockToTarget orbits the offset with the target's heading (chase cam);
             // WorldSpace keeps it axis-aligned (a fixed framing).

@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.102.0  (Cinemachine, cont.: dolly track)
+  - New DollyPath component: a smooth camera rail (Cinemachine's Path/SmoothPath). An
+    ordered list of waypoints evaluated as a Catmull-Rom spline, optionally looped.
+  - Virtual cameras gained a Tracked Dolly body: constrain the camera to a DollyPath
+    while the aim still tracks LookAt/Follow — glide a curved track past a subject.
+    Auto-Dolly slides to the path point nearest the Follow target.
+  - New DollyCart component: drive any GameObject (camera, platform) along a path at a
+    speed — on-rails shots and moving geometry.
+  - Inspector UI (editable waypoint list, add/remove), Add Component entries, and
+    back-compatible serialization. Cinemachine tests extended (spline endpoints,
+    auto-dolly tracking, cart travel); 76 tests pass.
+
 v2.101.0  (Cinemachine, cont.: FreeLook orbital rig)
   - Virtual cameras gained a FreeLook mode (Cinemachine's orbital rig): orbit the
     Follow target on a sphere by yaw/pitch at a fixed radius, with a pivot height and

@@ -179,5 +179,66 @@ int main() {
         CHECK_NEAR((p1 - Vec3{0,0,0}).Magnitude(), 10.0f, 0.2f);  // still on the sphere
     }
 
+    // A DollyPath evaluates a spline through its waypoints; endpoints hit exactly.
+    {
+        Scene s("CM7"); s.physicsEnabled = false;
+        GameObject* pg = s.CreateGameObject("Track");
+        auto* dp = pg->AddComponent<DollyPath>();
+        dp->waypoints = {{0,0,0}, {0,0,10}, {10,0,10}, {10,0,0}};
+
+        Vec3 a = dp->EvaluatePosition(0.0f);
+        Vec3 b = dp->EvaluatePosition(1.0f);
+        CHECK_NEAR((a - Vec3{0,0,0}).Magnitude(), 0.0f, 0.01f);    // starts at first waypoint
+        CHECK_NEAR((b - Vec3{10,0,0}).Magnitude(), 0.0f, 0.01f);   // ends at last waypoint
+        Vec3 mid = dp->EvaluatePosition(0.5f);
+        CHECK(mid.z > 5.0f);                                       // bows out toward the far side
+
+        // Nearest position to a point near the second waypoint is roughly 1/3 along.
+        float t = dp->NearestPosition({0, 0, 10});
+        CHECK_NEAR(t, 1.0f / 3.0f, 0.1f);
+    }
+
+    // A Tracked Dolly vcam sits on the rail and auto-dollies toward the target.
+    {
+        Scene s("CM8"); s.physicsEnabled = false;
+        GameObject* pg = s.CreateGameObject("Track");
+        auto* dp = pg->AddComponent<DollyPath>();
+        dp->waypoints = {{-10,0,0}, {0,0,0}, {10,0,0}};   // a straight rail along X
+
+        GameObject* t = s.CreateGameObject("T");
+        t->transform->localPosition = {8, 0, 0};
+
+        GameObject* camGO = s.CreateGameObject("Cam");
+        camGO->AddComponent<Camera>();
+        camGO->AddComponent<CinemachineBrain>()->blendTime = 0.0f;
+        GameObject* v = s.CreateGameObject("V");
+        auto* vc = v->AddComponent<VirtualCamera>();
+        vc->follow = "T"; vc->dolly = true; vc->dollyPath = "Track"; vc->autoDolly = true;
+        vc->positionDamping = 0.0f; vc->priority = 10;
+
+        s.Start();
+        s.Update(0.016f);
+        Vec3 p = camGO->transform->Position();
+        CHECK_NEAR(p.x, 8.0f, 0.3f);   // slid along the rail to under the target
+        CHECK_NEAR(p.z, 0.0f, 0.3f);   // constrained to the rail (z stays 0)
+    }
+
+    // A Dolly Cart advances any object along the path over time.
+    {
+        Scene s("CM9"); s.physicsEnabled = false;
+        GameObject* pg = s.CreateGameObject("Track");
+        auto* dp = pg->AddComponent<DollyPath>();
+        dp->waypoints = {{0,0,0}, {10,0,0}};
+
+        GameObject* cart = s.CreateGameObject("Cart");
+        auto* dc = cart->AddComponent<DollyCart>();
+        dc->path = "Track"; dc->position = 0.0f; dc->speed = 0.5f; dc->autoMove = true;
+
+        s.Start();
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);  // 1.0s at 0.5/s -> ~0.5 along
+        CHECK(cart->transform->Position().x > 1.0f);          // moved down the rail
+        CHECK(dc->position > 0.45f && dc->position < 0.55f);
+    }
+
     TEST_MAIN_RESULT();
 }

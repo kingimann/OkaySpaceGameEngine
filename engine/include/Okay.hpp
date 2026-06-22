@@ -100,6 +100,7 @@
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/DollyPath.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
 

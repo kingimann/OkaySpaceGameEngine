@@ -1036,6 +1036,11 @@ inline void ApplyColorGrade(Raster& r) {
 // ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
 inline bool& FXAAEnabled() { static bool v = true; return v; }
 
+// Active camera's layer culling mask (Camera.cullingMask). RenderMeshes draws a
+// mesh only if bit (1<<gameObject->layer) is set. The editor/player set this from
+// the rendering camera each frame (~0 = all layers, the Scene view default).
+inline int& RenderCullingMask() { static int v = ~0; return v; }
+
 /// Cheap post-process anti-aliasing: where local contrast is high (a geometry
 /// edge), blend the pixel toward its neighbourhood average by an amount scaled by
 /// the contrast. Smooths jaggies without a full supersample.
@@ -1135,6 +1140,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     auto renderBand = [&](int bandY0, int bandY1) {
     for (const auto& go : scene.Objects()) {
         if (ignore && go.get() == ignore) continue;   // this camera skips this object (1st-person body)
+        if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
         Mat4 model = go->transform->LocalToWorldMatrix();

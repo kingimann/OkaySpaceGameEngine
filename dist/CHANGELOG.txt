@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.98.0  (camera: layers, culling mask, physical camera)
+  - Added Unity-style named Layers (32 layers; GameObject.layer). Each GameObject now
+    sits on a layer, editable from a new Layer dropdown in the Inspector header.
+  - Cameras gained a Culling Mask (Camera.cullingMask): a per-layer set of what the
+    camera renders, with an Everything/Nothing + per-layer Inspector control. Meshes on
+    unselected layers are skipped — useful for mini-maps, helper geometry, layered passes.
+  - Cameras gained a Physical Camera mode (focal length + sensor height) that derives
+    the field of view from real lens optics, matching Unity's physical camera. The
+    Inspector shows the effective FOV. New Camera::VerticalFovDegrees() helper.
+  - layer, cullingMask and the physical-camera fields are all saved with the scene.
+
 v2.97.0  (optimization: less per-frame allocation)
   - Scene::FindObjectsOfType (called many times per frame by physics, rendering and
     UI) used to allocate a temporary vector for EVERY game object via GetComponents.

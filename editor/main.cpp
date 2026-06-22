@@ -4977,6 +4977,19 @@ void DrawInspector(EditorState& ed) {
         ImGui::EndCombo();
     }
     ImGui::SameLine();
+    // Layer dropdown (Unity-style): which of the 32 named layers the object sits on.
+    ImGui::SetNextItemWidth(130);
+    if (ImGui::BeginCombo("Layer", okay::Layers::Name(go->layer).c_str())) {
+        for (int i = 0; i < 32; ++i) {
+            std::string nm = okay::Layers::Name(i);
+            bool sel = (go->layer == i);
+            if (ImGui::Selectable((nm + "##layer" + std::to_string(i)).c_str(), sel)) {
+                go->layer = i; ed.dirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
     float btnW = ImGui::CalcTextSize("Save as Prefab").x + ImGui::GetStyle().FramePadding.x * 2;
     float avail = ImGui::GetContentRegionAvail().x;
     if (avail > btnW) ImGui::SameLine(ImGui::GetCursorPosX() + (avail - btnW));
@@ -5489,10 +5502,19 @@ void DrawInspector(EditorState& ed) {
             if (cam->projection == Camera::Projection::Orthographic) {
                 if (ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f)) ed.dirty = true;
             } else {
-                if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
-                int ax = cam->fovAxisHorizontal ? 1 : 0;
-                const char* axes[] = {"Vertical", "Horizontal"};
-                if (ImGui::Combo("FOV Axis", &ax, axes, 2)) { cam->fovAxisHorizontal = (ax == 1); ed.dirty = true; }
+                if (ImGui::Checkbox("Physical Camera", &cam->physicalCamera)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Drive FOV from real lens optics (focal length + sensor size),\nlike Unity's physical camera.");
+                if (cam->physicalCamera) {
+                    if (ImGui::DragFloat("Focal Length", &cam->focalLength, 0.5f, 1.0f, 300.0f, "%.1f mm")) ed.dirty = true;
+                    if (ImGui::DragFloat("Sensor Height", &cam->sensorHeight, 0.1f, 1.0f, 100.0f, "%.1f mm")) ed.dirty = true;
+                    ImGui::TextDisabled("Effective FOV: %.1f deg", cam->VerticalFovDegrees(16.0f / 9.0f));
+                } else {
+                    if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+                    int ax = cam->fovAxisHorizontal ? 1 : 0;
+                    const char* axes[] = {"Vertical", "Horizontal"};
+                    if (ImGui::Combo("FOV Axis", &ax, axes, 2)) { cam->fovAxisHorizontal = (ax == 1); ed.dirty = true; }
+                }
             }
 
             ImGui::SeparatorText("Background");
@@ -5515,6 +5537,36 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Where on screen this camera draws (0..1, origin bottom-left)\n— like Unity's Camera.rect. Use for split-screen / mini-maps.");
+
+            ImGui::SeparatorText("Culling Mask");
+            // Layer set this camera renders (Unity's Camera.cullingMask). Summarize the
+            // selection on the combo preview, with per-layer toggles + Everything/Nothing.
+            std::string maskPreview;
+            if (cam->cullingMask == ~0) maskPreview = "Everything";
+            else if (cam->cullingMask == 0) maskPreview = "Nothing";
+            else {
+                int cnt = 0;
+                for (int i = 0; i < 32; ++i) if (cam->cullingMask & (1 << i)) {
+                    if (cnt < 2) { if (cnt) maskPreview += ", "; maskPreview += okay::Layers::Name(i); }
+                    ++cnt;
+                }
+                if (cnt > 2) maskPreview += " (+" + std::to_string(cnt - 2) + ")";
+            }
+            if (ImGui::BeginCombo("Layers", maskPreview.c_str())) {
+                if (ImGui::Selectable("Everything", cam->cullingMask == ~0)) { cam->cullingMask = ~0; ed.dirty = true; }
+                if (ImGui::Selectable("Nothing", cam->cullingMask == 0)) { cam->cullingMask = 0; ed.dirty = true; }
+                ImGui::Separator();
+                for (int i = 0; i < 32; ++i) {
+                    std::string nm = okay::Layers::Name(i);
+                    bool on = (cam->cullingMask & (1 << i)) != 0;
+                    if (ImGui::Checkbox((nm + "##cull" + std::to_string(i)).c_str(), &on)) {
+                        if (on) cam->cullingMask |= (1 << i);
+                        else    cam->cullingMask &= ~(1 << i);
+                        ed.dirty = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
 
             ImGui::Spacing();
             if (ImGui::Checkbox("Main", &cam->main)) ed.dirty = true;
@@ -8108,6 +8160,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // canvas rect (AddImage), and SDL's scale maps that to the same physical area.
     float dpi = ImGui::GetIO().DisplayFramebufferScale.x;
     if (dpi < 1.0f || dpi > 4.0f) dpi = 1.0f;
+    // The Game view honors the main camera's layer culling mask; the Scene view
+    // always shows every layer so you can edit hidden objects.
+    RenderCullingMask() = (gameView && SceneCamera(ed.scene())) ? SceneCamera(ed.scene())->cullingMask : ~0;
     float v3w = view3dMax.x - view3dMin.x, v3h = view3dMax.y - view3dMin.y;
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)(v3w * dpi), (int)(v3h * dpi),

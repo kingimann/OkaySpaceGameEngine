@@ -17,17 +17,24 @@ Mat4 Camera::ViewMatrix() const {
     return transform->LocalToWorldMatrix().Inverse();
 }
 
-Mat4 Camera::ProjectionMatrix(float aspect) const {
-    if (projection == Projection::Perspective) {
-        float vfov = fieldOfView;
+float Camera::VerticalFovDegrees(float aspect) const {
+    float vfov = fieldOfView;
+    if (physicalCamera && focalLength > 1e-3f) {
+        // Vertical FOV from real lens geometry: 2*atan( sensorHeight / (2*focal) ).
+        vfov = 2.0f * std::atan(sensorHeight / (2.0f * focalLength)) * Mathf::Rad2Deg;
+    } else if (fovAxisHorizontal && aspect > 1e-4f) {
         // Horizontal FOV axis: convert the horizontal angle to the vertical angle
         // the perspective matrix expects, so the chosen axis stays fixed as the
         // aspect changes (Unity's "FOV Axis = Horizontal").
-        if (fovAxisHorizontal && aspect > 1e-4f) {
-            float hf = fieldOfView * Mathf::Deg2Rad * 0.5f;
-            vfov = 2.0f * std::atan(std::tan(hf) / aspect) * Mathf::Rad2Deg;
-        }
-        return Mat4::Perspective(vfov, aspect, nearClip, farClip);
+        float hf = fieldOfView * Mathf::Deg2Rad * 0.5f;
+        vfov = 2.0f * std::atan(std::tan(hf) / aspect) * Mathf::Rad2Deg;
+    }
+    return vfov;
+}
+
+Mat4 Camera::ProjectionMatrix(float aspect) const {
+    if (projection == Projection::Perspective) {
+        return Mat4::Perspective(VerticalFovDegrees(aspect), aspect, nearClip, farClip);
     }
     float h = orthographicSize;
     float w = orthographicSize * aspect;

@@ -135,7 +135,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)cam->clearFlags << " " << cam->depth
             << " " << cam->nearClip << " " << cam->farClip
             << " " << (cam->fovAxisHorizontal ? 1 : 0)
-            << " " << cam->rectX << " " << cam->rectY << " " << cam->rectW << " " << cam->rectH << "\n";
+            << " " << cam->rectX << " " << cam->rectY << " " << cam->rectW << " " << cam->rectH
+            << " " << cam->cullingMask
+            << " " << (cam->physicalCamera ? 1 : 0) << " " << cam->focalLength << " " << cam->sensorHeight
+            << "\n";
     }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
@@ -543,6 +546,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
+        if (go->layer != 0) out << "  layer " << go->layer << "\n";
         int parent = t->Parent() ? IndexOf(scene, t->Parent()->gameObject) : -1;
         out << "  parent " << parent << "\n";
         WriteComponents(out, go);
@@ -608,6 +612,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
+                else if (field == "layer") { in >> go->layer; }
                 else if (field == "parent") { int p = -1; in >> p; if (p >= 0) parentLinks.push_back({idx, p}); }
                 else if (field == "transform") {
                     Vec3 p, s; Quat q;
@@ -657,6 +662,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) {
                             int fax = 0; in >> fax >> cam->rectX >> cam->rectY >> cam->rectW >> cam->rectH;
                             cam->fovAxisHorizontal = (fax != 0);
+                            in >> std::ws; // optional culling mask + physical camera (added later)
+                            if (std::isdigit(in.peek()) || in.peek() == '-') {
+                                int phys = 0;
+                                in >> cam->cullingMask >> phys >> cam->focalLength >> cam->sensorHeight;
+                                cam->physicalCamera = (phys != 0);
+                            }
                         }
                     }
                 } else if (field == "mesh") {
@@ -1368,6 +1379,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
+        if (go->layer != 0) out << "  layer " << go->layer << "\n";
         Transform* parent = go->transform->Parent();
         int pIdx = -1;
         if (parent) {

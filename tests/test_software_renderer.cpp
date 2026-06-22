@@ -6,20 +6,20 @@ using namespace okay;
 int main() {
     RUN_SUITE("software_renderer");
 
-    // --- Depth test: a nearer triangle wins the pixel regardless of draw order ---
+    // --- Depth test (W-buffer: depth = 1/w, so LARGER = nearer) ---
     {
         Raster r; r.Resize(10, 10);
         r.Clear(0xFF000000u);                       // opaque black
         std::uint32_t red  = 0xFF0000FFu;           // ABGR: red
         std::uint32_t blue = 0xFFFF0000u;           // ABGR: blue
-        // A big FAR blue triangle, then a big NEAR red one drawn AFTER it.
-        r.Triangle(0, 0, 5.0f,  10, 0, 5.0f,  0, 10, 5.0f, blue);   // far
+        // A big FAR blue triangle (small 1/w), then a big NEAR red one (large 1/w).
+        r.Triangle(0, 0, 0.2f,  10, 0, 0.2f,  0, 10, 0.2f, blue);   // far
         r.Triangle(0, 0, 1.0f,  10, 0, 1.0f,  0, 10, 1.0f, red);    // near
         CHECK(r.Get(1, 1) == red);                  // near wins
-        CHECK(r.Depth(1, 1) <= 1.01f);
+        CHECK(r.Depth(1, 1) >= 0.99f);              // stored the near 1/w
 
-        // Now draw a FAR triangle AFTER the near one — it must NOT overwrite.
-        r.Triangle(0, 0, 9.0f,  10, 0, 9.0f,  0, 10, 9.0f, blue);
+        // Now draw a FARTHER triangle (even smaller 1/w) AFTER — it must NOT overwrite.
+        r.Triangle(0, 0, 0.1f,  10, 0, 0.1f,  0, 10, 0.1f, blue);
         CHECK(r.Get(1, 1) == red);                  // still red (depth rejected the far one)
     }
 

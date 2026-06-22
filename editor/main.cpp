@@ -5181,6 +5181,20 @@ void DrawInspector(EditorState& ed) {
             }
             if (mr->shader == MeshRenderer::Shader::Toon)
                 if (ImGui::SliderInt("Cel Bands##mesh", &mr->toonBands, 2, 6)) ed.dirty = true;
+            // Rim (Fresnel) backlight — a per-material glow, great with Toon.
+            if (ImGui::SliderFloat("Rim##mesh", &mr->rimStrength, 0.0f, 2.0f)) ed.dirty = true;
+            if (mr->rimStrength > 0.0f) {
+                if (ImGui::SliderFloat("Rim Power##mesh", &mr->rimPower, 1.0f, 8.0f)) ed.dirty = true;
+                float rc[3] = {mr->rimColor.r, mr->rimColor.g, mr->rimColor.b};
+                if (ImGui::ColorEdit3("Rim Color##mesh", rc)) { mr->rimColor = {rc[0], rc[1], rc[2], 1.0f}; ed.dirty = true; }
+            }
+            // Silhouette outline (inverted hull) — pairs with Toon for a cartoon edge.
+            if (ImGui::Checkbox("Outline##mesh", &mr->outline)) ed.dirty = true;
+            if (mr->outline) {
+                if (ImGui::DragFloat("Outline Width##mesh", &mr->outlineWidth, 0.002f, 0.0f, 1.0f)) ed.dirty = true;
+                float oc[3] = {mr->outlineColor.r, mr->outlineColor.g, mr->outlineColor.b};
+                if (ImGui::ColorEdit3("Outline Color##mesh", oc)) { mr->outlineColor = {oc[0], oc[1], oc[2], 1.0f}; ed.dirty = true; }
+            }
             // Material: emissive glow + specular highlight.
             float em[3] = {mr->emissive.r, mr->emissive.g, mr->emissive.b};
             if (ImGui::ColorEdit3("Emissive##mesh", em)) {

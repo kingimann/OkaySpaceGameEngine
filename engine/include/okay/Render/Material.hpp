@@ -27,6 +27,13 @@ struct Material {
     MeshRenderer::Shader shader = MeshRenderer::Shader::Standard;
     int                  toonBands = 3;
 
+    /// Per-material rim (Fresnel) backlight and inverted-hull silhouette outline.
+    float rimStrength = 0.0f, rimPower = 3.0f;
+    Color rimColor = Color::White;
+    bool  outline = false;
+    Color outlineColor = Color::Black;
+    float outlineWidth = 0.03f;
+
     /// Copy the surface fields from a renderer into a Material preset.
     static Material FromRenderer(const MeshRenderer& mr) {
         Material m;
@@ -35,6 +42,8 @@ struct Material {
         m.unlit = mr.unlit; m.doubleSided = mr.doubleSided;
         m.texture = mr.texture; m.tiling = mr.tiling;
         m.shader = mr.shader; m.toonBands = mr.toonBands;
+        m.rimStrength = mr.rimStrength; m.rimPower = mr.rimPower; m.rimColor = mr.rimColor;
+        m.outline = mr.outline; m.outlineColor = mr.outlineColor; m.outlineWidth = mr.outlineWidth;
         return m;
     }
     /// Stamp this material's look onto a renderer (mesh/geometry untouched).
@@ -44,6 +53,8 @@ struct Material {
         mr.unlit = unlit; mr.doubleSided = doubleSided;
         mr.texture = texture; mr.tiling = tiling;
         mr.shader = shader; mr.toonBands = toonBands;
+        mr.rimStrength = rimStrength; mr.rimPower = rimPower; mr.rimColor = rimColor;
+        mr.outline = outline; mr.outlineColor = outlineColor; mr.outlineWidth = outlineWidth;
     }
 
     std::string ToText() const {
@@ -55,6 +66,10 @@ struct Material {
           << "flags " << (unlit ? 1 : 0) << " " << (doubleSided ? 1 : 0) << "\n"
           << "tiling " << tiling.x << " " << tiling.y << "\n"
           << "shader " << (int)shader << " " << toonBands << "\n"
+          << "rim " << rimStrength << " " << rimPower << " "
+          << rimColor.r << " " << rimColor.g << " " << rimColor.b << "\n"
+          << "outline " << (outline ? 1 : 0) << " " << outlineWidth << " "
+          << outlineColor.r << " " << outlineColor.g << " " << outlineColor.b << "\n"
           << "texture " << (texture.empty() ? "-" : texture) << "\n";
         return o.str();
     }
@@ -69,6 +84,8 @@ struct Material {
             else if (tok == "flags")   { int u = 0, d = 0; in >> u >> d; m.unlit = u != 0; m.doubleSided = d != 0; }
             else if (tok == "tiling")  in >> m.tiling.x >> m.tiling.y;
             else if (tok == "shader")  { int s = 0; in >> s >> m.toonBands; m.shader = (MeshRenderer::Shader)s; }
+            else if (tok == "rim")     in >> m.rimStrength >> m.rimPower >> m.rimColor.r >> m.rimColor.g >> m.rimColor.b;
+            else if (tok == "outline") { int o = 0; in >> o >> m.outlineWidth >> m.outlineColor.r >> m.outlineColor.g >> m.outlineColor.b; m.outline = o != 0; }
             else if (tok == "texture") { std::string t; in >> t; m.texture = (t == "-") ? "" : t; }
         }
         return m;

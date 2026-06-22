@@ -22,6 +22,18 @@ public:
     Shader shader = Shader::Standard;
     /// Number of cel bands for the Toon shader (2-6 reads best). Ignored otherwise.
     int    toonBands = 3;
+
+    /// Rim / Fresnel backlight (per-material; works with any shader, great with Toon):
+    /// a colored glow that strengthens toward grazing angles (1 - n·view)^power. 0 = off.
+    float  rimStrength = 0.0f;
+    float  rimPower    = 3.0f;
+    Color  rimColor    = Color::White;
+
+    /// Silhouette outline (inverted-hull): render an expanded shell of back faces in a
+    /// solid color behind the mesh, leaving a clean cartoon edge. Pairs with Toon.
+    bool   outline      = false;
+    Color  outlineColor = Color::Black;
+    float  outlineWidth = 0.03f;   // world units the hull is pushed out along normals
     bool  enabled = true;      // when false the mesh is not drawn (e.g. the local
                                // player's own body in first person)
     bool  wireframe = false;   // solid by default (Unity-like); true = edges only

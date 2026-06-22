@@ -373,6 +373,8 @@ public:
                        const std::vector<Image>* specMips = nullptr,
                        float metallic = 0.0f,
                        int toonBands = 0,
+                       float matRimStr = 0.0f, float matRimPow = 3.0f,
+                       float rimR = 1.0f, float rimG = 1.0f, float rimB = 1.0f,
                        int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
@@ -538,9 +540,22 @@ public:
                              : std::pow(f, rimPow);
                     rim = fp * rimStr;
                 }
-                float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + er;
-                float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + eg;
-                float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + eb;
+                // Per-material Fresnel rim: an additive, colored backlight independent
+                // of the global rim toggle (a first-class shader feature).
+                float mrimR = 0.0f, mrimG = 0.0f, mrimB = 0.0f;
+                if (matRimStr > 0.0f) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    float f = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
+                    float fp = (matRimPow == 3.0f) ? f * f * f
+                             : (matRimPow == 2.0f) ? f * f
+                             : (matRimPow == 4.0f) ? (f * f) * (f * f)
+                             : std::pow(f, matRimPow);
+                    float m = fp * matRimStr;
+                    mrimR = m * rimR; mrimG = m * rimG; mrimB = m * rimB;
+                }
+                float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + mrimR + er;
+                float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + mrimG + eg;
+                float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + mrimB + eb;
                 // Environment reflection: mirror the sky gradient about the normal
                 // and blend it in by a Fresnel-weighted reflectivity (Schlick).
                 // Metals reflect strongly even without an explicit reflectivity, and
@@ -1214,6 +1229,41 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             }
             if (outN == 8 || outL == 8 || outR == 8 || outB == 8 || outT == 8) continue;
         }
+        // Inverted-hull outline pre-pass: draw an expanded shell of BACK faces in a
+        // flat outline color behind the mesh, so only a clean silhouette edge survives
+        // the main pass. A cosmetic pass — triangles crossing the near plane are
+        // skipped rather than clipped.
+        if (mr->outline && mr->outlineWidth > 0.0f) {
+            std::uint32_t oabgr = Raster::PackRGB(mr->outlineColor.r, mr->outlineColor.g, mr->outlineColor.b);
+            for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
+                int idx[3] = {t[i], t[i + 1], t[i + 2]};
+                Vec3 wp0[3];
+                for (int k = 0; k < 3; ++k) wp0[k] = model.MultiplyPoint(v[idx[k]]);
+                Vec3 fn = Vec3::Cross(wp0[1] - wp0[0], wp0[2] - wp0[0]).Normalized();
+                Vec3 cen = (wp0[0] + wp0[1] + wp0[2]) * (1.0f / 3.0f);
+                // Render the same faces the main pass shows (its visible surface), then
+                // expand them OUTWARD (away from the mesh, opposite the culling normal)
+                // and push them a touch farther, so the unexpanded mesh covers them
+                // everywhere except a clean silhouette ring.
+                bool mainVisible = Vec3::Dot(fn, eye - cen) >= 0.0f;
+                if (!mainVisible) continue;
+                Vec3 outward = fn * -1.0f;
+                float sxo[3], syo[3], sdo[3]; bool ok = true;
+                for (int k = 0; k < 3; ++k) {
+                    Vec4 c = vp * Vec4{wp0[k] + outward * mr->outlineWidth, 1.0f};
+                    if (c.w <= 1e-4f) { ok = false; break; }
+                    float iw = 1.0f / c.w;
+                    sxo[k] = (c.x * iw * 0.5f + 0.5f) * W;
+                    syo[k] = (1.0f - (c.y * iw * 0.5f + 0.5f)) * H;
+                    // Push the shell slightly farther (smaller 1/w) so the mesh always
+                    // wins where they overlap — the outline only survives at the rim.
+                    sdo[k] = iw * 0.9f;
+                }
+                if (ok) r.Triangle(sxo[0], syo[0], sdo[0], sxo[1], syo[1], sdo[1],
+                                   sxo[2], syo[2], sdo[2], oabgr, bandY0, bandY1);
+            }
+        }
+
         // A clip-space vertex carrying its (unprojected) UV, for near-plane
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
@@ -1400,7 +1450,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // cast shadows.)
             // Toon needs the per-pixel path (that's where the cel banding lives), so
             // it forces per-pixel lighting for its mesh regardless of the global toggle.
-            const bool perPixel = (PerPixelLighting() || mr->shader == MeshRenderer::Shader::Toon)
+            const bool perPixel = (PerPixelLighting() || mr->shader == MeshRenderer::Shader::Toon
+                                   || mr->rimStrength > 0.0f)
                                   && !unlit && !useMatcap;
             for (int j = 1; j + 1 < pn; ++j) {
                 const CV* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
@@ -1423,6 +1474,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     normalMips, triTangent, mr->normalStrength,
                                     mr->reflectivity, specMips, mr->metallic,
                                     (mr->shader == MeshRenderer::Shader::Toon ? mr->toonBands : 0),
+                                    mr->rimStrength, mr->rimPower,
+                                    mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
                                     bandY0, bandY1);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};

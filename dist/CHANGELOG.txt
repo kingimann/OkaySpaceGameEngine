@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.104.0  (shaders, cont.: rim light + outline)
+  - Per-material Rim (Fresnel) backlight: a colored glow that strengthens toward
+    grazing angles (strength, power, color). Works with any shader and auto-uses the
+    per-pixel path; pairs beautifully with Toon for a stylized edge glow.
+  - Silhouette Outline shader (inverted hull): renders an expanded shell of the mesh
+    in a solid color just behind it, leaving a clean cartoon edge (width + color). The
+    shell is pushed slightly back so it only shows at the silhouette, never occluding
+    the surface — verified it adds an outline ring with zero pixels lost.
+  - Both are exposed in the Mesh Renderer inspector, stored on .okaymat materials and
+    in scenes (back-compatible). shaders test suite extended (rim/outline round-trips
+    + a render check that the outline adds a silhouette ring); 77 tests pass.
+
 v2.103.0  (shaders: surface-model selector + Toon)
   - Materials/MeshRenderers now pick a Shader (surface model), like Unity: Standard
     (the full lit PBR-ish model), Unlit (flat base color, no lighting), or Toon.

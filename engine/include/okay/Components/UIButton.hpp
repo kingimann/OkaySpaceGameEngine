@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
@@ -30,11 +31,17 @@ public:
     Color disabledColor = Color::FromBytes(70, 70, 78);  // shown when !interactable
     Color textColor = Color::White;
     UIAnchor anchor = UIAnchor::TopLeft;
+    // Silhouette: rounded (default), hard rectangle, circle (icon button) or pill.
+    UIShape shape = UIShape::Rounded;
     // Customization: rounded corners, label size, and an optional border.
     float cornerRadius = 4.0f;
     float fontScale = 2.0f;                        // text pixel size multiplier
     float borderWidth = 0.0f;                      // 0 = no border
     Color borderColor = Color::FromBytes(255, 255, 255, 80);
+    // Optional drop shadow (lifts the button off the background — clean-UI style).
+    bool  shadow = false;
+    Color shadowColor = Color::FromBytes(0, 0, 0, 110);
+    Vec2  shadowOffset{0.0f, 3.0f};
     /// Grow effect when hovered/focused: 1 = none, e.g. 1.1 = 10% bigger. A
     /// lightweight Unity-style "transition" for tactile menus.
     float hoverScale = 1.0f;
@@ -101,8 +108,9 @@ public:
 
     bool Contains(const Vec2& p) const {
         Vec2 o = ResolveAnchor(anchor, position, size);
-        return p.x >= o.x && p.y >= o.y &&
-               p.x <= o.x + size.x && p.y <= o.y + size.y;
+        // Hit-test the actual silhouette so corners of a rounded/circle/pill button
+        // aren't clickable where there's no pixel.
+        return UIShapeContains(shape, size.x, size.y, cornerRadius, p.x - o.x, p.y - o.y);
     }
 
     void Update(float dt) override {

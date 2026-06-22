@@ -66,5 +66,27 @@ int main() {
         CHECK(im2 && im2->shape == UIShape::Circle);
     }
 
+    // A circle button only accepts clicks inside its disc, not the corners.
+    {
+        Scene s("B"); s.physicsEnabled = false;
+        auto* btn = s.CreateGameObject("Btn")->AddComponent<UIButton>();
+        btn->anchor = UIAnchor::TopLeft; btn->position = {0, 0}; btn->size = {100, 100};
+        btn->shape = UIShape::Circle;
+        CHECK(btn->Contains({50, 50}));     // center hits
+        CHECK(!btn->Contains({3, 3}));      // corner misses the disc
+    }
+
+    // UIButton shape + drop shadow round-trip through the scene.
+    {
+        Scene s("B2"); s.physicsEnabled = false;
+        auto* btn = s.CreateGameObject("Btn")->AddComponent<UIButton>();
+        btn->shape = UIShape::Pill; btn->shadow = true; btn->shadowOffset = {2, 5};
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* b2 = s2.Find("Btn") ? s2.Find("Btn")->GetComponent<UIButton>() : nullptr;
+        CHECK(b2 && b2->shape == UIShape::Pill);
+        CHECK(b2 && b2->shadow);
+        if (b2) CHECK_NEAR(b2->shadowOffset.y, 5.0f, 1e-4f);
+    }
+
     TEST_MAIN_RESULT();
 }

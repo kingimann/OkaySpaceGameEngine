@@ -6460,8 +6460,19 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             ImGui::SeparatorText("Style");
-            if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int bshp = (int)btn->shape;
+            const char* bshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##uib", &bshp, bshapes, 4)) { btn->shape = (UIShape)bshp; ed.dirty = true; }
+            if (btn->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Drop Shadow##uib", &btn->shadow)) ed.dirty = true;
+            if (btn->shadow) {
+                float sc[4] = {btn->shadowColor.r, btn->shadowColor.g, btn->shadowColor.b, btn->shadowColor.a};
+                if (ImGui::ColorEdit4("Shadow Color##uib", sc)) { btn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+                float so[2] = {btn->shadowOffset.x, btn->shadowOffset.y};
+                if (ImGui::DragFloat2("Shadow Offset##uib", so, 0.5f)) { btn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+            }
             if (ImGui::DragFloat("Border Width##uib", &btn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             if (btn->borderWidth > 0.0f) {
                 float bc[4] = {btn->borderColor.r, btn->borderColor.g, btn->borderColor.b, btn->borderColor.a};

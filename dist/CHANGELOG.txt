@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.107.0  (UI: buttons get shapes + shadows + accurate hit-test)
+  - UIButton gains the shape system (Rectangle/Rounded/Circle/Pill) and an optional
+    drop shadow, for clean flat-UI / icon buttons. The player renders the silhouette
+    (with border and shadow) instead of a plain box.
+  - Button click hit-testing now follows the actual silhouette, so the corners of a
+    rounded/circle/pill button aren't clickable where there's no pixel.
+  - Inspector Shape selector + shadow controls, back-compatible serialization.
+    uishape suite extended (circle-button hit-test + button round-trip); 78 tests pass.
+
 v2.106.0  (UI: real shapes — rounded / circle / pill)
   - New UI shape system (UIShape): widgets can be a hard Rectangle, soft Rounded box
     (the modern flat look), a full Circle (avatars/badges) or a Pill/capsule (toggle

@@ -415,7 +415,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << btn->transitionSpeed << " " << (btn->toggleMode ? 1 : 0)
             << " " << (btn->isOn ? 1 : 0) << " " << btn->pressOffset
             << " " << (btn->iconRight ? 1 : 0) << " " << (btn->holdRepeat ? 1 : 0)
-            << " " << btn->repeatDelay << " " << btn->repeatInterval << "\n";
+            << " " << btn->repeatDelay << " " << btn->repeatInterval
+            // extended (back-compatible trailing fields): shape + drop shadow
+            << " " << (int)btn->shape << " " << (btn->shadow ? 1 : 0) << " "
+            << btn->shadowColor.r << " " << btn->shadowColor.g << " " << btn->shadowColor.b << " " << btn->shadowColor.a
+            << " " << btn->shadowOffset.x << " " << btn->shadowOffset.y << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -1187,6 +1191,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                >> btn->repeatDelay >> btn->repeatInterval;
                             btn->hoverTextColor = ht; btn->toggleMode = (tm != 0); btn->isOn = (on != 0);
                             btn->iconRight = (ir != 0); btn->holdRepeat = (hr != 0);
+                            in >> std::ws; // optional shape + drop shadow (added later)
+                            if (std::isdigit(in.peek())) {
+                                int sp = 0, sh = 0; Color sc;
+                                in >> sp >> sh >> sc.r >> sc.g >> sc.b >> sc.a
+                                   >> btn->shadowOffset.x >> btn->shadowOffset.y;
+                                btn->shape = (UIShape)sp; btn->shadow = (sh != 0); btn->shadowColor = sc;
+                            }
                         }
                     }
                 } else if (field == "uipanel") {

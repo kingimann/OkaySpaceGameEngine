@@ -795,16 +795,20 @@ int main(int argc, char** argv) {
                 int gy = (int)(btn->size.y * (btn->hoverScale - 1.0f) * 0.5f);
                 r.x -= gx; r.y -= gy; r.w += 2 * gx; r.h += 2 * gy;
             }
-            SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
-                                   (Uint8)(bg.b * 255), (Uint8)(bg.a * 255 * op));
-            SDL_RenderFillRect(renderer, &r);
-            if (btn->borderWidth > 0.0f) {                  // outline (N nested rects)
-                SDL_SetRenderDrawColor(renderer, (Uint8)(btn->borderColor.r * 255), (Uint8)(btn->borderColor.g * 255),
-                                       (Uint8)(btn->borderColor.b * 255), (Uint8)(btn->borderColor.a * 255 * op));
-                for (int bw = 0; bw < (int)btn->borderWidth; ++bw) {
-                    SDL_Rect br{r.x + bw, r.y + bw, r.w - 2 * bw, r.h - 2 * bw};
-                    SDL_RenderDrawRect(renderer, &br);
-                }
+            if (btn->shadow) {                              // drop shadow behind (same shape)
+                SDL_Rect sh{r.x + (int)btn->shadowOffset.x, r.y + (int)btn->shadowOffset.y, r.w, r.h};
+                FillUIShape(renderer, sh, btn->shape, btn->cornerRadius,
+                            btn->shadowColor, btn->shadowColor, false, false, op);
+            }
+            if (btn->borderWidth > 0.0f) {                  // border = outer shape, then inner fill
+                FillUIShape(renderer, r, btn->shape, btn->cornerRadius,
+                            btn->borderColor, btn->borderColor, false, false, op);
+                int b = (int)btn->borderWidth;
+                SDL_Rect inner{r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b};
+                float innerR = btn->cornerRadius - b; if (innerR < 0.0f) innerR = 0.0f;
+                FillUIShape(renderer, inner, btn->shape, innerR, bg, bg, false, false, op);
+            } else {
+                FillUIShape(renderer, r, btn->shape, btn->cornerRadius, bg, bg, false, false, op);
             }
             // Optional icon (left by default, right when iconRight); the label
             // takes the remaining space. Press shifts content down slightly.

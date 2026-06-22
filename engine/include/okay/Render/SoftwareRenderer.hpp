@@ -194,31 +194,35 @@ public:
         float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
         if (area == 0.0f) return;
         float inv = 1.0f / area;
+        // Incremental barycentric: w0,w1 are linear in x, so compute them once at the
+        // start of each row and add a constant step per pixel — no per-pixel multiplies
+        // for the edge functions (the big fill-rate win). Hoist fog/specular: skip
+        // their per-pixel interpolation entirely when the triangle has neither.
+        const double dInv = (double)inv;
+        const double dw0 = (double)(Y[1] - Y[2]) * dInv;   // d(w0)/dx
+        const double dw1 = (double)(Y[2] - Y[0]) * dInv;   // d(w1)/dx
+        const bool anySpec = SP[0] != 0.0f || SP[1] != 0.0f || SP[2] != 0.0f;
+        const bool anyFog  = FOG[0] != 0.0f || FOG[1] != 0.0f || FOG[2] != 0.0f;
         for (int y = minY; y <= maxY; ++y) {
-            for (int x = minX; x <= maxX; ++x) {
-                // Double precision avoids float cancellation across huge triangles
-                // (torn silhouettes / edge cracks / depth banding on big grounds).
-                double px = x + 0.5, py = y + 0.5;
-                double w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * (double)inv;
-                double w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * (double)inv;
+            const double py = y + 0.5, pxs = minX + 0.5;
+            double w0 = ((X[1] - pxs) * (Y[2] - py) - (X[2] - pxs) * (Y[1] - py)) * dInv;
+            double w1 = ((X[2] - pxs) * (Y[0] - py) - (X[0] - pxs) * (Y[2] - py)) * dInv;
+            const std::size_t row = (std::size_t)y * width;
+            for (int x = minX; x <= maxX; ++x, w0 += dw0, w1 += dw1) {
                 double w2 = 1.0 - w0 - w1;
-                // Tiny edge bias: pixels right on a shared edge can fall just outside
-                // both triangles from float rounding, leaving 1px cracks (a dotted
-                // seam across the big ground quad). Accept a hair past the edge so
-                // adjacent triangles always overlap; the depth test resolves it.
-                if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
-                float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
-                std::size_t i = (std::size_t)y * width + x;
-                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer; small bias = first-drawn wins ties
-                float lr = w0 * LR[0] + w1 * LR[1] + w2 * LR[2];
-                float lg = w0 * LG[0] + w1 * LG[1] + w2 * LG[2];
-                float lb = w0 * LB[0] + w1 * LB[1] + w2 * LB[2];
-                float spec = (float)(w0 * SP[0] + w1 * SP[1] + w2 * SP[2]);   // per-vertex (no seam)
+                if (w0 < -1e-3 || w1 < -1e-3 || w2 < -1e-3) continue;
+                float d = (float)(w0 * D[0] + w1 * D[1] + w2 * D[2]);
+                std::size_t i = row + x;
+                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer; bias = first-drawn wins ties
+                float lr = (float)(w0 * LR[0] + w1 * LR[1] + w2 * LR[2]);
+                float lg = (float)(w0 * LG[0] + w1 * LG[1] + w2 * LG[2]);
+                float lb = (float)(w0 * LB[0] + w1 * LB[1] + w2 * LB[2]);
+                float spec = anySpec ? (float)(w0 * SP[0] + w1 * SP[1] + w2 * SP[2]) : 0.0f;
                 float cr = base.r * lr + spec + er;
                 float cg = base.g * lg + spec + eg;
                 float cb = base.b * lb + spec + eb;
-                float fog = (float)(w0 * FOG[0] + w1 * FOG[1] + w2 * FOG[2]);   // per-vertex (no seam)
-                if (fog > 0.0f) {
+                if (anyFog) {
+                    float fog = (float)(w0 * FOG[0] + w1 * FOG[1] + w2 * FOG[2]);
                     cr = cr * (1.0f - fog) + fr * fog;
                     cg = cg * (1.0f - fog) + fg * fog;
                     cb = cb * (1.0f - fog) + fb * fog;
@@ -308,37 +312,37 @@ public:
         int tw = mips[0].Width(), th = mips[0].Height();
         if (tw <= 0 || th <= 0) return;
         LodGrad lg2 = MakeLodGrad(X, Y, inv, U, V, IW);
+        const double dInv = (double)inv;
+        const double dw0 = (double)(Y[1] - Y[2]) * dInv;   // incremental barycentric steps
+        const double dw1 = (double)(Y[2] - Y[0]) * dInv;
+        const bool anySpec = SP[0] != 0.0f || SP[1] != 0.0f || SP[2] != 0.0f;
+        const bool anyFog  = FOG[0] != 0.0f || FOG[1] != 0.0f || FOG[2] != 0.0f;
         for (int y = minY; y <= maxY; ++y) {
-            for (int x = minX; x <= maxX; ++x) {
-                // Double precision avoids float cancellation across huge triangles
-                // (torn silhouettes / edge cracks / depth banding on big grounds).
-                double px = x + 0.5, py = y + 0.5;
-                double w0 = ((X[1] - px) * (Y[2] - py) - (X[2] - px) * (Y[1] - py)) * (double)inv;
-                double w1 = ((X[2] - px) * (Y[0] - py) - (X[0] - px) * (Y[2] - py)) * (double)inv;
+            const double py = y + 0.5, pxs = minX + 0.5;
+            double w0 = ((X[1] - pxs) * (Y[2] - py) - (X[2] - pxs) * (Y[1] - py)) * dInv;
+            double w1 = ((X[2] - pxs) * (Y[0] - py) - (X[0] - pxs) * (Y[2] - py)) * dInv;
+            const std::size_t rowBase = (std::size_t)y * width;
+            for (int x = minX; x <= maxX; ++x, w0 += dw0, w1 += dw1) {
                 double w2 = 1.0 - w0 - w1;
-                // Tiny edge bias: pixels right on a shared edge can fall just outside
-                // both triangles from float rounding, leaving 1px cracks (a dotted
-                // seam across the big ground quad). Accept a hair past the edge so
-                // adjacent triangles always overlap; the depth test resolves it.
-                if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
-                float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
-                std::size_t i = (std::size_t)y * width + x;
-                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer; small bias = first-drawn wins ties
-                float A = w0 * U[0] + w1 * U[1] + w2 * U[2];
-                float Av = w0 * V[0] + w1 * V[1] + w2 * V[2];
-                float iw = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                if (w0 < -1e-3 || w1 < -1e-3 || w2 < -1e-3) continue;
+                float d = (float)(w0 * D[0] + w1 * D[1] + w2 * D[2]);
+                std::size_t i = rowBase + x;
+                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer
+                float A = (float)(w0 * U[0] + w1 * U[1] + w2 * U[2]);
+                float Av = (float)(w0 * V[0] + w1 * V[1] + w2 * V[2]);
+                float iw = (float)(w0 * IW[0] + w1 * IW[1] + w2 * IW[2]);
                 if (iw == 0.0f) continue;
                 float u = A / iw, v = Av / iw;
                 Color tc = SampleMips(mips, u, v, PixelLod(A, Av, iw, lg2, tw, th));
-                float lr = w0 * LR[0] + w1 * LR[1] + w2 * LR[2];
-                float lg = w0 * LG[0] + w1 * LG[1] + w2 * LG[2];
-                float lb = w0 * LB[0] + w1 * LB[1] + w2 * LB[2];
-                float spec = (float)(w0 * SP[0] + w1 * SP[1] + w2 * SP[2]);   // per-vertex (no seam)
+                float lr = (float)(w0 * LR[0] + w1 * LR[1] + w2 * LR[2]);
+                float lg = (float)(w0 * LG[0] + w1 * LG[1] + w2 * LG[2]);
+                float lb = (float)(w0 * LB[0] + w1 * LB[1] + w2 * LB[2]);
+                float spec = anySpec ? (float)(w0 * SP[0] + w1 * SP[1] + w2 * SP[2]) : 0.0f;
                 float cr = tc.r * tint.r * lr + spec + er;
                 float cg = tc.g * tint.g * lg + spec + eg;
                 float cb = tc.b * tint.b * lb + spec + eb;
-                float fog = (float)(w0 * FOG[0] + w1 * FOG[1] + w2 * FOG[2]);   // per-vertex (no seam)
-                if (fog > 0.0f) {
+                if (anyFog) {
+                    float fog = (float)(w0 * FOG[0] + w1 * FOG[1] + w2 * FOG[2]);
                     cr = cr * (1.0f - fog) + fr * fog;
                     cg = cg * (1.0f - fog) + fg * fog;
                     cb = cb * (1.0f - fog) + fb * fog;

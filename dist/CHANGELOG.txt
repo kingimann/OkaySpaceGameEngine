@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.94.0  (renderer optimization)
+  - Faster software rasterizer. The lit and textured triangle paths now use
+    INCREMENTAL barycentric coordinates (computed once per scanline, then advanced
+    by a constant per pixel) instead of recomputing them from scratch at every
+    pixel — removing the per-pixel edge-function multiplies that dominated fill
+    cost on big surfaces (the ground). Also skip per-pixel fog and specular
+    interpolation entirely when a triangle has neither (the common case). ~15-20%
+    faster fill on typical 3D scenes; identical output (75 tests pass).
+
 v2.93.0
   - 3D anti-aliasing (2x supersampling) is ON by default again. With the v2.92
     W-buffer depth fix removing the z-fighting, the only thing left was faint edge

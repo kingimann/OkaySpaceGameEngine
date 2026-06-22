@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.85.0  (bug-hunt batch)
+  - Fixed normals under non-uniform scale: the renderer transformed normals by the
+    model matrix directly, which skews them when scale isn't uniform (e.g. a ground
+    scaled {40,1,40} or a stretched sphere) -> wrong lighting that "acts up" the
+    more the scale departs from uniform. Now uses the inverse-transpose (cofactor)
+    basis, correct for any scale/shear. Verified on a 3:1 stretched, specular sphere.
+  - Fixed Mat4::LookAt looking straight up/down: when the view direction was
+    parallel to the up vector (e.g. a top-down camera aimed straight down with
+    up = +Y), the basis collapsed and the view rendered black/garbled. Now falls
+    back to an alternate up axis so straight up/down cameras work. (75 tests pass.)
+
 v2.84.0
   - Fixed a real near-plane clipping bug: triangles were clipped on w > 1e-4
     (the camera plane) instead of the true near plane (z_clip >= -w_clip). That

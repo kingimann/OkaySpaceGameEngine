@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.76.0
+  - 3D templates: the ground now fades into the horizon with distance fog, so you
+    no longer see a hard edge / gray sky wedge past the end of the floor when you
+    roam (the floor size is unchanged). Fog is color-matched to the sky horizon for
+    a seamless, endless-looking ground. Tunable in Scene render settings.
+
 v2.75.0
   - Fixed the big-ground rendering glitches: torn/jagged silhouette when zoomed in,
     dashed edge cracks, and faint depth banding across large surfaces. Root cause

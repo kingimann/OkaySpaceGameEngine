@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.89.0  (bug-hunt batch)
+  - Fixed the real "glitch when zooming in" -- it was FRAME-RATE STUTTER, not a
+    rendering artifact. Zoomed in, a big surface (the ground) fills the whole view,
+    so the software renderer's per-pixel fill cost spikes and FPS drops, making
+    camera motion choppy. Two changes:
+      * Dynamic resolution: while the Scene camera is moving the 3D view renders at
+        half resolution (and no supersampling) for smooth panning/zooming, then
+        snaps back to full resolution the instant the camera settles.
+      * Reverted 2x anti-aliasing back to OFF by default (v2.88 turned it on, which
+        quadrupled fill cost and made the stutter worse). Still available in
+        View > "3D Anti-aliasing (2x)" if you have the headroom.
+
 v2.88.0  (bug-hunt batch)
   - 3D anti-aliasing (2x supersampling) is now ON by default. It was off, so 3D
     edges were hard 1-pixel stair-steps that CRAWL/shimmer while the camera moves

@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.88.0  (bug-hunt batch)
+  - 3D anti-aliasing (2x supersampling) is now ON by default. It was off, so 3D
+    edges were hard 1-pixel stair-steps that CRAWL/shimmer while the camera moves
+    and look fine when it stops -- the "glitch only while zooming/moving" report.
+    Auto-performance still drops it to 1x on heavy scenes, and now also on very
+    large viewports (keeps the supersampled buffer within a pixel budget so 2x AA
+    never tanks FPS). Toggle: View menu > "3D Anti-aliasing (2x)".
+
 v2.87.0  (bug-hunt batch)
   - Fixed specular highlights computed PER-TRIANGLE: a single Blinn-Phong value
     from the triangle centroid made a hard diagonal highlight seam on big quads

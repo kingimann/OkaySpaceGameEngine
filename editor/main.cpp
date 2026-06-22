@@ -145,7 +145,10 @@ SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
-int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample
+int g_ssaa = 2;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
+                  // ON by default: without it, 3D edges are hard 1px stair-steps that
+                  // CRAWL/shimmer as the camera moves (reads as a "glitch when zooming").
+                  // Auto-performance drops it to 1 on heavy/large views to keep FPS.
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
@@ -178,7 +181,12 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     int rw = (int)(w * scale); if (rw < 1) rw = 1;
     int rh = (int)(h * scale); if (rh < 1) rh = 1;
     int ss = g_ssaa;
-    if (g_autoPerf && ss > 1 && SceneTriangleLoad(scene) > 11000) ss = 1;
+    // Auto-performance: drop supersampling on heavy scenes OR very large viewports
+    // (the supersampled buffer is rw*rh*ss*ss pixels — keep that within a budget so
+    // 2x AA never tanks FPS on a big window).
+    if (g_autoPerf && ss > 1 &&
+        ((long)rw * rh * ss * ss > 5'000'000L || SceneTriangleLoad(scene) > 11000))
+        ss = 1;
     const std::uint32_t* px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
                                              scene, vp, eye, rw, rh, ss, ignore);
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh) {

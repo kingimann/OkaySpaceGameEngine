@@ -2375,8 +2375,9 @@ void DrawStats(EditorState& ed) {
         if (ImGui::SliderFloat("Render scale", &g_renderScale, 0.25f, 1.0f, "%.2fx")) SaveSettings();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Renders the 3D view at this fraction of resolution and\nupscales. Lower = much faster (softer image). The biggest\nFPS lever for the software renderer.");
-        ImGui::TextDisabled("Effects below are OFF by default — turn on what you want.");
-        ImGui::Separator();
+        ImGui::SeparatorText("Effects");
+        ImGui::TextDisabled("Toggle any effect on/off. On by default: Hemisphere\nambient, Tone mapping, Anti-aliasing. The rest are opt-in.");
+        ImGui::Spacing();
         ImGui::Checkbox("Per-pixel lighting (Phong)", &PerPixelLighting());
 
         ImGui::Checkbox("Hemisphere ambient", &HemisphereAmbient());
@@ -7791,6 +7792,27 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                      center.y - (c.y / c.w) * canvasSize.y * 0.5f);
         return true;
     };
+    // Project an already-in-front clip-space point (w > 0) to the screen.
+    auto projClip = [&](const Vec4& c) -> ImVec2 {
+        return ImVec2(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
+                      center.y - (c.y / c.w) * canvasSize.y * 0.5f);
+    };
+    // Draw a line from two CLIP-SPACE endpoints, clipped to the near plane. The
+    // mesh renderer near-clips its triangles, but gizmo lines used to just DROP any
+    // endpoint at/behind the camera (w <= eps) — so the selection box / grid lost
+    // their near edges and no longer matched the geometry. Clipping the segment to
+    // the near plane keeps the visible part and the outline aligned with the mesh.
+    auto clipLine = [&](Vec4 a, Vec4 b, ImU32 col, float th = 1.5f) {
+        const float wEps = 0.05f;
+        if (a.w < wEps && b.w < wEps) return;          // wholly behind the camera
+        auto lerp = [](const Vec4& p, const Vec4& q, float t) {
+            return Vec4{p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t,
+                        p.z + (q.z - p.z) * t, p.w + (q.w - p.w) * t};
+        };
+        if (a.w < wEps)      a = lerp(a, b, (wEps - a.w) / (b.w - a.w));
+        else if (b.w < wEps) b = lerp(b, a, (wEps - b.w) / (a.w - b.w));
+        dl->AddLine(projClip(a), projClip(b), col, th);
+    };
 
     dl->PushClipRect(canvasPos, canvasEnd, true);
 
@@ -7817,13 +7839,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Ground grid on the XZ plane (Scene view only; the Game view is clean).
     if (!gameView)
     for (int i = -10; i <= 10; ++i) {
-        ImVec2 a, b;
-        if (toScreen(vp * Vec4{Vec3{(float)i, 0, -10}, 1}, a) &&
-            toScreen(vp * Vec4{Vec3{(float)i, 0, 10}, 1}, b))
-            dl->AddLine(a, b, IM_COL32(50, 50, 64, 255));
-        if (toScreen(vp * Vec4{Vec3{-10, 0, (float)i}, 1}, a) &&
-            toScreen(vp * Vec4{Vec3{10, 0, (float)i}, 1}, b))
-            dl->AddLine(a, b, IM_COL32(50, 50, 64, 255));
+        clipLine(vp * Vec4{Vec3{(float)i, 0, -10}, 1},
+                 vp * Vec4{Vec3{(float)i, 0, 10}, 1}, IM_COL32(50, 50, 64, 255), 1.0f);
+        clipLine(vp * Vec4{Vec3{-10, 0, (float)i}, 1},
+                 vp * Vec4{Vec3{10, 0, (float)i}, 1}, IM_COL32(50, 50, 64, 255), 1.0f);
     }
 
     const auto& objs = ed.scene().Objects();
@@ -7833,9 +7852,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // and place them even though they don't render a mesh.
     if (!gameView && g_showGizmos) {
         auto line = [&](const Vec3& a, const Vec3& b, ImU32 col, float th = 1.5f) {
-            ImVec2 pa, pb;
-            if (toScreen(vp * Vec4{a, 1}, pa) && toScreen(vp * Vec4{b, 1}, pb))
-                dl->AddLine(pa, pb, col, th);
+            clipLine(vp * Vec4{a, 1}, vp * Vec4{b, 1}, col, th);   // near-clipped
         };
         // A ring of `seg` segments centered at c, in the plane spanned by u,v.
         auto ring = [&](const Vec3& c, const Vec3& u, const Vec3& v, float r,
@@ -7971,16 +7988,15 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (auto* mr = ed.selected()->GetComponent<MeshRenderer>()) {
             Mat4 m = vp * ed.selected()->transform->LocalToWorldMatrix();
             Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
-            ImVec2 corner[8]; bool cOk[8];
+            Vec4 corner[8];   // keep clip-space so the edges can be near-clipped
             for (int ci = 0; ci < 8; ++ci)
-                cOk[ci] = toScreen(m * Vec4{Vec3{(ci & 1) ? hi.x : lo.x,
-                                                 (ci & 2) ? hi.y : lo.y,
-                                                 (ci & 4) ? hi.z : lo.z}, 1}, corner[ci]);
+                corner[ci] = m * Vec4{Vec3{(ci & 1) ? hi.x : lo.x,
+                                           (ci & 2) ? hi.y : lo.y,
+                                           (ci & 4) ? hi.z : lo.z}, 1};
             static const int edges[12][2] = {
                 {0,1},{1,3},{3,2},{2,0}, {4,5},{5,7},{7,6},{6,4}, {0,4},{1,5},{2,6},{3,7}};
             ImU32 y = IM_COL32(255, 200, 0, 220);
-            for (auto& e : edges)
-                if (cOk[e[0]] && cOk[e[1]]) dl->AddLine(corner[e[0]], corner[e[1]], y, 1.5f);
+            for (auto& e : edges) clipLine(corner[e[0]], corner[e[1]], y, 1.5f);
         }
     }
 

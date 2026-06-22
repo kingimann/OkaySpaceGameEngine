@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.81.0
+  - Fixed: the yellow selection box (and the grid / camera / light gizmos) didn't
+    match the geometry — the rendered ground would spill past the yellow outline.
+    Cause: the mesh renderer near-plane-clips its triangles, but the editor's gizmo
+    lines simply DROPPED any endpoint at/behind the camera. So when the camera sat
+    within a large ground, the near edges of the box vanished and only the far peak
+    was drawn, while the green mesh still filled the screen. Gizmo lines are now
+    clipped to the near plane like the mesh, so the yellow box traces the actual
+    ground shape from every angle.
+  - Stats > Rendering: the effects list now has a clear "Effects" heading and an
+    accurate note (Hemisphere ambient, Tone mapping, and Anti-aliasing are ON by
+    default; the rest are opt-in). All 9 are toggleable here.
+
 v2.80.0
   - The 3D ground is now a flat PLANE instead of a 1-unit-thick cube slab. The old
     slab had vertical side walls; when the follow camera dropped near an edge you

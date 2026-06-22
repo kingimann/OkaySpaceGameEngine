@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include <string>
@@ -31,6 +32,9 @@ public:
     float fillAmount = 1.0f;
     /// Rounded corners for the colored-rect fallback (pixels).
     float cornerRadius = 0.0f;
+    /// Silhouette of the colored-rect fallback (no texture): box, rounded, circle
+    /// or pill — so a textureless UIImage can be an avatar dot, badge or chip.
+    UIShape shape = UIShape::Rectangle;
 
     /// The visible sub-rectangle after applying the fill (origin + size in local
     /// pixels relative to the widget's top-left). Returns the full rect when the

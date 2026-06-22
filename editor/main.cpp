@@ -6502,7 +6502,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##uip", pn->anchor, ed);
             ImGui::SeparatorText("Style");
-            if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int shp = (int)pn->shape;
+            const char* shapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##uip", &shp, shapes, 4)) { pn->shape = (UIShape)shp; ed.dirty = true; }
+            if (pn->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             if (pn->borderWidth > 0.0f) {
                 float bc[4] = {pn->borderColor.r, pn->borderColor.g, pn->borderColor.b, pn->borderColor.a};
@@ -6512,7 +6516,8 @@ void DrawInspector(EditorState& ed) {
             if (pn->useGradient) {
                 float gb[4] = {pn->colorBottom.r, pn->colorBottom.g, pn->colorBottom.b, pn->colorBottom.a};
                 if (ImGui::ColorEdit4("Bottom Color##uip", gb)) { pn->colorBottom = {gb[0], gb[1], gb[2], gb[3]}; ed.dirty = true; }
-                ImGui::TextDisabled("Color is the top; gradient ignores corner rounding.");
+                if (ImGui::Checkbox("Horizontal Gradient##uip", &pn->gradientHorizontal)) ed.dirty = true;
+                ImGui::TextDisabled("Color is the start; %s fade.", pn->gradientHorizontal ? "left->right" : "top->bottom");
             }
             if (ImGui::Checkbox("Drop Shadow##uip", &pn->shadow)) ed.dirty = true;
             if (pn->shadow) {
@@ -6778,6 +6783,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("for cooldowns / health bars; drive with ui_set_progress-style scripts");
             }
             if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int ishp = (int)im->shape;
+            const char* ishapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape (no texture)##uim", &ishp, ishapes, 4)) { im->shape = (UIShape)ishp; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }

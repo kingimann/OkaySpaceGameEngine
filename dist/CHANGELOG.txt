@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.106.0  (UI: real shapes — rounded / circle / pill)
+  - New UI shape system (UIShape): widgets can be a hard Rectangle, soft Rounded box
+    (the modern flat look), a full Circle (avatars/badges) or a Pill/capsule (toggle
+    tracks, tags). A single per-row span function drives both the fill and hit-testing.
+  - The player now actually RENDERS rounded/circle/pill silhouettes (previously corner
+    radius was stored but drawn as a plain box) via a scanline shape fill that also
+    honors the drop shadow and border per shape.
+  - UIPanel gains a Shape selector and a horizontal-gradient option; UIImage's
+    textureless fallback gains a Shape so it can be a dot/badge/chip.
+  - Inspector controls + back-compatible serialization. New uishape test suite
+    (rectangle/circle/rounded/pill geometry + hit-test + round-trips); 78 tests pass.
+
 v2.105.0  (shaders, cont.: triplanar + scrolling UV)
   - Triplanar mapping: project a texture along the three world axes and blend by the
     surface normal, so terrain, cliffs and arbitrary meshes texture with NO UV seams

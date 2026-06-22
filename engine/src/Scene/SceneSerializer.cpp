@@ -428,7 +428,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pn->colorBottom.r << " " << pn->colorBottom.g << " " << pn->colorBottom.b << " " << pn->colorBottom.a << " "
             << (pn->shadow ? 1 : 0) << " "
             << pn->shadowColor.r << " " << pn->shadowColor.g << " " << pn->shadowColor.b << " " << pn->shadowColor.a << " "
-            << pn->shadowOffset.x << " " << pn->shadowOffset.y << "\n";
+            << pn->shadowOffset.x << " " << pn->shadowOffset.y
+            // extended (back-compatible trailing fields): shape + gradient direction
+            << " " << (int)pn->shape << " " << (pn->gradientHorizontal ? 1 : 0) << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
@@ -531,7 +533,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << im->color.r << " " << im->color.g << " " << im->color.b << " " << im->color.a << " "
             << Quote(im->texture) << " " << (int)im->anchor << " "
             << (im->nineSlice ? 1 : 0) << " " << im->border << " "
-            << (int)im->fillMode << " " << im->fillAmount << " " << im->cornerRadius << "\n";
+            << (int)im->fillMode << " " << im->fillAmount << " " << im->cornerRadius
+            << " " << (int)im->shape << "\n";   // extended (back-compatible trailing field)
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
         out << "  uislider " << sl->position.x << " " << sl->position.y << " "
@@ -1213,6 +1216,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> sh >> sc.r >> sc.g >> sc.b >> sc.a >> pn->shadowOffset.x >> pn->shadowOffset.y;
                         pn->shadow = (sh != 0); pn->shadowColor = sc;
                     }
+                    in >> std::ws; // optional shape + gradient direction (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sp = 0, gh = 0; in >> sp >> gh;
+                        pn->shape = (UIShape)sp; pn->gradientHorizontal = (gh != 0);
+                    }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();
                     doc->markup = ReadQuoted(in);
@@ -1399,6 +1407,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int fm = 0; in >> fm >> im->fillAmount >> im->cornerRadius;
                         im->fillMode = (UIImage::FillMode)fm;
                     }
+                    in >> std::ws; // optional shape (added later)
+                    if (std::isdigit(in.peek())) { int sp = 0; in >> sp; im->shape = (UIShape)sp; }
                 } else if (field == "uislider") {
                     auto* sl = go->AddComponent<UISlider>();
                     Color bg, fl, kn;

@@ -108,13 +108,17 @@ public:
         width = w < 1 ? 1 : w;
         height = h < 1 ? 1 : h;
         color.assign((std::size_t)width * height, 0u);
-        depth.assign((std::size_t)width * height, std::numeric_limits<float>::infinity());
+        // W-buffer: store 1/w (reciprocal view depth). Larger = nearer, far -> 0.
+        // 1/w has uniform precision (unlike z/w, which is terrible far from a small
+        // near plane and causes z-fighting/flicker), so a small near clip works
+        // everywhere — no need to raise the near plane. Cleared to 0 = infinitely far.
+        depth.assign((std::size_t)width * height, 0.0f);
     }
 
-    /// Clear color (ABGR) and reset the depth buffer to "far".
+    /// Clear color (ABGR) and reset the W-buffer to "far" (1/w = 0).
     void Clear(std::uint32_t abgr) {
         std::fill(color.begin(), color.end(), abgr);
-        std::fill(depth.begin(), depth.end(), std::numeric_limits<float>::infinity());
+        std::fill(depth.begin(), depth.end(), 0.0f);
     }
 
     static std::uint32_t Pack(const Color& c, float shade = 1.0f) {
@@ -164,7 +168,7 @@ public:
                 if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
                 float d = w0 * d0 + w1 * d1 + w2 * d2;
                 std::size_t i = (std::size_t)y * width + x;
-                if (d < depth[i] - 1.5e-5f) { depth[i] = d; color[i] = abgr; }   // bias: stable winner on near-ties
+                if (d > depth[i] + 1e-6f) { depth[i] = d; color[i] = abgr; }   // W-buffer: larger 1/w = nearer
             }
         }
     }
@@ -205,7 +209,7 @@ public:
                 if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
-                if (d >= depth[i] - 1.5e-5f) continue;   // small bias: first-drawn wins near-ties (kills z-fighting flicker)
+                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer; small bias = first-drawn wins ties
                 float lr = w0 * LR[0] + w1 * LR[1] + w2 * LR[2];
                 float lg = w0 * LG[0] + w1 * LG[1] + w2 * LG[2];
                 float lb = w0 * LB[0] + w1 * LB[1] + w2 * LB[2];
@@ -319,7 +323,7 @@ public:
                 if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
-                if (d >= depth[i] - 1.5e-5f) continue;   // small bias: first-drawn wins near-ties (kills z-fighting flicker)
+                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer; small bias = first-drawn wins ties
                 float A = w0 * U[0] + w1 * U[1] + w2 * U[2];
                 float Av = w0 * V[0] + w1 * V[1] + w2 * V[2];
                 float iw = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
@@ -407,7 +411,7 @@ public:
                 if (w0 < -1e-3f || w1 < -1e-3f || w2 < -1e-3f) continue;
                 float d = w0 * D[0] + w1 * D[1] + w2 * D[2];
                 std::size_t i = (std::size_t)y * width + x;
-                if (d >= depth[i] - 1.5e-5f) continue;   // small bias: first-drawn wins near-ties (kills z-fighting flicker)
+                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer; small bias = first-drawn wins ties
                 // Perspective-correct interpolation of world normal + position
                 // (weight each vertex by 1/w). Affine interpolation is badly wrong
                 // for large triangles — e.g. a ground quad would sample shadows and
@@ -1354,7 +1358,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 iw = 1.0f / c.w;
                 sx = (c.x * iw * 0.5f + 0.5f) * W;
                 sy = (1.0f - (c.y * iw * 0.5f + 0.5f)) * H;
-                sd = c.z * iw;
+                sd = iw;   // W-buffer depth (1/w): larger = nearer, uniform precision
                 uo = c.u * iw; vo = c.v * iw;
             };
             // Per-pixel (Phong) shading for lit meshes that carry normals — smooth

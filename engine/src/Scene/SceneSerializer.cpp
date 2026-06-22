@@ -133,7 +133,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cam->backgroundColor.b << " " << cam->backgroundColor.a << " "
             << (cam->main ? 1 : 0)
             << " " << (int)cam->clearFlags << " " << cam->depth
-            << " " << cam->nearClip << " " << cam->farClip << "\n";
+            << " " << cam->nearClip << " " << cam->farClip
+            << " " << (cam->fovAxisHorizontal ? 1 : 0)
+            << " " << cam->rectX << " " << cam->rectY << " " << cam->rectW << " " << cam->rectH << "\n";
     }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
@@ -651,6 +653,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek()) || in.peek() == '-') {
                         int cf = 0; in >> cf >> cam->depth >> cam->nearClip >> cam->farClip;
                         cam->clearFlags = (Camera::ClearFlags)cf;
+                        in >> std::ws; // optional FOV axis + viewport rect (added later)
+                        if (std::isdigit(in.peek())) {
+                            int fax = 0; in >> fax >> cam->rectX >> cam->rectY >> cam->rectW >> cam->rectH;
+                            cam->fovAxisHorizontal = (fax != 0);
+                        }
                     }
                 } else if (field == "mesh") {
                     std::string kind = ReadQuoted(in);

@@ -20,10 +20,17 @@ public:
 
     /// Half the vertical viewing volume, in world units (orthographic).
     float orthographicSize = 5.0f;
-    /// Vertical field of view in degrees (perspective).
+    /// Field of view in degrees (perspective). Measured along the axis set by
+    /// `fovAxisHorizontal` (Unity's FOV Axis): vertical by default.
     float fieldOfView = 60.0f;
+    bool  fovAxisHorizontal = false;   // false = vertical FOV (Unity default), true = horizontal
     float nearClip = 0.3f;   // Unity-like near plane
     float farClip  = 1000.0f;
+
+    /// Normalized viewport rectangle (Unity's Camera.rect): where on the screen
+    /// this camera draws — x,y = bottom-left, w,h = size, all in 0..1. Defaults to
+    /// the full screen. Use it for split-screen, mini-maps, or picture-in-picture.
+    float rectX = 0.0f, rectY = 0.0f, rectW = 1.0f, rectH = 1.0f;
 
     /// Background fill mode and the color used when SolidColor.
     ClearFlags clearFlags = ClearFlags::Skybox;

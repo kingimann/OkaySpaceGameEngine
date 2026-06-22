@@ -5491,6 +5491,9 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f)) ed.dirty = true;
             } else {
                 if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+                int ax = cam->fovAxisHorizontal ? 1 : 0;
+                const char* axes[] = {"Vertical", "Horizontal"};
+                if (ImGui::Combo("FOV Axis", &ax, axes, 2)) { cam->fovAxisHorizontal = (ax == 1); ed.dirty = true; }
             }
 
             ImGui::SeparatorText("Background");
@@ -5505,6 +5508,14 @@ void DrawInspector(EditorState& ed) {
             ImGui::SeparatorText("Clipping Planes");
             if (ImGui::DragFloat("Near", &cam->nearClip, 0.01f, 0.001f, 100.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Far",  &cam->farClip, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Viewport Rect");
+            float r[4] = {cam->rectX, cam->rectY, cam->rectW, cam->rectH};
+            if (ImGui::DragFloat4("X / Y / W / H", r, 0.01f, 0.0f, 1.0f)) {
+                cam->rectX = r[0]; cam->rectY = r[1]; cam->rectW = r[2]; cam->rectH = r[3]; ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Where on screen this camera draws (0..1, origin bottom-left)\n— like Unity's Camera.rect. Use for split-screen / mini-maps.");
 
             ImGui::Spacing();
             if (ImGui::Checkbox("Main", &cam->main)) ed.dirty = true;
@@ -7858,12 +7869,23 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     Vec3 eye = ed.camTarget + dir * ed.camDist;
     Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
     Mat4 proj = Mat4::Perspective(g_editorFov, canvasSize.x / canvasSize.y, g_editorNear, 2000.0f);
+    // Where the 3D image is drawn within the panel. The Game view honors the main
+    // camera's normalized viewport rect (Unity's Camera.rect) for split-screen /
+    // mini-map / picture-in-picture; the Scene view always fills the panel.
+    ImVec2 view3dMin = canvasPos, view3dMax = canvasEnd;
     // The Game view renders through the scene's main camera instead.
     if (gameView) {
         if (Camera* mc = SceneCamera(ed.scene())) {
             eye = mc->gameObject->transform->Position();
             view = mc->ViewMatrix();
-            proj = mc->ProjectionMatrix(canvasSize.x / canvasSize.y);
+            // Clamp the rect to 0..1 and compute the on-panel pixel rectangle. Unity's
+            // rect y is measured from the BOTTOM, so flip it for top-left screen space.
+            float rw = Mathf::Clamp(mc->rectW, 0.01f, 1.0f), rh = Mathf::Clamp(mc->rectH, 0.01f, 1.0f);
+            float rx = Mathf::Clamp(mc->rectX, 0.0f, 1.0f - rw), ry = Mathf::Clamp(mc->rectY, 0.0f, 1.0f - rh);
+            view3dMin = ImVec2(canvasPos.x + rx * canvasSize.x,
+                               canvasPos.y + (1.0f - ry - rh) * canvasSize.y);
+            view3dMax = ImVec2(view3dMin.x + rw * canvasSize.x, view3dMin.y + rh * canvasSize.y);
+            proj = mc->ProjectionMatrix((rw * canvasSize.x) / (rh * canvasSize.y));
         }
     }
     Mat4 vp = proj * view;
@@ -8087,10 +8109,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // canvas rect (AddImage), and SDL's scale maps that to the same physical area.
     float dpi = ImGui::GetIO().DisplayFramebufferScale.x;
     if (dpi < 1.0f || dpi > 4.0f) dpi = 1.0f;
+    float v3w = view3dMax.x - view3dMin.x, v3h = view3dMax.y - view3dMin.y;
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
-                                           (int)(canvasSize.x * dpi), (int)(canvasSize.y * dpi),
+                                           (int)(v3w * dpi), (int)(v3h * dpi),
                                            gameView ? 1 : 0, viewIgnore))
-        dl->AddImage((ImTextureID)tex, canvasPos, canvasEnd);
+        dl->AddImage((ImTextureID)tex, view3dMin, view3dMax);
 
     // Highlight the selection with a clean yellow bounding box (12 edges).
     if (!gameView && g_showGizmos && ed.selected()) {

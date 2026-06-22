@@ -105,5 +105,21 @@ int main() {
         CHECK(sl2 && sl2->roundKnob);
     }
 
+    // The toggle's switch knob eases from off toward on over time (animation).
+    {
+        Scene s("TG"); s.physicsEnabled = false;
+        auto* tg = s.CreateGameObject("T")->AddComponent<UIToggle>();
+        tg->style = UIToggle::Style::Switch; tg->animSpeed = 12.0f; tg->on = true;
+        CHECK_NEAR(tg->AnimT(), 0.0f, 1e-4f);        // starts off
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(tg->AnimT() > 0.9f);                    // glides toward on
+
+        // Round-trip the animation speed.
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* tg2 = s2.Find("T") ? s2.Find("T")->GetComponent<UIToggle>() : nullptr;
+        CHECK(tg2 && tg2->style == UIToggle::Style::Switch);
+        if (tg2) CHECK_NEAR(tg2->animSpeed, 12.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

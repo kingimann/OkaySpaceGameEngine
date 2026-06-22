@@ -569,7 +569,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)tg->anchor << " " << tg->cornerRadius
             << " " << (int)tg->style << " "
             << tg->knobColor.r << " " << tg->knobColor.g << " " << tg->knobColor.b << " " << tg->knobColor.a
-            << " " << (tg->interactable ? 1 : 0) << "\n";
+            << " " << (tg->interactable ? 1 : 0)
+            << " " << tg->animSpeed << "\n";   // extended (back-compatible trailing field)
     }
     if (auto* ps = go->GetComponent<ParticleSystem>()) {
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
@@ -1477,6 +1478,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tg->style = (UIToggle::Style)st; tg->knobColor = kc;
                         in >> std::ws;
                         if (std::isdigit(in.peek())) { int it = 1; in >> it; tg->interactable = (it != 0); }
+                        in >> std::ws; // optional animation speed (added later)
+                        if (std::isdigit(in.peek())) in >> tg->animSpeed;
                     }
                 } else if (field == "particles") {
                     auto* ps = go->AddComponent<ParticleSystem>();

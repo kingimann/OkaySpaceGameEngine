@@ -6870,6 +6870,8 @@ void DrawInspector(EditorState& ed) {
                 float kc[4] = {tg->knobColor.r, tg->knobColor.g, tg->knobColor.b, tg->knobColor.a};
                 if (ImGui::ColorEdit4("Knob##utg", kc)) { tg->knobColor = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             }
+            if (ImGui::DragFloat("Anim Speed##utg", &tg->animSpeed, 0.2f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Knob glide / check fade speed (0 = snap).");
             if (ImGui::Checkbox("Interactable##utg", &tg->interactable)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }

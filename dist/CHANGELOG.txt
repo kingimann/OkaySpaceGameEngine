@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.109.0  (UI: animated toggles — gliding switch + fading check)
+  - UIToggle now animates: the Switch knob glides between off/on and the track
+    cross-fades (animSpeed, eased and frame-rate independent), and the Checkbox tick
+    fades in. AnimT() exposes the smoothed 0..1 state to the renderer.
+  - The player renders the switch as a proper Pill track with a Circle knob and a
+    rounded checkbox via the shape fill (no more hard rectangles).
+  - Inspector Anim Speed control + back-compatible serialization. uishape suite
+    extended (knob easing + round-trip); 78 tests pass.
+
 v2.108.0  (UI: progress bars + sliders get shapes / gradients / round knobs)
   - UIProgressBar gains the shape system (Rounded/Pill capsule bars) and an optional
     gradient fill (e.g. green->yellow->red health) along the fill direction.

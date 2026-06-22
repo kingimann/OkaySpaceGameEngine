@@ -748,27 +748,28 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect box{(int)o.x, (int)o.y, (int)tg->size.x, (int)tg->size.y};
+            float t = tg->AnimT();                          // 0=off..1=on (smoothed)
             if (tg->style == UIToggle::Style::Switch) {     // pill track + sliding knob
-                const Color& trk = tg->on ? tg->checkColor : tg->boxColor;
-                SDL_SetRenderDrawColor(renderer, (Uint8)(trk.r * 255), (Uint8)(trk.g * 255),
-                                       (Uint8)(trk.b * 255), (Uint8)(trk.a * 255 * op));
-                SDL_RenderFillRect(renderer, &box);
+                auto mix = [t](const Color& a, const Color& b) {
+                    return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
+                                 a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
+                };
+                Color trk = mix(tg->boxColor, tg->checkColor);   // cross-fade the track
+                FillUIShape(renderer, box, UIShape::Pill, 0.0f, trk, trk, false, false, op);
                 int kd = box.h - 4;
-                int kx = tg->on ? (box.x + box.w - kd - 2) : (box.x + 2);
+                int kx = box.x + 2 + (int)((box.w - kd - 4) * t);   // glide the knob
                 SDL_Rect knob{kx, box.y + 2, kd, kd};
-                SDL_SetRenderDrawColor(renderer, (Uint8)(tg->knobColor.r * 255), (Uint8)(tg->knobColor.g * 255),
-                                       (Uint8)(tg->knobColor.b * 255), (Uint8)(tg->knobColor.a * 255 * op));
-                SDL_RenderFillRect(renderer, &knob);
+                FillUIShape(renderer, knob, UIShape::Circle, 0.0f,
+                            tg->knobColor, tg->knobColor, false, false, op);
             } else {
-                SDL_SetRenderDrawColor(renderer, (Uint8)(tg->boxColor.r * 255), (Uint8)(tg->boxColor.g * 255),
-                                       (Uint8)(tg->boxColor.b * 255), (Uint8)(tg->boxColor.a * 255 * op));
-                SDL_RenderFillRect(renderer, &box);
-                if (tg->on) {                              // inset check fill
+                FillUIShape(renderer, box, UIShape::Rounded, tg->cornerRadius,
+                            tg->boxColor, tg->boxColor, false, false, op);
+                if (t > 0.01f) {                            // inset check fill (fades in)
                     int pad = (int)(tg->size.x * 0.22f);
                     SDL_Rect chk{box.x + pad, box.y + pad, box.w - 2 * pad, box.h - 2 * pad};
-                    SDL_SetRenderDrawColor(renderer, (Uint8)(tg->checkColor.r * 255), (Uint8)(tg->checkColor.g * 255),
-                                           (Uint8)(tg->checkColor.b * 255), (Uint8)(tg->checkColor.a * 255 * op));
-                    SDL_RenderFillRect(renderer, &chk);
+                    Color cc = tg->checkColor; cc.a *= t;
+                    FillUIShape(renderer, chk, UIShape::Rounded, tg->cornerRadius * 0.6f,
+                                cc, cc, false, false, op);
                 }
             }
             float px = 2.0f;

@@ -464,6 +464,11 @@ bool g_wireframeAll = false;     // debug: draw every mesh as wireframe (Scene v
 bool g_showWorldAxes = false;    // debug: draw the world X/Y/Z axes at the origin
 bool g_showCamHud = true;        // debug: on-screen readout of Scene camera zoom/angle/position
 float g_editorFov = 50.0f;       // Scene-view camera vertical FOV (degrees)
+// Debug capture: stash the last Scene-view camera so a button can re-render the
+// exact frame straight to a PNG (the true engine output, bypassing the display).
+Mat4 g_lastSceneVP; Vec3 g_lastSceneEye{0,0,0};
+int  g_lastSceneW = 0, g_lastSceneH = 0;
+bool g_captureScene = false;
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
@@ -2455,6 +2460,32 @@ void DrawStats(EditorState& ed) {
         if (ImGui::SliderFloat("Scene camera FOV", &g_editorFov, 20.0f, 110.0f, "%.0f deg")) SaveSettings();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Vertical field of view for the editor Scene camera.\nLower = flatter / more zoomed (less perspective\ndistortion); higher = wider / more stretched at edges.");
+        ImGui::Spacing();
+        if (ImGui::Button("Save Scene view -> PNG (debug)") && g_lastSceneW > 0)
+            g_captureScene = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Writes the EXACT pixels the engine renders for the current\nScene view to scene_capture.png — bypasses the screen/monitor.\nUse it when a glitch is visible, then share the PNG.");
+    }
+
+    // Handle a requested capture: re-render the stored Scene-view frame at full
+    // resolution and write the raw engine pixels to a PNG (true engine output).
+    if (g_captureScene && g_lastSceneW > 0) {
+        g_captureScene = false;
+        ApplySceneLight(ed.scene());
+        Raster work; std::vector<std::uint32_t> out;
+        const std::uint32_t* px = RenderMeshesSS(work, out, ed.scene(),
+                                                 g_lastSceneVP, g_lastSceneEye,
+                                                 g_lastSceneW, g_lastSceneH, 2);
+        okay::Image img(g_lastSceneW, g_lastSceneH);
+        for (int y = 0; y < g_lastSceneH; ++y)
+            for (int x = 0; x < g_lastSceneW; ++x) {
+                std::uint32_t p = px[(std::size_t)y * g_lastSceneW + x];
+                img.SetPixel(x, y, Color{(p & 0xFF) / 255.0f, ((p >> 8) & 0xFF) / 255.0f,
+                                         ((p >> 16) & 0xFF) / 255.0f, ((p >> 24) & 0xFF) / 255.0f});
+            }
+        std::string path = "scene_capture.png";
+        if (img.SavePNG(path)) ConsoleLog("Saved Scene view to " + path + " (raw engine pixels)", 0);
+        else                   ConsoleLog("Failed to save scene_capture.png", 2);
     }
     ImGui::End();
 }
@@ -7820,6 +7851,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
     Mat4 vp = proj * view;
+    if (!gameView) {   // remember this exact frame for the debug PNG capture
+        g_lastSceneVP = vp; g_lastSceneEye = eye;
+        g_lastSceneW = (int)canvasSize.x; g_lastSceneH = (int)canvasSize.y;
+    }
 
     auto toScreen = [&](const Vec4& c, ImVec2& out) -> bool {
         if (c.w <= 0.05f) return false;

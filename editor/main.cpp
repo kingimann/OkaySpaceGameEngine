@@ -457,6 +457,7 @@ bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
+bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
@@ -500,6 +501,7 @@ void LoadSettings() {
         else if (k == "autoperf") g_autoPerf = (v != 0);
         else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
+        else if (k == "showgizmos") g_showGizmos = (v != 0);
     }
 }
 void SaveSettings() {
@@ -507,7 +509,8 @@ void SaveSettings() {
     f << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
       << "ssaa "       << g_ssaa << "\n"
-      << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n";
+      << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
+      << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -1196,6 +1199,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
         ImGui::Separator();
         ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
+        if (ImGui::MenuItem("Gizmos (selection / camera / lights)", nullptr, &g_showGizmos)) SaveSettings();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Editor-only overlays in the Scene view\n(yellow selection box, camera frustum, light icons).\nNever appear in the Game view or a build.");
         if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
         ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);
         ImGui::Separator();
@@ -7826,7 +7831,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Editor gizmos for non-visual objects (Scene view only): a wireframe
     // frustum for cameras, a sun + direction arrow for lights, so you can see
     // and place them even though they don't render a mesh.
-    if (!gameView) {
+    if (!gameView && g_showGizmos) {
         auto line = [&](const Vec3& a, const Vec3& b, ImU32 col, float th = 1.5f) {
             ImVec2 pa, pb;
             if (toScreen(vp * Vec4{a, 1}, pa) && toScreen(vp * Vec4{b, 1}, pb))
@@ -7962,7 +7967,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         dl->AddImage((ImTextureID)tex, canvasPos, canvasEnd);
 
     // Highlight the selection with a clean yellow bounding box (12 edges).
-    if (!gameView && ed.selected()) {
+    if (!gameView && g_showGizmos && ed.selected()) {
         if (auto* mr = ed.selected()->GetComponent<MeshRenderer>()) {
             Mat4 m = vp * ed.selected()->transform->LocalToWorldMatrix();
             Vec3 lo, hi; mr->mesh.Bounds(lo, hi);

@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.93.0
+  - 3D anti-aliasing (2x supersampling) is ON by default again. With the v2.92
+    W-buffer depth fix removing the z-fighting, the only thing left was faint edge
+    shimmer during motion; 2x AA clears it. Auto-performance still drops to 1x on
+    heavy scenes / large viewports so it won't tank FPS. Toggle in View menu.
+
 v2.92.0  (camera depth-precision fix + more camera options)
   - DEPTH BUFFER is now a W-buffer (stores 1/w) instead of z/w. The old z/w depth
     had terrible precision far from a small near plane, so surfaces z-fought and

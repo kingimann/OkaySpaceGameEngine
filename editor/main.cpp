@@ -145,11 +145,10 @@ SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
-int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
-                  // Default OFF: 2x quadruples the pixels the software renderer must
-                  // fill, which tanks FPS when a big surface (the ground) fills the
-                  // view zoomed in — turning camera motion choppy. Opt in if you have
-                  // the headroom (View > "3D Anti-aliasing (2x)").
+int g_ssaa = 2;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
+                  // ON by default: removes the faint edge shimmer that remains during
+                  // camera motion after the depth (W-buffer) fix. Auto-performance drops
+                  // it to 1x on heavy scenes / large viewports to protect FPS.
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)

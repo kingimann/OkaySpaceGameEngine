@@ -1140,7 +1140,23 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // per-vertex normals — they use the face normal, interpolated per vertex, so
         // there are no flat-shading facet lines (only truly unlit meshes stay flat).
         const bool smooth = useMatcap || (!tex && !mr->unlit);
-        const Mat4 nrm = model;   // linear part transforms normals (rigid/uniform)
+        // Normal matrix = inverse-transpose of the model's linear part. Using the
+        // model matrix directly SKEWS normals under non-uniform scale (e.g. a ground
+        // scaled {40,1,40} or a stretched sphere) — lighting then "acts up" as the
+        // scale departs from uniform. The cofactor basis (cross products of the
+        // transformed axes) is the inverse-transpose up to a positive scale, which
+        // the per-vertex Normalized() removes — so it's correct for any scale/shear.
+        const Vec3 mAxX = model.MultiplyVector({1, 0, 0});
+        const Vec3 mAxY = model.MultiplyVector({0, 1, 0});
+        const Vec3 mAxZ = model.MultiplyVector({0, 0, 1});
+        const Vec3 nrmX = Vec3::Cross(mAxY, mAxZ);   // inverse-transpose basis columns
+        const Vec3 nrmY = Vec3::Cross(mAxZ, mAxX);
+        const Vec3 nrmZ = Vec3::Cross(mAxX, mAxY);
+        auto xformNormal = [&](const Vec3& n) {
+            return Vec3{nrmX.x * n.x + nrmY.x * n.y + nrmZ.x * n.z,
+                        nrmX.y * n.x + nrmY.y * n.y + nrmZ.y * n.z,
+                        nrmX.z * n.x + nrmY.z * n.y + nrmZ.z * n.z};
+        };
 
         // --- Per-mesh frustum cull: project the 8 AABB corners to clip space and
         // skip the whole mesh when every corner is outside one frustum plane
@@ -1200,7 +1216,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 // Per-vertex world normal (smoothed if the mesh has normals, else
                 // the face normal), flipped to match a culled back face.
                 Vec3 nk = mr->mesh.HasNormals()
-                              ? nrm.MultiplyVector(mr->mesh.normals[idx[k]]).Normalized()
+                              ? xformNormal(mr->mesh.normals[idx[k]]).Normalized()
                               : normal;
                 if (facing < 0.0f) nk = nk * -1.0f;
 

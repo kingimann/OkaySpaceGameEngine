@@ -94,7 +94,14 @@ struct Mat4 {
     /// Right-handed view matrix looking from `eye` toward `center`.
     static Mat4 LookAt(const Vec3& eye, const Vec3& center, const Vec3& up) {
         Vec3 f = (center - eye).Normalized();
-        Vec3 s = Vec3::Cross(f, up).Normalized();
+        // When the view direction is (nearly) parallel to `up` — e.g. a top-down
+        // camera looking straight down with up = +Y — Cross(f, up) collapses to
+        // zero and the whole basis breaks (black / garbled view). Fall back to an
+        // alternate up axis in that case so straight up/down views still work.
+        Vec3 upn = up.Normalized();
+        if (Mathf::Abs(Vec3::Dot(f, upn)) > 0.9999f)
+            upn = (Mathf::Abs(f.z) < 0.9f) ? Vec3{0, 0, 1} : Vec3{1, 0, 0};
+        Vec3 s = Vec3::Cross(f, upn).Normalized();
         Vec3 u = Vec3::Cross(s, f);
         Mat4 r;
         r.at(0,0) = s.x; r.at(1,0) = s.y; r.at(2,0) = s.z;

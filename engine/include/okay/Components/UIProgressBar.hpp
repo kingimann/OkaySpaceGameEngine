@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -17,10 +18,16 @@ public:
     Color background = Color::FromBytes(40, 40, 50);
     Color fill = Color::FromBytes(90, 200, 110);
     UIAnchor anchor = UIAnchor::TopLeft;
+    // Silhouette of the track/fill (Pill gives the clean capsule health-bar look).
+    UIShape shape = UIShape::Rounded;
     // Customization: rounded ends and an optional centered percent readout.
     float cornerRadius = 3.0f;
     bool  showPercent = false;
     Color textColor = Color::White;
+    // Optional gradient along the fill (e.g. green->yellow): `fill` is the start,
+    // `fillEnd` the far end.
+    bool  gradientFill = false;
+    Color fillEnd = Color::FromBytes(210, 200, 90);
     /// Which way the fill grows from empty to full.
     enum class FillDir { LeftRight, RightLeft, BottomTop, TopBottom };
     FillDir fillDir = FillDir::LeftRight;

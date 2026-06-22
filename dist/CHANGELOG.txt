@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.108.0  (UI: progress bars + sliders get shapes / gradients / round knobs)
+  - UIProgressBar gains the shape system (Rounded/Pill capsule bars) and an optional
+    gradient fill (e.g. green->yellow->red health) along the fill direction.
+  - UISlider gains a track shape (pill/rounded) and a round-knob option for a clean
+    circular handle.
+  - The player renders both via the shape fill (track + fill + knob), so corner radius
+    and pill ends actually draw. Inspector controls + back-compatible serialization.
+    uishape suite extended (progress/slider round-trips); 78 tests pass.
+
 v2.107.0  (UI: buttons get shapes + shadows + accurate hit-test)
   - UIButton gains the shape system (Rectangle/Rounded/Circle/Pill) and an optional
     drop shadow, for clean flat-UI / icon buttons. The player renders the silhouette

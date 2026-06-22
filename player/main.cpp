@@ -687,14 +687,14 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(pb->background.r * 255), (Uint8)(pb->background.g * 255),
-                                   (Uint8)(pb->background.b * 255), (Uint8)(pb->background.a * 255 * op));
-            SDL_RenderFillRect(renderer, &bg);
+            FillUIShape(renderer, bg, pb->shape, pb->cornerRadius,
+                        pb->background, pb->background, false, false, op);
             float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
             SDL_Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(pb->fill.r * 255), (Uint8)(pb->fill.g * 255),
-                                   (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255 * op));
-            SDL_RenderFillRect(renderer, &fl);
+            bool horiz = pb->fillDir == UIProgressBar::FillDir::LeftRight ||
+                         pb->fillDir == UIProgressBar::FillDir::RightLeft;
+            FillUIShape(renderer, fl, pb->shape, pb->cornerRadius,
+                        pb->fill, pb->fillEnd, pb->gradientFill, horiz, op);
             if (pb->showPercent) {
                 char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
                 float px = 2.0f;
@@ -712,9 +712,8 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(sl->background.r * 255), (Uint8)(sl->background.g * 255),
-                                   (Uint8)(sl->background.b * 255), (Uint8)(sl->background.a * 255 * op));
-            SDL_RenderFillRect(renderer, &bg);
+            FillUIShape(renderer, bg, sl->trackShape, sl->cornerRadius,
+                        sl->background, sl->background, false, false, op);
             float f = sl->Fraction();
             SDL_Rect fl, kn;
             if (sl->vertical) {
@@ -726,12 +725,11 @@ int main(int argc, char** argv) {
                 int kw = (int)(sl->size.y * sl->knobSize);
                 kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
             }
-            SDL_SetRenderDrawColor(renderer, (Uint8)(sl->fill.r * 255), (Uint8)(sl->fill.g * 255),
-                                   (Uint8)(sl->fill.b * 255), (Uint8)(sl->fill.a * 255 * op));
-            SDL_RenderFillRect(renderer, &fl);
-            SDL_SetRenderDrawColor(renderer, (Uint8)(sl->knob.r * 255), (Uint8)(sl->knob.g * 255),
-                                   (Uint8)(sl->knob.b * 255), (Uint8)(sl->knob.a * 255 * op));
-            SDL_RenderFillRect(renderer, &kn);
+            FillUIShape(renderer, fl, sl->trackShape, sl->cornerRadius,
+                        sl->fill, sl->fill, false, false, op);
+            // The handle: a circle when roundKnob, else a rounded tab.
+            FillUIShape(renderer, kn, sl->roundKnob ? UIShape::Circle : UIShape::Rounded,
+                        sl->cornerRadius, sl->knob, sl->knob, false, false, op);
             if (sl->showValue) {
                 char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
                 float px = 2.0f;

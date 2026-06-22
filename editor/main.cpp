@@ -6754,7 +6754,16 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
-            if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int pshp = (int)pb->shape;
+            const char* pshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##upb", &pshp, pshapes, 4)) { pb->shape = (UIShape)pshp; ed.dirty = true; }
+            if (pb->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Gradient Fill##upb", &pb->gradientFill)) ed.dirty = true;
+            if (pb->gradientFill) {
+                float fe[4] = {pb->fillEnd.r, pb->fillEnd.g, pb->fillEnd.b, pb->fillEnd.a};
+                if (ImGui::ColorEdit4("Fill End##upb", fe)) { pb->fillEnd = {fe[0], fe[1], fe[2], fe[3]}; ed.dirty = true; }
+            }
             if (ImGui::Checkbox("Show Percent##upb", &pb->showPercent)) ed.dirty = true;
             if (pb->showPercent) {
                 float tc[4] = {pb->textColor.r, pb->textColor.g, pb->textColor.b, pb->textColor.a};
@@ -6815,7 +6824,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Knob##usl", kc)) { sl->knob = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
             AnchorCombo("Anchor##usl", sl->anchor, ed);
-            if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int sshp = (int)sl->trackShape;
+            const char* sshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Track Shape##usl", &sshp, sshapes, 4)) { sl->trackShape = (UIShape)sshp; ed.dirty = true; }
+            if (sl->trackShape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Round Knob##usl", &sl->roundKnob)) ed.dirty = true;
             if (ImGui::DragFloat("Knob Size##usl", &sl->knobSize, 0.02f, 0.1f, 3.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Show Value##usl", &sl->showValue)) ed.dirty = true;
             ImGui::SameLine();

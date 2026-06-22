@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -25,10 +26,13 @@ public:
     Color fill       = Color::FromBytes(90, 140, 220);
     Color knob       = Color::FromBytes(230, 230, 240);
     UIAnchor anchor = UIAnchor::TopLeft;
+    // Silhouette of the track + fill (Pill = clean capsule slider).
+    UIShape trackShape = UIShape::Rounded;
     // Customization: rounded track, knob width (as a fraction of height), and an
     // optional value readout drawn to the right of the track.
     float cornerRadius = 3.0f;
     float knobSize = 0.6f;                           // knob width = size.y * this
+    bool  roundKnob = false;                         // draw a circular handle
     bool  showValue = false;
     bool  wholeNumbers = false;                      // snap the value to integers
     bool  vertical = false;                          // drag/fill bottom->top

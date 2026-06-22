@@ -529,7 +529,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)pb->anchor << " "
             << pb->cornerRadius << " " << (pb->showPercent ? 1 : 0) << " "
             << pb->textColor.r << " " << pb->textColor.g << " " << pb->textColor.b << " " << pb->textColor.a
-            << " " << (int)pb->fillDir << "\n";
+            << " " << (int)pb->fillDir
+            // extended (back-compatible trailing fields): shape + gradient fill
+            << " " << (int)pb->shape << " " << (pb->gradientFill ? 1 : 0) << " "
+            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a << "\n";
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -552,7 +555,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sl->textColor.r << " " << sl->textColor.g << " " << sl->textColor.b << " " << sl->textColor.a
             << " " << (sl->wholeNumbers ? 1 : 0)
             << " " << (sl->interactable ? 1 : 0)
-            << " " << (sl->vertical ? 1 : 0) << "\n";
+            << " " << (sl->vertical ? 1 : 0)
+            // extended (back-compatible trailing fields): track shape + round knob
+            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0) << "\n";
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
         out << "  uitoggle " << Quote(tg->label) << " "
@@ -1398,6 +1403,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         pb->showPercent = (sp != 0); pb->textColor = tc;
                         in >> std::ws; // optional fill direction (added later)
                         if (std::isdigit(in.peek())) { int fd = 0; in >> fd; pb->fillDir = (UIProgressBar::FillDir)fd; }
+                        in >> std::ws; // optional shape + gradient fill (added later)
+                        if (std::isdigit(in.peek())) {
+                            int sp = 0, gf = 0; Color fe;
+                            in >> sp >> gf >> fe.r >> fe.g >> fe.b >> fe.a;
+                            pb->shape = (UIShape)sp; pb->gradientFill = (gf != 0); pb->fillEnd = fe;
+                        }
                     }
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
@@ -1440,6 +1451,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) { int it = 1; in >> it; sl->interactable = (it != 0); }
                         in >> std::ws;
                         if (std::isdigit(in.peek())) { int vt = 0; in >> vt; sl->vertical = (vt != 0); }
+                        in >> std::ws; // optional track shape + round knob (added later)
+                        if (std::isdigit(in.peek())) {
+                            int ts = 0, rk = 0; in >> ts >> rk;
+                            sl->trackShape = (UIShape)ts; sl->roundKnob = (rk != 0);
+                        }
                     }
                 } else if (field == "uitoggle") {
                     auto* tg = go->AddComponent<UIToggle>();

@@ -88,5 +88,22 @@ int main() {
         if (b2) CHECK_NEAR(b2->shadowOffset.y, 5.0f, 1e-4f);
     }
 
+    // Progress bar + slider shape/style fields round-trip through the scene.
+    {
+        Scene s("PS"); s.physicsEnabled = false;
+        auto* pb = s.CreateGameObject("PB")->AddComponent<UIProgressBar>();
+        pb->shape = UIShape::Pill; pb->gradientFill = true; pb->fillEnd = Color::FromBytes(200, 60, 60);
+        auto* sl = s.CreateGameObject("SL")->AddComponent<UISlider>();
+        sl->trackShape = UIShape::Pill; sl->roundKnob = true;
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* pb2 = s2.Find("PB") ? s2.Find("PB")->GetComponent<UIProgressBar>() : nullptr;
+        auto* sl2 = s2.Find("SL") ? s2.Find("SL")->GetComponent<UISlider>() : nullptr;
+        CHECK(pb2 && pb2->shape == UIShape::Pill);
+        CHECK(pb2 && pb2->gradientFill);
+        CHECK(sl2 && sl2->trackShape == UIShape::Pill);
+        CHECK(sl2 && sl2->roundKnob);
+    }
+
     TEST_MAIN_RESULT();
 }

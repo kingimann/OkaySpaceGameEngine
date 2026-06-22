@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.97.0  (optimization: less per-frame allocation)
+  - Scene::FindObjectsOfType (called many times per frame by physics, rendering and
+    UI) used to allocate a temporary vector for EVERY game object via GetComponents.
+    It now collects matches directly into one reserved output vector (new
+    GameObject::CollectComponents), cutting per-frame heap allocations from O(objects)
+    to one per query. Identical results; 75 tests pass.
+
 v2.96.0  (physics optimization)
   - Faster collision broadphase (2D + 3D). Each collider's world AABB was being
     recomputed O(n) times per frame inside the all-pairs loop; it's now computed

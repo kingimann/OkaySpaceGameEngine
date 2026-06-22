@@ -67,8 +67,9 @@ public:
     template <typename T>
     std::vector<T*> FindObjectsOfType() const {
         std::vector<T*> out;
+        out.reserve(m_objects.size());   // typically ~1 of a given type per object
         for (const auto& go : m_objects)
-            for (T* c : go->GetComponents<T>()) out.push_back(c);
+            go->template CollectComponents<T>(out);   // append directly — no per-object temp vector
         return out;
     }
     /// The first component of type T found in the scene, or nullptr.

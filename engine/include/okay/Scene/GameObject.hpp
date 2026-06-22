@@ -36,6 +36,11 @@ public:
     template <typename T>
     std::vector<T*> GetComponents() const;
 
+    /// Append every component assignable to T to `out` (no per-object allocation;
+    /// used by Scene::FindObjectsOfType to avoid a temporary vector per object).
+    template <typename T>
+    void CollectComponents(std::vector<T*>& out) const;
+
     /// Remove a specific component (Transform cannot be removed). Returns true
     /// if it was found and removed.
     bool RemoveComponent(Component* component);
@@ -89,6 +94,12 @@ std::vector<T*> GameObject::GetComponents() const {
     for (const auto& c : m_components)
         if (T* casted = dynamic_cast<T*>(c.get())) result.push_back(casted);
     return result;
+}
+
+template <typename T>
+void GameObject::CollectComponents(std::vector<T*>& out) const {
+    for (const auto& c : m_components)
+        if (T* casted = dynamic_cast<T*>(c.get())) out.push_back(casted);
 }
 
 } // namespace okay

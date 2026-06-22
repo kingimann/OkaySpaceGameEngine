@@ -141,6 +141,12 @@ public:
         } else m_camPos = desired;
         m_haveCamPos = true;
 
+        // Never let the follow camera dip to or below the floor: from under (or
+        // grazing) the ground plane you'd see it edge-on, or — since the floor is a
+        // single-sided plane — not at all. Keep a small clearance above it.
+        float floorY = usePlayerHeight ? 0.0f : groundY;
+        if (m_camPos.y < floorY + 0.5f) m_camPos.y = floorY + 0.5f;
+
         cam->SetPosition(m_camPos);
         // Level rotation from yaw/pitch (z = 0, no roll) that looks at the player.
         cam->localRotation = Quat::Euler(-cameraPitch, cameraYaw, 0.0f);

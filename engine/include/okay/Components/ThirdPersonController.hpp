@@ -150,6 +150,14 @@ public:
         }
         m_haveCamPos = true;
 
+        // Never let the camera drop below the player's base. minPitch allows looking
+        // up from slightly below, which at close distance could otherwise sink the
+        // camera through the floor — from under a single-sided ground plane the floor
+        // vanishes, and grazing it reads as a glitchy edge. (target.y - cameraHeight
+        // == the player origin, so this stays correct on raised platforms too.)
+        float minY = target.y - cameraHeight;
+        if (m_camPos.y < minY) m_camPos.y = minY;
+
         cam->SetPosition(m_camPos);
         // Build the rotation straight from yaw/pitch with NO roll component (z = 0)
         // so the horizon is always level. (LookRotation could tilt the horizon at

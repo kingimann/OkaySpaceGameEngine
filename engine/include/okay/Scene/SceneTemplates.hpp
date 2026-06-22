@@ -115,6 +115,7 @@ inline void Platformer3D(Scene& scene) {
     auto* gmr = ground->AddComponent<MeshRenderer>();
     gmr->mesh = Mesh::Plane(1.0f);   // flat quad floor: a plane has no thick side walls,
                                      // so the edge can't read as a dark wedge / "not square"
+    gmr->doubleSided = true;         // stays visible even if the camera dips below the floor
     gmr->color = Color::FromBytes(90, 110, 90);
     auto* gbc = ground->AddComponent<BoxCollider3D>();
     gbc->size = {1, 1, 1};           // Transform scale (24) sizes the collider
@@ -153,6 +154,7 @@ inline void ThirdPerson(Scene& scene) {
     auto* gmr = ground->AddComponent<MeshRenderer>();
     gmr->mesh = Mesh::Plane(1.0f);   // flat quad floor: a plane has no thick side walls,
                                      // so the edge can't read as a dark wedge / "not square"
+    gmr->doubleSided = true;         // stays visible even if the camera dips below the floor
     gmr->color = Color::FromBytes(95, 110, 95);
     auto* gbc = ground->AddComponent<BoxCollider3D>();
     gbc->size = {1, 1, 1};           // Transform scale (40) sizes the collider
@@ -206,6 +208,7 @@ inline void PointAndClick(Scene& scene) {
     auto* gmr = ground->AddComponent<MeshRenderer>();
     gmr->mesh = Mesh::Plane(1.0f);   // flat quad floor: a plane has no thick side walls,
                                      // so the edge can't read as a dark wedge / "not square"
+    gmr->doubleSided = true;         // stays visible even if the camera dips below the floor
     gmr->color = Color::FromBytes(95, 110, 95);
     auto* gbc = ground->AddComponent<BoxCollider3D>();
     gbc->size = {1, 1, 1};           // Transform scale (40) sizes the collider
@@ -260,6 +263,7 @@ inline void FPS(Scene& scene) {
     auto* gmr = ground->AddComponent<MeshRenderer>();
     gmr->mesh = Mesh::Plane(1.0f);   // flat quad floor: a plane has no thick side walls,
                                      // so the edge can't read as a dark wedge / "not square"
+    gmr->doubleSided = true;         // stays visible even if the camera dips below the floor
     gmr->color = Color::FromBytes(95, 110, 95);
     auto* gbc = ground->AddComponent<BoxCollider3D>();
     gbc->size = {1, 1, 1};           // Transform scale (40) sizes the collider

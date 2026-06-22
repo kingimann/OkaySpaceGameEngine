@@ -8,6 +8,13 @@ v2.80.0
     square surface from every angle. Same 40×40 footprint (24×24 for 3D Platformer) —
     NOT enlarged. The collider is unchanged: a thin box whose top is still flush at
     y=0 (offset down by 0.5), so the player stands and falls exactly as before.
+  - Follow cameras (third-person and click-to-move) now clamp their height so they
+    never sink to or below the floor. ThirdPerson allowed pitching down to -20deg,
+    which at close range could drop the camera under the ground — from beneath a
+    floor you'd see it edge-on (a glitchy "wedge") or, with the one-sided plane, not
+    at all. The camera is now kept above the player's base / a small floor clearance.
+  - The ground plane is marked double-sided, so it stays visible even if you orbit
+    the editor Scene camera below it (a single-sided plane would otherwise vanish).
 
 v2.79.0
   - Added a "Gizmos" toggle (View menu): hide the editor-only Scene overlays — the

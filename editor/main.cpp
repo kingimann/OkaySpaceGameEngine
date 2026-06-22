@@ -6557,6 +6557,16 @@ void DrawInspector(EditorState& ed) {
             int ct = (int)in->contentType;
             if (ImGui::Combo("Content Type##uif", &ct, cts, 4)) { in->contentType = (UIInputField::ContentType)ct; ed.dirty = true; }
             AnchorCombo("Anchor##uif", in->anchor, ed);
+            int ishp = (int)in->shape;
+            const char* fshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##uif", &ishp, fshapes, 4)) { in->shape = (UIShape)ishp; ed.dirty = true; }
+            if (in->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##uif", &in->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Focus Ring##uif", &in->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+            if (in->borderWidth > 0.0f) {
+                float bc[4] = {in->borderColor.r, in->borderColor.g, in->borderColor.b, in->borderColor.a};
+                if (ImGui::ColorEdit4("Ring Color##uif", bc)) { in->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
             ImGui::TextDisabled("Click to focus + type at runtime; Enter calls on_submit().");
             if (ImGui::SmallButton("Remove##uif")) toRemove = in;
         }
@@ -6568,6 +6578,11 @@ void DrawInspector(EditorState& ed) {
             float sz[2] = {dd->size.x, dd->size.y};
             if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##udd", dd->anchor, ed);
+            int dshp = (int)dd->shape;
+            const char* dshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##udd", &dshp, dshapes, 4)) { dd->shape = (UIShape)dshp; ed.dirty = true; }
+            if (dd->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##udd", &dd->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             char ph[96]; std::strncpy(ph, dd->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
             if (ImGui::InputText("Placeholder##udd", ph, sizeof(ph))) { dd->placeholder = ph; ed.dirty = true; }
             if (ImGui::Button("Clear selection##udd")) { dd->value = -1; ed.dirty = true; }

@@ -871,12 +871,8 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(dd->anchor, dd->position, dd->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect hdr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(dd->color.r * 255), (Uint8)(dd->color.g * 255),
-                                   (Uint8)(dd->color.b * 255), (Uint8)(dd->color.a * 255));
-            SDL_RenderFillRect(renderer, &hdr);
-            SDL_SetRenderDrawColor(renderer, (Uint8)(dd->borderColor.r * 255), (Uint8)(dd->borderColor.g * 255),
-                                   (Uint8)(dd->borderColor.b * 255), (Uint8)(dd->borderColor.a * 255));
-            SDL_RenderDrawRect(renderer, &hdr);
+            FillUIShape(renderer, hdr, dd->shape, dd->cornerRadius,
+                        dd->color, dd->color, false, false, 1.0f);
             float px = 2.0f;
             float ty = o.y + (dd->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(dd->textColor.r * 255), (Uint8)(dd->textColor.g * 255),
@@ -905,12 +901,16 @@ int main(int argc, char** argv) {
             enterScroll(up.get(), o);
             SDL_Rect box{(int)o.x, (int)o.y, (int)in->size.x, (int)in->size.y};
             Color bg = in->CurrentColor();
-            SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
-                                   (Uint8)(bg.b * 255), (Uint8)(bg.a * 255));
-            SDL_RenderFillRect(renderer, &box);
-            if (in->focused) {                              // focus outline
-                SDL_SetRenderDrawColor(renderer, 120, 170, 255, 255);
-                SDL_RenderDrawRect(renderer, &box);
+            // Focus ring: draw the border shape behind, then the field inset over it.
+            if (in->focused && in->borderWidth > 0.0f) {
+                FillUIShape(renderer, box, in->shape, in->cornerRadius,
+                            in->borderColor, in->borderColor, false, false, 1.0f);
+                int b = (int)in->borderWidth;
+                SDL_Rect inner{box.x + b, box.y + b, box.w - 2 * b, box.h - 2 * b};
+                float ir = in->cornerRadius - b; if (ir < 0.0f) ir = 0.0f;
+                FillUIShape(renderer, inner, in->shape, ir, bg, bg, false, false, 1.0f);
+            } else {
+                FillUIShape(renderer, box, in->shape, in->cornerRadius, bg, bg, false, false, 1.0f);
             }
             float px = 2.0f, pad = 6.0f;
             bool empty = in->text.empty();

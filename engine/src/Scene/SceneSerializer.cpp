@@ -451,7 +451,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << in->size.x << " " << in->size.y << " " << (int)in->anchor << " "
             << in->maxLength << " " << Quote(in->text) << " " << Quote(in->placeholder) << " "
             << in->color.r << " " << in->color.g << " " << in->color.b << " " << in->color.a << " "
-            << (int)in->contentType << "\n";
+            << (int)in->contentType
+            // extended (back-compatible trailing fields): shape + corner + focus ring
+            << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
+            << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a << "\n";
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
         out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
@@ -464,7 +467,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << dd->borderColor.r << " " << dd->borderColor.g << " " << dd->borderColor.b << " " << dd->borderColor.a << " "
             << dd->options.size();
         for (const auto& opt : dd->options) out << " " << Quote(opt);
-        out << " " << (dd->interactable ? 1 : 0) << " " << Quote(dd->placeholder) << "\n";
+        out << " " << (dd->interactable ? 1 : 0) << " " << Quote(dd->placeholder)
+            << " " << (int)dd->shape << " " << dd->cornerRadius << "\n";   // extended (back-compatible)
     }
     if (auto* tb = go->GetComponent<UITextBind>()) {
         out << "  uibind " << Quote(tb->format) << "\n";
@@ -1292,6 +1296,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> c.r >> c.g >> c.b >> c.a; inp->color = c;
                     in >> std::ws; // optional content type (added later)
                     if (std::isdigit(in.peek())) { int ct = 0; in >> ct; inp->contentType = (UIInputField::ContentType)ct; }
+                    in >> std::ws; // optional shape + corner + focus ring (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sp = 0; Color bc;
+                        in >> sp >> inp->cornerRadius >> inp->borderWidth >> bc.r >> bc.g >> bc.b >> bc.a;
+                        inp->shape = (UIShape)sp; inp->borderColor = bc;
+                    }
                 } else if (field == "uidropdown") {
                     auto* dd = go->AddComponent<UIDropdown>();
                     int an = 0; std::size_t count = 0;
@@ -1310,6 +1320,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) { int it = 1; in >> it; dd->interactable = (it != 0); }
                     in >> std::ws; // optional placeholder (added later)
                     if (in.peek() == '"') dd->placeholder = ReadQuoted(in);
+                    in >> std::ws; // optional shape + corner radius (added later)
+                    if (std::isdigit(in.peek())) { int sp = 0; in >> sp >> dd->cornerRadius; dd->shape = (UIShape)sp; }
                 } else if (field == "uibind") {
                     auto* tb = go->AddComponent<UITextBind>();
                     tb->format = ReadQuoted(in);

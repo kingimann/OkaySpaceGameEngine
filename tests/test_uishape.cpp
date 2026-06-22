@@ -121,5 +121,22 @@ int main() {
         if (tg2) CHECK_NEAR(tg2->animSpeed, 12.0f, 1e-3f);
     }
 
+    // Input field + dropdown shape/style fields round-trip through the scene.
+    {
+        Scene s("FD"); s.physicsEnabled = false;
+        auto* inp = s.CreateGameObject("IN")->AddComponent<UIInputField>();
+        inp->shape = UIShape::Pill; inp->cornerRadius = 9.0f; inp->borderWidth = 2.0f;
+        auto* dd = s.CreateGameObject("DD")->AddComponent<UIDropdown>();
+        dd->shape = UIShape::Rounded; dd->cornerRadius = 7.0f;
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* in2 = s2.Find("IN") ? s2.Find("IN")->GetComponent<UIInputField>() : nullptr;
+        auto* dd2 = s2.Find("DD") ? s2.Find("DD")->GetComponent<UIDropdown>() : nullptr;
+        CHECK(in2 && in2->shape == UIShape::Pill);
+        if (in2) CHECK_NEAR(in2->borderWidth, 2.0f, 1e-4f);
+        CHECK(dd2 && dd2->shape == UIShape::Rounded);
+        if (dd2) CHECK_NEAR(dd2->cornerRadius, 7.0f, 1e-4f);
+    }
+
     TEST_MAIN_RESULT();
 }

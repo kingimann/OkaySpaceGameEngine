@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
@@ -34,6 +35,11 @@ public:
     ContentType contentType = ContentType::Standard;
     char passwordChar = '*';
     bool focused = false;
+    // Silhouette + corners and an optional focus ring (clean form-field styling).
+    UIShape shape = UIShape::Rounded;
+    float cornerRadius = 6.0f;
+    float borderWidth = 0.0f;                         // focus ring thickness (0 = none)
+    Color borderColor = Color::FromBytes(90, 140, 220);  // shown while focused
 
     bool Contains(const Vec2& p) const {
         Vec2 o = ResolveAnchor(anchor, position, size);

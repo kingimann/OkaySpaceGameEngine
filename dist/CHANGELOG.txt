@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.110.0  (UI: rounded form controls — input fields + dropdowns)
+  - UIInputField gains a shape + corner radius and an optional focus ring (a colored
+    border that appears while the field is focused), for clean rounded text fields.
+  - UIDropdown gains a shape + corner radius so the header renders as a rounded select.
+  - The player draws both via the shape fill. Inspector controls + back-compatible
+    serialization. uishape suite extended (input/dropdown round-trips); 78 tests pass.
+
 v2.109.0  (UI: animated toggles — gliding switch + fading check)
   - UIToggle now animates: the Switch knob glides between off/on and the track
     cross-fades (animSpeed, eased and frame-rate independent), and the Checkbox tick

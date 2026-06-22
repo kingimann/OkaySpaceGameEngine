@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.83.0
+  - Scene view: on-screen Camera HUD (top-left) showing the orbit camera's zoom
+    distance, yaw/pitch angle, eye position, target, and FOV. A screenshot now
+    records exactly where you're looking from, so visual issues can be reproduced
+    at the same camera. Toggle in Stats > Rendering > Debug view ("Camera HUD").
+
 v2.82.0
   - Reverted the 3D ground back to a SOLID block (it was briefly a flat plane with
     the collider offset below it, which looked like a thin sheet floating over a

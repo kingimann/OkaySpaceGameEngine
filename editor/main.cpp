@@ -1262,6 +1262,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
         if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
         if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
+        if (ImGui::MenuItem("Create Virtual Camera")) {
+            GameObject* g = ed.CreateEmpty("Virtual Camera");
+            g->AddComponent<VirtualCamera>();
+            ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
+        }
         ImGui::Separator();
         if (ImGui::BeginMenu("3D Object")) {       // every built-in primitive
             if (ImGui::MenuItem("Cube"))      { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
@@ -4977,6 +4982,19 @@ void DrawInspector(EditorState& ed) {
         ImGui::EndCombo();
     }
     ImGui::SameLine();
+    // Layer dropdown (Unity-style): which of the 32 named layers the object sits on.
+    ImGui::SetNextItemWidth(130);
+    if (ImGui::BeginCombo("Layer", okay::Layers::Name(go->layer).c_str())) {
+        for (int i = 0; i < 32; ++i) {
+            std::string nm = okay::Layers::Name(i);
+            bool sel = (go->layer == i);
+            if (ImGui::Selectable((nm + "##layer" + std::to_string(i)).c_str(), sel)) {
+                go->layer = i; ed.dirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
     float btnW = ImGui::CalcTextSize("Save as Prefab").x + ImGui::GetStyle().FramePadding.x * 2;
     float avail = ImGui::GetContentRegionAvail().x;
     if (avail > btnW) ImGui::SameLine(ImGui::GetCursorPosX() + (avail - btnW));
@@ -5151,8 +5169,32 @@ void DrawInspector(EditorState& ed) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
-            ImGui::SameLine();
-            if (ImGui::Checkbox("Unlit", &mr->unlit)) ed.dirty = true;
+            // Shader (surface model): Standard lit / Unlit / Toon (cel). Folds the old
+            // Unlit flag into the selector; the renderer treats Unlit-shader == unlit.
+            int sh = (int)mr->shader;
+            if (mr->unlit && mr->shader == MeshRenderer::Shader::Standard) sh = 1;  // legacy unlit flag
+            const char* shaders[] = {"Standard", "Unlit", "Toon"};
+            if (ImGui::Combo("Shader##mesh", &sh, shaders, 3)) {
+                mr->shader = (MeshRenderer::Shader)sh;
+                mr->unlit = (mr->shader == MeshRenderer::Shader::Unlit);  // keep legacy flag in sync
+                ed.dirty = true;
+            }
+            if (mr->shader == MeshRenderer::Shader::Toon)
+                if (ImGui::SliderInt("Cel Bands##mesh", &mr->toonBands, 2, 6)) ed.dirty = true;
+            // Rim (Fresnel) backlight — a per-material glow, great with Toon.
+            if (ImGui::SliderFloat("Rim##mesh", &mr->rimStrength, 0.0f, 2.0f)) ed.dirty = true;
+            if (mr->rimStrength > 0.0f) {
+                if (ImGui::SliderFloat("Rim Power##mesh", &mr->rimPower, 1.0f, 8.0f)) ed.dirty = true;
+                float rc[3] = {mr->rimColor.r, mr->rimColor.g, mr->rimColor.b};
+                if (ImGui::ColorEdit3("Rim Color##mesh", rc)) { mr->rimColor = {rc[0], rc[1], rc[2], 1.0f}; ed.dirty = true; }
+            }
+            // Silhouette outline (inverted hull) — pairs with Toon for a cartoon edge.
+            if (ImGui::Checkbox("Outline##mesh", &mr->outline)) ed.dirty = true;
+            if (mr->outline) {
+                if (ImGui::DragFloat("Outline Width##mesh", &mr->outlineWidth, 0.002f, 0.0f, 1.0f)) ed.dirty = true;
+                float oc[3] = {mr->outlineColor.r, mr->outlineColor.g, mr->outlineColor.b};
+                if (ImGui::ColorEdit3("Outline Color##mesh", oc)) { mr->outlineColor = {oc[0], oc[1], oc[2], 1.0f}; ed.dirty = true; }
+            }
             // Material: emissive glow + specular highlight.
             float em[3] = {mr->emissive.r, mr->emissive.g, mr->emissive.b};
             if (ImGui::ColorEdit3("Emissive##mesh", em)) {
@@ -5197,6 +5239,11 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat2("Tiling##mesh", til, 0.05f, 0.01f, 64.0f)) {
                     mr->tiling = {til[0], til[1]}; ed.dirty = true;
                 }
+                float sc[2] = {mr->uvScroll.x, mr->uvScroll.y};
+                if (ImGui::DragFloat2("UV Scroll##mesh", sc, 0.01f)) { mr->uvScroll = {sc[0], sc[1]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Animated texture: UV units/second (flowing water, lava, belts).");
+                if (ImGui::Checkbox("Triplanar##mesh", &mr->triplanar)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Project the texture on the 3 world axes (no UV seams; great for terrain/cliffs).\nTiling is the world-space scale.");
             }
             char nmap[260];
             std::strncpy(nmap, mr->normalMap.c_str(), sizeof(nmap) - 1);
@@ -5489,10 +5536,19 @@ void DrawInspector(EditorState& ed) {
             if (cam->projection == Camera::Projection::Orthographic) {
                 if (ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f)) ed.dirty = true;
             } else {
-                if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
-                int ax = cam->fovAxisHorizontal ? 1 : 0;
-                const char* axes[] = {"Vertical", "Horizontal"};
-                if (ImGui::Combo("FOV Axis", &ax, axes, 2)) { cam->fovAxisHorizontal = (ax == 1); ed.dirty = true; }
+                if (ImGui::Checkbox("Physical Camera", &cam->physicalCamera)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Drive FOV from real lens optics (focal length + sensor size),\nlike Unity's physical camera.");
+                if (cam->physicalCamera) {
+                    if (ImGui::DragFloat("Focal Length", &cam->focalLength, 0.5f, 1.0f, 300.0f, "%.1f mm")) ed.dirty = true;
+                    if (ImGui::DragFloat("Sensor Height", &cam->sensorHeight, 0.1f, 1.0f, 100.0f, "%.1f mm")) ed.dirty = true;
+                    ImGui::TextDisabled("Effective FOV: %.1f deg", cam->VerticalFovDegrees(16.0f / 9.0f));
+                } else {
+                    if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+                    int ax = cam->fovAxisHorizontal ? 1 : 0;
+                    const char* axes[] = {"Vertical", "Horizontal"};
+                    if (ImGui::Combo("FOV Axis", &ax, axes, 2)) { cam->fovAxisHorizontal = (ax == 1); ed.dirty = true; }
+                }
             }
 
             ImGui::SeparatorText("Background");
@@ -5515,6 +5571,36 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Where on screen this camera draws (0..1, origin bottom-left)\n— like Unity's Camera.rect. Use for split-screen / mini-maps.");
+
+            ImGui::SeparatorText("Culling Mask");
+            // Layer set this camera renders (Unity's Camera.cullingMask). Summarize the
+            // selection on the combo preview, with per-layer toggles + Everything/Nothing.
+            std::string maskPreview;
+            if (cam->cullingMask == ~0) maskPreview = "Everything";
+            else if (cam->cullingMask == 0) maskPreview = "Nothing";
+            else {
+                int cnt = 0;
+                for (int i = 0; i < 32; ++i) if (cam->cullingMask & (1 << i)) {
+                    if (cnt < 2) { if (cnt) maskPreview += ", "; maskPreview += okay::Layers::Name(i); }
+                    ++cnt;
+                }
+                if (cnt > 2) maskPreview += " (+" + std::to_string(cnt - 2) + ")";
+            }
+            if (ImGui::BeginCombo("Layers", maskPreview.c_str())) {
+                if (ImGui::Selectable("Everything", cam->cullingMask == ~0)) { cam->cullingMask = ~0; ed.dirty = true; }
+                if (ImGui::Selectable("Nothing", cam->cullingMask == 0)) { cam->cullingMask = 0; ed.dirty = true; }
+                ImGui::Separator();
+                for (int i = 0; i < 32; ++i) {
+                    std::string nm = okay::Layers::Name(i);
+                    bool on = (cam->cullingMask & (1 << i)) != 0;
+                    if (ImGui::Checkbox((nm + "##cull" + std::to_string(i)).c_str(), &on)) {
+                        if (on) cam->cullingMask |= (1 << i);
+                        else    cam->cullingMask &= ~(1 << i);
+                        ed.dirty = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
 
             ImGui::Spacing();
             if (ImGui::Checkbox("Main", &cam->main)) ed.dirty = true;
@@ -6027,6 +6113,119 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cf")) toRemove = cf;
         }
     }
+    if (auto* vc = go->GetComponent<VirtualCamera>()) {
+        if (CompHeader("Virtual Camera", vc, &toRemove)) {
+            if (ImGui::DragInt("Priority##vc", &vc->priority, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Highest enabled vcam becomes live (the brain blends to it).");
+            ImGui::SeparatorText("Body");
+            char fb[128];
+            std::strncpy(fb, vc->follow.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
+            if (ImGui::InputText("Follow##vc", fb, sizeof(fb))) { vc->follow = fb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject to position relative to (the body).");
+            float off[3] = {vc->followOffset.x, vc->followOffset.y, vc->followOffset.z};
+            if (ImGui::DragFloat3("Follow Offset##vc", off, 0.05f)) { vc->followOffset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            int bm = (int)vc->bindingMode;
+            const char* bms[] = {"World Space", "Lock To Target (orbital)"};
+            if (ImGui::Combo("Binding Mode##vc", &bm, bms, 2)) { vc->bindingMode = (VirtualCamera::BindingMode)bm; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock To Target orbits the offset with the target's facing\n(3rd-person chase cam).");
+            ImGui::SeparatorText("FreeLook (orbit rig)");
+            if (ImGui::Checkbox("FreeLook##vc", &vc->freeLook)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Orbit the Follow target on a sphere (overrides offset + aim).\nGreat for 3rd-person player cameras.");
+            if (vc->freeLook) {
+                if (ImGui::DragFloat("Radius##vcfl", &vc->orbitRadius, 0.1f, 0.1f, 200.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Pivot Height##vcfl", &vc->orbitHeight, 0.05f)) ed.dirty = true;
+                if (ImGui::DragFloat("Yaw##vcfl", &vc->orbitYaw, 0.5f)) ed.dirty = true;
+                if (ImGui::DragFloat("Pitch##vcfl", &vc->orbitPitch, 0.5f)) ed.dirty = true;
+                float pc[2] = {vc->orbitMinPitch, vc->orbitMaxPitch};
+                if (ImGui::DragFloat2("Pitch Min/Max##vcfl", pc, 0.5f, -89.0f, 89.0f)) { vc->orbitMinPitch = pc[0]; vc->orbitMaxPitch = pc[1]; ed.dirty = true; }
+                if (ImGui::Checkbox("Mouse Look##vcfl", &vc->orbitInput)) ed.dirty = true;
+                if (vc->orbitInput) {
+                    if (ImGui::DragInt("Mouse Button##vcfl", &vc->orbitButton, 0.1f, -1, 4)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold this mouse button to orbit (-1 = always; 1 = right button).");
+                    if (ImGui::DragFloat("Sensitivity##vcfl", &vc->mouseSensitivity, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+                }
+            }
+            ImGui::SeparatorText("Tracked Dolly");
+            if (ImGui::Checkbox("Dolly##vc", &vc->dolly)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Constrain the body to a Dolly Path rail (aim still tracks LookAt/Follow).");
+            if (vc->dolly) {
+                char db[128];
+                std::strncpy(db, vc->dollyPath.c_str(), sizeof(db) - 1); db[sizeof(db) - 1] = '\0';
+                if (ImGui::InputText("Path##vcd", db, sizeof(db))) { vc->dollyPath = db; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject holding a Dolly Path component.");
+                if (ImGui::Checkbox("Auto Dolly##vcd", &vc->autoDolly)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide to the path point nearest the Follow target.");
+                if (!vc->autoDolly)
+                    if (ImGui::SliderFloat("Position##vcd", &vc->dollyPosition, 0.0f, 1.0f)) ed.dirty = true;
+            }
+            ImGui::SeparatorText("Aim");
+            char lb[128];
+            std::strncpy(lb, vc->lookAt.c_str(), sizeof(lb) - 1); lb[sizeof(lb) - 1] = '\0';
+            if (ImGui::InputText("Look At##vc", lb, sizeof(lb))) { vc->lookAt = lb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject to aim at (the aim).");
+            float lo[3] = {vc->lookAtOffset.x, vc->lookAtOffset.y, vc->lookAtOffset.z};
+            if (ImGui::DragFloat3("Look Offset##vc", lo, 0.05f)) { vc->lookAtOffset = {lo[0], lo[1], lo[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Added to the LookAt target before aiming (e.g. aim at the head).");
+            if (ImGui::DragFloat("Dead Zone##vc", &vc->aimDeadZone, 0.1f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Don't re-aim until the target drifts beyond this angle (reduces jitter).");
+            ImGui::SeparatorText("Damping");
+            if (ImGui::DragFloat("Position##vcd", &vc->positionDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Rotation##vcd", &vc->rotationDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            ImGui::SeparatorText("Lens");
+            if (ImGui::SliderFloat("Field of View##vc", &vc->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+            ImGui::SeparatorText("Noise / Impulse");
+            if (ImGui::DragFloat("Amplitude##vcn", &vc->shakeAmplitude, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Frequency##vcn", &vc->shakeFrequency, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Impulse Decay##vcn", &vc->impulseDecay, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Test Impulse##vc")) vc->AddImpulse(1.0f);
+            ImGui::TextDisabled("Needs a Cinemachine Brain on the main camera.");
+            if (ImGui::SmallButton("Remove##vc")) toRemove = vc;
+        }
+    }
+    if (auto* cb = go->GetComponent<CinemachineBrain>()) {
+        if (CompHeader("Cinemachine Brain", cb, &toRemove)) {
+            if (ImGui::DragFloat("Blend Time##cb", &cb->blendTime, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to ease between virtual cameras (0 = cut).");
+            if (ImGui::Checkbox("Ease In/Out##cb", &cb->easeInOut)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth the blend curve instead of a linear ramp.");
+            if (VirtualCamera* live = cb->LiveCamera())
+                ImGui::TextDisabled("Live: %s", live->gameObject ? live->gameObject->name.c_str() : "?");
+            else
+                ImGui::TextDisabled("Drives this Camera from virtual cameras.");
+            if (ImGui::SmallButton("Remove##cb")) toRemove = cb;
+        }
+    }
+    if (auto* dp = go->GetComponent<DollyPath>()) {
+        if (CompHeader("Dolly Path", dp, &toRemove)) {
+            if (ImGui::Checkbox("Looped##dp", &dp->looped)) ed.dirty = true;
+            ImGui::Text("Waypoints: %d (local space)", (int)dp->waypoints.size());
+            for (int i = 0; i < (int)dp->waypoints.size(); ++i) {
+                float w[3] = {dp->waypoints[i].x, dp->waypoints[i].y, dp->waypoints[i].z};
+                ImGui::PushID(i);
+                if (ImGui::DragFloat3("##wp", w, 0.1f)) { dp->waypoints[i] = {w[0], w[1], w[2]}; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) { dp->waypoints.erase(dp->waypoints.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("Add Waypoint##dp")) {
+                Vec3 last = dp->waypoints.empty() ? Vec3{0, 0, 0} : dp->waypoints.back();
+                dp->waypoints.push_back(last + Vec3{0, 0, 5}); ed.dirty = true;
+            }
+            if (ImGui::SmallButton("Remove##dp")) toRemove = dp;
+        }
+    }
+    if (auto* dc = go->GetComponent<DollyCart>()) {
+        if (CompHeader("Dolly Cart", dc, &toRemove)) {
+            char db[128];
+            std::strncpy(db, dc->path.c_str(), sizeof(db) - 1); db[sizeof(db) - 1] = '\0';
+            if (ImGui::InputText("Path##dc", db, sizeof(db))) { dc->path = db; ed.dirty = true; }
+            if (ImGui::SliderFloat("Position##dc", &dc->position, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Speed##dc", &dc->speed, 0.01f)) ed.dirty = true;
+            if (ImGui::Checkbox("Auto Move##dc", &dc->autoMove)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##dc")) toRemove = dc;
+        }
+    }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
         if (CompHeader("Text", tr, &toRemove)) {
             char buf[512];
@@ -6261,8 +6460,19 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             ImGui::SeparatorText("Style");
-            if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int bshp = (int)btn->shape;
+            const char* bshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##uib", &bshp, bshapes, 4)) { btn->shape = (UIShape)bshp; ed.dirty = true; }
+            if (btn->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Drop Shadow##uib", &btn->shadow)) ed.dirty = true;
+            if (btn->shadow) {
+                float sc[4] = {btn->shadowColor.r, btn->shadowColor.g, btn->shadowColor.b, btn->shadowColor.a};
+                if (ImGui::ColorEdit4("Shadow Color##uib", sc)) { btn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+                float so[2] = {btn->shadowOffset.x, btn->shadowOffset.y};
+                if (ImGui::DragFloat2("Shadow Offset##uib", so, 0.5f)) { btn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+            }
             if (ImGui::DragFloat("Border Width##uib", &btn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             if (btn->borderWidth > 0.0f) {
                 float bc[4] = {btn->borderColor.r, btn->borderColor.g, btn->borderColor.b, btn->borderColor.a};
@@ -6303,7 +6513,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##uip", pn->anchor, ed);
             ImGui::SeparatorText("Style");
-            if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int shp = (int)pn->shape;
+            const char* shapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##uip", &shp, shapes, 4)) { pn->shape = (UIShape)shp; ed.dirty = true; }
+            if (pn->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             if (pn->borderWidth > 0.0f) {
                 float bc[4] = {pn->borderColor.r, pn->borderColor.g, pn->borderColor.b, pn->borderColor.a};
@@ -6313,7 +6527,8 @@ void DrawInspector(EditorState& ed) {
             if (pn->useGradient) {
                 float gb[4] = {pn->colorBottom.r, pn->colorBottom.g, pn->colorBottom.b, pn->colorBottom.a};
                 if (ImGui::ColorEdit4("Bottom Color##uip", gb)) { pn->colorBottom = {gb[0], gb[1], gb[2], gb[3]}; ed.dirty = true; }
-                ImGui::TextDisabled("Color is the top; gradient ignores corner rounding.");
+                if (ImGui::Checkbox("Horizontal Gradient##uip", &pn->gradientHorizontal)) ed.dirty = true;
+                ImGui::TextDisabled("Color is the start; %s fade.", pn->gradientHorizontal ? "left->right" : "top->bottom");
             }
             if (ImGui::Checkbox("Drop Shadow##uip", &pn->shadow)) ed.dirty = true;
             if (pn->shadow) {
@@ -6342,6 +6557,16 @@ void DrawInspector(EditorState& ed) {
             int ct = (int)in->contentType;
             if (ImGui::Combo("Content Type##uif", &ct, cts, 4)) { in->contentType = (UIInputField::ContentType)ct; ed.dirty = true; }
             AnchorCombo("Anchor##uif", in->anchor, ed);
+            int ishp = (int)in->shape;
+            const char* fshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##uif", &ishp, fshapes, 4)) { in->shape = (UIShape)ishp; ed.dirty = true; }
+            if (in->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##uif", &in->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Focus Ring##uif", &in->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+            if (in->borderWidth > 0.0f) {
+                float bc[4] = {in->borderColor.r, in->borderColor.g, in->borderColor.b, in->borderColor.a};
+                if (ImGui::ColorEdit4("Ring Color##uif", bc)) { in->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
             ImGui::TextDisabled("Click to focus + type at runtime; Enter calls on_submit().");
             if (ImGui::SmallButton("Remove##uif")) toRemove = in;
         }
@@ -6353,6 +6578,11 @@ void DrawInspector(EditorState& ed) {
             float sz[2] = {dd->size.x, dd->size.y};
             if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##udd", dd->anchor, ed);
+            int dshp = (int)dd->shape;
+            const char* dshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##udd", &dshp, dshapes, 4)) { dd->shape = (UIShape)dshp; ed.dirty = true; }
+            if (dd->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##udd", &dd->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             char ph[96]; std::strncpy(ph, dd->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
             if (ImGui::InputText("Placeholder##udd", ph, sizeof(ph))) { dd->placeholder = ph; ed.dirty = true; }
             if (ImGui::Button("Clear selection##udd")) { dd->value = -1; ed.dirty = true; }
@@ -6539,7 +6769,16 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
-            if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int pshp = (int)pb->shape;
+            const char* pshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##upb", &pshp, pshapes, 4)) { pb->shape = (UIShape)pshp; ed.dirty = true; }
+            if (pb->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Gradient Fill##upb", &pb->gradientFill)) ed.dirty = true;
+            if (pb->gradientFill) {
+                float fe[4] = {pb->fillEnd.r, pb->fillEnd.g, pb->fillEnd.b, pb->fillEnd.a};
+                if (ImGui::ColorEdit4("Fill End##upb", fe)) { pb->fillEnd = {fe[0], fe[1], fe[2], fe[3]}; ed.dirty = true; }
+            }
             if (ImGui::Checkbox("Show Percent##upb", &pb->showPercent)) ed.dirty = true;
             if (pb->showPercent) {
                 float tc[4] = {pb->textColor.r, pb->textColor.g, pb->textColor.b, pb->textColor.a};
@@ -6549,6 +6788,30 @@ void DrawInspector(EditorState& ed) {
             int fd = (int)pb->fillDir;
             if (ImGui::Combo("Fill Dir##upb", &fd, fds, 4)) { pb->fillDir = (UIProgressBar::FillDir)fd; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
+        }
+    }
+    if (auto* rp = go->GetComponent<UIRadialProgress>()) {
+        if (CompHeader("UI Radial Progress", rp, &toRemove)) {
+            float pos[2] = {rp->position.x, rp->position.y};
+            if (ImGui::DragFloat2("Pos (px)##urp", pos, 1.0f)) { rp->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {rp->size.x, rp->size.y};
+            if (ImGui::DragFloat2("Size (px)##urp", sz, 1.0f, 8.0f, 4000.0f)) { rp->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::SliderFloat("Value##urp", &rp->value, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Thickness##urp", &rp->thickness, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ring width in px (0 = filled pie)");
+            if (ImGui::DragFloat("Start Angle##urp", &rp->startAngle, 1.0f, -360.0f, 360.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::Checkbox("Clockwise##urp", &rp->clockwise)) ed.dirty = true;
+            if (ImGui::Checkbox("Spin (loader)##urp", &rp->spin)) ed.dirty = true;
+            if (rp->spin)
+                if (ImGui::DragFloat("Spin Speed##urp", &rp->spinSpeed, 2.0f, -1080.0f, 1080.0f, "%.0f deg/s")) ed.dirty = true;
+            float bgc[4] = {rp->background.r, rp->background.g, rp->background.b, rp->background.a};
+            if (ImGui::ColorEdit4("Track##urp", bgc)) { rp->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            float flc[4] = {rp->fill.r, rp->fill.g, rp->fill.b, rp->fill.a};
+            if (ImGui::ColorEdit4("Fill##urp", flc)) { rp->fill = {flc[0], flc[1], flc[2], flc[3]}; ed.dirty = true; }
+            AnchorCombo("Anchor##urp", rp->anchor, ed);
+            if (ImGui::Checkbox("Show Percent##urp", &rp->showPercent)) ed.dirty = true;
+            ImGui::TextDisabled("script: set_progress(0..1) on cooldowns / loaders");
+            if (ImGui::SmallButton("Remove##urp")) toRemove = rp;
         }
     }
     if (auto* im = go->GetComponent<UIImage>()) {
@@ -6579,6 +6842,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("for cooldowns / health bars; drive with ui_set_progress-style scripts");
             }
             if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int ishp = (int)im->shape;
+            const char* ishapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape (no texture)##uim", &ishp, ishapes, 4)) { im->shape = (UIShape)ishp; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -6597,7 +6863,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Knob##usl", kc)) { sl->knob = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
             AnchorCombo("Anchor##usl", sl->anchor, ed);
-            if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            int sshp = (int)sl->trackShape;
+            const char* sshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Track Shape##usl", &sshp, sshapes, 4)) { sl->trackShape = (UIShape)sshp; ed.dirty = true; }
+            if (sl->trackShape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Round Knob##usl", &sl->roundKnob)) ed.dirty = true;
             if (ImGui::DragFloat("Knob Size##usl", &sl->knobSize, 0.02f, 0.1f, 3.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Show Value##usl", &sl->showValue)) ed.dirty = true;
             ImGui::SameLine();
@@ -6638,6 +6909,8 @@ void DrawInspector(EditorState& ed) {
                 float kc[4] = {tg->knobColor.r, tg->knobColor.g, tg->knobColor.b, tg->knobColor.a};
                 if (ImGui::ColorEdit4("Knob##utg", kc)) { tg->knobColor = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             }
+            if (ImGui::DragFloat("Anim Speed##utg", &tg->animSpeed, 0.2f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Knob glide / check fade speed (0 = snap).");
             if (ImGui::Checkbox("Interactable##utg", &tg->interactable)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }
@@ -6810,6 +7083,10 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<Camera>(), "Camera")) { go->AddComponent<Camera>(); ed.dirty = true; }
             if (item(!go->GetComponent<CameraFollow>(), "Camera Follow")) { go->AddComponent<CameraFollow>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VirtualCamera>(), "Virtual Camera")) { go->AddComponent<VirtualCamera>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CinemachineBrain>(), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
+            if (item(!go->GetComponent<DollyPath>(), "Dolly Path")) { go->AddComponent<DollyPath>(); ed.dirty = true; }
+            if (item(!go->GetComponent<DollyCart>(), "Dolly Cart")) { go->AddComponent<DollyCart>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Scripts");
@@ -6873,6 +7150,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIToggle>(), "UI Toggle")) { go->AddComponent<UIToggle>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
@@ -8108,6 +8386,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // canvas rect (AddImage), and SDL's scale maps that to the same physical area.
     float dpi = ImGui::GetIO().DisplayFramebufferScale.x;
     if (dpi < 1.0f || dpi > 4.0f) dpi = 1.0f;
+    // The Game view honors the main camera's layer culling mask; the Scene view
+    // always shows every layer so you can edit hidden objects.
+    RenderCullingMask() = (gameView && SceneCamera(ed.scene())) ? SceneCamera(ed.scene())->cullingMask : ~0;
     float v3w = view3dMax.x - view3dMin.x, v3h = view3dMax.y - view3dMin.y;
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)(v3w * dpi), (int)(v3h * dpi),

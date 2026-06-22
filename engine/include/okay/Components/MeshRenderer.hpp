@@ -13,6 +13,36 @@ class MeshRenderer : public Component {
 public:
     Mesh  mesh;
     Color color = Color::White;        // base (albedo) color
+
+    /// Which surface/shading model the renderer uses (Unity's "Shader" on a
+    /// Material). Standard = the full lit PBR-ish model; Unlit = flat base color, no
+    /// lighting; Toon = cel-shaded (the diffuse banded into `toonBands` hard steps
+    /// with a single hard specular glint).
+    enum class Shader { Standard, Unlit, Toon };
+    Shader shader = Shader::Standard;
+    /// Number of cel bands for the Toon shader (2-6 reads best). Ignored otherwise.
+    int    toonBands = 3;
+
+    /// Rim / Fresnel backlight (per-material; works with any shader, great with Toon):
+    /// a colored glow that strengthens toward grazing angles (1 - n·view)^power. 0 = off.
+    float  rimStrength = 0.0f;
+    float  rimPower    = 3.0f;
+    Color  rimColor    = Color::White;
+
+    /// Silhouette outline (inverted-hull): render an expanded shell of back faces in a
+    /// solid color behind the mesh, leaving a clean cartoon edge. Pairs with Toon.
+    bool   outline      = false;
+    Color  outlineColor = Color::Black;
+    float  outlineWidth = 0.03f;   // world units the hull is pushed out along normals
+
+    /// Scrolling UV (animated texture): the texture offset advances by this many UV
+    /// units per second — flowing water, lava, conveyor belts, scrolling skies.
+    Vec2   uvScroll{0.0f, 0.0f};
+
+    /// Triplanar mapping: project the texture along the three world axes and blend by
+    /// the surface normal, so terrain, cliffs and arbitrary meshes texture cleanly
+    /// with NO UV seams or stretching. Uses `tiling` as world-space scale.
+    bool   triplanar = false;
     bool  enabled = true;      // when false the mesh is not drawn (e.g. the local
                                // player's own body in first person)
     bool  wireframe = false;   // solid by default (Unity-like); true = edges only

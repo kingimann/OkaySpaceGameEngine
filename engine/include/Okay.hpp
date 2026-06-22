@@ -34,6 +34,7 @@
 // Scene graph
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Layers.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -79,6 +80,7 @@
 #include "okay/Components/UINavigation.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIScrollView.hpp"
@@ -99,6 +101,9 @@
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/DollyPath.hpp"
+#include "okay/Components/VirtualCamera.hpp"
+#include "okay/Components/CinemachineBrain.hpp"
 
 // AI
 #include "okay/AI/Pathfinding.hpp"

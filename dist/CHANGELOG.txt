@@ -1,5 +1,162 @@
 OkaySpace Game Engine — Changelog
 
+v2.112.0  (UI: radial spinner / indeterminate loader)
+  - UIRadialProgress gains a Spin mode: the arc rotates continuously (spinSpeed deg/s)
+    for an indeterminate loading spinner — with a small value it's the classic loader.
+    EffectiveStart() feeds the renderer the live rotation; a Update() advances it.
+  - Inspector Spin + Spin Speed controls, back-compatible serialization. uishape suite
+    extended (spinner advance + round-trip); 78 tests pass.
+
+v2.111.0  (UI: new Radial Progress widget — rings & pies)
+  - New UIRadialProgress component: a circular/ring progress indicator (cooldowns,
+    loaders, skill timers, score dials) — the radial counterpart to UIProgressBar.
+    Draws a ring of configurable thickness (or a full pie) filled clockwise/counter
+    from a start angle by value (0..1), with a track + fill color and optional percent.
+  - The fill geometry is a single Sample() classifier (outside / track / fill) shared
+    by the player renderer and unit tests, so the visible arc is well-defined.
+  - GameObject > Add Component > UI Radial Progress, inspector controls, and scene
+    serialization. uishape suite extended (arc classification + round-trip); 78 tests pass.
+
+v2.110.0  (UI: rounded form controls — input fields + dropdowns)
+  - UIInputField gains a shape + corner radius and an optional focus ring (a colored
+    border that appears while the field is focused), for clean rounded text fields.
+  - UIDropdown gains a shape + corner radius so the header renders as a rounded select.
+  - The player draws both via the shape fill. Inspector controls + back-compatible
+    serialization. uishape suite extended (input/dropdown round-trips); 78 tests pass.
+
+v2.109.0  (UI: animated toggles — gliding switch + fading check)
+  - UIToggle now animates: the Switch knob glides between off/on and the track
+    cross-fades (animSpeed, eased and frame-rate independent), and the Checkbox tick
+    fades in. AnimT() exposes the smoothed 0..1 state to the renderer.
+  - The player renders the switch as a proper Pill track with a Circle knob and a
+    rounded checkbox via the shape fill (no more hard rectangles).
+  - Inspector Anim Speed control + back-compatible serialization. uishape suite
+    extended (knob easing + round-trip); 78 tests pass.
+
+v2.108.0  (UI: progress bars + sliders get shapes / gradients / round knobs)
+  - UIProgressBar gains the shape system (Rounded/Pill capsule bars) and an optional
+    gradient fill (e.g. green->yellow->red health) along the fill direction.
+  - UISlider gains a track shape (pill/rounded) and a round-knob option for a clean
+    circular handle.
+  - The player renders both via the shape fill (track + fill + knob), so corner radius
+    and pill ends actually draw. Inspector controls + back-compatible serialization.
+    uishape suite extended (progress/slider round-trips); 78 tests pass.
+
+v2.107.0  (UI: buttons get shapes + shadows + accurate hit-test)
+  - UIButton gains the shape system (Rectangle/Rounded/Circle/Pill) and an optional
+    drop shadow, for clean flat-UI / icon buttons. The player renders the silhouette
+    (with border and shadow) instead of a plain box.
+  - Button click hit-testing now follows the actual silhouette, so the corners of a
+    rounded/circle/pill button aren't clickable where there's no pixel.
+  - Inspector Shape selector + shadow controls, back-compatible serialization.
+    uishape suite extended (circle-button hit-test + button round-trip); 78 tests pass.
+
+v2.106.0  (UI: real shapes — rounded / circle / pill)
+  - New UI shape system (UIShape): widgets can be a hard Rectangle, soft Rounded box
+    (the modern flat look), a full Circle (avatars/badges) or a Pill/capsule (toggle
+    tracks, tags). A single per-row span function drives both the fill and hit-testing.
+  - The player now actually RENDERS rounded/circle/pill silhouettes (previously corner
+    radius was stored but drawn as a plain box) via a scanline shape fill that also
+    honors the drop shadow and border per shape.
+  - UIPanel gains a Shape selector and a horizontal-gradient option; UIImage's
+    textureless fallback gains a Shape so it can be a dot/badge/chip.
+  - Inspector controls + back-compatible serialization. New uishape test suite
+    (rectangle/circle/rounded/pill geometry + hit-test + round-trips); 78 tests pass.
+
+v2.105.0  (shaders, cont.: triplanar + scrolling UV)
+  - Triplanar mapping: project a texture along the three world axes and blend by the
+    surface normal, so terrain, cliffs and arbitrary meshes texture with NO UV seams
+    or stretching. Tiling is the world-space scale.
+  - Scrolling UV: animate a texture by a per-second UV speed (flowing water, lava,
+    conveyor belts, scrolling skies) — driven by elapsed time, applied to every
+    textured path.
+  - Both exposed in the Mesh Renderer inspector, saved on .okaymat materials and in
+    scenes (back-compatible). shaders suite extended (round-trips + render checks that
+    scrolling changes over time and triplanar differs from UV mapping); 77 tests pass.
+
+v2.104.0  (shaders, cont.: rim light + outline)
+  - Per-material Rim (Fresnel) backlight: a colored glow that strengthens toward
+    grazing angles (strength, power, color). Works with any shader and auto-uses the
+    per-pixel path; pairs beautifully with Toon for a stylized edge glow.
+  - Silhouette Outline shader (inverted hull): renders an expanded shell of the mesh
+    in a solid color just behind it, leaving a clean cartoon edge (width + color). The
+    shell is pushed slightly back so it only shows at the silhouette, never occluding
+    the surface — verified it adds an outline ring with zero pixels lost.
+  - Both are exposed in the Mesh Renderer inspector, stored on .okaymat materials and
+    in scenes (back-compatible). shaders test suite extended (rim/outline round-trips
+    + a render check that the outline adds a silhouette ring); 77 tests pass.
+
+v2.103.0  (shaders: surface-model selector + Toon)
+  - Materials/MeshRenderers now pick a Shader (surface model), like Unity: Standard
+    (the full lit PBR-ish model), Unlit (flat base color, no lighting), or Toon.
+  - New Toon (cel) shader: quantizes the diffuse lighting into a configurable number
+    of hard bands (Cel Bands, 2-6) and collapses the specular into a single hard
+    glint, for a cartoon look. It auto-uses the per-pixel path so it works out of the
+    box regardless of the global Per-Pixel Lighting toggle.
+  - Inspector Shader dropdown (folds the old Unlit flag into the selector) + Cel Bands
+    slider; the look is stored on .okaymat materials and in the scene (back-compatible).
+  - New shaders test suite (preset + scene round-trips, and a render check that Toon
+    posterizes a lit sphere into far fewer shades than Standard); 77 tests pass.
+
+v2.102.0  (Cinemachine, cont.: dolly track)
+  - New DollyPath component: a smooth camera rail (Cinemachine's Path/SmoothPath). An
+    ordered list of waypoints evaluated as a Catmull-Rom spline, optionally looped.
+  - Virtual cameras gained a Tracked Dolly body: constrain the camera to a DollyPath
+    while the aim still tracks LookAt/Follow — glide a curved track past a subject.
+    Auto-Dolly slides to the path point nearest the Follow target.
+  - New DollyCart component: drive any GameObject (camera, platform) along a path at a
+    speed — on-rails shots and moving geometry.
+  - Inspector UI (editable waypoint list, add/remove), Add Component entries, and
+    back-compatible serialization. Cinemachine tests extended (spline endpoints,
+    auto-dolly tracking, cart travel); 76 tests pass.
+
+v2.101.0  (Cinemachine, cont.: FreeLook orbital rig)
+  - Virtual cameras gained a FreeLook mode (Cinemachine's orbital rig): orbit the
+    Follow target on a sphere by yaw/pitch at a fixed radius, with a pivot height and
+    pitch clamp. When on, it overrides the body offset and aim — the camera always
+    frames the target. Ideal for 3rd-person player cameras.
+  - Optional mouse-look drives yaw/pitch (hold a configurable button, with adjustable
+    sensitivity), or set the angles from a script/controller.
+  - Full Inspector UI and back-compatible serialization. Cinemachine test suite
+    extended (orbit stays on the sphere as yaw sweeps); 76 tests pass.
+
+v2.100.0  (Cinemachine, cont.: binding modes, composer, impulse)
+  - Virtual cameras gained a Binding Mode: World Space (fixed framing) or Lock To
+    Target — an orbital/3rd-person chase cam whose offset rotates with the target's
+    facing, so it stays behind as the target turns.
+  - Aim got a Look Offset (Tracked Object Offset — aim at the head, not the feet) and
+    a Dead Zone (degrees): the camera holds its aim until the target drifts beyond the
+    angle, removing micro-jitter (a simplified Composer dead zone).
+  - Added a one-shot Impulse system: VirtualCamera::AddImpulse(strength) fires a
+    decaying camera shake on an event (explosion, landing, hit), with per-vcam Impulse
+    Decay. An Inspector "Test Impulse" button previews it.
+  - CinemachineBrain blends now ease-in/ease-out by default (toggle) for softer cuts.
+  - All new fields serialize (back-compatible) and have Inspector controls. 76 tests
+    pass (cinemachine suite extended: orbital binding, impulse settle).
+
+v2.99.0  (Cinemachine-style virtual cameras)
+  - New VirtualCamera component (Cinemachine-style): describes a *shot* — a Follow
+    target + offset (the body), a LookAt target (the aim), a lens (field of view),
+    position/rotation damping, and optional handheld noise (shake). It never renders.
+  - New CinemachineBrain component (lives on the main camera): each frame it solves
+    every virtual camera, makes the highest-priority enabled one "live", and eases the
+    real camera's pose + FOV toward it over a Blend Time when the live shot changes.
+  - Author several vcams and cut/blend between them just by changing priorities —
+    chase cams, cutscene framing, screen shake, etc.
+  - Full Inspector UI, GameObject > Create Virtual Camera, Add Component entries, and
+    scene serialization. New test suite (cinemachine); 76 tests pass.
+
+v2.98.0  (camera: layers, culling mask, physical camera)
+  - Added Unity-style named Layers (32 layers; GameObject.layer). Each GameObject now
+    sits on a layer, editable from a new Layer dropdown in the Inspector header.
+  - Cameras gained a Culling Mask (Camera.cullingMask): a per-layer set of what the
+    camera renders, with an Everything/Nothing + per-layer Inspector control. Meshes on
+    unselected layers are skipped — useful for mini-maps, helper geometry, layered passes.
+  - Cameras gained a Physical Camera mode (focal length + sensor height) that derives
+    the field of view from real lens optics, matching Unity's physical camera. The
+    Inspector shows the effective FOV. New Camera::VerticalFovDegrees() helper.
+  - layer, cullingMask and the physical-camera fields are all saved with the scene.
+
 v2.97.0  (optimization: less per-frame allocation)
   - Scene::FindObjectsOfType (called many times per frame by physics, rendering and
     UI) used to allocate a temporary vector for EVERY game object via GetComponents.

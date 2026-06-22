@@ -23,6 +23,9 @@
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/DollyPath.hpp"
+#include "okay/Components/VirtualCamera.hpp"
+#include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Animator.hpp"
@@ -48,6 +51,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 
@@ -135,7 +139,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)cam->clearFlags << " " << cam->depth
             << " " << cam->nearClip << " " << cam->farClip
             << " " << (cam->fovAxisHorizontal ? 1 : 0)
-            << " " << cam->rectX << " " << cam->rectY << " " << cam->rectW << " " << cam->rectH << "\n";
+            << " " << cam->rectX << " " << cam->rectY << " " << cam->rectW << " " << cam->rectH
+            << " " << cam->cullingMask
+            << " " << (cam->physicalCamera ? 1 : 0) << " " << cam->focalLength << " " << cam->sensorHeight
+            << "\n";
     }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
@@ -161,6 +168,21 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Specular/gloss map (separate record so older scenes still load).
         if (!mr->specularMap.empty())
             out << "  specmap " << Quote(mr->specularMap) << "\n";
+        // Shading model (separate record so older scenes still load).
+        if (mr->shader != MeshRenderer::Shader::Standard)
+            out << "  shader " << (int)mr->shader << " " << mr->toonBands << "\n";
+        // Per-material rim (Fresnel) backlight (separate record).
+        if (mr->rimStrength > 0.0f)
+            out << "  rim " << mr->rimStrength << " " << mr->rimPower << " "
+                << mr->rimColor.r << " " << mr->rimColor.g << " " << mr->rimColor.b << "\n";
+        // Silhouette outline (separate record).
+        if (mr->outline)
+            out << "  outline " << mr->outlineWidth << " "
+                << mr->outlineColor.r << " " << mr->outlineColor.g << " " << mr->outlineColor.b << "\n";
+        // Scrolling UV + triplanar mapping (separate record).
+        if (mr->uvScroll.x != 0.0f || mr->uvScroll.y != 0.0f || mr->triplanar)
+            out << "  uvanim " << mr->uvScroll.x << " " << mr->uvScroll.y << " "
+                << (mr->triplanar ? 1 : 0) << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -299,6 +321,36 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cf->offset.x << " " << cf->offset.y << " " << cf->offset.z << " "
             << cf->smoothing << "\n";
     }
+    if (auto* vc = go->GetComponent<VirtualCamera>()) {
+        out << "  vcam " << vc->priority << " " << Quote(vc->follow) << " " << Quote(vc->lookAt)
+            << " " << vc->followOffset.x << " " << vc->followOffset.y << " " << vc->followOffset.z
+            << " " << vc->positionDamping << " " << vc->rotationDamping
+            << " " << vc->fieldOfView << " " << vc->shakeAmplitude << " " << vc->shakeFrequency
+            // extended (back-compatible trailing fields)
+            << " " << (int)vc->bindingMode
+            << " " << vc->lookAtOffset.x << " " << vc->lookAtOffset.y << " " << vc->lookAtOffset.z
+            << " " << vc->aimDeadZone << " " << vc->impulseDecay
+            // freelook block (back-compatible trailing fields)
+            << " " << (vc->freeLook ? 1 : 0) << " " << vc->orbitYaw << " " << vc->orbitPitch
+            << " " << vc->orbitRadius << " " << vc->orbitHeight
+            << " " << vc->orbitMinPitch << " " << vc->orbitMaxPitch
+            << " " << (vc->orbitInput ? 1 : 0) << " " << vc->orbitButton << " " << vc->mouseSensitivity
+            // dolly block (back-compatible trailing fields)
+            << " " << (vc->dolly ? 1 : 0) << " " << Quote(vc->dollyPath)
+            << " " << vc->dollyPosition << " " << (vc->autoDolly ? 1 : 0) << "\n";
+    }
+    if (auto* cb = go->GetComponent<CinemachineBrain>()) {
+        out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
+    }
+    if (auto* dp = go->GetComponent<DollyPath>()) {
+        out << "  dollypath " << (dp->looped ? 1 : 0) << " " << dp->waypoints.size();
+        for (const auto& w : dp->waypoints) out << " " << w.x << " " << w.y << " " << w.z;
+        out << "\n";
+    }
+    if (auto* dc = go->GetComponent<DollyCart>()) {
+        out << "  dollycart " << Quote(dc->path) << " " << dc->position << " "
+            << dc->speed << " " << (dc->autoMove ? 1 : 0) << "\n";
+    }
     if (auto* tr = go->GetComponent<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "
             << tr->color.r << " " << tr->color.g << " " << tr->color.b << " " << tr->color.a << " "
@@ -364,7 +416,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << btn->transitionSpeed << " " << (btn->toggleMode ? 1 : 0)
             << " " << (btn->isOn ? 1 : 0) << " " << btn->pressOffset
             << " " << (btn->iconRight ? 1 : 0) << " " << (btn->holdRepeat ? 1 : 0)
-            << " " << btn->repeatDelay << " " << btn->repeatInterval << "\n";
+            << " " << btn->repeatDelay << " " << btn->repeatInterval
+            // extended (back-compatible trailing fields): shape + drop shadow
+            << " " << (int)btn->shape << " " << (btn->shadow ? 1 : 0) << " "
+            << btn->shadowColor.r << " " << btn->shadowColor.g << " " << btn->shadowColor.b << " " << btn->shadowColor.a
+            << " " << btn->shadowOffset.x << " " << btn->shadowOffset.y << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -377,7 +433,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pn->colorBottom.r << " " << pn->colorBottom.g << " " << pn->colorBottom.b << " " << pn->colorBottom.a << " "
             << (pn->shadow ? 1 : 0) << " "
             << pn->shadowColor.r << " " << pn->shadowColor.g << " " << pn->shadowColor.b << " " << pn->shadowColor.a << " "
-            << pn->shadowOffset.x << " " << pn->shadowOffset.y << "\n";
+            << pn->shadowOffset.x << " " << pn->shadowOffset.y
+            // extended (back-compatible trailing fields): shape + gradient direction
+            << " " << (int)pn->shape << " " << (pn->gradientHorizontal ? 1 : 0) << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
@@ -394,7 +452,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << in->size.x << " " << in->size.y << " " << (int)in->anchor << " "
             << in->maxLength << " " << Quote(in->text) << " " << Quote(in->placeholder) << " "
             << in->color.r << " " << in->color.g << " " << in->color.b << " " << in->color.a << " "
-            << (int)in->contentType << "\n";
+            << (int)in->contentType
+            // extended (back-compatible trailing fields): shape + corner + focus ring
+            << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
+            << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a << "\n";
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
         out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
@@ -407,7 +468,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << dd->borderColor.r << " " << dd->borderColor.g << " " << dd->borderColor.b << " " << dd->borderColor.a << " "
             << dd->options.size();
         for (const auto& opt : dd->options) out << " " << Quote(opt);
-        out << " " << (dd->interactable ? 1 : 0) << " " << Quote(dd->placeholder) << "\n";
+        out << " " << (dd->interactable ? 1 : 0) << " " << Quote(dd->placeholder)
+            << " " << (int)dd->shape << " " << dd->cornerRadius << "\n";   // extended (back-compatible)
     }
     if (auto* tb = go->GetComponent<UITextBind>()) {
         out << "  uibind " << Quote(tb->format) << "\n";
@@ -472,7 +534,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)pb->anchor << " "
             << pb->cornerRadius << " " << (pb->showPercent ? 1 : 0) << " "
             << pb->textColor.r << " " << pb->textColor.g << " " << pb->textColor.b << " " << pb->textColor.a
-            << " " << (int)pb->fillDir << "\n";
+            << " " << (int)pb->fillDir
+            // extended (back-compatible trailing fields): shape + gradient fill
+            << " " << (int)pb->shape << " " << (pb->gradientFill ? 1 : 0) << " "
+            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a << "\n";
+    }
+    if (auto* rp = go->GetComponent<UIRadialProgress>()) {
+        out << "  uiradial " << rp->position.x << " " << rp->position.y << " "
+            << rp->size.x << " " << rp->size.y << " " << rp->value << " "
+            << rp->thickness << " " << rp->startAngle << " " << (rp->clockwise ? 1 : 0) << " "
+            << rp->background.r << " " << rp->background.g << " " << rp->background.b << " " << rp->background.a << " "
+            << rp->fill.r << " " << rp->fill.g << " " << rp->fill.b << " " << rp->fill.a
+            << " " << (int)rp->anchor << " " << (rp->showPercent ? 1 : 0) << " "
+            << rp->textColor.r << " " << rp->textColor.g << " " << rp->textColor.b << " " << rp->textColor.a
+            << " " << (rp->spin ? 1 : 0) << " " << rp->spinSpeed << "\n";   // extended (back-compatible)
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -480,7 +555,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << im->color.r << " " << im->color.g << " " << im->color.b << " " << im->color.a << " "
             << Quote(im->texture) << " " << (int)im->anchor << " "
             << (im->nineSlice ? 1 : 0) << " " << im->border << " "
-            << (int)im->fillMode << " " << im->fillAmount << " " << im->cornerRadius << "\n";
+            << (int)im->fillMode << " " << im->fillAmount << " " << im->cornerRadius
+            << " " << (int)im->shape << "\n";   // extended (back-compatible trailing field)
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
         out << "  uislider " << sl->position.x << " " << sl->position.y << " "
@@ -494,7 +570,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sl->textColor.r << " " << sl->textColor.g << " " << sl->textColor.b << " " << sl->textColor.a
             << " " << (sl->wholeNumbers ? 1 : 0)
             << " " << (sl->interactable ? 1 : 0)
-            << " " << (sl->vertical ? 1 : 0) << "\n";
+            << " " << (sl->vertical ? 1 : 0)
+            // extended (back-compatible trailing fields): track shape + round knob
+            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0) << "\n";
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
         out << "  uitoggle " << Quote(tg->label) << " "
@@ -506,7 +584,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)tg->anchor << " " << tg->cornerRadius
             << " " << (int)tg->style << " "
             << tg->knobColor.r << " " << tg->knobColor.g << " " << tg->knobColor.b << " " << tg->knobColor.a
-            << " " << (tg->interactable ? 1 : 0) << "\n";
+            << " " << (tg->interactable ? 1 : 0)
+            << " " << tg->animSpeed << "\n";   // extended (back-compatible trailing field)
     }
     if (auto* ps = go->GetComponent<ParticleSystem>()) {
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
@@ -543,6 +622,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
+        if (go->layer != 0) out << "  layer " << go->layer << "\n";
         int parent = t->Parent() ? IndexOf(scene, t->Parent()->gameObject) : -1;
         out << "  parent " << parent << "\n";
         WriteComponents(out, go);
@@ -608,6 +688,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
+                else if (field == "layer") { in >> go->layer; }
                 else if (field == "parent") { int p = -1; in >> p; if (p >= 0) parentLinks.push_back({idx, p}); }
                 else if (field == "transform") {
                     Vec3 p, s; Quat q;
@@ -657,6 +738,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) {
                             int fax = 0; in >> fax >> cam->rectX >> cam->rectY >> cam->rectW >> cam->rectH;
                             cam->fovAxisHorizontal = (fax != 0);
+                            in >> std::ws; // optional culling mask + physical camera (added later)
+                            if (std::isdigit(in.peek()) || in.peek() == '-') {
+                                int phys = 0;
+                                in >> cam->cullingMask >> phys >> cam->focalLength >> cam->sensorHeight;
+                                cam->physicalCamera = (phys != 0);
+                            }
                         }
                     }
                 } else if (field == "mesh") {
@@ -713,6 +800,25 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         in >> std::ws;
                         if (in.peek() == '"') mr->specularMap = ReadQuoted(in);
+                    }
+                } else if (field == "shader") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        int s = 0; in >> s >> mr->toonBands;
+                        mr->shader = (MeshRenderer::Shader)s;
+                    }
+                } else if (field == "rim") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>())
+                        in >> mr->rimStrength >> mr->rimPower
+                           >> mr->rimColor.r >> mr->rimColor.g >> mr->rimColor.b;
+                } else if (field == "outline") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        in >> mr->outlineWidth >> mr->outlineColor.r >> mr->outlineColor.g >> mr->outlineColor.b;
+                        mr->outline = true;
+                    }
+                } else if (field == "uvanim") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        int tp = 0; in >> mr->uvScroll.x >> mr->uvScroll.y >> tp;
+                        mr->triplanar = (tp != 0);
                     }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();
@@ -928,6 +1034,58 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> off.x >> off.y >> off.z >> sm;
                     auto* cf = go->AddComponent<CameraFollow>();
                     cf->targetName = tgt; cf->offset = off; cf->smoothing = sm;
+                } else if (field == "vcam") {
+                    auto* vc = go->AddComponent<VirtualCamera>();
+                    in >> vc->priority;
+                    vc->follow = ReadQuoted(in);
+                    vc->lookAt = ReadQuoted(in);
+                    in >> vc->followOffset.x >> vc->followOffset.y >> vc->followOffset.z
+                       >> vc->positionDamping >> vc->rotationDamping
+                       >> vc->fieldOfView >> vc->shakeAmplitude >> vc->shakeFrequency;
+                    // Optional extended fields (absent in older scenes).
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int bm = 0;
+                        in >> bm >> vc->lookAtOffset.x >> vc->lookAtOffset.y >> vc->lookAtOffset.z
+                           >> vc->aimDeadZone >> vc->impulseDecay;
+                        vc->bindingMode = (VirtualCamera::BindingMode)bm;
+                    }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int fl = 0, oi = 1;
+                        in >> fl >> vc->orbitYaw >> vc->orbitPitch >> vc->orbitRadius >> vc->orbitHeight
+                           >> vc->orbitMinPitch >> vc->orbitMaxPitch >> oi >> vc->orbitButton >> vc->mouseSensitivity;
+                        vc->freeLook = (fl != 0);
+                        vc->orbitInput = (oi != 0);
+                    }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        int dl = 0, ad = 0;
+                        in >> dl;
+                        vc->dollyPath = ReadQuoted(in);
+                        in >> vc->dollyPosition >> ad;
+                        vc->dolly = (dl != 0);
+                        vc->autoDolly = (ad != 0);
+                    }
+                } else if (field == "dollypath") {
+                    auto* dp = go->AddComponent<DollyPath>();
+                    int lp = 0; std::size_t cnt = 0;
+                    in >> lp >> cnt;
+                    dp->looped = (lp != 0);
+                    dp->waypoints.resize(cnt);
+                    for (std::size_t k = 0; k < cnt; ++k)
+                        in >> dp->waypoints[k].x >> dp->waypoints[k].y >> dp->waypoints[k].z;
+                } else if (field == "dollycart") {
+                    auto* dc = go->AddComponent<DollyCart>();
+                    dc->path = ReadQuoted(in);
+                    int am = 1;
+                    in >> dc->position >> dc->speed >> am;
+                    dc->autoMove = (am != 0);
+                } else if (field == "cmbrain") {
+                    auto* cb = go->AddComponent<CinemachineBrain>();
+                    in >> cb->blendTime;
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int e = 1; in >> e; cb->easeInOut = (e != 0); }
                 } else if (field == "text") {
                     std::string str = ReadQuoted(in);
                     Color c; float px = 0.1f; int ss = 0; Vec2 sp;
@@ -1054,6 +1212,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                >> btn->repeatDelay >> btn->repeatInterval;
                             btn->hoverTextColor = ht; btn->toggleMode = (tm != 0); btn->isOn = (on != 0);
                             btn->iconRight = (ir != 0); btn->holdRepeat = (hr != 0);
+                            in >> std::ws; // optional shape + drop shadow (added later)
+                            if (std::isdigit(in.peek())) {
+                                int sp = 0, sh = 0; Color sc;
+                                in >> sp >> sh >> sc.r >> sc.g >> sc.b >> sc.a
+                                   >> btn->shadowOffset.x >> btn->shadowOffset.y;
+                                btn->shape = (UIShape)sp; btn->shadow = (sh != 0); btn->shadowColor = sc;
+                            }
                         }
                     }
                 } else if (field == "uipanel") {
@@ -1082,6 +1247,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int sh = 0; Color sc;
                         in >> sh >> sc.r >> sc.g >> sc.b >> sc.a >> pn->shadowOffset.x >> pn->shadowOffset.y;
                         pn->shadow = (sh != 0); pn->shadowColor = sc;
+                    }
+                    in >> std::ws; // optional shape + gradient direction (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sp = 0, gh = 0; in >> sp >> gh;
+                        pn->shape = (UIShape)sp; pn->gradientHorizontal = (gh != 0);
                     }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();
@@ -1137,6 +1307,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> c.r >> c.g >> c.b >> c.a; inp->color = c;
                     in >> std::ws; // optional content type (added later)
                     if (std::isdigit(in.peek())) { int ct = 0; in >> ct; inp->contentType = (UIInputField::ContentType)ct; }
+                    in >> std::ws; // optional shape + corner + focus ring (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sp = 0; Color bc;
+                        in >> sp >> inp->cornerRadius >> inp->borderWidth >> bc.r >> bc.g >> bc.b >> bc.a;
+                        inp->shape = (UIShape)sp; inp->borderColor = bc;
+                    }
                 } else if (field == "uidropdown") {
                     auto* dd = go->AddComponent<UIDropdown>();
                     int an = 0; std::size_t count = 0;
@@ -1155,6 +1331,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) { int it = 1; in >> it; dd->interactable = (it != 0); }
                     in >> std::ws; // optional placeholder (added later)
                     if (in.peek() == '"') dd->placeholder = ReadQuoted(in);
+                    in >> std::ws; // optional shape + corner radius (added later)
+                    if (std::isdigit(in.peek())) { int sp = 0; in >> sp >> dd->cornerRadius; dd->shape = (UIShape)sp; }
                 } else if (field == "uibind") {
                     auto* tb = go->AddComponent<UITextBind>();
                     tb->format = ReadQuoted(in);
@@ -1249,7 +1427,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         pb->showPercent = (sp != 0); pb->textColor = tc;
                         in >> std::ws; // optional fill direction (added later)
                         if (std::isdigit(in.peek())) { int fd = 0; in >> fd; pb->fillDir = (UIProgressBar::FillDir)fd; }
+                        in >> std::ws; // optional shape + gradient fill (added later)
+                        if (std::isdigit(in.peek())) {
+                            int sp = 0, gf = 0; Color fe;
+                            in >> sp >> gf >> fe.r >> fe.g >> fe.b >> fe.a;
+                            pb->shape = (UIShape)sp; pb->gradientFill = (gf != 0); pb->fillEnd = fe;
+                        }
                     }
+                } else if (field == "uiradial") {
+                    auto* rp = go->AddComponent<UIRadialProgress>();
+                    int cw = 1, an = 0, sp = 0; Color bg, fl, tc;
+                    in >> rp->position.x >> rp->position.y >> rp->size.x >> rp->size.y >> rp->value
+                       >> rp->thickness >> rp->startAngle >> cw
+                       >> bg.r >> bg.g >> bg.b >> bg.a >> fl.r >> fl.g >> fl.b >> fl.a
+                       >> an >> sp >> tc.r >> tc.g >> tc.b >> tc.a;
+                    rp->clockwise = (cw != 0); rp->background = bg; rp->fill = fl;
+                    rp->anchor = (UIAnchor)an; rp->showPercent = (sp != 0); rp->textColor = tc;
+                    in >> std::ws; // optional spinner (added later)
+                    if (std::isdigit(in.peek())) { int sn = 0; in >> sn >> rp->spinSpeed; rp->spin = (sn != 0); }
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
                     Color c;
@@ -1269,6 +1464,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int fm = 0; in >> fm >> im->fillAmount >> im->cornerRadius;
                         im->fillMode = (UIImage::FillMode)fm;
                     }
+                    in >> std::ws; // optional shape (added later)
+                    if (std::isdigit(in.peek())) { int sp = 0; in >> sp; im->shape = (UIShape)sp; }
                 } else if (field == "uislider") {
                     auto* sl = go->AddComponent<UISlider>();
                     Color bg, fl, kn;
@@ -1289,6 +1486,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) { int it = 1; in >> it; sl->interactable = (it != 0); }
                         in >> std::ws;
                         if (std::isdigit(in.peek())) { int vt = 0; in >> vt; sl->vertical = (vt != 0); }
+                        in >> std::ws; // optional track shape + round knob (added later)
+                        if (std::isdigit(in.peek())) {
+                            int ts = 0, rk = 0; in >> ts >> rk;
+                            sl->trackShape = (UIShape)ts; sl->roundKnob = (rk != 0);
+                        }
                     }
                 } else if (field == "uitoggle") {
                     auto* tg = go->AddComponent<UIToggle>();
@@ -1310,6 +1512,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tg->style = (UIToggle::Style)st; tg->knobColor = kc;
                         in >> std::ws;
                         if (std::isdigit(in.peek())) { int it = 1; in >> it; tg->interactable = (it != 0); }
+                        in >> std::ws; // optional animation speed (added later)
+                        if (std::isdigit(in.peek())) in >> tg->animSpeed;
                     }
                 } else if (field == "particles") {
                     auto* ps = go->AddComponent<ParticleSystem>();
@@ -1368,6 +1572,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
+        if (go->layer != 0) out << "  layer " << go->layer << "\n";
         Transform* parent = go->transform->Parent();
         int pIdx = -1;
         if (parent) {

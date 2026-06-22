@@ -8,6 +8,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Graphics/Image.hpp"
+#include "okay/Core/Time.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -372,6 +373,10 @@ public:
                        float reflectivity = 0.0f,
                        const std::vector<Image>* specMips = nullptr,
                        float metallic = 0.0f,
+                       int toonBands = 0,
+                       float matRimStr = 0.0f, float matRimPow = 3.0f,
+                       float rimR = 1.0f, float rimG = 1.0f, float rimB = 1.0f,
+                       bool triplanar = false, float triTileX = 1.0f, float triTileY = 1.0f,
                        int clipY0 = 0, int clipY1 = (1 << 30)) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
@@ -481,6 +486,14 @@ public:
                         lit.z = amb.z + (lit.z - amb.z) * sh; if (lit.z < 0) lit.z = 0;
                     }
                 }
+                // Toon (cel) shader: quantize the diffuse lighting into hard bands so
+                // the surface reads as flat cartoon shades instead of a smooth ramp.
+                if (toonBands > 0) {
+                    float q = (float)toonBands;
+                    lit.x = std::ceil(lit.x * q) / q;
+                    lit.y = std::ceil(lit.y * q) / q;
+                    lit.z = std::ceil(lit.z * q) / q;
+                }
                 // Colored Blinn-Phong specular from every light (sun + point + spot),
                 // each tinted by its own color and attenuation; the sun's part is
                 // shadowed. Scaled by the material strength and the gloss map.
@@ -490,9 +503,30 @@ public:
                     spec = SceneLights::SpecularN(wpos, n, toEye, shininess, sh);
                     float ks = specularK * gloss;
                     spec.x *= ks; spec.y *= ks; spec.z *= ks;
+                    // Toon: collapse the highlight to a single hard glint (on/off).
+                    if (toonBands > 0) {
+                        float sm = std::fmax(spec.x, std::fmax(spec.y, spec.z));
+                        float st = sm > 0.5f * ks ? ks : 0.0f;
+                        spec.x = st; spec.y = st; spec.z = st;
+                    }
                 }
                 float br = base.r, bg = base.g, bb2 = base.b;
-                if (textured) {
+                if (textured && triplanar) {
+                    // Triplanar: blend three world-axis projections by |normal|, so the
+                    // texture wraps cliffs/terrain with no UV seams or stretching.
+                    auto frac = [](float x) { return x - std::floor(x); };
+                    const Image& img = (*mips)[0];
+                    float ax = std::fabs(n.x), ay = std::fabs(n.y), az = std::fabs(n.z);
+                    float s = ax + ay + az; if (s < 1e-5f) s = 1.0f;
+                    ax /= s; ay /= s; az /= s;
+                    Color cx = img.Sample(frac(wpos.z * triTileX), frac(wpos.y * triTileY)); // x-facing
+                    Color cy = img.Sample(frac(wpos.x * triTileX), frac(wpos.z * triTileY)); // y-facing
+                    Color cz = img.Sample(frac(wpos.x * triTileX), frac(wpos.y * triTileY)); // z-facing
+                    float tr = cx.r * ax + cy.r * ay + cz.r * az;
+                    float tg = cx.g * ax + cy.g * ay + cz.g * az;
+                    float tb = cx.b * ax + cy.b * ay + cz.b * az;
+                    br = tr * tint.r; bg = tg * tint.g; bb2 = tb * tint.b;
+                } else if (textured) {
                     float A = w0 * U[0] + w1 * U[1] + w2 * U[2];
                     float Av = w0 * V[0] + w1 * V[1] + w2 * V[2];
                     float iw = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
@@ -523,9 +557,22 @@ public:
                              : std::pow(f, rimPow);
                     rim = fp * rimStr;
                 }
-                float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + er;
-                float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + eg;
-                float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + eb;
+                // Per-material Fresnel rim: an additive, colored backlight independent
+                // of the global rim toggle (a first-class shader feature).
+                float mrimR = 0.0f, mrimG = 0.0f, mrimB = 0.0f;
+                if (matRimStr > 0.0f) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    float f = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
+                    float fp = (matRimPow == 3.0f) ? f * f * f
+                             : (matRimPow == 2.0f) ? f * f
+                             : (matRimPow == 4.0f) ? (f * f) * (f * f)
+                             : std::pow(f, matRimPow);
+                    float m = fp * matRimStr;
+                    mrimR = m * rimR; mrimG = m * rimG; mrimB = m * rimB;
+                }
+                float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + mrimR + er;
+                float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + mrimG + eg;
+                float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + mrimB + eb;
                 // Environment reflection: mirror the sky gradient about the normal
                 // and blend it in by a Fresnel-weighted reflectivity (Schlick).
                 // Metals reflect strongly even without an explicit reflectivity, and
@@ -1036,6 +1083,11 @@ inline void ApplyColorGrade(Raster& r) {
 // ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
 inline bool& FXAAEnabled() { static bool v = true; return v; }
 
+// Active camera's layer culling mask (Camera.cullingMask). RenderMeshes draws a
+// mesh only if bit (1<<gameObject->layer) is set. The editor/player set this from
+// the rendering camera each frame (~0 = all layers, the Scene view default).
+inline int& RenderCullingMask() { static int v = ~0; return v; }
+
 /// Cheap post-process anti-aliasing: where local contrast is high (a geometry
 /// edge), blend the pixel toward its neighbourhood average by an amount scaled by
 /// the contrast. Smooths jaggies without a full supersample.
@@ -1126,7 +1178,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!mr->texture.empty())     GetCachedMips(mr->texture);
         if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
         if (!mr->specularMap.empty()) GetCachedMips(mr->specularMap);
-        if (!mr->matcap.empty() && !mr->unlit) GetCachedTexture(mr->matcap);
+        if (!mr->matcap.empty() && !mr->unlit && mr->shader != MeshRenderer::Shader::Unlit) GetCachedTexture(mr->matcap);
     }
     // Rasterize the meshes across CPU cores: each worker owns a horizontal band
     // of scanlines [bandY0, bandY1] and only fills pixels inside it, so colour /
@@ -1135,8 +1187,15 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     auto renderBand = [&](int bandY0, int bandY1) {
     for (const auto& go : scene.Objects()) {
         if (ignore && go.get() == ignore) continue;   // this camera skips this object (1st-person body)
+        if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
+        // The Unlit shader is equivalent to the unlit flag for the renderer.
+        const bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        // Scrolling-UV offset (animated textures): advance the texture coordinates by
+        // the scroll speed * elapsed time. Added after tiling, like Unity's offset.
+        const float scrollU = mr->uvScroll.x * Time::ElapsedTime();
+        const float scrollV = mr->uvScroll.y * Time::ElapsedTime();
         Mat4 model = go->transform->LocalToWorldMatrix();
         const auto& v = mr->mesh.vertices;
         const auto& t = mr->mesh.triangles;
@@ -1145,7 +1204,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
         const std::vector<Image>* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         const std::vector<Image>* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
-        Image* mcap = (mr->matcap.empty() || mr->unlit) ? nullptr : GetCachedTexture(mr->matcap);
+        Image* mcap = (mr->matcap.empty() || unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
         const bool useMatcap = mcap && mr->mesh.HasNormals();
         // Smooth (Gouraud) shading when the mesh carries per-vertex normals and
@@ -1154,7 +1213,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // Lit, untextured meshes shade via the smooth (Gouraud) path even without
         // per-vertex normals — they use the face normal, interpolated per vertex, so
         // there are no flat-shading facet lines (only truly unlit meshes stay flat).
-        const bool smooth = useMatcap || (!tex && !mr->unlit);
+        const bool smooth = useMatcap || (!tex && !unlit);
         // Normal matrix = inverse-transpose of the model's linear part. Using the
         // model matrix directly SKEWS normals under non-uniform scale (e.g. a ground
         // scaled {40,1,40} or a stretched sphere) — lighting then "acts up" as the
@@ -1191,6 +1250,41 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             }
             if (outN == 8 || outL == 8 || outR == 8 || outB == 8 || outT == 8) continue;
         }
+        // Inverted-hull outline pre-pass: draw an expanded shell of BACK faces in a
+        // flat outline color behind the mesh, so only a clean silhouette edge survives
+        // the main pass. A cosmetic pass — triangles crossing the near plane are
+        // skipped rather than clipped.
+        if (mr->outline && mr->outlineWidth > 0.0f) {
+            std::uint32_t oabgr = Raster::PackRGB(mr->outlineColor.r, mr->outlineColor.g, mr->outlineColor.b);
+            for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
+                int idx[3] = {t[i], t[i + 1], t[i + 2]};
+                Vec3 wp0[3];
+                for (int k = 0; k < 3; ++k) wp0[k] = model.MultiplyPoint(v[idx[k]]);
+                Vec3 fn = Vec3::Cross(wp0[1] - wp0[0], wp0[2] - wp0[0]).Normalized();
+                Vec3 cen = (wp0[0] + wp0[1] + wp0[2]) * (1.0f / 3.0f);
+                // Render the same faces the main pass shows (its visible surface), then
+                // expand them OUTWARD (away from the mesh, opposite the culling normal)
+                // and push them a touch farther, so the unexpanded mesh covers them
+                // everywhere except a clean silhouette ring.
+                bool mainVisible = Vec3::Dot(fn, eye - cen) >= 0.0f;
+                if (!mainVisible) continue;
+                Vec3 outward = fn * -1.0f;
+                float sxo[3], syo[3], sdo[3]; bool ok = true;
+                for (int k = 0; k < 3; ++k) {
+                    Vec4 c = vp * Vec4{wp0[k] + outward * mr->outlineWidth, 1.0f};
+                    if (c.w <= 1e-4f) { ok = false; break; }
+                    float iw = 1.0f / c.w;
+                    sxo[k] = (c.x * iw * 0.5f + 0.5f) * W;
+                    syo[k] = (1.0f - (c.y * iw * 0.5f + 0.5f)) * H;
+                    // Push the shell slightly farther (smaller 1/w) so the mesh always
+                    // wins where they overlap — the outline only survives at the rim.
+                    sdo[k] = iw * 0.9f;
+                }
+                if (ok) r.Triangle(sxo[0], syo[0], sdo[0], sxo[1], syo[1], sdo[1],
+                                   sxo[2], syo[2], sdo[2], oabgr, bandY0, bandY1);
+            }
+        }
+
         // A clip-space vertex carrying its (unprojected) UV, for near-plane
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
@@ -1250,7 +1344,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float mu = mx * 0.5f + 0.5f, mv = 1.0f - (my * 0.5f + 0.5f);
                     Color mc = mcap->Sample(mu, mv);
                     lk = {mc.r, mc.g, mc.b};
-                } else if (!mr->unlit) {
+                } else if (!unlit) {
                     // Per-vertex light (Gouraud) from the vertex normal — or the flat
                     // FACE normal when the mesh has none. Computing it per vertex (vs a
                     // single per-face value) interpolates smoothly across each face, so
@@ -1271,14 +1365,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 // single per-triangle value (from the centroid) made a hard diagonal
                 // highlight seam on big quads like a shiny ground.
                 float spk = 0.0f;
-                if (!mr->unlit && mr->specular > 0.0f) {
+                if (!unlit && mr->specular > 0.0f) {
                     Vec3 toL = SceneLight::Direction() * -1.0f;
                     Vec3 toE = (eye - wp[k]).Normalized();
                     Vec3 hv = (toL.Normalized() + toE).Normalized();
                     float nh = Vec3::Dot(nk, hv);
                     if (nh > 0.0f) spk = std::pow(nh, mr->shininess) * mr->specular;
                 }
-                in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y,
+                in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x + scrollU, vt * mr->tiling.y + scrollV,
                          lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok, spk};
             }
 
@@ -1329,10 +1423,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // Material: diffuse (Lambert, or flat when unlit) + Blinn-Phong
             // specular highlight + self-illuminating emissive.
             // Colored multi-light diffuse (directional + point + spot + ambient).
-            Vec3 lit = mr->unlit ? Vec3{1.0f, 1.0f, 1.0f}
-                                 : SceneLights::ShadeColor(centroid, normal);
+            Vec3 lit = unlit ? Vec3{1.0f, 1.0f, 1.0f}
+                             : SceneLights::ShadeColor(centroid, normal);
             float spec = 0.0f;
-            if (!mr->unlit && mr->specular > 0.0f) {
+            if (!unlit && mr->specular > 0.0f) {
                 Vec3 toLight = SceneLight::Direction() * -1.0f;
                 Vec3 toEye = (eye - centroid).Normalized();
                 Vec3 h = (toLight.Normalized() + toEye).Normalized();
@@ -1375,7 +1469,11 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // ambient — which the basic flat path can't do. (This is what lets
             // primitives like Cube/Plane and the flat-shaded Character receive
             // cast shadows.)
-            const bool perPixel = PerPixelLighting() && !mr->unlit && !useMatcap;
+            // Toon needs the per-pixel path (that's where the cel banding lives), so
+            // it forces per-pixel lighting for its mesh regardless of the global toggle.
+            const bool perPixel = (PerPixelLighting() || mr->shader == MeshRenderer::Shader::Toon
+                                   || mr->rimStrength > 0.0f || mr->triplanar)
+                                  && !unlit && !useMatcap;
             for (int j = 1; j + 1 < pn; ++j) {
                 const CV* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
                 float sx[3], sy[3], sd[3], iw[3], uu[3], vv[3];
@@ -1395,7 +1493,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
                                     fo, fogR, fogG, fogB,
                                     normalMips, triTangent, mr->normalStrength,
-                                    mr->reflectivity, specMips, mr->metallic, bandY0, bandY1);
+                                    mr->reflectivity, specMips, mr->metallic,
+                                    (mr->shader == MeshRenderer::Shader::Toon ? mr->toonBands : 0),
+                                    mr->rimStrength, mr->rimPower,
+                                    mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
+                                    mr->triplanar, mr->tiling.x, mr->tiling.y,
+                                    bandY0, bandY1);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

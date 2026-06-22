@@ -245,6 +245,18 @@ add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)
 add_test(NAME follow COMMAND test_follow)
 
+add_executable(test_cinemachine test_cinemachine.cpp)
+target_link_libraries(test_cinemachine PRIVATE okay::engine)
+add_test(NAME cinemachine COMMAND test_cinemachine)
+
+add_executable(test_shaders test_shaders.cpp)
+target_link_libraries(test_shaders PRIVATE okay::engine)
+add_test(NAME shaders COMMAND test_shaders)
+
+add_executable(test_uishape test_uishape.cpp)
+target_link_libraries(test_uishape PRIVATE okay::engine)
+add_test(NAME uishape COMMAND test_uishape)
+
 add_executable(test_ui_system test_ui_system.cpp)
 target_link_libraries(test_ui_system PRIVATE okay::engine)
 add_test(NAME ui_system COMMAND test_ui_system)

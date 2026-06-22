@@ -51,17 +51,31 @@ public:
     }
 
     bool interactable = true;   // when false: greyed out, ignores clicks
+    /// Switch-knob animation speed (units/sec); 0 = snap. The renderer reads
+    /// AnimT() (0=off..1=on) so the knob glides and the track cross-fades.
+    float animSpeed = 12.0f;
 
-    void Update(float) override {
-        if (!interactable) { m_hover = false; return; }
-        Vec2 m = Input::MousePosition();
-        m_hover = Contains(m);
-        if (m_hover && Input::GetMouseButtonDown(0)) Toggle();
+    void Update(float dt) override {
+        if (interactable) {
+            Vec2 m = Input::MousePosition();
+            m_hover = Contains(m);
+            if (m_hover && Input::GetMouseButtonDown(0)) Toggle();
+        } else {
+            m_hover = false;
+        }
+        float target = on ? 1.0f : 0.0f;          // ease the knob toward its state
+        if (animSpeed <= 0.0f) { m_anim = target; return; }
+        float k = animSpeed * dt; if (k > 1.0f) k = 1.0f;
+        m_anim += (target - m_anim) * k;
     }
+
+    /// Smoothed 0..1 on-ness for the renderer (knob slide + track cross-fade).
+    float AnimT() const { return m_anim; }
 
 private:
     bool m_hover = false;
     bool m_focused = false;
+    float m_anim = 0.0f;
 };
 
 } // namespace okay

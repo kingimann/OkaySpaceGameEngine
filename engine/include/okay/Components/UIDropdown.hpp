@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
@@ -29,6 +30,9 @@ public:
     Color textColor   = Color::White;
     Color borderColor = Color::FromBytes(255, 255, 255, 60);
     UIAnchor anchor = UIAnchor::TopLeft;
+    // Silhouette + corner radius for the header (and list) — clean rounded selects.
+    UIShape shape = UIShape::Rounded;
+    float cornerRadius = 6.0f;
     /// Shown in the header (dimmed) when nothing is chosen (value < 0).
     std::string placeholder = "Select...";
 

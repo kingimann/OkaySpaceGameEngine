@@ -27,6 +27,18 @@ public:
     float nearClip = 0.3f;   // Unity-like near plane
     float farClip  = 1000.0f;
 
+    /// Physical camera (Unity's Physical Camera): derive the field of view from a
+    /// real lens focal length + sensor size instead of an angle. Great for matching
+    /// real cameras / cinematic framing. When on, `fieldOfView` is ignored.
+    bool  physicalCamera = false;
+    float focalLength  = 50.0f;   // mm
+    float sensorHeight = 24.0f;   // mm (full-frame vertical); FOV = 2*atan(h/2f)
+
+    /// Culling mask (Unity's Camera.cullingMask): a 32-bit set of layers this camera
+    /// renders. A mesh is drawn only if bit (1 << gameObject->layer) is set. Default
+    /// = all layers. Use it for mini-maps, hidden helper geometry, layered passes.
+    int cullingMask = ~0;
+
     /// Normalized viewport rectangle (Unity's Camera.rect): where on the screen
     /// this camera draws — x,y = bottom-left, w,h = size, all in 0..1. Defaults to
     /// the full screen. Use it for split-screen, mini-maps, or picture-in-picture.
@@ -51,6 +63,9 @@ public:
     Mat4 ViewMatrix() const;
     /// Projection matrix for the given viewport aspect ratio.
     Mat4 ProjectionMatrix(float aspect) const;
+    /// The effective vertical field of view (degrees) for a viewport aspect ratio,
+    /// resolving physical-camera optics and the horizontal-axis option. Useful for UI.
+    float VerticalFovDegrees(float aspect) const;
 
     void Awake() override;
 };

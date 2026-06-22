@@ -30,6 +30,48 @@ static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int 
                      (int)(h * 0.5f - (p.y - camPos.y) * scale)};
 }
 
+// Fill a UI shape (rectangle / rounded / circle / pill) into screen rect `r`,
+// scanline by scanline so any silhouette uses one code path. Supports a linear
+// gradient (top->bottom, or left->right when `horizontal`); pass equal colors for
+// a flat fill. `op` is the canvas master opacity.
+static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
+                        const Color& top, const Color& bottom, bool gradient, bool horizontal,
+                        float op) {
+    if (r.w <= 0 || r.h <= 0) return;
+    auto lerp = [](const Color& a, const Color& b, float t) {
+        return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
+                     a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
+    };
+    for (int row = 0; row < r.h; ++row) {
+        float x0, x1;
+        if (!UIShapeRowSpan(shape, (float)r.w, (float)r.h, radius, row, x0, x1)) continue;
+        if (!gradient) {
+            SDL_SetRenderDrawColor(ren, (Uint8)(top.r * 255), (Uint8)(top.g * 255),
+                                   (Uint8)(top.b * 255), (Uint8)(top.a * 255 * op));
+            SDL_Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
+            SDL_RenderFillRect(ren, &span);
+        } else if (!horizontal) {
+            float t = r.h > 1 ? (float)row / (r.h - 1) : 0.0f;
+            Color c = lerp(top, bottom, t);
+            SDL_SetRenderDrawColor(ren, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
+                                   (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op));
+            SDL_Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
+            SDL_RenderFillRect(ren, &span);
+        } else {
+            // Horizontal gradient: step across the span pixel-cluster by cluster.
+            int ix0 = (int)x0, ix1 = (int)x1;
+            for (int x = ix0; x <= ix1; ++x) {
+                float t = r.w > 1 ? (float)x / (r.w - 1) : 0.0f;
+                Color c = lerp(top, bottom, t);
+                SDL_SetRenderDrawColor(ren, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
+                                       (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op));
+                SDL_Rect px{r.x + x, r.y + row, 1, 1};
+                SDL_RenderFillRect(ren, &px);
+            }
+        }
+    }
+}
+
 // A stable, distinct color for each non-zero tile id (no palette is stored).
 static SDL_Color TileColor(int id) {
     unsigned h = (unsigned)id * 2654435761u;
@@ -573,10 +615,10 @@ int main(int argc, char** argv) {
                 } else {
                     SDL_RenderCopy(renderer, tex, nullptr, &r);
                 }
-            } else {                                        // no image -> colored fill
-                SDL_SetRenderDrawColor(renderer, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
-                                       (Uint8)(im->color.b * 255), (Uint8)(im->color.a * 255));
-                SDL_RenderFillRect(renderer, filled ? &fr : &r);
+            } else {                                        // no image -> colored shape fill
+                const SDL_Rect& rr = filled ? fr : r;
+                FillUIShape(renderer, rr, im->shape, im->cornerRadius,
+                            im->color, im->color, false, false, op);
             }
         }
         for (const auto& up : scene.Objects()) {           // panels (backgrounds) first
@@ -586,38 +628,22 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
-            if (pn->shadow) {                               // drop shadow behind
+            if (pn->shadow) {                               // drop shadow behind (same shape)
                 SDL_Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
-                SDL_SetRenderDrawColor(renderer, (Uint8)(pn->shadowColor.r * 255), (Uint8)(pn->shadowColor.g * 255),
-                                       (Uint8)(pn->shadowColor.b * 255), (Uint8)(pn->shadowColor.a * 255 * op));
-                SDL_RenderFillRect(renderer, &sh);
+                FillUIShape(renderer, sh, pn->shape, pn->cornerRadius,
+                            pn->shadowColor, pn->shadowColor, false, false, op);
             }
-            if (pn->useGradient) {                          // top->bottom fade in bands
-                int bands = r.h > 0 ? (r.h < 64 ? r.h : 64) : 1;
-                for (int i = 0; i < bands; ++i) {
-                    float t = bands > 1 ? (float)i / (bands - 1) : 0.0f;
-                    Color cc{pn->color.r + (pn->colorBottom.r - pn->color.r) * t,
-                             pn->color.g + (pn->colorBottom.g - pn->color.g) * t,
-                             pn->color.b + (pn->colorBottom.b - pn->color.b) * t,
-                             pn->color.a + (pn->colorBottom.a - pn->color.a) * t};
-                    SDL_Rect band{r.x, r.y + i * r.h / bands, r.w,
-                                  (r.h / bands) + 1};
-                    SDL_SetRenderDrawColor(renderer, (Uint8)(cc.r * 255), (Uint8)(cc.g * 255),
-                                           (Uint8)(cc.b * 255), (Uint8)(cc.a * 255 * op));
-                    SDL_RenderFillRect(renderer, &band);
-                }
+            if (pn->borderWidth > 0.0f) {                   // border = outer shape, then inner fill
+                FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
+                            pn->borderColor, pn->borderColor, false, false, op);
+                int b = (int)pn->borderWidth;
+                SDL_Rect inner{r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b};
+                float innerR = pn->cornerRadius - b; if (innerR < 0.0f) innerR = 0.0f;
+                FillUIShape(renderer, inner, pn->shape, innerR,
+                            pn->color, pn->colorBottom, pn->useGradient, pn->gradientHorizontal, op);
             } else {
-                SDL_SetRenderDrawColor(renderer, (Uint8)(pn->color.r * 255), (Uint8)(pn->color.g * 255),
-                                       (Uint8)(pn->color.b * 255), (Uint8)(pn->color.a * 255 * op));
-                SDL_RenderFillRect(renderer, &r);
-            }
-            if (pn->borderWidth > 0.0f) {                   // outline (N nested rects)
-                SDL_SetRenderDrawColor(renderer, (Uint8)(pn->borderColor.r * 255), (Uint8)(pn->borderColor.g * 255),
-                                       (Uint8)(pn->borderColor.b * 255), (Uint8)(pn->borderColor.a * 255 * op));
-                for (int bw = 0; bw < (int)pn->borderWidth; ++bw) {
-                    SDL_Rect br{r.x + bw, r.y + bw, r.w - 2 * bw, r.h - 2 * bw};
-                    SDL_RenderDrawRect(renderer, &br);
-                }
+                FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
+                            pn->color, pn->colorBottom, pn->useGradient, pn->gradientHorizontal, op);
             }
         }
         for (const auto& up : scene.Objects()) {           // drop-target highlight (drag feedback)
@@ -661,14 +687,14 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(pb->background.r * 255), (Uint8)(pb->background.g * 255),
-                                   (Uint8)(pb->background.b * 255), (Uint8)(pb->background.a * 255 * op));
-            SDL_RenderFillRect(renderer, &bg);
+            FillUIShape(renderer, bg, pb->shape, pb->cornerRadius,
+                        pb->background, pb->background, false, false, op);
             float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
             SDL_Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(pb->fill.r * 255), (Uint8)(pb->fill.g * 255),
-                                   (Uint8)(pb->fill.b * 255), (Uint8)(pb->fill.a * 255 * op));
-            SDL_RenderFillRect(renderer, &fl);
+            bool horiz = pb->fillDir == UIProgressBar::FillDir::LeftRight ||
+                         pb->fillDir == UIProgressBar::FillDir::RightLeft;
+            FillUIShape(renderer, fl, pb->shape, pb->cornerRadius,
+                        pb->fill, pb->fillEnd, pb->gradientFill, horiz, op);
             if (pb->showPercent) {
                 char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
                 float px = 2.0f;
@@ -679,6 +705,35 @@ int main(int argc, char** argv) {
                          o.y + (pb->size.y - Font8x8::Height * px) * 0.5f, px, tc);
             }
         }
+        for (const auto& up : scene.Objects()) {           // radial / ring progress
+            auto* rp = up->GetComponent<UIRadialProgress>();
+            if (!rp || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o = ResolveAnchor(rp->anchor, rp->position, rp->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            int bw = (int)rp->size.x, bh = (int)rp->size.y;
+            for (int y = 0; y < bh; ++y)
+                for (int x = 0; x < bw; ++x) {
+                    int reg = UIRadialProgress::Sample((float)bw, (float)bh, rp->thickness,
+                                                       rp->EffectiveStart(), rp->clockwise, rp->value,
+                                                       x + 0.5f, y + 0.5f);
+                    if (reg == UIRadialProgress::Outside) continue;
+                    const Color& c = (reg == UIRadialProgress::Fill) ? rp->fill : rp->background;
+                    SDL_SetRenderDrawColor(renderer, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
+                                           (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op));
+                    SDL_Rect px1{(int)o.x + x, (int)o.y + y, 1, 1};
+                    SDL_RenderFillRect(renderer, &px1);
+                }
+            if (rp->showPercent) {
+                char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(rp->Fraction() * 100.0f + 0.5f));
+                float ps = 2.0f;
+                float tw = std::strlen(pct) * (Font8x8::Width + 1) * ps;
+                SDL_Color tc{(Uint8)(rp->textColor.r * 255), (Uint8)(rp->textColor.g * 255),
+                             (Uint8)(rp->textColor.b * 255), (Uint8)(rp->textColor.a * 255 * op)};
+                DrawText(renderer, pct, o.x + (rp->size.x - tw) * 0.5f,
+                         o.y + (rp->size.y - Font8x8::Height * ps) * 0.5f, ps, tc);
+            }
+        }
         for (const auto& up : scene.Objects()) {           // sliders
             auto* sl = up->GetComponent<UISlider>();
             if (!sl || !up->active || UIHidden(up.get())) continue;
@@ -686,9 +741,8 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(sl->background.r * 255), (Uint8)(sl->background.g * 255),
-                                   (Uint8)(sl->background.b * 255), (Uint8)(sl->background.a * 255 * op));
-            SDL_RenderFillRect(renderer, &bg);
+            FillUIShape(renderer, bg, sl->trackShape, sl->cornerRadius,
+                        sl->background, sl->background, false, false, op);
             float f = sl->Fraction();
             SDL_Rect fl, kn;
             if (sl->vertical) {
@@ -700,12 +754,11 @@ int main(int argc, char** argv) {
                 int kw = (int)(sl->size.y * sl->knobSize);
                 kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
             }
-            SDL_SetRenderDrawColor(renderer, (Uint8)(sl->fill.r * 255), (Uint8)(sl->fill.g * 255),
-                                   (Uint8)(sl->fill.b * 255), (Uint8)(sl->fill.a * 255 * op));
-            SDL_RenderFillRect(renderer, &fl);
-            SDL_SetRenderDrawColor(renderer, (Uint8)(sl->knob.r * 255), (Uint8)(sl->knob.g * 255),
-                                   (Uint8)(sl->knob.b * 255), (Uint8)(sl->knob.a * 255 * op));
-            SDL_RenderFillRect(renderer, &kn);
+            FillUIShape(renderer, fl, sl->trackShape, sl->cornerRadius,
+                        sl->fill, sl->fill, false, false, op);
+            // The handle: a circle when roundKnob, else a rounded tab.
+            FillUIShape(renderer, kn, sl->roundKnob ? UIShape::Circle : UIShape::Rounded,
+                        sl->cornerRadius, sl->knob, sl->knob, false, false, op);
             if (sl->showValue) {
                 char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
                 float px = 2.0f;
@@ -724,27 +777,28 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect box{(int)o.x, (int)o.y, (int)tg->size.x, (int)tg->size.y};
+            float t = tg->AnimT();                          // 0=off..1=on (smoothed)
             if (tg->style == UIToggle::Style::Switch) {     // pill track + sliding knob
-                const Color& trk = tg->on ? tg->checkColor : tg->boxColor;
-                SDL_SetRenderDrawColor(renderer, (Uint8)(trk.r * 255), (Uint8)(trk.g * 255),
-                                       (Uint8)(trk.b * 255), (Uint8)(trk.a * 255 * op));
-                SDL_RenderFillRect(renderer, &box);
+                auto mix = [t](const Color& a, const Color& b) {
+                    return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
+                                 a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
+                };
+                Color trk = mix(tg->boxColor, tg->checkColor);   // cross-fade the track
+                FillUIShape(renderer, box, UIShape::Pill, 0.0f, trk, trk, false, false, op);
                 int kd = box.h - 4;
-                int kx = tg->on ? (box.x + box.w - kd - 2) : (box.x + 2);
+                int kx = box.x + 2 + (int)((box.w - kd - 4) * t);   // glide the knob
                 SDL_Rect knob{kx, box.y + 2, kd, kd};
-                SDL_SetRenderDrawColor(renderer, (Uint8)(tg->knobColor.r * 255), (Uint8)(tg->knobColor.g * 255),
-                                       (Uint8)(tg->knobColor.b * 255), (Uint8)(tg->knobColor.a * 255 * op));
-                SDL_RenderFillRect(renderer, &knob);
+                FillUIShape(renderer, knob, UIShape::Circle, 0.0f,
+                            tg->knobColor, tg->knobColor, false, false, op);
             } else {
-                SDL_SetRenderDrawColor(renderer, (Uint8)(tg->boxColor.r * 255), (Uint8)(tg->boxColor.g * 255),
-                                       (Uint8)(tg->boxColor.b * 255), (Uint8)(tg->boxColor.a * 255 * op));
-                SDL_RenderFillRect(renderer, &box);
-                if (tg->on) {                              // inset check fill
+                FillUIShape(renderer, box, UIShape::Rounded, tg->cornerRadius,
+                            tg->boxColor, tg->boxColor, false, false, op);
+                if (t > 0.01f) {                            // inset check fill (fades in)
                     int pad = (int)(tg->size.x * 0.22f);
                     SDL_Rect chk{box.x + pad, box.y + pad, box.w - 2 * pad, box.h - 2 * pad};
-                    SDL_SetRenderDrawColor(renderer, (Uint8)(tg->checkColor.r * 255), (Uint8)(tg->checkColor.g * 255),
-                                           (Uint8)(tg->checkColor.b * 255), (Uint8)(tg->checkColor.a * 255 * op));
-                    SDL_RenderFillRect(renderer, &chk);
+                    Color cc = tg->checkColor; cc.a *= t;
+                    FillUIShape(renderer, chk, UIShape::Rounded, tg->cornerRadius * 0.6f,
+                                cc, cc, false, false, op);
                 }
             }
             float px = 2.0f;
@@ -769,16 +823,20 @@ int main(int argc, char** argv) {
                 int gy = (int)(btn->size.y * (btn->hoverScale - 1.0f) * 0.5f);
                 r.x -= gx; r.y -= gy; r.w += 2 * gx; r.h += 2 * gy;
             }
-            SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
-                                   (Uint8)(bg.b * 255), (Uint8)(bg.a * 255 * op));
-            SDL_RenderFillRect(renderer, &r);
-            if (btn->borderWidth > 0.0f) {                  // outline (N nested rects)
-                SDL_SetRenderDrawColor(renderer, (Uint8)(btn->borderColor.r * 255), (Uint8)(btn->borderColor.g * 255),
-                                       (Uint8)(btn->borderColor.b * 255), (Uint8)(btn->borderColor.a * 255 * op));
-                for (int bw = 0; bw < (int)btn->borderWidth; ++bw) {
-                    SDL_Rect br{r.x + bw, r.y + bw, r.w - 2 * bw, r.h - 2 * bw};
-                    SDL_RenderDrawRect(renderer, &br);
-                }
+            if (btn->shadow) {                              // drop shadow behind (same shape)
+                SDL_Rect sh{r.x + (int)btn->shadowOffset.x, r.y + (int)btn->shadowOffset.y, r.w, r.h};
+                FillUIShape(renderer, sh, btn->shape, btn->cornerRadius,
+                            btn->shadowColor, btn->shadowColor, false, false, op);
+            }
+            if (btn->borderWidth > 0.0f) {                  // border = outer shape, then inner fill
+                FillUIShape(renderer, r, btn->shape, btn->cornerRadius,
+                            btn->borderColor, btn->borderColor, false, false, op);
+                int b = (int)btn->borderWidth;
+                SDL_Rect inner{r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b};
+                float innerR = btn->cornerRadius - b; if (innerR < 0.0f) innerR = 0.0f;
+                FillUIShape(renderer, inner, btn->shape, innerR, bg, bg, false, false, op);
+            } else {
+                FillUIShape(renderer, r, btn->shape, btn->cornerRadius, bg, bg, false, false, op);
             }
             // Optional icon (left by default, right when iconRight); the label
             // takes the remaining space. Press shifts content down slightly.
@@ -842,12 +900,8 @@ int main(int argc, char** argv) {
             Vec2 o = ResolveAnchor(dd->anchor, dd->position, dd->size, (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect hdr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
-            SDL_SetRenderDrawColor(renderer, (Uint8)(dd->color.r * 255), (Uint8)(dd->color.g * 255),
-                                   (Uint8)(dd->color.b * 255), (Uint8)(dd->color.a * 255));
-            SDL_RenderFillRect(renderer, &hdr);
-            SDL_SetRenderDrawColor(renderer, (Uint8)(dd->borderColor.r * 255), (Uint8)(dd->borderColor.g * 255),
-                                   (Uint8)(dd->borderColor.b * 255), (Uint8)(dd->borderColor.a * 255));
-            SDL_RenderDrawRect(renderer, &hdr);
+            FillUIShape(renderer, hdr, dd->shape, dd->cornerRadius,
+                        dd->color, dd->color, false, false, 1.0f);
             float px = 2.0f;
             float ty = o.y + (dd->size.y - Font8x8::Height * px) * 0.5f;
             SDL_Color tc{(Uint8)(dd->textColor.r * 255), (Uint8)(dd->textColor.g * 255),
@@ -876,12 +930,16 @@ int main(int argc, char** argv) {
             enterScroll(up.get(), o);
             SDL_Rect box{(int)o.x, (int)o.y, (int)in->size.x, (int)in->size.y};
             Color bg = in->CurrentColor();
-            SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
-                                   (Uint8)(bg.b * 255), (Uint8)(bg.a * 255));
-            SDL_RenderFillRect(renderer, &box);
-            if (in->focused) {                              // focus outline
-                SDL_SetRenderDrawColor(renderer, 120, 170, 255, 255);
-                SDL_RenderDrawRect(renderer, &box);
+            // Focus ring: draw the border shape behind, then the field inset over it.
+            if (in->focused && in->borderWidth > 0.0f) {
+                FillUIShape(renderer, box, in->shape, in->cornerRadius,
+                            in->borderColor, in->borderColor, false, false, 1.0f);
+                int b = (int)in->borderWidth;
+                SDL_Rect inner{box.x + b, box.y + b, box.w - 2 * b, box.h - 2 * b};
+                float ir = in->cornerRadius - b; if (ir < 0.0f) ir = 0.0f;
+                FillUIShape(renderer, inner, in->shape, ir, bg, bg, false, false, 1.0f);
+            } else {
+                FillUIShape(renderer, box, in->shape, in->cornerRadius, bg, bg, false, false, 1.0f);
             }
             float px = 2.0f, pad = 6.0f;
             bool empty = in->text.empty();

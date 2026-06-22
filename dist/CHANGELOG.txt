@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.86.0  (bug-hunt batch)
+  - Fixed distance fog computed PER-TRIANGLE: each triangle got one fog value from
+    its centroid distance, so a big 2-triangle quad (e.g. the ground) showed a hard
+    DIAGONAL two-tone seam when fog was on. Fog is now a per-vertex factor
+    interpolated across the triangle (smooth/textured/per-pixel paths), so fog
+    fades smoothly with distance and the seam is gone. Verified before/after on a
+    fogged ground. (75 tests pass.)
+
 v2.85.0  (bug-hunt batch)
   - Fixed normals under non-uniform scale: the renderer transformed normals by the
     model matrix directly, which skews them when scale isn't uniform (e.g. a ground

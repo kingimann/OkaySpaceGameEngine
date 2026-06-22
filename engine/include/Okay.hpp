@@ -80,6 +80,7 @@
 #include "okay/Components/UINavigation.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIScrollView.hpp"

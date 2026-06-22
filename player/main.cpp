@@ -705,6 +705,35 @@ int main(int argc, char** argv) {
                          o.y + (pb->size.y - Font8x8::Height * px) * 0.5f, px, tc);
             }
         }
+        for (const auto& up : scene.Objects()) {           // radial / ring progress
+            auto* rp = up->GetComponent<UIRadialProgress>();
+            if (!rp || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o = ResolveAnchor(rp->anchor, rp->position, rp->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            int bw = (int)rp->size.x, bh = (int)rp->size.y;
+            for (int y = 0; y < bh; ++y)
+                for (int x = 0; x < bw; ++x) {
+                    int reg = UIRadialProgress::Sample((float)bw, (float)bh, rp->thickness,
+                                                       rp->startAngle, rp->clockwise, rp->value,
+                                                       x + 0.5f, y + 0.5f);
+                    if (reg == UIRadialProgress::Outside) continue;
+                    const Color& c = (reg == UIRadialProgress::Fill) ? rp->fill : rp->background;
+                    SDL_SetRenderDrawColor(renderer, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
+                                           (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op));
+                    SDL_Rect px1{(int)o.x + x, (int)o.y + y, 1, 1};
+                    SDL_RenderFillRect(renderer, &px1);
+                }
+            if (rp->showPercent) {
+                char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(rp->Fraction() * 100.0f + 0.5f));
+                float ps = 2.0f;
+                float tw = std::strlen(pct) * (Font8x8::Width + 1) * ps;
+                SDL_Color tc{(Uint8)(rp->textColor.r * 255), (Uint8)(rp->textColor.g * 255),
+                             (Uint8)(rp->textColor.b * 255), (Uint8)(rp->textColor.a * 255 * op)};
+                DrawText(renderer, pct, o.x + (rp->size.x - tw) * 0.5f,
+                         o.y + (rp->size.y - Font8x8::Height * ps) * 0.5f, ps, tc);
+            }
+        }
         for (const auto& up : scene.Objects()) {           // sliders
             auto* sl = up->GetComponent<UISlider>();
             if (!sl || !up->active || UIHidden(up.get())) continue;

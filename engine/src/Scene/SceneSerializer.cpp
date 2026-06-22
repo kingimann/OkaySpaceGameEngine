@@ -51,6 +51,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 
@@ -537,6 +538,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended (back-compatible trailing fields): shape + gradient fill
             << " " << (int)pb->shape << " " << (pb->gradientFill ? 1 : 0) << " "
             << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a << "\n";
+    }
+    if (auto* rp = go->GetComponent<UIRadialProgress>()) {
+        out << "  uiradial " << rp->position.x << " " << rp->position.y << " "
+            << rp->size.x << " " << rp->size.y << " " << rp->value << " "
+            << rp->thickness << " " << rp->startAngle << " " << (rp->clockwise ? 1 : 0) << " "
+            << rp->background.r << " " << rp->background.g << " " << rp->background.b << " " << rp->background.a << " "
+            << rp->fill.r << " " << rp->fill.g << " " << rp->fill.b << " " << rp->fill.a
+            << " " << (int)rp->anchor << " " << (rp->showPercent ? 1 : 0) << " "
+            << rp->textColor.r << " " << rp->textColor.g << " " << rp->textColor.b << " " << rp->textColor.a << "\n";
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -1423,6 +1433,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             pb->shape = (UIShape)sp; pb->gradientFill = (gf != 0); pb->fillEnd = fe;
                         }
                     }
+                } else if (field == "uiradial") {
+                    auto* rp = go->AddComponent<UIRadialProgress>();
+                    int cw = 1, an = 0, sp = 0; Color bg, fl, tc;
+                    in >> rp->position.x >> rp->position.y >> rp->size.x >> rp->size.y >> rp->value
+                       >> rp->thickness >> rp->startAngle >> cw
+                       >> bg.r >> bg.g >> bg.b >> bg.a >> fl.r >> fl.g >> fl.b >> fl.a
+                       >> an >> sp >> tc.r >> tc.g >> tc.b >> tc.a;
+                    rp->clockwise = (cw != 0); rp->background = bg; rp->fill = fl;
+                    rp->anchor = (UIAnchor)an; rp->showPercent = (sp != 0); rp->textColor = tc;
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
                     Color c;

@@ -6790,6 +6790,27 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
         }
     }
+    if (auto* rp = go->GetComponent<UIRadialProgress>()) {
+        if (CompHeader("UI Radial Progress", rp, &toRemove)) {
+            float pos[2] = {rp->position.x, rp->position.y};
+            if (ImGui::DragFloat2("Pos (px)##urp", pos, 1.0f)) { rp->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {rp->size.x, rp->size.y};
+            if (ImGui::DragFloat2("Size (px)##urp", sz, 1.0f, 8.0f, 4000.0f)) { rp->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::SliderFloat("Value##urp", &rp->value, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Thickness##urp", &rp->thickness, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ring width in px (0 = filled pie)");
+            if (ImGui::DragFloat("Start Angle##urp", &rp->startAngle, 1.0f, -360.0f, 360.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::Checkbox("Clockwise##urp", &rp->clockwise)) ed.dirty = true;
+            float bgc[4] = {rp->background.r, rp->background.g, rp->background.b, rp->background.a};
+            if (ImGui::ColorEdit4("Track##urp", bgc)) { rp->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            float flc[4] = {rp->fill.r, rp->fill.g, rp->fill.b, rp->fill.a};
+            if (ImGui::ColorEdit4("Fill##urp", flc)) { rp->fill = {flc[0], flc[1], flc[2], flc[3]}; ed.dirty = true; }
+            AnchorCombo("Anchor##urp", rp->anchor, ed);
+            if (ImGui::Checkbox("Show Percent##urp", &rp->showPercent)) ed.dirty = true;
+            ImGui::TextDisabled("script: set_progress(0..1) on cooldowns / loaders");
+            if (ImGui::SmallButton("Remove##urp")) toRemove = rp;
+        }
+    }
     if (auto* im = go->GetComponent<UIImage>()) {
         if (CompHeader("UI Image", im, &toRemove)) {
             float pos[2] = {im->position.x, im->position.y};
@@ -7126,6 +7147,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIToggle>(), "UI Toggle")) { go->AddComponent<UIToggle>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }

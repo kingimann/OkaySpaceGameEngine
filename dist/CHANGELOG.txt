@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.111.0  (UI: new Radial Progress widget — rings & pies)
+  - New UIRadialProgress component: a circular/ring progress indicator (cooldowns,
+    loaders, skill timers, score dials) — the radial counterpart to UIProgressBar.
+    Draws a ring of configurable thickness (or a full pie) filled clockwise/counter
+    from a start angle by value (0..1), with a track + fill color and optional percent.
+  - The fill geometry is a single Sample() classifier (outside / track / fill) shared
+    by the player renderer and unit tests, so the visible arc is well-defined.
+  - GameObject > Add Component > UI Radial Progress, inspector controls, and scene
+    serialization. uishape suite extended (arc classification + round-trip); 78 tests pass.
+
 v2.110.0  (UI: rounded form controls — input fields + dropdowns)
   - UIInputField gains a shape + corner radius and an optional focus ring (a colored
     border that appears while the field is focused), for clean rounded text fields.

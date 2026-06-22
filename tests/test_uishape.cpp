@@ -138,5 +138,36 @@ int main() {
         if (dd2) CHECK_NEAR(dd2->cornerRadius, 7.0f, 1e-4f);
     }
 
+    // Radial progress: pixels inside the ring band classify as fill below the value
+    // angle and track above it; pixels outside the band are Outside.
+    {
+        // 100x100 ring, thickness 20 -> band r in [30,50]. Center (50,50).
+        // A point on the ring just clockwise of the top (12 o'clock) at 25% value.
+        int top = UIRadialProgress::Sample(100, 100, 20, 0, true, 0.25f, 55.0f, 5.0f);
+        CHECK(top == UIRadialProgress::Fill);          // near the start, inside the arc
+        // A point at the bottom (~50% around) is past a 25% arc -> track.
+        int bottom = UIRadialProgress::Sample(100, 100, 20, 0, true, 0.25f, 50.0f, 95.0f);
+        CHECK(bottom == UIRadialProgress::Track);
+        // The very center is inside the hole -> Outside.
+        CHECK(UIRadialProgress::Sample(100, 100, 20, 0, true, 1.0f, 50.0f, 50.0f) == UIRadialProgress::Outside);
+        // Full value fills the whole ring band.
+        CHECK(UIRadialProgress::Sample(100, 100, 20, 0, true, 1.0f, 50.0f, 95.0f) == UIRadialProgress::Fill);
+    }
+
+    // Radial progress round-trips through the scene.
+    {
+        Scene s("RP"); s.physicsEnabled = false;
+        auto* rp = s.CreateGameObject("R")->AddComponent<UIRadialProgress>();
+        rp->value = 0.33f; rp->thickness = 14.0f; rp->startAngle = 90.0f; rp->clockwise = false;
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* r2 = s2.Find("R") ? s2.Find("R")->GetComponent<UIRadialProgress>() : nullptr;
+        CHECK(r2 != nullptr);
+        if (r2) {
+            CHECK_NEAR(r2->value, 0.33f, 1e-4f);
+            CHECK_NEAR(r2->startAngle, 90.0f, 1e-4f);
+            CHECK(!r2->clockwise);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

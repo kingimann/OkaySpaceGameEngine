@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.77.0
+  - Per-pixel lighting is now OFF by default. It produced a moiré/shimmer on large
+    flat surfaces (e.g. the ground) when the camera zoomed in close; flat/Gouraud
+    shading is clean there (and the rasterizer crack fixes from v2.75 apply to it
+    too). Re-enable it any time in the Rendering panel.
+  - Rim light is now OFF by default. Its grazing-angle glow swept across big floors
+    (brightest at the far corners) as the camera moved. Also opt-in in the panel.
+  - (Reverted the v2.76 template fog — it was based on a wrong diagnosis; the real
+    cause was the rim/per-pixel shading above.)
+
 v2.76.0
   - 3D templates: the ground now fades into the horizon with distance fog, so you
     no longer see a hard edge / gray sky wedge past the end of the floor when you

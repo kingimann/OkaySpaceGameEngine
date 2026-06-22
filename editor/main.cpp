@@ -151,10 +151,6 @@ int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersamp
                   // view zoomed in — turning camera motion choppy. Opt in if you have
                   // the headroom (View > "3D Anti-aliasing (2x)").
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
-// While the Scene camera is moving, the 3D view renders at reduced resolution for a
-// few frames so motion stays smooth even when a big surface fills the screen; it
-// snaps back to full resolution the moment the camera settles. >0 = still moving.
-int  g_camMotionFrames = 0;
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
 
@@ -184,14 +180,6 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // free (linear filtered) — a near-linear FPS win for the software renderer.
     float scale = g_renderScale < 0.25f ? 0.25f : (g_renderScale > 1.0f ? 1.0f : g_renderScale);
     int ss = g_ssaa;
-    // Dynamic resolution while the Scene camera moves: a big surface (the ground)
-    // can fill the whole view when zoomed in, so the per-pixel fill cost spikes and
-    // FPS drops — making motion choppy. Halve the buffer (and drop supersampling)
-    // during motion for smooth panning/zooming; it snaps back to full res on settle.
-    if (slot == 0 && g_camMotionFrames > 0) {
-        scale *= 0.5f;
-        ss = 1;
-    }
     int rw = (int)(w * scale); if (rw < 1) rw = 1;
     int rh = (int)(h * scale); if (rh < 1) rh = 1;
     // Auto-performance: drop supersampling on heavy scenes OR very large viewports
@@ -7875,13 +7863,6 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView) {   // remember this exact frame for the debug PNG capture
         g_lastSceneVP = vp; g_lastSceneEye = eye;
         g_lastSceneW = (int)canvasSize.x; g_lastSceneH = (int)canvasSize.y;
-        // Detect Scene-camera motion to drive dynamic resolution (smooth panning).
-        static float pYaw = 1e9f, pPitch = 0, pDist = 0; static Vec3 pTgt{1e9f, 0, 0};
-        bool moved = std::fabs(ed.camYaw - pYaw) > 1e-3f || std::fabs(ed.camPitch - pPitch) > 1e-3f ||
-                     std::fabs(ed.camDist - pDist) > 1e-3f || (ed.camTarget - pTgt).Magnitude() > 1e-3f;
-        pYaw = ed.camYaw; pPitch = ed.camPitch; pDist = ed.camDist; pTgt = ed.camTarget;
-        if (moved) g_camMotionFrames = 5;
-        else if (g_camMotionFrames > 0) --g_camMotionFrames;
     }
 
     auto toScreen = [&](const Vec4& c, ImVec2& out) -> bool {
@@ -8082,8 +8063,18 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
         }
     }
+    // Render the 3D view at the display's TRUE physical pixel resolution. On a
+    // high-DPI / Windows-scaled display, ImGui coords are logical pixels but the
+    // renderer scales to physical pixels (SDL_RenderSetScale by the framebuffer
+    // scale). Rendering the 3D texture at logical size left it to be LINEARLY
+    // upscaled to physical — blurry, and it shimmers/crawls while the camera moves
+    // (the resample shifts each frame). Rendering at physical size maps it 1:1, so
+    // it's sharp and stable in motion. The texture is still drawn to the logical
+    // canvas rect (AddImage), and SDL's scale maps that to the same physical area.
+    float dpi = ImGui::GetIO().DisplayFramebufferScale.x;
+    if (dpi < 1.0f || dpi > 4.0f) dpi = 1.0f;
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
-                                           (int)canvasSize.x, (int)canvasSize.y,
+                                           (int)(canvasSize.x * dpi), (int)(canvasSize.y * dpi),
                                            gameView ? 1 : 0, viewIgnore))
         dl->AddImage((ImTextureID)tex, canvasPos, canvasEnd);
 

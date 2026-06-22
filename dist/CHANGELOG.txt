@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.78.0
+  - No more facet lines with per-pixel lighting off: lit untextured meshes now shade
+    via the smooth (Gouraud) path using the face normal interpolated per vertex, so
+    a flat floor has no hard line on its triangle diagonal under any light — while
+    cubes keep their crisp hard edges. Combined with per-pixel + rim off (v2.77),
+    the ground is clean at any zoom: no moiré, no cracks, no facet lines.
+
 v2.77.0
   - Per-pixel lighting is now OFF by default. It produced a moiré/shimmer on large
     flat surfaces (e.g. the ground) when the camera zoomed in close; flat/Gouraud

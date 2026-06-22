@@ -1136,7 +1136,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // Smooth (Gouraud) shading when the mesh carries per-vertex normals and
         // isn't textured/unlit — interpolated lighting across each face. Matcap
         // also rides the smooth path (it interpolates a per-vertex sampled color).
-        const bool smooth = useMatcap || (!tex && mr->mesh.HasNormals());
+        // Lit, untextured meshes shade via the smooth (Gouraud) path even without
+        // per-vertex normals — they use the face normal, interpolated per vertex, so
+        // there are no flat-shading facet lines (only truly unlit meshes stay flat).
+        const bool smooth = useMatcap || (!tex && !mr->unlit);
         const Mat4 nrm = model;   // linear part transforms normals (rigid/uniform)
 
         // --- Per-mesh frustum cull: project the 8 AABB corners to clip space and
@@ -1216,7 +1219,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float mu = mx * 0.5f + 0.5f, mv = 1.0f - (my * 0.5f + 0.5f);
                     Color mc = mcap->Sample(mu, mv);
                     lk = {mc.r, mc.g, mc.b};
-                } else if (!mr->unlit && mr->mesh.HasNormals()) {
+                } else if (!mr->unlit) {
+                    // Per-vertex light (Gouraud) from the vertex normal — or the flat
+                    // FACE normal when the mesh has none. Computing it per vertex (vs a
+                    // single per-face value) interpolates smoothly across each face, so
+                    // a flat ground under a point light has no hard facet line on its
+                    // triangle diagonal even without per-pixel lighting.
                     lk = SceneLights::ShadeColor(wp[k], nk);
                 }
                 in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x, vt * mr->tiling.y,

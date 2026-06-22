@@ -5169,8 +5169,18 @@ void DrawInspector(EditorState& ed) {
                 mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
             }
             ImGui::Checkbox("Wireframe", &mr->wireframe);
-            ImGui::SameLine();
-            if (ImGui::Checkbox("Unlit", &mr->unlit)) ed.dirty = true;
+            // Shader (surface model): Standard lit / Unlit / Toon (cel). Folds the old
+            // Unlit flag into the selector; the renderer treats Unlit-shader == unlit.
+            int sh = (int)mr->shader;
+            if (mr->unlit && mr->shader == MeshRenderer::Shader::Standard) sh = 1;  // legacy unlit flag
+            const char* shaders[] = {"Standard", "Unlit", "Toon"};
+            if (ImGui::Combo("Shader##mesh", &sh, shaders, 3)) {
+                mr->shader = (MeshRenderer::Shader)sh;
+                mr->unlit = (mr->shader == MeshRenderer::Shader::Unlit);  // keep legacy flag in sync
+                ed.dirty = true;
+            }
+            if (mr->shader == MeshRenderer::Shader::Toon)
+                if (ImGui::SliderInt("Cel Bands##mesh", &mr->toonBands, 2, 6)) ed.dirty = true;
             // Material: emissive glow + specular highlight.
             float em[3] = {mr->emissive.r, mr->emissive.g, mr->emissive.b};
             if (ImGui::ColorEdit3("Emissive##mesh", em)) {

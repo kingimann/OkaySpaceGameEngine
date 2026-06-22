@@ -13,6 +13,15 @@ class MeshRenderer : public Component {
 public:
     Mesh  mesh;
     Color color = Color::White;        // base (albedo) color
+
+    /// Which surface/shading model the renderer uses (Unity's "Shader" on a
+    /// Material). Standard = the full lit PBR-ish model; Unlit = flat base color, no
+    /// lighting; Toon = cel-shaded (the diffuse banded into `toonBands` hard steps
+    /// with a single hard specular glint).
+    enum class Shader { Standard, Unlit, Toon };
+    Shader shader = Shader::Standard;
+    /// Number of cel bands for the Toon shader (2-6 reads best). Ignored otherwise.
+    int    toonBands = 3;
     bool  enabled = true;      // when false the mesh is not drawn (e.g. the local
                                // player's own body in first person)
     bool  wireframe = false;   // solid by default (Unity-like); true = edges only

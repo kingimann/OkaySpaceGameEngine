@@ -167,6 +167,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Specular/gloss map (separate record so older scenes still load).
         if (!mr->specularMap.empty())
             out << "  specmap " << Quote(mr->specularMap) << "\n";
+        // Shading model (separate record so older scenes still load).
+        if (mr->shader != MeshRenderer::Shader::Standard)
+            out << "  shader " << (int)mr->shader << " " << mr->toonBands << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -757,6 +760,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         in >> std::ws;
                         if (in.peek() == '"') mr->specularMap = ReadQuoted(in);
+                    }
+                } else if (field == "shader") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        int s = 0; in >> s >> mr->toonBands;
+                        mr->shader = (MeshRenderer::Shader)s;
                     }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();

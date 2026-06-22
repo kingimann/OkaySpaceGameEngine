@@ -23,6 +23,10 @@ struct Material {
     std::string texture;
     Vec2        tiling{1.0f, 1.0f};
 
+    /// Shading model (Unity's shader selector) + cel-band count for the Toon shader.
+    MeshRenderer::Shader shader = MeshRenderer::Shader::Standard;
+    int                  toonBands = 3;
+
     /// Copy the surface fields from a renderer into a Material preset.
     static Material FromRenderer(const MeshRenderer& mr) {
         Material m;
@@ -30,6 +34,7 @@ struct Material {
         m.specular = mr.specular; m.shininess = mr.shininess;
         m.unlit = mr.unlit; m.doubleSided = mr.doubleSided;
         m.texture = mr.texture; m.tiling = mr.tiling;
+        m.shader = mr.shader; m.toonBands = mr.toonBands;
         return m;
     }
     /// Stamp this material's look onto a renderer (mesh/geometry untouched).
@@ -38,6 +43,7 @@ struct Material {
         mr.specular = specular; mr.shininess = shininess;
         mr.unlit = unlit; mr.doubleSided = doubleSided;
         mr.texture = texture; mr.tiling = tiling;
+        mr.shader = shader; mr.toonBands = toonBands;
     }
 
     std::string ToText() const {
@@ -48,6 +54,7 @@ struct Material {
           << "specular " << specular << " " << shininess << "\n"
           << "flags " << (unlit ? 1 : 0) << " " << (doubleSided ? 1 : 0) << "\n"
           << "tiling " << tiling.x << " " << tiling.y << "\n"
+          << "shader " << (int)shader << " " << toonBands << "\n"
           << "texture " << (texture.empty() ? "-" : texture) << "\n";
         return o.str();
     }
@@ -61,6 +68,7 @@ struct Material {
             else if (tok == "specular")in >> m.specular >> m.shininess;
             else if (tok == "flags")   { int u = 0, d = 0; in >> u >> d; m.unlit = u != 0; m.doubleSided = d != 0; }
             else if (tok == "tiling")  in >> m.tiling.x >> m.tiling.y;
+            else if (tok == "shader")  { int s = 0; in >> s >> m.toonBands; m.shader = (MeshRenderer::Shader)s; }
             else if (tok == "texture") { std::string t; in >> t; m.texture = (t == "-") ? "" : t; }
         }
         return m;

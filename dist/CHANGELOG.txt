@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.103.0  (shaders: surface-model selector + Toon)
+  - Materials/MeshRenderers now pick a Shader (surface model), like Unity: Standard
+    (the full lit PBR-ish model), Unlit (flat base color, no lighting), or Toon.
+  - New Toon (cel) shader: quantizes the diffuse lighting into a configurable number
+    of hard bands (Cel Bands, 2-6) and collapses the specular into a single hard
+    glint, for a cartoon look. It auto-uses the per-pixel path so it works out of the
+    box regardless of the global Per-Pixel Lighting toggle.
+  - Inspector Shader dropdown (folds the old Unlit flag into the selector) + Cel Bands
+    slider; the look is stored on .okaymat materials and in the scene (back-compatible).
+  - New shaders test suite (preset + scene round-trips, and a render check that Toon
+    posterizes a lit sphere into far fewer shades than Standard); 77 tests pass.
+
 v2.102.0  (Cinemachine, cont.: dolly track)
   - New DollyPath component: a smooth camera rail (Cinemachine's Path/SmoothPath). An
     ordered list of waypoints evaluated as a Catmull-Rom spline, optionally looped.

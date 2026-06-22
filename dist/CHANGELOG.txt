@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.79.0
+  - Added a "Gizmos" toggle (View menu): hide the editor-only Scene overlays — the
+    yellow selection bounding box, camera frustum, and light icons — for a clean
+    view. (These never appeared in the Game view or a build; the toggle just lets
+    you confirm that and declutter the Scene.) Saved across sessions.
+
 v2.78.0
   - No more facet lines with per-pixel lighting off: lit untextured meshes now shade
     via the smooth (Gouraud) path using the face normal interpolated per vertex, so

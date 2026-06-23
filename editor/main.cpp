@@ -639,6 +639,14 @@ struct BuildSettings {
     bool  showFps = false;
     bool  includeAllProjectScenes = false; // else just the current scene
     bool  developmentBuild = false;
+    // ---- Graphics / quality (applied by the player at startup) ----
+    bool  lockCursor = false;              // hide + lock the cursor on launch
+    bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
+    bool  shadows = false;                 // directional cast shadows
+    bool  bloom = false;                   // glow on bright/emissive areas
+    bool  ssao = false;                    // ambient occlusion
+    bool  fxaa = true;                     // cheap edge anti-aliasing
+    int   antialias = 1;                   // 1 = off, 2 = 2x supersample
 };
 BuildSettings g_build;
 
@@ -911,6 +919,9 @@ struct Options {
     float masterVolume = 1.0f;
     bool showFps = false;
     bool includeAllProjectScenes = false, developmentBuild = false;
+    bool lockCursor = false, perPixelLighting = false, shadows = false,
+         bloom = false, ssao = false, fxaa = true;
+    int  antialias = 1;
 };
 
 // Build the game into outDir. Returns a human-readable status string.
@@ -959,6 +970,13 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "volume=" << opt.masterVolume << "\n";
         cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
+        cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
+        cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
+        cf << "shadows=" << (opt.shadows ? 1 : 0) << "\n";
+        cf << "bloom=" << (opt.bloom ? 1 : 0) << "\n";
+        cf << "ssao=" << (opt.ssao ? 1 : 0) << "\n";
+        cf << "fxaa=" << (opt.fxaa ? 1 : 0) << "\n";
+        cf << "antialias=" << opt.antialias << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
     }
@@ -4022,9 +4040,21 @@ void DrawFileDialogs(EditorState& ed) {
 
         ImGui::SeparatorText("Gameplay");
         ImGui::Checkbox("Quit on Escape", &g_build.quitOnEscape); ImGui::SameLine();
-        ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
+        ImGui::Checkbox("Show FPS overlay", &g_build.showFps); ImGui::SameLine();
+        ImGui::Checkbox("Lock cursor", &g_build.lockCursor);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor on launch (FPS/TPS games)");
         ImGui::SetNextItemWidth(200);
         ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
+
+        ImGui::SeparatorText("Graphics / Quality");
+        ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
+        ImGui::Checkbox("Shadows", &g_build.shadows);
+        ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
+        ImGui::Checkbox("Ambient occlusion", &g_build.ssao); ImGui::SameLine();
+        ImGui::Checkbox("FXAA", &g_build.fxaa);
+        bool aa2 = g_build.antialias > 1;
+        if (ImGui::Checkbox("Anti-aliasing 2x", &aa2)) g_build.antialias = aa2 ? 2 : 1;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Supersample: smoother but ~4x the pixels");
 
         ImGui::SeparatorText("Scenes & Options");
         ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
@@ -4046,6 +4076,9 @@ void DrawFileDialogs(EditorState& ed) {
             o.quitOnEscape = g_build.quitOnEscape; o.masterVolume = g_build.masterVolume; o.showFps = g_build.showFps;
             o.includeAllProjectScenes = g_build.includeAllProjectScenes;
             o.developmentBuild = g_build.developmentBuild;
+            o.lockCursor = g_build.lockCursor; o.perPixelLighting = g_build.perPixelLighting;
+            o.shadows = g_build.shadows; o.bloom = g_build.bloom; o.ssao = g_build.ssao;
+            o.fxaa = g_build.fxaa; o.antialias = g_build.antialias;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);

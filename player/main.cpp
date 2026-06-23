@@ -173,6 +173,8 @@ int main(int argc, char** argv) {
         bool showCursor = true, quitOnEscape = true, showFps = false;
         int  fpsCap = 0;
         float volume = 1.0f;
+        bool lockCursor = false, perPixel = false, shadows = false, bloom = false, ssao = false, fxaa = true;
+        int  antialias = 1;
         std::string startup;
         std::vector<std::string> scenes;
     } cfg;
@@ -196,6 +198,13 @@ int main(int argc, char** argv) {
             else if (k == "quit_on_escape") cfg.quitOnEscape = std::atoi(v.c_str()) != 0;
             else if (k == "volume")     cfg.volume = (float)std::atof(v.c_str());
             else if (k == "show_fps")   cfg.showFps = std::atoi(v.c_str()) != 0;
+            else if (k == "lock_cursor") cfg.lockCursor = std::atoi(v.c_str()) != 0;
+            else if (k == "perpixel")   cfg.perPixel = std::atoi(v.c_str()) != 0;
+            else if (k == "shadows")    cfg.shadows = std::atoi(v.c_str()) != 0;
+            else if (k == "bloom")      cfg.bloom = std::atoi(v.c_str()) != 0;
+            else if (k == "ssao")       cfg.ssao = std::atoi(v.c_str()) != 0;
+            else if (k == "fxaa")       cfg.fxaa = std::atoi(v.c_str()) != 0;
+            else if (k == "antialias")  cfg.antialias = std::atoi(v.c_str());
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
         }
@@ -234,6 +243,14 @@ int main(int argc, char** argv) {
     Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+
+    // Apply the build's graphics/quality settings to the renderer + cursor.
+    PerPixelLighting() = cfg.perPixel;
+    ShadowsEnabled()   = cfg.shadows;
+    BloomEnabled()     = cfg.bloom;
+    SSAOEnabled()      = cfg.ssao;
+    FXAAEnabled()      = cfg.fxaa;
+    if (cfg.lockCursor) Cursor::Capture(true);
     SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
 
     SDL_AudioSpec want{}, have{};
@@ -460,7 +477,8 @@ int main(int argc, char** argv) {
                 // supersampling is 4x the pixels — far too slow with the full
                 // shadow/SSAO/bloom pipeline — so it's off by default.
                 static std::vector<std::uint32_t> mesh3DDown;
-                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h, 1,
+                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h,
+                                                         cfg.antialias < 1 ? 1 : cfg.antialias,
                                                          cam ? cam->ignoreObject : nullptr);
                 if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
                     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);

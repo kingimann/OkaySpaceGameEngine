@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.124.0  (Build Settings: graphics / quality + cursor lock)
+  - The Build Game dialog gained a Graphics / Quality group so a shipped game ships
+    with the look you want: per-pixel lighting, shadows, bloom, ambient occlusion,
+    FXAA, and 2x anti-aliasing — plus a Lock cursor option (hide + lock on launch).
+  - These are written into game.okayconfig and applied by the player at startup
+    (renderer effect toggles + supersample factor + Cursor lock), giving full control
+    over a built game's quality without touching code.
+
 v2.123.0  (Third-person SHOOTER controller + cursor lock/hide)
   - New ThirdPersonShooterController: over-the-shoulder aim camera, the body always
     faces where you look (strafe shooter), mouse look, right-mouse aim (camera zooms

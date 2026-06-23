@@ -14,11 +14,13 @@
 #include "imgui_impl_sdlrenderer2.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -420,11 +422,34 @@ int main(int argc, char** argv) {
     };
     std::string serverUrl = fromEnvOrFile("OKAY_ACCOUNT_SERVER", "account_server.txt");
     std::string apiKey    = fromEnvOrFile("OKAY_ACCOUNT_API_KEY", "account_apikey.txt");
-    acct::AccountService account(acct::DefaultConfigDir(fs::path(g_exeDir)), serverUrl, apiKey);
+    // Held by pointer so the Settings tab can rebuild it live when the server
+    // config changes.
+    fs::path acctCfgDir = acct::DefaultConfigDir(fs::path(g_exeDir));
+    auto accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, serverUrl, apiKey);
     // If we resumed a saved session against an online server, make sure it's
     // still valid (the token may have been revoked/expired); this signs the
     // player out if so. Offline or local accounts are left as-is.
-    account.VerifySession();
+    accountPtr->VerifySession();
+
+    // Editable copies of the account-server settings, shown in the Settings tab.
+    char setUrl[256]; std::snprintf(setUrl, sizeof(setUrl), "%s", serverUrl.c_str());
+    char setKey[256]; std::snprintf(setKey, sizeof(setKey), "%s", apiKey.c_str());
+    std::string setStatus;
+    // Persist the settings next to the launcher and rebuild the service so the
+    // change takes effect without a restart.
+    auto applyAccountSettings = [&]() {
+        std::string url = setUrl, key = setKey;
+        trimEol(url); trimEol(key);
+        std::ofstream(fs::path(g_exeDir) / "account_server.txt", std::ios::trunc) << url << "\n";
+        std::ofstream(fs::path(g_exeDir) / "account_apikey.txt", std::ios::trunc) << key << "\n";
+        accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, url, key);
+        accountPtr->VerifySession();
+        setStatus = url.empty()
+            ? "Saved. Using local dev accounts (no server set)."
+            : std::string("Saved. Server: ") + accountPtr->ServerUrl() + " (" +
+              accountPtr->ProviderName() + ").";
+    };
+
     char acctUser[64] = {0};
     char acctPass[64] = {0};
     bool acctRegisterMode = false;       // false = sign in, true = create account
@@ -432,9 +457,14 @@ int main(int argc, char** argv) {
     bool acctMessageError = true;
     bool acctBusy = false;
 
-    int tab = 0; // 0 Create, 1 Play, 2 Marketplace, 3 Account
+    char playFilter[128] = {0};   // Play-tab search box
+    int tab = 0; // 0 Create, 1 Play, 2 Marketplace, 3 Account, 4 Settings
     bool running = true;
     while (running) {
+        // Current account service for this frame. Held by reference so existing
+        // code reads naturally; the Settings tab may rebuild accountPtr (which
+        // is why the Settings tab uses accountPtr-> directly, not this alias).
+        acct::AccountService& account = *accountPtr;
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
@@ -469,9 +499,9 @@ int main(int argc, char** argv) {
         ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
         ImGui::TextDisabled("game engine");
         ImGui::Dummy(ImVec2(0, 16));
-        const char* navs[]  = {"  Create", "  Play", "  Marketplace", "  Account"};
-        const char* navIco[] = {"+", ">", "*", "@"};
-        for (int i = 0; i < 4; ++i) {
+        const char* navs[]  = {"  Create", "  Play", "  Marketplace", "  Account", "  Settings"};
+        const char* navIco[] = {"+", ">", "*", "@", "="};
+        for (int i = 0; i < 5; ++i) {
             char lbl[48];
             std::snprintf(lbl, sizeof(lbl), "  %s  %s", navIco[i], navs[i] + 2);
             if (ImGui::Selectable(lbl, tab == i, 0, ImVec2(0, 40))) tab = i;
@@ -552,13 +582,26 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("No games found yet.");
                 ImGui::TextWrapped("Build one from the editor (File > Build Game), then put it "
                                    "next to the launcher or in a 'games' folder and hit Refresh.");
-            } else
+            } else {
+                // Search box (case-insensitive substring match on the file name).
+                ImGui::PushItemWidth(-1);
+                ImGui::InputTextWithHint("##playFilter", "Search games...", playFilter, sizeof(playFilter));
+                ImGui::PopItemWidth();
+                auto lower = [](std::string s) {
+                    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+                    return s;
+                };
+                std::string needle = lower(playFilter);
+                int shown = 0;
                 for (std::size_t i = 0; i < scenes.size(); ++i) {
+                    std::string name = scenes[i].filename().string();
+                    if (!needle.empty() && lower(name).find(needle) == std::string::npos)
+                        continue;
+                    ++shown;
                     ImGui::PushID((int)i);
                     ImGui::BeginChild("game", ImVec2(0, 60), true);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-                    ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s",
-                                       scenes[i].filename().string().c_str());
+                    ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", name.c_str());
                     ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8);
@@ -566,6 +609,9 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                     ImGui::PopID();
                 }
+                if (shown == 0)
+                    ImGui::TextDisabled("No games match \"%s\".", playFilter);
+            }
         } else if (tab == 2) {                            // ---- Marketplace ----
             ImGui::PushFont(nullptr);
             ImGui::TextColored(kTitle, "Marketplace");
@@ -588,7 +634,7 @@ int main(int argc, char** argv) {
             }
             ImGui::Dummy(ImVec2(0, 8));
             ImGui::TextDisabled("Community content marketplace coming soon.");
-        } else {                                          // ---- Account ----
+        } else if (tab == 3) {                            // ---- Account ----
             ImGui::PushFont(nullptr);
             ImGui::TextColored(kTitle, "Account");
             ImGui::PopFont();
@@ -611,9 +657,8 @@ int main(int argc, char** argv) {
                 ImGui::TextWrapped(account.IsOnline()
                     ? "Sign in to your OkaySpace account to sync your work."
                     : "No account server configured — using a local dev account on "
-                      "this device. Set OKAY_ACCOUNT_SERVER (+ OKAY_ACCOUNT_API_KEY "
-                      "for Supabase), or drop account_server.txt / account_apikey.txt "
-                      "next to the launcher, to sign in online.");
+                      "this device. Open the Settings tab to connect to a server "
+                      "(Supabase) and sign in online.");
                 if (account.IsOnline()) {
                     ImGui::TextDisabled("Server: %s (%s)", account.ServerUrl().c_str(),
                                         account.ProviderName());
@@ -667,6 +712,51 @@ int main(int argc, char** argv) {
                     ImGui::PopTextWrapPos();
                 }
             }
+        } else {                                          // ---- Settings ----
+            ImGui::PushFont(nullptr);
+            ImGui::TextColored(kTitle, "Settings");
+            ImGui::PopFont();
+            ImGui::TextWrapped("Connect accounts to a server so players sign in online "
+                               "and their progress follows them. For Supabase, paste your "
+                               "Project URL and the anon public key (Supabase dashboard > "
+                               "Project Settings > API). Leave both blank to use local "
+                               "accounts on this device only.");
+            ImGui::Dummy(ImVec2(0, 12));
+            ImGui::SeparatorText("Account server");
+
+            ImGui::TextDisabled("Server URL");
+            ImGui::PushItemWidth(460);
+            ImGui::InputTextWithHint("##setUrl", "https://YOUR-PROJECT.supabase.co",
+                                     setUrl, sizeof(setUrl));
+            ImGui::TextDisabled("API key  (anon public — required for Supabase)");
+            ImGui::InputTextWithHint("##setKey", "anon public key (leave blank for a custom server)",
+                                     setKey, sizeof(setKey));
+            ImGui::PopItemWidth();
+            ImGui::Dummy(ImVec2(0, 12));
+
+            if (ImGui::Button("Save & apply", ImVec2(180, 46))) applyAccountSettings();
+            ImGui::SameLine();
+            if (ImGui::Button("Use local (clear)", ImVec2(180, 46))) {
+                setUrl[0] = setKey[0] = '\0';
+                applyAccountSettings();
+            }
+
+            ImGui::Dummy(ImVec2(0, 10));
+            // accountPtr (not the per-frame alias) — applyAccountSettings above
+            // may have just rebuilt it this frame.
+            if (accountPtr->IsOnline())
+                ImGui::TextDisabled("Active: %s (%s)", accountPtr->ServerUrl().c_str(),
+                                    accountPtr->ProviderName());
+            else
+                ImGui::TextDisabled("Active: local dev accounts (no server)");
+            if (!setStatus.empty()) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "%s", setStatus.c_str());
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::Dummy(ImVec2(0, 10));
+            ImGui::TextDisabled("Saved next to the launcher (account_server.txt / "
+                                "account_apikey.txt). The anon key is safe to share.");
         }
 
         ImGui::EndChild();

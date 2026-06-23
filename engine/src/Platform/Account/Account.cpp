@@ -12,25 +12,41 @@ namespace {
         static std::unique_ptr<account::AccountService> s;
         return s;
     }
-    std::string& ConfigDir() { static std::string d; return d; }
-    std::string& ServerUrl() { static std::string u; return u; }
-    std::string& LastErr()   { static std::string e; return e; }
+    // Configuration set via Configure(); empty entries fall back to env vars /
+    // compile-time defaults in Get().
+    bool&        Configured() { static bool b = false; return b; }
+    std::string& ConfigDir()  { static std::string d; return d; }
+    std::string& ServerUrl()  { static std::string u; return u; }
+    std::string& ApiKey()     { static std::string k; return k; }
+    std::string& LastErr()    { static std::string e; return e; }
+
+    // Compile-time defaults let a shipped build be online out of the box:
+    //   -DOKAY_DEFAULT_ACCOUNT_URL=... -DOKAY_DEFAULT_ACCOUNT_KEY=...
+#ifndef OKAY_DEFAULT_ACCOUNT_URL
+#  define OKAY_DEFAULT_ACCOUNT_URL ""
+#endif
+#ifndef OKAY_DEFAULT_ACCOUNT_KEY
+#  define OKAY_DEFAULT_ACCOUNT_KEY ""
+#endif
+
+    std::string EnvOr(const char* name, const char* fallback) {
+        if (const char* v = std::getenv(name)) return v;
+        return fallback;
+    }
 
     // Where account data lives when Configure() wasn't called: the per-user
     // config directory, falling back to the current directory.
     std::string DefaultDir() {
         return account::DefaultConfigDir(std::filesystem::path(".")).string();
     }
-    // The server URL to use when Configure() didn't set one.
-    std::string DefaultServer() {
-        if (const char* env = std::getenv("OKAY_ACCOUNT_SERVER")) return env;
-        return {};
-    }
 }
 
-void Account::Configure(const std::string& configDir, const std::string& serverUrl) {
+void Account::Configure(const std::string& configDir, const std::string& serverUrl,
+                        const std::string& apiKey) {
+    Configured() = true;
     ConfigDir() = configDir;
     ServerUrl() = serverUrl;
+    ApiKey()    = apiKey;
     Service().reset();              // rebuilt on next Get()
 }
 
@@ -39,9 +55,14 @@ bool Account::Exists() { return Service() != nullptr; }
 account::AccountService& Account::Get() {
     auto& s = Service();
     if (!s) {
-        std::string dir = ConfigDir().empty() ? DefaultDir() : ConfigDir();
-        std::string url = ServerUrl().empty() ? DefaultServer() : ServerUrl();
-        s = std::make_unique<account::AccountService>(std::filesystem::path(dir), url);
+        // Configure() wins; otherwise read env vars, then compile-time defaults.
+        std::string dir = !ConfigDir().empty() ? ConfigDir() : DefaultDir();
+        std::string url = ServerUrl(), key = ApiKey();
+        if (!Configured()) {
+            url = EnvOr("OKAY_ACCOUNT_SERVER", OKAY_DEFAULT_ACCOUNT_URL);
+            key = EnvOr("OKAY_ACCOUNT_API_KEY", OKAY_DEFAULT_ACCOUNT_KEY);
+        }
+        s = std::make_unique<account::AccountService>(std::filesystem::path(dir), url, key);
     }
     return *s;
 }

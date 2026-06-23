@@ -18,9 +18,11 @@ public:
     static bool Exists();
 
     /// Choose where account data lives and (optionally) which auth server to
-    /// use. Call before the first Get(); calling it afterwards rebuilds the
-    /// service (and drops any in-memory session that wasn't persisted).
-    static void Configure(const std::string& configDir, const std::string& serverUrl = "");
+    /// use. Pass an `apiKey` to use a managed backend like Supabase (the server
+    /// URL is the project URL). Call before the first Get(); calling it
+    /// afterwards rebuilds the service (and drops any unsaved in-memory session).
+    static void Configure(const std::string& configDir, const std::string& serverUrl = "",
+                          const std::string& apiKey = "");
 
     /// Release the service (mainly for tests).
     static void Shutdown();

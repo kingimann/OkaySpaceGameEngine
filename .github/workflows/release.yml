@@ -1,0 +1,58 @@
+name: Release Windows build
+
+# Cross-compiles the Windows distribution (launcher, editor, player + SDL2.dll)
+# from Linux with MinGW-w64. Runs on a version tag (and attaches the zip to the
+# GitHub Release), or on demand via "Run workflow".
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write          # needed to attach assets to a Release
+
+jobs:
+  windows-exe:
+    name: Cross-compile Windows exes (MinGW)
+    runs-on: ubuntu-latest
+    env:
+      SDL2_VERSION: 2.30.9
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build mingw-w64 zip
+
+      - name: Fetch SDL2 (MinGW dev)
+        run: |
+          curl -sSL -o sdl2-mingw.tar.gz \
+            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
+          mkdir -p sdl2-mingw
+          tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
+          echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
+
+      - name: Build Windows distribution
+        run: scripts/build-windows-dist.sh
+
+      - name: Package zip
+        id: pkg
+        run: |
+          VER=$(cat build-win-dist/VERSION.txt 2>/dev/null || echo dev)
+          NAME="OkaySpace-windows-v${VER}"
+          mkdir -p "$NAME"
+          cp build-win-dist/* "$NAME"/
+          zip -r "${NAME}.zip" "$NAME"
+          echo "zip=${NAME}.zip" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: ${{ steps.pkg.outputs.zip }}
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.pkg.outputs.zip }}

@@ -315,10 +315,27 @@ Want a Unity-style editor window (hierarchy, inspector, scene view, Play button)
 # Debian/Ubuntu: sudo apt-get install libsdl2-dev libgl1-mesa-dev
 cmake -S . -B build -DOKAY_BUILD_EDITOR=ON
 cmake --build build -j
-./build/bin/okay-editor
+./build/bin/OkayEngine
 ```
 
 Full guide: [`docs/editor.md`](docs/editor.md).
+
+### Windows builds (cross-compiled from Linux)
+
+The Windows `.exe`s are cross-compiled from Linux with MinGW-w64. To build the
+whole Windows distribution (launcher, editor, player + the shared `SDL2.dll`):
+
+```bash
+sudo apt-get install -y mingw-w64 cmake ninja-build
+# SDL2 MinGW dev files from https://github.com/libsdl-org/SDL/releases:
+export SDL2_MINGW_PREFIX=/path/to/SDL2-<ver>/x86_64-w64-mingw32
+./scripts/build-windows-dist.sh        # -> build-win-dist/
+```
+
+CI does this automatically: [`.github/workflows/release.yml`](.github/workflows/release.yml)
+cross-compiles the Windows build on every `v*` tag (and on demand) and attaches
+the zip to the GitHub Release. (`scripts/build-windows-exe.sh` builds just the
+single-file console demo.)
 
 ### Optional backends
 

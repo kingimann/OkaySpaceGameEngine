@@ -394,4 +394,45 @@ std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& cent
     return out;
 }
 
+Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore, int iterations) {
+    for (int it = 0; it < iterations; ++it) {
+        bool moved = false;
+        for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+            if (!Alive(col)) continue;
+            if (ignore && col->gameObject == ignore) continue;
+            if (col->isTrigger) continue;                 // triggers never block
+            if (col->shape() == Collider3D::Shape::Sphere) {
+                Vec3 sc; float sr; AsSphere(col, c, sc, sr);
+                Vec3 d = c - sc; float dl = d.Magnitude();
+                if (dl < r + sr) {
+                    Vec3 n = dl > 1e-5f ? d * (1.0f / dl) : Vec3{0, 1, 0};
+                    c = sc + n * (r + sr); moved = true;
+                }
+                continue;
+            }
+            // Box / capsule (via its world AABB): push out of the box surface.
+            Vec3 mn, mx; col->WorldAABB(mn, mx);
+            Vec3 cp = ClampVec(c, mn, mx);
+            Vec3 d = c - cp; float dl = d.Magnitude();
+            if (dl > 1e-5f) {
+                if (dl < r) { c = cp + d * (1.0f / dl) * r; moved = true; }
+            } else {
+                // Centre is inside the box: eject along the axis of least penetration.
+                float dxl = c.x - mn.x, dxh = mx.x - c.x;
+                float dyl = c.y - mn.y, dyh = mx.y - c.y;
+                float dzl = c.z - mn.z, dzh = mx.z - c.z;
+                float m = dxl; Vec3 n{-1, 0, 0};
+                if (dxh < m) { m = dxh; n = {1, 0, 0}; }
+                if (dyl < m) { m = dyl; n = {0, -1, 0}; }
+                if (dyh < m) { m = dyh; n = {0, 1, 0}; }
+                if (dzl < m) { m = dzl; n = {0, 0, -1}; }
+                if (dzh < m) { m = dzh; n = {0, 0, 1}; }
+                c = c + n * (m + r); moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+    return c;
+}
+
 } // namespace okay

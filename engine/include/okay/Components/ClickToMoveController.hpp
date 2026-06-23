@@ -6,6 +6,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mat4.hpp"
@@ -98,6 +99,7 @@ public:
             else { rb->velocity.x = dir.x * speed; rb->velocity.z = dir.z * speed; }
         } else {
             transform->Translate(lastStep ? Vec3{to.x, 0.0f, to.z} : dir * step);
+            ResolvePlayerBody(scene, gameObject);   // no clipping through walls/floors
             if (lastStep) m_hasDest = false;
         }
 

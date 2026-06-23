@@ -105,6 +105,25 @@ int main() {
         CHECK(p && p->GetComponent<TopDownController>() != nullptr);
     }
 
+    // --- Transform-only player (no Rigidbody3D) is stopped by a wall (no clipping) ---
+    {
+        Scene sc("noclip"); sc.physicsEnabled = false;
+        GameObject* wall = sc.CreateGameObject("Wall");
+        wall->transform->localPosition = {1.5f, 0.9f, 0.0f};
+        wall->AddComponent<BoxCollider3D>()->size = {1, 2, 1};   // AABB x in [1,2]
+
+        GameObject* p = sc.CreateGameObject("Player");           // no rigidbody, no collider
+        auto* td = p->AddComponent<TopDownController>();
+        td->walkSpeed = 6.0f;
+
+        Input::FeedKeys({'d'});                                  // walk +X toward the wall
+        for (int i = 0; i < 120; ++i) td->Update(1.0f / 60.0f);
+
+        float px = p->transform->localPosition.x;
+        CHECK(px > 0.1f);          // it did move toward the wall
+        CHECK(px < 0.7f);          // but stopped at the wall (~1.0 - 0.4 radius), not past it
+    }
+
     // --- Top-down controller moves world-relative and drives walk/run animation ---
     {
         Scene sc("tdmove"); sc.physicsEnabled = false;

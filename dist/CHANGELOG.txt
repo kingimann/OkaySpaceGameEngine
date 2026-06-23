@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.117.0  (no-clip: transform-only players collide with walls/floors)
+  - Players moved by the Transform (no Rigidbody3D) no longer clip through geometry.
+    New Physics3D::ResolveSphere depenetrates a body sphere out of solid colliders
+    (box/sphere/capsule, ignoring triggers and the player itself), and a shared
+    ResolvePlayerBody helper applies it after movement.
+  - Wired into all four 3D controllers (First/Third Person, Top Down, Click To Move)
+    on their transform-only path, so every player kind is stopped by walls and floors
+    even without a physics body. (Rigidbody players still collide via physics.)
+  - New test: a transform-only player is stopped by a wall instead of passing through.
+    78 tests pass.
+
 v2.116.0  (new Top-Down controller + premade player)
   - New TopDownController (twin-stick / ARPG / RTS-hero): WASD/left-stick movement on
     the XZ plane with momentum (accel/decel), turn-to-face-travel, world- or

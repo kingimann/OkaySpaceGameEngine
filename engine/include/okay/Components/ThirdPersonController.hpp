@@ -5,6 +5,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Input/Input.hpp"
@@ -128,6 +129,8 @@ public:
             }
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
+            if (gameObject && gameObject->scene())
+                ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
         }
 
         // ---- Turn the body (smoothly) ----

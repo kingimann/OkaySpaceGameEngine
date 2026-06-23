@@ -43,3 +43,7 @@ target_link_libraries(okay-player PRIVATE okay::engine ${OKAY_PLAYER_SDL_LIB})
 target_include_directories(okay-player PRIVATE ${SDL2_INCLUDE_DIRS})
 set_target_properties(okay-player PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+# On Windows ship under the name the editor + launcher expect (OkaySpacePlayer.exe).
+if(WIN32)
+    set_target_properties(okay-player PROPERTIES OUTPUT_NAME "OkaySpacePlayer")
+endif()

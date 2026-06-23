@@ -248,10 +248,13 @@ void StartUpdateCheck() {
 // Find the first of `names` that exists next to the launcher.
 std::string FindExe(std::initializer_list<const char*> names) {
     std::error_code ec;
-    for (const char* n : names) {
-        fs::path p = fs::path(g_exeDir) / n;
-        if (fs::exists(p, ec)) return p.string();
-    }
+    // Look next to the launcher and in a tidy "Engine" subfolder (organized layout).
+    const char* dirs[] = {"", "Engine", "runtime", "bin"};
+    for (const char* d : dirs)
+        for (const char* n : names) {
+            fs::path p = d[0] ? (fs::path(g_exeDir) / d / n) : (fs::path(g_exeDir) / n);
+            if (fs::exists(p, ec)) return p.string();
+        }
     return {};
 }
 
@@ -360,11 +363,12 @@ int main(int argc, char** argv) {
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
 
-    // Auto-check for a newer engine version (or a missing runtime) and install
-    // it in the background so the launcher window stays responsive meanwhile.
-    SDL_AtomicSet(&g_upState, (int)Up_Idle);
+    // Show the bundled version and DON'T phone home on startup: the published build
+    // on GitHub can lag this one, so an auto-check used to download an OLDER engine
+    // and mislead with "up to date". Updates are now opt-in via the button below.
+    SDL_AtomicSet(&g_upState, (int)Up_UpToDate);
     g_upMutex = SDL_CreateMutex();
-    StartUpdateCheck();
+    SetUpMsg("OkaySpace v" + LocalVersion());
 
     SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher  v" OKAY_ENGINE_VERSION,
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 980, 620,

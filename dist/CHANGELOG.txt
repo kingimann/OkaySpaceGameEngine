@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.121.0  (packaging: consistent names, one entry point, no stale auto-download)
+  - The build now produces the exact exe names the tools expect: the launcher is
+    OkaySpace.exe (the one thing to double-click), the editor OkaySpaceEngine.exe, the
+    runtime OkaySpacePlayer.exe. This stops the launcher from thinking the engine was
+    "missing" and silently downloading an OLDER copy under a different name (the source
+    of duplicate exes and the stuck-on-2.97 version).
+  - The launcher no longer phones home on startup: the published GitHub build can lag
+    this one, so an auto-check used to install an older engine and mislead with "up to
+    date". Updates are now opt-in via the button; the footer shows the bundled version.
+  - Organized install layout: OkaySpace.exe + SDL2.dll at the top, the editor + player
+    tucked in an Engine/ subfolder. The launcher searches that subfolder, and the
+    editor finds the launcher one level up for its gate.
+
 v2.120.0  (packaging: Unity-style — ship SDL2.dll)
   - The Windows build now links SDL2 dynamically and ships SDL2.dll beside the
     executables (Unity-style), instead of static-linking it into every exe. The C/C++

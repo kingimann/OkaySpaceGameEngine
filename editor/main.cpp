@@ -9190,9 +9190,14 @@ static bool PassesLauncherGate(int argc, char** argv) {
     namespace sfs = std::filesystem;
     std::error_code ec;
     sfs::path dir = sfs::absolute(argv[0], ec).parent_path();
-    const char* names[] = {"okayspace-launcher.exe", "OkaySpaceLauncher.exe", "okayspace-launcher"};
+    const char* names[] = {"OkaySpace.exe", "okayspace-launcher.exe", "OkaySpaceLauncher.exe", "okayspace-launcher"};
+    // Search next to the editor and one level up (the editor may live in an Engine/
+    // subfolder while the launcher sits at the top of the install).
     sfs::path launcher;
-    for (const char* n : names) { sfs::path p = dir / n; if (sfs::exists(p, ec)) { launcher = p; break; } }
+    for (const sfs::path& base : {dir, dir.parent_path()}) {
+        for (const char* n : names) { sfs::path p = base / n; if (sfs::exists(p, ec)) { launcher = p; break; } }
+        if (!launcher.empty()) break;
+    }
     const char* msg = "OkaySpace Editor must be opened from the OkaySpace Launcher.\n\n"
                       "Starting the launcher now...";
     if (launcher.empty())

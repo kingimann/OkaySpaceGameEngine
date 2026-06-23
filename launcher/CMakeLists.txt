@@ -47,4 +47,5 @@ target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 target_include_directories(okayspace-launcher PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
 set_target_properties(okayspace-launcher PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    OUTPUT_NAME "OkaySpace")    # the single thing the user double-clicks

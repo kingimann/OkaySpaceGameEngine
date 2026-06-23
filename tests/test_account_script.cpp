@@ -58,11 +58,15 @@ int main() {
         "function start() {\n"
         "  account_verify();\n"
         "  account_get(\"/profile\");\n"
+        "  cloud_save(\"slot1\", \"level=3\");\n"   // no-ops on local backend
+        "  cloud_load(\"slot1\");\n"
         "}\n");
     s.Start();
     s.Update(0.016f);
     CHECK(Account::IsLoggedIn());                  // local verify keeps the session
     CHECK(Account::Api("/profile").reached == false);  // no server to reach
+    CHECK(!Account::CloudSave("slot1", "x"));      // cloud needs a server
+    CHECK(Account::CloudLoad("slot1").empty());
 
     Account::Shutdown();
     fs::remove_all(dir);

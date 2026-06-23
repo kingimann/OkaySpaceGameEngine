@@ -207,6 +207,35 @@ inline std::string JsonField(const std::string& json, const std::string& key) {
     return out;
 }
 
+// Pull an array of strings for a top-level "key" (e.g. {"keys":["a","b"]}).
+inline std::vector<std::string> JsonStringArray(const std::string& json,
+                                                const std::string& key) {
+    std::vector<std::string> out;
+    std::string needle = "\"" + key + "\"";
+    std::size_t k = json.find(needle);
+    if (k == std::string::npos) return out;
+    std::size_t lb = json.find('[', k + needle.size());
+    if (lb == std::string::npos) return out;
+    std::size_t rb = json.find(']', lb);
+    if (rb == std::string::npos) rb = json.size();
+    std::size_t i = lb + 1;
+    while (i < rb) {
+        std::size_t q1 = json.find('"', i);
+        if (q1 == std::string::npos || q1 >= rb) break;
+        std::string s;
+        std::size_t j = q1 + 1;
+        for (; j < json.size(); ++j) {
+            char c = json[j];
+            if (c == '\\' && j + 1 < json.size()) { s += json[++j]; continue; }
+            if (c == '"') break;
+            s += c;
+        }
+        out.push_back(s);
+        i = j + 1;
+    }
+    return out;
+}
+
 } // namespace detail
 
 // ===========================================================================
@@ -318,7 +347,51 @@ public:
         return r.ok;
     }
 
+    // ---- Cloud saves ---------------------------------------------------
+    // Per-account key/value storage on the server, so progress follows the
+    // player across devices. `key` names a save slot ("save1", "settings");
+    // `data` is arbitrary text (your serialized save). These require the online
+    // backend and a signed-in player; on the local backend they no-op (Save/
+    // Delete return false, Load returns "", List returns empty).
+    //
+    // Wire protocol (see the reference server):
+    //   POST   /cloud/<key>   {"data": "..."}   -> 200
+    //   GET    /cloud/<key>                       -> 200 {"data": "..."} | 404
+    //   DELETE /cloud/<key>                       -> 200
+    //   GET    /cloud                             -> 200 {"keys": [...]}
+    bool CloudSave(const std::string& key, const std::string& data) {
+        if (!CloudKeyOk(key)) return false;
+        return Api("/cloud/" + key, "POST",
+                   "{\"data\":\"" + detail::JsonEscape(data) + "\"}").ok;
+    }
+    std::string CloudLoad(const std::string& key) {
+        if (!CloudKeyOk(key)) return {};
+        ApiResponse r = Api("/cloud/" + key, "GET");
+        return r.ok ? detail::JsonField(r.body, "data") : std::string{};
+    }
+    bool CloudHas(const std::string& key) {
+        if (!CloudKeyOk(key)) return false;
+        return Api("/cloud/" + key, "GET").ok;
+    }
+    bool CloudDelete(const std::string& key) {
+        if (!CloudKeyOk(key)) return false;
+        return Api("/cloud/" + key, "DELETE").ok;
+    }
+    std::vector<std::string> CloudList() {
+        ApiResponse r = Api("/cloud", "GET");
+        return r.ok ? detail::JsonStringArray(r.body, "keys") : std::vector<std::string>{};
+    }
+
 private:
+    // Save keys live in a URL path, so keep them to a safe, simple alphabet.
+    static bool CloudKeyOk(const std::string& key) {
+        if (key.empty() || key.size() > 64) return false;
+        for (char c : key)
+            if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.'))
+                return false;
+        return true;
+    }
+
     fs::path    configDir_;
     std::string serverUrl_;
     Session     session_;

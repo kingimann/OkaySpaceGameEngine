@@ -74,6 +74,14 @@ account::ApiResponse Account::Api(const std::string& path, const std::string& me
     return Get().Api(path, method, jsonBody);
 }
 
+bool Account::CloudSave(const std::string& key, const std::string& data) {
+    return Get().CloudSave(key, data);
+}
+std::string Account::CloudLoad(const std::string& key) { return Get().CloudLoad(key); }
+bool Account::CloudHas(const std::string& key)        { return Get().CloudHas(key); }
+bool Account::CloudDelete(const std::string& key)     { return Get().CloudDelete(key); }
+std::vector<std::string> Account::CloudList()         { return Get().CloudList(); }
+
 std::string Account::LastError() { return LastErr(); }
 
 } // namespace okay

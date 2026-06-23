@@ -67,6 +67,14 @@ int main() {
         acct::ApiResponse r = svc.Api("/profile");
         CHECK(!r.reached);
         CHECK(!r.ok);
+
+        // Cloud saves need a server, so they no-op on the local backend.
+        CHECK(!svc.CloudSave("slot1", "level=3"));
+        CHECK(svc.CloudLoad("slot1").empty());
+        CHECK(!svc.CloudHas("slot1"));
+        CHECK(svc.CloudList().empty());
+        // Bad keys are rejected outright.
+        CHECK(!svc.CloudSave("../etc/passwd", "x"));
     }
 
     // ---- session persists across service instances ----

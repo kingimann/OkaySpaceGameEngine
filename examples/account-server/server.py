@@ -90,6 +90,18 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_json()
         if body is None:
             return self._send(400, {"error": "Malformed JSON."})
+        path = self.path.rstrip("/")
+
+        # Authenticated cloud save: POST /cloud/<key>  {"data": "..."}
+        cloud_key = self._cloud_key(path)
+        if cloud_key is not None:
+            rec = self._bearer_record()
+            if rec is None:
+                return self._send(401, {"error": "Invalid or expired session."})
+            rec.setdefault("cloud", {})[cloud_key] = body.get("data", "")
+            db = load_db(); db[rec["username"].lower()] = rec; save_db(db)
+            return self._send(200, {"ok": True})
+
         username = (body.get("username") or "").strip()
         password = body.get("password") or ""
         if not username or not password:
@@ -98,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
         db = load_db()
         key = username.lower()
 
-        if self.path.rstrip("/") == "/register":
+        if path == "/register":
             if key in db:
                 return self._send(409, {"error": "That username is already taken."})
             salt = secrets.token_hex(16)
@@ -107,7 +119,7 @@ class Handler(BaseHTTPRequestHandler):
             save_db(db)
             return self._send(200, {"token": issue_token(username)})
 
-        if self.path.rstrip("/") == "/login":
+        if path == "/login":
             rec = db.get(key)
             if not rec or hash_password(password, rec["salt"]) != rec["hash"]:
                 return self._send(401, {"error": "Invalid username or password."})
@@ -115,12 +127,35 @@ class Handler(BaseHTTPRequestHandler):
 
         return self._send(404, {"error": "Unknown endpoint."})
 
+    def do_DELETE(self):
+        cloud_key = self._cloud_key(self.path.rstrip("/"))
+        rec = self._bearer_record()
+        if rec is None:
+            return self._send(401, {"error": "Invalid or expired session."})
+        if cloud_key is None:
+            return self._send(404, {"error": "Unknown endpoint."})
+        rec.get("cloud", {}).pop(cloud_key, None)
+        db = load_db(); db[rec["username"].lower()] = rec; save_db(db)
+        return self._send(200, {"ok": True})
+
+    @staticmethod
+    def _cloud_key(path):
+        """The save slot name for a /cloud/<key> path, else None."""
+        if path.startswith("/cloud/"):
+            return path[len("/cloud/"):]
+        return None
+
     def _bearer_user(self):
         """The username for the request's bearer token, or None."""
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
             return None
         return SESSIONS.get(auth[len("Bearer "):].strip())
+
+    def _bearer_record(self):
+        """The account record for the request's bearer token, or None."""
+        user = self._bearer_user()
+        return load_db().get(user.lower()) if user else None
 
     def do_GET(self):
         # Authenticated endpoints: the client sends Authorization: Bearer <token>.
@@ -136,6 +171,19 @@ class Handler(BaseHTTPRequestHandler):
             if not user:
                 return self._send(401, {"error": "Invalid or expired session."})
             return self._send(200, {"username": user, "level": 1, "coins": 0})
+
+        # Cloud saves: GET /cloud lists slots; GET /cloud/<key> reads one.
+        if path == "/cloud" or path.startswith("/cloud/"):
+            rec = self._bearer_record()
+            if rec is None:
+                return self._send(401, {"error": "Invalid or expired session."})
+            cloud = rec.get("cloud", {})
+            cloud_key = self._cloud_key(path)
+            if cloud_key is None:                      # GET /cloud
+                return self._send(200, {"keys": sorted(cloud.keys())})
+            if cloud_key not in cloud:                 # GET /cloud/<key>
+                return self._send(404, {"error": "No such save slot."})
+            return self._send(200, {"data": cloud[cloud_key]})
 
         return self._send(404, {"error": "Unknown endpoint."})
 

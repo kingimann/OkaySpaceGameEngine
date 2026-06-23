@@ -112,6 +112,39 @@ It stores accounts in a local `accounts.json` and issues random tokens — fine
 for development, not for production. Put a real database, TLS, rate limiting,
 and token validation in front of it before shipping.
 
+## Cloud saves
+
+Built on authenticated requests, cloud saves give each signed-in player
+per-account key/value storage on the server, so progress follows them across
+devices. A "key" names a save slot (`"save1"`, `"settings"`); the data is any
+text you choose (your serialized save). It needs the online backend and a
+signed-in player; on the local backend these no-op (`save`/`delete` return
+false, `load` returns `""`, `list` is empty).
+
+```javascript
+function save_game() {
+  cloud_save("slot1", "level=3;coins=120");
+}
+function load_game() {
+  if (cloud_has("slot1")) { progress = cloud_load("slot1"); }
+}
+```
+
+The reference server stores slots per account; sign in on another machine and
+`cloud_load` returns the same data. The wire protocol (see
+`okay/Platform/Account/AccountService.hpp`) is:
+
+```
+POST   <server>/cloud/<key>   {"data": "..."}   -> 200
+GET    <server>/cloud/<key>                       -> 200 {"data": "..."} | 404
+DELETE <server>/cloud/<key>                       -> 200
+GET    <server>/cloud                             -> 200 {"keys": [...]}
+```
+
+Save-slot keys are limited to letters, digits, `_`, `-`, `.` (they live in a
+URL path). From C++ the same is available as `okay::Account::CloudSave/
+CloudLoad/CloudHas/CloudDelete/CloudList`.
+
 ## Using accounts from a game (OkayScript)
 
 The engine exposes these builtins, backed by the shared `okay::Account` service:
@@ -129,6 +162,11 @@ The engine exposes these builtins, backed by the shared `okay::Account` service:
 | `account_verify()` | `1` / `0` | re-check the session with the server (signs out if rejected) |
 | `account_get(path)` | string | authenticated GET; response body, or `""` if not 2xx |
 | `account_post(path, json)` | string | authenticated POST; response body, or `""` if not 2xx |
+| `cloud_save(key, data)` | `1` / `0` | store a save slot on the server |
+| `cloud_load(key)` | string | read a save slot (`""` if missing / offline) |
+| `cloud_has(key)` | `1` / `0` | whether a save slot exists |
+| `cloud_delete(key)` | `1` / `0` | delete a save slot |
+| `cloud_list()` | array | the player's save slot names |
 
 ```javascript
 function start() {

@@ -2160,6 +2160,26 @@ struct OkayScriptVM::Impl {
             auto r = Account::Api(a[0].AsString(), "POST", a.size() > 1 ? a[1].AsString() : std::string{});
             return Value{r.ok ? r.body : std::string{}};
         };
+        // Cloud saves: per-account storage on the server so progress follows the
+        // player across devices. cloud_save("slot1", save_text) etc.
+        b["cloud_save"] = [](std::vector<Value>& a) {
+            return Value{(a.size() >= 2 && Account::CloudSave(a[0].AsString(), a[1].AsString())) ? 1.0f : 0.0f};
+        };
+        b["cloud_load"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? std::string{} : Account::CloudLoad(a[0].AsString())};
+        };
+        b["cloud_has"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Account::CloudHas(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["cloud_delete"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Account::CloudDelete(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["cloud_list"] = [](std::vector<Value>&) {
+            Value v = Value::MakeArray();
+            if (auto arr = v.AsArray())
+                for (auto& k : Account::CloudList()) arr->push_back(Value{k});
+            return v;
+        };
         // Scriptable Objects: read reusable .okaydata assets (item/enemy/level
         // definitions, config). Loaded + cached by path.
         b["data_num"] = [](std::vector<Value>& a) -> Value {

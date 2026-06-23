@@ -54,6 +54,18 @@ public:
                                     const std::string& method = "GET",
                                     const std::string& jsonBody = {});
 
+    // ---- Cloud saves (per-account storage on the server) --------------
+    /// Store `data` under save slot `key`. Returns false offline / signed out.
+    static bool CloudSave(const std::string& key, const std::string& data);
+    /// Read save slot `key` (empty string if missing / offline).
+    static std::string CloudLoad(const std::string& key);
+    /// Whether save slot `key` exists on the server.
+    static bool CloudHas(const std::string& key);
+    /// Delete save slot `key`.
+    static bool CloudDelete(const std::string& key);
+    /// The player's save slot names.
+    static std::vector<std::string> CloudList();
+
     /// The error message from the most recent Register/Login (empty on success).
     static std::string LastError();
 };

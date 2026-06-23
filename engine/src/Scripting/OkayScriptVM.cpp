@@ -20,6 +20,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
+#include "okay/Platform/Account/Account.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -2127,6 +2128,23 @@ struct OkayScriptVM::Impl {
         b["steam_workshop_path"] = [](std::vector<Value>& a) {
             return Value{a.empty() ? std::string{} : Steam::Get().WorkshopItemPath((std::uint64_t)a[0].AsFloat())};
         };
+        // ---- Player accounts (shared process-wide service) ------------
+        // account_login("user","pass") / account_register(...) return 1 on
+        // success and 0 on failure; account_error() carries the reason.
+        b["account_register"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            return Value{Account::Register(a[0].AsString(), a[1].AsString()).ok ? 1.0f : 0.0f};
+        };
+        b["account_login"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            return Value{Account::Login(a[0].AsString(), a[1].AsString()).ok ? 1.0f : 0.0f};
+        };
+        b["account_logout"] = [](std::vector<Value>&) { Account::Logout(); return Value{}; };
+        b["account_is_logged_in"] = [](std::vector<Value>&) { return Value{Account::IsLoggedIn() ? 1.0f : 0.0f}; };
+        b["account_is_online"] = [](std::vector<Value>&) { return Value{Account::IsOnline() ? 1.0f : 0.0f}; };
+        b["account_username"] = [](std::vector<Value>&) { return Value{Account::Username()}; };
+        b["account_token"]    = [](std::vector<Value>&) { return Value{Account::Token()}; };
+        b["account_error"]    = [](std::vector<Value>&) { return Value{Account::LastError()}; };
         // Scriptable Objects: read reusable .okaydata assets (item/enemy/level
         // definitions, config). Loaded + cached by path.
         b["data_num"] = [](std::vector<Value>& a) -> Value {

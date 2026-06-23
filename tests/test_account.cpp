@@ -2,7 +2,7 @@
 // session persistence). The remote backend isn't exercised here since it needs
 // a live auth server.
 #include "test_framework.hpp"
-#include "Account.hpp"
+#include "okay/Platform/Account/AccountService.hpp"
 
 #include <filesystem>
 

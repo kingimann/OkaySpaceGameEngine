@@ -341,9 +341,15 @@ add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)
 add_test(NAME jump COMMAND test_jump)
 
-# The launcher's account service is header-only (in shared/), so this test
-# needs no engine link — just the include path and C++17.
+# The account service core is header-only, so this test just needs the engine's
+# public include path and C++17 — no engine link required.
 add_executable(test_account test_account.cpp)
 target_compile_features(test_account PRIVATE cxx_std_17)
-target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME account COMMAND test_account)
+
+# Exercises the okay::Account facade and the account_* OkayScript builtins, so
+# this one links the engine.
+add_executable(test_account_script test_account_script.cpp)
+target_link_libraries(test_account_script PRIVATE okay::engine)
+add_test(NAME account_script COMMAND test_account_script)

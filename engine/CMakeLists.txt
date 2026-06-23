@@ -33,6 +33,7 @@ add_library(okay_engine
     src/Platform/Steam/NullSteamService.cpp
     src/Platform/Steam/Steam.cpp
     src/Components/SteamManager.cpp
+    src/Platform/Account/Account.cpp
     src/Physics/Physics2D.cpp
     src/Physics/Physics3D.cpp
     src/Audio/AudioMixer.cpp

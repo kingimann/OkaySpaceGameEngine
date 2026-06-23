@@ -1,5 +1,7 @@
-// OkaySpace account service — a small client-side account system used by the
-// launcher to sign players in and out.
+// OkaySpace account service — a small client-side account system for signing
+// players in and out. It is used both by the launcher (its Account tab) and by
+// the engine, which exposes a process-wide instance (okay::Account) and the
+// account_* OkayScript builtins so games can sign players in from script.
 //
 // It is built around a single AccountService that supports two backends,
 // chosen at runtime by whether a server URL is configured:

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.120.0  (packaging: Unity-style — ship SDL2.dll)
+  - The Windows build now links SDL2 dynamically and ships SDL2.dll beside the
+    executables (Unity-style), instead of static-linking it into every exe. The C/C++
+    runtime (libgcc/libstdc++/winpthread) stays static, so SDL2.dll is the ONLY DLL
+    needed — no MinGW-runtime DLL pile.
+  - Result: much smaller binaries (editor 19 MB -> 8 MB, player 19 -> 6, launcher
+    16 -> 4) that share one 1.8 MB SDL2.dll. CMake copies SDL2.dll into the output bin
+    dir automatically. Configure with -DOKAY_STATIC_SDL=ON for the old single-exe build.
+
 v2.119.0  (UI: soft / blurred drop shadows)
   - UIPanel and UIButton gain a Shadow Blur (shadowSoftness): 0 = a crisp shadow,
     higher = a soft penumbra for the premium card look. The player fakes the blur by

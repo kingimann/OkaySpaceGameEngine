@@ -270,6 +270,14 @@ struct ApiResponse {
     std::string body;
 };
 
+/// One row of a server leaderboard: the player's name, their score, and their
+/// rank (1 = top).
+struct ScoreEntry {
+    std::string name;
+    long        score = 0;
+    int         rank  = 0;
+};
+
 /// A client-side account service. Construct it with a config directory (where
 /// the local database and the saved session live) and, optionally, a server
 /// URL to use the online backend.
@@ -380,6 +388,39 @@ public:
     std::vector<std::string> CloudList() {
         ApiResponse r = Api("/cloud", "GET");
         return r.ok ? detail::JsonStringArray(r.body, "keys") : std::vector<std::string>{};
+    }
+
+    // ---- Leaderboards --------------------------------------------------
+    // Global high-score tables keyed by a board name. Submitting keeps the
+    // player's best. Requires the online backend + a signed-in player; no-ops
+    // on the local backend (Submit returns false, Top returns empty).
+    //
+    // Wire protocol (see the reference server):
+    //   POST /leaderboard/<board>          {"score": N}   -> 200
+    //   GET  /leaderboard/<board>?count=N                 -> 200
+    //        {"entries": ["1,alice,500", "2,bob,300", ...]}  (rank,name,score)
+    bool LeaderboardSubmit(const std::string& board, long score) {
+        if (!CloudKeyOk(board)) return false;
+        return Api("/leaderboard/" + board, "POST",
+                   "{\"score\":" + std::to_string(score) + "}").ok;
+    }
+    std::vector<ScoreEntry> LeaderboardTop(const std::string& board, int count = 10) {
+        std::vector<ScoreEntry> out;
+        if (!CloudKeyOk(board)) return out;
+        ApiResponse r = Api("/leaderboard/" + board + "?count=" + std::to_string(count), "GET");
+        if (!r.ok) return out;
+        for (const std::string& s : detail::JsonStringArray(r.body, "entries")) {
+            // "rank,name,score" — names are usernames, so they carry no commas.
+            std::size_t c1 = s.find(',');
+            std::size_t c2 = s.rfind(',');
+            if (c1 == std::string::npos || c2 == c1) continue;
+            ScoreEntry e;
+            try { e.rank = std::stoi(s.substr(0, c1)); } catch (...) {}
+            e.name = s.substr(c1 + 1, c2 - c1 - 1);
+            try { e.score = std::stol(s.substr(c2 + 1)); } catch (...) {}
+            out.push_back(std::move(e));
+        }
+        return out;
     }
 
 private:

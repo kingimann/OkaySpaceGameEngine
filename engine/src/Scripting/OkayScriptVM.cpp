@@ -2180,6 +2180,22 @@ struct OkayScriptVM::Impl {
                 for (auto& k : Account::CloudList()) arr->push_back(Value{k});
             return v;
         };
+        // Server leaderboards: leaderboard_submit("high", score) keeps the
+        // player's best; leaderboard_top("high", n) returns "rank,name,score"
+        // strings (same shape as steam_leaderboard_top).
+        b["leaderboard_submit"] = [](std::vector<Value>& a) {
+            return Value{(a.size() >= 2 && Account::LeaderboardSubmit(a[0].AsString(), (long)a[1].AsFloat())) ? 1.0f : 0.0f};
+        };
+        b["leaderboard_top"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeArray();
+            auto arr = v.AsArray();
+            if (!a.empty() && arr) {
+                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                for (auto& e : Account::LeaderboardTop(a[0].AsString(), n))
+                    arr->push_back(Value{std::to_string(e.rank) + "," + e.name + "," + std::to_string(e.score)});
+            }
+            return v;
+        };
         // Scriptable Objects: read reusable .okaydata assets (item/enemy/level
         // definitions, config). Loaded + cached by path.
         b["data_num"] = [](std::vector<Value>& a) -> Value {

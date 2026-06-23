@@ -66,6 +66,13 @@ public:
     /// The player's save slot names.
     static std::vector<std::string> CloudList();
 
+    // ---- Leaderboards (global high-score tables on the server) ---------
+    /// Submit a score to a named board (the server keeps the player's best).
+    static bool LeaderboardSubmit(const std::string& board, long score);
+    /// The top `count` entries of a board, ranked high to low.
+    static std::vector<account::ScoreEntry> LeaderboardTop(const std::string& board,
+                                                           int count = 10);
+
     /// The error message from the most recent Register/Login (empty on success).
     static std::string LastError();
 };

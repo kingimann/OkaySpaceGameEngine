@@ -32,8 +32,10 @@ import json
 import os
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit, parse_qs
 
 DB_PATH = os.environ.get("OKAY_ACCOUNT_DB", "accounts.json")
+LB_PATH = os.environ.get("OKAY_LEADERBOARD_DB", "leaderboards.json")
 HOST = os.environ.get("OKAY_ACCOUNT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("OKAY_ACCOUNT_PORT", "8080"))
 
@@ -41,19 +43,36 @@ PORT = int(os.environ.get("OKAY_ACCOUNT_PORT", "8080"))
 SESSIONS = {}
 
 
-def load_db():
+def _load(path):
     try:
-        with open(DB_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def save_db(db):
-    tmp = DB_PATH + ".tmp"
+def _save(path, obj):
+    tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(db, f)
-    os.replace(tmp, DB_PATH)
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
+def load_db():
+    return _load(DB_PATH)
+
+
+def save_db(db):
+    _save(DB_PATH, db)
+
+
+# Leaderboards: { board_name: { username: best_score } }.
+def load_lb():
+    return _load(LB_PATH)
+
+
+def save_lb(lb):
+    _save(LB_PATH, lb)
 
 
 def hash_password(password, salt):
@@ -90,7 +109,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_json()
         if body is None:
             return self._send(400, {"error": "Malformed JSON."})
-        path = self.path.rstrip("/")
+        path = urlsplit(self.path).path.rstrip("/")
 
         # Authenticated cloud save: POST /cloud/<key>  {"data": "..."}
         cloud_key = self._cloud_key(path)
@@ -100,6 +119,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(401, {"error": "Invalid or expired session."})
             rec.setdefault("cloud", {})[cloud_key] = body.get("data", "")
             db = load_db(); db[rec["username"].lower()] = rec; save_db(db)
+            return self._send(200, {"ok": True})
+
+        # Authenticated score submit: POST /leaderboard/<board>  {"score": N}
+        board = self._board(path)
+        if board is not None:
+            rec = self._bearer_record()
+            if rec is None:
+                return self._send(401, {"error": "Invalid or expired session."})
+            try:
+                score = int(body.get("score", 0))
+            except (TypeError, ValueError):
+                return self._send(400, {"error": "Score must be a number."})
+            lb = load_lb()
+            board_scores = lb.setdefault(board, {})
+            name = rec["username"]
+            if score > board_scores.get(name, -(2 ** 62)):   # keep the best
+                board_scores[name] = score
+            save_lb(lb)
             return self._send(200, {"ok": True})
 
         username = (body.get("username") or "").strip()
@@ -145,6 +182,13 @@ class Handler(BaseHTTPRequestHandler):
             return path[len("/cloud/"):]
         return None
 
+    @staticmethod
+    def _board(path):
+        """The board name for a /leaderboard/<board> path, else None."""
+        if path.startswith("/leaderboard/"):
+            return path[len("/leaderboard/"):]
+        return None
+
     def _bearer_user(self):
         """The username for the request's bearer token, or None."""
         auth = self.headers.get("Authorization", "")
@@ -160,7 +204,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Authenticated endpoints: the client sends Authorization: Bearer <token>.
         user = self._bearer_user()
-        path = self.path.rstrip("/")
+        split = urlsplit(self.path)
+        path = split.path.rstrip("/")
+        query = parse_qs(split.query)
 
         if path == "/verify":
             if not user:
@@ -184,6 +230,21 @@ class Handler(BaseHTTPRequestHandler):
             if cloud_key not in cloud:                 # GET /cloud/<key>
                 return self._send(404, {"error": "No such save slot."})
             return self._send(200, {"data": cloud[cloud_key]})
+
+        # Leaderboard: GET /leaderboard/<board>?count=N -> top entries.
+        board = self._board(path)
+        if board is not None:
+            if not user:
+                return self._send(401, {"error": "Invalid or expired session."})
+            try:
+                count = int(query.get("count", ["10"])[0])
+            except (TypeError, ValueError):
+                count = 10
+            scores = load_lb().get(board, {})
+            ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+            entries = [f"{i + 1},{name},{score}"
+                       for i, (name, score) in enumerate(ranked[:max(0, count)])]
+            return self._send(200, {"entries": entries})
 
         return self._send(404, {"error": "Unknown endpoint."})
 

@@ -82,6 +82,13 @@ bool Account::CloudHas(const std::string& key)        { return Get().CloudHas(ke
 bool Account::CloudDelete(const std::string& key)     { return Get().CloudDelete(key); }
 std::vector<std::string> Account::CloudList()         { return Get().CloudList(); }
 
+bool Account::LeaderboardSubmit(const std::string& board, long score) {
+    return Get().LeaderboardSubmit(board, score);
+}
+std::vector<account::ScoreEntry> Account::LeaderboardTop(const std::string& board, int count) {
+    return Get().LeaderboardTop(board, count);
+}
+
 std::string Account::LastError() { return LastErr(); }
 
 } // namespace okay

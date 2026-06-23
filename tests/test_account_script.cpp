@@ -60,6 +60,8 @@ int main() {
         "  account_get(\"/profile\");\n"
         "  cloud_save(\"slot1\", \"level=3\");\n"   // no-ops on local backend
         "  cloud_load(\"slot1\");\n"
+        "  leaderboard_submit(\"high\", 100);\n"    // no-ops on local backend
+        "  leaderboard_top(\"high\", 5);\n"
         "}\n");
     s.Start();
     s.Update(0.016f);
@@ -67,6 +69,8 @@ int main() {
     CHECK(Account::Api("/profile").reached == false);  // no server to reach
     CHECK(!Account::CloudSave("slot1", "x"));      // cloud needs a server
     CHECK(Account::CloudLoad("slot1").empty());
+    CHECK(!Account::LeaderboardSubmit("high", 50));    // leaderboard needs a server
+    CHECK(Account::LeaderboardTop("high").empty());
 
     Account::Shutdown();
     fs::remove_all(dir);

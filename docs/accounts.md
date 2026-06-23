@@ -145,6 +145,33 @@ Save-slot keys are limited to letters, digits, `_`, `-`, `.` (they live in a
 URL path). From C++ the same is available as `okay::Account::CloudSave/
 CloudLoad/CloudHas/CloudDelete/CloudList`.
 
+## Leaderboards
+
+Also built on authenticated requests: global high-score tables keyed by a board
+name. Submitting keeps each player's best score. Like cloud saves, leaderboards
+need the online backend and a signed-in player; on the local backend
+`leaderboard_submit` returns false and `leaderboard_top` is empty.
+
+```javascript
+function game_over(score) {
+  leaderboard_submit("high", score);
+  // Each entry is "rank,name,score" (same shape as steam_leaderboard_top).
+  for (e in leaderboard_top("high", 10)) { print(e); }
+}
+```
+
+Wire protocol (see `okay/Platform/Account/AccountService.hpp`):
+
+```
+POST <server>/leaderboard/<board>          {"score": N}   -> 200
+GET  <server>/leaderboard/<board>?count=N                 -> 200
+     {"entries": ["1,alice,500", "2,bob,300", ...]}
+```
+
+From C++: `okay::Account::LeaderboardSubmit(board, score)` and
+`okay::Account::LeaderboardTop(board, count)` (returns `account::ScoreEntry`
+rows with `name`, `score`, `rank`).
+
 ## Using accounts from a game (OkayScript)
 
 The engine exposes these builtins, backed by the shared `okay::Account` service:
@@ -167,6 +194,8 @@ The engine exposes these builtins, backed by the shared `okay::Account` service:
 | `cloud_has(key)` | `1` / `0` | whether a save slot exists |
 | `cloud_delete(key)` | `1` / `0` | delete a save slot |
 | `cloud_list()` | array | the player's save slot names |
+| `leaderboard_submit(board, score)` | `1` / `0` | submit a score (server keeps the best) |
+| `leaderboard_top(board, count)` | array | top entries as `"rank,name,score"` strings |
 
 ```javascript
 function start() {

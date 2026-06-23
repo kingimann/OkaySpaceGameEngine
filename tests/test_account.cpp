@@ -75,6 +75,10 @@ int main() {
         CHECK(svc.CloudList().empty());
         // Bad keys are rejected outright.
         CHECK(!svc.CloudSave("../etc/passwd", "x"));
+
+        // Leaderboards also need a server; no-op on the local backend.
+        CHECK(!svc.LeaderboardSubmit("high", 100));
+        CHECK(svc.LeaderboardTop("high").empty());
     }
 
     // ---- session persists across service instances ----

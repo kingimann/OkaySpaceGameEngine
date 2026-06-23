@@ -33,6 +33,25 @@ if(OKAY_BUILD_TESTS)
     enable_testing()
 endif()
 
+# ---- Optional baked-in account server --------------------------------
+# Compile a default account server URL + API key into every binary so a shipped
+# build is online by default with no key file on disk. Intended to be injected
+# from a CI secret at configure time:
+#   cmake -DOKAY_DEFAULT_ACCOUNT_URL=https://xyz.supabase.co \
+#         -DOKAY_DEFAULT_ACCOUNT_KEY=sb_publishable_...
+# A Supabase publishable/anon key is safe to ship (protect data with RLS).
+# Empty by default, so normal dev builds are unaffected. Applied to all targets
+# created below (engine reads it via okay::Account; the launcher via its own
+# OKAY_DEFAULT_ACCOUNT_* fallback).
+set(OKAY_DEFAULT_ACCOUNT_URL "" CACHE STRING "Default account server URL compiled into builds")
+set(OKAY_DEFAULT_ACCOUNT_KEY "" CACHE STRING "Default account API key compiled into builds")
+if(OKAY_DEFAULT_ACCOUNT_URL)
+    add_compile_definitions(OKAY_DEFAULT_ACCOUNT_URL="${OKAY_DEFAULT_ACCOUNT_URL}")
+endif()
+if(OKAY_DEFAULT_ACCOUNT_KEY)
+    add_compile_definitions(OKAY_DEFAULT_ACCOUNT_KEY="${OKAY_DEFAULT_ACCOUNT_KEY}")
+endif()
+
 # ---- The engine library ----------------------------------------------
 add_subdirectory(engine)
 

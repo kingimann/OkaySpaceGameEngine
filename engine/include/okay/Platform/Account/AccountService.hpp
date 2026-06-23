@@ -32,6 +32,10 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#  include <windows.h>
+#endif
+
 namespace okay::account {
 
 namespace fs = std::filesystem;
@@ -170,6 +174,28 @@ inline bool SecureEquals(const std::string& a, const std::string& b) {
     for (std::size_t i = 0; i < a.size(); ++i)
         diff |= (unsigned)(a[i] ^ b[i]);
     return diff == 0;
+}
+
+// Run a shell command and wait. On Windows this avoids std::system so no
+// console window flashes for each curl request (CREATE_NO_WINDOW); elsewhere it
+// is std::system. Returns the process exit code (-1 on spawn failure).
+inline int RunCommand(const std::string& cmd) {
+#if defined(_WIN32)
+    std::string full = "cmd /c " + cmd;
+    std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
+    STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
+    if (!CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 0; GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+    return (int)code;
+#else
+    return std::system(cmd.c_str());
+#endif
 }
 
 // Minimal JSON helpers — just enough to send credentials and read a token back.
@@ -702,7 +728,7 @@ private:
 #if !defined(_WIN32)
         cmd += " 2>/dev/null";
 #endif
-        int rc = std::system(cmd.c_str());
+        int rc = detail::RunCommand(cmd);
 
         auto slurp = [](const fs::path& p) {
             std::ifstream r(p, std::ios::binary);

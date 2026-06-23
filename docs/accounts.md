@@ -54,6 +54,39 @@ be public (it's safe to ship); real protection comes from Supabase's Row Level
 Security on your tables. The client uses Supabase's `auth/v1` REST API
 (`/signup`, `/token`, `/user`) and stores only the returned access token.
 
+## Security: the key is public — protect data with RLS
+
+The Supabase **publishable / anon key ships inside your game** and can be
+extracted from the binary (this is true of any client app — a key in a shipped
+program can always be read out with `strings`). That's by design: the
+publishable key is meant to be public. What actually protects your data is
+**Row Level Security (RLS)** on your tables, *not* hiding the key.
+
+* **Never ship the `secret` key.** It bypasses RLS. Only the publishable/anon
+  key belongs in the client (the build bakes in only that one).
+* **Enable RLS on every table you create.** In the Supabase dashboard:
+  *Table editor → your table → enable Row Level Security*, then add policies so
+  each player only touches their own rows. Example for a `cloud_saves` table
+  with a `user_id uuid` column:
+
+  ```sql
+  alter table cloud_saves enable row level security;
+
+  create policy "own saves: read"   on cloud_saves
+    for select using (auth.uid() = user_id);
+  create policy "own saves: write"  on cloud_saves
+    for insert with check (auth.uid() = user_id);
+  create policy "own saves: update" on cloud_saves
+    for update using (auth.uid() = user_id);
+  ```
+
+* Auth itself (sign-up / sign-in) lives in Supabase's managed `auth` schema and
+  is already protected — the publishable key can only create sessions, not read
+  other users.
+
+With RLS on, a user holding the publishable key can do nothing they're not
+already allowed to do as themselves, so it being extractable is harmless.
+
 ## Your own server (custom backend)
 
 If you'd rather run your own auth server, set just the server URL (no API key)

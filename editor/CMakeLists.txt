@@ -57,6 +57,12 @@ set_target_properties(okay-editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     OUTPUT_NAME "OkayEngine")    # the name the launcher looks for
 
+# On Windows, build the editor as a GUI app so no console window opens behind it
+# (it's launched from the launcher). The headless --selftest is CI-only (Linux).
+if(WIN32)
+    set_target_properties(okay-editor PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
 # Headless self-test of the editor's (non-GUI) logic for CI.
 if(OKAY_BUILD_TESTS)
     add_test(NAME editor COMMAND okay-editor --selftest)

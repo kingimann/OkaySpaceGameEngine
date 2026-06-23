@@ -95,6 +95,31 @@ std::string BustCache(const std::string& url) {
     return url + sep + "okaycb=" + std::to_string(now) + "_" + std::to_string(counter++);
 }
 
+// Run a shell command. On Windows, run it WITHOUT flashing a console window
+// (CREATE_NO_WINDOW), which is why we don't use std::system there — every
+// std::system call would otherwise pop a cmd window. wait=true blocks and
+// returns the exit code (curl/powershell); wait=false fires and forgets
+// (launching apps, opening URLs).
+int RunCmd(const std::string& cmd, bool wait) {
+#if defined(_WIN32)
+    std::string full = "cmd /c " + cmd;
+    std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
+    STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
+    if (!CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        return -1;
+    DWORD code = 0;
+    if (wait) { WaitForSingleObject(pi.hProcess, INFINITE); GetExitCodeProcess(pi.hProcess, &code); }
+    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+    return (int)code;
+#else
+    (void)wait;
+    return std::system(cmd.c_str());
+#endif
+}
+
 // Download a URL to a file using whatever HTTP client is on the system.
 bool Download(const std::string& url, const std::string& out) {
     std::error_code ec; fs::remove(out, ec);
@@ -102,17 +127,17 @@ bool Download(const std::string& url, const std::string& out) {
     const char* nc = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" ";
 #if defined(_WIN32)
     std::string c1 = "curl -L -s -f " + std::string(nc) + "-o \"" + out + "\" \"" + u + "\"";
-    if (std::system(c1.c_str()) == 0 && fs::exists(out)) return true;
+    if (RunCmd(c1, true) == 0 && fs::exists(out)) return true;
     std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
                      "-Headers @{'Cache-Control'='no-cache'} "
                      "-UseBasicParsing -Uri '" + u + "' -OutFile '" + out +
                      "' } catch { exit 1 }\"";
-    return std::system(c2.c_str()) == 0 && fs::exists(out);
+    return RunCmd(c2, true) == 0 && fs::exists(out);
 #else
     std::string c1 = "curl -L -s -f " + std::string(nc) + "-o \"" + out + "\" \"" + u + "\" 2>/dev/null";
-    if (std::system(c1.c_str()) == 0 && fs::exists(out)) return true;
+    if (RunCmd(c1, true) == 0 && fs::exists(out)) return true;
     std::string c2 = "wget -q --no-cache -O \"" + out + "\" \"" + u + "\" 2>/dev/null";
-    return std::system(c2.c_str()) == 0 && fs::exists(out);
+    return RunCmd(c2, true) == 0 && fs::exists(out);
 #endif
 }
 
@@ -278,7 +303,7 @@ void Launch(const std::string& exe, const std::string& arg = "") {
     if (!arg.empty()) cmd += " \"" + arg + "\"";
     cmd += " >/dev/null 2>&1 &";
 #endif
-    std::system(cmd.c_str());
+    RunCmd(cmd, false);
 }
 
 // This launcher's process id (handed to the editor so it can verify the launcher
@@ -302,7 +327,20 @@ void LaunchEditor(const std::string& exe) {
 #else
     std::string cmd = "\"" + exe + "\" " + tok + " >/dev/null 2>&1 &";
 #endif
-    std::system(cmd.c_str());
+    RunCmd(cmd, false);
+}
+
+// Open a URL in the default browser, or a folder in the file manager.
+void OpenExternal(const std::string& target) {
+    if (target.empty()) return;
+#if defined(_WIN32)
+    std::string cmd = "start \"\" \"" + target + "\"";
+#elif defined(__APPLE__)
+    std::string cmd = "open \"" + target + "\" >/dev/null 2>&1 &";
+#else
+    std::string cmd = "xdg-open \"" + target + "\" >/dev/null 2>&1 &";
+#endif
+    RunCmd(cmd, false);
 }
 
 // Scan a few likely folders for built games (*.okayscene).
@@ -461,22 +499,40 @@ int main(int argc, char** argv) {
     accountPtr->VerifySession();
 
     // Editable copies of the account-server settings, shown in the Settings tab.
+    // The URL is prefilled (it isn't sensitive); the key field is left blank and
+    // masked so an existing or compiled-in key is never displayed. activeKey
+    // holds the key currently in use (from env/file/built-in) without showing it.
     char setUrl[256]; std::snprintf(setUrl, sizeof(setUrl), "%s", serverUrl.c_str());
-    char setKey[256]; std::snprintf(setKey, sizeof(setKey), "%s", apiKey.c_str());
+    char setKey[256] = {0};
+    std::string activeKey = apiKey;
     std::string setStatus;
-    // Persist the settings next to the launcher and rebuild the service so the
-    // change takes effect without a restart.
-    auto applyAccountSettings = [&]() {
-        std::string url = setUrl, key = setKey;
-        trimEol(url); trimEol(key);
+    // Apply the Settings form and rebuild the service live. clear=true switches
+    // to local accounts. The API key is written to disk ONLY when the user types
+    // a new one — an empty key field keeps the current key, so a built-in key is
+    // never persisted to a plaintext file. The URL isn't secret, so it's saved.
+    auto applyAccountSettings = [&](bool clear) {
+        std::error_code ec;
+        std::string url, typed = setKey; trimEol(typed);
+        if (!clear) { url = setUrl; trimEol(url); }
+        std::string key = clear ? std::string{} : (typed.empty() ? activeKey : typed);
+
         std::ofstream(fs::path(g_exeDir) / "account_server.txt", std::ios::trunc) << url << "\n";
-        std::ofstream(fs::path(g_exeDir) / "account_apikey.txt", std::ios::trunc) << key << "\n";
+        if (clear)
+            fs::remove(fs::path(g_exeDir) / "account_apikey.txt", ec);   // back to local/built-in
+        else if (!typed.empty())
+            std::ofstream(fs::path(g_exeDir) / "account_apikey.txt", std::ios::trunc) << typed << "\n";
+        // else: empty key field -> leave any existing key file untouched and
+        // never write a built-in key to disk.
+
+        activeKey = key;
+        setKey[0] = '\0';                       // never retain the typed key in the box
+        if (clear) setUrl[0] = '\0';
         accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, url, key);
         accountPtr->VerifySession();
-        setStatus = url.empty()
-            ? "Saved. Using local dev accounts (no server set)."
-            : std::string("Saved. Server: ") + accountPtr->ServerUrl() + " (" +
-              accountPtr->ProviderName() + ").";
+        setStatus = accountPtr->IsOnline()
+            ? std::string("Saved. Server: ") + accountPtr->ServerUrl() + " (" +
+              accountPtr->ProviderName() + ")."
+            : "Saved. Using local dev accounts (no server set).";
     };
 
     char acctUser[64] = {0};
@@ -582,10 +638,22 @@ int main(int argc, char** argv) {
         ImGui::BeginChild("content", ImVec2(0, 0), true);
 
         const ImVec4 kTitle(0.85f, 0.9f, 1.0f, 1.0f);
+        // Section title with a short accent underline; optional subtitle.
+        auto sectionHeader = [&](const char* title, const char* subtitle) {
+            ImGui::TextColored(kTitle, "%s", title);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            float w = ImGui::GetContentRegionAvail().x;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(p.x, p.y + 1), ImVec2(p.x + w * 0.16f, p.y + 4),
+                ImGui::GetColorU32(kAccent), 2.0f);
+            ImGui::Dummy(ImVec2(0, subtitle && *subtitle ? 8 : 14));
+            if (subtitle && *subtitle) {
+                ImGui::TextDisabled("%s", subtitle);
+                ImGui::Dummy(ImVec2(0, 10));
+            }
+        };
         if (tab == 0) {                                   // ---- Create ----
-            ImGui::PushFont(nullptr);
-            ImGui::TextColored(kTitle, "Create a game");
-            ImGui::PopFont();
+            sectionHeader("Create a game", nullptr);
             ImGui::TextWrapped("Open the OkaySpace editor to build 2D or 3D scenes, script "
                                "them, and design UI. Use File > Build Game to export a "
                                "standalone game you can share.");
@@ -604,12 +672,13 @@ int main(int argc, char** argv) {
             ImGui::BulletText("Drag assets from the Project panel onto objects.");
             ImGui::BulletText("Add UI from GameObject > UI (buttons, sliders, radial loaders).");
         } else if (tab == 1) {                            // ---- Play ----
-            ImGui::PushFont(nullptr);
             ImGui::TextColored(kTitle, "Play a game");
-            ImGui::PopFont();
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92);
             if (ImGui::Button("Refresh", ImVec2(92, 0))) scenes = FindScenes();
-            ImGui::Spacing();
+            { ImVec2 p = ImGui::GetCursorScreenPos(); float w = ImGui::GetContentRegionAvail().x;
+              ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 1),
+                  ImVec2(p.x + w * 0.16f, p.y + 4), ImGui::GetColorU32(kAccent), 2.0f); }
+            ImGui::Dummy(ImVec2(0, 14));
             if (player.empty())
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Player runtime not found next to the launcher.");
             else if (scenes.empty()) {
@@ -634,28 +703,45 @@ int main(int argc, char** argv) {
                         continue;
                     ++shown;
                     ImGui::PushID((int)i);
-                    ImGui::BeginChild("game", ImVec2(0, 60), true);
+                    ImGui::BeginChild("game", ImVec2(0, 62), true);
+                    if (ImGui::IsWindowHovered()) {
+                        ImVec2 mn = ImGui::GetWindowPos();
+                        ImGui::GetWindowDrawList()->AddRect(mn,
+                            ImVec2(mn.x + ImGui::GetWindowSize().x, mn.y + ImGui::GetWindowSize().y),
+                            ImGui::GetColorU32(kAccent), 12.0f, 0, 2.0f);
+                    }
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
                     ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", name.c_str());
                     ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
+                    // Right-aligned Folder + Play buttons.
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80 - 90);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8);
+                    if (ImGui::Button("Folder", ImVec2(82, 40)))
+                        OpenExternal(scenes[i].parent_path().string());
+                    ImGui::SameLine();
                     if (ImGui::Button("Play", ImVec2(80, 40))) Launch(player, scenes[i].string());
                     ImGui::EndChild();
                     ImGui::PopID();
                 }
                 if (shown == 0)
                     ImGui::TextDisabled("No games match \"%s\".", playFilter);
+                else
+                    ImGui::TextDisabled("%d game%s%s", shown, shown == 1 ? "" : "s",
+                                        needle.empty() ? "" : " matching");
             }
         } else if (tab == 2) {                            // ---- Marketplace ----
-            ImGui::PushFont(nullptr);
-            ImGui::TextColored(kTitle, "Marketplace");
-            ImGui::PopFont();
+            sectionHeader("Marketplace", nullptr);
             ImGui::TextDisabled("Starter templates — open one in the editor (New Project) to begin.");
             ImGui::Spacing();
             for (const auto& t : templates) {
                 ImGui::PushID(t.name);
                 ImGui::BeginChild(t.name, ImVec2(0, 70), true);
+                if (ImGui::IsWindowHovered()) {
+                    ImVec2 mn = ImGui::GetWindowPos();
+                    ImGui::GetWindowDrawList()->AddRect(mn,
+                        ImVec2(mn.x + ImGui::GetWindowSize().x, mn.y + ImGui::GetWindowSize().y),
+                        ImGui::GetColorU32(kAccent), 12.0f, 0, 2.0f);
+                }
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
                 ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.95f, 1.0f), "%s", t.name);
                 ImGui::TextDisabled("%s", t.desc);
@@ -670,9 +756,7 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 8));
             ImGui::TextDisabled("Community content marketplace coming soon.");
         } else if (tab == 3) {                            // ---- Account ----
-            ImGui::PushFont(nullptr);
-            ImGui::TextColored(kTitle, "Account");
-            ImGui::PopFont();
+            sectionHeader("Account", nullptr);
 
             if (account.IsLoggedIn()) {
                 const auto& s = account.CurrentSession();
@@ -748,9 +832,7 @@ int main(int argc, char** argv) {
                 }
             }
         } else {                                          // ---- Settings ----
-            ImGui::PushFont(nullptr);
-            ImGui::TextColored(kTitle, "Settings");
-            ImGui::PopFont();
+            sectionHeader("Settings", nullptr);
             ImGui::TextWrapped("Connect accounts to a server so players sign in online "
                                "and their progress follows them. For Supabase, paste your "
                                "Project URL and the anon public key (Supabase dashboard > "
@@ -763,18 +845,20 @@ int main(int argc, char** argv) {
             ImGui::PushItemWidth(460);
             ImGui::InputTextWithHint("##setUrl", "https://YOUR-PROJECT.supabase.co",
                                      setUrl, sizeof(setUrl));
-            ImGui::TextDisabled("API key  (anon public — required for Supabase)");
-            ImGui::InputTextWithHint("##setKey", "anon public key (leave blank for a custom server)",
-                                     setKey, sizeof(setKey));
+            ImGui::TextDisabled("API key  (anon / publishable — required for Supabase)");
+            // The key field is masked and never prefilled, so an existing or
+            // built-in key is never shown. Empty = keep the current key.
+            const char* keyHint = activeKey.empty()
+                ? "paste your publishable key"
+                : "********  (a key is set — type to replace)";
+            ImGui::InputTextWithHint("##setKey", keyHint, setKey, sizeof(setKey),
+                                     ImGuiInputTextFlags_Password);
             ImGui::PopItemWidth();
             ImGui::Dummy(ImVec2(0, 12));
 
-            if (ImGui::Button("Save & apply", ImVec2(180, 46))) applyAccountSettings();
+            if (ImGui::Button("Save & apply", ImVec2(180, 46))) applyAccountSettings(false);
             ImGui::SameLine();
-            if (ImGui::Button("Use local (clear)", ImVec2(180, 46))) {
-                setUrl[0] = setKey[0] = '\0';
-                applyAccountSettings();
-            }
+            if (ImGui::Button("Use local (clear)", ImVec2(180, 46))) applyAccountSettings(true);
 
             ImGui::Dummy(ImVec2(0, 10));
             // accountPtr (not the per-frame alias) — applyAccountSettings above
@@ -790,8 +874,24 @@ int main(int argc, char** argv) {
                 ImGui::PopTextWrapPos();
             }
             ImGui::Dummy(ImVec2(0, 10));
-            ImGui::TextDisabled("Saved next to the launcher (account_server.txt / "
-                                "account_apikey.txt). The anon key is safe to share.");
+            ImGui::TextDisabled("The key is hidden and only saved to disk if you type a "
+                                "new one; a built-in key is never written out. Protect "
+                                "your data with Supabase Row Level Security.");
+        }
+
+        // ---- Footer (pinned to the bottom of the content panel) ----
+        {
+            const char* kRepo = "https://github.com/kingimann/OkaySpaceGameEngine";
+            float fy = ImGui::GetWindowHeight() - 38.0f;
+            if (fy > ImGui::GetCursorPosY()) ImGui::SetCursorPosY(fy);
+            ImGui::Separator();
+            ImGui::TextDisabled("OkaySpace v%s", OKAY_ENGINE_VERSION);
+            ImGui::SameLine();
+            ImGui::TextDisabled("  -  ");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Docs")) OpenExternal(std::string(kRepo) + "/blob/main/docs/accounts.md");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("GitHub")) OpenExternal(kRepo);
         }
 
         ImGui::EndChild();

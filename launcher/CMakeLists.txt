@@ -54,3 +54,9 @@ target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_
 set_target_properties(okayspace-launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     OUTPUT_NAME "OkaySpace")    # the single thing the user double-clicks
+
+# On Windows, build as a GUI app so double-clicking it doesn't open a console
+# window behind the launcher. (Child commands are already run hidden.)
+if(WIN32)
+    set_target_properties(okayspace-launcher PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()

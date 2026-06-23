@@ -305,6 +305,19 @@ void LaunchEditor(const std::string& exe) {
     std::system(cmd.c_str());
 }
 
+// Open a URL in the default browser, or a folder in the file manager.
+void OpenExternal(const std::string& target) {
+    if (target.empty()) return;
+#if defined(_WIN32)
+    std::string cmd = "start \"\" \"" + target + "\"";
+#elif defined(__APPLE__)
+    std::string cmd = "open \"" + target + "\" >/dev/null 2>&1 &";
+#else
+    std::string cmd = "xdg-open \"" + target + "\" >/dev/null 2>&1 &";
+#endif
+    std::system(cmd.c_str());
+}
+
 // Scan a few likely folders for built games (*.okayscene).
 std::vector<fs::path> FindScenes() {
     std::vector<fs::path> out;
@@ -582,10 +595,22 @@ int main(int argc, char** argv) {
         ImGui::BeginChild("content", ImVec2(0, 0), true);
 
         const ImVec4 kTitle(0.85f, 0.9f, 1.0f, 1.0f);
+        // Section title with a short accent underline; optional subtitle.
+        auto sectionHeader = [&](const char* title, const char* subtitle) {
+            ImGui::TextColored(kTitle, "%s", title);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            float w = ImGui::GetContentRegionAvail().x;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(p.x, p.y + 1), ImVec2(p.x + w * 0.16f, p.y + 4),
+                ImGui::GetColorU32(kAccent), 2.0f);
+            ImGui::Dummy(ImVec2(0, subtitle && *subtitle ? 8 : 14));
+            if (subtitle && *subtitle) {
+                ImGui::TextDisabled("%s", subtitle);
+                ImGui::Dummy(ImVec2(0, 10));
+            }
+        };
         if (tab == 0) {                                   // ---- Create ----
-            ImGui::PushFont(nullptr);
-            ImGui::TextColored(kTitle, "Create a game");
-            ImGui::PopFont();
+            sectionHeader("Create a game", nullptr);
             ImGui::TextWrapped("Open the OkaySpace editor to build 2D or 3D scenes, script "
                                "them, and design UI. Use File > Build Game to export a "
                                "standalone game you can share.");
@@ -604,12 +629,13 @@ int main(int argc, char** argv) {
             ImGui::BulletText("Drag assets from the Project panel onto objects.");
             ImGui::BulletText("Add UI from GameObject > UI (buttons, sliders, radial loaders).");
         } else if (tab == 1) {                            // ---- Play ----
-            ImGui::PushFont(nullptr);
             ImGui::TextColored(kTitle, "Play a game");
-            ImGui::PopFont();
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92);
             if (ImGui::Button("Refresh", ImVec2(92, 0))) scenes = FindScenes();
-            ImGui::Spacing();
+            { ImVec2 p = ImGui::GetCursorScreenPos(); float w = ImGui::GetContentRegionAvail().x;
+              ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 1),
+                  ImVec2(p.x + w * 0.16f, p.y + 4), ImGui::GetColorU32(kAccent), 2.0f); }
+            ImGui::Dummy(ImVec2(0, 14));
             if (player.empty())
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Player runtime not found next to the launcher.");
             else if (scenes.empty()) {
@@ -634,23 +660,28 @@ int main(int argc, char** argv) {
                         continue;
                     ++shown;
                     ImGui::PushID((int)i);
-                    ImGui::BeginChild("game", ImVec2(0, 60), true);
+                    ImGui::BeginChild("game", ImVec2(0, 62), true);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
                     ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", name.c_str());
                     ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
+                    // Right-aligned Folder + Play buttons.
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80 - 90);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8);
+                    if (ImGui::Button("Folder", ImVec2(82, 40)))
+                        OpenExternal(scenes[i].parent_path().string());
+                    ImGui::SameLine();
                     if (ImGui::Button("Play", ImVec2(80, 40))) Launch(player, scenes[i].string());
                     ImGui::EndChild();
                     ImGui::PopID();
                 }
                 if (shown == 0)
                     ImGui::TextDisabled("No games match \"%s\".", playFilter);
+                else
+                    ImGui::TextDisabled("%d game%s%s", shown, shown == 1 ? "" : "s",
+                                        needle.empty() ? "" : " matching");
             }
         } else if (tab == 2) {                            // ---- Marketplace ----
-            ImGui::PushFont(nullptr);
-            ImGui::TextColored(kTitle, "Marketplace");
-            ImGui::PopFont();
+            sectionHeader("Marketplace", nullptr);
             ImGui::TextDisabled("Starter templates — open one in the editor (New Project) to begin.");
             ImGui::Spacing();
             for (const auto& t : templates) {
@@ -670,9 +701,7 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 8));
             ImGui::TextDisabled("Community content marketplace coming soon.");
         } else if (tab == 3) {                            // ---- Account ----
-            ImGui::PushFont(nullptr);
-            ImGui::TextColored(kTitle, "Account");
-            ImGui::PopFont();
+            sectionHeader("Account", nullptr);
 
             if (account.IsLoggedIn()) {
                 const auto& s = account.CurrentSession();
@@ -748,9 +777,7 @@ int main(int argc, char** argv) {
                 }
             }
         } else {                                          // ---- Settings ----
-            ImGui::PushFont(nullptr);
-            ImGui::TextColored(kTitle, "Settings");
-            ImGui::PopFont();
+            sectionHeader("Settings", nullptr);
             ImGui::TextWrapped("Connect accounts to a server so players sign in online "
                                "and their progress follows them. For Supabase, paste your "
                                "Project URL and the anon public key (Supabase dashboard > "
@@ -792,6 +819,21 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 10));
             ImGui::TextDisabled("Saved next to the launcher (account_server.txt / "
                                 "account_apikey.txt). The anon key is safe to share.");
+        }
+
+        // ---- Footer (pinned to the bottom of the content panel) ----
+        {
+            const char* kRepo = "https://github.com/kingimann/OkaySpaceGameEngine";
+            float fy = ImGui::GetWindowHeight() - 38.0f;
+            if (fy > ImGui::GetCursorPosY()) ImGui::SetCursorPosY(fy);
+            ImGui::Separator();
+            ImGui::TextDisabled("OkaySpace v%s", OKAY_ENGINE_VERSION);
+            ImGui::SameLine();
+            ImGui::TextDisabled("  -  ");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Docs")) OpenExternal(std::string(kRepo) + "/blob/main/docs/accounts.md");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("GitHub")) OpenExternal(kRepo);
         }
 
         ImGui::EndChild();

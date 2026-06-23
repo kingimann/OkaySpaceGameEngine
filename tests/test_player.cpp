@@ -99,6 +99,36 @@ int main() {
         GameObject* p = Templates::AddClickToMovePlayer(sc);
         CHECK(p && p->GetComponent<ClickToMoveController>() != nullptr);
     }
+    {
+        Scene sc("td");
+        GameObject* p = Templates::AddTopDownPlayer(sc);
+        CHECK(p && p->GetComponent<TopDownController>() != nullptr);
+    }
+
+    // --- Top-down controller moves world-relative and drives walk/run animation ---
+    {
+        Scene sc("tdmove"); sc.physicsEnabled = false;
+        GameObject* p = sc.CreateGameObject("Player");
+        auto* ch = p->AddComponent<Character>();
+        auto* td = p->AddComponent<TopDownController>();
+        td->acceleration = 1000.0f;                  // effectively instant for the check
+        ch->anim = 0;
+
+        Input::FeedKeys({});
+        td->Update(0.016f);
+        CHECK(ch->anim == 1);                         // idle
+
+        Vec3 start = p->transform->localPosition;
+        Input::FeedKeys({'w'});                       // forward = -Z (into the screen)
+        td->Update(0.1f);
+        CHECK(ch->anim == 2);                         // walking
+        CHECK((p->transform->localPosition - start).Magnitude() > 0.01f);
+
+        td->sprintKey = 'r';
+        Input::FeedKeys({'w', 'r'});
+        td->Update(0.05f);
+        CHECK(ch->anim == 3);                         // running
+    }
 
     TEST_MAIN_RESULT();
 }

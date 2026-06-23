@@ -18,6 +18,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/TopDownController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
@@ -94,6 +95,14 @@ inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0
 inline GameObject* AddClickToMovePlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<ClickToMoveController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Add a top-down player (twin-stick / ARPG; fixed high angled follow camera).
+inline GameObject* AddTopDownPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<TopDownController>();
     EnsureMainCamera(scene);
     return player;
 }

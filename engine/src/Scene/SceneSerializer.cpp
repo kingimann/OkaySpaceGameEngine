@@ -13,6 +13,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/TopDownController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -298,6 +299,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->coyoteTime << " " << tp->jumpBufferTime
             // camera collision (spring arm)
             << " " << (tp->cameraCollision ? 1 : 0) << " " << tp->cameraCollisionSkin << "\n";
+    }
+    if (auto* td = go->GetComponent<TopDownController>()) {
+        out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
+            << (td->sprintKey ? td->sprintKey : '-') << " "
+            << (td->driveAnimation ? 1 : 0) << " " << (td->rotateToFace ? 1 : 0) << " " << td->turnSpeed << " "
+            << td->acceleration << " " << td->deceleration << " " << (td->cameraRelative ? 1 : 0) << " "
+            << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
+            << td->lookHeight << " " << td->cameraDamping << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -1049,6 +1058,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (in >> cc >> skin) { tp->cameraCollision = (cc != 0); tp->cameraCollisionSkin = skin; }
                         }
                     }
+                } else if (field == "tdctrl") {
+                    auto* td = go->AddComponent<TopDownController>();
+                    std::string sk = "-"; int da = 1, rf = 1, cr = 0;
+                    in >> td->walkSpeed >> td->runSpeed >> sk >> da >> rf >> td->turnSpeed
+                       >> td->acceleration >> td->deceleration >> cr
+                       >> td->cameraDistance >> td->cameraPitch >> td->cameraYaw
+                       >> td->lookHeight >> td->cameraDamping;
+                    td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
+                    td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
                     go->AddComponent<Mover>()->velocity = v;

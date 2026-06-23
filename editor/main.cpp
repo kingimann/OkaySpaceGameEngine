@@ -1280,6 +1280,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(okay::Templates::AddFirstPersonPlayer(ed.scene()));
                 ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
             }
+            if (ImGui::MenuItem("Top Down")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddTopDownPlayer(ed.scene()));
+                ConsoleLog("Added Top-Down player"); ed.dirty = true; created = true;
+            }
             if (ImGui::MenuItem("Click To Move")) {
                 ed.PushUndo();
                 ed.Select(okay::Templates::AddClickToMovePlayer(ed.scene()));
@@ -5979,6 +5984,29 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
         }
     }
+    if (auto* td = go->GetComponent<TopDownController>()) {
+        if (CompHeader("Top Down Controller", td, &toRemove)) {
+            ImGui::SeparatorText("Movement");
+            if (ImGui::DragFloat("Walk Speed##td", &td->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Speed##td", &td->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##td", &td->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Deceleration##td", &td->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Rotate To Face##td", &td->rotateToFace)) ed.dirty = true;
+            if (td->rotateToFace)
+                if (ImGui::DragFloat("Turn Speed##td", &td->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Camera-Relative Move##td", &td->cameraRelative)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("WASD relative to the camera yaw instead of world axes");
+            if (ImGui::Checkbox("Drive Animation##td", &td->driveAnimation)) ed.dirty = true;
+            ImGui::SeparatorText("Camera");
+            if (ImGui::DragFloat("Distance##td", &td->cameraDistance, 0.1f, 1.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Pitch##td", &td->cameraPitch, 0.5f, 10.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Yaw##td", &td->cameraYaw, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Look Height##td", &td->lookHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Damping##td", &td->cameraDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+            ImGui::TextDisabled("Twin-stick / ARPG: WASD + a fixed high follow camera.");
+            if (ImGui::SmallButton("Remove##td")) toRemove = td;
+        }
+    }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         if (CompHeader("Click To Move Controller", cm, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##ctm", &cm->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -7173,6 +7201,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { go->AddComponent<FirstPersonController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { go->AddComponent<ThirdPersonController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TopDownController>(), "Top Down Controller")) { go->AddComponent<TopDownController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

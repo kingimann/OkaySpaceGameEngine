@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.116.0  (new Top-Down controller + premade player)
+  - New TopDownController (twin-stick / ARPG / RTS-hero): WASD/left-stick movement on
+    the XZ plane with momentum (accel/decel), turn-to-face-travel, world- or
+    camera-relative axes, and a fixed high, angled follow camera (distance / pitch /
+    yaw / damping). Drives a Character's walk/run animation.
+  - GameObject > Player > Top Down drops a fully wired top-down player into the scene
+    (Templates::AddTopDownPlayer), plus an Add Component entry and full inspector.
+  - Back-compatible serialization. New top-down move + premade tests; 78 tests pass.
+
 v2.115.0  (controllers polished + premade-player shortcuts)
   - First-person controller now matches third-person feel: movement momentum
     (accel/decel + air control) and a forgiving jump (grounded-from-contacts +

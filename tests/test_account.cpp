@@ -81,6 +81,34 @@ int main() {
         CHECK(svc.LeaderboardTop("high").empty());
     }
 
+    // ---- backend selection (no network) ----
+    {
+        // Nothing configured -> local.
+        acct::AccountService local(dir);
+        CHECK(!local.IsOnline());
+        CHECK(std::string(local.ProviderName()) == "local");
+        CHECK(!local.UsesEmail());
+
+        // URL only -> our custom server.
+        acct::AccountService custom(dir, "https://accounts.example.com");
+        CHECK(custom.IsOnline());
+        CHECK(std::string(custom.ProviderName()) == "custom");
+        CHECK(!custom.UsesEmail());
+
+        // URL + API key -> managed (Supabase), identified by email.
+        acct::AccountService sb(dir, "https://proj.supabase.co", "anon-key");
+        CHECK(sb.IsOnline());
+        CHECK(std::string(sb.ProviderName()) == "supabase");
+        CHECK(sb.UsesEmail());
+
+        // Supabase validates the identifier as an email before any network call.
+        acct::Result bad = sb.Register("notanemail", "longenough");
+        CHECK(!bad.ok);
+        CHECK(bad.error.find("email") != std::string::npos);
+        // Short password is caught locally too (no network).
+        CHECK(!sb.Login("user@example.com", "123").ok);
+    }
+
     // ---- session persists across service instances ----
     {
         acct::AccountService svc(dir);

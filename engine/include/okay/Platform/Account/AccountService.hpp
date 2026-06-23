@@ -278,40 +278,69 @@ struct ScoreEntry {
     int         rank  = 0;
 };
 
-/// A client-side account service. Construct it with a config directory (where
-/// the local database and the saved session live) and, optionally, a server
-/// URL to use the online backend.
+/// Which backend signs players in.
+///   Auto     — pick from the configuration: Local when no server URL is set,
+///              Supabase when an API key is also set, otherwise Custom.
+///   Local    — on-device accounts (a dev fallback; not a real server).
+///   Custom   — our own auth server (the reference server's /register, /login).
+///   Supabase — a hosted Supabase project (auth/v1 REST + anon apikey).
+enum class Provider { Auto, Local, Custom, Supabase };
+
+/// A client-side account service. Construct it with a config directory (where a
+/// saved session and any local accounts live) and, for online use, a server URL
+/// (+ an API key for managed providers like Supabase). With nothing configured
+/// it falls back to local, on-device accounts for development.
 class AccountService {
 public:
-    explicit AccountService(fs::path configDir, std::string serverUrl = {})
-        : configDir_(std::move(configDir)), serverUrl_(std::move(serverUrl)) {
+    explicit AccountService(fs::path configDir, std::string serverUrl = {},
+                            std::string apiKey = {}, Provider provider = Provider::Auto)
+        : configDir_(std::move(configDir)), serverUrl_(std::move(serverUrl)),
+          apiKey_(std::move(apiKey)), provider_(Resolve(provider, serverUrl_, apiKey_)) {
         std::error_code ec;
         fs::create_directories(configDir_, ec);
         LoadSession();
     }
 
-    /// True when configured to talk to a remote auth server.
-    bool IsOnline() const { return !serverUrl_.empty(); }
+    /// True when configured to talk to a real (non-local) backend.
+    bool IsOnline() const { return provider_ != Provider::Local; }
+    Provider GetProvider() const { return provider_; }
+    /// Identifier of the active backend ("local", "custom", or "supabase").
+    const char* ProviderName() const {
+        switch (provider_) {
+            case Provider::Supabase: return "supabase";
+            case Provider::Custom:   return "custom";
+            default:                 return "local";
+        }
+    }
+    /// Whether the backend identifies players by email (Supabase) rather than a
+    /// freeform username (local / custom). Lets the UI label the field.
+    bool UsesEmail() const { return provider_ == Provider::Supabase; }
     const std::string& ServerUrl() const { return serverUrl_; }
-    void SetServerUrl(const std::string& url) { serverUrl_ = url; }
 
     const Session& CurrentSession() const { return session_; }
     bool IsLoggedIn() const { return session_.loggedIn; }
 
-    /// Create a new account. Usernames are case-insensitive and must be unique.
+    /// Create a new account. For Supabase the identifier is an email; for local
+    /// and custom backends it's a username.
     Result Register(const std::string& username, const std::string& password) {
         std::string err = Validate(username, password);
         if (!err.empty()) return Fail(err);
-        return IsOnline() ? RemoteAuth("register", username, password)
-                          : LocalRegister(username, password);
+        switch (provider_) {
+            case Provider::Supabase: return SupabaseAuth(true, username, password);
+            case Provider::Custom:   return RemoteAuth("register", username, password);
+            default:                 return LocalRegister(username, password);
+        }
     }
 
     /// Sign in to an existing account.
     Result Login(const std::string& username, const std::string& password) {
         std::string err = Validate(username, password);
         if (!err.empty()) return Fail(err);
-        return IsOnline() ? RemoteAuth("login", username, password)
-                          : LocalLogin(username, password);
+        switch (provider_) {
+            case Provider::Supabase: return SupabaseAuth(false, username, password);
+            case Provider::Custom:   return RemoteAuth("login", username, password);
+            default:                 return LocalLogin(username, password);
+        }
     }
 
     /// Sign out and forget the saved session.
@@ -346,7 +375,9 @@ public:
     bool VerifySession() {
         if (!session_.loggedIn) return false;
         if (!IsOnline()) return true;
-        ApiResponse r = Api("/verify");
+        // Supabase exposes the signed-in user at auth/v1/user; our custom server
+        // uses /verify.
+        ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
         if (!r.reached) return true;                 // offline: keep the session
         if (r.status == 401 || r.status == 403) {    // token revoked/expired
             Logout();
@@ -435,10 +466,19 @@ private:
 
     fs::path    configDir_;
     std::string serverUrl_;
+    std::string apiKey_;
+    Provider    provider_;
     Session     session_;
 
     fs::path SessionPath() const { return configDir_ / "session.txt"; }
     fs::path DbPath() const { return configDir_ / "accounts.db"; }
+
+    // Turn Provider::Auto into a concrete backend from what's configured.
+    static Provider Resolve(Provider p, const std::string& url, const std::string& key) {
+        if (p != Provider::Auto) return p;
+        if (url.empty()) return Provider::Local;
+        return key.empty() ? Provider::Custom : Provider::Supabase;
+    }
 
     static std::string Lower(std::string s) {
         for (char& c : s) c = char(std::tolower((unsigned char)c));
@@ -449,12 +489,23 @@ private:
         Result r; r.ok = false; r.error = msg; return r;
     }
 
-    static std::string Validate(const std::string& username, const std::string& password) {
-        if (username.size() < 3) return "Username must be at least 3 characters.";
-        if (username.size() > 32) return "Username is too long (max 32).";
-        for (char c : username)
-            if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.'))
-                return "Username may use letters, digits, '_', '-', '.' only.";
+    static bool LooksLikeEmail(const std::string& s) {
+        std::size_t at = s.find('@');
+        if (at == std::string::npos || at == 0) return false;
+        std::size_t dot = s.find('.', at);
+        return dot != std::string::npos && dot + 1 < s.size();
+    }
+
+    std::string Validate(const std::string& username, const std::string& password) const {
+        if (provider_ == Provider::Supabase) {
+            if (!LooksLikeEmail(username)) return "Enter a valid email address.";
+        } else {
+            if (username.size() < 3) return "Username must be at least 3 characters.";
+            if (username.size() > 32) return "Username is too long (max 32).";
+            for (char c : username)
+                if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.'))
+                    return "Username may use letters, digits, '_', '-', '.' only.";
+        }
         if (password.size() < 6) return "Password must be at least 6 characters.";
         return {};
     }
@@ -574,6 +625,44 @@ private:
         return Succeed(username, token);
     }
 
+    // ---- managed backend: Supabase (auth/v1 REST) ----------------------
+    // Sign up:  POST <url>/auth/v1/signup            {"email","password"}
+    // Sign in:  POST <url>/auth/v1/token?grant_type=password {"email","password"}
+    // Both take the project's anon key as the `apikey` header (added by
+    // HttpRequest) and return {"access_token": "...", "user": {...}} on success,
+    // or an error object on failure.
+    Result SupabaseAuth(bool signUp, const std::string& email, const std::string& password) {
+        std::string base = serverUrl_;
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        std::string url = base + (signUp ? "/auth/v1/signup"
+                                         : "/auth/v1/token?grant_type=password");
+        std::string body = "{\"email\":\"" + detail::JsonEscape(email) +
+                           "\",\"password\":\"" + detail::JsonEscape(password) + "\"}";
+        ApiResponse r = HttpRequest("POST", url, body, /*authToken=*/{});
+
+        if (!r.reached)
+            return Fail("Couldn't reach the account server (offline or unreachable).");
+        if (!r.ok) {
+            // Supabase reports errors as error_description / msg / message / error.
+            std::string e = detail::JsonField(r.body, "error_description");
+            if (e.empty()) e = detail::JsonField(r.body, "msg");
+            if (e.empty()) e = detail::JsonField(r.body, "message");
+            if (e.empty()) e = detail::JsonField(r.body, "error");
+            return Fail(e.empty()
+                ? ("Account server rejected the request (HTTP " + std::to_string(r.status) + ").")
+                : e);
+        }
+        std::string token = detail::JsonField(r.body, "access_token");
+        if (token.empty()) {
+            // Sign-up with email confirmation enabled returns no session yet.
+            if (signUp)
+                return Fail("Account created — check your email to confirm, then sign in. "
+                            "(Turn off email confirmation in Supabase for instant sign-in.)");
+            return Fail("Server response was missing an access token.");
+        }
+        return Succeed(email, token);
+    }
+
     // Perform one HTTP request via the system `curl` so the launcher/engine need
     // no HTTP library and reuse the platform's TLS stack. Secrets (the request
     // body and the auth header) are passed through files, never argv, so they
@@ -596,6 +685,8 @@ private:
 
         // Headers/secrets go in a curl config file (-K), keeping them out of argv.
         std::string cfg;
+        if (!apiKey_.empty())                          // managed backends (Supabase)
+            cfg += "header = \"apikey: " + apiKey_ + "\"\n";
         if (!authToken.empty())
             cfg += "header = \"Authorization: Bearer " + authToken + "\"\n";
         if (!jsonBody.empty()) {

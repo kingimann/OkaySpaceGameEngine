@@ -399,20 +399,28 @@ int main(int argc, char** argv) {
     };
 
     // ---- Account ----
-    // Online when an auth server URL is provided (env var or a server.txt next
-    // to the launcher); otherwise a local, on-disk account works out of the box.
+    // Online when an auth server URL is configured; with an API key too it's a
+    // managed backend (Supabase). Config comes from env vars or files next to
+    // the launcher (account_server.txt / account_apikey.txt). With nothing
+    // configured, a local on-device account works for development.
     namespace acct = okay::account;
-    std::string serverUrl;
-    if (const char* env = std::getenv("OKAY_ACCOUNT_SERVER")) serverUrl = env;
-    if (serverUrl.empty()) {
-        std::ifstream sf(fs::path(g_exeDir) / "account_server.txt");
-        if (sf) { std::getline(sf, serverUrl);
-            while (!serverUrl.empty() && (serverUrl.back() == '\r' ||
-                   serverUrl.back() == '\n' || serverUrl.back() == ' '))
-                serverUrl.pop_back();
+    auto trimEol = [](std::string& s) {
+        while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' '))
+            s.pop_back();
+    };
+    auto fromEnvOrFile = [&](const char* env, const char* file) {
+        std::string v;
+        if (const char* e = std::getenv(env)) v = e;
+        if (v.empty()) {
+            std::ifstream f(fs::path(g_exeDir) / file);
+            if (f) std::getline(f, v);
         }
-    }
-    acct::AccountService account(acct::DefaultConfigDir(fs::path(g_exeDir)), serverUrl);
+        trimEol(v);
+        return v;
+    };
+    std::string serverUrl = fromEnvOrFile("OKAY_ACCOUNT_SERVER", "account_server.txt");
+    std::string apiKey    = fromEnvOrFile("OKAY_ACCOUNT_API_KEY", "account_apikey.txt");
+    acct::AccountService account(acct::DefaultConfigDir(fs::path(g_exeDir)), serverUrl, apiKey);
     // If we resumed a saved session against an online server, make sure it's
     // still valid (the token may have been revoked/expired); this signs the
     // player out if so. Offline or local accounts are left as-is.
@@ -592,7 +600,7 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "%s", s.username.c_str());
                 ImGui::TextDisabled("%s", account.IsOnline()
-                    ? "Online account." : "Local account (stored on this device).");
+                    ? "Online account." : "Local account (dev fallback, stored on this device).");
                 ImGui::Dummy(ImVec2(0, 18));
                 if (ImGui::Button("Sign out", ImVec2(200, 48))) {
                     account.Logout();
@@ -602,10 +610,13 @@ int main(int argc, char** argv) {
             } else {
                 ImGui::TextWrapped(account.IsOnline()
                     ? "Sign in to your OkaySpace account to sync your work."
-                    : "Create a local OkaySpace account on this device. Set "
-                      "OKAY_ACCOUNT_SERVER (or account_server.txt) to sign in online.");
+                    : "No account server configured — using a local dev account on "
+                      "this device. Set OKAY_ACCOUNT_SERVER (+ OKAY_ACCOUNT_API_KEY "
+                      "for Supabase), or drop account_server.txt / account_apikey.txt "
+                      "next to the launcher, to sign in online.");
                 if (account.IsOnline()) {
-                    ImGui::TextDisabled("Server: %s", account.ServerUrl().c_str());
+                    ImGui::TextDisabled("Server: %s (%s)", account.ServerUrl().c_str(),
+                                        account.ProviderName());
                 }
                 ImGui::Dummy(ImVec2(0, 12));
 
@@ -619,8 +630,9 @@ int main(int argc, char** argv) {
                 }
                 ImGui::Dummy(ImVec2(0, 8));
 
+                const char* idHint = account.UsesEmail() ? "Email" : "Username";
                 ImGui::PushItemWidth(320);
-                ImGui::InputTextWithHint("##acctUser", "Username", acctUser, sizeof(acctUser));
+                ImGui::InputTextWithHint("##acctUser", idHint, acctUser, sizeof(acctUser));
                 bool submit = ImGui::InputTextWithHint("##acctPass", "Password", acctPass,
                                   sizeof(acctPass), ImGuiInputTextFlags_Password |
                                   ImGuiInputTextFlags_EnterReturnsTrue);

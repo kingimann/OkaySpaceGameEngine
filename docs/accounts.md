@@ -7,47 +7,59 @@ in two places that share the same code:
 * the **engine** — a process-wide `okay::Account` plus `account_*` OkayScript
   builtins, so a game can sign players in from script.
 
-It has two backends, chosen automatically at runtime:
+It picks a backend automatically at runtime from what's configured:
 
-| Backend | When | Where credentials live |
-| --- | --- | --- |
-| **Local** | no server configured (default) | a salted+hashed file on the device (`accounts.db`) |
-| **Online** | a server URL is configured | your auth server; the client stores only the session token |
+| Backend | When | Identifier | Where credentials live |
+| --- | --- | --- | --- |
+| **Supabase** (managed) | a server URL **and** an API key are set | email | your Supabase project |
+| **Custom** | a server URL is set (no API key) | username | your own auth server |
+| **Local** (dev fallback) | nothing configured | username | a salted+hashed file on the device (`accounts.db`) |
 
-The local backend works out of the box and offline; the online backend is what
-you use to connect to a real server.
+The **local** backend is a development fallback only — it works offline and out
+of the box, but accounts live on one device. For real accounts that follow the
+player, point the client at a server. The recommended path is **Supabase** (a
+hosted auth backend — nothing to run yourself).
 
-## Connecting to a server
+## Connecting to Supabase (recommended)
 
-You point the client at a server in one of three ways. The first one found wins.
+1. Create a free project at [supabase.com](https://supabase.com). In
+   **Authentication → Providers → Email**, turn **"Confirm email" off** if you
+   want instant sign-in during development (otherwise new users must confirm by
+   email before they can sign in).
+2. From **Project Settings → API**, copy the **Project URL** and the **anon
+   public** key.
+3. Point the client at it (first source found wins):
 
-1. **Environment variable** (engine and launcher):
+   - **Environment variables** (engine and launcher):
+     ```bash
+     export OKAY_ACCOUNT_SERVER=https://YOUR-PROJECT.supabase.co
+     export OKAY_ACCOUNT_API_KEY=YOUR-ANON-PUBLIC-KEY
+     ```
+   - **Files next to the launcher**: `account_server.txt` (the project URL) and
+     `account_apikey.txt` (the anon key), one line each. Handy for shipping a
+     configured launcher.
+   - **From engine code**, before first use:
+     ```cpp
+     okay::Account::Configure("/config-dir",
+         "https://YOUR-PROJECT.supabase.co", "YOUR-ANON-PUBLIC-KEY");
+     ```
+   - **Baked into the build** so a shipped build is online by default:
+     ```
+     cmake ... -DOKAY_DEFAULT_ACCOUNT_URL=https://YOUR-PROJECT.supabase.co \
+               -DOKAY_DEFAULT_ACCOUNT_KEY=YOUR-ANON-PUBLIC-KEY
+     ```
 
-   ```bash
-   export OKAY_ACCOUNT_SERVER=https://accounts.mygame.com
-   ```
+With Supabase the identifier is the player's **email**. The anon key is meant to
+be public (it's safe to ship); real protection comes from Supabase's Row Level
+Security on your tables. The client uses Supabase's `auth/v1` REST API
+(`/signup`, `/token`, `/user`) and stores only the returned access token.
 
-2. **A file next to the launcher** — `account_server.txt`, one line, the base
-   URL. Handy for shipping a configured launcher:
+## Your own server (custom backend)
 
-   ```
-   https://accounts.mygame.com
-   ```
-
-3. **From engine code**, before the first use of the account system:
-
-   ```cpp
-   okay::Account::Configure("/path/to/config-dir", "https://accounts.mygame.com");
-   ```
-
-   Passing an empty server URL (or not calling `Configure`) keeps the local
-   backend; the per-user config directory is used by default.
-
-Use **HTTPS** in production — the password is sent in the request body.
-
-## The server contract
-
-When a server URL is set, sign-in and registration are plain JSON over HTTPS:
+If you'd rather run your own auth server, set just the server URL (no API key)
+and implement the contract below. A runnable reference server lives at
+[`examples/account-server/server.py`](../examples/account-server/server.py). Use
+**HTTPS** in production — the password is sent in the request body.
 
 ```
 POST <server>/register     {"username": "...", "password": "..."}
@@ -81,7 +93,8 @@ this to build server features on top of accounts — cloud saves, profiles,
 leaderboards, and so on. Your server returns `401`/`403` for an
 invalid/expired token.
 
-One endpoint is special:
+One endpoint is special (this is the custom-server path; with Supabase the
+client checks `auth/v1/user` automatically):
 
 ```
 GET <server>/verify        (Authorization: Bearer <token>)
@@ -120,6 +133,11 @@ devices. A "key" names a save slot (`"save1"`, `"settings"`); the data is any
 text you choose (your serialized save). It needs the online backend and a
 signed-in player; on the local backend these no-op (`save`/`delete` return
 false, `load` returns `""`, `list` is empty).
+
+> Cloud saves and leaderboards use the `/cloud` and `/leaderboard` endpoints
+> below. They work against the **custom** server out of the box; with
+> **Supabase** you'd expose the same routes (a table + a small Edge Function, or
+> PostgREST) — auth itself works either way.
 
 ```javascript
 function save_game() {

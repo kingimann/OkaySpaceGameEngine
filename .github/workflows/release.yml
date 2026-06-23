@@ -1,8 +1,9 @@
 name: Release Windows build
 
 # Cross-compiles the Windows distribution (launcher, editor, player + SDL2.dll)
-# from Linux with MinGW-w64. Runs on a version tag (and attaches the zip to the
-# GitHub Release), or on demand via "Run workflow".
+# from Linux with MinGW-w64 and publishes it as a GitHub Release. Triggers on a
+# version tag, or on demand via "Run workflow" — the manual run tags + releases
+# the version in dist/VERSION.txt.
 on:
   push:
     tags: ['v*']
@@ -44,6 +45,7 @@ jobs:
           zip -r "${NAME}.zip" "$NAME"
           echo "zip=${NAME}.zip" >> "$GITHUB_OUTPUT"
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "ver=${VER}" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -51,8 +53,13 @@ jobs:
           name: ${{ steps.pkg.outputs.name }}
           path: ${{ steps.pkg.outputs.zip }}
 
-      - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+      # On a tag push, release that tag. On a manual run, create/refresh a
+      # release for the version in dist/VERSION.txt (the runner's GITHUB_TOKEN
+      # can push the tag).
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.pkg.outputs.zip }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.pkg.outputs.ver) }}
+          name: OkaySpace v${{ steps.pkg.outputs.ver }}
+          generate_release_notes: true

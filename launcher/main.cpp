@@ -95,6 +95,31 @@ std::string BustCache(const std::string& url) {
     return url + sep + "okaycb=" + std::to_string(now) + "_" + std::to_string(counter++);
 }
 
+// Run a shell command. On Windows, run it WITHOUT flashing a console window
+// (CREATE_NO_WINDOW), which is why we don't use std::system there — every
+// std::system call would otherwise pop a cmd window. wait=true blocks and
+// returns the exit code (curl/powershell); wait=false fires and forgets
+// (launching apps, opening URLs).
+int RunCmd(const std::string& cmd, bool wait) {
+#if defined(_WIN32)
+    std::string full = "cmd /c " + cmd;
+    std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
+    STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
+    if (!CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        return -1;
+    DWORD code = 0;
+    if (wait) { WaitForSingleObject(pi.hProcess, INFINITE); GetExitCodeProcess(pi.hProcess, &code); }
+    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+    return (int)code;
+#else
+    (void)wait;
+    return std::system(cmd.c_str());
+#endif
+}
+
 // Download a URL to a file using whatever HTTP client is on the system.
 bool Download(const std::string& url, const std::string& out) {
     std::error_code ec; fs::remove(out, ec);
@@ -102,17 +127,17 @@ bool Download(const std::string& url, const std::string& out) {
     const char* nc = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" ";
 #if defined(_WIN32)
     std::string c1 = "curl -L -s -f " + std::string(nc) + "-o \"" + out + "\" \"" + u + "\"";
-    if (std::system(c1.c_str()) == 0 && fs::exists(out)) return true;
+    if (RunCmd(c1, true) == 0 && fs::exists(out)) return true;
     std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
                      "-Headers @{'Cache-Control'='no-cache'} "
                      "-UseBasicParsing -Uri '" + u + "' -OutFile '" + out +
                      "' } catch { exit 1 }\"";
-    return std::system(c2.c_str()) == 0 && fs::exists(out);
+    return RunCmd(c2, true) == 0 && fs::exists(out);
 #else
     std::string c1 = "curl -L -s -f " + std::string(nc) + "-o \"" + out + "\" \"" + u + "\" 2>/dev/null";
-    if (std::system(c1.c_str()) == 0 && fs::exists(out)) return true;
+    if (RunCmd(c1, true) == 0 && fs::exists(out)) return true;
     std::string c2 = "wget -q --no-cache -O \"" + out + "\" \"" + u + "\" 2>/dev/null";
-    return std::system(c2.c_str()) == 0 && fs::exists(out);
+    return RunCmd(c2, true) == 0 && fs::exists(out);
 #endif
 }
 
@@ -278,7 +303,7 @@ void Launch(const std::string& exe, const std::string& arg = "") {
     if (!arg.empty()) cmd += " \"" + arg + "\"";
     cmd += " >/dev/null 2>&1 &";
 #endif
-    std::system(cmd.c_str());
+    RunCmd(cmd, false);
 }
 
 // This launcher's process id (handed to the editor so it can verify the launcher
@@ -302,7 +327,7 @@ void LaunchEditor(const std::string& exe) {
 #else
     std::string cmd = "\"" + exe + "\" " + tok + " >/dev/null 2>&1 &";
 #endif
-    std::system(cmd.c_str());
+    RunCmd(cmd, false);
 }
 
 // Open a URL in the default browser, or a folder in the file manager.
@@ -315,7 +340,7 @@ void OpenExternal(const std::string& target) {
 #else
     std::string cmd = "xdg-open \"" + target + "\" >/dev/null 2>&1 &";
 #endif
-    std::system(cmd.c_str());
+    RunCmd(cmd, false);
 }
 
 // Scan a few likely folders for built games (*.okayscene).

@@ -142,6 +142,19 @@ int main() {
         if (ts2) { CHECK(ts2->lockCursor); CHECK_NEAR(ts2->aimDistance, ts->aimDistance, 1e-4f); }
     }
 
+    // --- Third-person shooter SCENE template builds a playable scene ---
+    {
+        Scene sc("tpl");
+        Templates::ThirdPersonShooter(sc);
+        GameObject* p = sc.Find("Player");
+        CHECK(p != nullptr);
+        CHECK(p && p->GetComponent<ThirdPersonShooterController>() != nullptr);
+        CHECK(p && p->GetComponent<Rigidbody3D>() != nullptr);
+        CHECK(sc.Find("Main Camera") != nullptr);
+        CHECK(sc.Find("Target") != nullptr);                 // shootable targets exist
+        CHECK(sc.Find("Ground") != nullptr);
+    }
+
     // --- Top-down controller moves world-relative and drives walk/run animation ---
     {
         Scene sc("tdmove"); sc.physicsEnabled = false;

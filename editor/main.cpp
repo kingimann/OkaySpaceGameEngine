@@ -4122,6 +4122,7 @@ void DrawNewProjectPopup(EditorState& ed) {
             {C_BLANK, "Empty",      "Nothing at all",     "A totally empty scene (no camera or light). Build it up yourself.", &EditorState::NewScene},
             {C_3D,    "First Person","Character + FPS",    "A blocky Character you control in first person: mouse-look, WASD, jump. Camera at eye height, with crates to walk around.", &EditorState::NewFPS},
             {C_3D,    "Third Person","Orbit camera",       "Your blocky Character with an orbit camera behind it: WASD relative to the camera, Space to jump, with walk/run animation. You see and control the character.", &EditorState::NewThirdPerson},
+            {C_3D,    "Third Person Shooter","Over-the-shoulder aim", "An over-the-shoulder shooter: the body faces where you aim, right mouse aims (camera zooms in), left mouse fires, cursor locked. Ground with cover crates and a row of targets to shoot.", &EditorState::NewThirdPersonShooter},
             {C_3D,    "Point & Click","Click to move",     "RuneScape / Diablo style: click the ground and your Character walks there, under a high angled camera. Powered by the Click To Move controller.", &EditorState::NewPointAndClick},
             {C_2D,    "Platformer",  "Side-scroller",      "A side-scroller: follow camera, a physics player on a wide ground, and a coin.", &EditorState::NewPlatformer},
             {C_2D,    "Top-Down",    "WASD movement",      "A WASD-driven player with a follow camera and a couple of walls.", &EditorState::NewTopDown},

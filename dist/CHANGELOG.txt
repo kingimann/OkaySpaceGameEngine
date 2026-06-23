@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.125.0  (Third-person shooter scene template)
+  - New "Third Person Shooter" starter scene (Templates::ThirdPersonShooter): a
+    playable over-the-shoulder level with a directional light, a ground, cover crates,
+    a row of shootable target spheres, and the player wired with the
+    ThirdPersonShooterController + camera. Available in New Project / templates next to
+    First Person and Third Person.
+
 v2.124.0  (Build Settings: graphics / quality + cursor lock)
   - The Build Game dialog gained a Graphics / Quality group so a shipped game ships
     with the look you want: per-pixel lighting, shadows, bloom, ambient occlusion,

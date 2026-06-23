@@ -262,6 +262,67 @@ inline void ThirdPerson(Scene& scene) {
     camObj->transform->localPosition = {0, 3, 6};
 }
 
+/// A third-person SHOOTER starter: the blocky Character driven by a
+/// ThirdPersonShooterController (over-the-shoulder aim, RMB aims, LMB fires), on a
+/// ground with some cover crates and a row of shootable targets to aim at.
+inline void ThirdPersonShooter(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Third Person Shooter");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -35, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {40, 1, 40};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube();
+    gmr->color = Color::FromBytes(88, 96, 104);
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    // Cover crates to strafe around.
+    const Vec3 crates[4] = {{4, 0.5f, -5}, {-4, 0.5f, -6}, {6, 0.5f, 2}, {-6, 0.5f, 3}};
+    for (int i = 0; i < 4; ++i) {
+        GameObject* c = scene.CreateGameObject("Crate");
+        c->transform->localPosition = crates[i];
+        auto* mr = c->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = Color::FromBytes(150, 120, 80);
+        c->AddComponent<BoxCollider3D>();
+        c->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+
+    // A row of red "targets" downrange to aim at.
+    for (int i = 0; i < 5; ++i) {
+        GameObject* t = scene.CreateGameObject("Target");
+        t->transform->localPosition = {(float)(i - 2) * 2.5f, 1.0f, -12.0f};
+        auto* mr = t->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Sphere();
+        mr->color = Color::FromBytes(200, 70, 60);
+        mr->emissive = Color::FromBytes(60, 10, 10);
+        t->AddComponent<SphereCollider3D>();
+    }
+
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = {0, 1.0f, 0};
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};
+    }
+    player->AddComponent<ThirdPersonShooterController>();
+
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {0, 2, 5};
+}
+
 /// A point-and-click starter (RuneScape / Diablo style): the blocky Character
 /// driven by a ClickToMoveController — click the ground and it walks there — under
 /// a high, angled camera, on a ground with a few crates.

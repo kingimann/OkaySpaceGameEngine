@@ -1269,6 +1269,26 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
         }
         ImGui::Separator();
+        if (ImGui::BeginMenu("Player")) {           // ready-to-play premade players
+            if (ImGui::MenuItem("Third Person")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddThirdPersonPlayer(ed.scene()));
+                ConsoleLog("Added Third-Person player"); ed.dirty = true; created = true;
+            }
+            if (ImGui::MenuItem("First Person")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddFirstPersonPlayer(ed.scene()));
+                ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
+            }
+            if (ImGui::MenuItem("Click To Move")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddClickToMovePlayer(ed.scene()));
+                ConsoleLog("Added Click-To-Move player"); ed.dirty = true; created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops a fully set-up player (Character + controller + physics) into this scene.");
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
         if (ImGui::BeginMenu("3D Object")) {       // every built-in primitive
             if (ImGui::MenuItem("Cube"))      { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
             if (ImGui::MenuItem("Sphere"))    { ed.CreateMesh("Sphere");    ConsoleLog("Created Sphere"); created = true; }
@@ -5900,6 +5920,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##fp", &fp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Deceleration##fp", &fp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Air Control##fp", &fp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Coyote Time##fp", &fp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Jump Buffer##fp", &fp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::DragFloat("Mouse Sensitivity##fp", &fp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Invert Y##fp", &fp->invertY)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##fp", &fp->canJump)) ed.dirty = true;
@@ -5962,6 +5987,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Run Key##ctm", rkb, sizeof(rkb))) { cm->runKey = rkb[0] == ' ' ? 0 : rkb[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold to run (blank = disabled)");
             if (ImGui::DragFloat("Stop Distance##ctm", &cm->stopDistance, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Arrive Radius##ctm", &cm->arriveRadius, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease to a stop over the last this-many metres (0 = abrupt stop)");
             if (ImGui::DragFloat("Turn Speed##ctm", &cm->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
             const char* btns[] = {"Left", "Right", "Middle"};
             ImGui::SetNextItemWidth(110);

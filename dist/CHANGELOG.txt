@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.115.0  (controllers polished + premade-player shortcuts)
+  - First-person controller now matches third-person feel: movement momentum
+    (accel/decel + air control) and a forgiving jump (grounded-from-contacts +
+    coyote time + jump buffer) replacing the old apex double-jump check.
+  - Click-to-move controller eases to a stop over an Arrive Radius so arrivals no
+    longer jolt.
+  - New "GameObject > Player" shortcuts: Third Person / First Person / Click To Move
+    drop a fully wired player (Character + controller + Rigidbody3D + collider, and a
+    camera — child-mounted for first person) straight into the current scene. Backed
+    by reusable Templates::Add*Player helpers.
+  - All new fields are in the inspector and saved with the scene (back-compatible).
+    New premade-player test; 78 tests pass.
+
 v2.114.0  (third-person controller: feel + no camera clipping)
   - Movement now has momentum: horizontal velocity eases toward the target with
     tunable acceleration/deceleration and reduced air control, so starts and stops

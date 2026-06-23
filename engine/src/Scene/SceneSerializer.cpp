@@ -279,7 +279,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
             << fp->mouseSensitivity << " " << (fp->canJump ? 1 : 0) << " " << (fp->driveAnimation ? 1 : 0)
-            << " " << (fp->invertY ? 1 : 0) << "\n";
+            << " " << (fp->invertY ? 1 : 0)
+            // extended (back-compatible trailing fields): momentum + jump feel
+            << " " << fp->acceleration << " " << fp->deceleration << " " << fp->airControl
+            << " " << fp->coyoteTime << " " << fp->jumpBufferTime << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
@@ -309,7 +312,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << cm->rotateSpeed << " " << cm->keyRotateSpeed
             << " " << (cm->rotateLeftKey ? cm->rotateLeftKey : '-')
             << " " << (cm->rotateRightKey ? cm->rotateRightKey : '-')
-            << " " << cm->cameraDamping << "\n";
+            << " " << cm->cameraDamping
+            << " " << cm->arriveRadius << "\n";   // extended (back-compatible trailing field)
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -986,6 +990,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cm->rotateLeftKey = (rlk == "-" || rlk.empty()) ? 0 : rlk[0];
                         cm->rotateRightKey = (rrk == "-" || rrk.empty()) ? 0 : rrk[0];
                         cm->cameraDamping = cdamp;
+                        in >> std::ws; // optional arrival radius (added later)
+                        if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->arriveRadius;
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -1005,6 +1011,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     fp->walkSpeed = ws; fp->runSpeed = rs; fp->jumpForce = jf;
                     fp->mouseSensitivity = ms; fp->canJump = (cj != 0); fp->driveAnimation = (da != 0);
                     fp->invertY = (iy != 0);
+                    // Optional momentum + jump-feel block (absent in older scenes).
+                    float ac = fp->acceleration, de = fp->deceleration, aircon = fp->airControl,
+                          coy = fp->coyoteTime, jb = fp->jumpBufferTime;
+                    in >> std::ws;
+                    if ((std::isdigit(in.peek()) || in.peek() == '-') &&
+                        (in >> ac >> de >> aircon >> coy >> jb)) {
+                        fp->acceleration = ac; fp->deceleration = de; fp->airControl = aircon;
+                        fp->coyoteTime = coy; fp->jumpBufferTime = jb;
+                    }
                 } else if (field == "tpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.2f, ts = 12, ds = 5, ch = 1.5f; int cj = 1, da = 1;
                     in >> ws >> rs >> jf >> ms >> ts >> ds >> ch >> cj >> da;

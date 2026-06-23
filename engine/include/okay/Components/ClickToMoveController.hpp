@@ -31,6 +31,7 @@ public:
     float runSpeed    = 7.0f;
     char  runKey      = 0;          // hold to run (0 = disabled)
     float stopDistance = 0.15f;     // how close counts as "arrived"
+    float arriveRadius = 1.2f;      // ease to a stop over the last this-many metres
     float turnSpeed   = 12.0f;      // how fast the body turns toward travel
     int   mouseButton = 0;          // which button sets the destination (0=left)
     bool  holdToMove  = false;      // hold the button to keep retargeting (else single clicks)
@@ -84,6 +85,9 @@ public:
         Vec3 dir{to.x / dist, 0.0f, to.z / dist};
         bool running = runKey && Input::GetKey(runKey);
         float speed = running ? runSpeed : walkSpeed;
+        // Ease to a stop over the last `arriveRadius` metres so arrivals don't jolt.
+        if (arriveRadius > 0.0f && dist < arriveRadius)
+            speed *= Mathf::Max(0.3f, dist / arriveRadius);
         // Don't overshoot on the final step.
         float step = speed * dt;
         bool lastStep = step >= dist;

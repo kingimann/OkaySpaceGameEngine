@@ -39,6 +39,65 @@ namespace okay {
 /// editor and tests can both use them.
 namespace Templates {
 
+// ---- Premade players (added to an EXISTING scene) --------------------------
+// These drop a ready-to-play player into the current scene (rather than building
+// a whole new scene), so the editor can offer "Add > Player" shortcuts. Each
+// returns the player GameObject so the caller can select it.
+
+/// A standard physics body for a player: the blocky Character + Rigidbody3D + a
+/// capsule-ish box collider wrapping feet->head.
+inline GameObject* BuildPlayerBody(Scene& scene, const Vec3& pos, const char* name) {
+    GameObject* player = scene.CreateGameObject(name);
+    player->transform->localPosition = pos;
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    auto* col = player->AddComponent<BoxCollider3D>();
+    col->size = {0.6f, 1.8f, 0.6f};
+    col->offset = {0.0f, 0.9f, 0.0f};
+    return player;
+}
+
+/// Find an existing Camera in the scene, or create a "Main Camera" if there is none.
+inline GameObject* EnsureMainCamera(Scene& scene) {
+    for (const auto& go : scene.Objects())
+        if (go->GetComponent<Camera>()) return go.get();
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {0, 3, 6};
+    return camObj;
+}
+
+/// Add a third-person player (orbit camera positioned by the controller).
+inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<ThirdPersonController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Add a first-person player (camera mounted as a child at eye height).
+inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<FirstPersonController>();
+    GameObject* camObj = scene.CreateGameObject("Player Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->SetParent(player->transform, false);
+    camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height
+    return player;
+}
+
+/// Add a click-to-move player (point-and-click; controller drives a follow camera).
+inline GameObject* AddClickToMovePlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<ClickToMoveController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
 /// A side-scrolling platformer starter: a follow camera, a physics player on a
 /// wide ground, and a spinning coin pickup.
 inline void Platformer(Scene& scene) {

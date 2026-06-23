@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Input/Input.hpp"
@@ -26,6 +27,15 @@ public:
     float walkSpeed = 4.5f;
     float runSpeed  = 8.0f;
     float jumpForce = 6.0f;
+    // Momentum: ramp horizontal velocity toward the target (units/s^2) for weighty
+    // starts/stops, with reduced authority in the air.
+    float acceleration = 60.0f;
+    float deceleration = 55.0f;
+    float airControl   = 0.40f;
+    // Forgiving jump timing: coyote time (jump just after a ledge) + jump buffer
+    // (press just before landing).
+    float coyoteTime    = 0.12f;
+    float jumpBufferTime = 0.12f;
     float mouseSensitivity = 0.15f;     // degrees per pixel of mouse movement
     float minPitch = -85.0f, maxPitch = 85.0f;
     bool  invertY = false;              // invert vertical mouse look
@@ -83,14 +93,28 @@ public:
         bool running = sprintKey && Input::GetKey(sprintKey) && moving;
         float speed = running ? runSpeed : walkSpeed;
 
+        // Grounded (from contacts) + coyote time + jump buffer.
+        m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
+        bool grounded = m_groundContact > 0.0f;
+        m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
+        if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
+        else                        m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
+
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
-        bool airborne = false;
+        // Only a physics body can be airborne; a transform-only player can't fall.
+        bool airborne = rb ? !grounded : false;
         if (rb) {
-            rb->velocity.x = dir.x * speed;
-            rb->velocity.z = dir.z * speed;
-            if (canJump && Input::GetKeyDown(' ') && Mathf::Abs(rb->velocity.y) < 0.5f)
+            Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
+            Vec3 dv{dir.x * speed - cur.x, 0.0f, dir.z * speed - cur.z};
+            float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
+            float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z), step = rate * dt;
+            if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
+            rb->velocity.x = cur.x + dv.x;
+            rb->velocity.z = cur.z + dv.z;
+            if (canJump && m_jumpBuf > 0.0f && m_coyote > 0.0f) {
                 rb->velocity.y = jumpForce;
-            airborne = Mathf::Abs(rb->velocity.y) > 0.6f;
+                m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f; airborne = true;
+            }
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
         }
@@ -101,9 +125,23 @@ public:
                 ch->anim = airborne ? 5 : (moving ? (running ? 3 : 2) : 1);
     }
 
+    // Grounded detection: a roughly-vertical contact with something below the player.
+    void OnCollisionEnter3D(const Collision3D& c) override { NoteGround(c); }
+    void OnCollisionStay3D(const Collision3D& c)  override { NoteGround(c); }
+
 private:
+    void NoteGround(const Collision3D& c) {
+        bool vertical = Mathf::Abs(c.normal.y) > 0.5f;
+        bool below = c.gameObject && c.gameObject->transform && transform &&
+                     c.gameObject->transform->Position().y < transform->Position().y;
+        if (vertical && below) m_groundContact = 0.10f;
+    }
+
     Vec2 m_lastMouse{0, 0};
     bool m_haveMouse = false;
+    float m_groundContact = 0.0f;
+    float m_coyote = 0.0f;
+    float m_jumpBuf = 0.0f;
 
     Transform* FindCameraChild() const {
         if (!transform) return nullptr;

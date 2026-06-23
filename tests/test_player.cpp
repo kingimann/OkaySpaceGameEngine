@@ -73,5 +73,32 @@ int main() {
         CHECK((p->transform->localPosition - start).Magnitude() > 0.01f);  // moved
     }
 
+    // --- Premade-player shortcuts drop a fully wired player into a scene ---
+    {
+        Scene sc("tp");
+        GameObject* p = Templates::AddThirdPersonPlayer(sc);
+        CHECK(p != nullptr);
+        CHECK(p->GetComponent<ThirdPersonController>() != nullptr);
+        CHECK(p->GetComponent<Character>() != nullptr);
+        CHECK(p->GetComponent<Rigidbody3D>() != nullptr);
+        CHECK(p->GetComponent<BoxCollider3D>() != nullptr);
+        // A camera exists in the scene (created since there was none).
+        CHECK(Templates::EnsureMainCamera(sc) != nullptr);
+    }
+    {
+        Scene sc("fp");
+        GameObject* p = Templates::AddFirstPersonPlayer(sc);
+        CHECK(p && p->GetComponent<FirstPersonController>() != nullptr);
+        // The camera is a child of the player (eye-mounted).
+        GameObject* camChild = sc.Find("Player Camera");
+        CHECK(camChild && camChild->transform->Parent() == p->transform);
+        CHECK(camChild && camChild->GetComponent<Camera>() != nullptr);
+    }
+    {
+        Scene sc("ctm");
+        GameObject* p = Templates::AddClickToMovePlayer(sc);
+        CHECK(p && p->GetComponent<ClickToMoveController>() != nullptr);
+    }
+
     TEST_MAIN_RESULT();
 }

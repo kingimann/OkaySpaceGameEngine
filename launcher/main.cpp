@@ -833,11 +833,10 @@ int main(int argc, char** argv) {
             }
         } else {                                          // ---- Settings ----
             sectionHeader("Settings", nullptr);
-            ImGui::TextWrapped("Connect accounts to a server so players sign in online "
-                               "and their progress follows them. For Supabase, paste your "
-                               "Project URL and the anon public key (Supabase dashboard > "
-                               "Project Settings > API). Leave both blank to use local "
-                               "accounts on this device only.");
+            ImGui::TextWrapped("Account server. This build is preconfigured, so you "
+                               "normally don't need to change anything here. Advanced: "
+                               "point the launcher at a different server URL below, or "
+                               "switch to local accounts on this device.");
             ImGui::Dummy(ImVec2(0, 12));
             ImGui::SeparatorText("Account server");
 
@@ -845,14 +844,6 @@ int main(int argc, char** argv) {
             ImGui::PushItemWidth(460);
             ImGui::InputTextWithHint("##setUrl", "https://YOUR-PROJECT.supabase.co",
                                      setUrl, sizeof(setUrl));
-            ImGui::TextDisabled("API key  (anon / publishable — required for Supabase)");
-            // The key field is masked and never prefilled, so an existing or
-            // built-in key is never shown. Empty = keep the current key.
-            const char* keyHint = activeKey.empty()
-                ? "paste your publishable key"
-                : "********  (a key is set — type to replace)";
-            ImGui::InputTextWithHint("##setKey", keyHint, setKey, sizeof(setKey),
-                                     ImGuiInputTextFlags_Password);
             ImGui::PopItemWidth();
             ImGui::Dummy(ImVec2(0, 12));
 
@@ -864,19 +855,14 @@ int main(int argc, char** argv) {
             // accountPtr (not the per-frame alias) — applyAccountSettings above
             // may have just rebuilt it this frame.
             if (accountPtr->IsOnline())
-                ImGui::TextDisabled("Active: %s (%s)", accountPtr->ServerUrl().c_str(),
-                                    accountPtr->ProviderName());
+                ImGui::TextDisabled("Status: connected to %s", accountPtr->ServerUrl().c_str());
             else
-                ImGui::TextDisabled("Active: local dev accounts (no server)");
+                ImGui::TextDisabled("Status: local accounts (no server)");
             if (!setStatus.empty()) {
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "%s", setStatus.c_str());
                 ImGui::PopTextWrapPos();
             }
-            ImGui::Dummy(ImVec2(0, 10));
-            ImGui::TextDisabled("The key is hidden and only saved to disk if you type a "
-                                "new one; a built-in key is never written out. Protect "
-                                "your data with Supabase Row Level Security.");
         }
 
         // ---- Footer (pinned to the bottom of the content panel) ----

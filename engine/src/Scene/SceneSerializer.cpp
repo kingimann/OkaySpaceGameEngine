@@ -436,10 +436,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (btn->isOn ? 1 : 0) << " " << btn->pressOffset
             << " " << (btn->iconRight ? 1 : 0) << " " << (btn->holdRepeat ? 1 : 0)
             << " " << btn->repeatDelay << " " << btn->repeatInterval
-            // extended (back-compatible trailing fields): shape + drop shadow
+            // extended (back-compatible trailing fields): shape + drop shadow (+softness)
             << " " << (int)btn->shape << " " << (btn->shadow ? 1 : 0) << " "
             << btn->shadowColor.r << " " << btn->shadowColor.g << " " << btn->shadowColor.b << " " << btn->shadowColor.a
-            << " " << btn->shadowOffset.x << " " << btn->shadowOffset.y << "\n";
+            << " " << btn->shadowOffset.x << " " << btn->shadowOffset.y
+            << " " << btn->shadowSoftness << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -453,8 +454,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (pn->shadow ? 1 : 0) << " "
             << pn->shadowColor.r << " " << pn->shadowColor.g << " " << pn->shadowColor.b << " " << pn->shadowColor.a << " "
             << pn->shadowOffset.x << " " << pn->shadowOffset.y
-            // extended (back-compatible trailing fields): shape + gradient direction
-            << " " << (int)pn->shape << " " << (pn->gradientHorizontal ? 1 : 0) << "\n";
+            // extended (back-compatible trailing fields): shape + gradient direction + soft shadow
+            << " " << (int)pn->shape << " " << (pn->gradientHorizontal ? 1 : 0)
+            << " " << pn->shadowSoftness << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
@@ -1279,6 +1281,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 in >> sp >> sh >> sc.r >> sc.g >> sc.b >> sc.a
                                    >> btn->shadowOffset.x >> btn->shadowOffset.y;
                                 btn->shape = (UIShape)sp; btn->shadow = (sh != 0); btn->shadowColor = sc;
+                                in >> std::ws; // optional shadow softness (added later)
+                                if (std::isdigit(in.peek()) || in.peek() == '.') in >> btn->shadowSoftness;
                             }
                         }
                     }
@@ -1313,6 +1317,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int sp = 0, gh = 0; in >> sp >> gh;
                         pn->shape = (UIShape)sp; pn->gradientHorizontal = (gh != 0);
+                        in >> std::ws; // optional shadow softness (added later)
+                        if (std::isdigit(in.peek()) || in.peek() == '.') in >> pn->shadowSoftness;
                     }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();

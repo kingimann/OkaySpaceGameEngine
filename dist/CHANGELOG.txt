@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.119.0  (UI: soft / blurred drop shadows)
+  - UIPanel and UIButton gain a Shadow Blur (shadowSoftness): 0 = a crisp shadow,
+    higher = a soft penumbra for the premium card look. The player fakes the blur by
+    stacking a few expanding, fading copies of the shape behind the widget.
+  - Inspector blur sliders + back-compatible serialization. uishape suite extended
+    (softness round-trip); 78 tests pass.
+
 v2.118.0  (UI: segmented tab control)
   - New UITabs component: a segmented control / tab bar — a row of equal segments
     where exactly one is selected (settings tabs, difficulty pickers, view switches).

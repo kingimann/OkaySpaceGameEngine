@@ -6540,6 +6540,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Shadow Color##uib", sc)) { btn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
                 float so[2] = {btn->shadowOffset.x, btn->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##uib", so, 0.5f)) { btn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+                if (ImGui::DragFloat("Shadow Blur##uib", &btn->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
             }
             if (ImGui::DragFloat("Border Width##uib", &btn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             if (btn->borderWidth > 0.0f) {
@@ -6604,6 +6605,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Shadow Color##uip", sc)) { pn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
                 float so[2] = {pn->shadowOffset.x, pn->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##uip", so, 0.5f)) { pn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+                if (ImGui::DragFloat("Shadow Blur##uip", &pn->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp; higher = a soft penumbra (premium card look)");
             }
             if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
         }

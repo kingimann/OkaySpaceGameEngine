@@ -211,5 +211,22 @@ int main() {
         }
     }
 
+    // Soft drop shadow blur round-trips on panels and buttons.
+    {
+        Scene s("SS"); s.physicsEnabled = false;
+        auto* pn = s.CreateGameObject("P")->AddComponent<UIPanel>();
+        pn->shadow = true; pn->shadowSoftness = 9.0f;
+        auto* bt = s.CreateGameObject("B")->AddComponent<UIButton>();
+        bt->shadow = true; bt->shadowSoftness = 5.0f;
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* pn2 = s2.Find("P") ? s2.Find("P")->GetComponent<UIPanel>() : nullptr;
+        auto* bt2 = s2.Find("B") ? s2.Find("B")->GetComponent<UIButton>() : nullptr;
+        CHECK(pn2 && pn2->shadow);
+        if (pn2) CHECK_NEAR(pn2->shadowSoftness, 9.0f, 1e-4f);
+        CHECK(bt2 && bt2->shadow);
+        if (bt2) CHECK_NEAR(bt2->shadowSoftness, 5.0f, 1e-4f);
+    }
+
     TEST_MAIN_RESULT();
 }

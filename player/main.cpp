@@ -72,6 +72,24 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
     }
 }
 
+// Draw a drop shadow for a UI shape. softness == 0 is a crisp shadow; softness > 0
+// fakes a blur by stacking a few expanding, fading copies into a soft penumbra.
+static void FillUIShadow(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
+                         const Color& color, float softness, float op) {
+    if (softness <= 0.0f) {
+        FillUIShape(ren, r, shape, radius, color, color, false, false, op);
+        return;
+    }
+    const int layers = 5;
+    for (int k = layers; k >= 1; --k) {
+        float grow = softness * (float)k / layers;
+        SDL_Rect r2{r.x - (int)grow, r.y - (int)grow, r.w + (int)(2 * grow), r.h + (int)(2 * grow)};
+        Color c = color; c.a = color.a * (0.6f / layers);     // accumulate toward the edge
+        FillUIShape(ren, r2, shape, radius + grow, c, c, false, false, op);
+    }
+    FillUIShape(ren, r, shape, radius, color, color, false, false, op);   // solid core
+}
+
 // A stable, distinct color for each non-zero tile id (no palette is stored).
 static SDL_Color TileColor(int id) {
     unsigned h = (unsigned)id * 2654435761u;
@@ -630,8 +648,8 @@ int main(int argc, char** argv) {
             SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
             if (pn->shadow) {                               // drop shadow behind (same shape)
                 SDL_Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
-                FillUIShape(renderer, sh, pn->shape, pn->cornerRadius,
-                            pn->shadowColor, pn->shadowColor, false, false, op);
+                FillUIShadow(renderer, sh, pn->shape, pn->cornerRadius,
+                             pn->shadowColor, pn->shadowSoftness, op);
             }
             if (pn->borderWidth > 0.0f) {                   // border = outer shape, then inner fill
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
@@ -852,8 +870,8 @@ int main(int argc, char** argv) {
             }
             if (btn->shadow) {                              // drop shadow behind (same shape)
                 SDL_Rect sh{r.x + (int)btn->shadowOffset.x, r.y + (int)btn->shadowOffset.y, r.w, r.h};
-                FillUIShape(renderer, sh, btn->shape, btn->cornerRadius,
-                            btn->shadowColor, btn->shadowColor, false, false, op);
+                FillUIShadow(renderer, sh, btn->shape, btn->cornerRadius,
+                             btn->shadowColor, btn->shadowSoftness, op);
             }
             if (btn->borderWidth > 0.0f) {                  // border = outer shape, then inner fill
                 FillUIShape(renderer, r, btn->shape, btn->cornerRadius,

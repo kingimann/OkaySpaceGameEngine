@@ -400,7 +400,7 @@ std::string InstallUpdate(const std::string& latest, const std::string& ref = "m
     fs::path newFile = self; newFile += ".new";
     // Download the new build from the commit-pinned URL so the CDN can never hand
     // back the old binary (the cause of "it updated but stayed the same version").
-    if (!Download(RawUrl(ref, "OkaySpaceEngine.exe"), newFile.string()))
+    if (!Download(RawUrl(ref, "OkayEngine.exe"), newFile.string()))
         return "Download of v" + latest + " failed.";
     if (fs::file_size(newFile, ec) < 100000) {
         fs::remove(newFile, ec);
@@ -6242,6 +6242,78 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
         }
     }
+    if (auto* st = go->GetComponent<Stats>()) {
+        if (CompHeader("Stats", st, &toRemove)) {
+            ImGui::SeparatorText("Vitals");
+            if (ImGui::DragFloat("Health##st", &st->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            if (ImGui::DragFloat("Max##sthp", &st->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Mana##st", &st->mana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            if (ImGui::DragFloat("Max##stmp", &st->maxMana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            ImGui::ProgressBar(st->HealthFraction(), ImVec2(-1, 0), "HP");
+            ImGui::SeparatorText("Progression");
+            if (ImGui::DragInt("Level##st", &st->level, 0.1f, 1, 999)) ed.dirty = true;
+            if (ImGui::DragInt("XP##st", &st->xp, 1.0f, 0, 1000000)) ed.dirty = true;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            if (ImGui::DragInt("To Next##st", &st->xpToNext, 1.0f, 1, 1000000)) ed.dirty = true;
+            ImGui::SeparatorText("Attributes");
+            if (ImGui::DragInt("Strength##st", &st->strength, 0.1f, 0, 999)) ed.dirty = true;
+            if (ImGui::DragInt("Defense##st", &st->defense, 0.1f, 0, 999)) ed.dirty = true;
+            if (ImGui::DragInt("Intelligence##st", &st->intelligence, 0.1f, 0, 999)) ed.dirty = true;
+            if (ImGui::DragInt("Agility##st", &st->agility, 0.1f, 0, 999)) ed.dirty = true;
+            ImGui::TextDisabled("scripts: take_damage / heal / add_xp; fires on_death, on_level_up");
+            if (ImGui::SmallButton("Remove##st")) toRemove = st;
+        }
+    }
+    if (auto* inv = go->GetComponent<Inventory>()) {
+        if (CompHeader("Inventory", inv, &toRemove)) {
+            if (ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999)) ed.dirty = true;
+            ImGui::Text("Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
+            int eraseS = -1;
+            for (int i = 0; i < (int)inv->slots.size(); ++i) {
+                ImGui::PushID(i);
+                char ib[64]; std::strncpy(ib, inv->slots[i].item.c_str(), sizeof(ib) - 1); ib[sizeof(ib)-1] = '\0';
+                ImGui::SetNextItemWidth(130);
+                if (ImGui::InputText("##invit", ib, sizeof(ib))) { inv->slots[i].item = ib; ed.dirty = true; }
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                if (ImGui::DragInt("##invn", &inv->slots[i].count, 0.2f, 0, 9999)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) eraseS = i;
+                ImGui::PopID();
+            }
+            if (eraseS >= 0) { inv->slots.erase(inv->slots.begin() + eraseS); ed.dirty = true; }
+            if (ImGui::SmallButton("Add Item##inv") && !inv->IsFull()) { inv->slots.push_back({"Item", 1}); ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##inv")) toRemove = inv;
+        }
+    }
+    if (auto* tm = go->GetComponent<TurnManager>()) {
+        if (CompHeader("Turn Manager", tm, &toRemove)) {
+            if (ImGui::Checkbox("Auto Start##tm", &tm->autoStart)) ed.dirty = true;
+            ImGui::Text("Round %d  |  Turn: %s", tm->round,
+                        tm->Current().empty() ? "-" : tm->Current().c_str());
+            ImGui::SeparatorText("Participants (turn order)");
+            int eraseP = -1;
+            for (int i = 0; i < (int)tm->participants.size(); ++i) {
+                ImGui::PushID(i);
+                bool active = (i == tm->current);
+                char pb[64]; std::strncpy(pb, tm->participants[i].c_str(), sizeof(pb) - 1); pb[sizeof(pb)-1] = '\0';
+                if (active) ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1), ">");
+                else ImGui::TextUnformatted(" ");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("##part", pb, sizeof(pb))) { tm->participants[i] = pb; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) eraseP = i;
+                ImGui::PopID();
+            }
+            if (eraseP >= 0) { tm->participants.erase(tm->participants.begin() + eraseP); if (tm->current >= tm->Count()) tm->current = 0; ed.dirty = true; }
+            if (ImGui::SmallButton("Add##tm")) { tm->participants.push_back("Unit"); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("End Turn (preview)##tm")) tm->EndTurn();
+            ImGui::TextDisabled("calls on_turn_start on each unit; on_round_start here");
+            if (ImGui::SmallButton("Remove##tm")) toRemove = tm;
+        }
+    }
     if (auto* cf = go->GetComponent<CameraFollow>()) {
         if (CompHeader("Camera Follow", cf, &toRemove)) {
             char buf[128];
@@ -7322,6 +7394,13 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
+          } EndCat(o); }
+
+        { bool o = BeginCat("RPG / Turn-Based");
+          if (o) {
+            if (item(!go->GetComponent<Stats>(), "Stats")) { go->AddComponent<Stats>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Inventory>(), "Inventory")) { go->AddComponent<Inventory>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TurnManager>(), "Turn Manager")) { go->AddComponent<TurnManager>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("UI");
@@ -9315,7 +9394,7 @@ int main(int argc, char** argv) {
     if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
 
     SDL_Window* window = SDL_CreateWindow(
-        "OkaySpace Editor", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        "OkayEngine", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { std::cerr << "CreateWindow failed: " << SDL_GetError() << "\n"; return 1; }
     okay::SetAppIcon(window);   // placeholder OkaySpace logo

@@ -23,6 +23,25 @@ public:
         if (m_service) m_service->SetStat(name, value);
     }
 
+    // Steam Cloud pass-throughs (save data that follows the player across PCs).
+    bool CloudWrite(const std::string& file, const std::string& data) {
+        return m_service && m_service->CloudWrite(file, data);
+    }
+    std::string CloudRead(const std::string& file) const {
+        return m_service ? m_service->CloudRead(file) : std::string{};
+    }
+
+    // Steam Workshop pass-throughs (community content).
+    std::uint64_t WorkshopPublish(const WorkshopItem& item) {
+        return m_service ? m_service->WorkshopPublish(item) : 0;
+    }
+    bool WorkshopSubscribe(std::uint64_t id) {
+        return m_service && m_service->WorkshopSubscribe(id);
+    }
+    std::vector<WorkshopItem> WorkshopSubscribedItems() const {
+        return m_service ? m_service->WorkshopSubscribedItems() : std::vector<WorkshopItem>{};
+    }
+
     void Awake() override;
     void Update(float dt) override;
     void OnDestroy() override;

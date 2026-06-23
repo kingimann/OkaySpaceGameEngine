@@ -1,5 +1,30 @@
 OkaySpace Game Engine — Changelog
 
+v2.127.0  (Turn-based / RPG components, Steam Workshop + Cloud, OkayEngine rename)
+  - RPG / turn-based building blocks: three new components under an "RPG / Turn-Based"
+    Add Component category, each with a full inspector and scene serialization.
+      * Stats     — health/mana, level + XP (auto level-up that raises caps and refills),
+                    strength/defense/intelligence/agility; TakeDamage mitigates by defense
+                    (min 1), fires on_death; AddXP fires on_level_up.
+      * Inventory — capacity-limited slots that auto-stack; Add/Remove/Count/Has, fires
+                    on_inventory_changed.
+      * TurnManager — ordered participants with turn/round tracking; Start/EndTurn fire
+                    on_turn_start, on_round_start; SetTurn/Remove for combat flow.
+  - Steam Workshop (UGC): publish/update community items, subscribe/unsubscribe, browse
+    with WorkshopQuery, and resolve installed item folders. Works in the in-memory
+    simulation for development; the real backend maps to ISteamUGC. New steam_workshop_*
+    OkayScript builtins.
+  - Steam Cloud: added file enumeration (CloudFiles) and CloudEnabled, plus
+    SteamManager pass-throughs and steam_cloud_has / steam_cloud_delete / steam_cloud_count
+    script builtins. The real backend maps Cloud to ISteamRemoteStorage.
+  - Renamed the editor executable to OkayEngine.exe (was OkaySpaceEngine.exe). The launcher
+    still finds older installs by name, and the window title is now "OkayEngine".
+
+v2.126.0  (Launcher updater fix)
+  - The launcher updater never downgrades: it only fetches a build when the published
+    version is strictly newer than what's installed, and the startup auto-check shows the
+    local version instead of silently pulling an older binary. Fixes "it downloads 2.97".
+
 v2.125.0  (Third-person shooter scene template)
   - New "Third Person Shooter" starter scene (Templates::ThirdPersonShooter): a
     playable over-the-shoulder level with a directional light, a ground, cover crates,

@@ -24,6 +24,9 @@
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
+#include "okay/Components/Stats.hpp"
+#include "okay/Components/Inventory.hpp"
+#include "okay/Components/TurnManager.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/DollyPath.hpp"
 #include "okay/Components/VirtualCamera.hpp"
@@ -348,6 +351,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* lt = go->GetComponent<Lifetime>()) {
         out << "  lifetime " << lt->seconds << "\n";
+    }
+    if (auto* st = go->GetComponent<Stats>()) {
+        out << "  stats " << st->health << " " << st->maxHealth << " " << st->mana << " " << st->maxMana
+            << " " << st->level << " " << st->xp << " " << st->xpToNext
+            << " " << st->strength << " " << st->defense << " " << st->intelligence << " " << st->agility << "\n";
+    }
+    if (auto* inv = go->GetComponent<Inventory>()) {
+        out << "  inventory " << inv->capacity << " " << inv->slots.size();
+        for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
+        out << "\n";
+    }
+    if (auto* tm = go->GetComponent<TurnManager>()) {
+        out << "  turnmgr " << tm->current << " " << tm->round << " " << (tm->autoStart ? 1 : 0)
+            << " " << tm->participants.size();
+        for (const auto& p : tm->participants) out << " " << Quote(p);
+        out << "\n";
     }
     if (auto* cf = go->GetComponent<CameraFollow>()) {
         out << "  camerafollow " << Quote(cf->targetName) << " "
@@ -1118,6 +1137,26 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "lifetime") {
                     float s = 1.0f; in >> s;
                     go->AddComponent<Lifetime>()->seconds = s;
+                } else if (field == "stats") {
+                    auto* st = go->AddComponent<Stats>();
+                    in >> st->health >> st->maxHealth >> st->mana >> st->maxMana
+                       >> st->level >> st->xp >> st->xpToNext
+                       >> st->strength >> st->defense >> st->intelligence >> st->agility;
+                } else if (field == "inventory") {
+                    auto* inv = go->AddComponent<Inventory>();
+                    std::size_t count = 0; in >> inv->capacity >> count;
+                    inv->slots.clear();
+                    for (std::size_t k = 0; k < count; ++k) {
+                        Inventory::Slot s; s.item = ReadQuoted(in); in >> s.count;
+                        inv->slots.push_back(s);
+                    }
+                } else if (field == "turnmgr") {
+                    auto* tm = go->AddComponent<TurnManager>();
+                    int as = 1; std::size_t count = 0;
+                    in >> tm->current >> tm->round >> as >> count;
+                    tm->autoStart = (as != 0);
+                    tm->participants.clear();
+                    for (std::size_t k = 0; k < count; ++k) tm->participants.push_back(ReadQuoted(in));
                 } else if (field == "camerafollow") {
                     std::string tgt = ReadQuoted(in);
                     Vec3 off; float sm = 5.0f;

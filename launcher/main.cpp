@@ -3,7 +3,7 @@
 //   Play        run a game you've built (any game.okayscene found nearby)
 //   Marketplace browse starter templates to open in the editor
 //
-// It looks for OkaySpaceEngine.exe (editor) and OkaySpacePlayer.exe (runtime)
+// It looks for OkayEngine.exe (editor) and OkaySpacePlayer.exe (runtime)
 // sitting next to it, and launches them. Built with Dear ImGui + SDL2.
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -203,8 +203,8 @@ int RunUpdateCheck(void*) {
     bool ok = true;
     {
         SetUpMsg("Downloading engine v" + latest + "...");
-        ok = ReplaceFile(std::string(kRawBase) + "OkaySpaceEngine.exe",
-                         dir / "OkaySpaceEngine.exe", false) && ok;
+        ok = ReplaceFile(std::string(kRawBase) + "OkayEngine.exe",
+                         dir / "OkayEngine.exe", false) && ok;
         SetUpMsg("Downloading player runtime v" + latest + "...");
         ok = ReplaceFile(std::string(kRawBase) + "OkaySpacePlayer.exe",
                          dir / "OkaySpacePlayer.exe", false) && ok;
@@ -383,7 +383,7 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
-    std::string editor = FindExe({"OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
+    std::string editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
     std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     std::vector<fs::path> scenes = FindScenes();
     bool rescannedAfterUpdate = false;
@@ -408,7 +408,7 @@ int main(int argc, char** argv) {
         // Once a background download finishes, re-detect the runtimes so the
         // "not found" notices clear without needing a restart.
         if (GetState() == Up_Updated && !rescannedAfterUpdate) {
-            editor = FindExe({"OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
+            editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
             player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
             scenes = FindScenes();
             rescannedAfterUpdate = true;
@@ -482,7 +482,7 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 18));
             if (editor.empty()) {
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Editor not found next to the launcher.");
-                ImGui::TextDisabled("Place okay-editor.exe (or OkaySpaceEngine.exe) beside this launcher.");
+                ImGui::TextDisabled("Place OkayEngine.exe beside this launcher.");
             } else {
                 if (ImGui::Button("Open Editor", ImVec2(240, 60))) LaunchEditor(editor);
                 ImGui::Dummy(ImVec2(0, 6));

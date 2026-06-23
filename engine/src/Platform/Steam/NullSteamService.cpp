@@ -2,6 +2,7 @@
 #include "okay/Core/Log.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
@@ -91,6 +92,83 @@ public:
     }
     bool CloudHasFile(const std::string& file) const override { return m_cloud.count(file) != 0; }
     bool CloudDelete(const std::string& file) override { return m_cloud.erase(file) != 0; }
+    std::vector<std::string> CloudFiles() const override {
+        std::vector<std::string> names;
+        names.reserve(m_cloud.size());
+        for (const auto& [name, data] : m_cloud) { (void)data; names.push_back(name); }
+        std::sort(names.begin(), names.end());
+        return names;
+    }
+    bool CloudEnabled() const override { return true; }
+
+    // Workshop (UGC): an in-memory catalogue. Publishing assigns a fresh id and
+    // auto-subscribes the author; Query does a case-insensitive substring match
+    // on title and tags.
+    std::uint64_t WorkshopPublish(const WorkshopItem& item) override {
+        WorkshopItem it = item;
+        it.id = m_nextWorkshopId++;
+        it.subscribed = true;
+        it.installed = true;
+        m_workshop[it.id] = it;
+        OKAY_INFO("Steam(sim): workshop published '", it.title, "' (id ", it.id, ")");
+        return it.id;
+    }
+    bool WorkshopUpdate(const WorkshopItem& item) override {
+        auto found = m_workshop.find(item.id);
+        if (found == m_workshop.end()) return false;
+        bool sub = found->second.subscribed, inst = found->second.installed;
+        found->second = item;
+        found->second.subscribed = sub;
+        found->second.installed  = inst;
+        return true;
+    }
+    bool WorkshopSubscribe(std::uint64_t id) override {
+        auto found = m_workshop.find(id);
+        if (found == m_workshop.end()) return false;
+        found->second.subscribed = true;
+        found->second.installed  = true;
+        return true;
+    }
+    bool WorkshopUnsubscribe(std::uint64_t id) override {
+        auto found = m_workshop.find(id);
+        if (found == m_workshop.end()) return false;
+        found->second.subscribed = false;
+        found->second.installed  = false;
+        return true;
+    }
+    bool WorkshopIsSubscribed(std::uint64_t id) const override {
+        auto found = m_workshop.find(id);
+        return found != m_workshop.end() && found->second.subscribed;
+    }
+    std::vector<WorkshopItem> WorkshopSubscribedItems() const override {
+        std::vector<WorkshopItem> rows;
+        for (const auto& [id, it] : m_workshop) { (void)id; if (it.subscribed) rows.push_back(it); }
+        return rows;
+    }
+    std::string WorkshopItemPath(std::uint64_t id) const override {
+        auto found = m_workshop.find(id);
+        return (found != m_workshop.end() && found->second.installed) ? found->second.contentPath
+                                                                      : std::string{};
+    }
+    std::vector<WorkshopItem> WorkshopQuery(const std::string& search, int count) const override {
+        auto lower = [](std::string s) {
+            std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            return s;
+        };
+        std::string needle = lower(search);
+        std::vector<WorkshopItem> rows;
+        for (const auto& [id, it] : m_workshop) {
+            (void)id;
+            if (needle.empty()) { rows.push_back(it); continue; }
+            if (lower(it.title).find(needle) != std::string::npos) { rows.push_back(it); continue; }
+            for (const auto& tag : it.tags)
+                if (lower(tag).find(needle) != std::string::npos) { rows.push_back(it); break; }
+        }
+        std::sort(rows.begin(), rows.end(),
+                  [](const WorkshopItem& a, const WorkshopItem& b) { return a.id < b.id; });
+        if (count >= 0 && (int)rows.size() > count) rows.resize(count);
+        return rows;
+    }
 
     int  FriendCount() const override { return 0; }
     void ActivateOverlay(const std::string& page) override {
@@ -119,6 +197,8 @@ private:
     std::unordered_map<std::string, float> m_stats;
     std::map<std::string, std::map<std::string, std::int32_t>> m_leaderboards;
     std::unordered_map<std::string, std::string> m_cloud;
+    std::map<std::uint64_t, WorkshopItem> m_workshop;
+    std::uint64_t m_nextWorkshopId = 1000;
 };
 
 #if !defined(OKAY_WITH_STEAM)

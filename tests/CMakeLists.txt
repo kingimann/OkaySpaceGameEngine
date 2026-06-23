@@ -324,3 +324,7 @@ add_test(NAME collider_fit COMMAND test_collider_fit)
 add_executable(test_clicktomove test_clicktomove.cpp)
 target_link_libraries(test_clicktomove PRIVATE okay::engine)
 add_test(NAME clicktomove COMMAND test_clicktomove)
+
+add_executable(test_rpg test_rpg.cpp)
+target_link_libraries(test_rpg PRIVATE okay::engine)
+add_test(NAME rpg COMMAND test_rpg)

@@ -322,6 +322,8 @@ int main(int argc, char** argv) {
         for (char c = '0'; c <= '9'; ++c)
             if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
         if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+        if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
+        if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
         // Editing keys for text fields (held-state; edge-detected by the field).
         if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8);
         if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
@@ -820,6 +822,52 @@ int main(int argc, char** argv) {
             }
             if (!sl->interactable) { SDL_Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
                 SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
+        }
+        for (const auto& up : scene.Objects()) {           // numeric steppers
+            auto* st = up->GetComponent<UIStepper>();
+            if (!st || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o = ResolveAnchor(st->anchor, st->position, st->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            SDL_Rect bg{(int)o.x, (int)o.y, (int)st->size.x, (int)st->size.y};
+            FillUIShape(renderer, bg, st->shape, st->cornerRadius, st->background, st->background, false, false, op);
+            float bw = st->ButtonWidth();
+            SDL_Rect minusR{(int)o.x, (int)o.y, (int)bw, (int)st->size.y};
+            SDL_Rect plusR{(int)(o.x + st->size.x - bw), (int)o.y, (int)bw, (int)st->size.y};
+            FillUIShape(renderer, minusR, st->shape, st->cornerRadius, st->button, st->button, false, false, op);
+            FillUIShape(renderer, plusR, st->shape, st->cornerRadius, st->button, st->button, false, false, op);
+            SDL_Color tc{(Uint8)(st->textColor.r * 255), (Uint8)(st->textColor.g * 255),
+                         (Uint8)(st->textColor.b * 255), (Uint8)(st->textColor.a * 255 * op)};
+            float px = 2.0f;
+            // "-" and "+" glyphs centred on the end buttons.
+            DrawText(renderer, "-", o.x + bw * 0.5f - Font8x8::Width * px * 0.5f,
+                     o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            DrawText(renderer, "+", o.x + st->size.x - bw * 0.5f - Font8x8::Width * px * 0.5f,
+                     o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            char vb[24];
+            if (st->wholeNumbers) std::snprintf(vb, sizeof(vb), "%d", (int)st->value);
+            else                  std::snprintf(vb, sizeof(vb), "%.2f", st->value);
+            float tw = std::strlen(vb) * (Font8x8::Width + 1) * px;
+            DrawText(renderer, vb, o.x + (st->size.x - tw) * 0.5f,
+                     o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            if (!st->interactable) { SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &bg); }
+        }
+        for (const auto& up : scene.Objects()) {           // star ratings
+            auto* rt = up->GetComponent<UIRating>();
+            if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o = ResolveAnchor(rt->anchor, rt->position, rt->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            float cw = rt->CellWidth();
+            float d = Mathf::Min(cw, rt->size.y);          // star size (square cell)
+            for (int i = 0; i < rt->count; ++i) {
+                float cx = o.x + i * cw + (cw - d) * 0.5f;
+                float cy = o.y + (rt->size.y - d) * 0.5f;
+                SDL_Rect star{(int)cx, (int)cy, (int)d, (int)d};
+                float f = rt->StarFill(i);
+                const Color& base = f >= 0.5f ? rt->on : rt->off;   // half rounds to filled
+                FillUIShape(renderer, star, UIShape::Diamond, 0.0f, base, base, false, false, op);
+            }
         }
         for (const auto& up : scene.Objects()) {           // toggles (checkboxes)
             auto* tg = up->GetComponent<UIToggle>();

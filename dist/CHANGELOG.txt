@@ -1,5 +1,64 @@
 OkaySpace Game Engine — Changelog
 
+v2.132.0  (New UI widgets + menu parity)
+  - Two new UI widgets, fully wired (inspector, scene serialization, game render,
+    editor preview):
+      * UI Stepper — a [-] value [+] numeric picker with min/max/step, optional
+        whole-numbers and wrap; fires script on_change().
+      * UI Rating  — a row of star (diamond) ratings; click to set, optional half
+        stars and read-only display; fires on_change().
+  - Menu parity: the GameObject > UI menu now lists everything the inspector's Add
+    Component does (added Radial Progress, Tabs, Draggable, Drop Target — plus the new
+    Stepper and Rating), so both ways of adding UI offer the same set.
+
+v2.131.0  (UI shapes, lean, head-look, UI authoring zoom)
+  - UI: six new widget shapes beside Rectangle/Rounded/Circle/Pill — Triangle, Diamond,
+    Hexagon, Octagon (chamfered), Parallelogram and Trapezoid. They fill, clip and
+    hit-test like the others (single source of truth), and the editor previews them
+    faithfully. Octagon/Parallelogram/Trapezoid use the corner-radius value for their
+    cut/skew/inset. Available on panels, images, buttons, inputs, dropdowns, progress
+    bars and slider tracks.
+  - UI editing: zoom into the UI in the Scene view with Ctrl+Wheel (zooms toward the
+    cursor) and pan with a middle-mouse drag, so tiny widgets are easy to place — the
+    Game view still shows the true 1:1 layout. "UI 1:1" button resets it.
+  - UI snapping: configurable snap distance, and resize now snaps to sibling centers
+    (not just edges) like move does.
+  - Controllers: lean around corners with Q/E (first & third person) — the camera rolls
+    and peeks sideways; angle/offset/keys are all configurable.
+  - Characters: the head now turns/tilts to look where you aim — in third person the
+    avatar's head follows the camera as you orbit; in first person it tilts with your
+    pitch (visible to other players / in shadows).
+  - Deeper, better-grounded crouch (follows up on v2.130's stance fix).
+
+v2.130.0  (Crouch & prone poses fixed)
+  - Fixed the crouch and prone body poses, which floated in the air ("sitting on an
+    invisible chair" / "L on the ground"). The rig's root is pinned at hip height, so
+    rotating bones alone couldn't lower the body — added a per-stance body drop so the
+    whole character actually sinks to the ground.
+  - Crouch is now a real low squat with the feet planted; prone lays the whole body flat
+    on the floor (hips rotate the body down, legs trail straight back, head lifted to look
+    ahead) instead of bending at the waist.
+
+v2.129.0  (Run / crouch / prone for the FP & TP controllers)
+  - Running is now built in: Sprint defaults to Shift (hold), with an optional Toggle Run
+    so a tap latches running until you tap again.
+  - Crouch (Ctrl) and Prone (Z) stances on both the First and Third Person controllers,
+    each with their own speed. First person lowers the eye height; third person drops the
+    camera's look target. Toggle (tap) or hold, configurable per stance.
+  - New crouch and prone character animations (anim 6 / 7) drive automatically from the
+    controllers, so the body reads its stance for shadows and other players.
+  - Lots of new customization in the inspector: sprint/crouch/prone key pickers (None /
+    Shift / Ctrl / letters), toggle-run & toggle-stance, crouch/prone speeds, eye heights
+    (FP) / camera drops (TP), and a stance-ease (smoothing) control. All saved with the scene.
+  - Modifier keys (Shift / Ctrl) are now fed to gameplay by the editor Play mode and the
+    standalone player.
+
+v2.128.0  (Third-person camera inversion fix)
+  - Fixed the third-person camera feeling inverted: mouse-right now orbits the camera
+    right and mouse-up looks up, matching the first-person controller. Both the
+    Third Person and Third Person Shooter controllers were corrected (the shooter was
+    inverted on both axes). invertX / invertY still flip each axis if you want.
+
 v2.127.0  (Turn-based / RPG components, Steam Workshop + Cloud, OkayEngine rename)
   - RPG / turn-based building blocks: three new components under an "RPG / Turn-Based"
     Add Component category, each with a full inspector and scene serialization.

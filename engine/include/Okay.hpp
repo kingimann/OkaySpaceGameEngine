@@ -83,6 +83,8 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UISlider.hpp"
+#include "okay/Components/UIStepper.hpp"
+#include "okay/Components/UIRating.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UITabs.hpp"
 #include "okay/Components/UIScrollView.hpp"

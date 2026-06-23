@@ -70,10 +70,12 @@ public:
         if (lockCursor && Cursor::lockState == Cursor::LockMode::None) Cursor::Capture(true);
 
         // ---- Mouse look ----
+        // Mouse-right orbits right, mouse-up looks up — same convention as the
+        // first/third-person controllers (yaw decreases as the mouse moves right).
         Vec2 mp = Input::MousePosition();
         if (m_haveMouse) {
-            yaw   += (mp.x - m_lastMouse.x) * mouseSensitivity;
-            pitch += (invertY ? 1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
+            yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;
+            pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
         m_lastMouse = mp; m_haveMouse = true;

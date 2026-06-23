@@ -11,6 +11,13 @@ namespace okay {
 /// reports no input, so games still run headlessly.
 class Input {
 public:
+    // Synthetic key codes for modifier keys that have no printable character.
+    // The windowed runtimes feed these so controllers can bind sprint/crouch to
+    // Shift / Ctrl. They sit in the ASCII control range so they never collide
+    // with letters, digits or space.
+    static constexpr char KeyShift = 16;
+    static constexpr char KeyCtrl  = 17;
+
     /// True while the key is held down.
     static bool GetKey(char key);
     /// True only on the frame the key was first pressed.

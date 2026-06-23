@@ -30,9 +30,34 @@ public:
     float walkSpeed = 4.5f;
     float runSpeed  = 8.0f;
     float jumpForce = 6.0f;
-    char  sprintKey = 0;                // hold to run (0 = disabled)
+    char  sprintKey = Input::KeyShift;  // hold (or tap, if toggleRun) to run; 0 = disabled
+    bool  toggleRun = false;            // tap sprint to keep running instead of holding
     bool  canJump = true;
     bool  driveAnimation = true;
+
+    // ---- Stance: crouch & prone ----
+    // Lower the character to crouch or go prone, each with its own speed; the
+    // orbit camera's look target drops to match. Toggle = tap, else hold. Running
+    // is disabled while crouched or prone.
+    char  crouchKey = Input::KeyCtrl;   // 0 = disabled
+    char  proneKey  = 'z';              // 0 = disabled
+    bool  toggleStance = true;          // tap to toggle vs hold
+    float crouchSpeed = 2.2f;
+    float proneSpeed  = 1.1f;
+    float crouchHeightDrop = 0.6f;      // how far the look target lowers when crouched
+    float proneHeightDrop  = 1.1f;      // ...and when prone
+    float stanceLerp = 12.0f;           // how fast the target height eases
+
+    enum class Stance { Stand, Crouch, Prone };
+    Stance stance() const { return m_stance; }
+
+    // ---- Lean (peek with Q/E) ----
+    char  leanLeftKey  = 'q';           // 0 = disabled
+    char  leanRightKey = 'e';           // 0 = disabled
+    float leanAngle  = 12.0f;           // camera roll while leaning (degrees)
+    float leanOffset = 0.5f;            // sideways camera shift while leaning (units)
+    float leanSpeed  = 10.0f;           // how fast the lean eases in/out
+    float lean() const { return m_lean; }
     float turnSpeed = 12.0f;            // how fast the body turns toward movement
     // Momentum: instead of snapping velocity, ramp toward the target so starts/stops
     // feel weighty (units/s^2). Higher = snappier; very high ~= the old instant feel.
@@ -73,10 +98,12 @@ public:
         if (!transform) return;
 
         // ---- Camera orbit input ----
-        // Default orbit feel (both axes); flip per-axis with invertX / invertY.
+        // Mouse-right orbits the camera right and mouse-up looks up — matching the
+        // first-person controller's convention (yaw decreases as the mouse moves
+        // right). Flip per-axis with invertX / invertY.
         Vec2 mp = Input::MousePosition();
         if (m_haveMouse) {
-            yaw   += (invertX ? -1.0f : 1.0f) * (mp.x - m_lastMouse.x) * mouseSensitivity;
+            yaw   += (invertX ? 1.0f : -1.0f) * (mp.x - m_lastMouse.x) * mouseSensitivity;
             pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
@@ -94,8 +121,14 @@ public:
         float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
-        bool running = sprintKey && Input::GetKey(sprintKey) && moving;
-        float speed = running ? runSpeed : walkSpeed;
+
+        // Stance (crouch / prone) + lean (Q/E peek) + run (no sprint while crouched/prone).
+        UpdateStance();
+        UpdateLean(dt);
+        bool running = m_stance == Stance::Stand && moving && IsRunHeld();
+        float speed = m_stance == Stance::Prone  ? proneSpeed
+                    : m_stance == Stance::Crouch ? crouchSpeed
+                    : (running ? runSpeed : walkSpeed);
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
 
@@ -154,8 +187,21 @@ public:
 
         // ---- Animation ----
         if (driveAnimation)
-            if (Character* ch = FindCharacter())
-                ch->anim = airborne ? 5 : (moving ? (running ? 3 : 2) : 1);
+            if (Character* ch = FindCharacter()) {
+                ch->anim = airborne ? 5
+                         : m_stance == Stance::Prone  ? 7
+                         : m_stance == Stance::Crouch ? 6
+                         : (moving ? (running ? 3 : 2) : 1);
+                // The head turns to keep looking where the camera points (relative to
+                // the body's current facing), so the avatar looks around as you orbit.
+                Vec3 f = transform->localRotation * Vec3{0, 0, -1};
+                float bodyYaw = Mathf::Atan2(f.x, -f.z) * Mathf::Rad2Deg;
+                float rel = yaw - bodyYaw;
+                while (rel > 180.0f) rel -= 360.0f;
+                while (rel < -180.0f) rel += 360.0f;
+                ch->lookYaw   = rel;
+                ch->lookPitch = 0.0f;
+            }
     }
 
     void LateUpdate(float dt) override {
@@ -165,8 +211,15 @@ public:
         Transform* cam = sc->mainCamera->transform;
         if (!cam) return;
 
+        // Ease the look target down when crouched / prone so the camera follows
+        // the lower head position.
+        float drop = m_stance == Stance::Prone  ? proneHeightDrop
+                   : m_stance == Stance::Crouch ? crouchHeightDrop : 0.0f;
+        float lt = stanceLerp > 0.0f ? (1.0f - std::exp(-stanceLerp * dt)) : 1.0f;
+        m_stanceDrop += (drop - m_stanceDrop) * lt;
+
         Vec3 target = transform->Position();
-        target.y += cameraHeight;
+        target.y += cameraHeight - m_stanceDrop;
 
         // Place the camera BEHIND the player (+Z of its facing at yaw 0), lifted by
         // pitch so a positive pitch looks DOWN at the player from above. (The old
@@ -219,13 +272,19 @@ public:
         float minY = target.y - cameraHeight;
         if (m_camPos.y < minY) m_camPos.y = minY;
 
+        // Lean (Q/E): shift the camera sideways along its horizontal right and roll
+        // it, so the player peeks around cover in third person too.
+        if (m_lean != 0.0f) {
+            Vec3 right = Quat::Euler(0, yaw, 0) * Vec3::Right;
+            m_camPos = m_camPos + right * (m_lean * leanOffset);
+        }
+
         cam->SetPosition(m_camPos);
         // Build the rotation straight from yaw/pitch with NO roll component (z = 0)
-        // so the horizon is always level. (LookRotation could tilt the horizon at
-        // steep angles — that was the slanted-view bug.) Euler(-pitch, yaw, 0)
-        // points the camera's -Z at the target: yaw matches the orbit, and a
+        // so the horizon is always level (plus the lean roll). Euler(-pitch, yaw,
+        // roll) points the camera's -Z at the target: yaw matches the orbit, and a
         // positive orbit pitch tilts the view down.
-        cam->localRotation = Quat::Euler(-pitch, yaw, 0.0f);
+        cam->localRotation = Quat::Euler(-pitch, yaw, -m_lean * leanAngle);
     }
 
     // Grounded detection: a contact counts as ground when it's a roughly-vertical
@@ -242,8 +301,40 @@ private:
         if (vertical && below) m_groundContact = 0.10f;
     }
 
+    bool IsRunHeld() {
+        if (!sprintKey) return false;
+        if (toggleRun) {
+            if (Input::GetKeyDown(sprintKey)) m_runToggled = !m_runToggled;
+            return m_runToggled;
+        }
+        return Input::GetKey(sprintKey);
+    }
+    void UpdateStance() {
+        if (toggleStance) {
+            if (crouchKey && Input::GetKeyDown(crouchKey))
+                m_stance = (m_stance == Stance::Crouch) ? Stance::Stand : Stance::Crouch;
+            if (proneKey && Input::GetKeyDown(proneKey))
+                m_stance = (m_stance == Stance::Prone) ? Stance::Stand : Stance::Prone;
+        } else {
+            if (proneKey && Input::GetKey(proneKey))        m_stance = Stance::Prone;
+            else if (crouchKey && Input::GetKey(crouchKey)) m_stance = Stance::Crouch;
+            else                                            m_stance = Stance::Stand;
+        }
+    }
+    void UpdateLean(float dt) {
+        float target = 0.0f;
+        if (leanLeftKey  && Input::GetKey(leanLeftKey))  target -= 1.0f;
+        if (leanRightKey && Input::GetKey(leanRightKey)) target += 1.0f;
+        float t = leanSpeed > 0.0f ? (1.0f - std::exp(-leanSpeed * dt)) : 1.0f;
+        m_lean += (target - m_lean) * t;
+    }
+
     Vec2 m_lastMouse{0, 0};
     bool m_haveMouse = false;
+    bool m_runToggled = false;
+    float m_lean = 0.0f;             // eased lean amount (-1..+1)
+    Stance m_stance = Stance::Stand;
+    float m_stanceDrop = 0.0f;        // smoothed look-target drop for crouch/prone
     Vec3 m_camPos{0, 0, 0};
     bool m_haveCamPos = false;
     float m_groundContact = 0.0f;   // time-to-live of the last ground contact

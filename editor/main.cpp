@@ -698,6 +698,20 @@ void LoadProjectSettings() {
 bool  g_snap = false;
 float g_snapSize = 1.0f;
 int   g_uiGrid = 8;         // UI snap grid in pixels (Snap on)
+float g_uiSnapDist = 8.0f;  // alignment-snap distance for UI (canvas px)
+// UI authoring zoom: scale + pan the UI canvas in the Scene view so small widgets
+// are easy to edit. Applied consistently by the overlay draw AND the hit-testing,
+// so the cursor lines up. 1.0 = fit (the game's true layout); only in Scene view.
+float g_uiEditZoom = 1.0f;
+ImVec2 g_uiEditPan{0.0f, 0.0f};
+// Transform an incoming (pos,size) canvas by the UI authoring zoom about its center.
+inline void ApplyUIEditZoom(ImVec2& pos, ImVec2& size) {
+    if (g_uiEditZoom == 1.0f && g_uiEditPan.x == 0.0f && g_uiEditPan.y == 0.0f) return;
+    ImVec2 c(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
+    size.x *= g_uiEditZoom; size.y *= g_uiEditZoom;
+    pos.x = c.x - size.x * 0.5f + g_uiEditPan.x;
+    pos.y = c.y - size.y * 0.5f + g_uiEditPan.y;
+}
 // Alignment guides: screen-space lines the UI drag snapped to this frame, drawn
 // by the overlay (Unity-style smart snapping). Cleared and refilled each drag.
 float g_uiGuideX = -1.0f;   // canvas-x of a vertical guide, or <0 = none
@@ -1425,12 +1439,18 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
             if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; });
             if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
+            if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
             if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
+            if (ImGui::MenuItem("Stepper"))      addUI("Stepper",     [](GameObject* g){ g->AddComponent<UIStepper>(); });
+            if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
             if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
+            if (ImGui::MenuItem("Tabs"))         addUI("Tabs",        [](GameObject* g){ g->AddComponent<UITabs>(); });
             if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
             if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
             if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
             if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
+            if (ImGui::MenuItem("Draggable"))    addUI("Draggable",   [](GameObject* g){ g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
+            if (ImGui::MenuItem("Drop Target"))  addUI("DropTarget",  [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
             if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
             ImGui::EndMenu();
         }
@@ -4970,6 +4990,58 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
     return out;
 }
 
+// Small picker for a run/crouch/prone key binding: the common choices plus
+// whatever single character is currently bound. Returns true when changed.
+static bool KeyBindCombo(const char* label, char& key) {
+    struct Opt { const char* name; char code; };
+    static const Opt opts[] = {
+        {"(none)", 0}, {"Shift", Input::KeyShift}, {"Ctrl", Input::KeyCtrl},
+        {"C", 'c'}, {"Z", 'z'}, {"X", 'x'}, {"V", 'v'}, {"F", 'f'}, {"B", 'b'},
+    };
+    const int n = (int)(sizeof(opts) / sizeof(opts[0]));
+    int cur = 0;
+    for (int i = 0; i < n; ++i) if (opts[i].code == key) { cur = i; break; }
+    bool changed = false;
+    ImGui::SetNextItemWidth(96);
+    if (ImGui::BeginCombo(label, opts[cur].name)) {
+        for (int i = 0; i < n; ++i)
+            if (ImGui::Selectable(opts[i].name, cur == i)) { key = opts[i].code; changed = true; }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+// True for the convex-polygon shapes the editor draws via a polygon path (the
+// classic Rectangle/Rounded/Circle/Pill keep their existing ImGui primitives).
+static bool IsPolyUIShape(UIShape s) {
+    return s == UIShape::Triangle || s == UIShape::Diamond || s == UIShape::Hexagon ||
+           s == UIShape::Octagon || s == UIShape::Parallelogram || s == UIShape::Trapezoid;
+}
+
+// Preview a UIShape in the editor canvas by sampling UIShapeRowSpan (the same
+// single source of truth the game renderer uses) into a convex polygon, so the
+// editor shows exactly the silhouette the built game will fill.
+static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, float radius,
+                            ImU32 fill, ImU32 border, float borderW) {
+    if (sz.x < 1.0f || sz.y < 1.0f) return;
+    const int STEPS = 28;
+    static std::vector<ImVec2> rightPts, leftPts;
+    rightPts.clear(); leftPts.clear();
+    for (int i = 0; i <= STEPS; ++i) {
+        float fy = (float)i / (float)STEPS * (sz.y - 0.5f);
+        float x0, x1;
+        if (!UIShapeRowSpan(shape, sz.x, sz.y, radius, (int)fy, x0, x1)) continue;
+        rightPts.push_back(ImVec2(a.x + x1, a.y + fy));
+        leftPts.push_back(ImVec2(a.x + x0, a.y + fy));
+    }
+    std::vector<ImVec2> poly = rightPts;
+    for (auto it = leftPts.rbegin(); it != leftPts.rend(); ++it) poly.push_back(*it);
+    if (poly.size() < 3) return;
+    dl->AddConvexPolyFilled(poly.data(), (int)poly.size(), fill);
+    if (borderW > 0.0f)
+        dl->AddPolyline(poly.data(), (int)poly.size(), border, ImDrawFlags_Closed, borderW);
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     // Roomier spacing for the Inspector specifically (it was too compact).
@@ -5978,6 +6050,28 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Invert Y##fp", &fp->invertY)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##fp", &fp->canJump)) ed.dirty = true;
             if (ImGui::Checkbox("Drive Animation##fp", &fp->driveAnimation)) ed.dirty = true;
+
+            ImGui::SeparatorText("Run / Stance");
+            if (KeyBindCombo("Sprint Key##fp", fp->sprintKey)) ed.dirty = true;
+            ImGui::SameLine(); if (ImGui::Checkbox("Toggle Run##fp", &fp->toggleRun)) ed.dirty = true;
+            if (KeyBindCombo("Crouch Key##fp", fp->crouchKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Prone Key##fp", fp->proneKey)) ed.dirty = true;
+            if (ImGui::Checkbox("Toggle Stance##fp", &fp->toggleStance)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
+            if (ImGui::DragFloat("Crouch Speed##fp", &fp->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Prone Speed##fp", &fp->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Stand Eye Height##fp", &fp->standEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Crouch Eye Height##fp", &fp->crouchEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Prone Eye Height##fp", &fp->proneEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Stance Ease##fp", &fp->stanceLerp, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Lean (peek)");
+            if (KeyBindCombo("Lean Left##fp", fp->leanLeftKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Lean Right##fp", fp->leanRightKey)) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Angle##fp", &fp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Offset##fp", &fp->leanOffset, 0.02f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Ease##fp", &fp->leanSpeed, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+
             ImGui::TextDisabled("Mouse look + WASD. Put a Camera as a child (eye height).");
             if (ImGui::SmallButton("Remove##fp")) toRemove = fp;
         }
@@ -6024,6 +6118,28 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Collision Skin##tp", &tp->cameraCollisionSkin, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Min Pitch##tp", &tp->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Max Pitch##tp", &tp->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Run / Stance");
+            if (KeyBindCombo("Sprint Key##tp", tp->sprintKey)) ed.dirty = true;
+            ImGui::SameLine(); if (ImGui::Checkbox("Toggle Run##tp", &tp->toggleRun)) ed.dirty = true;
+            if (KeyBindCombo("Crouch Key##tp", tp->crouchKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Prone Key##tp", tp->proneKey)) ed.dirty = true;
+            if (ImGui::Checkbox("Toggle Stance##tp", &tp->toggleStance)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
+            if (ImGui::DragFloat("Crouch Speed##tp", &tp->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Prone Speed##tp", &tp->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Crouch Drop##tp", &tp->crouchHeightDrop, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the camera's look target lowers when crouched");
+            if (ImGui::DragFloat("Prone Drop##tp", &tp->proneHeightDrop, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Stance Ease##tp", &tp->stanceLerp, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Lean (peek)");
+            if (KeyBindCombo("Lean Left##tp", tp->leanLeftKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Lean Right##tp", tp->leanRightKey)) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Angle##tp", &tp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Offset##tp", &tp->leanOffset, 0.02f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Ease##tp", &tp->leanSpeed, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+
             ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD/stick. Uses the main Camera.");
             if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
         }
@@ -6675,9 +6791,9 @@ void DrawInspector(EditorState& ed) {
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             ImGui::SeparatorText("Style");
             int bshp = (int)btn->shape;
-            const char* bshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##uib", &bshp, bshapes, 4)) { btn->shape = (UIShape)bshp; ed.dirty = true; }
-            if (btn->shape == UIShape::Rounded)
+            const char* bshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##uib", &bshp, bshapes, kUIShapeCount)) { btn->shape = (UIShape)bshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(btn->shape))
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Drop Shadow##uib", &btn->shadow)) ed.dirty = true;
@@ -6729,9 +6845,9 @@ void DrawInspector(EditorState& ed) {
             AnchorCombo("Anchor##uip", pn->anchor, ed);
             ImGui::SeparatorText("Style");
             int shp = (int)pn->shape;
-            const char* shapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##uip", &shp, shapes, 4)) { pn->shape = (UIShape)shp; ed.dirty = true; }
-            if (pn->shape == UIShape::Rounded)
+            const char* shapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##uip", &shp, shapes, kUIShapeCount)) { pn->shape = (UIShape)shp; ed.dirty = true; }
+            if (UIShapeUsesRadius(pn->shape))
                 if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             if (pn->borderWidth > 0.0f) {
@@ -6775,9 +6891,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Combo("Content Type##uif", &ct, cts, 4)) { in->contentType = (UIInputField::ContentType)ct; ed.dirty = true; }
             AnchorCombo("Anchor##uif", in->anchor, ed);
             int ishp = (int)in->shape;
-            const char* fshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##uif", &ishp, fshapes, 4)) { in->shape = (UIShape)ishp; ed.dirty = true; }
-            if (in->shape == UIShape::Rounded)
+            const char* fshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##uif", &ishp, fshapes, kUIShapeCount)) { in->shape = (UIShape)ishp; ed.dirty = true; }
+            if (UIShapeUsesRadius(in->shape))
                 if (ImGui::DragFloat("Corner Radius##uif", &in->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Focus Ring##uif", &in->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
             if (in->borderWidth > 0.0f) {
@@ -6796,9 +6912,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##udd", dd->anchor, ed);
             int dshp = (int)dd->shape;
-            const char* dshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##udd", &dshp, dshapes, 4)) { dd->shape = (UIShape)dshp; ed.dirty = true; }
-            if (dd->shape == UIShape::Rounded)
+            const char* dshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##udd", &dshp, dshapes, kUIShapeCount)) { dd->shape = (UIShape)dshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(dd->shape))
                 if (ImGui::DragFloat("Corner Radius##udd", &dd->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             char ph[96]; std::strncpy(ph, dd->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
             if (ImGui::InputText("Placeholder##udd", ph, sizeof(ph))) { dd->placeholder = ph; ed.dirty = true; }
@@ -6987,9 +7103,9 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
             int pshp = (int)pb->shape;
-            const char* pshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##upb", &pshp, pshapes, 4)) { pb->shape = (UIShape)pshp; ed.dirty = true; }
-            if (pb->shape == UIShape::Rounded)
+            const char* pshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##upb", &pshp, pshapes, kUIShapeCount)) { pb->shape = (UIShape)pshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(pb->shape))
                 if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Gradient Fill##upb", &pb->gradientFill)) ed.dirty = true;
             if (pb->gradientFill) {
@@ -7060,8 +7176,8 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             int ishp = (int)im->shape;
-            const char* ishapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape (no texture)##uim", &ishp, ishapes, 4)) { im->shape = (UIShape)ishp; ed.dirty = true; }
+            const char* ishapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape (no texture)##uim", &ishp, ishapes, kUIShapeCount)) { im->shape = (UIShape)ishp; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -7081,8 +7197,8 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
             AnchorCombo("Anchor##usl", sl->anchor, ed);
             int sshp = (int)sl->trackShape;
-            const char* sshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Track Shape##usl", &sshp, sshapes, 4)) { sl->trackShape = (UIShape)sshp; ed.dirty = true; }
+            const char* sshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Track Shape##usl", &sshp, sshapes, kUIShapeCount)) { sl->trackShape = (UIShape)sshp; ed.dirty = true; }
             if (sl->trackShape == UIShape::Rounded)
                 if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Round Knob##usl", &sl->roundKnob)) ed.dirty = true;
@@ -7101,6 +7217,56 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Vertical##usl", &sl->vertical)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
+        }
+    }
+    if (auto* st = go->GetComponent<UIStepper>()) {
+        if (CompHeader("UI Stepper", st, &toRemove)) {
+            float pos[2] = {st->position.x, st->position.y};
+            if (ImGui::DragFloat2("Pos (px)##ust", pos, 1.0f)) { st->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {st->size.x, st->size.y};
+            if (ImGui::DragFloat2("Size (px)##ust", sz, 1.0f, 1.0f, 8000.0f)) { st->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Min##ust", &st->minValue, 0.1f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max##ust", &st->maxValue, 0.1f)) ed.dirty = true;
+            if (ImGui::DragFloat("Step##ust", &st->step, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Value##ust", &st->value, st->minValue, st->maxValue)) ed.dirty = true;
+            if (ImGui::Checkbox("Whole Numbers##ust", &st->wholeNumbers)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Wrap##ust", &st->wrap)) ed.dirty = true;
+            float bg[4] = {st->background.r, st->background.g, st->background.b, st->background.a};
+            if (ImGui::ColorEdit4("Background##ust", bg)) { st->background = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
+            float bt[4] = {st->button.r, st->button.g, st->button.b, st->button.a};
+            if (ImGui::ColorEdit4("Buttons##ust", bt)) { st->button = {bt[0], bt[1], bt[2], bt[3]}; ed.dirty = true; }
+            float tc[4] = {st->textColor.r, st->textColor.g, st->textColor.b, st->textColor.a};
+            if (ImGui::ColorEdit4("Text##ust", tc)) { st->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+            AnchorCombo("Anchor##ust", st->anchor, ed);
+            int sshp = (int)st->shape;
+            const char* stshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##ust", &sshp, stshapes, kUIShapeCount)) { st->shape = (UIShape)sshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(st->shape))
+                if (ImGui::DragFloat("Corner Radius##ust", &st->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Interactable##ust", &st->interactable)) ed.dirty = true;
+            ImGui::TextDisabled("[-] value [+] ; calls script on_change()");
+            if (ImGui::SmallButton("Remove##ust")) toRemove = st;
+        }
+    }
+    if (auto* rt = go->GetComponent<UIRating>()) {
+        if (CompHeader("UI Rating", rt, &toRemove)) {
+            float pos[2] = {rt->position.x, rt->position.y};
+            if (ImGui::DragFloat2("Pos (px)##urt", pos, 1.0f)) { rt->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {rt->size.x, rt->size.y};
+            if (ImGui::DragFloat2("Size (px)##urt", sz, 1.0f, 1.0f, 8000.0f)) { rt->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::SliderInt("Stars##urt", &rt->count, 1, 10)) ed.dirty = true;
+            if (ImGui::SliderFloat("Value##urt", &rt->value, 0.0f, (float)rt->count)) ed.dirty = true;
+            if (ImGui::Checkbox("Allow Half##urt", &rt->allowHalf)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Read Only##urt", &rt->readOnly)) ed.dirty = true;
+            float on[4] = {rt->on.r, rt->on.g, rt->on.b, rt->on.a};
+            if (ImGui::ColorEdit4("Filled##urt", on)) { rt->on = {on[0], on[1], on[2], on[3]}; ed.dirty = true; }
+            float off[4] = {rt->off.r, rt->off.g, rt->off.b, rt->off.a};
+            if (ImGui::ColorEdit4("Empty##urt", off)) { rt->off = {off[0], off[1], off[2], off[3]}; ed.dirty = true; }
+            AnchorCombo("Anchor##urt", rt->anchor, ed);
+            ImGui::TextDisabled("click a star to rate; calls script on_change()");
+            if (ImGui::SmallButton("Remove##urt")) toRemove = rt;
         }
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
@@ -7140,9 +7306,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Size (px)##utb", sz, 1.0f, 8.0f, 4000.0f)) { tb->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##utb", tb->anchor, ed);
             int tshp = (int)tb->shape;
-            const char* tshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##utb", &tshp, tshapes, 4)) { tb->shape = (UIShape)tshp; ed.dirty = true; }
-            if (tb->shape == UIShape::Rounded)
+            const char* tshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##utb", &tshp, tshapes, kUIShapeCount)) { tb->shape = (UIShape)tshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(tb->shape))
                 if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (tb->Count() > 0) {
                 int v = tb->value;
@@ -7415,6 +7581,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIStepper>(), "UI Stepper")) { go->AddComponent<UIStepper>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRating>(), "UI Rating")) { go->AddComponent<UIRating>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIToggle>(), "UI Toggle")) { go->AddComponent<UIToggle>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
@@ -7547,6 +7715,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
 
+    // Authoring zoom (Scene view only): scale/pan the canvas so the UI is easy to
+    // edit. The Game view always shows the true 1:1 layout.
+    if (!gameView) ApplyUIEditZoom(canvasPos, canvasSize);
+
     // Publish the canvas size so anchored widgets resolve and (in Play) hit-test
     // against the same dimensions the preview uses.
     UICanvas::Set(canvasSize.x, canvasSize.y);
@@ -7609,8 +7781,13 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float fox, foy, fw, fh;
         im->FilledRect(sz.x, sz.y, fox, foy, fw, fh);
         ImVec2 fa(a.x + fox, a.y + foy), fb(fa.x + fw, fa.y + fh);
-        dl->AddRectFilled(fa, fb, ToColor(im->color), im->cornerRadius);
-        dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), im->cornerRadius);
+        if (IsPolyUIShape(im->shape)) {
+            DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), im->shape, im->cornerRadius,
+                            ToColor(im->color), IM_COL32(255, 255, 255, 90), 1.0f);
+        } else {
+            dl->AddRectFilled(fa, fb, ToColor(im->color), im->cornerRadius);
+            dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), im->cornerRadius);
+        }
         if (!im->texture.empty())
             DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
     }
@@ -7627,14 +7804,21 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ImVec2(a.x + pn->shadowOffset.x, a.y + pn->shadowOffset.y),
                               ImVec2(pb2.x + pn->shadowOffset.x, pb2.y + pn->shadowOffset.y),
                               ToColor(pn->shadowColor), pn->cornerRadius);
-        if (pn->useGradient) {   // vertical top->bottom fade (no rounding)
-            dl->AddRectFilledMultiColor(a, pb2, ToColor(pn->color), ToColor(pn->color),
-                                        ToColor(pn->colorBottom), ToColor(pn->colorBottom));
+        if (IsPolyUIShape(pn->shape)) {
+            DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), pn->shape, pn->cornerRadius,
+                            ToColor(pn->color),
+                            pn->borderWidth > 0.0f ? ToColor(pn->borderColor) : IM_COL32(0, 0, 0, 0),
+                            pn->borderWidth);
         } else {
-            dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+            if (pn->useGradient) {   // vertical top->bottom fade (no rounding)
+                dl->AddRectFilledMultiColor(a, pb2, ToColor(pn->color), ToColor(pn->color),
+                                            ToColor(pn->colorBottom), ToColor(pn->colorBottom));
+            } else {
+                dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+            }
+            if (pn->borderWidth > 0.0f)
+                dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
         }
-        if (pn->borderWidth > 0.0f)
-            dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
     }
     for (const auto& up : objs) {
         auto* pb = up->GetComponent<UIProgressBar>();
@@ -7685,6 +7869,45 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                            a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(sl->textColor));
         }
         if (!sl->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), sl->cornerRadius);
+    }
+    // UI steppers: [-] value [+]
+    for (const auto& up : objs) {
+        auto* st = up->GetComponent<UIStepper>();
+        if (!st || !up->active || UIHidden(up.get())) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(st->background), st->cornerRadius);
+        float bw = st->ButtonWidth() * s;
+        dl->AddRectFilled(a, ImVec2(a.x + bw, a.y + sz.y), ToColor(st->button), st->cornerRadius);
+        dl->AddRectFilled(ImVec2(a.x + sz.x - bw, a.y), ImVec2(a.x + sz.x, a.y + sz.y), ToColor(st->button), st->cornerRadius);
+        float px = 2.0f * s;
+        ImU32 tcol = ToColor(st->textColor);
+        DrawBitmapText(dl, "-", a.x + bw * 0.5f - Font8x8::Width * px * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
+        DrawBitmapText(dl, "+", a.x + sz.x - bw * 0.5f - Font8x8::Width * px * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
+        char vb[24];
+        if (st->wholeNumbers) std::snprintf(vb, sizeof(vb), "%d", (int)st->value);
+        else                  std::snprintf(vb, sizeof(vb), "%.2f", st->value);
+        float tw = std::strlen(vb) * (Font8x8::Width + 1) * px;
+        DrawBitmapText(dl, vb, a.x + (sz.x - tw) * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
+    }
+    // UI ratings: a row of star diamonds, filled up to the value.
+    for (const auto& up : objs) {
+        auto* rt = up->GetComponent<UIRating>();
+        if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        float cw = sz.x / (float)rt->count;
+        float d = Mathf::Min(cw, sz.y);
+        for (int i = 0; i < rt->count; ++i) {
+            float cx = a.x + i * cw + cw * 0.5f;
+            float cy = a.y + sz.y * 0.5f, r = d * 0.5f;
+            ImVec2 pts[4] = { ImVec2(cx, cy - r), ImVec2(cx + r, cy), ImVec2(cx, cy + r), ImVec2(cx - r, cy) };
+            ImU32 col = ToColor(rt->StarFill(i) >= 0.5f ? rt->on : rt->off);
+            dl->AddConvexPolyFilled(pts, 4, col);
+        }
     }
     // UI toggles: box (+ inset check when on) and a label.
     for (const auto& up : objs) {
@@ -7927,6 +8150,26 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                    bool hovered, ImGuiIO& io) {
     g_uiHandled = false;
+
+    // UI authoring zoom/pan (Scene view): Ctrl+Wheel zooms toward the cursor, and
+    // a middle-mouse drag pans. Done before the canvas transform so hit-testing
+    // below uses the same zoomed canvas the overlay draws with.
+    if (hovered && io.KeyCtrl && io.MouseWheel != 0.0f) {
+        ImVec2 c(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
+        float old = g_uiEditZoom;
+        g_uiEditZoom = Mathf::Clamp(g_uiEditZoom * (1.0f + io.MouseWheel * 0.12f), 0.25f, 6.0f);
+        // Keep the point under the cursor fixed while zooming.
+        float k = g_uiEditZoom / old;
+        ImVec2 pivot(c.x + g_uiEditPan.x, c.y + g_uiEditPan.y);
+        g_uiEditPan.x = (g_uiEditPan.x + (pivot.x - io.MousePos.x) * (k - 1.0f));
+        g_uiEditPan.y = (g_uiEditPan.y + (pivot.y - io.MousePos.y) * (k - 1.0f));
+        g_uiHandled = true;
+    }
+    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+        g_uiEditPan.x += io.MouseDelta.x; g_uiEditPan.y += io.MouseDelta.y;
+    }
+    ApplyUIEditZoom(canvasPos, canvasSize);
+
     UICanvas::Set(canvasSize.x, canvasSize.y);
     Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
 
@@ -7985,11 +8228,11 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
                             if (GetUIScreenRect(up2.get(), canvasSize.x, canvasSize.y, oo, ss)) {
-                                cx.push_back(oo.x); cx.push_back(oo.x + ss.x);
-                                cy.push_back(oo.y); cy.push_back(oo.y + ss.y);
+                                cx.push_back(oo.x); cx.push_back(oo.x + ss.x * 0.5f); cx.push_back(oo.x + ss.x);
+                                cy.push_back(oo.y); cy.push_back(oo.y + ss.y * 0.5f); cy.push_back(oo.y + ss.y);
                             }
                         }
-                        const float thr = 6.0f;
+                        const float thr = g_uiSnapDist;
                         auto edge = [&](float v, const std::vector<float>& cs, float& guide, bool& hit) {
                             float best = thr, res = v;
                             for (float c : cs) { float d = v > c ? v - c : c - v; if (d < best) { best = d; res = c; guide = c; hit = true; } }
@@ -8026,7 +8269,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                                 cy.push_back(oo.y); cy.push_back(oo.y + ss.y * 0.5f); cy.push_back(oo.y + ss.y);
                             }
                         }
-                        const float thr = 6.0f;
+                        const float thr = g_uiSnapDist;
                         auto bestSnap = [&](float lo, float mid, float hi, const std::vector<float>& cands,
                                             float& guide) -> float {
                             float best = thr, adj = 0.0f; bool found = false;
@@ -8115,7 +8358,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     -(s.y - center.y) / scale + camPos.y);
     };
 
-    if (!gameView && hovered && io.MouseWheel != 0.0f)
+    if (!gameView && hovered && io.MouseWheel != 0.0f && !io.KeyCtrl)  // Ctrl+Wheel = UI zoom
         ed.cameraZoom = Mathf::Clamp(ed.cameraZoom * (1.0f - io.MouseWheel * 0.1f), 2.0f, 200.0f);
     if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
         ed.cameraPos.x -= io.MouseDelta.x / scale;
@@ -8376,7 +8619,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
 
     // Orbit controls (Scene view only).
-    if (!gameView && hovered && io.MouseWheel != 0.0f)
+    if (!gameView && hovered && io.MouseWheel != 0.0f && !io.KeyCtrl)  // Ctrl+Wheel = UI zoom
         ed.camDist = Mathf::Clamp(ed.camDist * (1.0f - io.MouseWheel * 0.1f), 2.0f, 400.0f);
     if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ed.selected()) {
         ed.camYaw   -= io.MouseDelta.x * 0.4f;
@@ -9139,6 +9382,18 @@ void DrawViewport(EditorState& ed) {
         ImGui::SetNextItemWidth(70);
         ImGui::DragInt("UI px##uigrid", &g_uiGrid, 1, 1, 256);   // UI pixel grid
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("UI snap grid (pixels) + edge/center guides");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::DragFloat("UI snap##uisnap", &g_uiSnapDist, 0.5f, 1.0f, 40.0f, "%.0f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close (px) a UI edge/center snaps to a guide");
+    }
+    // UI authoring zoom readout + reset (Ctrl+Wheel to zoom, middle-drag to pan).
+    ImGui::SameLine();
+    if (g_uiEditZoom != 1.0f || g_uiEditPan.x != 0.0f || g_uiEditPan.y != 0.0f) {
+        if (ImGui::SmallButton("UI 1:1")) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0, 0); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset UI zoom/pan (now %.0f%%)", g_uiEditZoom * 100.0f);
+    } else {
+        ImGui::TextDisabled("UI zoom: Ctrl+Wheel");
     }
     ImGui::SameLine();
     ImGui::TextDisabled(ed.view3D ? "drag: orbit  wheel: zoom"
@@ -9494,6 +9749,8 @@ int main(int argc, char** argv) {
             for (char c = '0'; c <= '9'; ++c)
                 if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
             if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+            if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
+            if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
             if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
             if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
             if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);

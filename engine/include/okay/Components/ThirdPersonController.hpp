@@ -193,14 +193,17 @@ public:
                          : m_stance == Stance::Crouch ? 6
                          : (moving ? (running ? 3 : 2) : 1);
                 // The head turns to keep looking where the camera points (relative to
-                // the body's current facing), so the avatar looks around as you orbit.
+                // the body's current facing) AND tilts up/down with the orbit pitch,
+                // so the avatar looks around as you aim. (18 = the resting orbit pitch,
+                // so the head is level by default; aiming up raises the gaze.)
                 Vec3 f = transform->localRotation * Vec3{0, 0, -1};
                 float bodyYaw = Mathf::Atan2(f.x, -f.z) * Mathf::Rad2Deg;
                 float rel = yaw - bodyYaw;
                 while (rel > 180.0f) rel -= 360.0f;
                 while (rel < -180.0f) rel += 360.0f;
                 ch->lookYaw   = rel;
-                ch->lookPitch = 0.0f;
+                ch->lookPitch = 18.0f - pitch;
+                ch->bodyLean  = m_lean * leanAngle;   // body leans (camera stays put)
             }
     }
 
@@ -272,19 +275,11 @@ public:
         float minY = target.y - cameraHeight;
         if (m_camPos.y < minY) m_camPos.y = minY;
 
-        // Lean (Q/E): shift the camera sideways along its horizontal right and roll
-        // it, so the player peeks around cover in third person too.
-        if (m_lean != 0.0f) {
-            Vec3 right = Quat::Euler(0, yaw, 0) * Vec3::Right;
-            m_camPos = m_camPos + right * (m_lean * leanOffset);
-        }
-
         cam->SetPosition(m_camPos);
         // Build the rotation straight from yaw/pitch with NO roll component (z = 0)
-        // so the horizon is always level (plus the lean roll). Euler(-pitch, yaw,
-        // roll) points the camera's -Z at the target: yaw matches the orbit, and a
-        // positive orbit pitch tilts the view down.
-        cam->localRotation = Quat::Euler(-pitch, yaw, -m_lean * leanAngle);
+        // so the horizon is always level. Regular third person does NOT move the
+        // camera when leaning — the character's body leans instead (see Update).
+        cam->localRotation = Quat::Euler(-pitch, yaw, 0.0f);
     }
 
     // Grounded detection: a contact counts as ground when it's a roughly-vertical

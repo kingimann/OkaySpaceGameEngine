@@ -174,6 +174,7 @@ public:
                 // look pitch (visible to other players / shadows in first person).
                 ch->lookPitch = pitch;
                 ch->lookYaw   = 0.0f;
+                ch->bodyLean  = m_lean * leanAngle;   // body peeks with the camera
             }
     }
 

@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.133.0  (Real crouch, head up/down, body lean, fly camera, all UI shapes preview)
+  - Crouch fixed for real: measured the rig's kinematics so a deep knee-fold raises the
+    feet by exactly the body drop — the character now squats with feet planted on the
+    ground and the head lowered, instead of floating or sinking.
+  - Head movement: the head now also tilts UP and DOWN (not just left/right) as you aim
+    in third person and the shooter, and all head motion eases smoothly instead of
+    snapping (configurable headTurnSpeed).
+  - Lean now leans the PLAYER'S BODY, not just the camera. And regular third person no
+    longer moves the camera when leaning — only the body leans (the camera stays put);
+    first person and the third-person shooter still peek the camera AND lean the body.
+    Lean was also added to the third-person shooter.
+  - New Free Roam (Fly) Controller: drop it on a Camera to fly around — WASD along the
+    view, Space / C (or Ctrl) up and down, mouse look (hold right-mouse, or lock the
+    cursor), Shift to boost. Great for spectating, debugging or a no-clip creative mode.
+  - UI shapes now preview in the editor for EVERY shape on panels and images — Circle,
+    Pill and the polygons draw their true silhouette in the Scene view (before, only the
+    new polygons showed; circles/pills looked like plain boxes). The built game already
+    rendered them; this makes the editor match. Added tooltips explaining the Shape field.
+
 v2.132.0  (New UI widgets + menu parity)
   - Two new UI widgets, fully wired (inspector, scene serialization, game render,
     editor preview):

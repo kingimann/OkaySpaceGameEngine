@@ -128,6 +128,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
+#include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Audio/AudioMixer.hpp"

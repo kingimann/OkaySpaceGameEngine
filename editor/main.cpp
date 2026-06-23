@@ -5011,11 +5011,12 @@ static bool KeyBindCombo(const char* label, char& key) {
     return changed;
 }
 
-// True for the convex-polygon shapes the editor draws via a polygon path (the
-// classic Rectangle/Rounded/Circle/Pill keep their existing ImGui primitives).
+// Shapes the editor previews via a sampled polygon path. Rectangle and Rounded
+// keep ImGui's crisp rounded-rect primitive; everything else (Circle, Pill and the
+// convex polygons) is drawn from UIShapeRowSpan so the editor shows the real
+// silhouette the game will fill — not a plain box.
 static bool IsPolyUIShape(UIShape s) {
-    return s == UIShape::Triangle || s == UIShape::Diamond || s == UIShape::Hexagon ||
-           s == UIShape::Octagon || s == UIShape::Parallelogram || s == UIShape::Trapezoid;
+    return s != UIShape::Rectangle && s != UIShape::Rounded;
 }
 
 // Preview a UIShape in the editor canvas by sampling UIShapeRowSpan (the same
@@ -6167,6 +6168,28 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##td")) toRemove = td;
         }
     }
+    if (auto* fr = go->GetComponent<FreeRoamController>()) {
+        if (CompHeader("Free Roam (Fly) Controller", fr, &toRemove)) {
+            if (ImGui::DragFloat("Move Speed##fr", &fr->moveSpeed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Boost x##fr", &fr->boostMultiplier, 0.1f, 1.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed multiplier while holding Sprint (Shift)");
+            if (ImGui::DragFloat("Smoothing##fr", &fr->acceleration, 0.5f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Velocity ease-in (0 = instant)");
+            if (KeyBindCombo("Up Key##fr", fr->upKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Down Key##fr", fr->downKey)) ed.dirty = true;
+            ImGui::SeparatorText("Look");
+            if (ImGui::DragFloat("Sensitivity##fr", &fr->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Invert Y##fr", &fr->invertY)) ed.dirty = true;
+            if (ImGui::Checkbox("Lock Cursor##fr", &fr->lockCursor)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capture the cursor and always look (FPS spectator)");
+            if (!fr->lockCursor)
+                if (ImGui::Checkbox("Hold Right-Mouse to Look##fr", &fr->lookRequiresRightMouse)) ed.dirty = true;
+            if (ImGui::DragFloat("Min Pitch##fr", &fr->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Pitch##fr", &fr->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
+            ImGui::TextDisabled("Put on a Camera. WASD fly, Space/C up/down, Shift boost.");
+            if (ImGui::SmallButton("Remove##fr")) toRemove = fr;
+        }
+    }
     if (auto* ts = go->GetComponent<ThirdPersonShooterController>()) {
         if (CompHeader("Third Person Shooter Controller", ts, &toRemove)) {
             ImGui::SeparatorText("Movement");
@@ -6847,6 +6870,7 @@ void DrawInspector(EditorState& ed) {
             int shp = (int)pn->shape;
             const char* shapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
             if (ImGui::Combo("Shape##uip", &shp, shapes, kUIShapeCount)) { pn->shape = (UIShape)shp; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The panel's silhouette — circle, pill, hexagon, etc. Octagon/Parallelogram/Trapezoid use Corner Radius for their cut/skew.");
             if (UIShapeUsesRadius(pn->shape))
                 if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
@@ -7178,6 +7202,7 @@ void DrawInspector(EditorState& ed) {
             int ishp = (int)im->shape;
             const char* ishapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
             if (ImGui::Combo("Shape (no texture)##uim", &ishp, ishapes, kUIShapeCount)) { im->shape = (UIShape)ishp; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Silhouette of the colored fill when there's no texture set. For a shaped colored box, a UI Panel also works.");
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -7555,6 +7580,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { go->AddComponent<ThirdPersonController>(); ed.dirty = true; }
             if (item(!go->GetComponent<TopDownController>(), "Top Down Controller")) { go->AddComponent<TopDownController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { go->AddComponent<ThirdPersonShooterController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

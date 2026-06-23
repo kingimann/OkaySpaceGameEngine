@@ -15,6 +15,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
+#include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -335,6 +336,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
             << td->lookHeight << " " << td->cameraDamping << "\n";
     }
+    if (auto* fr = go->GetComponent<FreeRoamController>()) {
+        out << "  frctrl " << fr->moveSpeed << " " << fr->boostMultiplier << " "
+            << (int)(unsigned char)fr->sprintKey << " " << (int)(unsigned char)fr->upKey << " "
+            << (int)(unsigned char)fr->downKey << " " << fr->mouseSensitivity << " "
+            << (fr->invertY ? 1 : 0) << " " << (fr->lockCursor ? 1 : 0) << " "
+            << (fr->lookRequiresRightMouse ? 1 : 0) << " " << fr->minPitch << " " << fr->maxPitch << " "
+            << fr->acceleration << " " << fr->yaw << " " << fr->pitch << "\n";
+    }
     if (auto* ts = go->GetComponent<ThirdPersonShooterController>()) {
         out << "  tpsctrl " << ts->walkSpeed << " " << ts->runSpeed << " " << ts->jumpForce << " "
             << (ts->sprintKey ? ts->sprintKey : '-') << " " << (ts->canJump ? 1 : 0) << " "
@@ -346,7 +355,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ts->shoulderOffset << " " << (ts->cameraCollision ? 1 : 0) << " " << ts->cameraCollisionSkin << " "
             << ts->aimButton << " " << ts->aimDistance << " " << ts->aimShoulder << " " << ts->aimSpeed << " "
             << ts->fireButton << " " << (ts->autoFire ? 1 : 0) << " " << ts->fireRate << " "
-            << (ts->lockCursor ? 1 : 0) << "\n";
+            << (ts->lockCursor ? 1 : 0)
+            // extended: lean (peek with Q/E)
+            << " " << (int)(unsigned char)ts->leanLeftKey << " " << (int)(unsigned char)ts->leanRightKey
+            << " " << ts->leanAngle << " " << ts->leanOffset << " " << ts->leanSpeed << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -1204,6 +1216,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> td->lookHeight >> td->cameraDamping;
                     td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
+                } else if (field == "frctrl") {
+                    auto* fr = go->AddComponent<FreeRoamController>();
+                    int sk = (unsigned char)fr->sprintKey, uk = (unsigned char)fr->upKey,
+                        dk = (unsigned char)fr->downKey, iy = 0, lc = 0, rr = 1;
+                    in >> fr->moveSpeed >> fr->boostMultiplier >> sk >> uk >> dk
+                       >> fr->mouseSensitivity >> iy >> lc >> rr
+                       >> fr->minPitch >> fr->maxPitch >> fr->acceleration >> fr->yaw >> fr->pitch;
+                    fr->sprintKey = (char)sk; fr->upKey = (char)uk; fr->downKey = (char)dk;
+                    fr->invertY = (iy != 0); fr->lockCursor = (lc != 0); fr->lookRequiresRightMouse = (rr != 0);
                 } else if (field == "tpsctrl") {
                     auto* ts = go->AddComponent<ThirdPersonShooterController>();
                     std::string sk = "-"; int cj = 1, da = 1, iy = 0, cc = 1, af = 0, lc = 1;
@@ -1217,6 +1238,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ts->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
                     ts->canJump = (cj != 0); ts->driveAnimation = (da != 0); ts->invertY = (iy != 0);
                     ts->cameraCollision = (cc != 0); ts->autoFire = (af != 0); ts->lockCursor = (lc != 0);
+                    // Optional lean block (absent in older scenes).
+                    int ll = (unsigned char)ts->leanLeftKey, lr = (unsigned char)ts->leanRightKey;
+                    float la = ts->leanAngle, lo = ts->leanOffset, lsp = ts->leanSpeed;
+                    in >> std::ws;
+                    if ((std::isdigit(in.peek()) || in.peek() == '-') &&
+                        (in >> ll >> lr >> la >> lo >> lsp)) {
+                        ts->leanLeftKey = (char)ll; ts->leanRightKey = (char)lr;
+                        ts->leanAngle = la; ts->leanOffset = lo; ts->leanSpeed = lsp;
+                    }
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
                     go->AddComponent<Mover>()->velocity = v;

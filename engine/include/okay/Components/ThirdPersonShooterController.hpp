@@ -59,6 +59,14 @@ public:
     // ---- Cursor ----
     bool  lockCursor = true;             // hide + lock the cursor while playing (Unity-style)
 
+    // ---- Lean (peek with Q/E): the camera shifts/rolls AND the body leans ----
+    char  leanLeftKey  = 'q';
+    char  leanRightKey = 'e';
+    float leanAngle  = 12.0f;            // camera roll + body-lean degrees
+    float leanOffset = 0.5f;             // sideways camera shift while leaning
+    float leanSpeed  = 10.0f;
+    float lean() const { return m_lean; }
+
     float yaw = 0.0f, pitch = 12.0f;
 
     void Start() override {
@@ -133,9 +141,24 @@ public:
         float t = 1.0f - std::exp(-turnSpeed * dt);
         transform->localRotation = Quat::Slerp(transform->localRotation, want, t);
 
+        // Lean (Q/E) eases toward the held direction.
+        {
+            float target = 0.0f;
+            if (leanLeftKey  && Input::GetKey(leanLeftKey))  target -= 1.0f;
+            if (leanRightKey && Input::GetKey(leanRightKey)) target += 1.0f;
+            float lt = leanSpeed > 0.0f ? (1.0f - std::exp(-leanSpeed * dt)) : 1.0f;
+            m_lean += (target - m_lean) * lt;
+        }
+
         if (driveAnimation)
-            if (Character* ch = FindCharacter())
+            if (Character* ch = FindCharacter()) {
                 ch->anim = airborne ? 5 : (moving ? (running ? 3 : 2) : 1);
+                // The body already faces the aim yaw, so the head only tilts up/down
+                // with the pitch (12 = resting pitch, so it's level by default).
+                ch->lookYaw   = 0.0f;
+                ch->lookPitch = 12.0f - pitch;
+                ch->bodyLean  = m_lean * leanAngle;   // body peeks with the camera
+            }
     }
 
     void LateUpdate(float dt) override {
@@ -164,8 +187,13 @@ public:
             }
         }
 
+        // Lean: shift the camera sideways along its right and roll it (peek).
+        if (m_lean != 0.0f) {
+            Vec3 right = Quat::Euler(0, yaw, 0) * Vec3::Right;
+            desired = desired + right * (m_lean * leanOffset);
+        }
         cam->SetPosition(desired);
-        cam->localRotation = Quat::Euler(-pitch, yaw, 0.0f);
+        cam->localRotation = Quat::Euler(-pitch, yaw, -m_lean * leanAngle);
     }
 
     bool IsAiming() const { return m_aiming; }
@@ -188,6 +216,7 @@ private:
     bool m_haveMouse = false;
     bool m_aiming = false;
     float m_aim = 0.0f;             // 0 = hip, 1 = aiming
+    float m_lean = 0.0f;            // eased lean (-1..+1)
     float m_fireCooldown = 0.0f;
     float m_groundContact = 0.0f, m_coyote = 0.0f, m_jumpBuf = 0.0f;
 };

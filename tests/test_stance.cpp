@@ -135,5 +135,37 @@ int main() {
     }
 
     release();
+
+    // --- Free-roam fly camera: WASD flies along the look dir, Space rises, round-trip ---
+    {
+        Scene s("FR"); s.physicsEnabled = false;
+        GameObject* cam = s.CreateGameObject("FlyCam");
+        auto* fr = cam->AddComponent<FreeRoamController>();
+        fr->lockCursor = true;             // always looks; no RMB needed
+        fr->acceleration = 0.0f;           // instant velocity for a deterministic test
+        s.Start();
+
+        // Facing default (yaw 0, pitch 0) -> forward is -Z. Holding W flies -Z.
+        for (int i = 0; i < 10; ++i) { Input::FeedKeys({'w'}); s.Update(0.016f); }
+        CHECK(cam->transform->Position().z < -0.1f);
+
+        // Space rises (+Y).
+        float y0 = cam->transform->Position().y;
+        for (int i = 0; i < 10; ++i) { Input::FeedKeys({' '}); s.Update(0.016f); }
+        CHECK(cam->transform->Position().y > y0 + 0.1f);
+        Input::FeedKeys({});
+
+        // Settings round-trip.
+        fr->moveSpeed = 13.0f; fr->boostMultiplier = 4.0f; fr->invertY = true; fr->downKey = 'x';
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* fr2 = s2.Find("FlyCam") ? s2.Find("FlyCam")->GetComponent<FreeRoamController>() : nullptr;
+        CHECK(fr2 != nullptr);
+        if (fr2) {
+            CHECK_NEAR(fr2->moveSpeed, 13.0f, 1e-3f);
+            CHECK_NEAR(fr2->boostMultiplier, 4.0f, 1e-3f);
+            CHECK(fr2->invertY && fr2->downKey == 'x' && fr2->lockCursor);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

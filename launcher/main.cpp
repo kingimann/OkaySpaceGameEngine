@@ -474,22 +474,40 @@ int main(int argc, char** argv) {
     accountPtr->VerifySession();
 
     // Editable copies of the account-server settings, shown in the Settings tab.
+    // The URL is prefilled (it isn't sensitive); the key field is left blank and
+    // masked so an existing or compiled-in key is never displayed. activeKey
+    // holds the key currently in use (from env/file/built-in) without showing it.
     char setUrl[256]; std::snprintf(setUrl, sizeof(setUrl), "%s", serverUrl.c_str());
-    char setKey[256]; std::snprintf(setKey, sizeof(setKey), "%s", apiKey.c_str());
+    char setKey[256] = {0};
+    std::string activeKey = apiKey;
     std::string setStatus;
-    // Persist the settings next to the launcher and rebuild the service so the
-    // change takes effect without a restart.
-    auto applyAccountSettings = [&]() {
-        std::string url = setUrl, key = setKey;
-        trimEol(url); trimEol(key);
+    // Apply the Settings form and rebuild the service live. clear=true switches
+    // to local accounts. The API key is written to disk ONLY when the user types
+    // a new one — an empty key field keeps the current key, so a built-in key is
+    // never persisted to a plaintext file. The URL isn't secret, so it's saved.
+    auto applyAccountSettings = [&](bool clear) {
+        std::error_code ec;
+        std::string url, typed = setKey; trimEol(typed);
+        if (!clear) { url = setUrl; trimEol(url); }
+        std::string key = clear ? std::string{} : (typed.empty() ? activeKey : typed);
+
         std::ofstream(fs::path(g_exeDir) / "account_server.txt", std::ios::trunc) << url << "\n";
-        std::ofstream(fs::path(g_exeDir) / "account_apikey.txt", std::ios::trunc) << key << "\n";
+        if (clear)
+            fs::remove(fs::path(g_exeDir) / "account_apikey.txt", ec);   // back to local/built-in
+        else if (!typed.empty())
+            std::ofstream(fs::path(g_exeDir) / "account_apikey.txt", std::ios::trunc) << typed << "\n";
+        // else: empty key field -> leave any existing key file untouched and
+        // never write a built-in key to disk.
+
+        activeKey = key;
+        setKey[0] = '\0';                       // never retain the typed key in the box
+        if (clear) setUrl[0] = '\0';
         accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, url, key);
         accountPtr->VerifySession();
-        setStatus = url.empty()
-            ? "Saved. Using local dev accounts (no server set)."
-            : std::string("Saved. Server: ") + accountPtr->ServerUrl() + " (" +
-              accountPtr->ProviderName() + ").";
+        setStatus = accountPtr->IsOnline()
+            ? std::string("Saved. Server: ") + accountPtr->ServerUrl() + " (" +
+              accountPtr->ProviderName() + ")."
+            : "Saved. Using local dev accounts (no server set).";
     };
 
     char acctUser[64] = {0};
@@ -802,18 +820,20 @@ int main(int argc, char** argv) {
             ImGui::PushItemWidth(460);
             ImGui::InputTextWithHint("##setUrl", "https://YOUR-PROJECT.supabase.co",
                                      setUrl, sizeof(setUrl));
-            ImGui::TextDisabled("API key  (anon public — required for Supabase)");
-            ImGui::InputTextWithHint("##setKey", "anon public key (leave blank for a custom server)",
-                                     setKey, sizeof(setKey));
+            ImGui::TextDisabled("API key  (anon / publishable — required for Supabase)");
+            // The key field is masked and never prefilled, so an existing or
+            // built-in key is never shown. Empty = keep the current key.
+            const char* keyHint = activeKey.empty()
+                ? "paste your publishable key"
+                : "********  (a key is set — type to replace)";
+            ImGui::InputTextWithHint("##setKey", keyHint, setKey, sizeof(setKey),
+                                     ImGuiInputTextFlags_Password);
             ImGui::PopItemWidth();
             ImGui::Dummy(ImVec2(0, 12));
 
-            if (ImGui::Button("Save & apply", ImVec2(180, 46))) applyAccountSettings();
+            if (ImGui::Button("Save & apply", ImVec2(180, 46))) applyAccountSettings(false);
             ImGui::SameLine();
-            if (ImGui::Button("Use local (clear)", ImVec2(180, 46))) {
-                setUrl[0] = setKey[0] = '\0';
-                applyAccountSettings();
-            }
+            if (ImGui::Button("Use local (clear)", ImVec2(180, 46))) applyAccountSettings(true);
 
             ImGui::Dummy(ImVec2(0, 10));
             // accountPtr (not the per-frame alias) — applyAccountSettings above
@@ -829,8 +849,9 @@ int main(int argc, char** argv) {
                 ImGui::PopTextWrapPos();
             }
             ImGui::Dummy(ImVec2(0, 10));
-            ImGui::TextDisabled("Saved next to the launcher (account_server.txt / "
-                                "account_apikey.txt). The anon key is safe to share.");
+            ImGui::TextDisabled("The key is hidden and only saved to disk if you type a "
+                                "new one; a built-in key is never written out. Protect "
+                                "your data with Supabase Row Level Security.");
         }
 
         // ---- Footer (pinned to the bottom of the content panel) ----

@@ -280,6 +280,15 @@ The launcher checks GitHub for a newer version, pulls it, rebuilds, and starts
 the game. Handy flags: `--check-only`, `--no-update`, `--no-run`,
 `--game <name>`, and `-- <args passed to the game>`.
 
+The launcher's **Account** tab lets a player sign in or create an account.
+Out of the box this is a local account stored on the device (passwords are
+salted and hashed with SHA-256, never written in plaintext). To use a real
+online account, point it at an auth server by setting the `OKAY_ACCOUNT_SERVER`
+environment variable, or by dropping an `account_server.txt` (one line: the
+base URL) next to the launcher. When online, sign-in/registration POST
+`{"username","password"}` to `<server>/login` and `<server>/register` over
+HTTPS and expect a JSON `{"token": "..."}` response.
+
 ### 3. Build from source with CMake
 
 ```bash

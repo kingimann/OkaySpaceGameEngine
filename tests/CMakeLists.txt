@@ -340,3 +340,10 @@ add_test(NAME uiwidgets COMMAND test_uiwidgets)
 add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)
 add_test(NAME jump COMMAND test_jump)
+
+# The launcher's account service is header-only (in shared/), so this test
+# needs no engine link — just the include path and C++17.
+add_executable(test_account test_account.cpp)
+target_compile_features(test_account PRIVATE cxx_std_17)
+target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME account COMMAND test_account)

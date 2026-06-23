@@ -406,29 +406,43 @@ private:
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += "/" + action;
 
-        // -f makes curl fail on HTTP errors; -s keeps it quiet; we write the
-        // body to a file and read it back so credentials never hit argv.
+        // We deliberately don't use curl's -f/--fail: on an HTTP error (401,
+        // 409, ...) that flag discards the response body, and we want to read
+        // the server's {"error": "..."} message. Instead we save the body to a
+        // file and capture the status code (printed by -w) to a second file, so
+        // we can tell success from failure and still show the server's reason.
+        fs::path code = fs::temp_directory_path(ec) / ("okay_acct_" + detail::RandomHex(6) + ".code");
         std::string cmd =
-            "curl -s -f -X POST -H \"Content-Type: application/json\" "
+            "curl -s -X POST -H \"Content-Type: application/json\" "
             "--data-binary @\"" + body.string() + "\" "
-            "-o \"" + resp.string() + "\" \"" + url + "\"";
+            "-o \"" + resp.string() + "\" -w \"%{http_code}\" \"" + url + "\" "
+            "> \"" + code.string() + "\"";
 #if !defined(_WIN32)
         cmd += " 2>/dev/null";
 #endif
         int rc = std::system(cmd.c_str());
 
-        std::string out;
-        {
-            std::ifstream r(resp, std::ios::binary);
-            std::stringstream ss; ss << r.rdbuf(); out = ss.str();
-        }
+        auto slurp = [](const fs::path& p) {
+            std::ifstream r(p, std::ios::binary);
+            std::stringstream ss; ss << r.rdbuf(); return ss.str();
+        };
+        std::string out  = slurp(resp);
+        std::string codeS = slurp(code);
         fs::remove(body, ec);
         fs::remove(resp, ec);
+        fs::remove(code, ec);
 
-        if (rc != 0) {
+        long status = 0;
+        try { status = std::stol(codeS); } catch (...) { status = 0; }
+
+        // curl itself failed (DNS, TLS, connection refused) — no HTTP exchange.
+        if (rc != 0 || status == 0)
+            return Fail("Couldn't reach the account server (offline or unreachable).");
+
+        if (status < 200 || status >= 300) {
             std::string serverErr = detail::JsonField(out, "error");
             return Fail(serverErr.empty()
-                ? "Couldn't reach the account server (offline or rejected)."
+                ? ("Account server rejected the request (HTTP " + std::to_string(status) + ").")
                 : serverErr);
         }
         std::string token = detail::JsonField(out, "token");

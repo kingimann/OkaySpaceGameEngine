@@ -354,12 +354,13 @@ bool RaySphere(const Vec3& o, const Vec3& d, const Vec3& c, float r,
 } // namespace
 
 RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& direction,
-                                float maxDistance) {
+                                float maxDistance, GameObject* ignore) {
     RaycastHit3D best;
     best.distance = maxDistance;
     Vec3 dir = direction.Normalized();
     for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
         if (!Alive(c)) continue;
+        if (ignore && c->gameObject == ignore) continue;   // skip the caller (e.g. player)
         float t; Vec3 n; bool hit = false;
         if (c->shape() == Collider3D::Shape::Sphere) {
             auto* s = static_cast<SphereCollider3D*>(c);

@@ -28,6 +28,36 @@ int main() {
         CHECK(ch->anim == 3);
     }
 
+    // --- Third-person camera spring arm: a wall pulls the camera in (no clipping) ---
+    {
+        Scene sc("cam");
+        GameObject* cam = sc.CreateGameObject("Camera");
+        cam->AddComponent<Camera>();                         // becomes the main camera
+
+        GameObject* p = sc.CreateGameObject("Player");
+        auto* tp = p->AddComponent<ThirdPersonController>();
+        tp->yaw = 0.0f; tp->pitch = 0.0f;                    // camera straight behind (+Z)
+        tp->distance = 6.0f; tp->cameraHeight = 1.5f;
+        tp->cameraDamping = 0.0f;                            // instant, for a clean check
+        sc.Start();                                          // Camera::Awake registers mainCamera
+
+        // Baseline: no obstacle -> camera sits a full `distance` behind the head.
+        tp->LateUpdate(0.016f);
+        Vec3 head{0, 1.5f, 0};
+        float farDist = (cam->transform->Position() - head).Magnitude();
+        CHECK_NEAR(farDist, 6.0f, 0.3f);
+
+        // Put a wall between the head and the camera (around z = +3).
+        GameObject* wall = sc.CreateGameObject("Wall");
+        wall->transform->localPosition = {0, 1.5f, 3.0f};
+        wall->AddComponent<BoxCollider3D>()->size = {4, 4, 0.5f};
+
+        tp->LateUpdate(0.016f);
+        float nearDist = (cam->transform->Position() - head).Magnitude();
+        CHECK(nearDist < farDist);                           // pulled in by the wall
+        CHECK(nearDist < 3.2f);                              // sits at ~the wall, not past it
+    }
+
     // --- First-person controller: same animation driving, and it moves ---
     {
         Scene sc("s");

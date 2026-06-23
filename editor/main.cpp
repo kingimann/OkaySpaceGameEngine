@@ -5915,6 +5915,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Turn Speed##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##tp", &tp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher = snappier starts; very high ~= instant (no momentum)");
+            if (ImGui::DragFloat("Deceleration##tp", &tp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Air Control##tp", &tp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Coyote Time##tp", &tp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grace window to still jump just after leaving a ledge");
+            if (ImGui::DragFloat("Jump Buffer##tp", &tp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remembers a jump pressed just before landing");
             if (ImGui::Checkbox("Can Jump##tp", &tp->canJump)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##tp", &tp->driveAnimation)) ed.dirty = true;
@@ -5936,6 +5944,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Shoulder Offset##tp", &tp->shoulderOffset, 0.02f, -3.0f, 3.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Damping##tp", &tp->cameraDamping, 0.1f, 0.0f, 30.0f, "%.1f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = instant follow; higher = smoother lag");
+            if (ImGui::Checkbox("Camera Collision##tp", &tp->cameraCollision)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pull the camera in so it never clips through walls/floors");
+            if (tp->cameraCollision)
+                if (ImGui::DragFloat("Collision Skin##tp", &tp->cameraCollisionSkin, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Min Pitch##tp", &tp->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Max Pitch##tp", &tp->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
             ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD/stick. Uses the main Camera.");

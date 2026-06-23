@@ -289,7 +289,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (tp->invertX ? 1 : 0) << " " << (tp->invertY ? 1 : 0)
             << " " << tp->minDistance << " " << tp->maxDistance << " " << tp->zoomSpeed
             << " " << tp->shoulderOffset << " " << tp->cameraDamping
-            << " " << tp->minPitch << " " << tp->maxPitch << " " << (int)tp->faceMode << "\n";
+            << " " << tp->minPitch << " " << tp->maxPitch << " " << (int)tp->faceMode
+            // extended (back-compatible trailing fields): momentum + jump feel
+            << " " << tp->acceleration << " " << tp->deceleration << " " << tp->airControl
+            << " " << tp->coyoteTime << " " << tp->jumpBufferTime
+            // camera collision (spring arm)
+            << " " << (tp->cameraCollision ? 1 : 0) << " " << tp->cameraCollisionSkin << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -1018,6 +1023,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tp->shoulderOffset = so; tp->cameraDamping = cd;
                         tp->minPitch = mnp; tp->maxPitch = mxp;
                         tp->faceMode = (ThirdPersonController::FaceMode)fmode;
+                        // Optional momentum + jump-feel block (absent in older scenes).
+                        float ac = tp->acceleration, de = tp->deceleration, aircon = tp->airControl,
+                              coy = tp->coyoteTime, jb = tp->jumpBufferTime;
+                        if (in >> ac >> de >> aircon >> coy >> jb) {
+                            tp->acceleration = ac; tp->deceleration = de; tp->airControl = aircon;
+                            tp->coyoteTime = coy; tp->jumpBufferTime = jb;
+                            // Optional camera-collision block (absent in older scenes).
+                            int cc = tp->cameraCollision ? 1 : 0; float skin = tp->cameraCollisionSkin;
+                            if (in >> cc >> skin) { tp->cameraCollision = (cc != 0); tp->cameraCollisionSkin = skin; }
+                        }
                     }
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;

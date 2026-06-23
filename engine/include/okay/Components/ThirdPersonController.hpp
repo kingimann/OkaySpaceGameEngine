@@ -4,6 +4,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Input/Input.hpp"
@@ -32,6 +33,15 @@ public:
     bool  canJump = true;
     bool  driveAnimation = true;
     float turnSpeed = 12.0f;            // how fast the body turns toward movement
+    // Momentum: instead of snapping velocity, ramp toward the target so starts/stops
+    // feel weighty (units/s^2). Higher = snappier; very high ~= the old instant feel.
+    float acceleration = 60.0f;
+    float deceleration = 55.0f;
+    float airControl   = 0.40f;         // accel multiplier while airborne (0..1)
+    // Forgiving jump timing (platformer-grade): coyote time lets you jump just after
+    // walking off a ledge; jump buffer remembers a press made just before landing.
+    float coyoteTime     = 0.12f;
+    float jumpBufferTime  = 0.12f;
 
     // ---- Camera orbit ----
     float mouseSensitivity = 0.2f;      // degrees per pixel
@@ -43,7 +53,12 @@ public:
     float cameraHeight = 1.5f;          // look target height above the player origin
     float minPitch = -20.0f, maxPitch = 70.0f;
     float shoulderOffset = 0.0f;        // lateral camera offset (over-the-shoulder)
-    float cameraDamping = 0.0f;         // 0 = instant follow; higher = snappier smoothing
+    float cameraDamping = 15.0f;        // 0 = instant follow; higher = snappier smoothing
+    // Camera collision (spring arm): pull the camera in when a wall/floor is between
+    // it and the player so it never clips through geometry. `skin` keeps the near
+    // plane off the surface.
+    bool  cameraCollision = true;
+    float cameraCollisionSkin = 0.3f;
 
     /// How the body is oriented while playing.
     ///   Movement: turn to face the direction of travel (classic adventure feel).
@@ -81,14 +96,36 @@ public:
         bool running = sprintKey && Input::GetKey(sprintKey) && moving;
         float speed = running ? runSpeed : walkSpeed;
 
+        // Grounded state (from collision contacts) with coyote time, plus a jump
+        // buffer so an early press still fires on landing.
+        m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
+        bool grounded = m_groundContact > 0.0f;
+        m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
+        if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
+        else                        m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
+
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
-        bool airborne = false;
+        // Only a physics body can leave the ground; a transform-only player (no
+        // gravity) is always grounded for animation purposes.
+        bool airborne = rb ? !grounded : false;
         if (rb) {
-            rb->velocity.x = dir.x * speed;
-            rb->velocity.z = dir.z * speed;
-            if (canJump && Input::GetKeyDown(' ') && Mathf::Abs(rb->velocity.y) < 0.5f)
+            // Momentum: ease the horizontal velocity toward the target so starts and
+            // stops have weight; reduced authority in the air.
+            Vec3 tgt{dir.x * speed, 0.0f, dir.z * speed};
+            Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
+            float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
+            Vec3 dv{tgt.x - cur.x, 0.0f, tgt.z - cur.z};
+            float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z);
+            float step = rate * dt;
+            if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
+            rb->velocity.x = cur.x + dv.x;
+            rb->velocity.z = cur.z + dv.z;
+            // Jump: allowed within coyote time, satisfied by a buffered press.
+            if (canJump && m_jumpBuf > 0.0f && m_coyote > 0.0f) {
                 rb->velocity.y = jumpForce;
-            airborne = Mathf::Abs(rb->velocity.y) > 0.6f;
+                m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f;
+                grounded = false; airborne = true;
+            }
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
         }
@@ -150,6 +187,25 @@ public:
         }
         m_haveCamPos = true;
 
+        // Camera collision (spring arm): cast from the player's head to the smoothed
+        // camera position and, if anything is in the way, pull the camera in to the
+        // hit point (minus a skin). Clamping AFTER the smoothing guarantees the view
+        // never clips through walls/floors even while the follow eases.
+        if (cameraCollision) {
+            Vec3 from = target;            // head pivot (origin + cameraHeight)
+            Vec3 d = m_camPos - from;
+            float dist = d.Magnitude();
+            if (dist > 1e-4f) {
+                Vec3 dn = d * (1.0f / dist);
+                RaycastHit3D hit = sc->physics3D().Raycast(*sc, from, dn,
+                                                           dist + cameraCollisionSkin, gameObject);
+                if (hit.hit) {
+                    float pull = Mathf::Max(0.0f, hit.distance - cameraCollisionSkin);
+                    m_camPos = from + dn * pull;
+                }
+            }
+        }
+
         // Never let the camera drop below the player's base. minPitch allows looking
         // up from slightly below, which at close distance could otherwise sink the
         // camera through the floor — from under a single-sided ground plane the floor
@@ -167,11 +223,27 @@ public:
         cam->localRotation = Quat::Euler(-pitch, yaw, 0.0f);
     }
 
+    // Grounded detection: a contact counts as ground when it's a roughly-vertical
+    // hit with something below the player. Both enter and stay refresh it (the timer
+    // in Update lets it survive the frame-order of the physics step).
+    void OnCollisionEnter3D(const Collision3D& c) override { NoteGround(c); }
+    void OnCollisionStay3D(const Collision3D& c)  override { NoteGround(c); }
+
 private:
+    void NoteGround(const Collision3D& c) {
+        bool vertical = Mathf::Abs(c.normal.y) > 0.5f;
+        bool below = c.gameObject && c.gameObject->transform && transform &&
+                     c.gameObject->transform->Position().y < transform->Position().y;
+        if (vertical && below) m_groundContact = 0.10f;
+    }
+
     Vec2 m_lastMouse{0, 0};
     bool m_haveMouse = false;
     Vec3 m_camPos{0, 0, 0};
     bool m_haveCamPos = false;
+    float m_groundContact = 0.0f;   // time-to-live of the last ground contact
+    float m_coyote = 0.0f;          // remaining coyote-time window
+    float m_jumpBuf = 0.0f;         // remaining jump-buffer window
 
     Character* FindCharacter() const {
         if (gameObject) if (auto* ch = gameObject->GetComponent<Character>()) return ch;

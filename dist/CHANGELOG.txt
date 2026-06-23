@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.114.0  (third-person controller: feel + no camera clipping)
+  - Movement now has momentum: horizontal velocity eases toward the target with
+    tunable acceleration/deceleration and reduced air control, so starts and stops
+    have weight instead of snapping.
+  - Reliable grounded detection from collision contacts, with coyote time (jump just
+    after a ledge) and a jump buffer (press just before landing) — fixing the old
+    mid-air double-jump at the jump apex.
+  - Camera spring arm: the third-person camera casts to the player and pulls in when a
+    wall/floor is in the way, so the view never clips through geometry (new
+    Physics3D::Raycast ignore-parameter to skip the player). Smoother default follow.
+  - All new fields are in the inspector and saved with the scene (back-compatible).
+    New camera spring-arm test; 78 tests pass.
+
 v2.113.0  (launcher: polish + editor launch gate)
   - Polished the launcher UI: modern rounded theme, generous spacing, the version is
     shown next to the logo and in the window title, card-style Play list and

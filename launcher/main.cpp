@@ -314,36 +314,51 @@ std::vector<fs::path> FindScenes() {
     return out;
 }
 
+// Shared accent so UI code can match the theme.
+const ImVec4 kAccent(0.30f, 0.62f, 1.00f, 1.0f);     // friendly blue
+const ImVec4 kAccentDim(0.22f, 0.44f, 0.74f, 1.0f);
+
 void DarkTheme() {
     ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Soft, modern rounding + generous spacing for a clean flat look.
+    // Soft, modern rounding + generous spacing for a clean, flat look.
     s.WindowRounding = 0.0f;
-    s.ChildRounding = 10.0f;
-    s.FrameRounding = 8.0f; s.GrabRounding = 8.0f; s.PopupRounding = 8.0f;
-    s.ScrollbarRounding = 8.0f; s.TabRounding = 8.0f;
-    s.FramePadding = ImVec2(12, 9); s.ItemSpacing = ImVec2(10, 12);
-    s.WindowPadding = ImVec2(16, 16); s.ChildBorderSize = 0.0f;
-    s.ScrollbarSize = 12.0f;
+    s.ChildRounding = 12.0f;
+    s.FrameRounding = 8.0f; s.GrabRounding = 8.0f; s.PopupRounding = 10.0f;
+    s.ScrollbarRounding = 10.0f; s.TabRounding = 8.0f;
+    s.FramePadding = ImVec2(12, 10); s.ItemSpacing = ImVec2(10, 10);
+    s.ItemInnerSpacing = ImVec2(8, 6);
+    s.WindowPadding = ImVec2(18, 18); s.WindowBorderSize = 0.0f;
+    s.ChildBorderSize = 1.0f; s.FrameBorderSize = 0.0f;
+    s.ScrollbarSize = 12.0f; s.SeparatorTextBorderSize = 2.0f;
     ImVec4* c = s.Colors;
-    const ImVec4 accent(0.26f, 0.56f, 0.96f, 1.0f);     // friendly blue
-    const ImVec4 accentDim(0.22f, 0.40f, 0.70f, 1.0f);
-    c[ImGuiCol_WindowBg]      = ImVec4(0.07f, 0.08f, 0.11f, 1.0f);
-    c[ImGuiCol_ChildBg]       = ImVec4(0.11f, 0.12f, 0.16f, 1.0f);
-    c[ImGuiCol_PopupBg]       = ImVec4(0.11f, 0.12f, 0.16f, 1.0f);
-    c[ImGuiCol_Text]          = ImVec4(0.92f, 0.94f, 0.98f, 1.0f);
-    c[ImGuiCol_TextDisabled]  = ImVec4(0.52f, 0.55f, 0.62f, 1.0f);
-    c[ImGuiCol_Button]        = ImVec4(0.17f, 0.19f, 0.25f, 1.0f);
-    c[ImGuiCol_ButtonHovered] = accent;
-    c[ImGuiCol_ButtonActive]  = accentDim;
-    c[ImGuiCol_Header]        = ImVec4(accent.x, accent.y, accent.z, 0.30f);
-    c[ImGuiCol_HeaderHovered] = ImVec4(accent.x, accent.y, accent.z, 0.55f);
-    c[ImGuiCol_HeaderActive]  = accent;
-    c[ImGuiCol_Separator]     = ImVec4(1, 1, 1, 0.08f);
-    c[ImGuiCol_FrameBg]       = ImVec4(0.16f, 0.18f, 0.23f, 1.0f);
-    c[ImGuiCol_FrameBgHovered]= ImVec4(0.20f, 0.23f, 0.30f, 1.0f);
-    c[ImGuiCol_ScrollbarBg]   = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_ScrollbarGrab] = ImVec4(1, 1, 1, 0.12f);
+    const ImVec4 accent = kAccent;
+    const ImVec4 accentDim = kAccentDim;
+    c[ImGuiCol_WindowBg]         = ImVec4(0.055f, 0.065f, 0.085f, 1.0f);
+    c[ImGuiCol_ChildBg]          = ImVec4(0.100f, 0.112f, 0.142f, 1.0f);
+    c[ImGuiCol_PopupBg]          = ImVec4(0.100f, 0.112f, 0.142f, 0.98f);
+    c[ImGuiCol_Border]           = ImVec4(1, 1, 1, 0.055f);
+    c[ImGuiCol_Text]             = ImVec4(0.93f, 0.95f, 0.98f, 1.0f);
+    c[ImGuiCol_TextDisabled]     = ImVec4(0.50f, 0.54f, 0.63f, 1.0f);
+    c[ImGuiCol_Button]           = ImVec4(0.16f, 0.18f, 0.24f, 1.0f);
+    c[ImGuiCol_ButtonHovered]    = accent;
+    c[ImGuiCol_ButtonActive]     = accentDim;
+    c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.28f);
+    c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.45f);
+    c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.65f);
+    c[ImGuiCol_Separator]        = ImVec4(1, 1, 1, 0.07f);
+    c[ImGuiCol_SeparatorHovered] = accent;
+    c[ImGuiCol_SeparatorActive]  = accent;
+    c[ImGuiCol_FrameBg]          = ImVec4(0.14f, 0.16f, 0.21f, 1.0f);
+    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.18f, 0.21f, 0.27f, 1.0f);
+    c[ImGuiCol_FrameBgActive]    = ImVec4(0.20f, 0.24f, 0.31f, 1.0f);
+    c[ImGuiCol_CheckMark]        = accent;
+    c[ImGuiCol_SliderGrab]       = accent;
+    c[ImGuiCol_SliderGrabActive] = accentDim;
+    c[ImGuiCol_ScrollbarBg]      = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_ScrollbarGrab]    = ImVec4(1, 1, 1, 0.13f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(1, 1, 1, 0.22f);
+    c[ImGuiCol_ScrollbarGrabActive]  = accent;
 }
 
 } // namespace
@@ -370,7 +385,7 @@ int main(int argc, char** argv) {
     SetUpMsg("OkaySpace v" + LocalVersion());
 
     SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher  v" OKAY_ENGINE_VERSION,
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 980, 620,
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1040, 680,
         SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
     if (!window) return 1;
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
@@ -382,6 +397,7 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr; // the launcher has a fixed layout
+    ImGui::GetIO().ConfigDebugHighlightIdConflicts = false; // hide dev-only ID warnings
     DarkTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
@@ -492,30 +508,36 @@ int main(int argc, char** argv) {
             ImGuiWindowFlags_NoBringToFrontOnFocus);
 
         // ---- Left nav ----
-        ImGui::BeginChild("nav", ImVec2(210, 0), true);
-        ImGui::PushFont(nullptr);
-        ImGui::TextColored(ImVec4(0.45f, 0.7f, 1.0f, 1.0f), "OkaySpace");
+        ImGui::BeginChild("nav", ImVec2(224, 0), true);
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextColored(kAccent, "  OkaySpace");
         ImGui::SameLine();
         ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
-        ImGui::TextDisabled("game engine");
-        ImGui::Dummy(ImVec2(0, 16));
-        const char* navs[]  = {"  Create", "  Play", "  Marketplace", "  Account", "  Settings"};
+        ImGui::TextDisabled("  game engine");
+        ImGui::Dummy(ImVec2(0, 18));
+        ImGui::TextDisabled("  MENU");
+        ImGui::Dummy(ImVec2(0, 2));
+        const char* navs[]  = {"Create", "Play", "Marketplace", "Account", "Settings"};
         const char* navIco[] = {"+", ">", "*", "@", "="};
         for (int i = 0; i < 5; ++i) {
             char lbl[48];
-            std::snprintf(lbl, sizeof(lbl), "  %s  %s", navIco[i], navs[i] + 2);
-            if (ImGui::Selectable(lbl, tab == i, 0, ImVec2(0, 40))) tab = i;
+            std::snprintf(lbl, sizeof(lbl), "   %s   %s", navIco[i], navs[i]);
+            bool sel = (tab == i);
+            // Accent the active item's label so the selection reads clearly.
+            if (sel) ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
+            if (ImGui::Selectable(lbl, sel, 0, ImVec2(0, 42))) tab = i;
+            if (sel) ImGui::PopStyleColor();
         }
-        ImGui::PopFont();
 
-        // Show who's signed in, just under the nav items.
-        ImGui::Dummy(ImVec2(0, 6));
+        // Signed-in status chip, just under the nav items.
+        ImGui::Dummy(ImVec2(0, 10));
+        ImGui::TextDisabled("  ACCOUNT");
         if (account.IsLoggedIn()) {
-            ImGui::TextDisabled("Signed in as");
-            ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "%s",
+            ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "  %s  %s",
+                               account.IsOnline() ? "online" : "local",
                                account.CurrentSession().username.c_str());
         } else {
-            ImGui::TextDisabled("Not signed in");
+            ImGui::TextDisabled("  not signed in");
         }
 
         // ---- Update status (pinned to the bottom of the nav) ----

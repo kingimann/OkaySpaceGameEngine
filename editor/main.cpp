@@ -9805,6 +9805,10 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    // This is a shipping app, not a Dear ImGui demo: don't pop the developer-only
+    // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
+    // button labels like "Load" in a panel) at end users.
+    io.ConfigDebugHighlightIdConflicts = false;
     LoadProjectSettings();   // project.okayproj defaults (company/version/gravity/...)
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);

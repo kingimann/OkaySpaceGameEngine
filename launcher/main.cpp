@@ -661,6 +661,12 @@ int main(int argc, char** argv) {
                     ++shown;
                     ImGui::PushID((int)i);
                     ImGui::BeginChild("game", ImVec2(0, 62), true);
+                    if (ImGui::IsWindowHovered()) {
+                        ImVec2 mn = ImGui::GetWindowPos();
+                        ImGui::GetWindowDrawList()->AddRect(mn,
+                            ImVec2(mn.x + ImGui::GetWindowSize().x, mn.y + ImGui::GetWindowSize().y),
+                            ImGui::GetColorU32(kAccent), 12.0f, 0, 2.0f);
+                    }
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
                     ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", name.c_str());
                     ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
@@ -687,6 +693,12 @@ int main(int argc, char** argv) {
             for (const auto& t : templates) {
                 ImGui::PushID(t.name);
                 ImGui::BeginChild(t.name, ImVec2(0, 70), true);
+                if (ImGui::IsWindowHovered()) {
+                    ImVec2 mn = ImGui::GetWindowPos();
+                    ImGui::GetWindowDrawList()->AddRect(mn,
+                        ImVec2(mn.x + ImGui::GetWindowSize().x, mn.y + ImGui::GetWindowSize().y),
+                        ImGui::GetColorU32(kAccent), 12.0f, 0, 2.0f);
+                }
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
                 ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.95f, 1.0f), "%s", t.name);
                 ImGui::TextDisabled("%s", t.desc);

@@ -187,28 +187,24 @@ int RunUpdateCheck(void*) {
 
     std::string local = LocalVersion();
     fs::path dir(g_exeDir);
-    std::error_code mec;
-    bool haveEngine = fs::exists(dir / "OkaySpaceEngine.exe", mec);
-    bool havePlayer = fs::exists(dir / "OkaySpacePlayer.exe", mec);
-    bool newer = !latest.empty() && CompareVersions(local, latest) < 0;
+    bool newer = !latest.empty() && CompareVersions(local, latest) < 0;   // installed < published
 
-    // Nothing to do only if we're current AND both runtimes are present.
-    if (!newer && haveEngine && havePlayer) {
+    // Only ever download a STRICTLY newer published version. Never "self-heal" by
+    // pulling a not-newer (older or equal) build — that used to downgrade the engine
+    // to whatever stale binary sits in the repo's dist/ folder (the "it downloads
+    // 2.97" bug). If we're current or ahead, do nothing.
+    if (!newer) {
         SetUpMsg("Up to date (v" + local + ").");
         SetState(Up_UpToDate);
         return 0;
     }
 
-    // Download what's needed: everything on a version bump, otherwise just the
-    // missing runtimes (self-healing a launcher-only download).
     SetState(Up_Downloading);
     bool ok = true;
-    if (newer || !haveEngine) {
+    {
         SetUpMsg("Downloading engine v" + latest + "...");
         ok = ReplaceFile(std::string(kRawBase) + "OkaySpaceEngine.exe",
                          dir / "OkaySpaceEngine.exe", false) && ok;
-    }
-    if (newer || !havePlayer) {
         SetUpMsg("Downloading player runtime v" + latest + "...");
         ok = ReplaceFile(std::string(kRawBase) + "OkaySpacePlayer.exe",
                          dir / "OkaySpacePlayer.exe", false) && ok;

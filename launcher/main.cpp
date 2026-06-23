@@ -37,6 +37,16 @@ namespace fs = std::filesystem;
 #  define OKAY_ENGINE_VERSION "dev"
 #endif
 
+// Optional account server compiled into the build (set at configure time with
+// -DOKAY_DEFAULT_ACCOUNT_URL / -DOKAY_DEFAULT_ACCOUNT_KEY, injected from a CI
+// secret) so a shipped build is online by default with no key file on disk.
+#ifndef OKAY_DEFAULT_ACCOUNT_URL
+#  define OKAY_DEFAULT_ACCOUNT_URL ""
+#endif
+#ifndef OKAY_DEFAULT_ACCOUNT_KEY
+#  define OKAY_DEFAULT_ACCOUNT_KEY ""
+#endif
+
 namespace {
 
 std::string g_exeDir = ".";
@@ -438,6 +448,9 @@ int main(int argc, char** argv) {
     };
     std::string serverUrl = fromEnvOrFile("OKAY_ACCOUNT_SERVER", "account_server.txt");
     std::string apiKey    = fromEnvOrFile("OKAY_ACCOUNT_API_KEY", "account_apikey.txt");
+    // Fall back to values baked into the build (no config file needed).
+    if (serverUrl.empty()) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
+    if (apiKey.empty())    apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
     // Held by pointer so the Settings tab can rebuild it live when the server
     // config changes.
     fs::path acctCfgDir = acct::DefaultConfigDir(fs::path(g_exeDir));

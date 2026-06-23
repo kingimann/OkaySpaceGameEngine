@@ -146,12 +146,13 @@ SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
-int g_ssaa = 2;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
-                  // ON by default: removes the faint edge shimmer that remains during
-                  // camera motion after the depth (W-buffer) fix. Auto-performance drops
-                  // it to 1x on heavy scenes / large viewports to protect FPS.
+int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
+                  // OFF by default for speed: 2x supersample renders 4x the pixels,
+                  // which tanked FPS (badly on HiDPI displays). Cheap FXAA still
+                  // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
+bool g_vsync = false;    // false = uncapped FPS (no 60 Hz limit); true = vsync
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
 
 // Sum the triangles of all active, visible solid meshes — a cheap proxy for how
@@ -521,6 +522,7 @@ void LoadSettings() {
     while (f >> k >> v) {
         if (k == "autoupdate") g_autoUpdate = (v != 0);
         else if (k == "autoperf") g_autoPerf = (v != 0);
+        else if (k == "vsync") g_vsync = (v != 0);
         else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
         else if (k == "showgizmos") g_showGizmos = (v != 0);
@@ -537,6 +539,7 @@ void SaveSettings() {
     std::ofstream f("okay_settings.txt");
     f << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
+      << "vsync "      << (g_vsync ? 1 : 0) << "\n"
       << "ssaa "       << g_ssaa << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
       << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n"
@@ -1231,6 +1234,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         bool aa = g_ssaa > 1;
         if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
+        if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
         if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
         ImGui::Separator();
@@ -9246,9 +9251,10 @@ int main(int argc, char** argv) {
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
-    SDL_Renderer* renderer = SDL_CreateRenderer(
-        window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    // VSync off by default = uncapped FPS (no 60 Hz limit). Toggle in View > VSync.
+    SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
 

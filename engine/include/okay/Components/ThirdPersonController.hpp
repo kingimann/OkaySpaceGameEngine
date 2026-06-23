@@ -97,15 +97,17 @@ public:
         bool running = sprintKey && Input::GetKey(sprintKey) && moving;
         float speed = running ? runSpeed : walkSpeed;
 
-        // Grounded state (from collision contacts) with coyote time, plus a jump
-        // buffer so an early press still fires on landing.
+        auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
+
+        // Grounded: resting on something (low vertical speed) — the reliable signal
+        // that works regardless of how the ground is set up — OR a fresh ground
+        // contact. Coyote time + a jump buffer make jumping forgiving.
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
-        bool grounded = m_groundContact > 0.0f;
+        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f;
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
         else                        m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
 
-        auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         // Only a physics body can leave the ground; a transform-only player (no
         // gravity) is always grounded for animation purposes.
         bool airborne = rb ? !grounded : false;

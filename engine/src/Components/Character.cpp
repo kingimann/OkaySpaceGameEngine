@@ -212,8 +212,51 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LUPARM] = {0, 0, 140};   r[B_RUPARM] = {0, 0, -140};
         r[B_LTHIGH] = {-22, 0, 0};   r[B_RTHIGH] = {-22, 0, 0};
         r[B_LSHIN]  = {35, 0, 0};    r[B_RSHIN]  = {35, 0, 0};
+    } else if (anim == 6) {                // crouch (deep squat: hips low, feet planted)
+        float s = std::sin(t * 2.2f);      // gentle breathing
+        // Thighs forward + shins folded hard back so the knees come up while the
+        // feet stay roughly under the hips; StanceOffset() then lowers the body so
+        // the feet land back on the ground (the knee-fold raises them by ~the same
+        // amount the body drops).
+        r[B_LTHIGH] = {100, 0, 0};   r[B_RTHIGH] = {100, 0, 0};
+        r[B_LSHIN]  = {-150, 0, 0};  r[B_RSHIN]  = {-150, 0, 0};
+        r[B_LFOOT]  = {55, 0, 0};    r[B_RFOOT]  = {55, 0, 0};   // keep the soles flat
+        r[B_TORSO]  = {26 + 1.5f * s, 0, 0};
+        r[B_HEAD]   = {-18, 0, 0};
+        r[B_LUPARM] = {-30, 0, 10};  r[B_RUPARM] = {-30, 0, -10};
+        r[B_LFORE]  = {42, 0, 0};    r[B_RFORE]  = {42, 0, 0};
+    } else if (anim == 7) {                // prone (whole body flat on the ground)
+        // Rotate ONLY the hips 90° so the body lies flat: the torso/head swing
+        // forward along the ground and the legs swing straight back — no counter
+        // rotation on the legs (that was what stood it back up). StanceOffset()
+        // then drops the whole body down onto the floor.
+        r[B_HIPS]   = {90, 0, 0};
+        r[B_HEAD]   = {-52, 0, 0};         // lift the head to look ahead
+        r[B_LUPARM] = {16, 0, 14};   r[B_RUPARM] = {16, 0, -14};   // arms slightly out front
+        r[B_LFORE]  = {24, 0, 0};    r[B_RFORE]  = {24, 0, 0};
+    }
+
+    // Head look: layer the (eased) gaze on top of whatever the animation set, so the
+    // head turns and tilts toward where the player is looking. Clamped so the neck
+    // never breaks. (The body is flipped 180° about Y in Apply(), which negates the
+    // pitch sense — hence the minus on X.)
+    if (anim != 0) {
+        r[B_HEAD].x += -Mathf::Clamp(m_headPitch, -55.0f, 55.0f);
+        r[B_HEAD].y +=  Mathf::Clamp(m_headYaw,   -72.0f, 72.0f);
+        // Body lean (peek): roll the torso sideways. Splitting a little onto the hips
+        // makes it read as a whole-body lean rather than just a bent waist. (The 180°
+        // Y flip in Apply() negates the roll sense, hence the minus.)
+        float lean = -Mathf::Clamp(m_bodyLean, -40.0f, 40.0f);
+        r[B_TORSO].z += lean * 0.7f;
+        r[B_HIPS].z  += lean * 0.3f;
     }
     return r;
+}
+
+Vec3 Character::StanceOffset() const {
+    if (anim == 6) return {0.0f, -0.571f, 0.0f};  // crouch: drop the body so the feet plant
+    if (anim == 7) return {0.0f, -0.78f, 0.0f};   // prone: lay the body on the ground
+    return {0.0f, 0.0f, 0.0f};
 }
 
 void Character::Skin(Mesh& m, const std::vector<int>& bone, const std::vector<Vec3>& rot) const {
@@ -242,8 +285,10 @@ void Character::Apply() {
     Skin(m, m_bone, PoseAt(animTime));
     // Face -Z: the engine's cameras look down -Z and the controllers move along
     // -Z, so the body (modelled facing +Z) is turned 180° about Y to match — this
-    // is what stops the walk looking backwards (moonwalk).
-    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }
+    // is what stops the walk looking backwards (moonwalk). StanceOffset lowers the
+    // whole body for crouch / prone (the rig's root is otherwise pinned at the hip).
+    Vec3 so = StanceOffset();
+    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; v += so; }
     m.normals.clear();                     // boxy -> flat shading
     mr->mesh = std::move(m);
     mr->doubleSided = true;
@@ -252,12 +297,19 @@ void Character::Apply() {
 void Character::Update(float dt) {
     if (anim == 0) return;
     animTime += dt * animSpeed;
+    // Ease the head toward the look target so it moves smoothly (frame-rate
+    // independent) instead of snapping to the camera each frame.
+    float k = headTurnSpeed > 0.0f ? (1.0f - std::exp(-headTurnSpeed * dt)) : 1.0f;
+    m_headYaw   += (lookYaw   - m_headYaw)   * k;
+    m_headPitch += (lookPitch - m_headPitch) * k;
+    m_bodyLean  += (bodyLean  - m_bodyLean)  * k;
     auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
     if (!mr) return;
     EnsureRest();
     Mesh m = m_rest;
     Skin(m, m_bone, PoseAt(animTime));
-    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }   // face -Z (see Apply)
+    Vec3 so = StanceOffset();
+    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();
     mr->mesh = std::move(m);
     mr->doubleSided = true;

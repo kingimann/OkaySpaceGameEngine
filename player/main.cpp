@@ -72,6 +72,24 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
     }
 }
 
+// Draw a drop shadow for a UI shape. softness == 0 is a crisp shadow; softness > 0
+// fakes a blur by stacking a few expanding, fading copies into a soft penumbra.
+static void FillUIShadow(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
+                         const Color& color, float softness, float op) {
+    if (softness <= 0.0f) {
+        FillUIShape(ren, r, shape, radius, color, color, false, false, op);
+        return;
+    }
+    const int layers = 5;
+    for (int k = layers; k >= 1; --k) {
+        float grow = softness * (float)k / layers;
+        SDL_Rect r2{r.x - (int)grow, r.y - (int)grow, r.w + (int)(2 * grow), r.h + (int)(2 * grow)};
+        Color c = color; c.a = color.a * (0.6f / layers);     // accumulate toward the edge
+        FillUIShape(ren, r2, shape, radius + grow, c, c, false, false, op);
+    }
+    FillUIShape(ren, r, shape, radius, color, color, false, false, op);   // solid core
+}
+
 // A stable, distinct color for each non-zero tile id (no palette is stored).
 static SDL_Color TileColor(int id) {
     unsigned h = (unsigned)id * 2654435761u;
@@ -155,6 +173,8 @@ int main(int argc, char** argv) {
         bool showCursor = true, quitOnEscape = true, showFps = false;
         int  fpsCap = 0;
         float volume = 1.0f;
+        bool lockCursor = false, perPixel = false, shadows = false, bloom = false, ssao = false, fxaa = true;
+        int  antialias = 1;
         std::string startup;
         std::vector<std::string> scenes;
     } cfg;
@@ -178,6 +198,13 @@ int main(int argc, char** argv) {
             else if (k == "quit_on_escape") cfg.quitOnEscape = std::atoi(v.c_str()) != 0;
             else if (k == "volume")     cfg.volume = (float)std::atof(v.c_str());
             else if (k == "show_fps")   cfg.showFps = std::atoi(v.c_str()) != 0;
+            else if (k == "lock_cursor") cfg.lockCursor = std::atoi(v.c_str()) != 0;
+            else if (k == "perpixel")   cfg.perPixel = std::atoi(v.c_str()) != 0;
+            else if (k == "shadows")    cfg.shadows = std::atoi(v.c_str()) != 0;
+            else if (k == "bloom")      cfg.bloom = std::atoi(v.c_str()) != 0;
+            else if (k == "ssao")       cfg.ssao = std::atoi(v.c_str()) != 0;
+            else if (k == "fxaa")       cfg.fxaa = std::atoi(v.c_str()) != 0;
+            else if (k == "antialias")  cfg.antialias = std::atoi(v.c_str());
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
         }
@@ -216,6 +243,14 @@ int main(int argc, char** argv) {
     Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+
+    // Apply the build's graphics/quality settings to the renderer + cursor.
+    PerPixelLighting() = cfg.perPixel;
+    ShadowsEnabled()   = cfg.shadows;
+    BloomEnabled()     = cfg.bloom;
+    SSAOEnabled()      = cfg.ssao;
+    FXAAEnabled()      = cfg.fxaa;
+    if (cfg.lockCursor) Cursor::Capture(true);
     SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
 
     SDL_AudioSpec want{}, have{};
@@ -287,6 +322,8 @@ int main(int argc, char** argv) {
         for (char c = '0'; c <= '9'; ++c)
             if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
         if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+        if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
+        if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
         // Editing keys for text fields (held-state; edge-detected by the field).
         if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8);
         if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
@@ -324,13 +361,28 @@ int main(int argc, char** argv) {
         Input::FeedKeys(down);
         Input::FeedGamepad(padAxis, padMask);
 
-        // Feed the mouse (position in pixels + left/right/middle button state).
-        int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+        // Apply the game's requested cursor state (Unity-style Cursor lock/visibility).
+        static Vec2 s_virtualMouse{0, 0};
+        bool locked = Cursor::IsLocked();
+        SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+        SDL_ShowCursor(Cursor::visible ? SDL_ENABLE : SDL_DISABLE);
+
+        // Feed the mouse (position in pixels + left/right/middle button state). When
+        // locked we accumulate relative motion into a virtual position so the
+        // controllers' look deltas keep working with a hidden, centred cursor.
+        int mx, my; Uint32 mb;
+        if (locked) {
+            int rx, ry; mb = SDL_GetRelativeMouseState(&rx, &ry);
+            s_virtualMouse.x += (float)rx; s_virtualMouse.y += (float)ry;
+        } else {
+            int ax, ay; mb = SDL_GetMouseState(&ax, &ay);
+            s_virtualMouse = Vec2{(float)ax, (float)ay};
+        }
         unsigned mask = 0;
         if (mb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
         if (mb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
         if (mb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
-        Input::FeedMouse(Vec2{(float)mx, (float)my}, mask);
+        Input::FeedMouse(s_virtualMouse, mask);
 
         Uint64 now = SDL_GetPerformanceCounter();
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
@@ -427,7 +479,8 @@ int main(int argc, char** argv) {
                 // supersampling is 4x the pixels — far too slow with the full
                 // shadow/SSAO/bloom pipeline — so it's off by default.
                 static std::vector<std::uint32_t> mesh3DDown;
-                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h, 1,
+                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h,
+                                                         cfg.antialias < 1 ? 1 : cfg.antialias,
                                                          cam ? cam->ignoreObject : nullptr);
                 if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
                     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
@@ -630,8 +683,8 @@ int main(int argc, char** argv) {
             SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
             if (pn->shadow) {                               // drop shadow behind (same shape)
                 SDL_Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
-                FillUIShape(renderer, sh, pn->shape, pn->cornerRadius,
-                            pn->shadowColor, pn->shadowColor, false, false, op);
+                FillUIShadow(renderer, sh, pn->shape, pn->cornerRadius,
+                             pn->shadowColor, pn->shadowSoftness, op);
             }
             if (pn->borderWidth > 0.0f) {                   // border = outer shape, then inner fill
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
@@ -770,6 +823,52 @@ int main(int argc, char** argv) {
             if (!sl->interactable) { SDL_Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
                 SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
+        for (const auto& up : scene.Objects()) {           // numeric steppers
+            auto* st = up->GetComponent<UIStepper>();
+            if (!st || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o = ResolveAnchor(st->anchor, st->position, st->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            SDL_Rect bg{(int)o.x, (int)o.y, (int)st->size.x, (int)st->size.y};
+            FillUIShape(renderer, bg, st->shape, st->cornerRadius, st->background, st->background, false, false, op);
+            float bw = st->ButtonWidth();
+            SDL_Rect minusR{(int)o.x, (int)o.y, (int)bw, (int)st->size.y};
+            SDL_Rect plusR{(int)(o.x + st->size.x - bw), (int)o.y, (int)bw, (int)st->size.y};
+            FillUIShape(renderer, minusR, st->shape, st->cornerRadius, st->button, st->button, false, false, op);
+            FillUIShape(renderer, plusR, st->shape, st->cornerRadius, st->button, st->button, false, false, op);
+            SDL_Color tc{(Uint8)(st->textColor.r * 255), (Uint8)(st->textColor.g * 255),
+                         (Uint8)(st->textColor.b * 255), (Uint8)(st->textColor.a * 255 * op)};
+            float px = 2.0f;
+            // "-" and "+" glyphs centred on the end buttons.
+            DrawText(renderer, "-", o.x + bw * 0.5f - Font8x8::Width * px * 0.5f,
+                     o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            DrawText(renderer, "+", o.x + st->size.x - bw * 0.5f - Font8x8::Width * px * 0.5f,
+                     o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            char vb[24];
+            if (st->wholeNumbers) std::snprintf(vb, sizeof(vb), "%d", (int)st->value);
+            else                  std::snprintf(vb, sizeof(vb), "%.2f", st->value);
+            float tw = std::strlen(vb) * (Font8x8::Width + 1) * px;
+            DrawText(renderer, vb, o.x + (st->size.x - tw) * 0.5f,
+                     o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            if (!st->interactable) { SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &bg); }
+        }
+        for (const auto& up : scene.Objects()) {           // star ratings
+            auto* rt = up->GetComponent<UIRating>();
+            if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o = ResolveAnchor(rt->anchor, rt->position, rt->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            float cw = rt->CellWidth();
+            float d = Mathf::Min(cw, rt->size.y);          // star size (square cell)
+            for (int i = 0; i < rt->count; ++i) {
+                float cx = o.x + i * cw + (cw - d) * 0.5f;
+                float cy = o.y + (rt->size.y - d) * 0.5f;
+                SDL_Rect star{(int)cx, (int)cy, (int)d, (int)d};
+                float f = rt->StarFill(i);
+                const Color& base = f >= 0.5f ? rt->on : rt->off;   // half rounds to filled
+                FillUIShape(renderer, star, UIShape::Diamond, 0.0f, base, base, false, false, op);
+            }
+        }
         for (const auto& up : scene.Objects()) {           // toggles (checkboxes)
             auto* tg = up->GetComponent<UIToggle>();
             if (!tg || !up->active || UIHidden(up.get())) continue;
@@ -810,6 +909,33 @@ int main(int argc, char** argv) {
             if (!tg->interactable) { SDL_Rect dr{box.x, box.y, box.w, box.h};
                 SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
+        for (const auto& up : scene.Objects()) {           // segmented tab bars
+            auto* tb = up->GetComponent<UITabs>();
+            if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o = ResolveAnchor(tb->anchor, tb->position, tb->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            SDL_Rect bar{(int)o.x, (int)o.y, (int)tb->size.x, (int)tb->size.y};
+            FillUIShape(renderer, bar, tb->shape, tb->cornerRadius,
+                        tb->background, tb->background, false, false, op);
+            // Highlight the selected segment (inset a touch so the track frames it).
+            float sox, soy, sw, sh; tb->SegmentRect(tb->value, sox, soy, sw, sh);
+            SDL_Rect sel{(int)(o.x + sox) + 2, (int)(o.y + soy) + 2, (int)sw - 4, (int)sh - 4};
+            FillUIShape(renderer, sel, tb->shape, tb->cornerRadius,
+                        tb->selected, tb->selected, false, false, op);
+            // Labels centered in each segment.
+            float px = 2.0f;
+            for (int i = 0; i < tb->Count(); ++i) {
+                float ox, oy, sgw, sgh; tb->SegmentRect(i, ox, oy, sgw, sgh);
+                const std::string& lbl = tb->tabs[i];
+                float tw = lbl.size() * (Font8x8::Width + 1) * px;
+                const Color& c = (i == tb->value) ? tb->selectedTextColor : tb->textColor;
+                SDL_Color tc{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op)};
+                DrawText(renderer, lbl, o.x + ox + (sgw - tw) * 0.5f,
+                         o.y + oy + (sgh - Font8x8::Height * px) * 0.5f, px, tc);
+            }
+            if (!tb->interactable) { SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &bar); }
+        }
         for (const auto& up : scene.Objects()) {
             auto* btn = up->GetComponent<UIButton>();
             if (!btn || !up->active || UIHidden(up.get())) continue;
@@ -825,8 +951,8 @@ int main(int argc, char** argv) {
             }
             if (btn->shadow) {                              // drop shadow behind (same shape)
                 SDL_Rect sh{r.x + (int)btn->shadowOffset.x, r.y + (int)btn->shadowOffset.y, r.w, r.h};
-                FillUIShape(renderer, sh, btn->shape, btn->cornerRadius,
-                            btn->shadowColor, btn->shadowColor, false, false, op);
+                FillUIShadow(renderer, sh, btn->shape, btn->cornerRadius,
+                             btn->shadowColor, btn->shadowSoftness, op);
             }
             if (btn->borderWidth > 0.0f) {                  // border = outer shape, then inner fill
                 FillUIShape(renderer, r, btn->shape, btn->cornerRadius,

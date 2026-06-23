@@ -21,6 +21,20 @@ struct LeaderboardEntry {
     int          rank  = 0;
 };
 
+/// One Steam Workshop (UGC) item — a piece of community content (a level, a
+/// mod, a skin). `id` is the published file id; `contentPath` is the local
+/// folder holding the item's files (where it lives once installed, or the
+/// folder to upload when publishing).
+struct WorkshopItem {
+    std::uint64_t            id = 0;
+    std::string              title;
+    std::string              description;
+    std::string              contentPath;
+    std::vector<std::string> tags;
+    bool                     subscribed = false;
+    bool                     installed  = false;
+};
+
 /// Platform service abstraction for Steam features. The engine always links a
 /// no-op/simulation backend so games build and run without the proprietary
 /// Steamworks SDK; building with -DOKAY_WITH_STEAM=ON and pointing at the SDK
@@ -84,6 +98,29 @@ public:
     virtual std::string CloudRead(const std::string& file) const { (void)file; return {}; }
     virtual bool        CloudHasFile(const std::string& file) const { (void)file; return false; }
     virtual bool        CloudDelete(const std::string& file) { (void)file; return false; }
+    /// Names of every file currently in the player's cloud storage.
+    virtual std::vector<std::string> CloudFiles() const { return {}; }
+    /// True when Steam Cloud is enabled for this app and account.
+    virtual bool        CloudEnabled() const { return true; }
+
+    // ---- Workshop (UGC: community levels / mods / skins) ---------------
+    /// Publish a new workshop item from a local content folder. Returns the new
+    /// item id, or 0 on failure.
+    virtual std::uint64_t WorkshopPublish(const WorkshopItem& item) { (void)item; return 0; }
+    /// Update an existing item's metadata and/or content folder.
+    virtual bool WorkshopUpdate(const WorkshopItem& item) { (void)item; return false; }
+    /// Subscribe to an item (Steam downloads + installs it); unsubscribe removes it.
+    virtual bool WorkshopSubscribe(std::uint64_t id)   { (void)id; return false; }
+    virtual bool WorkshopUnsubscribe(std::uint64_t id) { (void)id; return false; }
+    virtual bool WorkshopIsSubscribed(std::uint64_t id) const { (void)id; return false; }
+    /// Items the player is subscribed to and that are installed locally.
+    virtual std::vector<WorkshopItem> WorkshopSubscribedItems() const { return {}; }
+    /// Local install folder for an item (empty if it isn't installed).
+    virtual std::string WorkshopItemPath(std::uint64_t id) const { (void)id; return {}; }
+    /// Browse the workshop: items whose title/tags match `search` (empty = all).
+    virtual std::vector<WorkshopItem> WorkshopQuery(const std::string& search, int count) const {
+        (void)search; (void)count; return {};
+    }
 
     // ---- Friends / overlay ---------------------------------------------
     /// Number of the player's Steam friends (0 in simulation unless seeded).

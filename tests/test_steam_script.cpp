@@ -23,6 +23,7 @@ int main() {
         "  if (steam_get_stat(\"kills\") >= 5) { steam_unlock(\"WIN\"); }\n"
         "  steam_cloud_write(\"save\", \"level=2\");\n"
         "  steam_leaderboard(\"high\", 500);\n"
+        "  steam_workshop_publish(\"My Map\", \"/maps/mine\", \"a level\");\n"
         "}\n");
     s.Start();
     s.Update(0.016f);
@@ -31,6 +32,7 @@ int main() {
     CHECK_NEAR(Steam::Get().GetStat("kills"), 5.0f, 1e-4f);
     CHECK(Steam::Get().IsAchievementUnlocked("WIN"));
     CHECK(Steam::Get().CloudRead("save") == "level=2");
+    CHECK(Steam::Get().WorkshopSubscribedItems().size() == 1);   // publish auto-subscribes
     {
         auto top = Steam::Get().DownloadLeaderboardTop("high", 5);
         CHECK(top.size() == 1);

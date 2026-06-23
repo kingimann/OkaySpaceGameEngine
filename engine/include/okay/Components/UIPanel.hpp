@@ -33,6 +33,9 @@ public:
     bool  shadow = false;
     Color shadowColor = Color::FromBytes(0, 0, 0, 120);
     Vec2  shadowOffset{6.0f, 6.0f};
+    /// Shadow blur in pixels: 0 = a crisp shadow, higher = a soft penumbra (the
+    /// premium card look). Stacked expanding copies fake the blur.
+    float shadowSoftness = 0.0f;
 };
 
 } // namespace okay

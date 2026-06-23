@@ -13,6 +13,9 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
+#include "okay/Components/TopDownController.hpp"
+#include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -22,6 +25,9 @@
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
+#include "okay/Components/Stats.hpp"
+#include "okay/Components/Inventory.hpp"
+#include "okay/Components/TurnManager.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/DollyPath.hpp"
 #include "okay/Components/VirtualCamera.hpp"
@@ -53,7 +59,10 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UISlider.hpp"
+#include "okay/Components/UIStepper.hpp"
+#include "okay/Components/UIRating.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UITabs.hpp"
 
 #include <cctype>
 #include <functional>
@@ -279,7 +288,21 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
             << fp->mouseSensitivity << " " << (fp->canJump ? 1 : 0) << " " << (fp->driveAnimation ? 1 : 0)
-            << " " << (fp->invertY ? 1 : 0) << "\n";
+            << " " << (fp->invertY ? 1 : 0)
+            // extended (back-compatible trailing fields): momentum + jump feel
+            << " " << fp->acceleration << " " << fp->deceleration << " " << fp->airControl
+            << " " << fp->coyoteTime << " " << fp->jumpBufferTime
+            // extended: run + stance (sprint/crouch/prone). Keys as ints.
+            << " " << (int)(unsigned char)fp->sprintKey << " " << (fp->toggleRun ? 1 : 0)
+            << " " << (int)(unsigned char)fp->crouchKey << " " << (int)(unsigned char)fp->proneKey
+            << " " << (fp->toggleStance ? 1 : 0)
+            << " " << fp->crouchSpeed << " " << fp->proneSpeed
+            << " " << fp->standEyeHeight << " " << fp->crouchEyeHeight << " " << fp->proneEyeHeight
+            << " " << fp->stanceLerp
+            // extended: lean (peek with Q/E)
+            << " " << (int)(unsigned char)fp->leanLeftKey << " " << (int)(unsigned char)fp->leanRightKey
+            << " " << fp->leanAngle << " " << fp->leanOffset << " " << fp->leanSpeed
+            << " " << fp->maxJumps << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
@@ -289,7 +312,56 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (tp->invertX ? 1 : 0) << " " << (tp->invertY ? 1 : 0)
             << " " << tp->minDistance << " " << tp->maxDistance << " " << tp->zoomSpeed
             << " " << tp->shoulderOffset << " " << tp->cameraDamping
-            << " " << tp->minPitch << " " << tp->maxPitch << " " << (int)tp->faceMode << "\n";
+            << " " << tp->minPitch << " " << tp->maxPitch << " " << (int)tp->faceMode
+            // extended (back-compatible trailing fields): momentum + jump feel
+            << " " << tp->acceleration << " " << tp->deceleration << " " << tp->airControl
+            << " " << tp->coyoteTime << " " << tp->jumpBufferTime
+            // camera collision (spring arm)
+            << " " << (tp->cameraCollision ? 1 : 0) << " " << tp->cameraCollisionSkin
+            // extended: run + stance (sprint/crouch/prone). Keys as ints.
+            << " " << (int)(unsigned char)tp->sprintKey << " " << (tp->toggleRun ? 1 : 0)
+            << " " << (int)(unsigned char)tp->crouchKey << " " << (int)(unsigned char)tp->proneKey
+            << " " << (tp->toggleStance ? 1 : 0)
+            << " " << tp->crouchSpeed << " " << tp->proneSpeed
+            << " " << tp->crouchHeightDrop << " " << tp->proneHeightDrop
+            << " " << tp->stanceLerp
+            // extended: lean (peek with Q/E)
+            << " " << (int)(unsigned char)tp->leanLeftKey << " " << (int)(unsigned char)tp->leanRightKey
+            << " " << tp->leanAngle << " " << tp->leanOffset << " " << tp->leanSpeed
+            << " " << tp->maxJumps << "\n";
+    }
+    if (auto* td = go->GetComponent<TopDownController>()) {
+        out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
+            << (td->sprintKey ? td->sprintKey : '-') << " "
+            << (td->driveAnimation ? 1 : 0) << " " << (td->rotateToFace ? 1 : 0) << " " << td->turnSpeed << " "
+            << td->acceleration << " " << td->deceleration << " " << (td->cameraRelative ? 1 : 0) << " "
+            << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
+            << td->lookHeight << " " << td->cameraDamping << "\n";
+    }
+    if (auto* fr = go->GetComponent<FreeRoamController>()) {
+        out << "  frctrl " << fr->moveSpeed << " " << fr->boostMultiplier << " "
+            << (int)(unsigned char)fr->sprintKey << " " << (int)(unsigned char)fr->upKey << " "
+            << (int)(unsigned char)fr->downKey << " " << fr->mouseSensitivity << " "
+            << (fr->invertY ? 1 : 0) << " " << (fr->lockCursor ? 1 : 0) << " "
+            << (fr->lookRequiresRightMouse ? 1 : 0) << " " << fr->minPitch << " " << fr->maxPitch << " "
+            << fr->acceleration << " " << fr->yaw << " " << fr->pitch << "\n";
+    }
+    if (auto* ts = go->GetComponent<ThirdPersonShooterController>()) {
+        out << "  tpsctrl " << ts->walkSpeed << " " << ts->runSpeed << " " << ts->jumpForce << " "
+            << (ts->sprintKey ? ts->sprintKey : '-') << " " << (ts->canJump ? 1 : 0) << " "
+            << (ts->driveAnimation ? 1 : 0) << " " << ts->turnSpeed << " "
+            << ts->acceleration << " " << ts->deceleration << " " << ts->airControl << " "
+            << ts->coyoteTime << " " << ts->jumpBufferTime << " "
+            << ts->mouseSensitivity << " " << (ts->invertY ? 1 : 0) << " "
+            << ts->minPitch << " " << ts->maxPitch << " " << ts->distance << " " << ts->cameraHeight << " "
+            << ts->shoulderOffset << " " << (ts->cameraCollision ? 1 : 0) << " " << ts->cameraCollisionSkin << " "
+            << ts->aimButton << " " << ts->aimDistance << " " << ts->aimShoulder << " " << ts->aimSpeed << " "
+            << ts->fireButton << " " << (ts->autoFire ? 1 : 0) << " " << ts->fireRate << " "
+            << (ts->lockCursor ? 1 : 0)
+            // extended: lean (peek with Q/E)
+            << " " << (int)(unsigned char)ts->leanLeftKey << " " << (int)(unsigned char)ts->leanRightKey
+            << " " << ts->leanAngle << " " << ts->leanOffset << " " << ts->leanSpeed
+            << " " << ts->maxJumps << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -304,7 +376,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << cm->rotateSpeed << " " << cm->keyRotateSpeed
             << " " << (cm->rotateLeftKey ? cm->rotateLeftKey : '-')
             << " " << (cm->rotateRightKey ? cm->rotateRightKey : '-')
-            << " " << cm->cameraDamping << "\n";
+            << " " << cm->cameraDamping
+            << " " << cm->arriveRadius << "\n";   // extended (back-compatible trailing field)
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -315,6 +388,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* lt = go->GetComponent<Lifetime>()) {
         out << "  lifetime " << lt->seconds << "\n";
+    }
+    if (auto* st = go->GetComponent<Stats>()) {
+        out << "  stats " << st->health << " " << st->maxHealth << " " << st->mana << " " << st->maxMana
+            << " " << st->level << " " << st->xp << " " << st->xpToNext
+            << " " << st->strength << " " << st->defense << " " << st->intelligence << " " << st->agility << "\n";
+    }
+    if (auto* inv = go->GetComponent<Inventory>()) {
+        out << "  inventory " << inv->capacity << " " << inv->slots.size();
+        for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
+        out << "\n";
+    }
+    if (auto* tm = go->GetComponent<TurnManager>()) {
+        out << "  turnmgr " << tm->current << " " << tm->round << " " << (tm->autoStart ? 1 : 0)
+            << " " << tm->participants.size();
+        for (const auto& p : tm->participants) out << " " << Quote(p);
+        out << "\n";
     }
     if (auto* cf = go->GetComponent<CameraFollow>()) {
         out << "  camerafollow " << Quote(cf->targetName) << " "
@@ -417,10 +506,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (btn->isOn ? 1 : 0) << " " << btn->pressOffset
             << " " << (btn->iconRight ? 1 : 0) << " " << (btn->holdRepeat ? 1 : 0)
             << " " << btn->repeatDelay << " " << btn->repeatInterval
-            // extended (back-compatible trailing fields): shape + drop shadow
+            // extended (back-compatible trailing fields): shape + drop shadow (+softness)
             << " " << (int)btn->shape << " " << (btn->shadow ? 1 : 0) << " "
             << btn->shadowColor.r << " " << btn->shadowColor.g << " " << btn->shadowColor.b << " " << btn->shadowColor.a
-            << " " << btn->shadowOffset.x << " " << btn->shadowOffset.y << "\n";
+            << " " << btn->shadowOffset.x << " " << btn->shadowOffset.y
+            << " " << btn->shadowSoftness << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -434,8 +524,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (pn->shadow ? 1 : 0) << " "
             << pn->shadowColor.r << " " << pn->shadowColor.g << " " << pn->shadowColor.b << " " << pn->shadowColor.a << " "
             << pn->shadowOffset.x << " " << pn->shadowOffset.y
-            // extended (back-compatible trailing fields): shape + gradient direction
-            << " " << (int)pn->shape << " " << (pn->gradientHorizontal ? 1 : 0) << "\n";
+            // extended (back-compatible trailing fields): shape + gradient direction + soft shadow
+            << " " << (int)pn->shape << " " << (pn->gradientHorizontal ? 1 : 0)
+            << " " << pn->shadowSoftness << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
@@ -456,6 +547,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended (back-compatible trailing fields): shape + corner + focus ring
             << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
             << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a << "\n";
+    }
+    if (auto* tb = go->GetComponent<UITabs>()) {
+        out << "  uitabs " << tb->position.x << " " << tb->position.y << " "
+            << tb->size.x << " " << tb->size.y << " " << (int)tb->anchor << " " << tb->value << " "
+            << tb->background.r << " " << tb->background.g << " " << tb->background.b << " " << tb->background.a << " "
+            << tb->selected.r << " " << tb->selected.g << " " << tb->selected.b << " " << tb->selected.a << " "
+            << tb->textColor.r << " " << tb->textColor.g << " " << tb->textColor.b << " " << tb->textColor.a << " "
+            << tb->selectedTextColor.r << " " << tb->selectedTextColor.g << " " << tb->selectedTextColor.b << " " << tb->selectedTextColor.a << " "
+            << (int)tb->shape << " " << tb->cornerRadius << " " << (tb->interactable ? 1 : 0) << " "
+            << tb->tabs.size();
+        for (const auto& t : tb->tabs) out << " " << Quote(t);
+        out << "\n";
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
         out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
@@ -573,6 +676,25 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (sl->vertical ? 1 : 0)
             // extended (back-compatible trailing fields): track shape + round knob
             << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0) << "\n";
+    }
+    if (auto* st = go->GetComponent<UIStepper>()) {
+        out << "  uistepper " << st->position.x << " " << st->position.y << " "
+            << st->size.x << " " << st->size.y << " "
+            << st->value << " " << st->minValue << " " << st->maxValue << " " << st->step << " "
+            << (st->wholeNumbers ? 1 : 0) << " " << (st->wrap ? 1 : 0) << " "
+            << st->background.r << " " << st->background.g << " " << st->background.b << " " << st->background.a << " "
+            << st->button.r << " " << st->button.g << " " << st->button.b << " " << st->button.a << " "
+            << st->textColor.r << " " << st->textColor.g << " " << st->textColor.b << " " << st->textColor.a << " "
+            << (int)st->anchor << " " << (int)st->shape << " " << st->cornerRadius << " "
+            << (st->interactable ? 1 : 0) << "\n";
+    }
+    if (auto* rt = go->GetComponent<UIRating>()) {
+        out << "  uirating " << rt->position.x << " " << rt->position.y << " "
+            << rt->size.x << " " << rt->size.y << " "
+            << rt->count << " " << rt->value << " " << (rt->allowHalf ? 1 : 0) << " " << (rt->readOnly ? 1 : 0) << " "
+            << rt->on.r << " " << rt->on.g << " " << rt->on.b << " " << rt->on.a << " "
+            << rt->off.r << " " << rt->off.g << " " << rt->off.b << " " << rt->off.a << " "
+            << (int)rt->anchor << "\n";
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
         out << "  uitoggle " << Quote(tg->label) << " "
@@ -981,6 +1103,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cm->rotateLeftKey = (rlk == "-" || rlk.empty()) ? 0 : rlk[0];
                         cm->rotateRightKey = (rrk == "-" || rrk.empty()) ? 0 : rrk[0];
                         cm->cameraDamping = cdamp;
+                        in >> std::ws; // optional arrival radius (added later)
+                        if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->arriveRadius;
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -1000,6 +1124,40 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     fp->walkSpeed = ws; fp->runSpeed = rs; fp->jumpForce = jf;
                     fp->mouseSensitivity = ms; fp->canJump = (cj != 0); fp->driveAnimation = (da != 0);
                     fp->invertY = (iy != 0);
+                    // Optional momentum + jump-feel block (absent in older scenes).
+                    float ac = fp->acceleration, de = fp->deceleration, aircon = fp->airControl,
+                          coy = fp->coyoteTime, jb = fp->jumpBufferTime;
+                    in >> std::ws;
+                    if ((std::isdigit(in.peek()) || in.peek() == '-') &&
+                        (in >> ac >> de >> aircon >> coy >> jb)) {
+                        fp->acceleration = ac; fp->deceleration = de; fp->airControl = aircon;
+                        fp->coyoteTime = coy; fp->jumpBufferTime = jb;
+                        // Optional run + stance block (absent in older scenes).
+                        int sk = (unsigned char)fp->sprintKey, tr = fp->toggleRun ? 1 : 0,
+                            ck = (unsigned char)fp->crouchKey, pk = (unsigned char)fp->proneKey,
+                            tst = fp->toggleStance ? 1 : 0;
+                        float csp = fp->crouchSpeed, psp = fp->proneSpeed, seh = fp->standEyeHeight,
+                              ceh = fp->crouchEyeHeight, peh = fp->proneEyeHeight, sl = fp->stanceLerp;
+                        in >> std::ws;
+                        if ((std::isdigit(in.peek()) || in.peek() == '-') &&
+                            (in >> sk >> tr >> ck >> pk >> tst >> csp >> psp >> seh >> ceh >> peh >> sl)) {
+                            fp->sprintKey = (char)sk; fp->toggleRun = (tr != 0);
+                            fp->crouchKey = (char)ck; fp->proneKey = (char)pk; fp->toggleStance = (tst != 0);
+                            fp->crouchSpeed = csp; fp->proneSpeed = psp; fp->standEyeHeight = seh;
+                            fp->crouchEyeHeight = ceh; fp->proneEyeHeight = peh; fp->stanceLerp = sl;
+                            // Optional lean block.
+                            int ll = (unsigned char)fp->leanLeftKey, lr = (unsigned char)fp->leanRightKey;
+                            float la = fp->leanAngle, lo = fp->leanOffset, lsp = fp->leanSpeed;
+                            in >> std::ws;
+                            if ((std::isdigit(in.peek()) || in.peek() == '-') &&
+                                (in >> ll >> lr >> la >> lo >> lsp)) {
+                                fp->leanLeftKey = (char)ll; fp->leanRightKey = (char)lr;
+                                fp->leanAngle = la; fp->leanOffset = lo; fp->leanSpeed = lsp;
+                                in >> std::ws;
+                                if (std::isdigit(in.peek())) { int mj = fp->maxJumps; in >> mj; fp->maxJumps = mj; }
+                            }
+                        }
+                    }
                 } else if (field == "tpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.2f, ts = 12, ds = 5, ch = 1.5f; int cj = 1, da = 1;
                     in >> ws >> rs >> jf >> ms >> ts >> ds >> ch >> cj >> da;
@@ -1018,6 +1176,85 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tp->shoulderOffset = so; tp->cameraDamping = cd;
                         tp->minPitch = mnp; tp->maxPitch = mxp;
                         tp->faceMode = (ThirdPersonController::FaceMode)fmode;
+                        // Optional momentum + jump-feel block (absent in older scenes).
+                        float ac = tp->acceleration, de = tp->deceleration, aircon = tp->airControl,
+                              coy = tp->coyoteTime, jb = tp->jumpBufferTime;
+                        if (in >> ac >> de >> aircon >> coy >> jb) {
+                            tp->acceleration = ac; tp->deceleration = de; tp->airControl = aircon;
+                            tp->coyoteTime = coy; tp->jumpBufferTime = jb;
+                            // Optional camera-collision block (absent in older scenes).
+                            int cc = tp->cameraCollision ? 1 : 0; float skin = tp->cameraCollisionSkin;
+                            if (in >> cc >> skin) {
+                                tp->cameraCollision = (cc != 0); tp->cameraCollisionSkin = skin;
+                                // Optional run + stance block.
+                                int sk = (unsigned char)tp->sprintKey, tr = tp->toggleRun ? 1 : 0,
+                                    ck = (unsigned char)tp->crouchKey, pk = (unsigned char)tp->proneKey,
+                                    tst = tp->toggleStance ? 1 : 0;
+                                float csp = tp->crouchSpeed, psp = tp->proneSpeed,
+                                      chd = tp->crouchHeightDrop, phd = tp->proneHeightDrop, sl = tp->stanceLerp;
+                                in >> std::ws;
+                                if ((std::isdigit(in.peek()) || in.peek() == '-') &&
+                                    (in >> sk >> tr >> ck >> pk >> tst >> csp >> psp >> chd >> phd >> sl)) {
+                                    tp->sprintKey = (char)sk; tp->toggleRun = (tr != 0);
+                                    tp->crouchKey = (char)ck; tp->proneKey = (char)pk; tp->toggleStance = (tst != 0);
+                                    tp->crouchSpeed = csp; tp->proneSpeed = psp;
+                                    tp->crouchHeightDrop = chd; tp->proneHeightDrop = phd; tp->stanceLerp = sl;
+                                    // Optional lean block.
+                                    int ll = (unsigned char)tp->leanLeftKey, lr = (unsigned char)tp->leanRightKey;
+                                    float la = tp->leanAngle, lo = tp->leanOffset, lsp = tp->leanSpeed;
+                                    in >> std::ws;
+                                    if ((std::isdigit(in.peek()) || in.peek() == '-') &&
+                                        (in >> ll >> lr >> la >> lo >> lsp)) {
+                                        tp->leanLeftKey = (char)ll; tp->leanRightKey = (char)lr;
+                                        tp->leanAngle = la; tp->leanOffset = lo; tp->leanSpeed = lsp;
+                                        in >> std::ws;
+                                        if (std::isdigit(in.peek())) { int mj = tp->maxJumps; in >> mj; tp->maxJumps = mj; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (field == "tdctrl") {
+                    auto* td = go->AddComponent<TopDownController>();
+                    std::string sk = "-"; int da = 1, rf = 1, cr = 0;
+                    in >> td->walkSpeed >> td->runSpeed >> sk >> da >> rf >> td->turnSpeed
+                       >> td->acceleration >> td->deceleration >> cr
+                       >> td->cameraDistance >> td->cameraPitch >> td->cameraYaw
+                       >> td->lookHeight >> td->cameraDamping;
+                    td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
+                    td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
+                } else if (field == "frctrl") {
+                    auto* fr = go->AddComponent<FreeRoamController>();
+                    int sk = (unsigned char)fr->sprintKey, uk = (unsigned char)fr->upKey,
+                        dk = (unsigned char)fr->downKey, iy = 0, lc = 0, rr = 1;
+                    in >> fr->moveSpeed >> fr->boostMultiplier >> sk >> uk >> dk
+                       >> fr->mouseSensitivity >> iy >> lc >> rr
+                       >> fr->minPitch >> fr->maxPitch >> fr->acceleration >> fr->yaw >> fr->pitch;
+                    fr->sprintKey = (char)sk; fr->upKey = (char)uk; fr->downKey = (char)dk;
+                    fr->invertY = (iy != 0); fr->lockCursor = (lc != 0); fr->lookRequiresRightMouse = (rr != 0);
+                } else if (field == "tpsctrl") {
+                    auto* ts = go->AddComponent<ThirdPersonShooterController>();
+                    std::string sk = "-"; int cj = 1, da = 1, iy = 0, cc = 1, af = 0, lc = 1;
+                    in >> ts->walkSpeed >> ts->runSpeed >> ts->jumpForce >> sk >> cj >> da >> ts->turnSpeed
+                       >> ts->acceleration >> ts->deceleration >> ts->airControl
+                       >> ts->coyoteTime >> ts->jumpBufferTime
+                       >> ts->mouseSensitivity >> iy >> ts->minPitch >> ts->maxPitch >> ts->distance >> ts->cameraHeight
+                       >> ts->shoulderOffset >> cc >> ts->cameraCollisionSkin
+                       >> ts->aimButton >> ts->aimDistance >> ts->aimShoulder >> ts->aimSpeed
+                       >> ts->fireButton >> af >> ts->fireRate >> lc;
+                    ts->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
+                    ts->canJump = (cj != 0); ts->driveAnimation = (da != 0); ts->invertY = (iy != 0);
+                    ts->cameraCollision = (cc != 0); ts->autoFire = (af != 0); ts->lockCursor = (lc != 0);
+                    // Optional lean block (absent in older scenes).
+                    int ll = (unsigned char)ts->leanLeftKey, lr = (unsigned char)ts->leanRightKey;
+                    float la = ts->leanAngle, lo = ts->leanOffset, lsp = ts->leanSpeed;
+                    in >> std::ws;
+                    if ((std::isdigit(in.peek()) || in.peek() == '-') &&
+                        (in >> ll >> lr >> la >> lo >> lsp)) {
+                        ts->leanLeftKey = (char)ll; ts->leanRightKey = (char)lr;
+                        ts->leanAngle = la; ts->leanOffset = lo; ts->leanSpeed = lsp;
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { int mj = ts->maxJumps; in >> mj; ts->maxJumps = mj; }
                     }
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
@@ -1028,6 +1265,26 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "lifetime") {
                     float s = 1.0f; in >> s;
                     go->AddComponent<Lifetime>()->seconds = s;
+                } else if (field == "stats") {
+                    auto* st = go->AddComponent<Stats>();
+                    in >> st->health >> st->maxHealth >> st->mana >> st->maxMana
+                       >> st->level >> st->xp >> st->xpToNext
+                       >> st->strength >> st->defense >> st->intelligence >> st->agility;
+                } else if (field == "inventory") {
+                    auto* inv = go->AddComponent<Inventory>();
+                    std::size_t count = 0; in >> inv->capacity >> count;
+                    inv->slots.clear();
+                    for (std::size_t k = 0; k < count; ++k) {
+                        Inventory::Slot s; s.item = ReadQuoted(in); in >> s.count;
+                        inv->slots.push_back(s);
+                    }
+                } else if (field == "turnmgr") {
+                    auto* tm = go->AddComponent<TurnManager>();
+                    int as = 1; std::size_t count = 0;
+                    in >> tm->current >> tm->round >> as >> count;
+                    tm->autoStart = (as != 0);
+                    tm->participants.clear();
+                    for (std::size_t k = 0; k < count; ++k) tm->participants.push_back(ReadQuoted(in));
                 } else if (field == "camerafollow") {
                     std::string tgt = ReadQuoted(in);
                     Vec3 off; float sm = 5.0f;
@@ -1218,6 +1475,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 in >> sp >> sh >> sc.r >> sc.g >> sc.b >> sc.a
                                    >> btn->shadowOffset.x >> btn->shadowOffset.y;
                                 btn->shape = (UIShape)sp; btn->shadow = (sh != 0); btn->shadowColor = sc;
+                                in >> std::ws; // optional shadow softness (added later)
+                                if (std::isdigit(in.peek()) || in.peek() == '.') in >> btn->shadowSoftness;
                             }
                         }
                     }
@@ -1252,6 +1511,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int sp = 0, gh = 0; in >> sp >> gh;
                         pn->shape = (UIShape)sp; pn->gradientHorizontal = (gh != 0);
+                        in >> std::ws; // optional shadow softness (added later)
+                        if (std::isdigit(in.peek()) || in.peek() == '.') in >> pn->shadowSoftness;
                     }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();
@@ -1313,6 +1574,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> sp >> inp->cornerRadius >> inp->borderWidth >> bc.r >> bc.g >> bc.b >> bc.a;
                         inp->shape = (UIShape)sp; inp->borderColor = bc;
                     }
+                } else if (field == "uitabs") {
+                    auto* tb = go->AddComponent<UITabs>();
+                    int an = 0, sp = 0, it = 1; std::size_t count = 0;
+                    Color bg, se, tc, stc;
+                    in >> tb->position.x >> tb->position.y >> tb->size.x >> tb->size.y >> an >> tb->value
+                       >> bg.r >> bg.g >> bg.b >> bg.a >> se.r >> se.g >> se.b >> se.a
+                       >> tc.r >> tc.g >> tc.b >> tc.a >> stc.r >> stc.g >> stc.b >> stc.a
+                       >> sp >> tb->cornerRadius >> it >> count;
+                    tb->anchor = (UIAnchor)an; tb->background = bg; tb->selected = se;
+                    tb->textColor = tc; tb->selectedTextColor = stc;
+                    tb->shape = (UIShape)sp; tb->interactable = (it != 0);
+                    tb->tabs.clear();
+                    for (std::size_t k = 0; k < count; ++k) tb->tabs.push_back(ReadQuoted(in));
                 } else if (field == "uidropdown") {
                     auto* dd = go->AddComponent<UIDropdown>();
                     int an = 0; std::size_t count = 0;
@@ -1492,6 +1766,28 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             sl->trackShape = (UIShape)ts; sl->roundKnob = (rk != 0);
                         }
                     }
+                } else if (field == "uistepper") {
+                    auto* st = go->AddComponent<UIStepper>();
+                    Color bg, bt, tc; int wn = 1, wr = 0, sh = 0, it = 1;
+                    in >> st->position.x >> st->position.y >> st->size.x >> st->size.y
+                       >> st->value >> st->minValue >> st->maxValue >> st->step
+                       >> wn >> wr
+                       >> bg.r >> bg.g >> bg.b >> bg.a >> bt.r >> bt.g >> bt.b >> bt.a
+                       >> tc.r >> tc.g >> tc.b >> tc.a;
+                    st->wholeNumbers = (wn != 0); st->wrap = (wr != 0);
+                    st->background = bg; st->button = bt; st->textColor = tc;
+                    ReadAnchor(in, st->anchor);
+                    in >> sh >> st->cornerRadius >> it;
+                    st->shape = (UIShape)sh; st->interactable = (it != 0);
+                } else if (field == "uirating") {
+                    auto* rt = go->AddComponent<UIRating>();
+                    Color on, off; int ah = 0, ro = 0;
+                    in >> rt->position.x >> rt->position.y >> rt->size.x >> rt->size.y
+                       >> rt->count >> rt->value >> ah >> ro
+                       >> on.r >> on.g >> on.b >> on.a >> off.r >> off.g >> off.b >> off.a;
+                    rt->allowHalf = (ah != 0); rt->readOnly = (ro != 0);
+                    rt->on = on; rt->off = off;
+                    ReadAnchor(in, rt->anchor);
                 } else if (field == "uitoggle") {
                     auto* tg = go->AddComponent<UIToggle>();
                     tg->label = ReadQuoted(in);

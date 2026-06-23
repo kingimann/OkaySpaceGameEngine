@@ -42,6 +42,7 @@ public:
     bool  shadow = false;
     Color shadowColor = Color::FromBytes(0, 0, 0, 110);
     Vec2  shadowOffset{0.0f, 3.0f};
+    float shadowSoftness = 0.0f;   // 0 = crisp; higher = a soft blurred shadow
     /// Grow effect when hovered/focused: 1 = none, e.g. 1.1 = 10% bigger. A
     /// lightweight Unity-style "transition" for tactile menus.
     float hoverScale = 1.0f;

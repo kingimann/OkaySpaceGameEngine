@@ -59,10 +59,19 @@ public:
 
     // ---- Scene queries -------------------------------------------------
     /// Cast a ray and return the nearest collider hit (within maxDistance).
+    /// `ignore` (optional) skips a GameObject's colliders — e.g. the camera ray
+    /// ignoring the player it's attached to.
     RaycastHit3D Raycast(Scene& scene, const Vec3& origin, const Vec3& direction,
-                         float maxDistance = 1e9f);
+                         float maxDistance = 1e9f, GameObject* ignore = nullptr);
     /// All colliders overlapping a sphere.
     std::vector<Collider3D*> OverlapSphere(Scene& scene, const Vec3& center, float radius);
+
+    /// Push a sphere out of any SOLID colliders it overlaps (depenetration) and
+    /// return the corrected centre — a lightweight "collide and slide" used to keep
+    /// transform-only players (no Rigidbody3D) from clipping through walls/floors.
+    /// `ignore` skips a GameObject (the mover itself); triggers never block.
+    Vec3 ResolveSphere(Scene& scene, Vec3 center, float radius,
+                       GameObject* ignore = nullptr, int iterations = 4);
 
     void Clear() { m_contacts.clear(); }
 

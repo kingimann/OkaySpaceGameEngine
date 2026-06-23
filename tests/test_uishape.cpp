@@ -50,6 +50,66 @@ int main() {
         CHECK(x0 > 10.0f);
     }
 
+    // New convex polygon shapes: each produces a single span per row that matches
+    // its silhouette, and the hit-test agrees with the fill.
+    {
+        float x0, x1;
+        // Triangle (apex top, full base): a point at the top, full width at the base.
+        UIShapeRowSpan(UIShape::Triangle, 100, 100, 0, 1, x0, x1);
+        CHECK(x1 - x0 < 5.0f);
+        UIShapeRowSpan(UIShape::Triangle, 100, 100, 0, 99, x0, x1);
+        CHECK_NEAR(x1 - x0, 99.0f, 2.0f);
+        CHECK(UIShapeContains(UIShape::Triangle, 100, 100, 0, 50.0f, 95.0f));   // low center inside
+        CHECK(!UIShapeContains(UIShape::Triangle, 100, 100, 0, 5.0f, 10.0f));   // top corner outside
+
+        // Diamond: widest at the middle row, points at top and bottom.
+        UIShapeRowSpan(UIShape::Diamond, 100, 100, 0, 50, x0, x1);
+        CHECK_NEAR(x1 - x0, 100.0f, 2.0f);
+        CHECK(!UIShapeContains(UIShape::Diamond, 100, 100, 0, 5.0f, 5.0f));     // corner outside
+
+        // Hexagon: full width through the middle band, narrower (quarter) at the very edges.
+        UIShapeRowSpan(UIShape::Hexagon, 100, 100, 0, 50, x0, x1);
+        CHECK_NEAR(x1 - x0, 100.0f, 2.0f);
+        UIShapeRowSpan(UIShape::Hexagon, 100, 100, 0, 0, x0, x1);
+        CHECK_NEAR(x1 - x0, 50.0f, 4.0f);
+
+        // Octagon: chamfered corners inset by the radius at the top, full in the middle.
+        UIShapeRowSpan(UIShape::Octagon, 100, 100, 20, 0, x0, x1);
+        CHECK_NEAR(x0, 20.0f, 1.0f);
+        UIShapeRowSpan(UIShape::Octagon, 100, 100, 20, 50, x0, x1);
+        CHECK_NEAR(x1 - x0, 100.0f, 1.0f);
+
+        // Parallelogram: constant width, the top row shifted right by the skew.
+        UIShapeRowSpan(UIShape::Parallelogram, 100, 100, 30, 0, x0, x1);
+        CHECK_NEAR(x0, 30.0f, 1.0f);
+        UIShapeRowSpan(UIShape::Parallelogram, 100, 100, 30, 99, x0, x1);
+        CHECK_NEAR(x0, 0.0f, 1.0f);
+
+        // Trapezoid: inset at the top, full width at the base.
+        UIShapeRowSpan(UIShape::Trapezoid, 100, 100, 20, 0, x0, x1);
+        CHECK_NEAR(x0, 20.0f, 1.0f);
+        UIShapeRowSpan(UIShape::Trapezoid, 100, 100, 20, 99, x0, x1);
+        CHECK_NEAR(x1 - x0, 100.0f, 1.5f);
+
+        CHECK(UIShapeUsesRadius(UIShape::Octagon));
+        CHECK(UIShapeUsesRadius(UIShape::Trapezoid));
+        CHECK(!UIShapeUsesRadius(UIShape::Triangle));
+    }
+
+    // A polygon shape round-trips through the scene (enum value preserved).
+    {
+        Scene s("HX"); s.physicsEnabled = false;
+        auto* pn = s.CreateGameObject("P")->AddComponent<UIPanel>();
+        pn->shape = UIShape::Hexagon;
+        auto* im = s.CreateGameObject("I")->AddComponent<UIImage>();
+        im->shape = UIShape::Diamond;
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* pn2 = s2.Find("P") ? s2.Find("P")->GetComponent<UIPanel>() : nullptr;
+        auto* im2 = s2.Find("I") ? s2.Find("I")->GetComponent<UIImage>() : nullptr;
+        CHECK(pn2 && pn2->shape == UIShape::Hexagon);
+        CHECK(im2 && im2->shape == UIShape::Diamond);
+    }
+
     // Round-trip the new UIPanel shape + gradient direction, and UIImage shape.
     {
         Scene s("U"); s.physicsEnabled = false;
@@ -182,6 +242,50 @@ int main() {
         auto* r2 = s2.Find("R") ? s2.Find("R")->GetComponent<UIRadialProgress>() : nullptr;
         CHECK(r2 && r2->spin);
         if (r2) CHECK_NEAR(r2->spinSpeed, 360.0f, 1e-3f);
+    }
+
+    // UITabs: segment hit-testing maps an x to the right tab, Select fires/clamps,
+    // and the whole control round-trips.
+    {
+        Scene s("TB"); s.physicsEnabled = false;
+        auto* tb = s.CreateGameObject("Tabs")->AddComponent<UITabs>();
+        tb->size = {300, 40};
+        tb->tabs = {"A", "B", "C"};                  // 3 segments of 100px each
+        CHECK(tb->SegmentAt(50.0f) == 0);
+        CHECK(tb->SegmentAt(150.0f) == 1);
+        CHECK(tb->SegmentAt(250.0f) == 2);
+        CHECK(tb->SegmentAt(-5.0f) == -1);
+        CHECK(tb->SegmentAt(305.0f) == -1);
+
+        tb->Select(2);  CHECK(tb->value == 2);
+        tb->Select(99); CHECK(tb->value == 2);       // clamped to the last tab
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* tb2 = s2.Find("Tabs") ? s2.Find("Tabs")->GetComponent<UITabs>() : nullptr;
+        CHECK(tb2 != nullptr);
+        if (tb2) {
+            CHECK(tb2->Count() == 3);
+            CHECK(tb2->tabs[1] == "B");
+            CHECK(tb2->value == 2);
+            CHECK(tb2->shape == UIShape::Pill);
+        }
+    }
+
+    // Soft drop shadow blur round-trips on panels and buttons.
+    {
+        Scene s("SS"); s.physicsEnabled = false;
+        auto* pn = s.CreateGameObject("P")->AddComponent<UIPanel>();
+        pn->shadow = true; pn->shadowSoftness = 9.0f;
+        auto* bt = s.CreateGameObject("B")->AddComponent<UIButton>();
+        bt->shadow = true; bt->shadowSoftness = 5.0f;
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* pn2 = s2.Find("P") ? s2.Find("P")->GetComponent<UIPanel>() : nullptr;
+        auto* bt2 = s2.Find("B") ? s2.Find("B")->GetComponent<UIButton>() : nullptr;
+        CHECK(pn2 && pn2->shadow);
+        if (pn2) CHECK_NEAR(pn2->shadowSoftness, 9.0f, 1e-4f);
+        CHECK(bt2 && bt2->shadow);
+        if (bt2) CHECK_NEAR(bt2->shadowSoftness, 5.0f, 1e-4f);
     }
 
     TEST_MAIN_RESULT();

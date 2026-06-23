@@ -115,6 +115,7 @@ int main(int argc, char** argv) {
 #  include <windows.h>
 #else
 #  include <unistd.h>
+#  include <csignal>
 #endif
 
 #ifndef OKAY_ENGINE_VERSION
@@ -145,12 +146,13 @@ SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
-int g_ssaa = 2;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
-                  // ON by default: removes the faint edge shimmer that remains during
-                  // camera motion after the depth (W-buffer) fix. Auto-performance drops
-                  // it to 1x on heavy scenes / large viewports to protect FPS.
+int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
+                  // OFF by default for speed: 2x supersample renders 4x the pixels,
+                  // which tanked FPS (badly on HiDPI displays). Cheap FXAA still
+                  // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
+bool g_vsync = false;    // false = uncapped FPS (no 60 Hz limit); true = vsync
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
 
 // Sum the triangles of all active, visible solid meshes — a cheap proxy for how
@@ -398,7 +400,7 @@ std::string InstallUpdate(const std::string& latest, const std::string& ref = "m
     fs::path newFile = self; newFile += ".new";
     // Download the new build from the commit-pinned URL so the CDN can never hand
     // back the old binary (the cause of "it updated but stayed the same version").
-    if (!Download(RawUrl(ref, "OkaySpaceEngine.exe"), newFile.string()))
+    if (!Download(RawUrl(ref, "OkayEngine.exe"), newFile.string()))
         return "Download of v" + latest + " failed.";
     if (fs::file_size(newFile, ec) < 100000) {
         fs::remove(newFile, ec);
@@ -520,6 +522,7 @@ void LoadSettings() {
     while (f >> k >> v) {
         if (k == "autoupdate") g_autoUpdate = (v != 0);
         else if (k == "autoperf") g_autoPerf = (v != 0);
+        else if (k == "vsync") g_vsync = (v != 0);
         else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
         else if (k == "showgizmos") g_showGizmos = (v != 0);
@@ -536,6 +539,7 @@ void SaveSettings() {
     std::ofstream f("okay_settings.txt");
     f << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
+      << "vsync "      << (g_vsync ? 1 : 0) << "\n"
       << "ssaa "       << g_ssaa << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
       << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n"
@@ -635,6 +639,14 @@ struct BuildSettings {
     bool  showFps = false;
     bool  includeAllProjectScenes = false; // else just the current scene
     bool  developmentBuild = false;
+    // ---- Graphics / quality (applied by the player at startup) ----
+    bool  lockCursor = false;              // hide + lock the cursor on launch
+    bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
+    bool  shadows = false;                 // directional cast shadows
+    bool  bloom = false;                   // glow on bright/emissive areas
+    bool  ssao = false;                    // ambient occlusion
+    bool  fxaa = true;                     // cheap edge anti-aliasing
+    int   antialias = 1;                   // 1 = off, 2 = 2x supersample
 };
 BuildSettings g_build;
 
@@ -686,6 +698,20 @@ void LoadProjectSettings() {
 bool  g_snap = false;
 float g_snapSize = 1.0f;
 int   g_uiGrid = 8;         // UI snap grid in pixels (Snap on)
+float g_uiSnapDist = 8.0f;  // alignment-snap distance for UI (canvas px)
+// UI authoring zoom: scale + pan the UI canvas in the Scene view so small widgets
+// are easy to edit. Applied consistently by the overlay draw AND the hit-testing,
+// so the cursor lines up. 1.0 = fit (the game's true layout); only in Scene view.
+float g_uiEditZoom = 1.0f;
+ImVec2 g_uiEditPan{0.0f, 0.0f};
+// Transform an incoming (pos,size) canvas by the UI authoring zoom about its center.
+inline void ApplyUIEditZoom(ImVec2& pos, ImVec2& size) {
+    if (g_uiEditZoom == 1.0f && g_uiEditPan.x == 0.0f && g_uiEditPan.y == 0.0f) return;
+    ImVec2 c(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
+    size.x *= g_uiEditZoom; size.y *= g_uiEditZoom;
+    pos.x = c.x - size.x * 0.5f + g_uiEditPan.x;
+    pos.y = c.y - size.y * 0.5f + g_uiEditPan.y;
+}
 // Alignment guides: screen-space lines the UI drag snapped to this frame, drawn
 // by the overlay (Unity-style smart snapping). Cleared and refilled each drag.
 float g_uiGuideX = -1.0f;   // canvas-x of a vertical guide, or <0 = none
@@ -907,6 +933,9 @@ struct Options {
     float masterVolume = 1.0f;
     bool showFps = false;
     bool includeAllProjectScenes = false, developmentBuild = false;
+    bool lockCursor = false, perPixelLighting = false, shadows = false,
+         bloom = false, ssao = false, fxaa = true;
+    int  antialias = 1;
 };
 
 // Build the game into outDir. Returns a human-readable status string.
@@ -955,6 +984,13 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "volume=" << opt.masterVolume << "\n";
         cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
+        cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
+        cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
+        cf << "shadows=" << (opt.shadows ? 1 : 0) << "\n";
+        cf << "bloom=" << (opt.bloom ? 1 : 0) << "\n";
+        cf << "ssao=" << (opt.ssao ? 1 : 0) << "\n";
+        cf << "fxaa=" << (opt.fxaa ? 1 : 0) << "\n";
+        cf << "antialias=" << opt.antialias << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
     }
@@ -1230,6 +1266,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         bool aa = g_ssaa > 1;
         if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
+        if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
         if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
         ImGui::Separator();
@@ -1266,6 +1304,36 @@ void DrawMenuAndToolbar(EditorState& ed) {
             GameObject* g = ed.CreateEmpty("Virtual Camera");
             g->AddComponent<VirtualCamera>();
             ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Player")) {           // ready-to-play premade players
+            if (ImGui::MenuItem("Third Person")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddThirdPersonPlayer(ed.scene()));
+                ConsoleLog("Added Third-Person player"); ed.dirty = true; created = true;
+            }
+            if (ImGui::MenuItem("First Person")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddFirstPersonPlayer(ed.scene()));
+                ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
+            }
+            if (ImGui::MenuItem("Third Person Shooter")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddThirdPersonShooterPlayer(ed.scene()));
+                ConsoleLog("Added Third-Person Shooter player"); ed.dirty = true; created = true;
+            }
+            if (ImGui::MenuItem("Top Down")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddTopDownPlayer(ed.scene()));
+                ConsoleLog("Added Top-Down player"); ed.dirty = true; created = true;
+            }
+            if (ImGui::MenuItem("Click To Move")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddClickToMovePlayer(ed.scene()));
+                ConsoleLog("Added Click-To-Move player"); ed.dirty = true; created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops a fully set-up player (Character + controller + physics) into this scene.");
+            ImGui::EndMenu();
         }
         ImGui::Separator();
         if (ImGui::BeginMenu("3D Object")) {       // every built-in primitive
@@ -1371,12 +1439,18 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
             if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; });
             if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
+            if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
             if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
+            if (ImGui::MenuItem("Stepper"))      addUI("Stepper",     [](GameObject* g){ g->AddComponent<UIStepper>(); });
+            if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
             if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
+            if (ImGui::MenuItem("Tabs"))         addUI("Tabs",        [](GameObject* g){ g->AddComponent<UITabs>(); });
             if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
             if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
             if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
             if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
+            if (ImGui::MenuItem("Draggable"))    addUI("Draggable",   [](GameObject* g){ g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
+            if (ImGui::MenuItem("Drop Target"))  addUI("DropTarget",  [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
             if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
             ImGui::EndMenu();
         }
@@ -3986,9 +4060,21 @@ void DrawFileDialogs(EditorState& ed) {
 
         ImGui::SeparatorText("Gameplay");
         ImGui::Checkbox("Quit on Escape", &g_build.quitOnEscape); ImGui::SameLine();
-        ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
+        ImGui::Checkbox("Show FPS overlay", &g_build.showFps); ImGui::SameLine();
+        ImGui::Checkbox("Lock cursor", &g_build.lockCursor);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor on launch (FPS/TPS games)");
         ImGui::SetNextItemWidth(200);
         ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
+
+        ImGui::SeparatorText("Graphics / Quality");
+        ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
+        ImGui::Checkbox("Shadows", &g_build.shadows);
+        ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
+        ImGui::Checkbox("Ambient occlusion", &g_build.ssao); ImGui::SameLine();
+        ImGui::Checkbox("FXAA", &g_build.fxaa);
+        bool aa2 = g_build.antialias > 1;
+        if (ImGui::Checkbox("Anti-aliasing 2x", &aa2)) g_build.antialias = aa2 ? 2 : 1;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Supersample: smoother but ~4x the pixels");
 
         ImGui::SeparatorText("Scenes & Options");
         ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
@@ -4010,6 +4096,9 @@ void DrawFileDialogs(EditorState& ed) {
             o.quitOnEscape = g_build.quitOnEscape; o.masterVolume = g_build.masterVolume; o.showFps = g_build.showFps;
             o.includeAllProjectScenes = g_build.includeAllProjectScenes;
             o.developmentBuild = g_build.developmentBuild;
+            o.lockCursor = g_build.lockCursor; o.perPixelLighting = g_build.perPixelLighting;
+            o.shadows = g_build.shadows; o.bloom = g_build.bloom; o.ssao = g_build.ssao;
+            o.fxaa = g_build.fxaa; o.antialias = g_build.antialias;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);
@@ -4053,6 +4142,7 @@ void DrawNewProjectPopup(EditorState& ed) {
             {C_BLANK, "Empty",      "Nothing at all",     "A totally empty scene (no camera or light). Build it up yourself.", &EditorState::NewScene},
             {C_3D,    "First Person","Character + FPS",    "A blocky Character you control in first person: mouse-look, WASD, jump. Camera at eye height, with crates to walk around.", &EditorState::NewFPS},
             {C_3D,    "Third Person","Orbit camera",       "Your blocky Character with an orbit camera behind it: WASD relative to the camera, Space to jump, with walk/run animation. You see and control the character.", &EditorState::NewThirdPerson},
+            {C_3D,    "Third Person Shooter","Over-the-shoulder aim", "An over-the-shoulder shooter: the body faces where you aim, right mouse aims (camera zooms in), left mouse fires, cursor locked. Ground with cover crates and a row of targets to shoot.", &EditorState::NewThirdPersonShooter},
             {C_3D,    "Point & Click","Click to move",     "RuneScape / Diablo style: click the ground and your Character walks there, under a high angled camera. Powered by the Click To Move controller.", &EditorState::NewPointAndClick},
             {C_2D,    "Platformer",  "Side-scroller",      "A side-scroller: follow camera, a physics player on a wide ground, and a coin.", &EditorState::NewPlatformer},
             {C_2D,    "Top-Down",    "WASD movement",      "A WASD-driven player with a follow camera and a couple of walls.", &EditorState::NewTopDown},
@@ -4724,27 +4814,147 @@ static void FitCapsule(GameObject* go, CapsuleCollider3D* cap) {
 // One row of the Game-Creator-style action editor: an op dropdown + a free-text
 // args field + reorder/remove buttons. Returns 0 = none, 1 = remove, 2 = up,
 // 3 = down (the caller applies the index change).
-static int DrawActionItem(ActionList::Item& it, const char* const* ops, int nops,
+// One Action (condition or instruction) described in plain language: the stable
+// serialized `op`, a friendly menu Label, an args Hint, a hover Desc, and a Group
+// header so the dropdown reads like a categorized menu instead of code names.
+struct ActionOpInfo {
+    const char* op; const char* label; const char* hint; const char* desc; const char* group;
+};
+
+// Conditions — "this action list runs only if ALL of these pass".
+static const ActionOpInfo kCondOps[] = {
+    {"always",   "Always",               "",                          "Always passes — the actions run every time the trigger fires.", "Basic"},
+    {"is_active","This Object Is Active", "",                          "Passes if this object is currently active.",                   "Basic"},
+    {"has_tag",  "This Object Has Tag",  "tag",                        "Passes if this object has the given tag.",                     "Basic"},
+    {"chance",   "Random Chance",        "probability 0..1",           "Passes randomly — e.g. 0.25 means 25% of the time.",            "Basic"},
+    {"key",      "Key Is Held",          "key (e.g. e)",               "Passes while the given key is held down.",                      "Input"},
+    {"key_down", "Key Just Pressed",     "key (e.g. space)",           "Passes on the frame the key is first pressed.",                 "Input"},
+    {"key_up",   "Key Just Released",    "key",                        "Passes on the frame the key is released.",                      "Input"},
+    {"mouse",    "Mouse Button Held",    "button: 0=left 1=right 2=mid","Passes while a mouse button is held.",                         "Input"},
+    {"mouse_down","Mouse Just Clicked",  "button: 0=left 1=right",     "Passes on the frame a mouse button is pressed.",               "Input"},
+    {"var_eq",   "Variable Equals",      "name value",                 "Passes if the variable equals the value.",                     "Variables"},
+    {"var_neq",  "Variable Is Not",      "name value",                 "Passes if the variable does NOT equal the value.",             "Variables"},
+    {"var_gt",   "Variable Is Above",    "name value",                 "Passes if the variable is greater than the value.",            "Variables"},
+    {"var_lt",   "Variable Is Below",    "name value",                 "Passes if the variable is less than the value.",               "Variables"},
+    {"prefs_eq", "Saved Value Equals",   "key value",                  "Passes if a saved value (persists between runs) equals it.",   "Variables"},
+    {"prefs_gt", "Saved Value Is Above", "key value",                  "Passes if a saved value is greater than the value.",           "Variables"},
+    {"dist_lt",  "Closer Than",          "object distance",            "Passes if the named object is closer than the distance.",      "World"},
+    {"dist_gt",  "Farther Than",         "object distance",            "Passes if the named object is farther than the distance.",     "World"},
+    {"exists",   "Object Exists",        "name",                       "Passes if an object with that name exists in the scene.",      "World"},
+};
+
+// Instructions — "do these, top to bottom".
+static const ActionOpInfo kInstrOps[] = {
+    {"move",        "Move By",            "x y z",                "Move this object by an offset.",                          "Move"},
+    {"move_toward", "Move Toward Object", "object speed",         "Move toward a named object at a speed.",                  "Move"},
+    {"set_pos",     "Set Position",       "x y z",                "Teleport this object to a position.",                     "Move"},
+    {"rotate",      "Rotate By",          "x y z degrees",        "Spin this object by the given degrees.",                  "Move"},
+    {"set_rotation","Set Angle (2D)",     "degrees",              "Face a 2D angle (around Z).",                             "Move"},
+    {"set_rotation3","Set Angle (3D)",    "x y z degrees",        "Set the full 3D rotation.",                               "Move"},
+    {"look_at",     "Look At Object",     "object",               "Turn to face a named object.",                            "Move"},
+    {"set_scale",   "Set Size",           "scale",                "Set a uniform size (1 = normal).",                        "Move"},
+    {"set_scale3",  "Set Size (XYZ)",     "x y z",                "Set a non-uniform size.",                                 "Move"},
+    {"velocity",    "Set Speed (2D)",     "x y",                  "Set a 2D physics body's velocity.",                       "Physics"},
+    {"impulse",     "Push (2D)",          "x y",                  "Give a 2D physics body a sudden push.",                   "Physics"},
+    {"velocity3",   "Set Speed (3D)",     "x y z",                "Set a 3D physics body's velocity.",                       "Physics"},
+    {"impulse3",    "Push (3D)",          "x y z",                "Give a 3D physics body a sudden push.",                   "Physics"},
+    {"force3",      "Add Force (3D)",     "x y z",                "Continuously push a 3D physics body.",                    "Physics"},
+    {"set_var",     "Set Variable",       "name value",           "Set a variable to a number.",                             "Variables"},
+    {"add_var",     "Add To Variable",    "name amount",          "Add to a variable.",                                      "Variables"},
+    {"mul_var",     "Multiply Variable",  "name factor",          "Multiply a variable.",                                    "Variables"},
+    {"div_var",     "Divide Variable",    "name divisor",         "Divide a variable.",                                      "Variables"},
+    {"copy_var",    "Copy Variable",      "dest source",          "Copy one variable's value into another.",                 "Variables"},
+    {"rand_var",    "Random Variable",    "name min max",         "Set a variable to a random number in a range.",           "Variables"},
+    {"set_active",  "Show/Hide Object",   "1 or 0",               "Activate (1) or deactivate (0) this whole object.",       "Object"},
+    {"set_visible", "Show/Hide Graphics", "1 or 0",               "Show or hide this object's sprite / mesh / text.",        "Object"},
+    {"activate",    "Activate Named",     "name",                 "Activate a named object.",                                "Object"},
+    {"deactivate",  "Deactivate Named",   "name",                 "Deactivate a named object.",                              "Object"},
+    {"set_tag",     "Set Tag",            "tag",                  "Give this object a tag.",                                 "Object"},
+    {"spawn",       "Spawn Prefab (2D)",  "prefab x y",           "Create a prefab at a 2D position.",                       "Object"},
+    {"spawn3",      "Spawn Prefab (3D)",  "prefab x y z",         "Create a prefab at a 3D position.",                       "Object"},
+    {"destroy",     "Destroy Self",       "",                     "Remove THIS object from the scene.",                      "Object"},
+    {"destroy_obj", "Destroy Named",      "name",                 "Remove a named object from the scene.",                   "Object"},
+    {"set_text",    "Set Text",           "the words to show",    "Set this object's Text to the given words.",              "Look"},
+    {"set_sprite",  "Set Sprite Image",   "path",                 "Change this object's sprite image.",                      "Look"},
+    {"set_color",   "Set Color",          "r g b [a] (0..1)",     "Tint this object (each channel 0..1).",                   "Look"},
+    {"emit",        "Burst Particles",    "count",                "Emit a burst from this object's particle system.",        "Look"},
+    {"play_anim",   "Play Animation",     "name",                 "Play a named animation clip.",                            "Look"},
+    {"play_sound",  "Play Sound",         "path [volume]",        "Play a sound effect.",                                    "Look"},
+    {"set_cam",     "Move Camera",        "x y [zoom]",           "Move the main camera (and optional zoom).",               "Scene"},
+    {"set_bg",      "Set Background Color","r g b (0..1)",        "Set the background / sky color.",                         "Scene"},
+    {"set_light",   "Set Light Direction","x y z",                "Aim the main directional light.",                         "Scene"},
+    {"set_ambient", "Set Ambient Light",  "brightness 0..1",      "Set the ambient (fill) light level.",                     "Scene"},
+    {"set_timescale","Set Game Speed",    "scale (1 = normal)",   "Slow-mo or fast-forward (0.5 = half, 2 = double).",        "Scene"},
+    {"wait",        "Wait",               "seconds",              "Pause here before the next instruction.",                 "Flow"},
+    {"goto",        "Jump To Line",       "line number",          "Jump to an instruction line (0 = first).",                "Flow"},
+    {"if_goto",     "Jump If",            "var cmp value line",   "Jump to a line if a test passes (cmp: eq neq gt lt ge le).","Flow"},
+    {"stop",        "Stop",               "",                     "Stop running the rest of this list.",                     "Flow"},
+    {"call",        "Call Script Event",  "event name",           "Call a function on this object's Script.",                "Flow"},
+    {"send",        "Broadcast Message",  "message",              "Send a message to ALL action lists in the scene.",        "Flow"},
+    {"send_to",     "Message One Object", "object message",       "Send a message to one named object's actions.",           "Flow"},
+    {"log",         "Log To Console",     "text",                 "Print text to the console (for debugging).",              "Flow"},
+    {"load_scene",  "Load Scene",         "name",                 "Load a scene by file name.",                              "Scenes"},
+    {"load_scene_index","Load Scene #",   "index",                "Load a scene by its build index.",                        "Scenes"},
+    {"load_next_scene","Load Next Scene", "",                     "Load the next scene in the build order.",                 "Scenes"},
+    {"set_prefs",   "Save A Value",       "key value",            "Store a value that persists between play sessions.",      "Save"},
+    {"add_prefs",   "Add To Saved Value", "key amount",           "Add to a stored (saved) value.",                          "Save"},
+    {"save_prefs",  "Write Save File",    "[file]",               "Write the saved values to disk.",                         "Save"},
+    {"net_host",    "Host Game",          "port",                 "Start hosting a multiplayer session.",                    "Multiplayer"},
+    {"net_join",    "Join Game",          "ip port",              "Connect to a host.",                                      "Multiplayer"},
+    {"net_send",    "Send Message (fast)","channel data",         "Send a fast (unreliable) network message.",               "Multiplayer"},
+    {"net_send_reliable","Send Message (sure)","channel data",    "Send a guaranteed (reliable) network message.",           "Multiplayer"},
+    {"net_set",     "Set Network Value",  "name value",           "Set a value shared across the network.",                  "Multiplayer"},
+    {"net_spawn",   "Spawn Networked",    "prefab x y z",         "Spawn an object visible to all players.",                 "Multiplayer"},
+    {"net_ready",   "Mark Ready",         "",                     "Tell the host you're ready.",                             "Multiplayer"},
+    {"net_start_match","Start Match",     "",                     "Host: begin the match.",                                  "Multiplayer"},
+    {"net_kick",    "Kick Player",        "id [reason]",          "Host: remove a player.",                                  "Multiplayer"},
+    {"net_disconnect","Disconnect",       "",                     "Leave the multiplayer session.",                          "Multiplayer"},
+    {"steam_unlock","Steam Achievement",  "id",                   "Unlock a Steam achievement.",                             "Steam"},
+    {"steam_set_stat","Steam Set Stat",   "name value",           "Set a Steam stat to a value.",                            "Steam"},
+    {"steam_inc_stat","Steam Add Stat",   "name amount",          "Increase a Steam stat.",                                  "Steam"},
+};
+
+// The friendly label for an op string (falls back to the raw op if unknown).
+static const char* ActionOpLabel(const ActionOpInfo* ops, int n, const std::string& op) {
+    for (int i = 0; i < n; ++i) if (op == ops[i].op) return ops[i].label;
+    return op.c_str();
+}
+
+static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
                           int id, bool& dirty) {
     int action = 0;
     ImGui::PushID(id);
-    if (it.op.empty()) it.op = ops[0];
+    if (it.op.empty()) it.op = ops[0].op;
     int cur = 0;
-    for (int i = 0; i < nops; ++i) if (it.op == ops[i]) cur = i;
-    ImGui::SetNextItemWidth(132);
-    if (ImGui::Combo("##op", &cur, ops, nops)) { it.op = ops[cur]; dirty = true; }
+    for (int i = 0; i < nops; ++i) if (it.op == ops[i].op) cur = i;
+    // Friendly, grouped dropdown with a hover description per choice.
+    ImGui::SetNextItemWidth(168);
+    if (ImGui::BeginCombo("##op", ops[cur].label)) {
+        const char* lastGroup = nullptr;
+        for (int i = 0; i < nops; ++i) {
+            if (ops[i].group && (!lastGroup || std::strcmp(ops[i].group, lastGroup) != 0)) {
+                ImGui::SeparatorText(ops[i].group); lastGroup = ops[i].group;
+            }
+            if (ImGui::Selectable(ops[i].label, i == cur)) { it.op = ops[i].op; dirty = true; }
+            if (ImGui::IsItemHovered() && ops[i].desc[0]) ImGui::SetTooltip("%s", ops[i].desc);
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered() && ops[cur].desc[0]) ImGui::SetTooltip("%s", ops[cur].desc);
     ImGui::SameLine();
     std::string joined;
     for (auto& a : it.args) { if (!joined.empty()) joined += ' '; joined += a; }
     char buf[256];
     std::strncpy(buf, joined.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
     ImGui::SetNextItemWidth(-78);
-    if (ImGui::InputTextWithHint("##args", "args (space-separated)", buf, sizeof(buf))) {
+    const char* hint = ops[cur].hint[0] ? ops[cur].hint : "(no values needed)";
+    if (ImGui::InputTextWithHint("##args", hint, buf, sizeof(buf))) {
         it.args.clear();
         std::stringstream ss(buf); std::string tok;
         while (ss >> tok) it.args.push_back(tok);
         dirty = true;
     }
+    if (ImGui::IsItemHovered() && ops[cur].hint[0]) ImGui::SetTooltip("Values: %s", ops[cur].hint);
     ImGui::SameLine(); if (ImGui::SmallButton("^")) action = 2;
     ImGui::SameLine(); if (ImGui::SmallButton("v")) action = 3;
     ImGui::SameLine(); if (ImGui::SmallButton("X")) { action = 1; dirty = true; }
@@ -4898,6 +5108,59 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
         if (depth < 0) depth = 0;
     }
     return out;
+}
+
+// Small picker for a run/crouch/prone key binding: the common choices plus
+// whatever single character is currently bound. Returns true when changed.
+static bool KeyBindCombo(const char* label, char& key) {
+    struct Opt { const char* name; char code; };
+    static const Opt opts[] = {
+        {"(none)", 0}, {"Shift", Input::KeyShift}, {"Ctrl", Input::KeyCtrl},
+        {"C", 'c'}, {"Z", 'z'}, {"X", 'x'}, {"V", 'v'}, {"F", 'f'}, {"B", 'b'},
+    };
+    const int n = (int)(sizeof(opts) / sizeof(opts[0]));
+    int cur = 0;
+    for (int i = 0; i < n; ++i) if (opts[i].code == key) { cur = i; break; }
+    bool changed = false;
+    ImGui::SetNextItemWidth(96);
+    if (ImGui::BeginCombo(label, opts[cur].name)) {
+        for (int i = 0; i < n; ++i)
+            if (ImGui::Selectable(opts[i].name, cur == i)) { key = opts[i].code; changed = true; }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+// Shapes the editor previews via a sampled polygon path. Rectangle and Rounded
+// keep ImGui's crisp rounded-rect primitive; everything else (Circle, Pill and the
+// convex polygons) is drawn from UIShapeRowSpan so the editor shows the real
+// silhouette the game will fill — not a plain box.
+static bool IsPolyUIShape(UIShape s) {
+    return s != UIShape::Rectangle && s != UIShape::Rounded;
+}
+
+// Preview a UIShape in the editor canvas by sampling UIShapeRowSpan (the same
+// single source of truth the game renderer uses) into a convex polygon, so the
+// editor shows exactly the silhouette the built game will fill.
+static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, float radius,
+                            ImU32 fill, ImU32 border, float borderW) {
+    if (sz.x < 1.0f || sz.y < 1.0f) return;
+    const int STEPS = 28;
+    static std::vector<ImVec2> rightPts, leftPts;
+    rightPts.clear(); leftPts.clear();
+    for (int i = 0; i <= STEPS; ++i) {
+        float fy = (float)i / (float)STEPS * (sz.y - 0.5f);
+        float x0, x1;
+        if (!UIShapeRowSpan(shape, sz.x, sz.y, radius, (int)fy, x0, x1)) continue;
+        rightPts.push_back(ImVec2(a.x + x1, a.y + fy));
+        leftPts.push_back(ImVec2(a.x + x0, a.y + fy));
+    }
+    std::vector<ImVec2> poly = rightPts;
+    for (auto it = leftPts.rbegin(); it != leftPts.rend(); ++it) poly.push_back(*it);
+    if (poly.size() < 3) return;
+    dl->AddConvexPolyFilled(poly.data(), (int)poly.size(), fill);
+    if (borderW > 0.0f)
+        dl->AddPolyline(poly.data(), (int)poly.size(), border, ImDrawFlags_Closed, borderW);
 }
 
 void DrawInspector(EditorState& ed) {
@@ -5899,10 +6162,40 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##fp", &fp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Deceleration##fp", &fp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Air Control##fp", &fp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Coyote Time##fp", &fp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Jump Buffer##fp", &fp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::DragFloat("Mouse Sensitivity##fp", &fp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Invert Y##fp", &fp->invertY)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##fp", &fp->canJump)) ed.dirty = true;
+            if (fp->canJump) { ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                if (ImGui::DragInt("Max Jumps##fp", &fp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }
             if (ImGui::Checkbox("Drive Animation##fp", &fp->driveAnimation)) ed.dirty = true;
+
+            ImGui::SeparatorText("Run / Stance");
+            if (KeyBindCombo("Sprint Key##fp", fp->sprintKey)) ed.dirty = true;
+            ImGui::SameLine(); if (ImGui::Checkbox("Toggle Run##fp", &fp->toggleRun)) ed.dirty = true;
+            if (KeyBindCombo("Crouch Key##fp", fp->crouchKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Prone Key##fp", fp->proneKey)) ed.dirty = true;
+            if (ImGui::Checkbox("Toggle Stance##fp", &fp->toggleStance)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
+            if (ImGui::DragFloat("Crouch Speed##fp", &fp->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Prone Speed##fp", &fp->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Stand Eye Height##fp", &fp->standEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Crouch Eye Height##fp", &fp->crouchEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Prone Eye Height##fp", &fp->proneEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Stance Ease##fp", &fp->stanceLerp, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Lean (peek)");
+            if (KeyBindCombo("Lean Left##fp", fp->leanLeftKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Lean Right##fp", fp->leanRightKey)) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Angle##fp", &fp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Offset##fp", &fp->leanOffset, 0.02f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Ease##fp", &fp->leanSpeed, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+
             ImGui::TextDisabled("Mouse look + WASD. Put a Camera as a child (eye height).");
             if (ImGui::SmallButton("Remove##fp")) toRemove = fp;
         }
@@ -5914,9 +6207,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Turn Speed##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##tp", &tp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher = snappier starts; very high ~= instant (no momentum)");
+            if (ImGui::DragFloat("Deceleration##tp", &tp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Air Control##tp", &tp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Coyote Time##tp", &tp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grace window to still jump just after leaving a ledge");
+            if (ImGui::DragFloat("Jump Buffer##tp", &tp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remembers a jump pressed just before landing");
             if (ImGui::Checkbox("Can Jump##tp", &tp->canJump)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##tp", &tp->driveAnimation)) ed.dirty = true;
+            if (tp->canJump) { ImGui::SetNextItemWidth(90);
+                if (ImGui::DragInt("Max Jumps##tp", &tp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }
             const char* faceModes[] = {"Face Movement", "Face Camera"};
             int fm = (int)tp->faceMode;
             ImGui::SetNextItemWidth(160);
@@ -5935,10 +6239,113 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Shoulder Offset##tp", &tp->shoulderOffset, 0.02f, -3.0f, 3.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Damping##tp", &tp->cameraDamping, 0.1f, 0.0f, 30.0f, "%.1f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = instant follow; higher = smoother lag");
+            if (ImGui::Checkbox("Camera Collision##tp", &tp->cameraCollision)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pull the camera in so it never clips through walls/floors");
+            if (tp->cameraCollision)
+                if (ImGui::DragFloat("Collision Skin##tp", &tp->cameraCollisionSkin, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Min Pitch##tp", &tp->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Max Pitch##tp", &tp->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Run / Stance");
+            if (KeyBindCombo("Sprint Key##tp", tp->sprintKey)) ed.dirty = true;
+            ImGui::SameLine(); if (ImGui::Checkbox("Toggle Run##tp", &tp->toggleRun)) ed.dirty = true;
+            if (KeyBindCombo("Crouch Key##tp", tp->crouchKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Prone Key##tp", tp->proneKey)) ed.dirty = true;
+            if (ImGui::Checkbox("Toggle Stance##tp", &tp->toggleStance)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
+            if (ImGui::DragFloat("Crouch Speed##tp", &tp->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Prone Speed##tp", &tp->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Crouch Drop##tp", &tp->crouchHeightDrop, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the camera's look target lowers when crouched");
+            if (ImGui::DragFloat("Prone Drop##tp", &tp->proneHeightDrop, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Stance Ease##tp", &tp->stanceLerp, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Lean (peek)");
+            if (KeyBindCombo("Lean Left##tp", tp->leanLeftKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Lean Right##tp", tp->leanRightKey)) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Angle##tp", &tp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Offset##tp", &tp->leanOffset, 0.02f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Lean Ease##tp", &tp->leanSpeed, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+
             ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD/stick. Uses the main Camera.");
             if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
+        }
+    }
+    if (auto* td = go->GetComponent<TopDownController>()) {
+        if (CompHeader("Top Down Controller", td, &toRemove)) {
+            ImGui::SeparatorText("Movement");
+            if (ImGui::DragFloat("Walk Speed##td", &td->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Speed##td", &td->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##td", &td->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Deceleration##td", &td->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Rotate To Face##td", &td->rotateToFace)) ed.dirty = true;
+            if (td->rotateToFace)
+                if (ImGui::DragFloat("Turn Speed##td", &td->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Camera-Relative Move##td", &td->cameraRelative)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("WASD relative to the camera yaw instead of world axes");
+            if (ImGui::Checkbox("Drive Animation##td", &td->driveAnimation)) ed.dirty = true;
+            ImGui::SeparatorText("Camera");
+            if (ImGui::DragFloat("Distance##td", &td->cameraDistance, 0.1f, 1.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Pitch##td", &td->cameraPitch, 0.5f, 10.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Yaw##td", &td->cameraYaw, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Look Height##td", &td->lookHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Damping##td", &td->cameraDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+            ImGui::TextDisabled("Twin-stick / ARPG: WASD + a fixed high follow camera.");
+            if (ImGui::SmallButton("Remove##td")) toRemove = td;
+        }
+    }
+    if (auto* fr = go->GetComponent<FreeRoamController>()) {
+        if (CompHeader("Free Roam (Fly) Controller", fr, &toRemove)) {
+            if (ImGui::DragFloat("Move Speed##fr", &fr->moveSpeed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Boost x##fr", &fr->boostMultiplier, 0.1f, 1.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed multiplier while holding Sprint (Shift)");
+            if (ImGui::DragFloat("Smoothing##fr", &fr->acceleration, 0.5f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Velocity ease-in (0 = instant)");
+            if (KeyBindCombo("Up Key##fr", fr->upKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Down Key##fr", fr->downKey)) ed.dirty = true;
+            ImGui::SeparatorText("Look");
+            if (ImGui::DragFloat("Sensitivity##fr", &fr->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Invert Y##fr", &fr->invertY)) ed.dirty = true;
+            if (ImGui::Checkbox("Lock Cursor##fr", &fr->lockCursor)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capture the cursor and always look (FPS spectator)");
+            if (!fr->lockCursor)
+                if (ImGui::Checkbox("Hold Right-Mouse to Look##fr", &fr->lookRequiresRightMouse)) ed.dirty = true;
+            if (ImGui::DragFloat("Min Pitch##fr", &fr->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Pitch##fr", &fr->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
+            ImGui::TextDisabled("Put on a Camera. WASD fly, Space/C up/down, Shift boost.");
+            if (ImGui::SmallButton("Remove##fr")) toRemove = fr;
+        }
+    }
+    if (auto* ts = go->GetComponent<ThirdPersonShooterController>()) {
+        if (CompHeader("Third Person Shooter Controller", ts, &toRemove)) {
+            ImGui::SeparatorText("Movement");
+            if (ImGui::DragFloat("Walk Speed##tps", &ts->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragInt("Max Jumps##tps", &ts->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ...");
+            if (ImGui::DragFloat("Acceleration##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Air Control##tps", &ts->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            ImGui::SeparatorText("Look / Camera");
+            if (ImGui::DragFloat("Sensitivity##tps", &ts->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Invert Y##tps", &ts->invertY)) ed.dirty = true;
+            if (ImGui::DragFloat("Distance##tps", &ts->distance, 0.1f, 1.0f, 15.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Camera Height##tps", &ts->cameraHeight, 0.05f, 0.0f, 4.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Shoulder Offset##tps", &ts->shoulderOffset, 0.02f, -2.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Camera Collision##tps", &ts->cameraCollision)) ed.dirty = true;
+            ImGui::SeparatorText("Aim & Fire");
+            if (ImGui::DragInt("Aim Button##tps", &ts->aimButton, 0.1f, 0, 4)) ed.dirty = true;
+            if (ImGui::DragFloat("Aim Distance##tps", &ts->aimDistance, 0.05f, 0.5f, 10.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Aim Shoulder##tps", &ts->aimShoulder, 0.02f, -2.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragInt("Fire Button##tps", &ts->fireButton, 0.1f, 0, 4)) ed.dirty = true;
+            if (ImGui::Checkbox("Auto Fire##tps", &ts->autoFire)) ed.dirty = true;
+            if (ts->autoFire)
+                if (ImGui::DragFloat("Fire Rate##tps", &ts->fireRate, 0.2f, 0.5f, 30.0f, "%.1f /s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Left mouse fires; calls the script's on_fire()");
+            if (ImGui::Checkbox("Lock Cursor##tps", &ts->lockCursor)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor while playing (Unity-style)");
+            ImGui::TextDisabled("Over-the-shoulder aim. Body faces the camera; RMB aims, LMB fires.");
+            if (ImGui::SmallButton("Remove##tps")) toRemove = ts;
         }
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
@@ -5949,6 +6356,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Run Key##ctm", rkb, sizeof(rkb))) { cm->runKey = rkb[0] == ' ' ? 0 : rkb[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold to run (blank = disabled)");
             if (ImGui::DragFloat("Stop Distance##ctm", &cm->stopDistance, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Arrive Radius##ctm", &cm->arriveRadius, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease to a stop over the last this-many metres (0 = abrupt stop)");
             if (ImGui::DragFloat("Turn Speed##ctm", &cm->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
             const char* btns[] = {"Left", "Right", "Middle"};
             ImGui::SetNextItemWidth(110);
@@ -6015,34 +6424,18 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
 
-            static const char* condOps[] = {"always", "key", "key_down", "key_up", "mouse",
-                "mouse_down", "chance", "var_eq", "var_neq", "var_gt", "var_lt",
-                "prefs_eq", "prefs_gt", "has_tag", "is_active",
-                "dist_lt", "dist_gt", "exists"};
-            static const char* instOps[] = {"move", "set_pos", "rotate", "set_rotation",
-                "set_rotation3", "set_scale", "set_scale3", "move_toward", "look_at",
-                "wait", "goto", "if_goto", "stop", "call", "send", "send_to",
-                "set_var", "add_var", "mul_var", "div_var", "copy_var", "rand_var",
-                "set_active", "set_visible", "set_text", "set_sprite", "set_color", "velocity",
-                "impulse", "velocity3", "impulse3", "force3", "emit", "play_anim", "play_sound",
-                "set_cam", "set_bg", "set_light", "set_ambient", "set_timescale", "spawn", "spawn3",
-                "destroy", "destroy_obj", "activate", "deactivate", "set_tag",
-                "set_prefs", "add_prefs", "save_prefs",
-                "net_host", "net_join", "net_send", "net_send_reliable", "net_set", "net_spawn",
-                "net_ready", "net_start_match", "net_kick", "net_disconnect",
-                "steam_unlock", "steam_set_stat", "steam_inc_stat",
-                "load_scene", "load_scene_index", "load_next_scene", "log"};
-
             ImGui::SeparatorText("Conditions (all must pass)");
+            if (al->conditions.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
             for (std::size_t i = 0; i < al->conditions.size();) {
-                int act = DrawActionItem(al->conditions[i], condOps, IM_ARRAYSIZE(condOps), (int)i, ed.dirty);
+                int act = DrawActionItem(al->conditions[i], kCondOps, IM_ARRAYSIZE(kCondOps), (int)i, ed.dirty);
                 i = ApplyItemAction(al->conditions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({"always", {}}); ed.dirty = true; }
 
             ImGui::SeparatorText("Instructions (run top to bottom)");
+            if (al->instructions.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
             for (std::size_t i = 0; i < al->instructions.size();) {
-                int act = DrawActionItem(al->instructions[i], instOps, IM_ARRAYSIZE(instOps), 1000 + (int)i, ed.dirty);
+                int act = DrawActionItem(al->instructions[i], kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000 + (int)i, ed.dirty);
                 i = ApplyItemAction(al->instructions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({"move", {}}); ed.dirty = true; }
@@ -6098,6 +6491,78 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Seconds##lt", &lt->seconds, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
             ImGui::TextDisabled("destroys this object after N seconds of play");
             if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
+        }
+    }
+    if (auto* st = go->GetComponent<Stats>()) {
+        if (CompHeader("Stats", st, &toRemove)) {
+            ImGui::SeparatorText("Vitals");
+            if (ImGui::DragFloat("Health##st", &st->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            if (ImGui::DragFloat("Max##sthp", &st->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Mana##st", &st->mana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            if (ImGui::DragFloat("Max##stmp", &st->maxMana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            ImGui::ProgressBar(st->HealthFraction(), ImVec2(-1, 0), "HP");
+            ImGui::SeparatorText("Progression");
+            if (ImGui::DragInt("Level##st", &st->level, 0.1f, 1, 999)) ed.dirty = true;
+            if (ImGui::DragInt("XP##st", &st->xp, 1.0f, 0, 1000000)) ed.dirty = true;
+            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            if (ImGui::DragInt("To Next##st", &st->xpToNext, 1.0f, 1, 1000000)) ed.dirty = true;
+            ImGui::SeparatorText("Attributes");
+            if (ImGui::DragInt("Strength##st", &st->strength, 0.1f, 0, 999)) ed.dirty = true;
+            if (ImGui::DragInt("Defense##st", &st->defense, 0.1f, 0, 999)) ed.dirty = true;
+            if (ImGui::DragInt("Intelligence##st", &st->intelligence, 0.1f, 0, 999)) ed.dirty = true;
+            if (ImGui::DragInt("Agility##st", &st->agility, 0.1f, 0, 999)) ed.dirty = true;
+            ImGui::TextDisabled("scripts: take_damage / heal / add_xp; fires on_death, on_level_up");
+            if (ImGui::SmallButton("Remove##st")) toRemove = st;
+        }
+    }
+    if (auto* inv = go->GetComponent<Inventory>()) {
+        if (CompHeader("Inventory", inv, &toRemove)) {
+            if (ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999)) ed.dirty = true;
+            ImGui::Text("Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
+            int eraseS = -1;
+            for (int i = 0; i < (int)inv->slots.size(); ++i) {
+                ImGui::PushID(i);
+                char ib[64]; std::strncpy(ib, inv->slots[i].item.c_str(), sizeof(ib) - 1); ib[sizeof(ib)-1] = '\0';
+                ImGui::SetNextItemWidth(130);
+                if (ImGui::InputText("##invit", ib, sizeof(ib))) { inv->slots[i].item = ib; ed.dirty = true; }
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                if (ImGui::DragInt("##invn", &inv->slots[i].count, 0.2f, 0, 9999)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) eraseS = i;
+                ImGui::PopID();
+            }
+            if (eraseS >= 0) { inv->slots.erase(inv->slots.begin() + eraseS); ed.dirty = true; }
+            if (ImGui::SmallButton("Add Item##inv") && !inv->IsFull()) { inv->slots.push_back({"Item", 1}); ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##inv")) toRemove = inv;
+        }
+    }
+    if (auto* tm = go->GetComponent<TurnManager>()) {
+        if (CompHeader("Turn Manager", tm, &toRemove)) {
+            if (ImGui::Checkbox("Auto Start##tm", &tm->autoStart)) ed.dirty = true;
+            ImGui::Text("Round %d  |  Turn: %s", tm->round,
+                        tm->Current().empty() ? "-" : tm->Current().c_str());
+            ImGui::SeparatorText("Participants (turn order)");
+            int eraseP = -1;
+            for (int i = 0; i < (int)tm->participants.size(); ++i) {
+                ImGui::PushID(i);
+                bool active = (i == tm->current);
+                char pb[64]; std::strncpy(pb, tm->participants[i].c_str(), sizeof(pb) - 1); pb[sizeof(pb)-1] = '\0';
+                if (active) ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1), ">");
+                else ImGui::TextUnformatted(" ");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("##part", pb, sizeof(pb))) { tm->participants[i] = pb; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) eraseP = i;
+                ImGui::PopID();
+            }
+            if (eraseP >= 0) { tm->participants.erase(tm->participants.begin() + eraseP); if (tm->current >= tm->Count()) tm->current = 0; ed.dirty = true; }
+            if (ImGui::SmallButton("Add##tm")) { tm->participants.push_back("Unit"); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("End Turn (preview)##tm")) tm->EndTurn();
+            ImGui::TextDisabled("calls on_turn_start on each unit; on_round_start here");
+            if (ImGui::SmallButton("Remove##tm")) toRemove = tm;
         }
     }
     if (auto* cf = go->GetComponent<CameraFollow>()) {
@@ -6461,9 +6926,9 @@ void DrawInspector(EditorState& ed) {
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             ImGui::SeparatorText("Style");
             int bshp = (int)btn->shape;
-            const char* bshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##uib", &bshp, bshapes, 4)) { btn->shape = (UIShape)bshp; ed.dirty = true; }
-            if (btn->shape == UIShape::Rounded)
+            const char* bshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##uib", &bshp, bshapes, kUIShapeCount)) { btn->shape = (UIShape)bshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(btn->shape))
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Drop Shadow##uib", &btn->shadow)) ed.dirty = true;
@@ -6472,6 +6937,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Shadow Color##uib", sc)) { btn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
                 float so[2] = {btn->shadowOffset.x, btn->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##uib", so, 0.5f)) { btn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+                if (ImGui::DragFloat("Shadow Blur##uib", &btn->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
             }
             if (ImGui::DragFloat("Border Width##uib", &btn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             if (btn->borderWidth > 0.0f) {
@@ -6514,9 +6980,10 @@ void DrawInspector(EditorState& ed) {
             AnchorCombo("Anchor##uip", pn->anchor, ed);
             ImGui::SeparatorText("Style");
             int shp = (int)pn->shape;
-            const char* shapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##uip", &shp, shapes, 4)) { pn->shape = (UIShape)shp; ed.dirty = true; }
-            if (pn->shape == UIShape::Rounded)
+            const char* shapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##uip", &shp, shapes, kUIShapeCount)) { pn->shape = (UIShape)shp; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The panel's silhouette — circle, pill, hexagon, etc. Octagon/Parallelogram/Trapezoid use Corner Radius for their cut/skew.");
+            if (UIShapeUsesRadius(pn->shape))
                 if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             if (pn->borderWidth > 0.0f) {
@@ -6536,6 +7003,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Shadow Color##uip", sc)) { pn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
                 float so[2] = {pn->shadowOffset.x, pn->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##uip", so, 0.5f)) { pn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+                if (ImGui::DragFloat("Shadow Blur##uip", &pn->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp; higher = a soft penumbra (premium card look)");
             }
             if (ImGui::SmallButton("Remove##uip")) toRemove = pn;
         }
@@ -6558,9 +7027,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Combo("Content Type##uif", &ct, cts, 4)) { in->contentType = (UIInputField::ContentType)ct; ed.dirty = true; }
             AnchorCombo("Anchor##uif", in->anchor, ed);
             int ishp = (int)in->shape;
-            const char* fshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##uif", &ishp, fshapes, 4)) { in->shape = (UIShape)ishp; ed.dirty = true; }
-            if (in->shape == UIShape::Rounded)
+            const char* fshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##uif", &ishp, fshapes, kUIShapeCount)) { in->shape = (UIShape)ishp; ed.dirty = true; }
+            if (UIShapeUsesRadius(in->shape))
                 if (ImGui::DragFloat("Corner Radius##uif", &in->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Focus Ring##uif", &in->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
             if (in->borderWidth > 0.0f) {
@@ -6579,9 +7048,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##udd", dd->anchor, ed);
             int dshp = (int)dd->shape;
-            const char* dshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##udd", &dshp, dshapes, 4)) { dd->shape = (UIShape)dshp; ed.dirty = true; }
-            if (dd->shape == UIShape::Rounded)
+            const char* dshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##udd", &dshp, dshapes, kUIShapeCount)) { dd->shape = (UIShape)dshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(dd->shape))
                 if (ImGui::DragFloat("Corner Radius##udd", &dd->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             char ph[96]; std::strncpy(ph, dd->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
             if (ImGui::InputText("Placeholder##udd", ph, sizeof(ph))) { dd->placeholder = ph; ed.dirty = true; }
@@ -6770,9 +7239,9 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
             int pshp = (int)pb->shape;
-            const char* pshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape##upb", &pshp, pshapes, 4)) { pb->shape = (UIShape)pshp; ed.dirty = true; }
-            if (pb->shape == UIShape::Rounded)
+            const char* pshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##upb", &pshp, pshapes, kUIShapeCount)) { pb->shape = (UIShape)pshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(pb->shape))
                 if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Gradient Fill##upb", &pb->gradientFill)) ed.dirty = true;
             if (pb->gradientFill) {
@@ -6843,8 +7312,9 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             int ishp = (int)im->shape;
-            const char* ishapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Shape (no texture)##uim", &ishp, ishapes, 4)) { im->shape = (UIShape)ishp; ed.dirty = true; }
+            const char* ishapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape (no texture)##uim", &ishp, ishapes, kUIShapeCount)) { im->shape = (UIShape)ishp; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Silhouette of the colored fill when there's no texture set. For a shaped colored box, a UI Panel also works.");
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -6864,8 +7334,8 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
             AnchorCombo("Anchor##usl", sl->anchor, ed);
             int sshp = (int)sl->trackShape;
-            const char* sshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
-            if (ImGui::Combo("Track Shape##usl", &sshp, sshapes, 4)) { sl->trackShape = (UIShape)sshp; ed.dirty = true; }
+            const char* sshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Track Shape##usl", &sshp, sshapes, kUIShapeCount)) { sl->trackShape = (UIShape)sshp; ed.dirty = true; }
             if (sl->trackShape == UIShape::Rounded)
                 if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Round Knob##usl", &sl->roundKnob)) ed.dirty = true;
@@ -6884,6 +7354,56 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Vertical##usl", &sl->vertical)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
+        }
+    }
+    if (auto* st = go->GetComponent<UIStepper>()) {
+        if (CompHeader("UI Stepper", st, &toRemove)) {
+            float pos[2] = {st->position.x, st->position.y};
+            if (ImGui::DragFloat2("Pos (px)##ust", pos, 1.0f)) { st->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {st->size.x, st->size.y};
+            if (ImGui::DragFloat2("Size (px)##ust", sz, 1.0f, 1.0f, 8000.0f)) { st->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Min##ust", &st->minValue, 0.1f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max##ust", &st->maxValue, 0.1f)) ed.dirty = true;
+            if (ImGui::DragFloat("Step##ust", &st->step, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Value##ust", &st->value, st->minValue, st->maxValue)) ed.dirty = true;
+            if (ImGui::Checkbox("Whole Numbers##ust", &st->wholeNumbers)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Wrap##ust", &st->wrap)) ed.dirty = true;
+            float bg[4] = {st->background.r, st->background.g, st->background.b, st->background.a};
+            if (ImGui::ColorEdit4("Background##ust", bg)) { st->background = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
+            float bt[4] = {st->button.r, st->button.g, st->button.b, st->button.a};
+            if (ImGui::ColorEdit4("Buttons##ust", bt)) { st->button = {bt[0], bt[1], bt[2], bt[3]}; ed.dirty = true; }
+            float tc[4] = {st->textColor.r, st->textColor.g, st->textColor.b, st->textColor.a};
+            if (ImGui::ColorEdit4("Text##ust", tc)) { st->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+            AnchorCombo("Anchor##ust", st->anchor, ed);
+            int sshp = (int)st->shape;
+            const char* stshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##ust", &sshp, stshapes, kUIShapeCount)) { st->shape = (UIShape)sshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(st->shape))
+                if (ImGui::DragFloat("Corner Radius##ust", &st->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Interactable##ust", &st->interactable)) ed.dirty = true;
+            ImGui::TextDisabled("[-] value [+] ; calls script on_change()");
+            if (ImGui::SmallButton("Remove##ust")) toRemove = st;
+        }
+    }
+    if (auto* rt = go->GetComponent<UIRating>()) {
+        if (CompHeader("UI Rating", rt, &toRemove)) {
+            float pos[2] = {rt->position.x, rt->position.y};
+            if (ImGui::DragFloat2("Pos (px)##urt", pos, 1.0f)) { rt->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {rt->size.x, rt->size.y};
+            if (ImGui::DragFloat2("Size (px)##urt", sz, 1.0f, 1.0f, 8000.0f)) { rt->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::SliderInt("Stars##urt", &rt->count, 1, 10)) ed.dirty = true;
+            if (ImGui::SliderFloat("Value##urt", &rt->value, 0.0f, (float)rt->count)) ed.dirty = true;
+            if (ImGui::Checkbox("Allow Half##urt", &rt->allowHalf)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Read Only##urt", &rt->readOnly)) ed.dirty = true;
+            float on[4] = {rt->on.r, rt->on.g, rt->on.b, rt->on.a};
+            if (ImGui::ColorEdit4("Filled##urt", on)) { rt->on = {on[0], on[1], on[2], on[3]}; ed.dirty = true; }
+            float off[4] = {rt->off.r, rt->off.g, rt->off.b, rt->off.a};
+            if (ImGui::ColorEdit4("Empty##urt", off)) { rt->off = {off[0], off[1], off[2], off[3]}; ed.dirty = true; }
+            AnchorCombo("Anchor##urt", rt->anchor, ed);
+            ImGui::TextDisabled("click a star to rate; calls script on_change()");
+            if (ImGui::SmallButton("Remove##urt")) toRemove = rt;
         }
     }
     if (auto* tg = go->GetComponent<UIToggle>()) {
@@ -6913,6 +7433,43 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Knob glide / check fade speed (0 = snap).");
             if (ImGui::Checkbox("Interactable##utg", &tg->interactable)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
+        }
+    }
+    if (auto* tb = go->GetComponent<UITabs>()) {
+        if (CompHeader("UI Tabs", tb, &toRemove)) {
+            float pos[2] = {tb->position.x, tb->position.y};
+            if (ImGui::DragFloat2("Pos (px)##utb", pos, 1.0f)) { tb->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {tb->size.x, tb->size.y};
+            if (ImGui::DragFloat2("Size (px)##utb", sz, 1.0f, 8.0f, 4000.0f)) { tb->size = {sz[0], sz[1]}; ed.dirty = true; }
+            AnchorCombo("Anchor##utb", tb->anchor, ed);
+            int tshp = (int)tb->shape;
+            const char* tshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
+            if (ImGui::Combo("Shape##utb", &tshp, tshapes, kUIShapeCount)) { tb->shape = (UIShape)tshp; ed.dirty = true; }
+            if (UIShapeUsesRadius(tb->shape))
+                if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (tb->Count() > 0) {
+                int v = tb->value;
+                if (ImGui::SliderInt("Selected##utb", &v, 0, tb->Count() - 1)) { tb->value = v; ed.dirty = true; }
+            }
+            float se[4] = {tb->selected.r, tb->selected.g, tb->selected.b, tb->selected.a};
+            if (ImGui::ColorEdit4("Selected Color##utb", se)) { tb->selected = {se[0], se[1], se[2], se[3]}; ed.dirty = true; }
+            float bgc[4] = {tb->background.r, tb->background.g, tb->background.b, tb->background.a};
+            if (ImGui::ColorEdit4("Track Color##utb", bgc)) { tb->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            ImGui::SeparatorText("Tabs");
+            int eraseT = -1;
+            for (int i = 0; i < (int)tb->tabs.size(); ++i) {
+                ImGui::PushID(i);
+                char ob[64]; std::strncpy(ob, tb->tabs[i].c_str(), sizeof(ob) - 1); ob[sizeof(ob) - 1] = '\0';
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("##tab", ob, sizeof(ob))) { tb->tabs[i] = ob; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) eraseT = i;
+                ImGui::PopID();
+            }
+            if (eraseT >= 0) { tb->tabs.erase(tb->tabs.begin() + eraseT); if (tb->value >= tb->Count()) tb->value = tb->Count() - 1; ed.dirty = true; }
+            if (ImGui::SmallButton("Add Tab##utb")) { tb->tabs.push_back("Tab"); ed.dirty = true; }
+            ImGui::TextDisabled("Click a segment in the game; calls script on_change().");
+            if (ImGui::SmallButton("Remove##utb")) toRemove = tb;
         }
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
@@ -7133,11 +7690,21 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { go->AddComponent<CharacterController3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { go->AddComponent<FirstPersonController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { go->AddComponent<ThirdPersonController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TopDownController>(), "Top Down Controller")) { go->AddComponent<TopDownController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { go->AddComponent<ThirdPersonShooterController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
+          } EndCat(o); }
+
+        { bool o = BeginCat("RPG / Turn-Based");
+          if (o) {
+            if (item(!go->GetComponent<Stats>(), "Stats")) { go->AddComponent<Stats>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Inventory>(), "Inventory")) { go->AddComponent<Inventory>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TurnManager>(), "Turn Manager")) { go->AddComponent<TurnManager>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("UI");
@@ -7152,7 +7719,10 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIStepper>(), "UI Stepper")) { go->AddComponent<UIStepper>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRating>(), "UI Rating")) { go->AddComponent<UIRating>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIToggle>(), "UI Toggle")) { go->AddComponent<UIToggle>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
           } EndCat(o); }
@@ -7283,6 +7853,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
 
+    // Authoring zoom (Scene view only): scale/pan the canvas so the UI is easy to
+    // edit. The Game view always shows the true 1:1 layout.
+    if (!gameView) ApplyUIEditZoom(canvasPos, canvasSize);
+
     // Publish the canvas size so anchored widgets resolve and (in Play) hit-test
     // against the same dimensions the preview uses.
     UICanvas::Set(canvasSize.x, canvasSize.y);
@@ -7345,8 +7919,13 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float fox, foy, fw, fh;
         im->FilledRect(sz.x, sz.y, fox, foy, fw, fh);
         ImVec2 fa(a.x + fox, a.y + foy), fb(fa.x + fw, fa.y + fh);
-        dl->AddRectFilled(fa, fb, ToColor(im->color), im->cornerRadius);
-        dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), im->cornerRadius);
+        if (IsPolyUIShape(im->shape)) {
+            DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), im->shape, im->cornerRadius,
+                            ToColor(im->color), IM_COL32(255, 255, 255, 90), 1.0f);
+        } else {
+            dl->AddRectFilled(fa, fb, ToColor(im->color), im->cornerRadius);
+            dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), im->cornerRadius);
+        }
         if (!im->texture.empty())
             DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
     }
@@ -7363,14 +7942,21 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ImVec2(a.x + pn->shadowOffset.x, a.y + pn->shadowOffset.y),
                               ImVec2(pb2.x + pn->shadowOffset.x, pb2.y + pn->shadowOffset.y),
                               ToColor(pn->shadowColor), pn->cornerRadius);
-        if (pn->useGradient) {   // vertical top->bottom fade (no rounding)
-            dl->AddRectFilledMultiColor(a, pb2, ToColor(pn->color), ToColor(pn->color),
-                                        ToColor(pn->colorBottom), ToColor(pn->colorBottom));
+        if (IsPolyUIShape(pn->shape)) {
+            DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), pn->shape, pn->cornerRadius,
+                            ToColor(pn->color),
+                            pn->borderWidth > 0.0f ? ToColor(pn->borderColor) : IM_COL32(0, 0, 0, 0),
+                            pn->borderWidth);
         } else {
-            dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+            if (pn->useGradient) {   // vertical top->bottom fade (no rounding)
+                dl->AddRectFilledMultiColor(a, pb2, ToColor(pn->color), ToColor(pn->color),
+                                            ToColor(pn->colorBottom), ToColor(pn->colorBottom));
+            } else {
+                dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+            }
+            if (pn->borderWidth > 0.0f)
+                dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
         }
-        if (pn->borderWidth > 0.0f)
-            dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
     }
     for (const auto& up : objs) {
         auto* pb = up->GetComponent<UIProgressBar>();
@@ -7421,6 +8007,45 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                            a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(sl->textColor));
         }
         if (!sl->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), sl->cornerRadius);
+    }
+    // UI steppers: [-] value [+]
+    for (const auto& up : objs) {
+        auto* st = up->GetComponent<UIStepper>();
+        if (!st || !up->active || UIHidden(up.get())) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(st->background), st->cornerRadius);
+        float bw = st->ButtonWidth() * s;
+        dl->AddRectFilled(a, ImVec2(a.x + bw, a.y + sz.y), ToColor(st->button), st->cornerRadius);
+        dl->AddRectFilled(ImVec2(a.x + sz.x - bw, a.y), ImVec2(a.x + sz.x, a.y + sz.y), ToColor(st->button), st->cornerRadius);
+        float px = 2.0f * s;
+        ImU32 tcol = ToColor(st->textColor);
+        DrawBitmapText(dl, "-", a.x + bw * 0.5f - Font8x8::Width * px * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
+        DrawBitmapText(dl, "+", a.x + sz.x - bw * 0.5f - Font8x8::Width * px * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
+        char vb[24];
+        if (st->wholeNumbers) std::snprintf(vb, sizeof(vb), "%d", (int)st->value);
+        else                  std::snprintf(vb, sizeof(vb), "%.2f", st->value);
+        float tw = std::strlen(vb) * (Font8x8::Width + 1) * px;
+        DrawBitmapText(dl, vb, a.x + (sz.x - tw) * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
+    }
+    // UI ratings: a row of star diamonds, filled up to the value.
+    for (const auto& up : objs) {
+        auto* rt = up->GetComponent<UIRating>();
+        if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        float cw = sz.x / (float)rt->count;
+        float d = Mathf::Min(cw, sz.y);
+        for (int i = 0; i < rt->count; ++i) {
+            float cx = a.x + i * cw + cw * 0.5f;
+            float cy = a.y + sz.y * 0.5f, r = d * 0.5f;
+            ImVec2 pts[4] = { ImVec2(cx, cy - r), ImVec2(cx + r, cy), ImVec2(cx, cy + r), ImVec2(cx - r, cy) };
+            ImU32 col = ToColor(rt->StarFill(i) >= 0.5f ? rt->on : rt->off);
+            dl->AddConvexPolyFilled(pts, 4, col);
+        }
     }
     // UI toggles: box (+ inset check when on) and a label.
     for (const auto& up : objs) {
@@ -7663,6 +8288,26 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                    bool hovered, ImGuiIO& io) {
     g_uiHandled = false;
+
+    // UI authoring zoom/pan (Scene view): Ctrl+Wheel zooms toward the cursor, and
+    // a middle-mouse drag pans. Done before the canvas transform so hit-testing
+    // below uses the same zoomed canvas the overlay draws with.
+    if (hovered && io.KeyCtrl && io.MouseWheel != 0.0f) {
+        ImVec2 c(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
+        float old = g_uiEditZoom;
+        g_uiEditZoom = Mathf::Clamp(g_uiEditZoom * (1.0f + io.MouseWheel * 0.12f), 0.25f, 6.0f);
+        // Keep the point under the cursor fixed while zooming.
+        float k = g_uiEditZoom / old;
+        ImVec2 pivot(c.x + g_uiEditPan.x, c.y + g_uiEditPan.y);
+        g_uiEditPan.x = (g_uiEditPan.x + (pivot.x - io.MousePos.x) * (k - 1.0f));
+        g_uiEditPan.y = (g_uiEditPan.y + (pivot.y - io.MousePos.y) * (k - 1.0f));
+        g_uiHandled = true;
+    }
+    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+        g_uiEditPan.x += io.MouseDelta.x; g_uiEditPan.y += io.MouseDelta.y;
+    }
+    ApplyUIEditZoom(canvasPos, canvasSize);
+
     UICanvas::Set(canvasSize.x, canvasSize.y);
     Vec2 mouseCanvas{io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y};
 
@@ -7721,11 +8366,11 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
                             if (GetUIScreenRect(up2.get(), canvasSize.x, canvasSize.y, oo, ss)) {
-                                cx.push_back(oo.x); cx.push_back(oo.x + ss.x);
-                                cy.push_back(oo.y); cy.push_back(oo.y + ss.y);
+                                cx.push_back(oo.x); cx.push_back(oo.x + ss.x * 0.5f); cx.push_back(oo.x + ss.x);
+                                cy.push_back(oo.y); cy.push_back(oo.y + ss.y * 0.5f); cy.push_back(oo.y + ss.y);
                             }
                         }
-                        const float thr = 6.0f;
+                        const float thr = g_uiSnapDist;
                         auto edge = [&](float v, const std::vector<float>& cs, float& guide, bool& hit) {
                             float best = thr, res = v;
                             for (float c : cs) { float d = v > c ? v - c : c - v; if (d < best) { best = d; res = c; guide = c; hit = true; } }
@@ -7762,7 +8407,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                                 cy.push_back(oo.y); cy.push_back(oo.y + ss.y * 0.5f); cy.push_back(oo.y + ss.y);
                             }
                         }
-                        const float thr = 6.0f;
+                        const float thr = g_uiSnapDist;
                         auto bestSnap = [&](float lo, float mid, float hi, const std::vector<float>& cands,
                                             float& guide) -> float {
                             float best = thr, adj = 0.0f; bool found = false;
@@ -7851,7 +8496,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     -(s.y - center.y) / scale + camPos.y);
     };
 
-    if (!gameView && hovered && io.MouseWheel != 0.0f)
+    if (!gameView && hovered && io.MouseWheel != 0.0f && !io.KeyCtrl)  // Ctrl+Wheel = UI zoom
         ed.cameraZoom = Mathf::Clamp(ed.cameraZoom * (1.0f - io.MouseWheel * 0.1f), 2.0f, 200.0f);
     if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
         ed.cameraPos.x -= io.MouseDelta.x / scale;
@@ -8112,7 +8757,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
 
     // Orbit controls (Scene view only).
-    if (!gameView && hovered && io.MouseWheel != 0.0f)
+    if (!gameView && hovered && io.MouseWheel != 0.0f && !io.KeyCtrl)  // Ctrl+Wheel = UI zoom
         ed.camDist = Mathf::Clamp(ed.camDist * (1.0f - io.MouseWheel * 0.1f), 2.0f, 400.0f);
     if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ed.selected()) {
         ed.camYaw   -= io.MouseDelta.x * 0.4f;
@@ -8875,6 +9520,18 @@ void DrawViewport(EditorState& ed) {
         ImGui::SetNextItemWidth(70);
         ImGui::DragInt("UI px##uigrid", &g_uiGrid, 1, 1, 256);   // UI pixel grid
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("UI snap grid (pixels) + edge/center guides");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::DragFloat("UI snap##uisnap", &g_uiSnapDist, 0.5f, 1.0f, 40.0f, "%.0f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close (px) a UI edge/center snaps to a guide");
+    }
+    // UI authoring zoom readout + reset (Ctrl+Wheel to zoom, middle-drag to pan).
+    ImGui::SameLine();
+    if (g_uiEditZoom != 1.0f || g_uiEditPan.x != 0.0f || g_uiEditPan.y != 0.0f) {
+        if (ImGui::SmallButton("UI 1:1")) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0, 0); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset UI zoom/pan (now %.0f%%)", g_uiEditZoom * 100.0f);
+    } else {
+        ImGui::TextDisabled("UI zoom: Ctrl+Wheel");
     }
     ImGui::SameLine();
     ImGui::TextDisabled(ed.view3D ? "drag: orbit  wheel: zoom"
@@ -9043,9 +9700,73 @@ void DrawGameView(EditorState& ed) {
 
 } // namespace
 
+// ---- Launcher gate ---------------------------------------------------------
+// The editor may only be opened through the OkaySpace Launcher, and only while
+// that launcher is still running. The launcher passes "--launcher <pid>"; we
+// verify the token is present and that process is alive. Double-clicking the
+// editor directly (no token) bounces the user to the launcher instead.
+static bool ProcessAlive(unsigned long pid) {
+    if (pid == 0) return false;
+#if defined(_WIN32)
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
+    if (!h) return false;
+    bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    CloseHandle(h);
+    return alive;
+#else
+    return ::kill((pid_t)pid, 0) == 0;
+#endif
+}
+
+// Returns true if the editor is allowed to run. When not, it tries to open the
+// launcher (found next to this exe) and returns false so main() can exit.
+static bool PassesLauncherGate(int argc, char** argv) {
+    // Development / CI escape hatch: OKAY_DEV=1 or a --dev flag bypasses the gate.
+    if (const char* dev = std::getenv("OKAY_DEV"); dev && dev[0] && dev[0] != '0') return true;
+    unsigned long launcherPid = 0;
+    bool haveToken = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--dev") return true;
+        if (a == "--launcher" && i + 1 < argc) { launcherPid = std::strtoul(argv[i + 1], nullptr, 10); haveToken = true; }
+        else if (a.rfind("--launcher=", 0) == 0) { launcherPid = std::strtoul(a.c_str() + 11, nullptr, 10); haveToken = true; }
+    }
+    if (haveToken && ProcessAlive(launcherPid)) return true;
+
+    // Not launched by a live launcher: bounce to the launcher and refuse.
+    namespace sfs = std::filesystem;
+    std::error_code ec;
+    sfs::path dir = sfs::absolute(argv[0], ec).parent_path();
+    const char* names[] = {"OkaySpace.exe", "okayspace-launcher.exe", "OkaySpaceLauncher.exe", "okayspace-launcher"};
+    // Search next to the editor and one level up (the editor may live in an Engine/
+    // subfolder while the launcher sits at the top of the install).
+    sfs::path launcher;
+    for (const sfs::path& base : {dir, dir.parent_path()}) {
+        for (const char* n : names) { sfs::path p = base / n; if (sfs::exists(p, ec)) { launcher = p; break; } }
+        if (!launcher.empty()) break;
+    }
+    const char* msg = "OkaySpace Editor must be opened from the OkaySpace Launcher.\n\n"
+                      "Starting the launcher now...";
+    if (launcher.empty())
+        msg = "OkaySpace Editor must be opened from the OkaySpace Launcher,\n"
+              "but the launcher was not found next to the editor.";
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "OkaySpace", msg, nullptr);
+    if (!launcher.empty()) {
+#if defined(_WIN32)
+        std::string cmd = "start \"\" \"" + launcher.string() + "\"";
+#else
+        std::string cmd = "\"" + launcher.string() + "\" >/dev/null 2>&1 &";
+#endif
+        std::system(cmd.c_str());
+    }
+    return false;
+}
+
 int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
+
+    if (!PassesLauncherGate(argc, argv)) return 0;
 
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO |
@@ -9066,15 +9787,16 @@ int main(int argc, char** argv) {
     if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
 
     SDL_Window* window = SDL_CreateWindow(
-        "OkaySpace Editor", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        "OkayEngine", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { std::cerr << "CreateWindow failed: " << SDL_GetError() << "\n"; return 1; }
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
-    SDL_Renderer* renderer = SDL_CreateRenderer(
-        window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    // VSync off by default = uncapped FPS (no 60 Hz limit). Toggle in View > VSync.
+    SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
 
@@ -9165,6 +9887,8 @@ int main(int argc, char** argv) {
             for (char c = '0'; c <= '9'; ++c)
                 if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
             if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
+            if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
+            if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
             if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
             if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
             if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);

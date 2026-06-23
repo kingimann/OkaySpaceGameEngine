@@ -3,7 +3,7 @@
 //   Play        run a game you've built (any game.okayscene found nearby)
 //   Marketplace browse starter templates to open in the editor
 //
-// It looks for OkaySpaceEngine.exe (editor) and OkaySpacePlayer.exe (runtime)
+// It looks for OkayEngine.exe (editor) and OkaySpacePlayer.exe (runtime)
 // sitting next to it, and launches them. Built with Dear ImGui + SDL2.
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -14,12 +14,19 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#if defined(_WIN32)
+#  include <windows.h>
+#else
+#  include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -180,28 +187,24 @@ int RunUpdateCheck(void*) {
 
     std::string local = LocalVersion();
     fs::path dir(g_exeDir);
-    std::error_code mec;
-    bool haveEngine = fs::exists(dir / "OkaySpaceEngine.exe", mec);
-    bool havePlayer = fs::exists(dir / "OkaySpacePlayer.exe", mec);
-    bool newer = !latest.empty() && CompareVersions(local, latest) < 0;
+    bool newer = !latest.empty() && CompareVersions(local, latest) < 0;   // installed < published
 
-    // Nothing to do only if we're current AND both runtimes are present.
-    if (!newer && haveEngine && havePlayer) {
+    // Only ever download a STRICTLY newer published version. Never "self-heal" by
+    // pulling a not-newer (older or equal) build — that used to downgrade the engine
+    // to whatever stale binary sits in the repo's dist/ folder (the "it downloads
+    // 2.97" bug). If we're current or ahead, do nothing.
+    if (!newer) {
         SetUpMsg("Up to date (v" + local + ").");
         SetState(Up_UpToDate);
         return 0;
     }
 
-    // Download what's needed: everything on a version bump, otherwise just the
-    // missing runtimes (self-healing a launcher-only download).
     SetState(Up_Downloading);
     bool ok = true;
-    if (newer || !haveEngine) {
+    {
         SetUpMsg("Downloading engine v" + latest + "...");
-        ok = ReplaceFile(std::string(kRawBase) + "OkaySpaceEngine.exe",
-                         dir / "OkaySpaceEngine.exe", false) && ok;
-    }
-    if (newer || !havePlayer) {
+        ok = ReplaceFile(std::string(kRawBase) + "OkayEngine.exe",
+                         dir / "OkayEngine.exe", false) && ok;
         SetUpMsg("Downloading player runtime v" + latest + "...");
         ok = ReplaceFile(std::string(kRawBase) + "OkaySpacePlayer.exe",
                          dir / "OkaySpacePlayer.exe", false) && ok;
@@ -241,10 +244,13 @@ void StartUpdateCheck() {
 // Find the first of `names` that exists next to the launcher.
 std::string FindExe(std::initializer_list<const char*> names) {
     std::error_code ec;
-    for (const char* n : names) {
-        fs::path p = fs::path(g_exeDir) / n;
-        if (fs::exists(p, ec)) return p.string();
-    }
+    // Look next to the launcher and in a tidy "Engine" subfolder (organized layout).
+    const char* dirs[] = {"", "Engine", "runtime", "bin"};
+    for (const char* d : dirs)
+        for (const char* n : names) {
+            fs::path p = d[0] ? (fs::path(g_exeDir) / d / n) : (fs::path(g_exeDir) / n);
+            if (fs::exists(p, ec)) return p.string();
+        }
     return {};
 }
 
@@ -258,6 +264,30 @@ void Launch(const std::string& exe, const std::string& arg = "") {
     std::string cmd = "\"" + exe + "\"";
     if (!arg.empty()) cmd += " \"" + arg + "\"";
     cmd += " >/dev/null 2>&1 &";
+#endif
+    std::system(cmd.c_str());
+}
+
+// This launcher's process id (handed to the editor so it can verify the launcher
+// is still running).
+unsigned long CurrentPid() {
+#if defined(_WIN32)
+    return (unsigned long)GetCurrentProcessId();
+#else
+    return (unsigned long)getpid();
+#endif
+}
+
+// Launch the editor with a handshake token: "--launcher <pid>". The editor refuses
+// to start unless this token is present AND that launcher process is still alive,
+// so the engine can only be opened through (and alongside) the launcher.
+void LaunchEditor(const std::string& exe) {
+    if (exe.empty()) return;
+    std::string tok = "--launcher " + std::to_string(CurrentPid());
+#if defined(_WIN32)
+    std::string cmd = "start \"\" \"" + exe + "\" " + tok;
+#else
+    std::string cmd = "\"" + exe + "\" " + tok + " >/dev/null 2>&1 &";
 #endif
     std::system(cmd.c_str());
 }
@@ -284,17 +314,33 @@ std::vector<fs::path> FindScenes() {
 void DarkTheme() {
     ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding = 0.0f; s.FrameRounding = 5.0f; s.GrabRounding = 5.0f;
-    s.FramePadding = ImVec2(10, 7); s.ItemSpacing = ImVec2(10, 10);
+    // Soft, modern rounding + generous spacing for a clean flat look.
+    s.WindowRounding = 0.0f;
+    s.ChildRounding = 10.0f;
+    s.FrameRounding = 8.0f; s.GrabRounding = 8.0f; s.PopupRounding = 8.0f;
+    s.ScrollbarRounding = 8.0f; s.TabRounding = 8.0f;
+    s.FramePadding = ImVec2(12, 9); s.ItemSpacing = ImVec2(10, 12);
+    s.WindowPadding = ImVec2(16, 16); s.ChildBorderSize = 0.0f;
+    s.ScrollbarSize = 12.0f;
     ImVec4* c = s.Colors;
-    ImVec4 accent(0.20f, 0.45f, 0.85f, 1.0f);
-    c[ImGuiCol_WindowBg]     = ImVec4(0.09f, 0.10f, 0.13f, 1.0f);
-    c[ImGuiCol_ChildBg]      = ImVec4(0.12f, 0.13f, 0.17f, 1.0f);
-    c[ImGuiCol_Button]       = ImVec4(0.18f, 0.20f, 0.26f, 1.0f);
-    c[ImGuiCol_ButtonHovered]= accent;
-    c[ImGuiCol_ButtonActive] = ImVec4(0.16f, 0.38f, 0.72f, 1.0f);
-    c[ImGuiCol_Header]       = accent;
-    c[ImGuiCol_HeaderHovered]= accent;
+    const ImVec4 accent(0.26f, 0.56f, 0.96f, 1.0f);     // friendly blue
+    const ImVec4 accentDim(0.22f, 0.40f, 0.70f, 1.0f);
+    c[ImGuiCol_WindowBg]      = ImVec4(0.07f, 0.08f, 0.11f, 1.0f);
+    c[ImGuiCol_ChildBg]       = ImVec4(0.11f, 0.12f, 0.16f, 1.0f);
+    c[ImGuiCol_PopupBg]       = ImVec4(0.11f, 0.12f, 0.16f, 1.0f);
+    c[ImGuiCol_Text]          = ImVec4(0.92f, 0.94f, 0.98f, 1.0f);
+    c[ImGuiCol_TextDisabled]  = ImVec4(0.52f, 0.55f, 0.62f, 1.0f);
+    c[ImGuiCol_Button]        = ImVec4(0.17f, 0.19f, 0.25f, 1.0f);
+    c[ImGuiCol_ButtonHovered] = accent;
+    c[ImGuiCol_ButtonActive]  = accentDim;
+    c[ImGuiCol_Header]        = ImVec4(accent.x, accent.y, accent.z, 0.30f);
+    c[ImGuiCol_HeaderHovered] = ImVec4(accent.x, accent.y, accent.z, 0.55f);
+    c[ImGuiCol_HeaderActive]  = accent;
+    c[ImGuiCol_Separator]     = ImVec4(1, 1, 1, 0.08f);
+    c[ImGuiCol_FrameBg]       = ImVec4(0.16f, 0.18f, 0.23f, 1.0f);
+    c[ImGuiCol_FrameBgHovered]= ImVec4(0.20f, 0.23f, 0.30f, 1.0f);
+    c[ImGuiCol_ScrollbarBg]   = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_ScrollbarGrab] = ImVec4(1, 1, 1, 0.12f);
 }
 
 } // namespace
@@ -313,15 +359,16 @@ int main(int argc, char** argv) {
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
 
-    // Auto-check for a newer engine version (or a missing runtime) and install
-    // it in the background so the launcher window stays responsive meanwhile.
-    SDL_AtomicSet(&g_upState, (int)Up_Idle);
+    // Show the bundled version and DON'T phone home on startup: the published build
+    // on GitHub can lag this one, so an auto-check used to download an OLDER engine
+    // and mislead with "up to date". Updates are now opt-in via the button below.
+    SDL_AtomicSet(&g_upState, (int)Up_UpToDate);
     g_upMutex = SDL_CreateMutex();
-    StartUpdateCheck();
+    SetUpMsg("OkaySpace v" + LocalVersion());
 
-    SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 600,
-        SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher  v" OKAY_ENGINE_VERSION,
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 980, 620,
+        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
     if (!window) return 1;
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1,
@@ -336,7 +383,7 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
-    std::string editor = FindExe({"OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
+    std::string editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
     std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     std::vector<fs::path> scenes = FindScenes();
     bool rescannedAfterUpdate = false;
@@ -361,7 +408,7 @@ int main(int argc, char** argv) {
         // Once a background download finishes, re-detect the runtimes so the
         // "not found" notices clear without needing a restart.
         if (GetState() == Up_Updated && !rescannedAfterUpdate) {
-            editor = FindExe({"OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
+            editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor"});
             player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
             scenes = FindScenes();
             rescannedAfterUpdate = true;
@@ -380,14 +427,20 @@ int main(int argc, char** argv) {
             ImGuiWindowFlags_NoBringToFrontOnFocus);
 
         // ---- Left nav ----
-        ImGui::BeginChild("nav", ImVec2(190, 0), true);
+        ImGui::BeginChild("nav", ImVec2(210, 0), true);
         ImGui::PushFont(nullptr);
         ImGui::TextColored(ImVec4(0.45f, 0.7f, 1.0f, 1.0f), "OkaySpace");
+        ImGui::SameLine();
+        ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
         ImGui::TextDisabled("game engine");
-        ImGui::Dummy(ImVec2(0, 14));
-        const char* navs[] = {"  Create", "  Play", "  Marketplace"};
-        for (int i = 0; i < 3; ++i)
-            if (ImGui::Selectable(navs[i], tab == i, 0, ImVec2(0, 34))) tab = i;
+        ImGui::Dummy(ImVec2(0, 16));
+        const char* navs[]  = {"  Create", "  Play", "  Marketplace"};
+        const char* navIco[] = {"+", ">", "*"};
+        for (int i = 0; i < 3; ++i) {
+            char lbl[48];
+            std::snprintf(lbl, sizeof(lbl), "  %s  %s", navIco[i], navs[i] + 2);
+            if (ImGui::Selectable(lbl, tab == i, 0, ImVec2(0, 40))) tab = i;
+        }
         ImGui::PopFont();
 
         // ---- Update status (pinned to the bottom of the nav) ----
@@ -418,52 +471,75 @@ int main(int argc, char** argv) {
         ImGui::SameLine();
         ImGui::BeginChild("content", ImVec2(0, 0), true);
 
+        const ImVec4 kTitle(0.85f, 0.9f, 1.0f, 1.0f);
         if (tab == 0) {                                   // ---- Create ----
-            ImGui::TextColored(ImVec4(0.85f, 0.9f, 1.0f, 1.0f), "Create a game");
-            ImGui::TextWrapped("Open the OkaySpace editor to build 2D or 3D scenes, "
-                               "script them, and design UI. Use File > Build Game to "
-                               "export a standalone game.");
-            ImGui::Dummy(ImVec2(0, 16));
+            ImGui::PushFont(nullptr);
+            ImGui::TextColored(kTitle, "Create a game");
+            ImGui::PopFont();
+            ImGui::TextWrapped("Open the OkaySpace editor to build 2D or 3D scenes, script "
+                               "them, and design UI. Use File > Build Game to export a "
+                               "standalone game you can share.");
+            ImGui::Dummy(ImVec2(0, 18));
             if (editor.empty()) {
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Editor not found next to the launcher.");
-                ImGui::TextDisabled("Place OkaySpaceEngine.exe beside this launcher.");
+                ImGui::TextDisabled("Place OkayEngine.exe beside this launcher.");
             } else {
-                if (ImGui::Button("Open Editor", ImVec2(220, 56))) Launch(editor);
+                if (ImGui::Button("Open Editor", ImVec2(240, 60))) LaunchEditor(editor);
+                ImGui::Dummy(ImVec2(0, 6));
                 ImGui::TextDisabled("%s", editor.c_str());
             }
+            ImGui::Dummy(ImVec2(0, 22));
+            ImGui::SeparatorText("Tips");
+            ImGui::BulletText("Press Play in the editor to test instantly.");
+            ImGui::BulletText("Drag assets from the Project panel onto objects.");
+            ImGui::BulletText("Add UI from GameObject > UI (buttons, sliders, radial loaders).");
         } else if (tab == 1) {                            // ---- Play ----
-            ImGui::TextColored(ImVec4(0.85f, 0.9f, 1.0f, 1.0f), "Play a game");
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
-            if (ImGui::Button("Refresh", ImVec2(80, 0))) scenes = FindScenes();
-            ImGui::Separator();
+            ImGui::PushFont(nullptr);
+            ImGui::TextColored(kTitle, "Play a game");
+            ImGui::PopFont();
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92);
+            if (ImGui::Button("Refresh", ImVec2(92, 0))) scenes = FindScenes();
+            ImGui::Spacing();
             if (player.empty())
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Player runtime not found next to the launcher.");
-            else if (scenes.empty())
-                ImGui::TextDisabled("No games found. Build one from the editor (File > Build Game), "
-                                    "then put it next to the launcher or in a 'games' folder.");
-            else
+            else if (scenes.empty()) {
+                ImGui::Dummy(ImVec2(0, 12));
+                ImGui::TextDisabled("No games found yet.");
+                ImGui::TextWrapped("Build one from the editor (File > Build Game), then put it "
+                                   "next to the launcher or in a 'games' folder and hit Refresh.");
+            } else
                 for (std::size_t i = 0; i < scenes.size(); ++i) {
                     ImGui::PushID((int)i);
-                    if (ImGui::Button("Play", ImVec2(70, 0))) Launch(player, scenes[i].string());
-                    ImGui::SameLine();
-                    ImGui::TextUnformatted(scenes[i].filename().string().c_str());
-                    ImGui::SameLine();
+                    ImGui::BeginChild("game", ImVec2(0, 60), true);
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+                    ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s",
+                                       scenes[i].filename().string().c_str());
                     ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8);
+                    if (ImGui::Button("Play", ImVec2(80, 40))) Launch(player, scenes[i].string());
+                    ImGui::EndChild();
                     ImGui::PopID();
                 }
         } else {                                          // ---- Marketplace ----
-            ImGui::TextColored(ImVec4(0.85f, 0.9f, 1.0f, 1.0f), "Marketplace");
+            ImGui::PushFont(nullptr);
+            ImGui::TextColored(kTitle, "Marketplace");
+            ImGui::PopFont();
             ImGui::TextDisabled("Starter templates — open one in the editor (New Project) to begin.");
-            ImGui::Separator();
+            ImGui::Spacing();
             for (const auto& t : templates) {
-                ImGui::BeginChild(t.name, ImVec2(0, 64), true);
+                ImGui::PushID(t.name);
+                ImGui::BeginChild(t.name, ImVec2(0, 70), true);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
                 ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.95f, 1.0f), "%s", t.name);
                 ImGui::TextDisabled("%s", t.desc);
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
-                ImGui::PushID(t.name);
-                if (ImGui::Button("Open", ImVec2(86, 0))) Launch(editor);
-                ImGui::PopID();
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 6);
+                ImGui::BeginDisabled(editor.empty());
+                if (ImGui::Button("Open", ImVec2(90, 44))) LaunchEditor(editor);
+                ImGui::EndDisabled();
                 ImGui::EndChild();
+                ImGui::PopID();
             }
             ImGui::Dummy(ImVec2(0, 8));
             ImGui::TextDisabled("Community content marketplace coming soon.");

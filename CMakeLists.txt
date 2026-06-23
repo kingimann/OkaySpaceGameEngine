@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.112.0
+    VERSION 2.134.0
     DESCRIPTION "A Unity-inspired C++ game engine"
     LANGUAGES CXX)
 
@@ -60,6 +60,30 @@ endif()
 # The editor's "Build Game" ships this runtime, so build it alongside the editor.
 if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)
     add_subdirectory(player)
+endif()
+
+# ---- Ship SDL2.dll beside the binaries (Unity-style dynamic linking) ----
+# Unless fully static (OKAY_STATIC_SDL), the Windows exes link SDL2 dynamically and
+# need SDL2.dll next to them. Copy it into the output bin dir so a build is runnable
+# in place and "Build Game" / packaging can grab it from there.
+if(WIN32 AND NOT OKAY_STATIC_SDL AND DEFINED SDL2_DIR)
+    # SDL2_DIR is .../<triple>/lib/cmake/SDL2; the DLL lives at .../<triple>/bin/SDL2.dll.
+    set(_okay_sdl_dll "")
+    foreach(_up "/../../../bin/SDL2.dll" "/../../bin/SDL2.dll")
+        get_filename_component(_cand "${SDL2_DIR}${_up}" ABSOLUTE)
+        if(EXISTS "${_cand}")
+            set(_okay_sdl_dll "${_cand}")
+            break()
+        endif()
+    endforeach()
+    if(_okay_sdl_dll)
+        add_custom_target(okay_copy_sdl2 ALL
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_okay_sdl_dll}" "${CMAKE_BINARY_DIR}/bin/"
+            COMMENT "Copying SDL2.dll next to the OkaySpace binaries")
+    else()
+        message(WARNING "SDL2.dll not found at ${_okay_sdl_dll}; ship it manually or use -DOKAY_STATIC_SDL=ON.")
+    endif()
 endif()
 
 # ---- Tests ------------------------------------------------------------

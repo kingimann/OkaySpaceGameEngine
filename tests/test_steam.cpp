@@ -56,6 +56,45 @@ int main() {
     CHECK(!svc->CloudHasFile("save.dat"));
     CHECK(svc->CloudRead("missing.dat").empty());
 
+    // Steam Cloud: enumerate stored files.
+    CHECK(svc->CloudEnabled());
+    CHECK(svc->CloudFiles().empty());
+    CHECK(svc->CloudWrite("a.sav", "1"));
+    CHECK(svc->CloudWrite("b.sav", "2"));
+    {
+        auto files = svc->CloudFiles();
+        CHECK(files.size() == 2);
+        CHECK(files[0] == "a.sav" && files[1] == "b.sav");   // sorted
+    }
+
+    // Steam Workshop: publish auto-subscribes, query browses, (un)subscribe toggles.
+    {
+        WorkshopItem item;
+        item.title = "Crimson Canyon";
+        item.description = "A desert combat map";
+        item.contentPath = "/maps/crimson";
+        item.tags = {"map", "pvp"};
+        std::uint64_t id = svc->WorkshopPublish(item);
+        CHECK(id != 0);
+        CHECK(svc->WorkshopIsSubscribed(id));
+        CHECK(svc->WorkshopItemPath(id) == "/maps/crimson");
+        CHECK(svc->WorkshopSubscribedItems().size() == 1);
+
+        std::uint64_t id2 = svc->WorkshopPublish({0, "Forest Arena", "", "/maps/forest", {"map"}, false, false});
+        CHECK(id2 != 0 && id2 != id);
+        CHECK(svc->WorkshopQuery("", 10).size() == 2);          // all items
+        CHECK(svc->WorkshopQuery("crimson", 10).size() == 1);   // title match
+        CHECK(svc->WorkshopQuery("pvp", 10).size() == 1);       // tag match
+        CHECK(svc->WorkshopQuery("map", 10).size() == 2);       // tag on both
+
+        CHECK(svc->WorkshopUnsubscribe(id));
+        CHECK(!svc->WorkshopIsSubscribed(id));
+        CHECK(svc->WorkshopItemPath(id).empty());               // no longer installed
+        CHECK(svc->WorkshopSubscribedItems().size() == 1);      // only Forest Arena left
+        CHECK(svc->WorkshopSubscribe(id));
+        CHECK(svc->WorkshopIsSubscribed(id));
+    }
+
     svc->ActivateOverlay("achievements");   // no-op in sim, just shouldn't crash
     CHECK(svc->FriendCount() == 0);
 

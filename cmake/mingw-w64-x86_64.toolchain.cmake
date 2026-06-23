@@ -17,6 +17,14 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 
-# Produce a self-contained .exe that runs without extra MinGW runtime DLLs.
-set(CMAKE_EXE_LINKER_FLAGS_INIT
-    "-static -static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
+# Link the C/C++ runtime (libgcc, libstdc++, winpthread) statically so no MinGW
+# runtime DLLs are needed, but switch back to -Bdynamic afterwards so SDL2 links
+# against its import library — i.e. ship one SDL2.dll beside the exe (Unity-style).
+# Configure with -DOKAY_STATIC_SDL=ON to fully static-link into a single .exe instead.
+if(OKAY_STATIC_SDL)
+    set(CMAKE_EXE_LINKER_FLAGS_INIT
+        "-static -static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
+else()
+    set(CMAKE_EXE_LINKER_FLAGS_INIT
+        "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic")
+endif()

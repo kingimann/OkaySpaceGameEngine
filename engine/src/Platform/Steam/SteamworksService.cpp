@@ -88,6 +88,85 @@ public:
             SteamFriends()->SetRichPresence(key.c_str(), value.c_str());
     }
 
+    // ---- Steam Cloud (ISteamRemoteStorage) -----------------------------
+    bool CloudWrite(const std::string& file, const std::string& data) override {
+        return m_ready && SteamRemoteStorage() &&
+               SteamRemoteStorage()->FileWrite(file.c_str(), data.data(), (int32)data.size());
+    }
+    std::string CloudRead(const std::string& file) const override {
+        if (!m_ready || !SteamRemoteStorage() || !SteamRemoteStorage()->FileExists(file.c_str()))
+            return {};
+        int32 size = SteamRemoteStorage()->GetFileSize(file.c_str());
+        std::string buf(size, '\0');
+        int32 read = SteamRemoteStorage()->FileRead(file.c_str(), buf.data(), size);
+        buf.resize(read > 0 ? read : 0);
+        return buf;
+    }
+    bool CloudHasFile(const std::string& file) const override {
+        return m_ready && SteamRemoteStorage() && SteamRemoteStorage()->FileExists(file.c_str());
+    }
+    bool CloudDelete(const std::string& file) override {
+        return m_ready && SteamRemoteStorage() && SteamRemoteStorage()->FileDelete(file.c_str());
+    }
+    std::vector<std::string> CloudFiles() const override {
+        std::vector<std::string> names;
+        if (!m_ready || !SteamRemoteStorage()) return names;
+        int32 count = SteamRemoteStorage()->GetFileCount();
+        for (int32 i = 0; i < count; ++i) {
+            int32 size = 0;
+            const char* name = SteamRemoteStorage()->GetFileNameAndSize(i, &size);
+            if (name) names.emplace_back(name);
+        }
+        return names;
+    }
+    bool CloudEnabled() const override {
+        return m_ready && SteamRemoteStorage() &&
+               SteamRemoteStorage()->IsCloudEnabledForAccount() &&
+               SteamRemoteStorage()->IsCloudEnabledForApp();
+    }
+
+    // ---- Workshop (ISteamUGC) ------------------------------------------
+    // Subscribe / unsubscribe / install queries are synchronous; publishing is
+    // an async multi-step flow on the real SDK and is left to higher-level tools.
+    bool WorkshopSubscribe(std::uint64_t id) override {
+        if (!m_ready || !SteamUGC()) return false;
+        SteamUGC()->SubscribeItem((PublishedFileId_t)id);
+        return true;
+    }
+    bool WorkshopUnsubscribe(std::uint64_t id) override {
+        if (!m_ready || !SteamUGC()) return false;
+        SteamUGC()->UnsubscribeItem((PublishedFileId_t)id);
+        return true;
+    }
+    bool WorkshopIsSubscribed(std::uint64_t id) const override {
+        if (!m_ready || !SteamUGC()) return false;
+        return (SteamUGC()->GetItemState((PublishedFileId_t)id) & k_EItemStateSubscribed) != 0;
+    }
+    std::string WorkshopItemPath(std::uint64_t id) const override {
+        if (!m_ready || !SteamUGC()) return {};
+        uint64 sizeOnDisk = 0; char folder[1024] = {0}; uint32 timestamp = 0;
+        if (SteamUGC()->GetItemInstallInfo((PublishedFileId_t)id, &sizeOnDisk,
+                                           folder, sizeof(folder), &timestamp))
+            return std::string(folder);
+        return {};
+    }
+    std::vector<WorkshopItem> WorkshopSubscribedItems() const override {
+        std::vector<WorkshopItem> rows;
+        if (!m_ready || !SteamUGC()) return rows;
+        uint32 n = SteamUGC()->GetNumSubscribedItems();
+        std::vector<PublishedFileId_t> ids(n);
+        if (n > 0) SteamUGC()->GetSubscribedItems(ids.data(), n);
+        for (auto id : ids) {
+            WorkshopItem it;
+            it.id = (std::uint64_t)id;
+            it.subscribed = true;
+            it.contentPath = WorkshopItemPath(it.id);
+            it.installed = !it.contentPath.empty();
+            rows.push_back(it);
+        }
+        return rows;
+    }
+
 private:
     bool m_ready = false;
 };

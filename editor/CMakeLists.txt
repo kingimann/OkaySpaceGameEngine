@@ -54,7 +54,8 @@ add_executable(okay-editor main.cpp EditorState.cpp)
 target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
 set_target_properties(okay-editor PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    OUTPUT_NAME "OkayEngine")    # the name the launcher looks for
 
 # Headless self-test of the editor's (non-GUI) logic for CI.
 if(OKAY_BUILD_TESTS)

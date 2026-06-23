@@ -2097,6 +2097,36 @@ struct OkayScriptVM::Impl {
             Steam::Get().ActivateOverlay(a.empty() ? "friends" : a[0].AsString());
             return Value{};
         };
+        // Steam Cloud extras.
+        b["steam_cloud_has"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Steam::Get().CloudHasFile(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["steam_cloud_delete"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Steam::Get().CloudDelete(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["steam_cloud_count"] = [](std::vector<Value>&) {
+            return Value{(float)Steam::Get().CloudFiles().size()};
+        };
+        // Steam Workshop (community content).
+        b["steam_workshop_publish"] = [](std::vector<Value>& a) {
+            WorkshopItem it;
+            if (a.size() >= 1) it.title = a[0].AsString();
+            if (a.size() >= 2) it.contentPath = a[1].AsString();
+            if (a.size() >= 3) it.description = a[2].AsString();
+            return Value{(float)Steam::Get().WorkshopPublish(it)};
+        };
+        b["steam_workshop_subscribe"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Steam::Get().WorkshopSubscribe((std::uint64_t)a[0].AsFloat())) ? 1.0f : 0.0f};
+        };
+        b["steam_workshop_unsubscribe"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Steam::Get().WorkshopUnsubscribe((std::uint64_t)a[0].AsFloat())) ? 1.0f : 0.0f};
+        };
+        b["steam_workshop_count"] = [](std::vector<Value>&) {
+            return Value{(float)Steam::Get().WorkshopSubscribedItems().size()};
+        };
+        b["steam_workshop_path"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? std::string{} : Steam::Get().WorkshopItemPath((std::uint64_t)a[0].AsFloat())};
+        };
         // Scriptable Objects: read reusable .okaydata assets (item/enemy/level
         // definitions, config). Loaded + cached by path.
         b["data_num"] = [](std::vector<Value>& a) -> Value {

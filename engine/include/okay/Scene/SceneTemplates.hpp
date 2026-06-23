@@ -18,6 +18,8 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
+#include "okay/Components/TopDownController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
@@ -38,6 +40,81 @@ namespace okay {
 /// learn from or extend. These touch only the public Scene/Component API, so the
 /// editor and tests can both use them.
 namespace Templates {
+
+// ---- Premade players (added to an EXISTING scene) --------------------------
+// These drop a ready-to-play player into the current scene (rather than building
+// a whole new scene), so the editor can offer "Add > Player" shortcuts. Each
+// returns the player GameObject so the caller can select it.
+
+/// A standard physics body for a player: the blocky Character + Rigidbody3D + a
+/// capsule-ish box collider wrapping feet->head.
+inline GameObject* BuildPlayerBody(Scene& scene, const Vec3& pos, const char* name) {
+    GameObject* player = scene.CreateGameObject(name);
+    player->transform->localPosition = pos;
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    auto* col = player->AddComponent<BoxCollider3D>();
+    col->size = {0.6f, 1.8f, 0.6f};
+    col->offset = {0.0f, 0.9f, 0.0f};
+    return player;
+}
+
+/// Find an existing Camera in the scene, or create a "Main Camera" if there is none.
+inline GameObject* EnsureMainCamera(Scene& scene) {
+    for (const auto& go : scene.Objects())
+        if (go->GetComponent<Camera>()) return go.get();
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {0, 3, 6};
+    return camObj;
+}
+
+/// Add a third-person player (orbit camera positioned by the controller).
+inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<ThirdPersonController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Add a first-person player (camera mounted as a child at eye height).
+inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<FirstPersonController>();
+    GameObject* camObj = scene.CreateGameObject("Player Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->SetParent(player->transform, false);
+    camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height
+    return player;
+}
+
+/// Add a click-to-move player (point-and-click; controller drives a follow camera).
+inline GameObject* AddClickToMovePlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<ClickToMoveController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Add a top-down player (twin-stick / ARPG; fixed high angled follow camera).
+inline GameObject* AddTopDownPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<TopDownController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Add a third-person shooter player (over-the-shoulder aim; cursor locked).
+inline GameObject* AddThirdPersonShooterPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<ThirdPersonShooterController>();
+    EnsureMainCamera(scene);
+    return player;
+}
 
 /// A side-scrolling platformer starter: a follow camera, a physics player on a
 /// wide ground, and a spinning coin pickup.
@@ -183,6 +260,67 @@ inline void ThirdPerson(Scene& scene) {
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
     camObj->transform->localPosition = {0, 3, 6};
+}
+
+/// A third-person SHOOTER starter: the blocky Character driven by a
+/// ThirdPersonShooterController (over-the-shoulder aim, RMB aims, LMB fires), on a
+/// ground with some cover crates and a row of shootable targets to aim at.
+inline void ThirdPersonShooter(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Third Person Shooter");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -35, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {40, 1, 40};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube();
+    gmr->color = Color::FromBytes(88, 96, 104);
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    // Cover crates to strafe around.
+    const Vec3 crates[4] = {{4, 0.5f, -5}, {-4, 0.5f, -6}, {6, 0.5f, 2}, {-6, 0.5f, 3}};
+    for (int i = 0; i < 4; ++i) {
+        GameObject* c = scene.CreateGameObject("Crate");
+        c->transform->localPosition = crates[i];
+        auto* mr = c->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = Color::FromBytes(150, 120, 80);
+        c->AddComponent<BoxCollider3D>();
+        c->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+
+    // A row of red "targets" downrange to aim at.
+    for (int i = 0; i < 5; ++i) {
+        GameObject* t = scene.CreateGameObject("Target");
+        t->transform->localPosition = {(float)(i - 2) * 2.5f, 1.0f, -12.0f};
+        auto* mr = t->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Sphere();
+        mr->color = Color::FromBytes(200, 70, 60);
+        mr->emissive = Color::FromBytes(60, 10, 10);
+        t->AddComponent<SphereCollider3D>();
+    }
+
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = {0, 1.0f, 0};
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};
+    }
+    player->AddComponent<ThirdPersonShooterController>();
+
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {0, 2, 5};
 }
 
 /// A point-and-click starter (RuneScape / Diablo style): the blocky Character

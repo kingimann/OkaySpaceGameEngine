@@ -1,5 +1,246 @@
 OkaySpace Game Engine — Changelog
 
+v2.134.0  (Friendly Action names, double jump + no infinite jump, fly-cam fix)
+  - Visual scripting (Actions) is much easier to read: every condition and instruction
+    now has a plain-English name (e.g. "Set Variable", "Play Sound", "Move Toward Object"
+    instead of set_var / play_sound / move_toward), grouped into categories, with a hover
+    tooltip explaining what it does AND a hint of what values to type. The saved files are
+    unchanged, so existing projects still load.
+  - Jumping: fixed "I can jump forever" — jumps now refill only when you actually touch
+    the ground, so the brief weightless moment at the top of a jump no longer hands you a
+    free one. Added a Max Jumps option to the first/third-person and shooter controllers
+    (1 = single, 2 = double jump, ...).
+  - Fixed the Free Roam (fly) camera's horizontal look being inverted.
+
+v2.133.0  (Real crouch, head up/down, body lean, fly camera, all UI shapes preview)
+  - Crouch fixed for real: measured the rig's kinematics so a deep knee-fold raises the
+    feet by exactly the body drop — the character now squats with feet planted on the
+    ground and the head lowered, instead of floating or sinking.
+  - Head movement: the head now also tilts UP and DOWN (not just left/right) as you aim
+    in third person and the shooter, and all head motion eases smoothly instead of
+    snapping (configurable headTurnSpeed).
+  - Lean now leans the PLAYER'S BODY, not just the camera. And regular third person no
+    longer moves the camera when leaning — only the body leans (the camera stays put);
+    first person and the third-person shooter still peek the camera AND lean the body.
+    Lean was also added to the third-person shooter.
+  - New Free Roam (Fly) Controller: drop it on a Camera to fly around — WASD along the
+    view, Space / C (or Ctrl) up and down, mouse look (hold right-mouse, or lock the
+    cursor), Shift to boost. Great for spectating, debugging or a no-clip creative mode.
+  - UI shapes now preview in the editor for EVERY shape on panels and images — Circle,
+    Pill and the polygons draw their true silhouette in the Scene view (before, only the
+    new polygons showed; circles/pills looked like plain boxes). The built game already
+    rendered them; this makes the editor match. Added tooltips explaining the Shape field.
+
+v2.132.0  (New UI widgets + menu parity)
+  - Two new UI widgets, fully wired (inspector, scene serialization, game render,
+    editor preview):
+      * UI Stepper — a [-] value [+] numeric picker with min/max/step, optional
+        whole-numbers and wrap; fires script on_change().
+      * UI Rating  — a row of star (diamond) ratings; click to set, optional half
+        stars and read-only display; fires on_change().
+  - Menu parity: the GameObject > UI menu now lists everything the inspector's Add
+    Component does (added Radial Progress, Tabs, Draggable, Drop Target — plus the new
+    Stepper and Rating), so both ways of adding UI offer the same set.
+
+v2.131.0  (UI shapes, lean, head-look, UI authoring zoom)
+  - UI: six new widget shapes beside Rectangle/Rounded/Circle/Pill — Triangle, Diamond,
+    Hexagon, Octagon (chamfered), Parallelogram and Trapezoid. They fill, clip and
+    hit-test like the others (single source of truth), and the editor previews them
+    faithfully. Octagon/Parallelogram/Trapezoid use the corner-radius value for their
+    cut/skew/inset. Available on panels, images, buttons, inputs, dropdowns, progress
+    bars and slider tracks.
+  - UI editing: zoom into the UI in the Scene view with Ctrl+Wheel (zooms toward the
+    cursor) and pan with a middle-mouse drag, so tiny widgets are easy to place — the
+    Game view still shows the true 1:1 layout. "UI 1:1" button resets it.
+  - UI snapping: configurable snap distance, and resize now snaps to sibling centers
+    (not just edges) like move does.
+  - Controllers: lean around corners with Q/E (first & third person) — the camera rolls
+    and peeks sideways; angle/offset/keys are all configurable.
+  - Characters: the head now turns/tilts to look where you aim — in third person the
+    avatar's head follows the camera as you orbit; in first person it tilts with your
+    pitch (visible to other players / in shadows).
+  - Deeper, better-grounded crouch (follows up on v2.130's stance fix).
+
+v2.130.0  (Crouch & prone poses fixed)
+  - Fixed the crouch and prone body poses, which floated in the air ("sitting on an
+    invisible chair" / "L on the ground"). The rig's root is pinned at hip height, so
+    rotating bones alone couldn't lower the body — added a per-stance body drop so the
+    whole character actually sinks to the ground.
+  - Crouch is now a real low squat with the feet planted; prone lays the whole body flat
+    on the floor (hips rotate the body down, legs trail straight back, head lifted to look
+    ahead) instead of bending at the waist.
+
+v2.129.0  (Run / crouch / prone for the FP & TP controllers)
+  - Running is now built in: Sprint defaults to Shift (hold), with an optional Toggle Run
+    so a tap latches running until you tap again.
+  - Crouch (Ctrl) and Prone (Z) stances on both the First and Third Person controllers,
+    each with their own speed. First person lowers the eye height; third person drops the
+    camera's look target. Toggle (tap) or hold, configurable per stance.
+  - New crouch and prone character animations (anim 6 / 7) drive automatically from the
+    controllers, so the body reads its stance for shadows and other players.
+  - Lots of new customization in the inspector: sprint/crouch/prone key pickers (None /
+    Shift / Ctrl / letters), toggle-run & toggle-stance, crouch/prone speeds, eye heights
+    (FP) / camera drops (TP), and a stance-ease (smoothing) control. All saved with the scene.
+  - Modifier keys (Shift / Ctrl) are now fed to gameplay by the editor Play mode and the
+    standalone player.
+
+v2.128.0  (Third-person camera inversion fix)
+  - Fixed the third-person camera feeling inverted: mouse-right now orbits the camera
+    right and mouse-up looks up, matching the first-person controller. Both the
+    Third Person and Third Person Shooter controllers were corrected (the shooter was
+    inverted on both axes). invertX / invertY still flip each axis if you want.
+
+v2.127.0  (Turn-based / RPG components, Steam Workshop + Cloud, OkayEngine rename)
+  - RPG / turn-based building blocks: three new components under an "RPG / Turn-Based"
+    Add Component category, each with a full inspector and scene serialization.
+      * Stats     — health/mana, level + XP (auto level-up that raises caps and refills),
+                    strength/defense/intelligence/agility; TakeDamage mitigates by defense
+                    (min 1), fires on_death; AddXP fires on_level_up.
+      * Inventory — capacity-limited slots that auto-stack; Add/Remove/Count/Has, fires
+                    on_inventory_changed.
+      * TurnManager — ordered participants with turn/round tracking; Start/EndTurn fire
+                    on_turn_start, on_round_start; SetTurn/Remove for combat flow.
+  - Steam Workshop (UGC): publish/update community items, subscribe/unsubscribe, browse
+    with WorkshopQuery, and resolve installed item folders. Works in the in-memory
+    simulation for development; the real backend maps to ISteamUGC. New steam_workshop_*
+    OkayScript builtins.
+  - Steam Cloud: added file enumeration (CloudFiles) and CloudEnabled, plus
+    SteamManager pass-throughs and steam_cloud_has / steam_cloud_delete / steam_cloud_count
+    script builtins. The real backend maps Cloud to ISteamRemoteStorage.
+  - Renamed the editor executable to OkayEngine.exe (was OkaySpaceEngine.exe). The launcher
+    still finds older installs by name, and the window title is now "OkayEngine".
+
+v2.126.0  (Launcher updater fix)
+  - The launcher updater never downgrades: it only fetches a build when the published
+    version is strictly newer than what's installed, and the startup auto-check shows the
+    local version instead of silently pulling an older binary. Fixes "it downloads 2.97".
+
+v2.125.0  (Third-person shooter scene template)
+  - New "Third Person Shooter" starter scene (Templates::ThirdPersonShooter): a
+    playable over-the-shoulder level with a directional light, a ground, cover crates,
+    a row of shootable target spheres, and the player wired with the
+    ThirdPersonShooterController + camera. Available in New Project / templates next to
+    First Person and Third Person.
+
+v2.124.0  (Build Settings: graphics / quality + cursor lock)
+  - The Build Game dialog gained a Graphics / Quality group so a shipped game ships
+    with the look you want: per-pixel lighting, shadows, bloom, ambient occlusion,
+    FXAA, and 2x anti-aliasing — plus a Lock cursor option (hide + lock on launch).
+  - These are written into game.okayconfig and applied by the player at startup
+    (renderer effect toggles + supersample factor + Cursor lock), giving full control
+    over a built game's quality without touching code.
+
+v2.123.0  (Third-person SHOOTER controller + cursor lock/hide)
+  - New ThirdPersonShooterController: over-the-shoulder aim camera, the body always
+    faces where you look (strafe shooter), mouse look, right-mouse aim (camera zooms
+    in over the shoulder), left-mouse fire (calls the script's on_fire()). Momentum +
+    forgiving jump + camera collision, like the other controllers.
+  - New Unity-style Cursor API (Cursor.lockState / .visible / Capture(on)). The player
+    applies it: locked = hidden, centred cursor with relative-motion mouse look; free =
+    normal cursor. The shooter locks the cursor on play (toggle: Lock Cursor).
+  - GameObject > Player > Third Person Shooter premade, Add Component entry, full
+    inspector, scene serialization. New shooter test; 78 tests pass.
+
+v2.122.0  (fix controller jump, FPS default no 2x AA, uncapped vsync)
+  - First/third-person jump works again in every scene (grounded uses the reliable
+    vertical-velocity check, not contacts-only); fixes stuck-in-fall-animation.
+  - 3D anti-aliasing 2x OFF by default (it rendered 4x the pixels — the ~10 FPS cause,
+    bad on HiDPI). Cheap FXAA still smooths edges; opt back in under View.
+  - VSync off by default = uncapped FPS (no 60 Hz cap); toggle under View > VSync.
+
+v2.121.0  (packaging: consistent names, one entry point, no stale auto-download)
+  - The build now produces the exact exe names the tools expect: the launcher is
+    OkaySpace.exe (the one thing to double-click), the editor OkaySpaceEngine.exe, the
+    runtime OkaySpacePlayer.exe. This stops the launcher from thinking the engine was
+    "missing" and silently downloading an OLDER copy under a different name (the source
+    of duplicate exes and the stuck-on-2.97 version).
+  - The launcher no longer phones home on startup: the published GitHub build can lag
+    this one, so an auto-check used to install an older engine and mislead with "up to
+    date". Updates are now opt-in via the button; the footer shows the bundled version.
+  - Organized install layout: OkaySpace.exe + SDL2.dll at the top, the editor + player
+    tucked in an Engine/ subfolder. The launcher searches that subfolder, and the
+    editor finds the launcher one level up for its gate.
+
+v2.120.0  (packaging: Unity-style — ship SDL2.dll)
+  - The Windows build now links SDL2 dynamically and ships SDL2.dll beside the
+    executables (Unity-style), instead of static-linking it into every exe. The C/C++
+    runtime (libgcc/libstdc++/winpthread) stays static, so SDL2.dll is the ONLY DLL
+    needed — no MinGW-runtime DLL pile.
+  - Result: much smaller binaries (editor 19 MB -> 8 MB, player 19 -> 6, launcher
+    16 -> 4) that share one 1.8 MB SDL2.dll. CMake copies SDL2.dll into the output bin
+    dir automatically. Configure with -DOKAY_STATIC_SDL=ON for the old single-exe build.
+
+v2.119.0  (UI: soft / blurred drop shadows)
+  - UIPanel and UIButton gain a Shadow Blur (shadowSoftness): 0 = a crisp shadow,
+    higher = a soft penumbra for the premium card look. The player fakes the blur by
+    stacking a few expanding, fading copies of the shape behind the widget.
+  - Inspector blur sliders + back-compatible serialization. uishape suite extended
+    (softness round-trip); 78 tests pass.
+
+v2.118.0  (UI: segmented tab control)
+  - New UITabs component: a segmented control / tab bar — a row of equal segments
+    where exactly one is selected (settings tabs, difficulty pickers, view switches).
+    Clicking a segment sets `value` and calls the script's on_change(). Pill/rounded
+    silhouette, track + selected + per-state text colors, edit the tab list inline.
+  - Hit-testing maps a click to the right segment (shared SegmentAt() used by the
+    player and tests). Add Component entry, inspector, and scene serialization.
+    uishape suite extended (segment mapping + select clamp + round-trip); 78 tests pass.
+
+v2.117.0  (no-clip: transform-only players collide with walls/floors)
+  - Players moved by the Transform (no Rigidbody3D) no longer clip through geometry.
+    New Physics3D::ResolveSphere depenetrates a body sphere out of solid colliders
+    (box/sphere/capsule, ignoring triggers and the player itself), and a shared
+    ResolvePlayerBody helper applies it after movement.
+  - Wired into all four 3D controllers (First/Third Person, Top Down, Click To Move)
+    on their transform-only path, so every player kind is stopped by walls and floors
+    even without a physics body. (Rigidbody players still collide via physics.)
+  - New test: a transform-only player is stopped by a wall instead of passing through.
+    78 tests pass.
+
+v2.116.0  (new Top-Down controller + premade player)
+  - New TopDownController (twin-stick / ARPG / RTS-hero): WASD/left-stick movement on
+    the XZ plane with momentum (accel/decel), turn-to-face-travel, world- or
+    camera-relative axes, and a fixed high, angled follow camera (distance / pitch /
+    yaw / damping). Drives a Character's walk/run animation.
+  - GameObject > Player > Top Down drops a fully wired top-down player into the scene
+    (Templates::AddTopDownPlayer), plus an Add Component entry and full inspector.
+  - Back-compatible serialization. New top-down move + premade tests; 78 tests pass.
+
+v2.115.0  (controllers polished + premade-player shortcuts)
+  - First-person controller now matches third-person feel: movement momentum
+    (accel/decel + air control) and a forgiving jump (grounded-from-contacts +
+    coyote time + jump buffer) replacing the old apex double-jump check.
+  - Click-to-move controller eases to a stop over an Arrive Radius so arrivals no
+    longer jolt.
+  - New "GameObject > Player" shortcuts: Third Person / First Person / Click To Move
+    drop a fully wired player (Character + controller + Rigidbody3D + collider, and a
+    camera — child-mounted for first person) straight into the current scene. Backed
+    by reusable Templates::Add*Player helpers.
+  - All new fields are in the inspector and saved with the scene (back-compatible).
+    New premade-player test; 78 tests pass.
+
+v2.114.0  (third-person controller: feel + no camera clipping)
+  - Movement now has momentum: horizontal velocity eases toward the target with
+    tunable acceleration/deceleration and reduced air control, so starts and stops
+    have weight instead of snapping.
+  - Reliable grounded detection from collision contacts, with coyote time (jump just
+    after a ledge) and a jump buffer (press just before landing) — fixing the old
+    mid-air double-jump at the jump apex.
+  - Camera spring arm: the third-person camera casts to the player and pulls in when a
+    wall/floor is in the way, so the view never clips through geometry (new
+    Physics3D::Raycast ignore-parameter to skip the player). Smoother default follow.
+  - All new fields are in the inspector and saved with the scene (back-compatible).
+    New camera spring-arm test; 78 tests pass.
+
+v2.113.0  (launcher: polish + editor launch gate)
+  - Polished the launcher UI: modern rounded theme, generous spacing, the version is
+    shown next to the logo and in the window title, card-style Play list and
+    Marketplace entries, and a Tips panel on Create.
+  - The editor is now gated behind the launcher: it only starts when opened via the
+    launcher (which passes a --launcher <pid> handshake) AND that launcher is still
+    running. Double-clicking the editor directly bounces the user to the launcher and
+    exits. A development bypass (OKAY_DEV=1 or --dev) keeps local/CI builds runnable.
+
 v2.112.0  (UI: radial spinner / indeterminate loader)
   - UIRadialProgress gains a Spin mode: the arc rotates continuously (spinSpeed deg/s)
     for an indeterminate loading spinner — with a small value it's the classic loader.

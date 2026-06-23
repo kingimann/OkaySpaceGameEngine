@@ -13,6 +13,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
@@ -308,6 +309,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << td->acceleration << " " << td->deceleration << " " << (td->cameraRelative ? 1 : 0) << " "
             << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
             << td->lookHeight << " " << td->cameraDamping << "\n";
+    }
+    if (auto* ts = go->GetComponent<ThirdPersonShooterController>()) {
+        out << "  tpsctrl " << ts->walkSpeed << " " << ts->runSpeed << " " << ts->jumpForce << " "
+            << (ts->sprintKey ? ts->sprintKey : '-') << " " << (ts->canJump ? 1 : 0) << " "
+            << (ts->driveAnimation ? 1 : 0) << " " << ts->turnSpeed << " "
+            << ts->acceleration << " " << ts->deceleration << " " << ts->airControl << " "
+            << ts->coyoteTime << " " << ts->jumpBufferTime << " "
+            << ts->mouseSensitivity << " " << (ts->invertY ? 1 : 0) << " "
+            << ts->minPitch << " " << ts->maxPitch << " " << ts->distance << " " << ts->cameraHeight << " "
+            << ts->shoulderOffset << " " << (ts->cameraCollision ? 1 : 0) << " " << ts->cameraCollisionSkin << " "
+            << ts->aimButton << " " << ts->aimDistance << " " << ts->aimShoulder << " " << ts->aimSpeed << " "
+            << ts->fireButton << " " << (ts->autoFire ? 1 : 0) << " " << ts->fireRate << " "
+            << (ts->lockCursor ? 1 : 0) << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -1082,6 +1096,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> td->lookHeight >> td->cameraDamping;
                     td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
+                } else if (field == "tpsctrl") {
+                    auto* ts = go->AddComponent<ThirdPersonShooterController>();
+                    std::string sk = "-"; int cj = 1, da = 1, iy = 0, cc = 1, af = 0, lc = 1;
+                    in >> ts->walkSpeed >> ts->runSpeed >> ts->jumpForce >> sk >> cj >> da >> ts->turnSpeed
+                       >> ts->acceleration >> ts->deceleration >> ts->airControl
+                       >> ts->coyoteTime >> ts->jumpBufferTime
+                       >> ts->mouseSensitivity >> iy >> ts->minPitch >> ts->maxPitch >> ts->distance >> ts->cameraHeight
+                       >> ts->shoulderOffset >> cc >> ts->cameraCollisionSkin
+                       >> ts->aimButton >> ts->aimDistance >> ts->aimShoulder >> ts->aimSpeed
+                       >> ts->fireButton >> af >> ts->fireRate >> lc;
+                    ts->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
+                    ts->canJump = (cj != 0); ts->driveAnimation = (da != 0); ts->invertY = (iy != 0);
+                    ts->cameraCollision = (cc != 0); ts->autoFire = (af != 0); ts->lockCursor = (lc != 0);
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
                     go->AddComponent<Mover>()->velocity = v;

@@ -1285,6 +1285,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(okay::Templates::AddFirstPersonPlayer(ed.scene()));
                 ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
             }
+            if (ImGui::MenuItem("Third Person Shooter")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddThirdPersonShooterPlayer(ed.scene()));
+                ConsoleLog("Added Third-Person Shooter player"); ed.dirty = true; created = true;
+            }
             if (ImGui::MenuItem("Top Down")) {
                 ed.PushUndo();
                 ed.Select(okay::Templates::AddTopDownPlayer(ed.scene()));
@@ -6012,6 +6017,36 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##td")) toRemove = td;
         }
     }
+    if (auto* ts = go->GetComponent<ThirdPersonShooterController>()) {
+        if (CompHeader("Third Person Shooter Controller", ts, &toRemove)) {
+            ImGui::SeparatorText("Movement");
+            if (ImGui::DragFloat("Walk Speed##tps", &ts->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Air Control##tps", &ts->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            ImGui::SeparatorText("Look / Camera");
+            if (ImGui::DragFloat("Sensitivity##tps", &ts->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Invert Y##tps", &ts->invertY)) ed.dirty = true;
+            if (ImGui::DragFloat("Distance##tps", &ts->distance, 0.1f, 1.0f, 15.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Camera Height##tps", &ts->cameraHeight, 0.05f, 0.0f, 4.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Shoulder Offset##tps", &ts->shoulderOffset, 0.02f, -2.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Camera Collision##tps", &ts->cameraCollision)) ed.dirty = true;
+            ImGui::SeparatorText("Aim & Fire");
+            if (ImGui::DragInt("Aim Button##tps", &ts->aimButton, 0.1f, 0, 4)) ed.dirty = true;
+            if (ImGui::DragFloat("Aim Distance##tps", &ts->aimDistance, 0.05f, 0.5f, 10.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Aim Shoulder##tps", &ts->aimShoulder, 0.02f, -2.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragInt("Fire Button##tps", &ts->fireButton, 0.1f, 0, 4)) ed.dirty = true;
+            if (ImGui::Checkbox("Auto Fire##tps", &ts->autoFire)) ed.dirty = true;
+            if (ts->autoFire)
+                if (ImGui::DragFloat("Fire Rate##tps", &ts->fireRate, 0.2f, 0.5f, 30.0f, "%.1f /s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Left mouse fires; calls the script's on_fire()");
+            if (ImGui::Checkbox("Lock Cursor##tps", &ts->lockCursor)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor while playing (Unity-style)");
+            ImGui::TextDisabled("Over-the-shoulder aim. Body faces the camera; RMB aims, LMB fires.");
+            if (ImGui::SmallButton("Remove##tps")) toRemove = ts;
+        }
+    }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         if (CompHeader("Click To Move Controller", cm, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##ctm", &cm->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -7247,6 +7282,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { go->AddComponent<FirstPersonController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { go->AddComponent<ThirdPersonController>(); ed.dirty = true; }
             if (item(!go->GetComponent<TopDownController>(), "Top Down Controller")) { go->AddComponent<TopDownController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { go->AddComponent<ThirdPersonShooterController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

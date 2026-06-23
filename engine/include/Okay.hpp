@@ -21,6 +21,7 @@
 
 // Input
 #include "okay/Input/Input.hpp"
+#include "okay/Input/Cursor.hpp"
 
 // Rendering
 #include "okay/Render/Color.hpp"
@@ -120,6 +121,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"

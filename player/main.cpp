@@ -342,13 +342,28 @@ int main(int argc, char** argv) {
         Input::FeedKeys(down);
         Input::FeedGamepad(padAxis, padMask);
 
-        // Feed the mouse (position in pixels + left/right/middle button state).
-        int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+        // Apply the game's requested cursor state (Unity-style Cursor lock/visibility).
+        static Vec2 s_virtualMouse{0, 0};
+        bool locked = Cursor::IsLocked();
+        SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+        SDL_ShowCursor(Cursor::visible ? SDL_ENABLE : SDL_DISABLE);
+
+        // Feed the mouse (position in pixels + left/right/middle button state). When
+        // locked we accumulate relative motion into a virtual position so the
+        // controllers' look deltas keep working with a hidden, centred cursor.
+        int mx, my; Uint32 mb;
+        if (locked) {
+            int rx, ry; mb = SDL_GetRelativeMouseState(&rx, &ry);
+            s_virtualMouse.x += (float)rx; s_virtualMouse.y += (float)ry;
+        } else {
+            int ax, ay; mb = SDL_GetMouseState(&ax, &ay);
+            s_virtualMouse = Vec2{(float)ax, (float)ay};
+        }
         unsigned mask = 0;
         if (mb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
         if (mb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
         if (mb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
-        Input::FeedMouse(Vec2{(float)mx, (float)my}, mask);
+        Input::FeedMouse(s_virtualMouse, mask);
 
         Uint64 now = SDL_GetPerformanceCounter();
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());

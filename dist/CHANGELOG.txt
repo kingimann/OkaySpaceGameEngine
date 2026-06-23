@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.123.0  (Third-person SHOOTER controller + cursor lock/hide)
+  - New ThirdPersonShooterController: over-the-shoulder aim camera, the body always
+    faces where you look (strafe shooter), mouse look, right-mouse aim (camera zooms
+    in over the shoulder), left-mouse fire (calls the script's on_fire()). Momentum +
+    forgiving jump + camera collision, like the other controllers.
+  - New Unity-style Cursor API (Cursor.lockState / .visible / Capture(on)). The player
+    applies it: locked = hidden, centred cursor with relative-motion mouse look; free =
+    normal cursor. The shooter locks the cursor on play (toggle: Lock Cursor).
+  - GameObject > Player > Third Person Shooter premade, Add Component entry, full
+    inspector, scene serialization. New shooter test; 78 tests pass.
+
+v2.122.0  (fix controller jump, FPS default no 2x AA, uncapped vsync)
+  - First/third-person jump works again in every scene (grounded uses the reliable
+    vertical-velocity check, not contacts-only); fixes stuck-in-fall-animation.
+  - 3D anti-aliasing 2x OFF by default (it rendered 4x the pixels — the ~10 FPS cause,
+    bad on HiDPI). Cheap FXAA still smooths edges; opt back in under View.
+  - VSync off by default = uncapped FPS (no 60 Hz cap); toggle under View > VSync.
+
 v2.121.0  (packaging: consistent names, one entry point, no stale auto-download)
   - The build now produces the exact exe names the tools expect: the launcher is
     OkaySpace.exe (the one thing to double-click), the editor OkaySpaceEngine.exe, the

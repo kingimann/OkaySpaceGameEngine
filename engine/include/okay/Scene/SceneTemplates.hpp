@@ -18,6 +18,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/Light.hpp"
@@ -103,6 +104,14 @@ inline GameObject* AddClickToMovePlayer(Scene& scene, const Vec3& pos = {0, 1, 0
 inline GameObject* AddTopDownPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<TopDownController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Add a third-person shooter player (over-the-shoulder aim; cursor locked).
+inline GameObject* AddThirdPersonShooterPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    player->AddComponent<ThirdPersonShooterController>();
     EnsureMainCamera(scene);
     return player;
 }

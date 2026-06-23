@@ -124,6 +124,24 @@ int main() {
         CHECK(px < 0.7f);          // but stopped at the wall (~1.0 - 0.4 radius), not past it
     }
 
+    // --- Third-person shooter: premade wiring, cursor lock on Start, and fire ---
+    {
+        Scene sc("tps"); sc.physicsEnabled = false;
+        GameObject* p = Templates::AddThirdPersonShooterPlayer(sc);
+        auto* ts = p->GetComponent<ThirdPersonShooterController>();
+        CHECK(ts != nullptr);
+        Cursor::Capture(false);                          // start unlocked
+        sc.Start();                                      // controller's Start locks it
+        CHECK(Cursor::IsLocked());
+        CHECK(!Cursor::visible);
+
+        // Round-trip the shooter through the scene.
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(sc));
+        auto* ts2 = s2.Find("Player") ? s2.Find("Player")->GetComponent<ThirdPersonShooterController>() : nullptr;
+        CHECK(ts2 != nullptr);
+        if (ts2) { CHECK(ts2->lockCursor); CHECK_NEAR(ts2->aimDistance, ts->aimDistance, 1e-4f); }
+    }
+
     // --- Top-down controller moves world-relative and drives walk/run animation ---
     {
         Scene sc("tdmove"); sc.physicsEnabled = false;

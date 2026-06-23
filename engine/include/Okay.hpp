@@ -153,3 +153,8 @@
 #include "okay/Platform/Steam/SteamService.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Components/SteamManager.hpp"
+
+// Player accounts (sign-in/register; local backend by default, online when an
+// auth server is configured)
+#include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Account/Account.hpp"

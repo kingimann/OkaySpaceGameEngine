@@ -8,6 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "AppIcon.hpp"
+#include "okay/Platform/Account/AccountService.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -397,7 +398,33 @@ int main(int argc, char** argv) {
         {"Snake",          "The classic, fully playable."},
     };
 
-    int tab = 0; // 0 Create, 1 Play, 2 Marketplace
+    // ---- Account ----
+    // Online when an auth server URL is provided (env var or a server.txt next
+    // to the launcher); otherwise a local, on-disk account works out of the box.
+    namespace acct = okay::account;
+    std::string serverUrl;
+    if (const char* env = std::getenv("OKAY_ACCOUNT_SERVER")) serverUrl = env;
+    if (serverUrl.empty()) {
+        std::ifstream sf(fs::path(g_exeDir) / "account_server.txt");
+        if (sf) { std::getline(sf, serverUrl);
+            while (!serverUrl.empty() && (serverUrl.back() == '\r' ||
+                   serverUrl.back() == '\n' || serverUrl.back() == ' '))
+                serverUrl.pop_back();
+        }
+    }
+    acct::AccountService account(acct::DefaultConfigDir(fs::path(g_exeDir)), serverUrl);
+    // If we resumed a saved session against an online server, make sure it's
+    // still valid (the token may have been revoked/expired); this signs the
+    // player out if so. Offline or local accounts are left as-is.
+    account.VerifySession();
+    char acctUser[64] = {0};
+    char acctPass[64] = {0};
+    bool acctRegisterMode = false;       // false = sign in, true = create account
+    std::string acctMessage;             // last error/status, shown under the form
+    bool acctMessageError = true;
+    bool acctBusy = false;
+
+    int tab = 0; // 0 Create, 1 Play, 2 Marketplace, 3 Account
     bool running = true;
     while (running) {
         SDL_Event e;
@@ -434,14 +461,24 @@ int main(int argc, char** argv) {
         ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
         ImGui::TextDisabled("game engine");
         ImGui::Dummy(ImVec2(0, 16));
-        const char* navs[]  = {"  Create", "  Play", "  Marketplace"};
-        const char* navIco[] = {"+", ">", "*"};
-        for (int i = 0; i < 3; ++i) {
+        const char* navs[]  = {"  Create", "  Play", "  Marketplace", "  Account"};
+        const char* navIco[] = {"+", ">", "*", "@"};
+        for (int i = 0; i < 4; ++i) {
             char lbl[48];
             std::snprintf(lbl, sizeof(lbl), "  %s  %s", navIco[i], navs[i] + 2);
             if (ImGui::Selectable(lbl, tab == i, 0, ImVec2(0, 40))) tab = i;
         }
         ImGui::PopFont();
+
+        // Show who's signed in, just under the nav items.
+        ImGui::Dummy(ImVec2(0, 6));
+        if (account.IsLoggedIn()) {
+            ImGui::TextDisabled("Signed in as");
+            ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "%s",
+                               account.CurrentSession().username.c_str());
+        } else {
+            ImGui::TextDisabled("Not signed in");
+        }
 
         // ---- Update status (pinned to the bottom of the nav) ----
         UpState st = GetState();
@@ -521,7 +558,7 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                     ImGui::PopID();
                 }
-        } else {                                          // ---- Marketplace ----
+        } else if (tab == 2) {                            // ---- Marketplace ----
             ImGui::PushFont(nullptr);
             ImGui::TextColored(kTitle, "Marketplace");
             ImGui::PopFont();
@@ -543,6 +580,81 @@ int main(int argc, char** argv) {
             }
             ImGui::Dummy(ImVec2(0, 8));
             ImGui::TextDisabled("Community content marketplace coming soon.");
+        } else {                                          // ---- Account ----
+            ImGui::PushFont(nullptr);
+            ImGui::TextColored(kTitle, "Account");
+            ImGui::PopFont();
+
+            if (account.IsLoggedIn()) {
+                const auto& s = account.CurrentSession();
+                ImGui::Dummy(ImVec2(0, 8));
+                ImGui::Text("Signed in as");
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "%s", s.username.c_str());
+                ImGui::TextDisabled("%s", account.IsOnline()
+                    ? "Online account." : "Local account (stored on this device).");
+                ImGui::Dummy(ImVec2(0, 18));
+                if (ImGui::Button("Sign out", ImVec2(200, 48))) {
+                    account.Logout();
+                    acctMessage.clear();
+                    acctUser[0] = acctPass[0] = '\0';
+                }
+            } else {
+                ImGui::TextWrapped(account.IsOnline()
+                    ? "Sign in to your OkaySpace account to sync your work."
+                    : "Create a local OkaySpace account on this device. Set "
+                      "OKAY_ACCOUNT_SERVER (or account_server.txt) to sign in online.");
+                if (account.IsOnline()) {
+                    ImGui::TextDisabled("Server: %s", account.ServerUrl().c_str());
+                }
+                ImGui::Dummy(ImVec2(0, 12));
+
+                // Sign in / Create account toggle.
+                if (ImGui::RadioButton("Sign in", !acctRegisterMode)) {
+                    acctRegisterMode = false; acctMessage.clear();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Create account", acctRegisterMode)) {
+                    acctRegisterMode = true; acctMessage.clear();
+                }
+                ImGui::Dummy(ImVec2(0, 8));
+
+                ImGui::PushItemWidth(320);
+                ImGui::InputTextWithHint("##acctUser", "Username", acctUser, sizeof(acctUser));
+                bool submit = ImGui::InputTextWithHint("##acctPass", "Password", acctPass,
+                                  sizeof(acctPass), ImGuiInputTextFlags_Password |
+                                  ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::PopItemWidth();
+                ImGui::Dummy(ImVec2(0, 8));
+
+                const char* btn = acctRegisterMode ? "Create account" : "Sign in";
+                ImGui::BeginDisabled(acctBusy);
+                if (ImGui::Button(btn, ImVec2(200, 48)) || submit) {
+                    acctBusy = true;
+                    acct::Result r = acctRegisterMode
+                        ? account.Register(acctUser, acctPass)
+                        : account.Login(acctUser, acctPass);
+                    acctBusy = false;
+                    acctMessageError = !r.ok;
+                    if (r.ok) {
+                        acctMessage.clear();
+                        // Don't leave the password sitting in memory longer than needed.
+                        std::fill(acctPass, acctPass + sizeof(acctPass), '\0');
+                    } else {
+                        acctMessage = r.error;
+                    }
+                }
+                ImGui::EndDisabled();
+
+                if (!acctMessage.empty()) {
+                    ImGui::Dummy(ImVec2(0, 6));
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1)
+                                                        : ImVec4(0.55f, 0.9f, 0.6f, 1),
+                                       "%s", acctMessage.c_str());
+                    ImGui::PopTextWrapPos();
+                }
+            }
         }
 
         ImGui::EndChild();

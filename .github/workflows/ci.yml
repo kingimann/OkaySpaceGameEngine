@@ -42,4 +42,4 @@ jobs:
             -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_TESTS=OFF \
             -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON
           cmake --build build-editor -j
-          ./build-editor/bin/okay-editor --selftest
+          ./build-editor/bin/OkayEngine --selftest

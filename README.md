@@ -280,6 +280,16 @@ The launcher checks GitHub for a newer version, pulls it, rebuilds, and starts
 the game. Handy flags: `--check-only`, `--no-update`, `--no-run`,
 `--game <name>`, and `-- <args passed to the game>`.
 
+The launcher's **Account** tab lets a player sign in or create an account, and
+the engine exposes the same accounts to games via `okay::Account` and the
+`account_*` OkayScript builtins. Out of the box accounts are stored locally on
+the device (passwords salted and hashed with SHA-256, never in plaintext); point
+it at an auth server with `OKAY_ACCOUNT_SERVER` (or an `account_server.txt` next
+to the launcher) to go online. There's a runnable reference server in
+[`examples/account-server/`](examples/account-server/server.py). See
+[docs/accounts.md](docs/accounts.md) for the full guide, server contract, and
+script API.
+
 ### 3. Build from source with CMake
 
 ```bash

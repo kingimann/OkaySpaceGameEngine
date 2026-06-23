@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Minimal reference auth server for OkaySpace accounts.
+
+It speaks the exact contract the engine/launcher account client expects:
+
+    POST /register   {"username": "...", "password": "..."}
+    POST /login      {"username": "...", "password": "..."}
+
+  * On success: HTTP 200 with JSON  {"token": "<opaque session token>"}
+  * On failure: HTTP 4xx with JSON  {"error": "<human-readable reason>"}
+
+This is intentionally tiny and dependency-free (Python standard library only)
+so you can run it locally to try the online backend end to end. It is NOT
+production-ready: it stores accounts in a local JSON file and issues random
+in-memory tokens. Put a real database, TLS, and rate limiting in front of it
+before shipping.
+
+Run it:
+
+    python3 examples/account-server/server.py            # listens on :8080
+
+Then point the launcher or engine at it:
+
+    export OKAY_ACCOUNT_SERVER=http://localhost:8080
+    ./build/bin/OkaySpace                                # Account tab -> online
+
+(Use https:// with a real certificate in production — the client sends the
+password in the request body.)
+"""
+import hashlib
+import json
+import os
+import secrets
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit, parse_qs
+
+DB_PATH = os.environ.get("OKAY_ACCOUNT_DB", "accounts.json")
+LB_PATH = os.environ.get("OKAY_LEADERBOARD_DB", "leaderboards.json")
+HOST = os.environ.get("OKAY_ACCOUNT_HOST", "0.0.0.0")
+PORT = int(os.environ.get("OKAY_ACCOUNT_PORT", "8080"))
+
+# Issued session tokens -> username (in memory; lost on restart).
+SESSIONS = {}
+
+
+def _load(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
+def load_db():
+    return _load(DB_PATH)
+
+
+def save_db(db):
+    _save(DB_PATH, db)
+
+
+# Leaderboards: { board_name: { username: best_score } }.
+def load_lb():
+    return _load(LB_PATH)
+
+
+def save_lb(lb):
+    _save(LB_PATH, lb)
+
+
+def hash_password(password, salt):
+    # PBKDF2-HMAC-SHA256; a real server can tune the iteration count up.
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"),
+                             bytes.fromhex(salt), 200_000)
+    return dk.hex()
+
+
+def issue_token(username):
+    token = secrets.token_hex(24)
+    SESSIONS[token] = username
+    return token
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, status, obj):
+        payload = json.dumps(obj).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length else b""
+        try:
+            return json.loads(raw or b"{}")
+        except json.JSONDecodeError:
+            return None
+
+    def do_POST(self):
+        body = self._read_json()
+        if body is None:
+            return self._send(400, {"error": "Malformed JSON."})
+        path = urlsplit(self.path).path.rstrip("/")
+
+        # Authenticated cloud save: POST /cloud/<key>  {"data": "..."}
+        cloud_key = self._cloud_key(path)
+        if cloud_key is not None:
+            rec = self._bearer_record()
+            if rec is None:
+                return self._send(401, {"error": "Invalid or expired session."})
+            rec.setdefault("cloud", {})[cloud_key] = body.get("data", "")
+            db = load_db(); db[rec["username"].lower()] = rec; save_db(db)
+            return self._send(200, {"ok": True})
+
+        # Authenticated score submit: POST /leaderboard/<board>  {"score": N}
+        board = self._board(path)
+        if board is not None:
+            rec = self._bearer_record()
+            if rec is None:
+                return self._send(401, {"error": "Invalid or expired session."})
+            try:
+                score = int(body.get("score", 0))
+            except (TypeError, ValueError):
+                return self._send(400, {"error": "Score must be a number."})
+            lb = load_lb()
+            board_scores = lb.setdefault(board, {})
+            name = rec["username"]
+            if score > board_scores.get(name, -(2 ** 62)):   # keep the best
+                board_scores[name] = score
+            save_lb(lb)
+            return self._send(200, {"ok": True})
+
+        username = (body.get("username") or "").strip()
+        password = body.get("password") or ""
+        if not username or not password:
+            return self._send(400, {"error": "Username and password are required."})
+
+        db = load_db()
+        key = username.lower()
+
+        if path == "/register":
+            if key in db:
+                return self._send(409, {"error": "That username is already taken."})
+            salt = secrets.token_hex(16)
+            db[key] = {"username": username, "salt": salt,
+                       "hash": hash_password(password, salt)}
+            save_db(db)
+            return self._send(200, {"token": issue_token(username)})
+
+        if path == "/login":
+            rec = db.get(key)
+            if not rec or hash_password(password, rec["salt"]) != rec["hash"]:
+                return self._send(401, {"error": "Invalid username or password."})
+            return self._send(200, {"token": issue_token(rec["username"])})
+
+        return self._send(404, {"error": "Unknown endpoint."})
+
+    def do_DELETE(self):
+        cloud_key = self._cloud_key(self.path.rstrip("/"))
+        rec = self._bearer_record()
+        if rec is None:
+            return self._send(401, {"error": "Invalid or expired session."})
+        if cloud_key is None:
+            return self._send(404, {"error": "Unknown endpoint."})
+        rec.get("cloud", {}).pop(cloud_key, None)
+        db = load_db(); db[rec["username"].lower()] = rec; save_db(db)
+        return self._send(200, {"ok": True})
+
+    @staticmethod
+    def _cloud_key(path):
+        """The save slot name for a /cloud/<key> path, else None."""
+        if path.startswith("/cloud/"):
+            return path[len("/cloud/"):]
+        return None
+
+    @staticmethod
+    def _board(path):
+        """The board name for a /leaderboard/<board> path, else None."""
+        if path.startswith("/leaderboard/"):
+            return path[len("/leaderboard/"):]
+        return None
+
+    def _bearer_user(self):
+        """The username for the request's bearer token, or None."""
+        auth = self.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return None
+        return SESSIONS.get(auth[len("Bearer "):].strip())
+
+    def _bearer_record(self):
+        """The account record for the request's bearer token, or None."""
+        user = self._bearer_user()
+        return load_db().get(user.lower()) if user else None
+
+    def do_GET(self):
+        # Authenticated endpoints: the client sends Authorization: Bearer <token>.
+        user = self._bearer_user()
+        split = urlsplit(self.path)
+        path = split.path.rstrip("/")
+        query = parse_qs(split.query)
+
+        if path == "/verify":
+            if not user:
+                return self._send(401, {"error": "Invalid or expired session."})
+            return self._send(200, {"username": user})
+
+        if path == "/profile":   # sample protected resource
+            if not user:
+                return self._send(401, {"error": "Invalid or expired session."})
+            return self._send(200, {"username": user, "level": 1, "coins": 0})
+
+        # Cloud saves: GET /cloud lists slots; GET /cloud/<key> reads one.
+        if path == "/cloud" or path.startswith("/cloud/"):
+            rec = self._bearer_record()
+            if rec is None:
+                return self._send(401, {"error": "Invalid or expired session."})
+            cloud = rec.get("cloud", {})
+            cloud_key = self._cloud_key(path)
+            if cloud_key is None:                      # GET /cloud
+                return self._send(200, {"keys": sorted(cloud.keys())})
+            if cloud_key not in cloud:                 # GET /cloud/<key>
+                return self._send(404, {"error": "No such save slot."})
+            return self._send(200, {"data": cloud[cloud_key]})
+
+        # Leaderboard: GET /leaderboard/<board>?count=N -> top entries.
+        board = self._board(path)
+        if board is not None:
+            if not user:
+                return self._send(401, {"error": "Invalid or expired session."})
+            try:
+                count = int(query.get("count", ["10"])[0])
+            except (TypeError, ValueError):
+                count = 10
+            scores = load_lb().get(board, {})
+            ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+            entries = [f"{i + 1},{name},{score}"
+                       for i, (name, score) in enumerate(ranked[:max(0, count)])]
+            return self._send(200, {"entries": entries})
+
+        return self._send(404, {"error": "Unknown endpoint."})
+
+    # Quieter logging.
+    def log_message(self, fmt, *args):
+        print("[account-server] " + (fmt % args))
+
+
+def main():
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"OkaySpace account server listening on http://{HOST}:{PORT} "
+          f"(db: {DB_PATH})")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down.")
+
+
+if __name__ == "__main__":
+    main()

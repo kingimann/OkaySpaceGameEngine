@@ -44,7 +44,12 @@ endif()
 
 add_executable(okayspace-launcher main.cpp)
 target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
-target_include_directories(okayspace-launcher PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+# shared/ for the launcher's AppIcon, and the engine's public headers for the
+# (header-only) account service it shares with the engine. The launcher doesn't
+# link the engine library — the account core needs only the standard library.
+target_include_directories(okayspace-launcher PRIVATE
+    ${CMAKE_SOURCE_DIR}/shared
+    ${CMAKE_SOURCE_DIR}/engine/include)
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
 set_target_properties(okayspace-launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

@@ -20,6 +20,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
+#include "okay/Platform/Account/Account.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -2126,6 +2127,74 @@ struct OkayScriptVM::Impl {
         };
         b["steam_workshop_path"] = [](std::vector<Value>& a) {
             return Value{a.empty() ? std::string{} : Steam::Get().WorkshopItemPath((std::uint64_t)a[0].AsFloat())};
+        };
+        // ---- Player accounts (shared process-wide service) ------------
+        // account_login("user","pass") / account_register(...) return 1 on
+        // success and 0 on failure; account_error() carries the reason.
+        b["account_register"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            return Value{Account::Register(a[0].AsString(), a[1].AsString()).ok ? 1.0f : 0.0f};
+        };
+        b["account_login"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            return Value{Account::Login(a[0].AsString(), a[1].AsString()).ok ? 1.0f : 0.0f};
+        };
+        b["account_logout"] = [](std::vector<Value>&) { Account::Logout(); return Value{}; };
+        b["account_is_logged_in"] = [](std::vector<Value>&) { return Value{Account::IsLoggedIn() ? 1.0f : 0.0f}; };
+        b["account_is_online"] = [](std::vector<Value>&) { return Value{Account::IsOnline() ? 1.0f : 0.0f}; };
+        b["account_username"] = [](std::vector<Value>&) { return Value{Account::Username()}; };
+        b["account_token"]    = [](std::vector<Value>&) { return Value{Account::Token()}; };
+        b["account_error"]    = [](std::vector<Value>&) { return Value{Account::LastError()}; };
+        // Re-check the saved session with the server (signs out if rejected).
+        b["account_verify"]   = [](std::vector<Value>&) { return Value{Account::VerifySession() ? 1.0f : 0.0f}; };
+        // Authenticated requests to the account server (bearer token attached).
+        // account_get(path) / account_post(path, json) return the response body,
+        // or "" if the request didn't reach a 2xx (offline, not signed in, ...).
+        b["account_get"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            auto r = Account::Api(a[0].AsString(), "GET");
+            return Value{r.ok ? r.body : std::string{}};
+        };
+        b["account_post"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            auto r = Account::Api(a[0].AsString(), "POST", a.size() > 1 ? a[1].AsString() : std::string{});
+            return Value{r.ok ? r.body : std::string{}};
+        };
+        // Cloud saves: per-account storage on the server so progress follows the
+        // player across devices. cloud_save("slot1", save_text) etc.
+        b["cloud_save"] = [](std::vector<Value>& a) {
+            return Value{(a.size() >= 2 && Account::CloudSave(a[0].AsString(), a[1].AsString())) ? 1.0f : 0.0f};
+        };
+        b["cloud_load"] = [](std::vector<Value>& a) {
+            return Value{a.empty() ? std::string{} : Account::CloudLoad(a[0].AsString())};
+        };
+        b["cloud_has"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Account::CloudHas(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["cloud_delete"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Account::CloudDelete(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["cloud_list"] = [](std::vector<Value>&) {
+            Value v = Value::MakeArray();
+            if (auto arr = v.AsArray())
+                for (auto& k : Account::CloudList()) arr->push_back(Value{k});
+            return v;
+        };
+        // Server leaderboards: leaderboard_submit("high", score) keeps the
+        // player's best; leaderboard_top("high", n) returns "rank,name,score"
+        // strings (same shape as steam_leaderboard_top).
+        b["leaderboard_submit"] = [](std::vector<Value>& a) {
+            return Value{(a.size() >= 2 && Account::LeaderboardSubmit(a[0].AsString(), (long)a[1].AsFloat())) ? 1.0f : 0.0f};
+        };
+        b["leaderboard_top"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeArray();
+            auto arr = v.AsArray();
+            if (!a.empty() && arr) {
+                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                for (auto& e : Account::LeaderboardTop(a[0].AsString(), n))
+                    arr->push_back(Value{std::to_string(e.rank) + "," + e.name + "," + std::to_string(e.score)});
+            }
+            return v;
         };
         // Scriptable Objects: read reusable .okaydata assets (item/enemy/level
         // definitions, config). Loaded + cached by path.

@@ -67,6 +67,13 @@ account::Result Account::Login(const std::string& username, const std::string& p
 
 void Account::Logout() { Get().Logout(); }
 
+bool Account::VerifySession() { return Get().VerifySession(); }
+
+account::ApiResponse Account::Api(const std::string& path, const std::string& method,
+                                 const std::string& jsonBody) {
+    return Get().Api(path, method, jsonBody);
+}
+
 std::string Account::LastError() { return LastErr(); }
 
 } // namespace okay

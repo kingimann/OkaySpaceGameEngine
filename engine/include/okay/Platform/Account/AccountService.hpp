@@ -230,6 +230,17 @@ struct Result {
     Session     session;
 };
 
+/// Result of an authenticated request to the account server (see Api). `ok` is
+/// true for a 2xx response; `reached` is false when the server couldn't be
+/// contacted at all (offline / DNS / TLS). `status` is the HTTP status code
+/// (0 when not reached) and `body` is the raw response body.
+struct ApiResponse {
+    bool        ok      = false;
+    bool        reached = false;
+    long        status  = 0;
+    std::string body;
+};
+
 /// A client-side account service. Construct it with a config directory (where
 /// the local database and the saved session live) and, optionally, a server
 /// URL to use the online backend.
@@ -271,6 +282,40 @@ public:
         session_ = {};
         std::error_code ec;
         fs::remove(SessionPath(), ec);
+    }
+
+    /// Make an authenticated request to the account server, attaching the
+    /// current session token as `Authorization: Bearer <token>`. `path` is the
+    /// part after the server URL (e.g. "/profile"); `method` defaults to GET.
+    /// `jsonBody`, when non-empty, is sent as an application/json body.
+    ///
+    /// Use this to build server features on top of accounts (cloud saves,
+    /// profiles, ...). Returns a not-reached response for the local backend or
+    /// when no one is signed in.
+    ApiResponse Api(const std::string& path, const std::string& method = "GET",
+                    const std::string& jsonBody = {}) const {
+        if (!IsOnline() || !session_.loggedIn) return {};
+        std::string url = serverUrl_;
+        if (!url.empty() && url.back() == '/') url.pop_back();
+        url += path.empty() || path.front() == '/' ? path : ("/" + path);
+        return HttpRequest(method, url, jsonBody, /*authToken=*/session_.token);
+    }
+
+    /// Confirm the saved session is still valid with the server (GET /verify
+    /// with the bearer token). On a definitive rejection (401/403) the local
+    /// session is cleared so the player is signed out. Network errors leave the
+    /// session intact (so being offline doesn't sign players out). The local
+    /// backend has nothing to check, so it just reports whether someone is in.
+    bool VerifySession() {
+        if (!session_.loggedIn) return false;
+        if (!IsOnline()) return true;
+        ApiResponse r = Api("/verify");
+        if (!r.reached) return true;                 // offline: keep the session
+        if (r.status == 401 || r.status == 403) {    // token revoked/expired
+            Logout();
+            return false;
+        }
+        return r.ok;
     }
 
 private:
@@ -390,33 +435,65 @@ private:
 
     // ---- remote backend ------------------------------------------------
     // POST {"username":..,"password":..} to <serverUrl>/<action>; a 2xx
-    // response is expected to contain a "token" field. We shell out to curl so
-    // the launcher needs no HTTP library and reuses the system's TLS stack.
+    // response is expected to contain a "token" field.
     Result RemoteAuth(const std::string& action, const std::string& username,
                       const std::string& password) {
-        std::error_code ec;
-        fs::path body = fs::temp_directory_path(ec) / ("okay_acct_" + detail::RandomHex(6) + ".json");
-        fs::path resp = fs::temp_directory_path(ec) / ("okay_acct_" + detail::RandomHex(6) + ".out");
-        {
-            std::ofstream b(body, std::ios::trunc);
-            b << "{\"username\":\"" << detail::JsonEscape(username)
-              << "\",\"password\":\"" << detail::JsonEscape(password) << "\"}";
-        }
         std::string url = serverUrl_;
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += "/" + action;
 
-        // We deliberately don't use curl's -f/--fail: on an HTTP error (401,
-        // 409, ...) that flag discards the response body, and we want to read
-        // the server's {"error": "..."} message. Instead we save the body to a
-        // file and capture the status code (printed by -w) to a second file, so
-        // we can tell success from failure and still show the server's reason.
-        fs::path code = fs::temp_directory_path(ec) / ("okay_acct_" + detail::RandomHex(6) + ".code");
-        std::string cmd =
-            "curl -s -X POST -H \"Content-Type: application/json\" "
-            "--data-binary @\"" + body.string() + "\" "
-            "-o \"" + resp.string() + "\" -w \"%{http_code}\" \"" + url + "\" "
-            "> \"" + code.string() + "\"";
+        std::string body = "{\"username\":\"" + detail::JsonEscape(username) +
+                           "\",\"password\":\"" + detail::JsonEscape(password) + "\"}";
+        // No bearer token yet — this is how the player gets one.
+        ApiResponse r = HttpRequest("POST", url, body, /*authToken=*/{});
+
+        if (!r.reached)
+            return Fail("Couldn't reach the account server (offline or unreachable).");
+        if (!r.ok) {
+            std::string serverErr = detail::JsonField(r.body, "error");
+            return Fail(serverErr.empty()
+                ? ("Account server rejected the request (HTTP " + std::to_string(r.status) + ").")
+                : serverErr);
+        }
+        std::string token = detail::JsonField(r.body, "token");
+        if (token.empty()) return Fail("Server response was missing a session token.");
+        return Succeed(username, token);
+    }
+
+    // Perform one HTTP request via the system `curl` so the launcher/engine need
+    // no HTTP library and reuse the platform's TLS stack. Secrets (the request
+    // body and the auth header) are passed through files, never argv, so they
+    // don't show up in the process list. We avoid curl's -f/--fail because it
+    // discards the response body on HTTP errors and we want the server's
+    // {"error": ...} message; instead we capture the status code via -w.
+    ApiResponse HttpRequest(const std::string& method, const std::string& url,
+                            const std::string& jsonBody,
+                            const std::string& authToken) const {
+        std::error_code ec;
+        fs::path dir   = fs::temp_directory_path(ec);
+        std::string id = detail::RandomHex(8);
+        fs::path resp  = dir / ("okay_acct_" + id + ".out");
+        fs::path code  = dir / ("okay_acct_" + id + ".code");
+        fs::path bodyF = dir / ("okay_acct_" + id + ".json");
+        fs::path cfgF  = dir / ("okay_acct_" + id + ".cfg");
+
+        std::string cmd = "curl -s -X " + method +
+            " -o \"" + resp.string() + "\" -w \"%{http_code}\"";
+
+        // Headers/secrets go in a curl config file (-K), keeping them out of argv.
+        std::string cfg;
+        if (!authToken.empty())
+            cfg += "header = \"Authorization: Bearer " + authToken + "\"\n";
+        if (!jsonBody.empty()) {
+            std::ofstream(bodyF, std::ios::trunc) << jsonBody;
+            cfg += "header = \"Content-Type: application/json\"\n";
+            cmd += " --data-binary @\"" + bodyF.string() + "\"";
+        }
+        if (!cfg.empty()) {
+            std::ofstream(cfgF, std::ios::trunc) << cfg;
+            cmd += " -K \"" + cfgF.string() + "\"";
+        }
+        cmd += " \"" + url + "\" > \"" + code.string() + "\"";
 #if !defined(_WIN32)
         cmd += " 2>/dev/null";
 #endif
@@ -426,28 +503,16 @@ private:
             std::ifstream r(p, std::ios::binary);
             std::stringstream ss; ss << r.rdbuf(); return ss.str();
         };
-        std::string out  = slurp(resp);
+        ApiResponse out;
+        out.body = slurp(resp);
         std::string codeS = slurp(code);
-        fs::remove(body, ec);
-        fs::remove(resp, ec);
-        fs::remove(code, ec);
+        fs::remove(resp, ec); fs::remove(code, ec);
+        fs::remove(bodyF, ec); fs::remove(cfgF, ec);
 
-        long status = 0;
-        try { status = std::stol(codeS); } catch (...) { status = 0; }
-
-        // curl itself failed (DNS, TLS, connection refused) — no HTTP exchange.
-        if (rc != 0 || status == 0)
-            return Fail("Couldn't reach the account server (offline or unreachable).");
-
-        if (status < 200 || status >= 300) {
-            std::string serverErr = detail::JsonField(out, "error");
-            return Fail(serverErr.empty()
-                ? ("Account server rejected the request (HTTP " + std::to_string(status) + ").")
-                : serverErr);
-        }
-        std::string token = detail::JsonField(out, "token");
-        if (token.empty()) return Fail("Server response was missing a session token.");
-        return Succeed(username, token);
+        try { out.status = std::stol(codeS); } catch (...) { out.status = 0; }
+        out.reached = (rc == 0 && out.status != 0);
+        out.ok = out.reached && out.status >= 200 && out.status < 300;
+        return out;
     }
 };
 

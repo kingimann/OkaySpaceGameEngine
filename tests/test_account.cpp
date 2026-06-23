@@ -60,6 +60,13 @@ int main() {
         acct::Result login = svc.Login("alice", "s3cret!");
         CHECK(login.ok);
         CHECK(svc.IsLoggedIn());
+
+        // Local backend: a session is always "valid" (nothing to check), and
+        // authenticated requests aren't reached (no server).
+        CHECK(svc.VerifySession());
+        acct::ApiResponse r = svc.Api("/profile");
+        CHECK(!r.reached);
+        CHECK(!r.ok);
     }
 
     // ---- session persists across service instances ----

@@ -50,6 +50,20 @@ int main() {
     CHECK(Account::Login("player1", "s3cret!").ok);
     CHECK(Account::LastError().empty());       // cleared on success
 
+    // Script-side verify + authenticated request on the local backend: verify
+    // reports the signed-in state, and an authed GET returns "" (no server).
+    GameObject* go2 = s.CreateGameObject("Logic2");
+    auto* sc2 = go2->AddComponent<ScriptComponent>("okayscript");
+    sc2->LoadSource(
+        "function start() {\n"
+        "  account_verify();\n"
+        "  account_get(\"/profile\");\n"
+        "}\n");
+    s.Start();
+    s.Update(0.016f);
+    CHECK(Account::IsLoggedIn());                  // local verify keeps the session
+    CHECK(Account::Api("/profile").reached == false);  // no server to reach
+
     Account::Shutdown();
     fs::remove_all(dir);
     TEST_MAIN_RESULT();

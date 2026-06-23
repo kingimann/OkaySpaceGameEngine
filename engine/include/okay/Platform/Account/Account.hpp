@@ -42,6 +42,18 @@ public:
     /// Sign out and forget the saved session.
     static void Logout();
 
+    /// Confirm the saved session is still valid with the server (signs the
+    /// player out on a definitive rejection). Safe to call on launch. Returns
+    /// whether a player remains signed in.
+    static bool VerifySession();
+
+    /// Make an authenticated request to the account server with the current
+    /// session token (Authorization: Bearer ...). For building server features
+    /// on top of accounts (cloud saves, profiles, ...).
+    static account::ApiResponse Api(const std::string& path,
+                                    const std::string& method = "GET",
+                                    const std::string& jsonBody = {});
+
     /// The error message from the most recent Register/Login (empty on success).
     static std::string LastError();
 };

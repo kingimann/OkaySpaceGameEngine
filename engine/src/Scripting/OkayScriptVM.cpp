@@ -2145,6 +2145,21 @@ struct OkayScriptVM::Impl {
         b["account_username"] = [](std::vector<Value>&) { return Value{Account::Username()}; };
         b["account_token"]    = [](std::vector<Value>&) { return Value{Account::Token()}; };
         b["account_error"]    = [](std::vector<Value>&) { return Value{Account::LastError()}; };
+        // Re-check the saved session with the server (signs out if rejected).
+        b["account_verify"]   = [](std::vector<Value>&) { return Value{Account::VerifySession() ? 1.0f : 0.0f}; };
+        // Authenticated requests to the account server (bearer token attached).
+        // account_get(path) / account_post(path, json) return the response body,
+        // or "" if the request didn't reach a 2xx (offline, not signed in, ...).
+        b["account_get"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            auto r = Account::Api(a[0].AsString(), "GET");
+            return Value{r.ok ? r.body : std::string{}};
+        };
+        b["account_post"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            auto r = Account::Api(a[0].AsString(), "POST", a.size() > 1 ? a[1].AsString() : std::string{});
+            return Value{r.ok ? r.body : std::string{}};
+        };
         // Scriptable Objects: read reusable .okaydata assets (item/enemy/level
         // definitions, config). Loaded + cached by path.
         b["data_num"] = [](std::vector<Value>& a) -> Value {

@@ -70,9 +70,30 @@ The server must respond:
   ```
 
 The client stores the returned token (not the password) and stays signed in
-across launches until the player signs out. It does not yet send the token back
-to the server for validation — treat the token as a session handle to build on
-(e.g. add an `Authorization: Bearer <token>` header where you need it).
+across launches until the player signs out.
+
+### Authenticated requests and session validation
+
+Once signed in, the client can make **authenticated requests** to your server:
+it attaches the session token as an `Authorization: Bearer <token>` header (sent
+via a curl config file, so the token never appears in the process list). Use
+this to build server features on top of accounts — cloud saves, profiles,
+leaderboards, and so on. Your server returns `401`/`403` for an
+invalid/expired token.
+
+One endpoint is special:
+
+```
+GET <server>/verify        (Authorization: Bearer <token>)
+```
+
+* valid token → `200` (body optional, e.g. `{"username": "..."}`)
+* invalid/expired/revoked → `401` or `403`
+
+The launcher calls this on startup (and games can call it via
+`account_verify()` / `okay::Account::VerifySession()`): a definitive rejection
+signs the player out, while a network error leaves the session intact so being
+offline doesn't log players out.
 
 ## Try it locally
 
@@ -105,6 +126,9 @@ The engine exposes these builtins, backed by the shared `okay::Account` service:
 | `account_username()` | string | empty when signed out |
 | `account_token()` | string | current session token |
 | `account_error()` | string | reason for the last failed register/login |
+| `account_verify()` | `1` / `0` | re-check the session with the server (signs out if rejected) |
+| `account_get(path)` | string | authenticated GET; response body, or `""` if not 2xx |
+| `account_post(path, json)` | string | authenticated POST; response body, or `""` if not 2xx |
 
 ```javascript
 function start() {
@@ -122,4 +146,11 @@ From C++ the same thing is available through `okay::Account` (see
 ```cpp
 auto r = okay::Account::Login("player1", "s3cret!");
 if (!r.ok) std::cerr << okay::Account::LastError() << "\n";
+
+// Validate a resumed session on launch, then call a protected endpoint.
+if (okay::Account::VerifySession()) {
+    auto resp = okay::Account::Api("/profile");          // GET by default
+    if (resp.ok) std::cout << resp.body << "\n";
+    // POST JSON: okay::Account::Api("/save", "POST", "{\"slot\":1}");
+}
 ```

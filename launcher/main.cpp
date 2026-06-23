@@ -413,6 +413,10 @@ int main(int argc, char** argv) {
         }
     }
     acct::AccountService account(acct::DefaultConfigDir(fs::path(g_exeDir)), serverUrl);
+    // If we resumed a saved session against an online server, make sure it's
+    // still valid (the token may have been revoked/expired); this signs the
+    // player out if so. Offline or local accounts are left as-is.
+    account.VerifySession();
     char acctUser[64] = {0};
     char acctPass[64] = {0};
     bool acctRegisterMode = false;       // false = sign in, true = create account

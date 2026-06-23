@@ -115,6 +115,30 @@ class Handler(BaseHTTPRequestHandler):
 
         return self._send(404, {"error": "Unknown endpoint."})
 
+    def _bearer_user(self):
+        """The username for the request's bearer token, or None."""
+        auth = self.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return None
+        return SESSIONS.get(auth[len("Bearer "):].strip())
+
+    def do_GET(self):
+        # Authenticated endpoints: the client sends Authorization: Bearer <token>.
+        user = self._bearer_user()
+        path = self.path.rstrip("/")
+
+        if path == "/verify":
+            if not user:
+                return self._send(401, {"error": "Invalid or expired session."})
+            return self._send(200, {"username": user})
+
+        if path == "/profile":   # sample protected resource
+            if not user:
+                return self._send(401, {"error": "Invalid or expired session."})
+            return self._send(200, {"username": user, "level": 1, "coins": 0})
+
+        return self._send(404, {"error": "Unknown endpoint."})
+
     # Quieter logging.
     def log_message(self, fmt, *args):
         print("[account-server] " + (fmt % args))

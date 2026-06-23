@@ -62,10 +62,20 @@ jobs:
       # On a tag push, release that tag. On a manual run, create/refresh a
       # release for the version in dist/VERSION.txt (the runner's GITHUB_TOKEN
       # can push the tag).
+      # Upload the zip AND the individual files as release assets. The in-app
+      # updater (launcher + editor) downloads the individual files from
+      # releases/latest/download/<name>, so they must be present as assets.
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.pkg.outputs.zip }}
+          files: |
+            ${{ steps.pkg.outputs.zip }}
+            build-win-dist/OkaySpace.exe
+            build-win-dist/OkayEngine.exe
+            build-win-dist/OkaySpacePlayer.exe
+            build-win-dist/SDL2.dll
+            build-win-dist/VERSION.txt
+            dist/CHANGELOG.txt
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.pkg.outputs.ver) }}
           name: OkaySpace v${{ steps.pkg.outputs.ver }}
           generate_release_notes: true

@@ -52,9 +52,12 @@ namespace {
 std::string g_exeDir = ".";
 std::string g_selfPath;   // absolute path of the running launcher exe
 
-// Raw GitHub URL of the published dist/ folder (where the exes + VERSION live).
+// Where published builds live: the assets of the latest GitHub Release (this is
+// what the release workflow uploads). "releases/latest/download/<name>" always
+// redirects to the newest release's asset, so this never serves a stale binary
+// the way the old raw dist/ URL did.
 const char* kRawBase =
-    "https://raw.githubusercontent.com/kingimann/OkaySpaceGameEngine/main/dist/";
+    "https://github.com/kingimann/OkaySpaceGameEngine/releases/latest/download/";
 
 // ---- Auto-updater ----------------------------------------------------------
 // On startup the launcher checks the published version and, if newer (or a
@@ -252,7 +255,7 @@ int RunUpdateCheck(void*) {
     if (newer) {
         SetUpMsg("Updating launcher...");
         launcherOk = !g_selfPath.empty() &&
-            ReplaceFile(std::string(kRawBase) + "OkaySpace-Launcher.exe",
+            ReplaceFile(std::string(kRawBase) + "OkaySpace.exe",
                         fs::path(g_selfPath), true);
     }
 

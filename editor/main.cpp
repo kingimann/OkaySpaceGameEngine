@@ -314,9 +314,13 @@ std::string LatestRef() {
     return sha.size() >= 7 ? sha : "main";
 }
 
-// A commit-pinned raw URL for a file in dist/ (ref is a SHA or "main").
+// URL of a published file: the named asset of the latest GitHub Release (what
+// the release workflow uploads). "releases/latest/download/<name>" always
+// redirects to the newest release, so it never serves a stale binary the way the
+// old raw dist/ URL did. (ref is unused now; kept for call-site compatibility.)
 std::string RawUrl(const std::string& ref, const std::string& name) {
-    return std::string(kRawRepo) + ref + "/dist/" + name;
+    (void)ref;
+    return "https://github.com/kingimann/OkaySpaceGameEngine/releases/latest/download/" + name;
 }
 
 // Compare dotted versions ("1.4.0"); returns -1 / 0 / 1 for a<b / a==b / a>b.
@@ -356,7 +360,7 @@ UpdateInfo CheckLatest() {
     info.checked = true;
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec);
-    info.ref = LatestRef();                       // pin to the latest commit
+    info.ref = "latest";                          // the latest GitHub Release
     fs::path vf = tmp / "okayspace_version.txt";
     if (!Download(RawUrl(info.ref, "VERSION.txt"), vf.string())) {
         info.error = "Couldn't reach GitHub (no internet, or curl/PowerShell missing).";

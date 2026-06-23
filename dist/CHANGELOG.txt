@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.118.0  (UI: segmented tab control)
+  - New UITabs component: a segmented control / tab bar — a row of equal segments
+    where exactly one is selected (settings tabs, difficulty pickers, view switches).
+    Clicking a segment sets `value` and calls the script's on_change(). Pill/rounded
+    silhouette, track + selected + per-state text colors, edit the tab list inline.
+  - Hit-testing maps a click to the right segment (shared SegmentAt() used by the
+    player and tests). Add Component entry, inspector, and scene serialization.
+    uishape suite extended (segment mapping + select clamp + round-trip); 78 tests pass.
+
 v2.117.0  (no-clip: transform-only players collide with walls/floors)
   - Players moved by the Transform (no Rigidbody3D) no longer clip through geometry.
     New Physics3D::ResolveSphere depenetrates a body sphere out of solid colliders

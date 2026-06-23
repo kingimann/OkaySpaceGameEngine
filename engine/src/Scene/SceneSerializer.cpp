@@ -55,6 +55,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UITabs.hpp"
 
 #include <cctype>
 #include <functional>
@@ -474,6 +475,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended (back-compatible trailing fields): shape + corner + focus ring
             << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
             << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a << "\n";
+    }
+    if (auto* tb = go->GetComponent<UITabs>()) {
+        out << "  uitabs " << tb->position.x << " " << tb->position.y << " "
+            << tb->size.x << " " << tb->size.y << " " << (int)tb->anchor << " " << tb->value << " "
+            << tb->background.r << " " << tb->background.g << " " << tb->background.b << " " << tb->background.a << " "
+            << tb->selected.r << " " << tb->selected.g << " " << tb->selected.b << " " << tb->selected.a << " "
+            << tb->textColor.r << " " << tb->textColor.g << " " << tb->textColor.b << " " << tb->textColor.a << " "
+            << tb->selectedTextColor.r << " " << tb->selectedTextColor.g << " " << tb->selectedTextColor.b << " " << tb->selectedTextColor.a << " "
+            << (int)tb->shape << " " << tb->cornerRadius << " " << (tb->interactable ? 1 : 0) << " "
+            << tb->tabs.size();
+        for (const auto& t : tb->tabs) out << " " << Quote(t);
+        out << "\n";
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
         out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
@@ -1361,6 +1374,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> sp >> inp->cornerRadius >> inp->borderWidth >> bc.r >> bc.g >> bc.b >> bc.a;
                         inp->shape = (UIShape)sp; inp->borderColor = bc;
                     }
+                } else if (field == "uitabs") {
+                    auto* tb = go->AddComponent<UITabs>();
+                    int an = 0, sp = 0, it = 1; std::size_t count = 0;
+                    Color bg, se, tc, stc;
+                    in >> tb->position.x >> tb->position.y >> tb->size.x >> tb->size.y >> an >> tb->value
+                       >> bg.r >> bg.g >> bg.b >> bg.a >> se.r >> se.g >> se.b >> se.a
+                       >> tc.r >> tc.g >> tc.b >> tc.a >> stc.r >> stc.g >> stc.b >> stc.a
+                       >> sp >> tb->cornerRadius >> it >> count;
+                    tb->anchor = (UIAnchor)an; tb->background = bg; tb->selected = se;
+                    tb->textColor = tc; tb->selectedTextColor = stc;
+                    tb->shape = (UIShape)sp; tb->interactable = (it != 0);
+                    tb->tabs.clear();
+                    for (std::size_t k = 0; k < count; ++k) tb->tabs.push_back(ReadQuoted(in));
                 } else if (field == "uidropdown") {
                     auto* dd = go->AddComponent<UIDropdown>();
                     int an = 0; std::size_t count = 0;

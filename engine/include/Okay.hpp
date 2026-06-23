@@ -83,6 +83,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UITabs.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIInputField.hpp"

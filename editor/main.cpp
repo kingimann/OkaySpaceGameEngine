@@ -6983,6 +6983,43 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }
     }
+    if (auto* tb = go->GetComponent<UITabs>()) {
+        if (CompHeader("UI Tabs", tb, &toRemove)) {
+            float pos[2] = {tb->position.x, tb->position.y};
+            if (ImGui::DragFloat2("Pos (px)##utb", pos, 1.0f)) { tb->position = {pos[0], pos[1]}; ed.dirty = true; }
+            float sz[2] = {tb->size.x, tb->size.y};
+            if (ImGui::DragFloat2("Size (px)##utb", sz, 1.0f, 8.0f, 4000.0f)) { tb->size = {sz[0], sz[1]}; ed.dirty = true; }
+            AnchorCombo("Anchor##utb", tb->anchor, ed);
+            int tshp = (int)tb->shape;
+            const char* tshapes[] = {"Rectangle", "Rounded", "Circle", "Pill"};
+            if (ImGui::Combo("Shape##utb", &tshp, tshapes, 4)) { tb->shape = (UIShape)tshp; ed.dirty = true; }
+            if (tb->shape == UIShape::Rounded)
+                if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (tb->Count() > 0) {
+                int v = tb->value;
+                if (ImGui::SliderInt("Selected##utb", &v, 0, tb->Count() - 1)) { tb->value = v; ed.dirty = true; }
+            }
+            float se[4] = {tb->selected.r, tb->selected.g, tb->selected.b, tb->selected.a};
+            if (ImGui::ColorEdit4("Selected Color##utb", se)) { tb->selected = {se[0], se[1], se[2], se[3]}; ed.dirty = true; }
+            float bgc[4] = {tb->background.r, tb->background.g, tb->background.b, tb->background.a};
+            if (ImGui::ColorEdit4("Track Color##utb", bgc)) { tb->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            ImGui::SeparatorText("Tabs");
+            int eraseT = -1;
+            for (int i = 0; i < (int)tb->tabs.size(); ++i) {
+                ImGui::PushID(i);
+                char ob[64]; std::strncpy(ob, tb->tabs[i].c_str(), sizeof(ob) - 1); ob[sizeof(ob) - 1] = '\0';
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("##tab", ob, sizeof(ob))) { tb->tabs[i] = ob; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) eraseT = i;
+                ImGui::PopID();
+            }
+            if (eraseT >= 0) { tb->tabs.erase(tb->tabs.begin() + eraseT); if (tb->value >= tb->Count()) tb->value = tb->Count() - 1; ed.dirty = true; }
+            if (ImGui::SmallButton("Add Tab##utb")) { tb->tabs.push_back("Tab"); ed.dirty = true; }
+            ImGui::TextDisabled("Click a segment in the game; calls script on_change().");
+            if (ImGui::SmallButton("Remove##utb")) toRemove = tb;
+        }
+    }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         if (CompHeader("Sprite Animator", an, &toRemove)) {
             if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
@@ -7222,6 +7259,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIToggle>(), "UI Toggle")) { go->AddComponent<UIToggle>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
           } EndCat(o); }

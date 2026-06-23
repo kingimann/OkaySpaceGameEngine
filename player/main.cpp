@@ -810,6 +810,33 @@ int main(int argc, char** argv) {
             if (!tg->interactable) { SDL_Rect dr{box.x, box.y, box.w, box.h};
                 SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
+        for (const auto& up : scene.Objects()) {           // segmented tab bars
+            auto* tb = up->GetComponent<UITabs>();
+            if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o = ResolveAnchor(tb->anchor, tb->position, tb->size, (float)w, (float)h);
+            enterScroll(up.get(), o);
+            SDL_Rect bar{(int)o.x, (int)o.y, (int)tb->size.x, (int)tb->size.y};
+            FillUIShape(renderer, bar, tb->shape, tb->cornerRadius,
+                        tb->background, tb->background, false, false, op);
+            // Highlight the selected segment (inset a touch so the track frames it).
+            float sox, soy, sw, sh; tb->SegmentRect(tb->value, sox, soy, sw, sh);
+            SDL_Rect sel{(int)(o.x + sox) + 2, (int)(o.y + soy) + 2, (int)sw - 4, (int)sh - 4};
+            FillUIShape(renderer, sel, tb->shape, tb->cornerRadius,
+                        tb->selected, tb->selected, false, false, op);
+            // Labels centered in each segment.
+            float px = 2.0f;
+            for (int i = 0; i < tb->Count(); ++i) {
+                float ox, oy, sgw, sgh; tb->SegmentRect(i, ox, oy, sgw, sgh);
+                const std::string& lbl = tb->tabs[i];
+                float tw = lbl.size() * (Font8x8::Width + 1) * px;
+                const Color& c = (i == tb->value) ? tb->selectedTextColor : tb->textColor;
+                SDL_Color tc{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op)};
+                DrawText(renderer, lbl, o.x + ox + (sgw - tw) * 0.5f,
+                         o.y + oy + (sgh - Font8x8::Height * px) * 0.5f, px, tc);
+            }
+            if (!tb->interactable) { SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &bar); }
+        }
         for (const auto& up : scene.Objects()) {
             auto* btn = up->GetComponent<UIButton>();
             if (!btn || !up->active || UIHidden(up.get())) continue;

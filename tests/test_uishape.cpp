@@ -184,5 +184,32 @@ int main() {
         if (r2) CHECK_NEAR(r2->spinSpeed, 360.0f, 1e-3f);
     }
 
+    // UITabs: segment hit-testing maps an x to the right tab, Select fires/clamps,
+    // and the whole control round-trips.
+    {
+        Scene s("TB"); s.physicsEnabled = false;
+        auto* tb = s.CreateGameObject("Tabs")->AddComponent<UITabs>();
+        tb->size = {300, 40};
+        tb->tabs = {"A", "B", "C"};                  // 3 segments of 100px each
+        CHECK(tb->SegmentAt(50.0f) == 0);
+        CHECK(tb->SegmentAt(150.0f) == 1);
+        CHECK(tb->SegmentAt(250.0f) == 2);
+        CHECK(tb->SegmentAt(-5.0f) == -1);
+        CHECK(tb->SegmentAt(305.0f) == -1);
+
+        tb->Select(2);  CHECK(tb->value == 2);
+        tb->Select(99); CHECK(tb->value == 2);       // clamped to the last tab
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* tb2 = s2.Find("Tabs") ? s2.Find("Tabs")->GetComponent<UITabs>() : nullptr;
+        CHECK(tb2 != nullptr);
+        if (tb2) {
+            CHECK(tb2->Count() == 3);
+            CHECK(tb2->tabs[1] == "B");
+            CHECK(tb2->value == 2);
+            CHECK(tb2->shape == UIShape::Pill);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

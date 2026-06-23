@@ -33,6 +33,12 @@ jobs:
           echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
 
       - name: Build Windows distribution
+        # Bake the account server into the binaries from repo secrets (if set),
+        # so released builds are online by default with no key file shipped.
+        # GitHub masks secret values in logs.
+        env:
+          OKAY_DEFAULT_ACCOUNT_URL: ${{ secrets.ACCOUNT_SERVER_URL }}
+          OKAY_DEFAULT_ACCOUNT_KEY: ${{ secrets.ACCOUNT_API_KEY }}
         run: scripts/build-windows-dist.sh
 
       - name: Package zip

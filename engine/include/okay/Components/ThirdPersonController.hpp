@@ -68,6 +68,7 @@ public:
     // walking off a ledge; jump buffer remembers a press made just before landing.
     float coyoteTime     = 0.12f;
     float jumpBufferTime  = 0.12f;
+    int   maxJumps = 1;                 // 1 = single jump, 2 = double jump, etc.
 
     // ---- Camera orbit ----
     float mouseSensitivity = 0.2f;      // degrees per pixel
@@ -137,7 +138,12 @@ public:
         // contact. Coyote time + a jump buffer make jumping forgiving.
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
         bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f;
+        // Jump count refills only on a real ground contact, so the zero-velocity at
+        // the jump apex can't grant another jump (no more endless jumping). maxJumps
+        // enables double (or more) jumps.
+        if (m_groundContact > 0.0f) m_jumpsUsed = 0;
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
+        if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
         else                        m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
 
@@ -156,11 +162,16 @@ public:
             if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
             rb->velocity.x = cur.x + dv.x;
             rb->velocity.z = cur.z + dv.z;
-            // Jump: allowed within coyote time, satisfied by a buffered press.
-            if (canJump && m_jumpBuf > 0.0f && m_coyote > 0.0f) {
-                rb->velocity.y = jumpForce;
-                m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f;
-                grounded = false; airborne = true;
+            // Jump: first jump needs ground/coyote; extra jumps (double-jump) up to maxJumps.
+            if (canJump && m_jumpBuf > 0.0f) {
+                bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
+                bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
+                if (firstOk || extraOk) {
+                    rb->velocity.y = jumpForce;
+                    ++m_jumpsUsed;
+                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f;
+                    grounded = false; airborne = true;
+                }
             }
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
@@ -328,6 +339,7 @@ private:
     bool m_haveMouse = false;
     bool m_runToggled = false;
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
+    int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     Stance m_stance = Stance::Stand;
     float m_stanceDrop = 0.0f;        // smoothed look-target drop for crouch/prone
     Vec3 m_camPos{0, 0, 0};

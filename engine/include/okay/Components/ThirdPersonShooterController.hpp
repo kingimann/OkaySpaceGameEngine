@@ -31,6 +31,7 @@ public:
     float jumpForce = 6.0f;
     char  sprintKey = 0;
     bool  canJump = true;
+    int   maxJumps = 1;                  // 1 = single jump, 2 = double jump, etc.
     bool  driveAnimation = true;
     float acceleration = 60.0f, deceleration = 55.0f, airControl = 0.4f;
     float coyoteTime = 0.12f, jumpBufferTime = 0.12f;
@@ -117,7 +118,11 @@ public:
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
         bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f;
+        // Jump count refills only on a real ground contact (no endless jumping at the
+        // apex); maxJumps enables double jumps.
+        if (m_groundContact > 0.0f) m_jumpsUsed = 0;
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
+        if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
         else                        m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
         bool airborne = rb ? !grounded : false;
@@ -129,8 +134,13 @@ public:
             float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z), step = rate * dt;
             if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
             rb->velocity.x = cur.x + dv.x; rb->velocity.z = cur.z + dv.z;
-            if (canJump && m_jumpBuf > 0.0f && m_coyote > 0.0f) {
-                rb->velocity.y = jumpForce; m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f; airborne = true;
+            if (canJump && m_jumpBuf > 0.0f) {
+                bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
+                bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
+                if (firstOk || extraOk) {
+                    rb->velocity.y = jumpForce; ++m_jumpsUsed;
+                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f; airborne = true;
+                }
             }
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
@@ -217,6 +227,7 @@ private:
     bool m_aiming = false;
     float m_aim = 0.0f;             // 0 = hip, 1 = aiming
     float m_lean = 0.0f;            // eased lean (-1..+1)
+    int   m_jumpsUsed = 0;         // jumps since last grounded (for double-jump)
     float m_fireCooldown = 0.0f;
     float m_groundContact = 0.0f, m_coyote = 0.0f, m_jumpBuf = 0.0f;
 };

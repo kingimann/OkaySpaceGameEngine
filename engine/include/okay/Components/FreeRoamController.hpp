@@ -50,7 +50,7 @@ public:
         bool looking = lockCursor || !lookRequiresRightMouse || Input::GetMouseButton(1);
         Vec2 mp = Input::MousePosition();
         if (looking && m_haveMouse) {
-            yaw   += (mp.x - m_lastMouse.x) * mouseSensitivity;
+            yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;   // mouse-right looks right
             pitch += (invertY ? 1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }

@@ -301,7 +301,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << fp->stanceLerp
             // extended: lean (peek with Q/E)
             << " " << (int)(unsigned char)fp->leanLeftKey << " " << (int)(unsigned char)fp->leanRightKey
-            << " " << fp->leanAngle << " " << fp->leanOffset << " " << fp->leanSpeed << "\n";
+            << " " << fp->leanAngle << " " << fp->leanOffset << " " << fp->leanSpeed
+            << " " << fp->maxJumps << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
@@ -326,7 +327,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->stanceLerp
             // extended: lean (peek with Q/E)
             << " " << (int)(unsigned char)tp->leanLeftKey << " " << (int)(unsigned char)tp->leanRightKey
-            << " " << tp->leanAngle << " " << tp->leanOffset << " " << tp->leanSpeed << "\n";
+            << " " << tp->leanAngle << " " << tp->leanOffset << " " << tp->leanSpeed
+            << " " << tp->maxJumps << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
@@ -358,7 +360,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (ts->lockCursor ? 1 : 0)
             // extended: lean (peek with Q/E)
             << " " << (int)(unsigned char)ts->leanLeftKey << " " << (int)(unsigned char)ts->leanRightKey
-            << " " << ts->leanAngle << " " << ts->leanOffset << " " << ts->leanSpeed << "\n";
+            << " " << ts->leanAngle << " " << ts->leanOffset << " " << ts->leanSpeed
+            << " " << ts->maxJumps << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -1150,6 +1153,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 (in >> ll >> lr >> la >> lo >> lsp)) {
                                 fp->leanLeftKey = (char)ll; fp->leanRightKey = (char)lr;
                                 fp->leanAngle = la; fp->leanOffset = lo; fp->leanSpeed = lsp;
+                                in >> std::ws;
+                                if (std::isdigit(in.peek())) { int mj = fp->maxJumps; in >> mj; fp->maxJumps = mj; }
                             }
                         }
                     }
@@ -1202,6 +1207,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         (in >> ll >> lr >> la >> lo >> lsp)) {
                                         tp->leanLeftKey = (char)ll; tp->leanRightKey = (char)lr;
                                         tp->leanAngle = la; tp->leanOffset = lo; tp->leanSpeed = lsp;
+                                        in >> std::ws;
+                                        if (std::isdigit(in.peek())) { int mj = tp->maxJumps; in >> mj; tp->maxJumps = mj; }
                                     }
                                 }
                             }
@@ -1246,6 +1253,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         (in >> ll >> lr >> la >> lo >> lsp)) {
                         ts->leanLeftKey = (char)ll; ts->leanRightKey = (char)lr;
                         ts->leanAngle = la; ts->leanOffset = lo; ts->leanSpeed = lsp;
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { int mj = ts->maxJumps; in >> mj; ts->maxJumps = mj; }
                     }
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;

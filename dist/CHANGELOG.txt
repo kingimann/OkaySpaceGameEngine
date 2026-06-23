@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.134.0  (Friendly Action names, double jump + no infinite jump, fly-cam fix)
+  - Visual scripting (Actions) is much easier to read: every condition and instruction
+    now has a plain-English name (e.g. "Set Variable", "Play Sound", "Move Toward Object"
+    instead of set_var / play_sound / move_toward), grouped into categories, with a hover
+    tooltip explaining what it does AND a hint of what values to type. The saved files are
+    unchanged, so existing projects still load.
+  - Jumping: fixed "I can jump forever" — jumps now refill only when you actually touch
+    the ground, so the brief weightless moment at the top of a jump no longer hands you a
+    free one. Added a Max Jumps option to the first/third-person and shooter controllers
+    (1 = single, 2 = double jump, ...).
+  - Fixed the Free Roam (fly) camera's horizontal look being inverted.
+
 v2.133.0  (Real crouch, head up/down, body lean, fly camera, all UI shapes preview)
   - Crouch fixed for real: measured the rig's kinematics so a deep knee-fold raises the
     feet by exactly the body drop — the character now squats with feet planted on the

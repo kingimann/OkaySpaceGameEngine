@@ -336,3 +336,7 @@ add_test(NAME stance COMMAND test_stance)
 add_executable(test_uiwidgets test_uiwidgets.cpp)
 target_link_libraries(test_uiwidgets PRIVATE okay::engine)
 add_test(NAME uiwidgets COMMAND test_uiwidgets)
+
+add_executable(test_jump test_jump.cpp)
+target_link_libraries(test_jump PRIVATE okay::engine)
+add_test(NAME jump COMMAND test_jump)

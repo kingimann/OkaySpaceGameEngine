@@ -4814,27 +4814,147 @@ static void FitCapsule(GameObject* go, CapsuleCollider3D* cap) {
 // One row of the Game-Creator-style action editor: an op dropdown + a free-text
 // args field + reorder/remove buttons. Returns 0 = none, 1 = remove, 2 = up,
 // 3 = down (the caller applies the index change).
-static int DrawActionItem(ActionList::Item& it, const char* const* ops, int nops,
+// One Action (condition or instruction) described in plain language: the stable
+// serialized `op`, a friendly menu Label, an args Hint, a hover Desc, and a Group
+// header so the dropdown reads like a categorized menu instead of code names.
+struct ActionOpInfo {
+    const char* op; const char* label; const char* hint; const char* desc; const char* group;
+};
+
+// Conditions — "this action list runs only if ALL of these pass".
+static const ActionOpInfo kCondOps[] = {
+    {"always",   "Always",               "",                          "Always passes — the actions run every time the trigger fires.", "Basic"},
+    {"is_active","This Object Is Active", "",                          "Passes if this object is currently active.",                   "Basic"},
+    {"has_tag",  "This Object Has Tag",  "tag",                        "Passes if this object has the given tag.",                     "Basic"},
+    {"chance",   "Random Chance",        "probability 0..1",           "Passes randomly — e.g. 0.25 means 25% of the time.",            "Basic"},
+    {"key",      "Key Is Held",          "key (e.g. e)",               "Passes while the given key is held down.",                      "Input"},
+    {"key_down", "Key Just Pressed",     "key (e.g. space)",           "Passes on the frame the key is first pressed.",                 "Input"},
+    {"key_up",   "Key Just Released",    "key",                        "Passes on the frame the key is released.",                      "Input"},
+    {"mouse",    "Mouse Button Held",    "button: 0=left 1=right 2=mid","Passes while a mouse button is held.",                         "Input"},
+    {"mouse_down","Mouse Just Clicked",  "button: 0=left 1=right",     "Passes on the frame a mouse button is pressed.",               "Input"},
+    {"var_eq",   "Variable Equals",      "name value",                 "Passes if the variable equals the value.",                     "Variables"},
+    {"var_neq",  "Variable Is Not",      "name value",                 "Passes if the variable does NOT equal the value.",             "Variables"},
+    {"var_gt",   "Variable Is Above",    "name value",                 "Passes if the variable is greater than the value.",            "Variables"},
+    {"var_lt",   "Variable Is Below",    "name value",                 "Passes if the variable is less than the value.",               "Variables"},
+    {"prefs_eq", "Saved Value Equals",   "key value",                  "Passes if a saved value (persists between runs) equals it.",   "Variables"},
+    {"prefs_gt", "Saved Value Is Above", "key value",                  "Passes if a saved value is greater than the value.",           "Variables"},
+    {"dist_lt",  "Closer Than",          "object distance",            "Passes if the named object is closer than the distance.",      "World"},
+    {"dist_gt",  "Farther Than",         "object distance",            "Passes if the named object is farther than the distance.",     "World"},
+    {"exists",   "Object Exists",        "name",                       "Passes if an object with that name exists in the scene.",      "World"},
+};
+
+// Instructions — "do these, top to bottom".
+static const ActionOpInfo kInstrOps[] = {
+    {"move",        "Move By",            "x y z",                "Move this object by an offset.",                          "Move"},
+    {"move_toward", "Move Toward Object", "object speed",         "Move toward a named object at a speed.",                  "Move"},
+    {"set_pos",     "Set Position",       "x y z",                "Teleport this object to a position.",                     "Move"},
+    {"rotate",      "Rotate By",          "x y z degrees",        "Spin this object by the given degrees.",                  "Move"},
+    {"set_rotation","Set Angle (2D)",     "degrees",              "Face a 2D angle (around Z).",                             "Move"},
+    {"set_rotation3","Set Angle (3D)",    "x y z degrees",        "Set the full 3D rotation.",                               "Move"},
+    {"look_at",     "Look At Object",     "object",               "Turn to face a named object.",                            "Move"},
+    {"set_scale",   "Set Size",           "scale",                "Set a uniform size (1 = normal).",                        "Move"},
+    {"set_scale3",  "Set Size (XYZ)",     "x y z",                "Set a non-uniform size.",                                 "Move"},
+    {"velocity",    "Set Speed (2D)",     "x y",                  "Set a 2D physics body's velocity.",                       "Physics"},
+    {"impulse",     "Push (2D)",          "x y",                  "Give a 2D physics body a sudden push.",                   "Physics"},
+    {"velocity3",   "Set Speed (3D)",     "x y z",                "Set a 3D physics body's velocity.",                       "Physics"},
+    {"impulse3",    "Push (3D)",          "x y z",                "Give a 3D physics body a sudden push.",                   "Physics"},
+    {"force3",      "Add Force (3D)",     "x y z",                "Continuously push a 3D physics body.",                    "Physics"},
+    {"set_var",     "Set Variable",       "name value",           "Set a variable to a number.",                             "Variables"},
+    {"add_var",     "Add To Variable",    "name amount",          "Add to a variable.",                                      "Variables"},
+    {"mul_var",     "Multiply Variable",  "name factor",          "Multiply a variable.",                                    "Variables"},
+    {"div_var",     "Divide Variable",    "name divisor",         "Divide a variable.",                                      "Variables"},
+    {"copy_var",    "Copy Variable",      "dest source",          "Copy one variable's value into another.",                 "Variables"},
+    {"rand_var",    "Random Variable",    "name min max",         "Set a variable to a random number in a range.",           "Variables"},
+    {"set_active",  "Show/Hide Object",   "1 or 0",               "Activate (1) or deactivate (0) this whole object.",       "Object"},
+    {"set_visible", "Show/Hide Graphics", "1 or 0",               "Show or hide this object's sprite / mesh / text.",        "Object"},
+    {"activate",    "Activate Named",     "name",                 "Activate a named object.",                                "Object"},
+    {"deactivate",  "Deactivate Named",   "name",                 "Deactivate a named object.",                              "Object"},
+    {"set_tag",     "Set Tag",            "tag",                  "Give this object a tag.",                                 "Object"},
+    {"spawn",       "Spawn Prefab (2D)",  "prefab x y",           "Create a prefab at a 2D position.",                       "Object"},
+    {"spawn3",      "Spawn Prefab (3D)",  "prefab x y z",         "Create a prefab at a 3D position.",                       "Object"},
+    {"destroy",     "Destroy Self",       "",                     "Remove THIS object from the scene.",                      "Object"},
+    {"destroy_obj", "Destroy Named",      "name",                 "Remove a named object from the scene.",                   "Object"},
+    {"set_text",    "Set Text",           "the words to show",    "Set this object's Text to the given words.",              "Look"},
+    {"set_sprite",  "Set Sprite Image",   "path",                 "Change this object's sprite image.",                      "Look"},
+    {"set_color",   "Set Color",          "r g b [a] (0..1)",     "Tint this object (each channel 0..1).",                   "Look"},
+    {"emit",        "Burst Particles",    "count",                "Emit a burst from this object's particle system.",        "Look"},
+    {"play_anim",   "Play Animation",     "name",                 "Play a named animation clip.",                            "Look"},
+    {"play_sound",  "Play Sound",         "path [volume]",        "Play a sound effect.",                                    "Look"},
+    {"set_cam",     "Move Camera",        "x y [zoom]",           "Move the main camera (and optional zoom).",               "Scene"},
+    {"set_bg",      "Set Background Color","r g b (0..1)",        "Set the background / sky color.",                         "Scene"},
+    {"set_light",   "Set Light Direction","x y z",                "Aim the main directional light.",                         "Scene"},
+    {"set_ambient", "Set Ambient Light",  "brightness 0..1",      "Set the ambient (fill) light level.",                     "Scene"},
+    {"set_timescale","Set Game Speed",    "scale (1 = normal)",   "Slow-mo or fast-forward (0.5 = half, 2 = double).",        "Scene"},
+    {"wait",        "Wait",               "seconds",              "Pause here before the next instruction.",                 "Flow"},
+    {"goto",        "Jump To Line",       "line number",          "Jump to an instruction line (0 = first).",                "Flow"},
+    {"if_goto",     "Jump If",            "var cmp value line",   "Jump to a line if a test passes (cmp: eq neq gt lt ge le).","Flow"},
+    {"stop",        "Stop",               "",                     "Stop running the rest of this list.",                     "Flow"},
+    {"call",        "Call Script Event",  "event name",           "Call a function on this object's Script.",                "Flow"},
+    {"send",        "Broadcast Message",  "message",              "Send a message to ALL action lists in the scene.",        "Flow"},
+    {"send_to",     "Message One Object", "object message",       "Send a message to one named object's actions.",           "Flow"},
+    {"log",         "Log To Console",     "text",                 "Print text to the console (for debugging).",              "Flow"},
+    {"load_scene",  "Load Scene",         "name",                 "Load a scene by file name.",                              "Scenes"},
+    {"load_scene_index","Load Scene #",   "index",                "Load a scene by its build index.",                        "Scenes"},
+    {"load_next_scene","Load Next Scene", "",                     "Load the next scene in the build order.",                 "Scenes"},
+    {"set_prefs",   "Save A Value",       "key value",            "Store a value that persists between play sessions.",      "Save"},
+    {"add_prefs",   "Add To Saved Value", "key amount",           "Add to a stored (saved) value.",                          "Save"},
+    {"save_prefs",  "Write Save File",    "[file]",               "Write the saved values to disk.",                         "Save"},
+    {"net_host",    "Host Game",          "port",                 "Start hosting a multiplayer session.",                    "Multiplayer"},
+    {"net_join",    "Join Game",          "ip port",              "Connect to a host.",                                      "Multiplayer"},
+    {"net_send",    "Send Message (fast)","channel data",         "Send a fast (unreliable) network message.",               "Multiplayer"},
+    {"net_send_reliable","Send Message (sure)","channel data",    "Send a guaranteed (reliable) network message.",           "Multiplayer"},
+    {"net_set",     "Set Network Value",  "name value",           "Set a value shared across the network.",                  "Multiplayer"},
+    {"net_spawn",   "Spawn Networked",    "prefab x y z",         "Spawn an object visible to all players.",                 "Multiplayer"},
+    {"net_ready",   "Mark Ready",         "",                     "Tell the host you're ready.",                             "Multiplayer"},
+    {"net_start_match","Start Match",     "",                     "Host: begin the match.",                                  "Multiplayer"},
+    {"net_kick",    "Kick Player",        "id [reason]",          "Host: remove a player.",                                  "Multiplayer"},
+    {"net_disconnect","Disconnect",       "",                     "Leave the multiplayer session.",                          "Multiplayer"},
+    {"steam_unlock","Steam Achievement",  "id",                   "Unlock a Steam achievement.",                             "Steam"},
+    {"steam_set_stat","Steam Set Stat",   "name value",           "Set a Steam stat to a value.",                            "Steam"},
+    {"steam_inc_stat","Steam Add Stat",   "name amount",          "Increase a Steam stat.",                                  "Steam"},
+};
+
+// The friendly label for an op string (falls back to the raw op if unknown).
+static const char* ActionOpLabel(const ActionOpInfo* ops, int n, const std::string& op) {
+    for (int i = 0; i < n; ++i) if (op == ops[i].op) return ops[i].label;
+    return op.c_str();
+}
+
+static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
                           int id, bool& dirty) {
     int action = 0;
     ImGui::PushID(id);
-    if (it.op.empty()) it.op = ops[0];
+    if (it.op.empty()) it.op = ops[0].op;
     int cur = 0;
-    for (int i = 0; i < nops; ++i) if (it.op == ops[i]) cur = i;
-    ImGui::SetNextItemWidth(132);
-    if (ImGui::Combo("##op", &cur, ops, nops)) { it.op = ops[cur]; dirty = true; }
+    for (int i = 0; i < nops; ++i) if (it.op == ops[i].op) cur = i;
+    // Friendly, grouped dropdown with a hover description per choice.
+    ImGui::SetNextItemWidth(168);
+    if (ImGui::BeginCombo("##op", ops[cur].label)) {
+        const char* lastGroup = nullptr;
+        for (int i = 0; i < nops; ++i) {
+            if (ops[i].group && (!lastGroup || std::strcmp(ops[i].group, lastGroup) != 0)) {
+                ImGui::SeparatorText(ops[i].group); lastGroup = ops[i].group;
+            }
+            if (ImGui::Selectable(ops[i].label, i == cur)) { it.op = ops[i].op; dirty = true; }
+            if (ImGui::IsItemHovered() && ops[i].desc[0]) ImGui::SetTooltip("%s", ops[i].desc);
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered() && ops[cur].desc[0]) ImGui::SetTooltip("%s", ops[cur].desc);
     ImGui::SameLine();
     std::string joined;
     for (auto& a : it.args) { if (!joined.empty()) joined += ' '; joined += a; }
     char buf[256];
     std::strncpy(buf, joined.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
     ImGui::SetNextItemWidth(-78);
-    if (ImGui::InputTextWithHint("##args", "args (space-separated)", buf, sizeof(buf))) {
+    const char* hint = ops[cur].hint[0] ? ops[cur].hint : "(no values needed)";
+    if (ImGui::InputTextWithHint("##args", hint, buf, sizeof(buf))) {
         it.args.clear();
         std::stringstream ss(buf); std::string tok;
         while (ss >> tok) it.args.push_back(tok);
         dirty = true;
     }
+    if (ImGui::IsItemHovered() && ops[cur].hint[0]) ImGui::SetTooltip("Values: %s", ops[cur].hint);
     ImGui::SameLine(); if (ImGui::SmallButton("^")) action = 2;
     ImGui::SameLine(); if (ImGui::SmallButton("v")) action = 3;
     ImGui::SameLine(); if (ImGui::SmallButton("X")) { action = 1; dirty = true; }
@@ -6050,6 +6170,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Mouse Sensitivity##fp", &fp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Invert Y##fp", &fp->invertY)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##fp", &fp->canJump)) ed.dirty = true;
+            if (fp->canJump) { ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                if (ImGui::DragInt("Max Jumps##fp", &fp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }
             if (ImGui::Checkbox("Drive Animation##fp", &fp->driveAnimation)) ed.dirty = true;
 
             ImGui::SeparatorText("Run / Stance");
@@ -6095,6 +6218,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Jump##tp", &tp->canJump)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##tp", &tp->driveAnimation)) ed.dirty = true;
+            if (tp->canJump) { ImGui::SetNextItemWidth(90);
+                if (ImGui::DragInt("Max Jumps##tp", &tp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }
             const char* faceModes[] = {"Face Movement", "Face Camera"};
             int fm = (int)tp->faceMode;
             ImGui::SetNextItemWidth(160);
@@ -6196,6 +6322,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Walk Speed##tps", &ts->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragInt("Max Jumps##tps", &ts->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ...");
             if (ImGui::DragFloat("Acceleration##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Air Control##tps", &ts->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             ImGui::SeparatorText("Look / Camera");
@@ -6296,34 +6424,18 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
 
-            static const char* condOps[] = {"always", "key", "key_down", "key_up", "mouse",
-                "mouse_down", "chance", "var_eq", "var_neq", "var_gt", "var_lt",
-                "prefs_eq", "prefs_gt", "has_tag", "is_active",
-                "dist_lt", "dist_gt", "exists"};
-            static const char* instOps[] = {"move", "set_pos", "rotate", "set_rotation",
-                "set_rotation3", "set_scale", "set_scale3", "move_toward", "look_at",
-                "wait", "goto", "if_goto", "stop", "call", "send", "send_to",
-                "set_var", "add_var", "mul_var", "div_var", "copy_var", "rand_var",
-                "set_active", "set_visible", "set_text", "set_sprite", "set_color", "velocity",
-                "impulse", "velocity3", "impulse3", "force3", "emit", "play_anim", "play_sound",
-                "set_cam", "set_bg", "set_light", "set_ambient", "set_timescale", "spawn", "spawn3",
-                "destroy", "destroy_obj", "activate", "deactivate", "set_tag",
-                "set_prefs", "add_prefs", "save_prefs",
-                "net_host", "net_join", "net_send", "net_send_reliable", "net_set", "net_spawn",
-                "net_ready", "net_start_match", "net_kick", "net_disconnect",
-                "steam_unlock", "steam_set_stat", "steam_inc_stat",
-                "load_scene", "load_scene_index", "load_next_scene", "log"};
-
             ImGui::SeparatorText("Conditions (all must pass)");
+            if (al->conditions.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
             for (std::size_t i = 0; i < al->conditions.size();) {
-                int act = DrawActionItem(al->conditions[i], condOps, IM_ARRAYSIZE(condOps), (int)i, ed.dirty);
+                int act = DrawActionItem(al->conditions[i], kCondOps, IM_ARRAYSIZE(kCondOps), (int)i, ed.dirty);
                 i = ApplyItemAction(al->conditions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({"always", {}}); ed.dirty = true; }
 
             ImGui::SeparatorText("Instructions (run top to bottom)");
+            if (al->instructions.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
             for (std::size_t i = 0; i < al->instructions.size();) {
-                int act = DrawActionItem(al->instructions[i], instOps, IM_ARRAYSIZE(instOps), 1000 + (int)i, ed.dirty);
+                int act = DrawActionItem(al->instructions[i], kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000 + (int)i, ed.dirty);
                 i = ApplyItemAction(al->instructions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({"move", {}}); ed.dirty = true; }

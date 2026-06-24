@@ -50,9 +50,9 @@ public:
     GameObject* FindWithTag(const std::string& tag) const;
     const std::vector<std::unique_ptr<GameObject>>& Objects() const { return m_objects; }
 
-    /// Reorder an object in the draw/iteration list. Objects are drawn in list
-    /// order, so the last one is on top — MoveToFront draws it last (frontmost),
-    /// MoveToBack draws it first (behind). Used for UI layering in the editor.
+    /// Layer a widget frontmost/backmost. UI draws in hierarchy order, so a parented
+    /// object moves to the last/first slot among its SIBLINGS (last = on top); a root
+    /// object moves to the end/start of the scene's object list. Used for UI layering.
     void MoveToFront(GameObject* go);
     void MoveToBack(GameObject* go);
     /// Reorder `go` among its siblings (same parent) by `dir` (-1 = up/earlier,

@@ -270,6 +270,13 @@ GameObject* Scene::FindWithTag(const std::string& tag) const {
 }
 
 void Scene::MoveToFront(GameObject* go) {
+    // UI draw order follows the hierarchy (a parent's child list), so a parented
+    // widget must move to the LAST sibling slot to come out on top. Root objects
+    // (no parent) instead move to the end of the scene's object list.
+    if (go && go->transform && go->transform->Parent()) {
+        go->transform->Parent()->MoveChildToEdge(go->transform, /*toFront=*/false);  // last child = on top
+        return;
+    }
     for (std::size_t i = 0; i < m_objects.size(); ++i)
         if (m_objects[i].get() == go) {
             auto held = std::move(m_objects[i]);
@@ -280,6 +287,10 @@ void Scene::MoveToFront(GameObject* go) {
 }
 
 void Scene::MoveToBack(GameObject* go) {
+    if (go && go->transform && go->transform->Parent()) {
+        go->transform->Parent()->MoveChildToEdge(go->transform, /*toFront=*/true);   // first child = behind
+        return;
+    }
     for (std::size_t i = 0; i < m_objects.size(); ++i)
         if (m_objects[i].get() == go) {
             auto held = std::move(m_objects[i]);

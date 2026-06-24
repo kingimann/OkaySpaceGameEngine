@@ -5563,8 +5563,9 @@ void DrawInspector(EditorState& ed) {
 
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
 
-    // UI layering + quick-center for any screen-space widget (draw order is the
-    // scene's object order; later = on top, which is also what picking selects).
+    // UI layering + quick-center for any screen-space widget. Draw order follows the
+    // hierarchy (a later sibling / a child draws on top); Bring to Front / Send to
+    // Back reorder the widget among its siblings to change that.
     if (IsUIElement(go)) {
         if (ImGui::Button("Bring to Front")) { ed.scene().MoveToFront(go); ed.dirty = true; }
         ImGui::SameLine();

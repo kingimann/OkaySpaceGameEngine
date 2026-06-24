@@ -151,6 +151,34 @@ create trigger touch before update on public.game_sessions
 Optionally purge sessions from crashed hosts with a scheduled job (Supabase →
 Database → Cron), e.g. `delete from public.game_sessions where updated_at < now() - interval '2 minutes';`.
 
+## Authenticated multiplayer (verify a Supabase identity on join)
+
+`NetworkManager` can require each joining client to present its Supabase access
+token and bind it to a verified account id. The engine never calls the auth backend
+itself — you hand it a verifier, so wire it to `okay::Account`:
+
+```cpp
+// Host: verify each client's token against Supabase (auth/v1/user) and bind its id.
+net->SetTokenVerifier([](const std::string& token, std::string& outUserId) {
+    return okay::Account::VerifyToken(token, outUserId);
+});
+net->StartServer(45000);
+
+// Client: present our signed-in token when joining.
+net->SetAuthToken(okay::Account::Token());
+net->StartClient(host, 45000);
+```
+
+A client with no/invalid token is refused with `"authentication failed"`; an
+accepted peer's id is available to the host via `net->PeerUserId(peerId)` (and to the
+client via `net->LocalUserId()`). With no verifier set the server stays open
+(anonymous joins), so this is opt-in. Combine with `net->encryption = true` for an
+authenticated **and** encrypted session.
+
+No verifier needed for the requests above to be safe: tokens are validated
+server-side by Supabase, and all table access is gated by the RLS policies in this
+doc — the anon key being public is fine.
+
 Usage (C++):
 
 ```cpp

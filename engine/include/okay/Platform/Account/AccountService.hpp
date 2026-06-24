@@ -570,6 +570,26 @@ public:
         return r.ok;
     }
 
+    /// Verify an ARBITRARY access token (not our own session) and, on success, hand
+    /// back the account id it belongs to. This is what a multiplayer host uses to
+    /// authenticate a joining client's Supabase token — wire it into
+    /// NetworkManager::SetTokenVerifier. Supabase: GET auth/v1/user with the token as
+    /// Bearer ({"id": "<uuid>", ...}); custom server: GET /verify with the token.
+    /// Returns false for the local backend, offline, or an empty/invalid token.
+    bool VerifyToken(const std::string& token, std::string& outUserId) const {
+        outUserId.clear();
+        if (token.empty() || !IsOnline()) return false;
+        std::string base = serverUrl_;
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        if (provider_ == Provider::Supabase) {
+            ApiResponse r = HttpRequest("GET", base + "/auth/v1/user", {}, token);
+            if (!r.ok) return false;
+            outUserId = detail::JsonField(r.body, "id");
+            return !outUserId.empty();
+        }
+        return HttpRequest("GET", base + "/verify", {}, token).ok;   // custom server
+    }
+
     // ---- Cloud saves ---------------------------------------------------
     // Per-account key/value storage on the server, so progress follows the
     // player across devices. `key` names a save slot ("save1", "settings");

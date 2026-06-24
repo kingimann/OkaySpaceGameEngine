@@ -8806,6 +8806,59 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     UIWorld().active = false;   // end world-space UI projection for this overlay
 }
 
+// Install the UIWorld() projector for a viewport, matching how that viewport draws
+// the scene: the 2D ortho camera in 2D mode, the perspective editor/main camera in
+// 3D. ONE source of truth so in-world UI editing (pick/drag) and rendering agree.
+// Returns coordinates canvas-LOCAL (relative to canvasPos), like the screen-space
+// path, so DrawUIOverlay's `canvasPos + o` and the pickers line up.
+static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
+                                      bool view3D, bool gameView) {
+    UIWorld().active = true;
+    UIWorld().screenW = canvasSize.x; UIWorld().screenH = canvasSize.y;
+    ImVec2 cs = canvasSize;
+    if (view3D) {
+        Mat4 view, proj; Vec3 right{1.0f, 0.0f, 0.0f};
+        if (gameView) {
+            Camera* mc = SceneCamera(ed.scene());
+            if (!mc || !mc->gameObject) { UIWorld().active = false; return; }
+            view = mc->ViewMatrix();
+            proj = mc->ProjectionMatrix(cs.x / cs.y);
+            right = mc->gameObject->transform->Right();
+        } else {
+            float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
+            Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
+                     Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
+            Vec3 eye = ed.camTarget + dir * ed.camDist;
+            view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
+            proj = Mat4::Perspective(g_editorFov, cs.x / cs.y, g_editorNear, 2000.0f);
+            right = Vec3::Cross((ed.camTarget - eye).Normalized(), Vec3::Up).Normalized();
+        }
+        UIWorld().right = right;
+        Mat4 vp = proj * view;
+        UIWorld().project = [vp, cs](const Vec3& wp, Vec2& out, float& depth) -> bool {
+            Vec4 c = vp * Vec4{wp.x, wp.y, wp.z, 1.0f};
+            if (c.w <= 0.05f) return false;
+            out = Vec2{cs.x * 0.5f + (c.x / c.w) * cs.x * 0.5f,
+                       cs.y * 0.5f - (c.y / c.w) * cs.y * 0.5f};
+            depth = c.w; return true;
+        };
+    } else {
+        Vec2 camPos = ed.cameraPos; float zoom = ed.cameraZoom;
+        if (gameView) {
+            if (Camera* mc = SceneCamera(ed.scene())) {
+                Vec3 cp = mc->gameObject->transform->Position();
+                camPos = {cp.x, cp.y}; zoom = mc->orthographicSize * 2.0f;
+            }
+        }
+        float scale = cs.y / (zoom > 0.001f ? zoom : 1.0f);
+        UIWorld().right = {1.0f, 0.0f, 0.0f};
+        UIWorld().project = [camPos, scale, cs](const Vec3& wp, Vec2& out, float& depth) -> bool {
+            out = Vec2{cs.x * 0.5f + (wp.x - camPos.x) * scale, cs.y * 0.5f - (wp.y - camPos.y) * scale};
+            depth = 1.0f; return true;
+        };
+    }
+}
+
 // Click-to-select and drag-to-reposition for screen-space UI in the Scene view.
 // Runs in both 2D and 3D modes (UI is an overlay, identical in either), and
 // takes priority over the world picking below it — clicking a HUD button selects
@@ -9147,20 +9200,10 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
-    // In-world UI projector for this (2D ortho) view: map a world point with the
-    // same camera the scene is drawn with, returning canvas-local pixels. So world
-    // UI / world-space canvases sit on their objects while editing in 2D.
-    {
-        ImVec2 cp = canvasPos; ImVec2 cs = canvasSize;
-        Vec2 cam = camPos; float sc = scale;
-        UIWorld().active = true;
-        UIWorld().right = {1.0f, 0.0f, 0.0f};
-        UIWorld().screenW = cs.x; UIWorld().screenH = cs.y;
-        UIWorld().project = [cp, cs, cam, sc](const Vec3& wp, Vec2& out, float& depth) {
-            out = Vec2{cs.x * 0.5f + (wp.x - cam.x) * sc, cs.y * 0.5f - (wp.y - cam.y) * sc};
-            depth = 1.0f; return true;   // ortho: no distance falloff
-        };
-    }
+    // In-world UI projector for this (2D ortho) view, so world-space canvases sit on
+    // their objects while editing. (Same helper EditUIWidgets used, so pick/drag and
+    // rendering agree.)
+    SetEditorWorldUIProjector(ed, canvasSize, /*view3D=*/false, gameView);
 
     // Screen-space UI (text, images, panels, bars, sliders, toggles, buttons).
     DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
@@ -9332,9 +9375,6 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     Vec3 eye = ed.camTarget + dir * ed.camDist;
     Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
     Mat4 proj = Mat4::Perspective(g_editorFov, canvasSize.x / canvasSize.y, g_editorNear, 2000.0f);
-    // Camera right axis (for billboarding world-space canvases). Editor camera by
-    // default; the Game view overrides it with the main camera's right below.
-    Vec3 camRight = Vec3::Cross((ed.camTarget - eye).Normalized(), Vec3::Up).Normalized();
     // Where the 3D image is drawn within the panel. The Game view honors the main
     // camera's normalized viewport rect (Unity's Camera.rect) for split-screen /
     // mini-map / picture-in-picture; the Scene view always fills the panel.
@@ -9344,7 +9384,6 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (Camera* mc = SceneCamera(ed.scene())) {
             eye = mc->gameObject->transform->Position();
             view = mc->ViewMatrix();
-            if (mc->gameObject && mc->gameObject->transform) camRight = mc->gameObject->transform->Right();
             // Clamp the rect to 0..1 and compute the on-panel pixel rectangle. Unity's
             // rect y is measured from the BOTTOM, so flip it for top-left screen space.
             float rw = Mathf::Clamp(mc->rectW, 0.01f, 1.0f), rh = Mathf::Clamp(mc->rectH, 0.01f, 1.0f);
@@ -9644,23 +9683,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         IM_COL32(120, 230, 150, 255), lines[i]);
     }
 
-    // In-world UI projector for this (perspective) view: project a world point with
-    // the SAME view*projection the scene is rendered with, returning canvas-local
-    // pixels — so world UI / world-space canvases align with the 3D objects and
-    // gizmos. This is what lets you see where in-world UI sits while editing.
-    {
-        Mat4 wvp = vp; ImVec2 cs = canvasSize;
-        UIWorld().active = true;
-        UIWorld().right = camRight;
-        UIWorld().screenW = cs.x; UIWorld().screenH = cs.y;
-        UIWorld().project = [wvp, cs](const Vec3& wp, Vec2& out, float& depth) -> bool {
-            Vec4 c = wvp * Vec4{wp.x, wp.y, wp.z, 1.0f};
-            if (c.w <= 0.05f) return false;                  // behind the camera
-            out = Vec2{cs.x * 0.5f + (c.x / c.w) * cs.x * 0.5f,
-                       cs.y * 0.5f - (c.y / c.w) * cs.y * 0.5f};   // canvas-local px
-            depth = c.w; return true;
-        };
-    }
+    // In-world UI projector for this (perspective) view, matching the view*projection
+    // the scene is rendered with (same helper EditUIWidgets used, so pick/drag and
+    // rendering agree). This is what lets you see and grab in-world UI while editing.
+    SetEditorWorldUIProjector(ed, canvasSize, /*view3D=*/true, gameView);
 
     // Screen-space UI draws on top of the 3D view too, so UI added to a 3D
     // project (HUD, menus, buttons) is visible here and in the Game view.
@@ -10170,9 +10196,10 @@ void DrawViewport(EditorState& ed) {
             hovered = true;
     }
 
-    // UI editing (pick/drag screen-space widgets) runs first and may consume the
-    // click so the world pickers below leave the selection alone.
-    EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
+    // Project world-space-canvas widgets through the active view BEFORE editing, so
+    // they can be picked, dragged and resized in the viewport (the pick/drag helpers
+    // go through GetUIScreenRect, which needs this context). Screen-space UI ignores it.
+    SetEditorWorldUIProjector(ed, canvasSize, ed.view3D, /*gameView=*/false);
 
     // UI editing (pick/drag screen-space widgets) runs first and may consume the
     // click so the world pickers below leave the selection alone.

@@ -13,6 +13,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UITabs.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIScrollView.hpp"
@@ -63,6 +64,7 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* rp = go->GetComponent<UIRadialProgress>()){ r.valid = true; r.anchor = rp->anchor; r.anchorPtr = &rp->anchor; r.position = &rp->position; r.sizePtr = &rp->size; r.size = rp->size; }
     else if (auto* in = go->GetComponent<UIInputField>()) { r.valid = true; r.anchor = in->anchor; r.anchorPtr = &in->anchor; r.position = &in->position; r.sizePtr = &in->size; r.size = in->size; }
     else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.anchorPtr = &dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
+    else if (auto* tb = go->GetComponent<UITabs>())       { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
     else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.anchorPtr = &sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
     else if (auto* lg = go->GetComponent<UILayoutGroup>()){ // a controller (no size): movable by its origin, not resizable
         r.valid = true; r.anchor = lg->anchor; r.anchorPtr = &lg->anchor; r.position = &lg->origin; r.sizePtr = nullptr;
@@ -90,6 +92,7 @@ inline bool IsUIFocused(GameObject* go) {
     if (auto* p = go->GetComponent<UIStepper>())  return p->IsFocused();
     if (auto* r = go->GetComponent<UIRating>())   return r->IsFocused();
     if (auto* d = go->GetComponent<UIDropdown>()) return d->IsFocused();
+    if (auto* tb = go->GetComponent<UITabs>())    return tb->IsFocused();
     return false;
 }
 

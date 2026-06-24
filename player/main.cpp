@@ -864,9 +864,21 @@ int main(int argc, char** argv) {
                 float cx = o.x + i * cw + (cw - d) * 0.5f;
                 float cy = o.y + (rt->size.y - d) * 0.5f;
                 SDL_Rect star{(int)cx, (int)cy, (int)d, (int)d};
-                float f = rt->StarFill(i);
-                const Color& base = f >= 0.5f ? rt->on : rt->off;   // half rounds to filled
-                FillUIShape(renderer, star, UIShape::Diamond, 0.0f, base, base, false, false, op);
+                float f = rt->StarFill(i);              // 0, 0.5 or 1 (uses hover preview)
+                FillUIShape(renderer, star, UIShape::Diamond, 0.0f, rt->off, rt->off, false, false, op);
+                if (f > 0.0f) {
+                    // Reveal the filled color over the left fraction of the star so a
+                    // half rating shows a real half-star. Clip to the existing clip so
+                    // ratings inside a scroll view stay clipped.
+                    SDL_bool wasClip = SDL_RenderIsClipEnabled(renderer);
+                    SDL_Rect prev; SDL_RenderGetClipRect(renderer, &prev);
+                    SDL_Rect want{star.x, star.y, (int)(star.w * f + 0.5f), star.h}, use = want;
+                    if (wasClip) SDL_IntersectRect(&want, &prev, &use);
+                    SDL_RenderSetClipRect(renderer, &use);
+                    FillUIShape(renderer, star, UIShape::Diamond, 0.0f, rt->on, rt->on, false, false, op);
+                    if (wasClip) SDL_RenderSetClipRect(renderer, &prev);
+                    else         SDL_RenderSetClipRect(renderer, nullptr);
+                }
             }
         }
         for (const auto& up : scene.Objects()) {           // toggles (checkboxes)

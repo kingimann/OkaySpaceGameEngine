@@ -5169,11 +5169,17 @@ static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, 
     if (rightPts.size() < 2) return;
     // Fill as a strip of convex quads between adjacent sampled rows. Unlike a single
     // AddConvexPolyFilled, this renders CONCAVE silhouettes (e.g. arrows) correctly,
-    // matching exactly the per-row spans the game fills.
+    // matching exactly the per-row spans the game fills. Anti-aliased fill feathers
+    // each quad's edge, so abutting quads would show seam lines and the shape looks
+    // streaky — turn AA fill OFF for the strip so it reads as one solid shape, then
+    // restore it for the (stroked) border.
+    ImDrawListFlags savedFlags = dl->Flags;
+    dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;
     for (std::size_t i = 0; i + 1 < rightPts.size(); ++i) {
         ImVec2 quad[4] = { leftPts[i], rightPts[i], rightPts[i + 1], leftPts[i + 1] };
         dl->AddConvexPolyFilled(quad, 4, fill);
     }
+    dl->Flags = savedFlags;
     if (borderW > 0.0f) {
         std::vector<ImVec2> poly = rightPts;
         for (auto it = leftPts.rbegin(); it != leftPts.rend(); ++it) poly.push_back(*it);
@@ -8053,8 +8059,13 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             float cx = a.x + i * cw + cw * 0.5f;
             float cy = a.y + sz.y * 0.5f, r = d * 0.5f;
             ImVec2 pts[4] = { ImVec2(cx, cy - r), ImVec2(cx + r, cy), ImVec2(cx, cy + r), ImVec2(cx - r, cy) };
-            ImU32 col = ToColor(rt->StarFill(i) >= 0.5f ? rt->on : rt->off);
-            dl->AddConvexPolyFilled(pts, 4, col);
+            float f = rt->StarFill(i);                 // 0, 0.5 or 1 (uses hover preview)
+            dl->AddConvexPolyFilled(pts, 4, ToColor(rt->off));   // empty base
+            if (f > 0.0f) {
+                if (f < 1.0f) dl->PushClipRect(ImVec2(cx - r, cy - r), ImVec2(cx - r + 2.0f * r * f, cy + r), true);
+                dl->AddConvexPolyFilled(pts, 4, ToColor(rt->on));
+                if (f < 1.0f) dl->PopClipRect();
+            }
         }
     }
     // UI toggles: box (+ inset check when on) and a label.
@@ -8086,6 +8097,66 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         DrawBitmapText(dl, tg->label, labelX,
                        a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, ToColor(tg->textColor));
         if (!tg->interactable) dl->AddRectFilled(a, b, IM_COL32(30, 30, 35, 150), tg->cornerRadius);
+    }
+
+    // UI radial / ring progress: a track ring + a filled arc (a pie when thickness<=0).
+    for (const auto& up : objs) {
+        auto* rp = up->GetComponent<UIRadialProgress>();
+        if (!rp || !up->active || UIHidden(up.get())) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 ctr(a.x + sz.x * 0.5f, a.y + sz.y * 0.5f);
+        float outerR = Mathf::Min(sz.x, sz.y) * 0.5f;
+        float th = rp->thickness > 0.0f ? rp->thickness * s : outerR;   // <=0 => pie (fills to center)
+        float midR = Mathf::Max(0.5f, outerR - th * 0.5f);
+        const float kPi = 3.14159265358979f;
+        // Match UIRadialProgress::Sample: 0 = 12 o'clock, +clockwise. ImGui angles are
+        // 0 = +X and grow clockwise on a y-down canvas, so top = -PI/2.
+        float a0 = -kPi * 0.5f + rp->EffectiveStart() * kPi / 180.0f;
+        float span = rp->Fraction() * 2.0f * kPi;
+        float aMin = rp->clockwise ? a0 : a0 - span;
+        float aMax = rp->clockwise ? a0 + span : a0;
+        dl->AddCircle(ctr, midR, ToColor(rp->background), 48, th);        // full track ring
+        if (span > 0.0001f) {
+            dl->PathArcTo(ctr, midR, aMin, aMax, 48);
+            dl->PathStroke(ToColor(rp->fill), 0, th);                    // filled arc
+        }
+        if (rp->showPercent) {
+            char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(rp->Fraction() * 100.0f + 0.5f));
+            float px = 2.0f * s;
+            float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
+            DrawBitmapText(dl, pct, ctr.x - tw * 0.5f, ctr.y - Font8x8::Height * px * 0.5f, px, ToColor(rp->textColor));
+        }
+    }
+
+    // UI tabs: a segmented bar with the selected segment highlighted + labels.
+    for (const auto& up : objs) {
+        auto* tb = up->GetComponent<UITabs>();
+        if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        if (IsPolyUIShape(tb->shape))
+            DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), tb->shape, tb->cornerRadius, ToColor(tb->background), IM_COL32(0, 0, 0, 0), 0.0f);
+        else
+            dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(tb->background), tb->cornerRadius);
+        int n = tb->Count();
+        float segW = sz.x / (float)n;
+        ImVec2 selA(a.x + segW * tb->value + 2.0f, a.y + 2.0f);
+        ImVec2 selB(a.x + segW * (tb->value + 1) - 2.0f, a.y + sz.y - 2.0f);
+        dl->AddRectFilled(selA, selB, ToColor(tb->selected), tb->cornerRadius);
+        float px = 2.0f * s;
+        for (int i = 0; i < n; ++i) {
+            const std::string& lbl = tb->tabs[i];
+            float tw = lbl.size() * (Font8x8::Width + 1) * px;
+            ImU32 c = ToColor(i == tb->value ? tb->selectedTextColor : tb->textColor);
+            DrawBitmapText(dl, lbl, a.x + segW * i + (segW - tw) * 0.5f,
+                           a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, c);
+        }
+        if (!tb->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), tb->cornerRadius);
     }
 
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).

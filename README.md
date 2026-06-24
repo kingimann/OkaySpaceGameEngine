@@ -354,6 +354,25 @@ cross-compiles the Windows build on every `v*` tag (and on demand) and attaches
 the zip to the GitHub Release. (`scripts/build-windows-exe.sh` builds just the
 single-file console demo.)
 
+**Distribution layout** — the build is organized so the thing you double-click is
+at the top and the rest is tucked into `Tools/`:
+
+```
+OkaySpace.exe        ← the launcher (start here)
+SDL2.dll             ← required beside OkaySpace.exe
+README.txt
+Tools/
+  OkayEngine.exe        the editor
+  OkaySpacePlayer.exe   standalone game runtime
+  okayspace-relay.exe   multiplayer NAT relay (see docs/relay.md)
+  SDL2.dll              copy — each .exe needs the DLL in its own folder
+  VERSION.txt
+```
+
+Windows resolves load-time DLLs from each exe's own directory, so `SDL2.dll` is
+intentionally duplicated next to the `Tools/` exes — keep every `.exe` together
+with an `SDL2.dll`. Full details in [docs/packaging.md](docs/packaging.md).
+
 ### Optional backends
 
 These are off by default to keep the core dependency-free:

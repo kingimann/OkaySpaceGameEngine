@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Cross-compile the full Windows distribution — launcher, editor, and player —
-# from Linux with MinGW-w64, bundling the one SDL2.dll they share. Output goes
-# to build-win-dist/.
+# Cross-compile the full Windows distribution — launcher, editor, player, and the
+# multiplayer relay — from Linux with MinGW-w64, bundling SDL2.dll. Output goes to
+# build-win-dist/ laid out as: OkaySpace.exe + SDL2.dll at the top (double-click
+# the launcher), with the rest in a Tools/ subfolder. See the "Distribution
+# layout" section below and docs/packaging.md.
 #
 # This is what CI (.github/workflows/release.yml) runs to publish Windows builds,
 # and you can run it locally too.
@@ -56,16 +58,53 @@ cmake -S . -B "$BUILD_DIR" \
       "${EXTRA[@]}"
 cmake --build "$BUILD_DIR" -j
 
+# ---- Distribution layout ------------------------------------------------------
+# Keep the thing you double-click at the top and tuck the rest away:
+#
+#   OkaySpace.exe        <- the launcher (start here)
+#   SDL2.dll             <- required next to OkaySpace.exe (load-time linked)
+#   README.txt
+#   Tools/
+#     OkayEngine.exe         (the editor)
+#     OkaySpacePlayer.exe    (standalone game runtime)
+#     okayspace-relay.exe    (multiplayer NAT relay, if built)
+#     SDL2.dll               (copy — each exe needs the DLL beside it on Windows)
+#     VERSION.txt / accounts.md
+#
+# Note: Windows resolves load-time DLLs from the exe's own directory, so SDL2.dll
+# is intentionally duplicated next to the Tools/ exes — that's required, not waste.
 rm -rf "$OUT_DIR"
-mkdir -p "$OUT_DIR"
-cp "$BUILD_DIR/bin/OkaySpace.exe" \
-   "$BUILD_DIR/bin/OkayEngine.exe" \
+mkdir -p "$OUT_DIR/Tools"
+
+# Top level: the launcher + its SDL2.dll.
+cp "$BUILD_DIR/bin/OkaySpace.exe" "$SDL2_MINGW_PREFIX/bin/SDL2.dll" "$OUT_DIR/"
+
+# Tools/: the editor, player, relay (if present), and their own SDL2.dll copy.
+cp "$BUILD_DIR/bin/OkayEngine.exe" \
    "$BUILD_DIR/bin/OkaySpacePlayer.exe" \
    "$SDL2_MINGW_PREFIX/bin/SDL2.dll" \
-   "$OUT_DIR/"
-[ -f dist/VERSION.txt ] && cp dist/VERSION.txt "$OUT_DIR/"
-[ -f docs/accounts.md ] && cp docs/accounts.md "$OUT_DIR/"
+   "$OUT_DIR/Tools/"
+[ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
+[ -f dist/VERSION.txt ] && cp dist/VERSION.txt "$OUT_DIR/Tools/"
+[ -f docs/accounts.md ] && cp docs/accounts.md "$OUT_DIR/Tools/"
+
+cat > "$OUT_DIR/README.txt" <<'EOF'
+OkaySpace
+=========
+
+Double-click  OkaySpace.exe  to start (the launcher: sign in, create/play games).
+Keep SDL2.dll next to it.
+
+Everything else lives in  Tools/:
+  OkayEngine.exe        the editor (make games)
+  OkaySpacePlayer.exe   the standalone runtime that plays an exported game
+  okayspace-relay.exe   optional multiplayer relay for NAT traversal
+                        (run on a reachable host; see docs/relay.md)
+
+Each .exe needs SDL2.dll in its own folder — that's why one sits beside the
+launcher and a copy sits in Tools/. Don't separate an .exe from its SDL2.dll.
+EOF
 
 echo
 echo "Built Windows distribution in $OUT_DIR/:"
-ls -lh "$OUT_DIR"
+find "$OUT_DIR" -type f | sort

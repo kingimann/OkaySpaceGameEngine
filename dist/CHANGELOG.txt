@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.143.0  (UI parenting, cursor lock, net crash fix, gestures/emotions)
+  - UI children now follow their parent in built games (a widget parented under a
+    panel/card moves and resizes with it, matching the editor).
+  - First/Third Person controllers get a "Lock + Hide Cursor" option for mouse-look
+    (on by default for first person).
+  - Fixed a crash when stopping Play after hosting/joining (the editor kept using a
+    freed Network Manager — use-after-free).
+  - Character gains hand gestures (Point, Clap, Thumbs Up, Salute, Wave Both) and
+    emotion poses (Cheer, Sad, Angry, Think), selectable in the inspector or from
+    scripts.
+
 v2.142.0  (UI widget round-up: rating hover, tabs/radial, scroll view)
   - Star rating: stars light up as you hover, and half ratings now render as real
     half-filled stars (click the set value again to clear).

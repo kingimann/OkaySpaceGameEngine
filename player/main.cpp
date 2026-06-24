@@ -615,14 +615,11 @@ int main(int argc, char** argv) {
         }
 
         // In-game UI (screen space), drawn on top of everything. Iterate widgets in
-        // Canvas sort-order (higher draws on top) — a stable sort, so widgets that
-        // share a Canvas (or have none) keep their authored order.
+        // Canvas sort-order (higher draws on top), then by hierarchy pre-order so a
+        // child layers above its parent and sibling reordering (bring-to-front/back)
+        // takes effect — all within the existing per-type passes.
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-        std::vector<std::size_t> uiOrder(scene.Objects().size());
-        for (std::size_t i = 0; i < uiOrder.size(); ++i) uiOrder[i] = i;
-        std::stable_sort(uiOrder.begin(), uiOrder.end(), [&](std::size_t a, std::size_t b) {
-            return CanvasSortOrder(scene.Objects()[a].get()) < CanvasSortOrder(scene.Objects()[b].get());
-        });
+        std::vector<std::size_t> uiOrder = BuildUIDrawOrder(scene.Objects());
         for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // drop-target slot backgrounds (behind items)
             auto* dt = up->GetComponent<UIDropTarget>();
             if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;

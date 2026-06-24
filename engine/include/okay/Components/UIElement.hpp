@@ -19,6 +19,10 @@
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Math/Vec2.hpp"
+#include <vector>
+#include <algorithm>
+#include <unordered_map>
+#include <cstddef>
 
 namespace okay {
 
@@ -126,6 +130,59 @@ inline bool UIHidden(GameObject* go) {
 inline int CanvasSortOrder(GameObject* go) {
     Canvas* cv = OwningCanvas(go);
     return cv ? cv->sortOrder : 0;
+}
+
+/// The order UI should be drawn in: primary key the owning Canvas's sortOrder
+/// (higher draws on top), secondary key the scene's hierarchy PRE-ORDER (a parent
+/// before its children, earlier siblings before later ones). Returns indices into
+/// `objects`. Renderers iterate their per-type passes over this order so that
+/// nested widgets layer like Unity — a child panel sits above its parent panel,
+/// and bring-to-front/send-to-back (sibling reordering) takes effect — without
+/// changing the relative order of the type passes themselves. `objects` is the
+/// scene's `std::vector<std::unique_ptr<GameObject>>`.
+template <class ObjVec>
+inline std::vector<std::size_t> BuildUIDrawOrder(const ObjVec& objects) {
+    const std::size_t n = objects.size();
+    std::unordered_map<GameObject*, std::size_t> pos;
+    pos.reserve(n * 2);
+    for (std::size_t i = 0; i < n; ++i) pos[objects[i].get()] = i;
+
+    // Assign a pre-order rank by walking the transform tree from each root (an
+    // object with no parent), in scene order. Unvisited objects (shouldn't happen)
+    // fall back to their scene index, sorted after the visited ones.
+    std::vector<std::size_t> pre(n, n);   // n = "unset"
+    std::size_t counter = 0;
+    // Iterative DFS to avoid deep recursion on large hierarchies.
+    std::vector<Transform*> stack;
+    auto visitRoot = [&](Transform* root) {
+        stack.clear();
+        stack.push_back(root);
+        while (!stack.empty()) {
+            Transform* t = stack.back(); stack.pop_back();
+            if (!t || !t->gameObject) continue;
+            auto it = pos.find(t->gameObject);
+            if (it != pos.end() && pre[it->second] == n) pre[it->second] = counter++;
+            // Push children in reverse so the first child is processed first.
+            const auto& ch = t->Children();
+            for (auto rit = ch.rbegin(); rit != ch.rend(); ++rit) stack.push_back(*rit);
+        }
+    };
+    for (std::size_t i = 0; i < n; ++i) {
+        Transform* t = objects[i]->transform;
+        if (t && !t->Parent()) visitRoot(t);
+    }
+    // Any object not reached (orphaned transform) gets a rank after the rest.
+    for (std::size_t i = 0; i < n; ++i)
+        if (pre[i] == n) pre[i] = counter++;
+
+    std::vector<std::size_t> order(n);
+    for (std::size_t i = 0; i < n; ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        int sa = CanvasSortOrder(objects[a].get()), sb = CanvasSortOrder(objects[b].get());
+        if (sa != sb) return sa < sb;
+        return pre[a] < pre[b];
+    });
+    return order;
 }
 
 /// The master opacity [0,1] the widget should be drawn at (its Canvas's opacity,

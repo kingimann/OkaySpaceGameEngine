@@ -8176,14 +8176,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
 
-    // Mirror the player's Canvas sort-order rendering: draw widgets owned by a
-    // lower-sortOrder Canvas first so the editor preview layers UI the same way the
-    // built game does. stable_sort keeps creation order within one Canvas.
-    std::vector<std::size_t> edOrder(objs.size());
-    for (std::size_t i = 0; i < edOrder.size(); ++i) edOrder[i] = i;
-    std::stable_sort(edOrder.begin(), edOrder.end(), [&](std::size_t a, std::size_t b) {
-        return CanvasSortOrder(objs[a].get()) < CanvasSortOrder(objs[b].get());
-    });
+    // Mirror the player's draw order: Canvas sortOrder first, then hierarchy
+    // pre-order (parent before children, sibling order honored) so the editor
+    // preview layers UI exactly like the built game does.
+    std::vector<std::size_t> edOrder = BuildUIDrawOrder(objs);
 
     // Authoring zoom (Scene view only): scale/pan the canvas so the UI is easy to
     // edit. The Game view always shows the true 1:1 layout.

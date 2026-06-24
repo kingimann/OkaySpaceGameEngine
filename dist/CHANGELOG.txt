@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.147.0  (Hierarchy right-click UI, Flow Graph upgrades)
+  - Hierarchy right-click now has a "UI" submenu to create any UI widget (Panel,
+    Button, Image, Text, Slider, Toggle, Stepper, Rating, Progress Bar, Radial,
+    Input Field, Dropdown, Tabs, Scroll View) — Unity-style create-in-place.
+  - Flow Graph: fixed a Dear ImGui error, and added + Instruction / + Condition,
+    pan (drag empty space) over a grid, Reset View, per-node delete, and a
+    running/idle light (the Trigger node glows green while running in Play).
+
 v2.146.0  (Flow Graph for visual scripting)
   - New Flow Graph window (Windows > Flow Graph): a node view of the selected
     object's Actions — Trigger, Condition gates and Instructions wired top to

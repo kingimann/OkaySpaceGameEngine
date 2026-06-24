@@ -54,7 +54,8 @@ public:
     /// on top of accounts (cloud saves, profiles, ...).
     static account::ApiResponse Api(const std::string& path,
                                     const std::string& method = "GET",
-                                    const std::string& jsonBody = {});
+                                    const std::string& jsonBody = {},
+                                    const std::string& extraHeader = {});
 
     // ---- Cloud saves (per-account storage on the server) --------------
     /// Store `data` under save slot `key`. Returns false offline / signed out.

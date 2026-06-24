@@ -226,6 +226,10 @@ add_executable(test_net_aoi test_net_aoi.cpp)
 target_link_libraries(test_net_aoi PRIVATE okay::engine)
 add_test(NAME net_aoi COMMAND test_net_aoi)
 
+add_executable(test_matchmaking test_matchmaking.cpp)
+target_link_libraries(test_matchmaking PRIVATE okay::engine)
+add_test(NAME matchmaking COMMAND test_matchmaking)
+
 add_executable(test_visualscript test_visualscript.cpp)
 target_link_libraries(test_visualscript PRIVATE okay::engine)
 add_test(NAME visualscript COMMAND test_visualscript)

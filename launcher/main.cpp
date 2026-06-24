@@ -52,6 +52,10 @@ namespace {
 std::string g_exeDir = ".";
 std::string g_selfPath;   // absolute path of the running launcher exe
 
+// Resolve an engine/player exe by name, searching next to the launcher and in the
+// Tools/ subfolder (defined fully below; forward-declared for the updater).
+std::string FindExe(std::initializer_list<const char*> names);
+
 // Where published builds live: the assets of the latest GitHub Release (this is
 // what the release workflow uploads). "releases/latest/download/<name>" always
 // redirects to the newest release's asset, so this never serves a stale binary
@@ -243,12 +247,19 @@ int RunUpdateCheck(void*) {
     SetState(Up_Downloading);
     bool ok = true;
     {
+        // Write each exe back to wherever it currently lives (e.g. Tools/), so an
+        // update preserves the organized layout instead of scattering exes to the
+        // top level. Falls back to next-to-launcher if not found (fresh install).
+        auto destOf = [&](const char* name) -> fs::path {
+            std::string found = FindExe({name});
+            return found.empty() ? (dir / name) : fs::path(found);
+        };
         SetUpMsg("Downloading engine v" + latest + "...");
         ok = ReplaceFile(std::string(kRawBase) + "OkayEngine.exe",
-                         dir / "OkayEngine.exe", false) && ok;
+                         destOf("OkayEngine.exe"), false) && ok;
         SetUpMsg("Downloading player runtime v" + latest + "...");
         ok = ReplaceFile(std::string(kRawBase) + "OkaySpacePlayer.exe",
-                         dir / "OkaySpacePlayer.exe", false) && ok;
+                         destOf("OkaySpacePlayer.exe"), false) && ok;
     }
     // Only self-update the launcher on a genuine version bump.
     bool launcherOk = false;
@@ -285,8 +296,10 @@ void StartUpdateCheck() {
 // Find the first of `names` that exists next to the launcher.
 std::string FindExe(std::initializer_list<const char*> names) {
     std::error_code ec;
-    // Look next to the launcher and in a tidy "Engine" subfolder (organized layout).
-    const char* dirs[] = {"", "Engine", "runtime", "bin"};
+    // Look next to the launcher and in the "Tools" subfolder (the canonical
+    // organized layout — see docs/packaging.md); "Engine"/"runtime"/"bin" are
+    // also accepted for older / alternative layouts.
+    const char* dirs[] = {"", "Tools", "Engine", "runtime", "bin"};
     for (const char* d : dirs)
         for (const char* n : names) {
             fs::path p = d[0] ? (fs::path(g_exeDir) / d / n) : (fs::path(g_exeDir) / n);

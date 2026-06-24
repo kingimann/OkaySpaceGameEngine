@@ -1,7 +1,11 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/Camera.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Scene.hpp"
+#include "okay/Scene/Transform.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Math/Mathf.hpp"
 #include <cmath>
 #include <sstream>
 
@@ -355,6 +359,30 @@ void Character::Apply() {
 void Character::Update(float dt) {
     if (anim == 0) return;
     animTime += dt * animSpeed;
+
+    // Auto look-at: drive lookYaw/lookPitch so the head aims at the main camera or a
+    // named target. Same sign convention the controllers use: the head Euler-Y offset
+    // is (body heading − target heading), and +pitch raises the gaze.
+    if ((lookAtCamera || !lookAtTarget.empty()) && gameObject && gameObject->transform) {
+        Scene* sc = gameObject->scene();
+        Transform* tgt = nullptr;
+        if (sc && !lookAtTarget.empty()) { if (GameObject* g = sc->Find(lookAtTarget)) tgt = g->transform; }
+        else if (lookAtCamera && sc && sc->mainCamera) tgt = sc->mainCamera->transform;
+        if (tgt) {
+            Vec3 self = gameObject->transform->Position(); self.y += lookHeight;
+            Vec3 dir = tgt->Position() - self;
+            Vec3 fwd = gameObject->transform->localRotation * Vec3{0, 0, -1};
+            float bodyYaw = Mathf::Atan2(fwd.x, -fwd.z) * Mathf::Rad2Deg;
+            float aimYaw  = Mathf::Atan2(dir.x, -dir.z) * Mathf::Rad2Deg;
+            float relY = bodyYaw - aimYaw;
+            while (relY > 180.0f) relY -= 360.0f;
+            while (relY < -180.0f) relY += 360.0f;
+            float horiz = std::sqrt(dir.x * dir.x + dir.z * dir.z);
+            lookYaw   = relY;
+            lookPitch = Mathf::Atan2(dir.y, horiz) * Mathf::Rad2Deg;
+        }
+    }
+
     // Ease the head toward the look target so it moves smoothly (frame-rate
     // independent) instead of snapping to the camera each frame.
     float k = headTurnSpeed > 0.0f ? (1.0f - std::exp(-headTurnSpeed * dt)) : 1.0f;

@@ -5791,6 +5791,15 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle/walk/run/jump are driven by the controllers; the gestures and emotions (Point...Think) are poses you can trigger from scripts (set a Character's anim) or preview here.");
             if (ch->anim != 0) ImGui::SliderFloat("Anim Speed##char", &ch->animSpeed, 0.1f, 3.0f);
 
+            ImGui::SeparatorText("Head look");
+            if (ImGui::Checkbox("Look at Camera##char", &ch->lookAtCamera)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the head to face the main camera each frame (no controller/script needed). A First/Third-Person controller overrides this with its own aim.");
+            { static char lookBuf[48]; static Character* lbound = nullptr;
+              if (lbound != ch) { std::strncpy(lookBuf, ch->lookAtTarget.c_str(), sizeof(lookBuf)-1); lookBuf[sizeof(lookBuf)-1]='\0'; lbound = ch; }
+              if (ImGui::InputText("Look at Object##char", lookBuf, sizeof(lookBuf))) { ch->lookAtTarget = lookBuf; ed.dirty = true; }
+              if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional: name of an object to look at instead of the camera (e.g. the player). Leave blank to use the camera."); }
+            if (ImGui::SliderFloat("Head Turn Speed##char", &ch->headTurnSpeed, 0.0f, 20.0f)) ed.dirty = true;
+
             if (c) { ch->Apply(); ed.dirty = true; }
         }
     }

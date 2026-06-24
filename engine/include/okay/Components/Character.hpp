@@ -71,6 +71,14 @@ public:
     float HeadYaw()   const { return m_headYaw; }
     float HeadPitch() const { return m_headPitch; }
 
+    // Auto look-at: each frame, aim the head at the scene's main camera (or a named
+    // target) with no controller or script needed — for NPCs that track the player,
+    // or a character that makes eye contact with the camera. A First/Third-Person
+    // controller, if attached, drives the look itself and overrides this.
+    bool lookAtCamera = false;
+    std::string lookAtTarget;     // object name to look at (takes priority over lookAtCamera)
+    float lookHeight = 1.5f;      // head pivot height above the object's origin (aim from here)
+
     // Body lean: roll the upper body sideways (peeking around cover). Target in
     // degrees (+ leans to the body's right); eased like the head. Not serialized —
     // the controllers drive it each frame.

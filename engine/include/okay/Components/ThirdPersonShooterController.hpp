@@ -46,6 +46,9 @@ public:
     float shoulderOffset = 0.7f;         // over-the-shoulder lateral offset
     bool  cameraCollision = true;        // pull in so the view never clips walls
     float cameraCollisionSkin = 0.3f;
+    // Ease the camera back out once an obstacle clears (spring arm) instead of
+    // snapping. Higher = quicker recovery.
+    float cameraCollisionRecover = 6.0f;
 
     // ---- Aim (right mouse) ----
     int   aimButton = 1;                 // SDL right button
@@ -187,13 +190,23 @@ public:
         Vec3 desired = target + Vec3{behind.x * cp, Mathf::Sin(pr), behind.z * cp} * dist;
         desired = desired + (Quat::Euler(0, yaw, 0) * Vec3::Right) * shldr;
 
-        // Camera collision: never clip through walls/floors.
+        // Camera collision: never clip through walls/floors. Snap in instantly when
+        // blocked, ease back out once clear (spring arm) so the view doesn't pop.
         if (cameraCollision) {
             Vec3 d = desired - target; float dl = d.Magnitude();
             if (dl > 1e-4f) {
                 Vec3 dn = d * (1.0f / dl);
+                float allow = dl;
                 RaycastHit3D hit = sc->physics3D().Raycast(*sc, target, dn, dl + cameraCollisionSkin, gameObject);
-                if (hit.hit) desired = target + dn * Mathf::Max(0.0f, hit.distance - cameraCollisionSkin);
+                if (hit.hit) allow = Mathf::Max(0.0f, hit.distance - cameraCollisionSkin);
+                if (allow <= m_springLen) {
+                    m_springLen = allow;
+                } else {
+                    float e = cameraCollisionRecover > 0.0f
+                        ? (1.0f - std::exp(-cameraCollisionRecover * dt)) : 1.0f;
+                    m_springLen += (allow - m_springLen) * e;
+                }
+                desired = target + dn * m_springLen;
             }
         }
 
@@ -226,6 +239,7 @@ private:
     bool m_haveMouse = false;
     bool m_aiming = false;
     float m_aim = 0.0f;             // 0 = hip, 1 = aiming
+    float m_springLen = distance;   // eased spring-arm length (camera collision)
     float m_lean = 0.0f;            // eased lean (-1..+1)
     int   m_jumpsUsed = 0;         // jumps since last grounded (for double-jump)
     float m_fireCooldown = 0.0f;

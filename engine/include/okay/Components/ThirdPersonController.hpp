@@ -86,6 +86,9 @@ public:
     // plane off the surface.
     bool  cameraCollision = true;
     float cameraCollisionSkin = 0.3f;
+    // When an obstacle clears, ease the camera back out to its full distance
+    // instead of snapping (a classic spring arm). Higher = quicker recovery.
+    float cameraCollisionRecover = 6.0f;
 
     /// How the body is oriented while playing.
     ///   Movement: turn to face the direction of travel (classic adventure feel).
@@ -207,9 +210,18 @@ public:
                 // the body's current facing) AND tilts up/down with the orbit pitch,
                 // so the avatar looks around as you aim. (18 = the resting orbit pitch,
                 // so the head is level by default; aiming up raises the gaze.)
+                //
+                // bodyYaw is the body's facing as a world heading; the camera heading
+                // in that same convention is -yaw (the camera is built from
+                // Euler(0, yaw, 0), whose forward sits at world heading -yaw). The
+                // head offset the rig wants is (camera heading) - (body heading) read
+                // back through the rig's Euler-Y sense, which works out to yaw +
+                // bodyYaw. The old `yaw - bodyYaw` mixed the two sign conventions, so
+                // the head turned the wrong way (and cranked to ±2·yaw when the body
+                // already faced the camera).
                 Vec3 f = transform->localRotation * Vec3{0, 0, -1};
                 float bodyYaw = Mathf::Atan2(f.x, -f.z) * Mathf::Rad2Deg;
-                float rel = yaw - bodyYaw;
+                float rel = yaw + bodyYaw;
                 while (rel > 180.0f) rel -= 360.0f;
                 while (rel < -180.0f) rel += 360.0f;
                 ch->lookYaw   = rel;
@@ -262,19 +274,27 @@ public:
         // Camera collision (spring arm): cast from the player's head to the smoothed
         // camera position and, if anything is in the way, pull the camera in to the
         // hit point (minus a skin). Clamping AFTER the smoothing guarantees the view
-        // never clips through walls/floors even while the follow eases.
+        // never clips through walls/floors even while the follow eases. We snap IN
+        // instantly (so nothing ever clips) but ease the arm back OUT once the
+        // obstacle clears, so the camera glides rather than popping to full distance.
         if (cameraCollision) {
             Vec3 from = target;            // head pivot (origin + cameraHeight)
             Vec3 d = m_camPos - from;
             float dist = d.Magnitude();
             if (dist > 1e-4f) {
                 Vec3 dn = d * (1.0f / dist);
+                float allow = dist;        // how far the arm may extend this frame
                 RaycastHit3D hit = sc->physics3D().Raycast(*sc, from, dn,
                                                            dist + cameraCollisionSkin, gameObject);
-                if (hit.hit) {
-                    float pull = Mathf::Max(0.0f, hit.distance - cameraCollisionSkin);
-                    m_camPos = from + dn * pull;
+                if (hit.hit) allow = Mathf::Max(0.0f, hit.distance - cameraCollisionSkin);
+                if (allow <= m_springLen) {
+                    m_springLen = allow;   // blocked: pull in immediately
+                } else {
+                    float e = cameraCollisionRecover > 0.0f
+                        ? (1.0f - std::exp(-cameraCollisionRecover * dt)) : 1.0f;
+                    m_springLen += (allow - m_springLen) * e;   // clear: glide back out
                 }
+                m_camPos = from + dn * m_springLen;
             }
         }
 
@@ -344,6 +364,7 @@ private:
     float m_stanceDrop = 0.0f;        // smoothed look-target drop for crouch/prone
     Vec3 m_camPos{0, 0, 0};
     bool m_haveCamPos = false;
+    float m_springLen = distance;   // eased spring-arm length (camera collision)
     float m_groundContact = 0.0f;   // time-to-live of the last ground contact
     float m_coyote = 0.0f;          // remaining coyote-time window
     float m_jumpBuf = 0.0f;         // remaining jump-buffer window

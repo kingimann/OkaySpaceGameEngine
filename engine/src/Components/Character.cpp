@@ -208,10 +208,16 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_RUPARM] = {0, 0, -150};
         r[B_RFORE]  = {0, 0, -15 + 28 * std::sin(t * 8.0f)};
         r[B_LUPARM] = {0, 0, 6};
-    } else if (anim == 5) {                // jump
-        r[B_LUPARM] = {0, 0, 140};   r[B_RUPARM] = {0, 0, -140};
-        r[B_LTHIGH] = {-22, 0, 0};   r[B_RTHIGH] = {-22, 0, 0};
-        r[B_LSHIN]  = {35, 0, 0};    r[B_RSHIN]  = {35, 0, 0};
+    } else if (anim == 5) {                // jump (arms swing up & out — never crossing)
+        // Raise the arms up-and-OUT to the sides with bent elbows. The old pose
+        // rotated each upper arm 140° about Z, which swings the hands up and over
+        // the centerline so they cross in front of the face; ~58° keeps each arm
+        // on its own side. (+Z spreads the left arm out, −Z the right — same sense
+        // as the idle/walk spread, just larger.)
+        r[B_LUPARM] = {-18, 0, 58};   r[B_RUPARM] = {-18, 0, -58};
+        r[B_LFORE]  = {32, 0, 0};     r[B_RFORE]  = {32, 0, 0};   // elbows bent up
+        r[B_LTHIGH] = {-22, 0, 0};    r[B_RTHIGH] = {-22, 0, 0};
+        r[B_LSHIN]  = {35, 0, 0};     r[B_RSHIN]  = {35, 0, 0};
     } else if (anim == 6) {                // crouch (deep squat: hips low, feet planted)
         float s = std::sin(t * 2.2f);      // gentle breathing
         // Thighs forward + shins folded hard back so the knees come up while the

@@ -483,9 +483,13 @@ inline void Multiplayer(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     player->AddComponent<SpriteRenderer>()->color = Color::FromBytes(90, 170, 240);
     auto* sc = player->AddComponent<ScriptComponent>("okayscript");
+    // Host with H, join 127.0.0.1 with J, then move with WASD. Every connected peer
+    // appears automatically (the NetworkManager spawns a sprite per peer and keeps
+    // it in sync), so two windows show each other move with zero extra wiring.
     sc->LoadSource(
-        "# Press H to host a server, J to join 127.0.0.1. Move with WASD.\n"
+        "# Multiplayer starter — H host, J join, WASD move.\n"
         "var started = 0;\n"
+        "function start() { net_name(\"Player\"); }\n"
         "function update(d) {\n"
         "  if (started == 0) {\n"
         "    if (key_down(\"h\")) { net_host(45000); started = 1; }\n"
@@ -495,10 +499,22 @@ inline void Multiplayer(Scene& scene) {
         "  move(axis_x() * speed * d, axis_y() * speed * d);\n"
         "}\n");
 
-    GameObject* hud = scene.CreateGameObject("Help");
-    auto* tr = hud->AddComponent<TextRenderer>();
-    tr->text = "H = host   J = join 127.0.0.1   WASD = move";
-    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 2.0f;
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* htr = help->AddComponent<TextRenderer>();
+    htr->text = "H = host    J = join 127.0.0.1    WASD = move";
+    htr->screenSpace = true; htr->screenPos = {12, 12}; htr->pixelSize = 2.0f;
+
+    // Live status line driven by the net_* builtins — a ready-made connection HUD.
+    GameObject* status = scene.CreateGameObject("NetStatus");
+    auto* str = status->AddComponent<TextRenderer>();
+    str->text = "Net: offline"; str->screenSpace = true; str->screenPos = {12, 40}; str->pixelSize = 2.0f;
+    auto* ssc = status->AddComponent<ScriptComponent>("okayscript");
+    ssc->LoadSource(
+        "function update(d) {\n"
+        "  if (net_connected() == 0) { set_text(\"Net: offline\"); }\n"
+        "  else if (net_is_server() == 1) { set_text($\"Net: HOSTING   peers: {net_peers()}\"); }\n"
+        "  else { set_text($\"Net: CLIENT   ping: {net_ping()} ms\"); }\n"
+        "}\n");
 }
 
 /// A complete little game: drive the player with WASD to collect spinning

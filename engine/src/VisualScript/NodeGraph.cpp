@@ -123,6 +123,14 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "Or")  return std::make_unique<LogicNode>(LogicNode::Op::Or);
     if (type == "Xor") return std::make_unique<LogicNode>(LogicNode::Op::Xor);
     if (type == "Not") return std::make_unique<NotNode>();
+    // Conditions.
+    if (type == "Equals")    return std::make_unique<EqualsNode>(false);
+    if (type == "NotEquals") return std::make_unique<EqualsNode>(true);
+    if (type == "Approx")    return std::make_unique<ApproxNode>();
+    if (type == "Between")   return std::make_unique<BetweenNode>();
+    if (type == "Chance")    { if (!need(1)) return nullptr; return std::make_unique<ChanceNode>(ParseValue(args[0]).AsFloat()); }
+    if (type == "HasVar")    { if (!need(1)) return nullptr; return std::make_unique<HasVarNode>(args[0]); }
+    if (type == "KeyUp")     { if (!need(1)) return nullptr; return std::make_unique<KeyUpNode>(args[0].empty() ? ' ' : args[0][0]); }
     if (type == "Select") return std::make_unique<SelectNode>();
     if (type == "Concat") return std::make_unique<ConcatNode>();
     // Vectors.
@@ -154,6 +162,32 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "FlipFlop")    return std::make_unique<FlipFlopNode>();
     if (type == "Timer")       { if (!need(1)) return nullptr; return std::make_unique<TimerNode>(ParseValue(args[0]).AsFloat()); }
     if (type == "Sequence")    { int c = args.empty() ? 2 : (int)ParseValue(args[0]).AsFloat(); return std::make_unique<SequenceNode>(c); }
+    if (type == "Repeat")      { if (!need(1)) return nullptr; return std::make_unique<RepeatNode>((int)ParseValue(args[0]).AsFloat()); }
+    if (type == "Toggle")      { if (!need(1)) return nullptr; return std::make_unique<ToggleNode>(args[0]); }
+    if (type == "LogWarn")     return std::make_unique<LogNode>(1);
+    if (type == "LogError")    return std::make_unique<LogNode>(2);
+    if (type == "Spawn")       { if (!need(1)) return nullptr; return std::make_unique<SpawnPrefabNode>(args[0]); }
+    if (type == "Wait")        { if (!need(1)) return nullptr; return std::make_unique<WaitNode>(ParseValue(args[0]).AsFloat()); }
+    // Multiplayer.
+    if (type == "NetConnected") return std::make_unique<NetConnectedNode>();
+    if (type == "NetIsServer")  return std::make_unique<NetIsServerNode>();
+    if (type == "NetIsClient")  return std::make_unique<NetIsClientNode>();
+    if (type == "NetPeers")     return std::make_unique<NetPeersNode>();
+    if (type == "NetId")        return std::make_unique<NetIdNode>();
+    if (type == "NetGetVar")    { if (!need(1)) return nullptr; return std::make_unique<NetGetVarNode>(args[0]); }
+    if (type == "NetHost")      { int p = args.empty() ? 45000 : (int)ParseValue(args[0]).AsFloat(); return std::make_unique<NetHostNode>(p); }
+    if (type == "NetJoin")      { std::string h = args.empty() ? "127.0.0.1" : args[0]; int p = args.size() < 2 ? 45000 : (int)ParseValue(args[1]).AsFloat(); return std::make_unique<NetJoinNode>(h, p); }
+    if (type == "NetSend")      { if (!need(1)) return nullptr; return std::make_unique<NetSendNode>(args[0]); }
+    if (type == "NetSetVar")    { if (!need(1)) return nullptr; return std::make_unique<NetSetVarNode>(args[0]); }
+    if (type == "NetDisconnect") return std::make_unique<NetDisconnectNode>();
+    // Steam.
+    if (type == "SteamName")        return std::make_unique<SteamNameNode>();
+    if (type == "SteamIsUnlocked")  { if (!need(1)) return nullptr; return std::make_unique<SteamUnlockedNode>(args[0]); }
+    if (type == "SteamGetStat")     { if (!need(1)) return nullptr; return std::make_unique<SteamGetStatNode>(args[0]); }
+    if (type == "SteamUnlock")      { if (!need(1)) return nullptr; return std::make_unique<SteamUnlockNode>(args[0]); }
+    if (type == "SteamSetStat")     { if (!need(1)) return nullptr; return std::make_unique<SteamSetStatNode>(args[0]); }
+    if (type == "SteamStore")       return std::make_unique<SteamStoreNode>();
+    if (type == "SteamLeaderboard") { if (!need(1)) return nullptr; return std::make_unique<SteamLeaderboardNode>(args[0]); }
     if (err) *err = "unknown node type '" + type + "'";
     return nullptr;
 }

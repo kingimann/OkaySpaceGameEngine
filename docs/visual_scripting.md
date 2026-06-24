@@ -34,18 +34,40 @@ in1=b, in2=t); `Random` (0..1); `RandomRange` (in0=lo, in1=hi)
 passes any value type through), `Concat` (in0+in1 as strings),
 `MakeVec3` (in0=x, in1=y, in2=z), `VecX` / `VecY` / `VecZ` (in0=vector)
 
+**Data — conditions** (return a bool, pair with `Branch`): `Equals` /
+`NotEquals` (type-aware: text if either side is a string, else numeric),
+`Approx` (in0≈in1 within in2, default 0.001), `Between` (in1 ≤ in0 ≤ in2),
+`Chance <p>` (true with probability p), `HasVar <name>` (variable is set),
+`KeyUp <c>` (key released this frame)
+
+**Data — multiplayer**: `NetConnected`, `NetIsServer`, `NetIsClient`,
+`NetPeers` (count), `NetId`, `NetGetVar <key>` (synced variable)
+
+**Data — Steam**: `SteamName`, `SteamIsUnlocked <achievement>`,
+`SteamGetStat <name>`
+
 **Actions** (1 exec out): `SetVar <name>`, `AddVar <name>` (add in0 to a variable),
-`Print`, `Translate` (in0=x, in1=y), `SetPosition` (in0=x, in1=y),
+`Toggle <name>` (flip a boolean variable), `Print`, `LogWarn`, `LogError`,
+`Translate` (in0=x, in1=y), `SetPosition` (in0=x, in1=y),
 `Rotate` (in0=degrees), `SetRotation` (in0=absolute degrees about Z),
-`SetScale` (in0=x, in1=y, in2=z; default 1), `Destroy` (remove this object —
-terminal, no exec out)
+`SetScale` (in0=x, in1=y, in2=z; default 1), `Spawn <prefab>` (instantiate at this
+object's position), `Destroy` (remove this object — terminal, no exec out)
+
+**Actions — multiplayer**: `NetHost <port>`, `NetJoin <host> <port>`,
+`NetSend <channel>` (in0=data), `NetSetVar <key>` (in0=value), `NetDisconnect`
+
+**Actions — Steam**: `SteamUnlock <achievement>`, `SteamSetStat <name>` (in0=value),
+`SteamStore`, `SteamLeaderboard <board>` (in0=score)
 
 **Flow**:
 - `Branch` — exec out 0 = true, exec out 1 = false; data in0 = condition
 - `Sequence <n>` — fire each of `n` exec outputs in order (default 2)
+- `Repeat <n>` — run the downstream chain `n` times, then continue
 - `Once` — pass through only the first time it's reached (one-shot setup)
 - `Timer <seconds>` — pass through at most once every `seconds` (accumulates
   `DeltaTime`); ideal for "every N seconds" pulses under `OnUpdate`
+- `Wait <seconds>` — one-shot delay: blocks until `seconds` elapse, then passes
+  through from then on (combine with `Once` for a single deferred action)
 - `FlipFlop` — alternate between exec out 0 and 1 on each execution
 
 ## Example: move right at 2 units/sec

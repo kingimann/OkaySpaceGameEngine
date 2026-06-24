@@ -228,6 +228,15 @@ editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
 | `net_get("key")` | Read a synced variable (same value on every peer) |
 | `net_spawn("prefab", x, y[, z])` | **Replicated spawn** — instantiate a prefab on every peer |
 
+### Character animation (a Character on the same object)
+| Function | Description |
+|---|---|
+| `load_clips("text")` | Load keyframe clips from OkayVS-anim text (see [animation.md](animation.md)); returns count |
+| `play_clip("name")` | Play a loaded clip by name (returns 1 on success) |
+| `stop_clip()` | Stop the clip, return to the built-in animation |
+| `playing_clip()` / `is_playing_clip()` | The active clip name / whether one is playing |
+| `set_anim(n)` / `get_anim()` | Set/get the built-in animation index (1 idle, 2 walk, 3 run, …) |
+
 ### Steam (achievements, stats, leaderboards, cloud)
 | Function | Description |
 |---|---|

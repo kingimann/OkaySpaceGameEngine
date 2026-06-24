@@ -293,6 +293,10 @@ add_executable(test_animclip test_animclip.cpp)
 target_link_libraries(test_animclip PRIVATE okay::engine)
 add_test(NAME animclip COMMAND test_animclip)
 
+add_executable(test_script_anim test_script_anim.cpp)
+target_link_libraries(test_script_anim PRIVATE okay::engine)
+add_test(NAME script_anim COMMAND test_script_anim)
+
 add_executable(test_steam_script test_steam_script.cpp)
 target_link_libraries(test_steam_script PRIVATE okay::engine)
 add_test(NAME steam_script COMMAND test_steam_script)

@@ -108,9 +108,15 @@ Recent additions (v2.12–2.14):
   canvas edges/center and sibling widgets (magenta lines) while moving or
   resizing. **Arrow keys** nudge the selection (Shift = grid step). A selected
   widget's inspector adds a **3×3 anchor preset** grid (re-anchors without
-  moving it), **Bring to Front / Send to Back**, **Center in Canvas**, and
-  **Fill Width / Height / Canvas**. A live `W x H` readout and an anchor marker
-  are drawn on the selection.
+  moving it), **Bring to Front / Send to Back**, a **Draw Order** override,
+  **Center in Canvas**, and **Fill Width / Height / Canvas**. A live `W x H`
+  readout and an anchor marker are drawn on the selection.
+- **UI layering** — all UI draws in one pass ordered by: owning **Canvas Sort
+  Order** (higher on top), then each widget's **Draw Order** (0 = its default
+  type order; any non-zero value layers it freely against widgets of *any* other
+  type, higher on top), then the **hierarchy** (a child draws above its parent;
+  **Bring to Front / Send to Back** reorder a widget among its siblings). The
+  editor preview uses the exact same order as the built game.
 - **Sprite textures** — set a Sprite Renderer's *Texture* to a PNG/JPG/BMP path
   (loaded via `okay::Image`/stb_image). The built game draws the image, tinted by
   the sprite color; the editor viewport still shows the colored quad. Keep the

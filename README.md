@@ -428,6 +428,12 @@ and **synced variables** `net_set(key, value)` / `net_get(key)` — a
 server-authoritative shared store (scores, game phase) that every peer sees,
 auto-synced to new joiners.
 
+**Players behind home routers?** Run the bundled `okayspace-relay` on any
+reachable host and connect through it with a shared code —
+`net_host_relay(relay_ip, port, "code")` / `net_join_relay(...)` (or
+`HostViaRelay` / `JoinViaRelay` in C++). No port-forwarding; encryption still
+runs end to end. See [docs/relay.md](docs/relay.md).
+
 **No code at all?** Add a **Network Manager** component, set **Auto Start =
 Host on Play** (or **Join**) with a port/name in the Inspector, and press Play —
 the component hosts/joins on its own, broadcasting its object's Transform. The

@@ -16,6 +16,7 @@ add_library(okay_engine
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
     src/Net/NetworkManager.cpp
+    src/Net/RelayServer.cpp
     src/VisualScript/NodeGraph.cpp
     src/Components/VisualScriptComponent.cpp
     src/Scripting/OkayScriptVM.cpp

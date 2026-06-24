@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.165.0
+    VERSION 2.166.0
     DESCRIPTION "A Unity-inspired C++ game engine"
     LANGUAGES CXX)
 
@@ -105,6 +105,10 @@ if(WIN32 AND NOT OKAY_STATIC_SDL AND DEFINED SDL2_DIR)
         message(WARNING "SDL2.dll not found at ${_okay_sdl_dll}; ship it manually or use -DOKAY_STATIC_SDL=ON.")
     endif()
 endif()
+
+# ---- Reference relay (NAT traversal) ---------------------------------
+# A tiny console UDP forwarder; no graphics deps, always built.
+add_subdirectory(relay)
 
 # ---- Tests ------------------------------------------------------------
 if(OKAY_BUILD_TESTS)

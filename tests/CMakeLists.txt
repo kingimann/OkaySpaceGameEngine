@@ -285,6 +285,10 @@ add_executable(test_script_net test_script_net.cpp)
 target_link_libraries(test_script_net PRIVATE okay::engine)
 add_test(NAME script_net COMMAND test_script_net)
 
+add_executable(test_net_relay test_net_relay.cpp)
+target_link_libraries(test_net_relay PRIVATE okay::engine)
+add_test(NAME net_relay COMMAND test_net_relay)
+
 add_executable(test_steam_script test_steam_script.cpp)
 target_link_libraries(test_steam_script PRIVATE okay::engine)
 add_test(NAME steam_script COMMAND test_steam_script)

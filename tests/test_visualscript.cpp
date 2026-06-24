@@ -208,5 +208,95 @@ int main() {
         CHECK_NEAR(vsc->GetVariable("ticks").AsFloat(), 3.0f, 0.001f);  // Timer: 3 pulses
     }
 
+    // --- Conditions: Equals, Between; instructions: Repeat. ---
+    {
+        const char* src = R"OKAYVS(
+            node 0 OnStart
+            node 1 Const 5
+            node 2 Const 5
+            node 3 Equals
+            node 4 SetVar eq
+            node 10 Const 5
+            node 11 Const 1
+            node 12 Const 10
+            node 13 Between
+            node 14 SetVar btw
+            node 20 Repeat 3
+            node 21 AddVar hits
+            node 22 Const 1
+            data 3 0 1 0
+            data 3 1 2 0
+            data 4 0 3 0
+            data 13 0 10 0
+            data 13 1 11 0
+            data 13 2 12 0
+            data 14 0 13 0
+            data 21 0 22 0
+            exec 0 0 4
+            exec 4 0 14
+            exec 14 0 20
+            exec 20 0 21
+            entry OnStart 0
+        )OKAYVS";
+        Scene scene("VS7");
+        auto* vsc = scene.CreateGameObject("Cond")->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(vsc->LoadFromText(src, &err));
+        if (!err.empty()) std::cerr << "  parse: " << err << "\n";
+        scene.Start();
+        CHECK_NEAR(vsc->GetVariable("eq").AsFloat(), 1.0f, 0.001f);    // 5 == 5
+        CHECK_NEAR(vsc->GetVariable("btw").AsFloat(), 1.0f, 0.001f);   // 1 <= 5 <= 10
+        CHECK_NEAR(vsc->GetVariable("hits").AsFloat(), 3.0f, 0.001f);  // Repeat 3
+    }
+
+    // --- Wait: one-shot delay then passes through. ---
+    {
+        const char* src = R"OKAYVS(
+            node 0 OnUpdate
+            node 1 Wait 1.0
+            node 2 AddVar after
+            node 3 Const 1
+            data 2 0 3 0
+            exec 0 0 1
+            exec 1 0 2
+            entry OnUpdate 0
+        )OKAYVS";
+        Scene scene("VS8");
+        auto* vsc = scene.CreateGameObject("Waiter")->AddComponent<VisualScriptComponent>();
+        CHECK(vsc->LoadFromText(src));
+        scene.Start();
+        for (int i = 0; i < 8; ++i) scene.Update(0.25f);   // 2.0s; passes from 1.0s on (updates 4..8)
+        CHECK_NEAR(vsc->GetVariable("after").AsFloat(), 5.0f, 0.001f);
+    }
+
+    // --- Multiplayer/Steam nodes are safe offline (no session / no Steam). ---
+    {
+        const char* src = R"OKAYVS(
+            node 0 OnStart
+            node 1 NetConnected
+            node 2 SetVar conn
+            node 3 NetPeers
+            node 4 SetVar peers
+            node 5 SteamIsUnlocked ACH_TEST
+            node 6 SetVar unlocked
+            data 2 0 1 0
+            data 4 0 3 0
+            data 6 0 5 0
+            exec 0 0 2
+            exec 2 0 4
+            exec 4 0 6
+            entry OnStart 0
+        )OKAYVS";
+        Scene scene("VS9"); scene.physicsEnabled = false;
+        auto* vsc = scene.CreateGameObject("NetSteam")->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(vsc->LoadFromText(src, &err));
+        if (!err.empty()) std::cerr << "  parse: " << err << "\n";
+        scene.Start();
+        CHECK_NEAR(vsc->GetVariable("conn").AsFloat(), 0.0f, 0.001f);     // not connected
+        CHECK_NEAR(vsc->GetVariable("peers").AsFloat(), 0.0f, 0.001f);    // no peers
+        CHECK_NEAR(vsc->GetVariable("unlocked").AsFloat(), 0.0f, 0.001f); // no Steam -> false
+    }
+
     TEST_MAIN_RESULT();
 }

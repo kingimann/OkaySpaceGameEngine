@@ -2,6 +2,8 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Mat4.hpp"
+#include "okay/Math/Vec2.hpp"
+#include "okay/Math/Vec3.hpp"
 
 namespace okay {
 
@@ -66,6 +68,23 @@ public:
     /// The effective vertical field of view (degrees) for a viewport aspect ratio,
     /// resolving physical-camera optics and the horizontal-axis option. Useful for UI.
     float VerticalFovDegrees(float aspect) const;
+
+    /// Project a world point to screen pixels (origin top-left, +Y down). Returns
+    /// false when the point is behind the camera; on success *out is the pixel
+    /// position and *outDepth (if given) is the clip-space w (view depth) for
+    /// distance-based scaling. Uses the same view*projection the renderer draws
+    /// meshes with, so projected UI lines up with the 3D scene. Inline so UI code
+    /// (player + editor) can project world-space widgets without extra plumbing.
+    bool WorldToScreen(const Vec3& world, float screenW, float screenH,
+                       Vec2& out, float* outDepth = nullptr) const {
+        float aspect = screenH > 0.0f ? screenW / screenH : 1.0f;
+        Vec4 clip = (ProjectionMatrix(aspect) * ViewMatrix()) * Vec4{world.x, world.y, world.z, 1.0f};
+        if (clip.w <= 1e-5f) return false;                 // behind / on the camera plane
+        float ndcX = clip.x / clip.w, ndcY = clip.y / clip.w;
+        out = Vec2{(ndcX * 0.5f + 0.5f) * screenW, (1.0f - (ndcY * 0.5f + 0.5f)) * screenH};
+        if (outDepth) *outDepth = clip.w;
+        return true;
+    }
 
     void Awake() override;
 };

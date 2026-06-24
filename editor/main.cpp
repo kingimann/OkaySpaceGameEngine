@@ -1426,6 +1426,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             };
             if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>();        ed.dirty = true; created = true; }
             if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
             if (ImGui::MenuItem("UI Document"))  {
                 GameObject* root = EnsureUIRoot(ed);
                 GameObject* g = ed.CreateEmpty("UIDocument");
@@ -6985,6 +6987,32 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uidoc")) toRemove = doc;
         }
     }
+    if (auto* wu = go->GetComponent<WorldUI>()) {
+        if (CompHeader("World UI (3D label)", wu, &toRemove)) {
+            char tb[160]; std::strncpy(tb, wu->text.c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
+            if (ImGui::InputText("Text##wu", tb, sizeof(tb))) { wu->text = tb; ed.dirty = true; }
+            float c[4] = {wu->color.r, wu->color.g, wu->color.b, wu->color.a};
+            if (ImGui::ColorEdit4("Text Color##wu", c)) { wu->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
+            float bg[4] = {wu->background.r, wu->background.g, wu->background.b, wu->background.a};
+            if (ImGui::ColorEdit4("Background##wu", bg)) { wu->background = {bg[0],bg[1],bg[2],bg[3]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Panel behind the text. Set alpha to 0 for no panel.");
+            float off[3] = {wu->worldOffset.x, wu->worldOffset.y, wu->worldOffset.z};
+            if (ImGui::DragFloat3("World Offset##wu", off, 0.05f)) { wu->worldOffset = {off[0],off[1],off[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Offset from the object in world units (default: 2 above it).");
+            if (ImGui::DragFloat("Size##wu", &wu->pixelSize, 0.05f, 0.2f, 16.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Scale With Distance##wu", &wu->scaleWithDistance)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Distance##wu", &wu->maxDistance, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = always visible; otherwise hide when farther than this.");
+            if (ImGui::DragFloat("Bar (0..1, <0 = none)##wu", &wu->bar, 0.01f, -1.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A health/progress bar under the text. Drive it from a script (set the WorldUI's bar).");
+            if (wu->bar >= 0.0f) {
+                float bc[4] = {wu->barColor.r, wu->barColor.g, wu->barColor.b, wu->barColor.a};
+                if (ImGui::ColorEdit4("Bar Color##wu", bc)) { wu->barColor = {bc[0],bc[1],bc[2],bc[3]}; ed.dirty = true; }
+            }
+            ImGui::TextDisabled("Floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
+            if (ImGui::SmallButton("Remove##wu")) toRemove = wu;
+        }
+    }
     if (auto* btn = go->GetComponent<UIButton>()) {
         if (CompHeader("UI Button", btn, &toRemove)) {
             char lb[128];
@@ -7801,6 +7829,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
+            if (item(!go->GetComponent<WorldUI>(), "World UI (3D label)")) { go->AddComponent<WorldUI>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIStepper>(), "UI Stepper")) { go->AddComponent<UIStepper>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRating>(), "UI Rating")) { go->AddComponent<UIRating>(); ed.dirty = true; }
@@ -8224,6 +8253,38 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                            a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, c);
         }
         if (!tb->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), tb->cornerRadius);
+    }
+
+    // In-world UI (3D labels/markers): project each through the main camera onto the
+    // canvas. Only meaningful in the Game view, which shows the main camera (the
+    // Scene view uses the free editor camera, so we skip it there).
+    if (gameView && ed.scene().mainCamera) {
+        Camera* mc = ed.scene().mainCamera;
+        for (const auto& up : objs) {
+            auto* wu = up->GetComponent<WorldUI>();
+            if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
+            Vec3 wp = up->transform->Position() + wu->worldOffset;
+            Vec2 sp; float depth = 0.0f;
+            if (!mc->WorldToScreen(wp, canvasSize.x, canvasSize.y, sp, &depth)) continue;
+            if (wu->maxDistance > 0.0f && depth > wu->maxDistance) continue;
+            float scale = wu->pixelSize;
+            if (wu->scaleWithDistance && depth > 0.001f)
+                scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
+                                     wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
+            float tw = wu->text.size() * (Font8x8::Width + 1) * scale;
+            float th = Font8x8::Height * scale;
+            ImVec2 c(canvasPos.x + sp.x, canvasPos.y + sp.y);
+            float tx = c.x - tw * 0.5f, ty = c.y - th * 0.5f;
+            if (wu->background.a > 0.001f)
+                dl->AddRectFilled(ImVec2(tx - 5, ty - 4), ImVec2(tx + tw + 5, ty + th + 4), ToColor(wu->background), 4.0f);
+            DrawBitmapText(dl, wu->text, tx, ty, scale, ToColor(wu->color));
+            if (wu->bar >= 0.0f) {
+                float bw = tw > 36.0f ? tw : 36.0f;
+                float bx = c.x - bw * 0.5f, by = ty + th + 3.0f, bh = 4.0f * scale;
+                dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), ToColor(wu->barBackground), 2.0f);
+                dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * Mathf::Clamp01(wu->bar), by + bh), ToColor(wu->barColor), 2.0f);
+            }
+        }
     }
 
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).

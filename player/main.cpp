@@ -1041,6 +1041,39 @@ int main(int argc, char** argv) {
             DrawText(renderer, disp, o.x, o.y, p, col, ls, lp);
             if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp);
         }
+        for (const auto& up : scene.Objects()) {           // in-world UI labels/markers (3D -> screen)
+            auto* wu = up->GetComponent<WorldUI>();
+            if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
+            Camera* mc = scene.mainCamera;
+            if (!mc) continue;
+            Vec3 wp = up->transform->Position() + wu->worldOffset;
+            Vec2 sp; float depth = 0.0f;
+            if (!mc->WorldToScreen(wp, (float)w, (float)h, sp, &depth)) continue;   // behind camera
+            if (wu->maxDistance > 0.0f && depth > wu->maxDistance) continue;
+            float scale = wu->pixelSize;
+            if (wu->scaleWithDistance && depth > 0.001f)
+                scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
+                                     wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
+            float op = UIOpacity(up.get());
+            float tw = wu->text.size() * (Font8x8::Width + 1) * scale;
+            float th = Font8x8::Height * scale;
+            float tx = sp.x - tw * 0.5f, ty = sp.y - th * 0.5f;
+            if (wu->background.a > 0.001f) {
+                SDL_Rect bg{(int)(tx - 5), (int)(ty - 4), (int)(tw + 10), (int)(th + 8)};
+                FillUIShape(renderer, bg, UIShape::Rounded, 4.0f, wu->background, wu->background, false, false, op);
+            }
+            SDL_Color tc{(Uint8)(wu->color.r * 255), (Uint8)(wu->color.g * 255),
+                         (Uint8)(wu->color.b * 255), (Uint8)(wu->color.a * 255 * op)};
+            DrawText(renderer, wu->text, tx, ty, scale, tc);
+            if (wu->bar >= 0.0f) {                          // optional health/progress bar under the text
+                float bw = tw > 36.0f ? tw : 36.0f;
+                float bx = sp.x - bw * 0.5f, by = ty + th + 3.0f, bh = 4.0f * scale;
+                SDL_Rect bgb{(int)bx, (int)by, (int)bw, (int)bh};
+                FillUIShape(renderer, bgb, UIShape::Rounded, 2.0f, wu->barBackground, wu->barBackground, false, false, op);
+                SDL_Rect fb{(int)bx, (int)by, (int)(bw * Mathf::Clamp01(wu->bar)), (int)bh};
+                FillUIShape(renderer, fb, UIShape::Rounded, 2.0f, wu->barColor, wu->barColor, false, false, op);
+            }
+        }
         for (const auto& up : scene.Objects()) {           // dropdowns (header + open list)
             auto* dd = up->GetComponent<UIDropdown>();
             if (!dd || !up->active || UIHidden(up.get())) continue;

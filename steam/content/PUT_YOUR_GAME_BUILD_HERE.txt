@@ -1,1 +1,0 @@
-Put your exported game here (editor: File > Build Game output), then run upload.sh / upload.bat.

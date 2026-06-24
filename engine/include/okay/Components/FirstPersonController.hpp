@@ -59,7 +59,7 @@ public:
     float crouchSpeed = 2.2f;
     float proneSpeed  = 1.1f;
     float standEyeHeight  = 1.6f;       // child-camera local Y while standing
-    float crouchEyeHeight = 0.9f;
+    float crouchEyeHeight = 1.2f;       // Minecraft-style: a modest dip, not a deep squat
     float proneEyeHeight  = 0.4f;
     float stanceLerp = 12.0f;           // how fast the eye height eases between stances
 

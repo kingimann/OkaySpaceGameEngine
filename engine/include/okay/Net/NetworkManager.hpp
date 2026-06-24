@@ -223,6 +223,22 @@ private:
     void ResendReliable(std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& out,
                         const net::Endpoint& to, float dt);
 
+    // Datagram fragmentation: SendDatagram splits an oversized message into
+    // MTU-sized pieces; TakeFragment reassembles them on the far side; PruneFragments
+    // discards half-assembled messages whose fragments stopped arriving.
+    void SendDatagram(const net::Endpoint& to, const std::uint8_t* data, std::size_t size);
+    struct FragAsm {
+        std::uint32_t count = 0;
+        std::uint32_t got   = 0;
+        std::vector<std::vector<std::uint8_t>> chunks;
+        float age = 0.0f;
+    };
+    bool TakeFragment(const net::Endpoint& from, const std::uint8_t* data,
+                      std::size_t size, std::vector<std::uint8_t>& out);
+    void PruneFragments(float dt);
+    std::unordered_map<net::Endpoint, std::unordered_map<std::uint32_t, FragAsm>, net::EndpointHash> m_fragIn;
+    std::uint32_t m_fragNextId = 0;
+
     void ServerTick(float dt);
     void ClientTick(float dt);
     GameObject* EnsureRemote(std::uint32_t id, char glyph);

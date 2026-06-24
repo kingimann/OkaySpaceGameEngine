@@ -15,8 +15,10 @@ namespace {
     enum Msg : std::uint8_t {
         Join = 1, Welcome = 2, State = 3, Snapshot = 4, Leave = 5,
         Message = 6, DirectMessage = 7, SyncVar = 8, Ping = 9, Pong = 10,
-        Ready = 11, Reject = 12, Kicked = 13, ReliableMsg = 14, ReliableAck = 15
+        Ready = 11, Reject = 12, Kicked = 13, ReliableMsg = 14, ReliableAck = 15,
+        Fragment = 16   // one piece of a message too large for a single datagram
     };
+    constexpr float kFragmentTtl = 5.0f;        // drop half-assembled messages after this
     constexpr float kClientTimeout = 5.0f;
     constexpr float kReliableResend = 0.25f;   // resend an unacked message this often
 
@@ -67,7 +69,7 @@ void NetworkManager::Stop() {
     if (m_mode == Mode::Client && m_joined && m_socket.IsOpen()) {
         net::Packet p(Leave);
         p.Write(m_localId);
-        m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+        SendDatagram(m_serverEp, p.Data(), p.Size());
     }
     m_socket.Close();
     if (m_netStarted) { net::Shutdown(); m_netStarted = false; }
@@ -196,7 +198,7 @@ void NetworkManager::SetReady(bool ready) {
     m_ready = ready;
     if (m_mode == Mode::Client && m_joined) {
         net::Packet p(Ready); p.Write(std::uint8_t(ready ? 1 : 0));
-        m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+        SendDatagram(m_serverEp, p.Data(), p.Size());
     }
 }
 
@@ -227,10 +229,10 @@ void NetworkManager::SetVar(const std::string& key, const std::string& value) {
     ApplySyncVar(key, value);                 // optimistic / offline local apply
     if (m_mode == Mode::Server) {
         net::Packet p(SyncVar); p.Write(key); p.Write(value);
-        for (auto& [ep, c] : m_clients) m_socket.SendTo(c.endpoint, p.Data(), p.Size());
+        for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, p.Data(), p.Size());
     } else if (m_mode == Mode::Client && m_joined) {
         net::Packet p(SyncVar); p.Write(key); p.Write(value);
-        m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+        SendDatagram(m_serverEp, p.Data(), p.Size());
     }
 }
 
@@ -242,13 +244,13 @@ void NetworkManager::SendTo(std::uint32_t targetId, const std::string& channel,
             if (c.id == targetId) {
                 net::Packet p(Message);
                 p.Write(m_localId); p.Write(channel); p.Write(data);
-                m_socket.SendTo(c.endpoint, p.Data(), p.Size());
+                SendDatagram(c.endpoint, p.Data(), p.Size());
                 return;
             }
     } else if (m_mode == Mode::Client && m_joined) {
         net::Packet p(DirectMessage);
         p.Write(m_localId); p.Write(targetId); p.Write(channel); p.Write(data);
-        m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+        SendDatagram(m_serverEp, p.Data(), p.Size());
     }
 }
 
@@ -260,7 +262,7 @@ void NetworkManager::SendReliableTo(std::uint32_t targetId, const std::string& c
                 std::uint32_t seq = c.relSeq++;
                 auto bytes = BuildReliable(seq, channel, data);
                 c.relOut[seq] = {bytes, 0.0f};
-                m_socket.SendTo(c.endpoint, bytes.data(), bytes.size());
+                SendDatagram(c.endpoint, bytes.data(), bytes.size());
                 return;
             }
     } else if (m_mode == Mode::Client && m_joined) {
@@ -268,7 +270,7 @@ void NetworkManager::SendReliableTo(std::uint32_t targetId, const std::string& c
         std::uint32_t seq = m_relSeq++;
         auto bytes = BuildReliable(seq, channel, data);
         m_relOut[seq] = {bytes, 0.0f};
-        m_socket.SendTo(m_serverEp, bytes.data(), bytes.size());
+        SendDatagram(m_serverEp, bytes.data(), bytes.size());
     }
 }
 
@@ -287,8 +289,67 @@ void NetworkManager::ResendReliable(
         item.second += dt;
         if (item.second >= kReliableResend) {
             item.second = 0.0f;
-            m_socket.SendTo(to, item.first.data(), item.first.size());
+            SendDatagram(to, item.first.data(), item.first.size());
         }
+    }
+}
+
+// Send a datagram, splitting it into MTU-sized fragments if it's too big to fit in
+// one. Small messages (the vast majority) go out directly. Each fragment carries
+// {Fragment, msgId, index, count} so the receiver can reassemble in order.
+void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* data, std::size_t size) {
+    if (size <= net::kFragmentThreshold) { m_socket.SendTo(to, data, size); return; }
+    const std::size_t header = 1 + 4 + 4 + 4;            // type + msgId + index + count
+    const std::size_t chunkMax = net::kFragmentThreshold - header;
+    std::uint32_t count = static_cast<std::uint32_t>((size + chunkMax - 1) / chunkMax);
+    std::uint32_t id = m_fragNextId++;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        std::size_t off = static_cast<std::size_t>(i) * chunkMax;
+        std::size_t len = std::min(chunkMax, size - off);
+        net::Packet h(Fragment); h.Write(id); h.Write(i); h.Write(count);
+        std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
+        dg.insert(dg.end(), data + off, data + off + len);
+        m_socket.SendTo(to, dg.data(), dg.size());
+    }
+}
+
+// Collect one fragment from `from`. Returns true (and fills `out` with the whole
+// reassembled message) only once every fragment of that message has arrived.
+bool NetworkManager::TakeFragment(const net::Endpoint& from, const std::uint8_t* data,
+                                  std::size_t size, std::vector<std::uint8_t>& out) {
+    const std::size_t header = 1 + 4 + 4 + 4;
+    if (size < header) return false;
+    net::Packet p(data, size);
+    p.ReadU8();                                   // Fragment tag
+    std::uint32_t id = p.ReadU32(), index = p.ReadU32(), count = p.ReadU32();
+    if (!p.Ok() || count == 0 || count > 65535 || index >= count) return false;
+    auto& asm_ = m_fragIn[from][id];
+    if (asm_.chunks.empty()) { asm_.count = count; asm_.chunks.resize(count); }
+    if (asm_.count != count) return false;        // inconsistent — drop this stray fragment
+    if (asm_.chunks[index].empty()) {             // first time we see this index
+        asm_.chunks[index].assign(data + header, data + size);
+        asm_.got++;
+    }
+    asm_.age = 0.0f;
+    if (asm_.got < asm_.count) return false;
+    out.clear();
+    for (auto& c : asm_.chunks) out.insert(out.end(), c.begin(), c.end());
+    m_fragIn[from].erase(id);
+    if (m_fragIn[from].empty()) m_fragIn.erase(from);
+    return true;
+}
+
+// Discard half-assembled messages whose fragments stopped arriving, so a lost
+// fragment can't leak memory forever.
+void NetworkManager::PruneFragments(float dt) {
+    for (auto epIt = m_fragIn.begin(); epIt != m_fragIn.end(); ) {
+        for (auto it = epIt->second.begin(); it != epIt->second.end(); ) {
+            it->second.age += dt;
+            if (it->second.age > kFragmentTtl) it = epIt->second.erase(it);
+            else ++it;
+        }
+        if (epIt->second.empty()) epIt = m_fragIn.erase(epIt);
+        else ++epIt;
     }
 }
 
@@ -297,7 +358,7 @@ void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
     for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
         if (it->second.id != id) continue;
         net::Packet p(Kicked); p.Write(reason);
-        m_socket.SendTo(it->second.endpoint, p.Data(), p.Size());
+        SendDatagram(it->second.endpoint, p.Data(), p.Size());
         if (auto r = m_remotes.find(id); r != m_remotes.end()) {
             if (GetScene() && r->second) GetScene()->Destroy(r->second);
             m_remotes.erase(r);
@@ -330,13 +391,13 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
         p.Write(data);
         for (auto& [ep, c] : m_clients)
             if (c.room == m_localRoom)
-                m_socket.SendTo(c.endpoint, p.Data(), p.Size());
+                SendDatagram(c.endpoint, p.Data(), p.Size());
     } else if (m_mode == Mode::Client && m_joined) {
         net::Packet p(Message);
         p.Write(m_localId);
         p.Write(channel);
         p.Write(data);
-        m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+        SendDatagram(m_serverEp, p.Data(), p.Size());
     }
 }
 
@@ -344,11 +405,19 @@ void NetworkManager::ServerTick(float dt) {
     // A full-size receive buffer: a UDP datagram can be up to ~64 KB, so a small
     // fixed buffer silently truncated any larger message (e.g. a big reliable
     // payload). Reused across ticks (thread-local) to avoid per-frame allocation.
+    PruneFragments(dt);
     static thread_local std::vector<std::uint8_t> buf(net::kMaxDatagram);
     net::Endpoint from;
     int n;
     while ((n = m_socket.RecvFrom(buf.data(), buf.size(), from)) > 0) {
-        net::Packet p(buf.data(), static_cast<std::size_t>(n));
+        const std::uint8_t* data = buf.data();
+        std::size_t len = static_cast<std::size_t>(n);
+        std::vector<std::uint8_t> assembled;   // holds the message if this was a fragment
+        if (len >= 1 && data[0] == Fragment) {
+            if (!TakeFragment(from, data, len, assembled)) continue;  // wait for the rest
+            data = assembled.data(); len = assembled.size();
+        }
+        net::Packet p(data, len);
         std::uint8_t type = p.ReadU8();
         if (type == Join) {
             std::string name = p.ReadString();           // display name (may be empty)
@@ -362,7 +431,7 @@ void NetworkManager::ServerTick(float dt) {
                 else if (!password.empty() && pass != password) why = "wrong password";
                 if (why) {
                     net::Packet r(Reject); r.Write(std::string(why));
-                    m_socket.SendTo(from, r.Data(), r.Size());
+                    SendDatagram(from, r.Data(), r.Size());
                     continue;
                 }
             }
@@ -379,14 +448,14 @@ void NetworkManager::ServerTick(float dt) {
             net::Packet w(Welcome);
             w.Write(c.id);
             w.Write(serverName);
-            m_socket.SendTo(from, w.Data(), w.Size());
+            SendDatagram(from, w.Data(), w.Size());
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
                 if (m_peerJoined) m_peerJoined(c.id, c.name);
                 // Full sync: send every current synced variable to the newcomer.
                 for (auto& [k, v] : m_syncVars) {
                     net::Packet sv(SyncVar); sv.Write(k); sv.Write(v);
-                    m_socket.SendTo(from, sv.Data(), sv.Size());
+                    SendDatagram(from, sv.Data(), sv.Size());
                 }
             }
         } else if (type == SyncVar) {
@@ -395,12 +464,12 @@ void NetworkManager::ServerTick(float dt) {
             std::string value = p.ReadString();
             ApplySyncVar(key, value);
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
-            for (auto& [ep, c] : m_clients) m_socket.SendTo(c.endpoint, out.Data(), out.Size());
+            for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, out.Data(), out.Size());
         } else if (type == Ping) {
             // Echo the client's timestamp straight back so it can measure RTT.
             float stamp = p.ReadF32();
             net::Packet pong(Pong); pong.Write(stamp);
-            m_socket.SendTo(from, pong.Data(), pong.Size());
+            SendDatagram(from, pong.Data(), pong.Size());
         } else if (type == Ready) {
             std::uint8_t r = p.ReadU8();
             auto it = m_clients.find(from);
@@ -412,7 +481,7 @@ void NetworkManager::ServerTick(float dt) {
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
                 net::Packet ack(ReliableAck); ack.Write(seq);
-                m_socket.SendTo(from, ack.Data(), ack.Size());
+                SendDatagram(from, ack.Data(), ack.Size());
                 if (it->second.relSeen.insert(seq).second)   // first time -> deliver
                     Deliver(it->second.id, channel, data);
             }
@@ -434,7 +503,7 @@ void NetworkManager::ServerTick(float dt) {
                         if (cl.id == target) {
                             net::Packet fwd(Message);
                             fwd.Write(sender); fwd.Write(channel); fwd.Write(data);
-                            m_socket.SendTo(cl.endpoint, fwd.Data(), fwd.Size());
+                            SendDatagram(cl.endpoint, fwd.Data(), fwd.Size());
                             break;
                         }
                 }
@@ -479,7 +548,7 @@ void NetworkManager::ServerTick(float dt) {
                 relay.Write(data);
                 for (auto& [ep, c] : m_clients)
                     if (c.id != sender && c.room == senderRoom)
-                        m_socket.SendTo(c.endpoint, relay.Data(), relay.Size());
+                        SendDatagram(c.endpoint, relay.Data(), relay.Size());
             }
         }
     }
@@ -526,7 +595,7 @@ void NetworkManager::ServerTick(float dt) {
                 snap.Write(c.state.x); snap.Write(c.state.y); snap.Write(c.state.z);
                 snap.Write(std::uint8_t(c.state.glyph));
             }
-            m_socket.SendTo(recipient.endpoint, snap.Data(), snap.Size());
+            SendDatagram(recipient.endpoint, snap.Data(), snap.Size());
         }
     }
 
@@ -543,7 +612,7 @@ void NetworkManager::ClientTick(float dt) {
             p.Write(m_localName);
             p.Write(m_localRoom);
             p.Write(password);          // matched against the server's password
-            m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+            SendDatagram(m_serverEp, p.Data(), p.Size());
             m_joinTimer = 0.5f;
         }
     } else {
@@ -551,17 +620,25 @@ void NetworkManager::ClientTick(float dt) {
         m_pingTimer -= dt;
         if (m_pingTimer <= 0.0f) {
             net::Packet p(Ping); p.Write(m_clock);
-            m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+            SendDatagram(m_serverEp, p.Data(), p.Size());
             m_pingTimer = 1.0f;
         }
         ResendReliable(m_relOut, m_serverEp, dt);   // keep retrying unacked messages
     }
 
+    PruneFragments(dt);
     static thread_local std::vector<std::uint8_t> buf(net::kMaxDatagram);
     net::Endpoint from;
     int n;
     while ((n = m_socket.RecvFrom(buf.data(), buf.size(), from)) > 0) {
-        net::Packet p(buf.data(), static_cast<std::size_t>(n));
+        const std::uint8_t* data = buf.data();
+        std::size_t len = static_cast<std::size_t>(n);
+        std::vector<std::uint8_t> assembled;
+        if (len >= 1 && data[0] == Fragment) {
+            if (!TakeFragment(from, data, len, assembled)) continue;
+            data = assembled.data(); len = assembled.size();
+        }
+        net::Packet p(data, len);
         std::uint8_t type = p.ReadU8();
         if (type == Welcome) {
             m_localId = p.ReadU32();
@@ -585,7 +662,7 @@ void NetworkManager::ClientTick(float dt) {
             std::string channel = p.ReadString();
             std::string data    = p.ReadString();
             net::Packet ack(ReliableAck); ack.Write(seq);
-            m_socket.SendTo(m_serverEp, ack.Data(), ack.Size());
+            SendDatagram(m_serverEp, ack.Data(), ack.Size());
             if (m_relSeen.insert(seq).second) Deliver(0, channel, data);
         } else if (type == ReliableAck) {
             m_relOut.erase(p.ReadU32());
@@ -621,7 +698,7 @@ void NetworkManager::ClientTick(float dt) {
         p.Write(m_localId);
         p.Write(lp.x); p.Write(lp.y); p.Write(lp.z);
         p.Write(std::uint8_t(m_localGlyph));
-        m_socket.SendTo(m_serverEp, p.Data(), p.Size());
+        SendDatagram(m_serverEp, p.Data(), p.Size());
     }
 }
 

@@ -224,10 +224,11 @@ int main() {
     // --- Large message: a payload bigger than the old 1 KB recv buffer arrives
     //     intact (previously it was silently truncated). ------------------------
     {
-        // ~6 KB of varied bytes so any truncation or corruption is caught.
+        // ~20 KB of varied bytes — well past one datagram, so it must be split into
+        // many fragments and reassembled in order, byte-for-byte.
         std::string big;
-        big.reserve(6000);
-        for (int i = 0; i < 6000; ++i) big.push_back((char)('A' + (i * 7 + 3) % 26));
+        big.reserve(20000);
+        for (int i = 0; i < 20000; ++i) big.push_back((char)('A' + (i * 7 + 3) % 26));
         std::string gotBig;
         server->SetMessageHandler([&](const NetworkManager::NetMessage& m){ if (m.channel == "big") gotBig = m.data; });
         client->SendReliable("big", big);

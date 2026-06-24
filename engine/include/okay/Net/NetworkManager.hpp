@@ -45,6 +45,12 @@ public:
     /// motion at the local frame rate.
     float interpolationRate = 12.0f;
 
+    /// Spatial interest management: a client is only sent peers within this many
+    /// world units of its own avatar (0 = no culling — send everyone in the room).
+    /// Trims bandwidth in large worlds; an out-of-range peer simply stops updating
+    /// on that client until it comes back into range.
+    float interestRadius = 0.0f;
+
     /// Round-trip time to the server in milliseconds (clients only; 0 until the
     /// first ping completes). A simple latency readout for HUDs / netcode.
     float RttMs() const { return m_rtt; }
@@ -246,6 +252,8 @@ private:
         std::string room;
         std::string userId;   // verified identity (from the token verifier), or ""
         net::SecureChannel secure;   // per-client encrypted session (if negotiated)
+        std::unordered_map<std::uint32_t, PeerState> sentStates;  // last state sent (delta snapshots)
+        bool hasState = false;   // true once this client has reported its position
         bool ready = false;
         // Per-client reliable channel (server side).
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client

@@ -13,6 +13,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/Character.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -1937,6 +1938,36 @@ struct OkayScriptVM::Impl {
         // ---- Multiplayer (NetworkManager) -----------------------------
         // Start hosting / join from a script; both wire the host object as the
         // broadcast avatar and mirror remote peers as sprites.
+        // ---- Character animation (a sibling Character component) ----------
+        // play_clip/stop_clip/etc. drive a Character on this script's object, so a
+        // custom keyframe clip (see docs/animation.md) can be played from script.
+        auto charSelf = [this]() -> Character* {
+            return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<Character>() : nullptr;
+        };
+        b["play_clip"] = [charSelf](std::vector<Value>& a) {
+            Character* c = charSelf();
+            return Value{(c && !a.empty() && c->PlayClip(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["stop_clip"] = [charSelf](std::vector<Value>&) { if (Character* c = charSelf()) c->StopClip(); return Value{}; };
+        b["playing_clip"] = [charSelf](std::vector<Value>&) {
+            Character* c = charSelf(); return Value{c ? c->PlayingClip() : std::string{}};
+        };
+        b["is_playing_clip"] = [charSelf](std::vector<Value>&) {
+            Character* c = charSelf(); return Value{(c && c->IsPlayingClip()) ? 1.0f : 0.0f};
+        };
+        b["load_clips"] = [charSelf](std::vector<Value>& a) {
+            Character* c = charSelf();
+            return Value{(c && !a.empty()) ? (float)c->LoadClips(a[0].AsString()) : 0.0f};
+        };
+        // Set/get the built-in animation index (0 none,1 idle,2 walk,3 run,...).
+        b["set_anim"] = [charSelf](std::vector<Value>& a) {
+            if (Character* c = charSelf(); c && !a.empty()) c->anim = (int)a[0].AsFloat();
+            return Value{};
+        };
+        b["get_anim"] = [charSelf](std::vector<Value>&) {
+            Character* c = charSelf(); return Value{c ? (float)c->anim : 0.0f};
+        };
+
         b["net_host"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
             std::uint16_t port = (std::uint16_t)(a.empty() ? 45000 : (int)a[0].AsFloat());

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.142.0  (UI widget round-up: rating hover, tabs/radial, scroll view)
+  - Star rating: stars light up as you hover, and half ratings now render as real
+    half-filled stars (click the set value again to clear).
+  - Tabs and Radial Progress now show up (and are selectable) in the editor — they
+    were drawn at zero size / had no preview before.
+  - Scroll view: the scrollbar is grab-and-draggable (and click-to-jump), and the
+    content height auto-fits the child widgets so scrolling just works.
+  - UI shapes render solid in the editor (removed the anti-aliased seam lines).
+
 v2.141.0  (Character + camera fixes, more UI shapes, UI widget fixes)
   - Player head now looks in the correct direction in third person (the look yaw
     was inverted, turning the head away from where you aimed).

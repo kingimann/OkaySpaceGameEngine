@@ -471,6 +471,7 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
+bool g_showFlowGraph = false;    // node/flow-graph view of the selected object's Actions
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
 bool g_showGrid = true;          // draw the XZ ground grid in the Scene view
@@ -1264,6 +1265,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
+        ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
         ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
@@ -4931,6 +4933,93 @@ static const ActionOpInfo kInstrOps[] = {
 static const char* ActionOpLabel(const ActionOpInfo* ops, int n, const std::string& op) {
     for (int i = 0; i < n; ++i) if (op == ops[i].op) return ops[i].label;
     return op.c_str();
+}
+
+// A flow-graph (node) view of the selected object's Actions: the Trigger as a node,
+// its Conditions as gate nodes, and the Instructions wired top-to-bottom. It reads
+// the live ActionList (so it always matches the Inspector and the running game) and
+// reuses the proven execution — this is a visual layer, not a second script system.
+// Nodes are draggable within the window (session layout). Edit values in the Inspector.
+static void DrawFlowGraph(EditorState& ed) {
+    if (!g_showFlowGraph) return;
+    if (!ImGui::Begin("Flow Graph", &g_showFlowGraph, ImGuiWindowFlags_HorizontalScrollbar)) { ImGui::End(); return; }
+    GameObject* go = ed.selected();
+    ActionList* al = go ? go->GetComponent<ActionList>() : nullptr;
+    if (!al) {
+        ImGui::TextDisabled("Select an object with an Actions component to see its flow graph.");
+        ImGui::TextDisabled("(Add one via Add Component > Actions, or the Actions inspector.)");
+        ImGui::End(); return;
+    }
+    ImGui::Text("Flow of '%s'", go->name.c_str());
+    ImGui::SameLine(); ImGui::TextDisabled("— drag nodes to arrange; edit values in the Inspector");
+    ImGui::Separator();
+
+    static const char* trigs[] = {"On Start","On Update","On Key","On Collision","On Click",
+        "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
+        "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over"};
+    int ti = (int)al->trigger;
+    const char* trigLabel = (ti >= 0 && ti < (int)IM_ARRAYSIZE(trigs)) ? trigs[ti] : "Trigger";
+
+    ImVec2 cp = ImGui::GetCursorScreenPos();
+    ImVec2 cs = ImGui::GetContentRegionAvail();
+    if (cs.x < 80) cs.x = 80; if (cs.y < 80) cs.y = 80;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(cp, ImVec2(cp.x + cs.x, cp.y + cs.y), IM_COL32(24, 26, 32, 255), 4.0f);
+
+    static std::unordered_map<std::string, ImVec2> pos;
+    auto key = [&](const char* role, int i) {
+        char b[64]; std::snprintf(b, sizeof(b), "%p:%s:%d", (void*)al, role, i); return std::string(b);
+    };
+    const float NW = 190.0f, NH = 46.0f, GAPY = 72.0f;
+    auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col) -> ImVec2 {
+        if (pos.find(k) == pos.end()) pos[k] = def;
+        ImVec2 r = pos[k];
+        ImVec2 p{cp.x + r.x, cp.y + r.y};
+        ImGui::SetCursorScreenPos(p);
+        ImGui::PushID(k.c_str());
+        ImGui::InvisibleButton("nd", ImVec2(NW, NH));
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pos[k].x += ImGui::GetIO().MouseDelta.x; pos[k].y += ImGui::GetIO().MouseDelta.y; }
+        bool hov = ImGui::IsItemHovered();
+        ImGui::PopID();
+        dl->AddRectFilled(p, ImVec2(p.x + NW, p.y + NH), col, 6.0f);
+        dl->AddRect(p, ImVec2(p.x + NW, p.y + NH), hov ? IM_COL32(255,255,255,150) : IM_COL32(255,255,255,40), 6.0f);
+        dl->AddText(ImVec2(p.x + 9, p.y + 6), IM_COL32(236,239,246,255), title);
+        if (!sub.empty()) dl->AddText(ImVec2(p.x + 9, p.y + 25), IM_COL32(172,178,192,255), sub.c_str());
+        return ImVec2(p.x + NW * 0.5f, p.y + NH * 0.5f);
+    };
+    auto wire = [&](ImVec2 a, ImVec2 b, ImU32 col) {
+        dl->AddBezierCubic(a, ImVec2(a.x, (a.y + b.y) * 0.5f), ImVec2(b.x, (a.y + b.y) * 0.5f), b, col, 2.5f);
+    };
+
+    std::string tsub;
+    if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnMessage)
+        tsub = "\"" + al->triggerKey + "\"";
+    ImVec2 trigC = node(key("trig", 0), ImVec2(30, 18), trigLabel, tsub, IM_COL32(150, 92, 42, 255));
+
+    for (std::size_t i = 0; i < al->conditions.size(); ++i) {
+        ImVec2 c = node(key("cond", (int)i), ImVec2(30 + NW + 60, 18 + i * GAPY),
+                        ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), al->conditions[i].op), "if",
+                        IM_COL32(58, 112, 92, 255));
+        wire(ImVec2(trigC.x + NW * 0.5f, trigC.y), ImVec2(c.x - NW * 0.5f, c.y), IM_COL32(120, 185, 150, 200));
+    }
+
+    float startY = 18.0f + (al->conditions.empty() ? GAPY : (float)al->conditions.size() * GAPY);
+    ImVec2 prev = trigC;
+    for (std::size_t i = 0; i < al->instructions.size(); ++i) {
+        std::string sub;
+        for (const auto& a : al->instructions[i].args) { if (!sub.empty()) sub += " "; sub += a; }
+        if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
+        ImVec2 c = node(key("ins", (int)i), ImVec2(30, startY + i * GAPY),
+                        ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), al->instructions[i].op), sub,
+                        IM_COL32(50, 82, 142, 255));
+        wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
+        prev = c;
+    }
+    if (al->instructions.empty())
+        dl->AddText(ImVec2(cp.x + 30, cp.y + startY + 12), IM_COL32(150, 150, 160, 255), "(no instructions yet — add them in the Inspector)");
+
+    ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + cs.y));   // keep the window content sized
+    ImGui::End();
 }
 
 static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
@@ -10256,6 +10345,7 @@ int main(int argc, char** argv) {
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);
         DrawScriptDocs();
+        DrawFlowGraph(ed);
         if (g_showStats)     DrawStats(ed);
         if (g_showSaveManager) DrawSaveManager(ed);
         if (g_showScenes)    DrawScenes(ed);

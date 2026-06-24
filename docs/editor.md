@@ -30,10 +30,10 @@ configure time, network access to fetch Dear ImGui):
 # Debian/Ubuntu: sudo apt-get install libsdl2-dev libgl1-mesa-dev
 cmake -S . -B build -DOKAY_BUILD_EDITOR=ON
 cmake --build build -j
-./build/bin/okay-editor
+./build/bin/OkayEngine
 ```
 
-Run `./build/bin/okay-editor --selftest` to exercise the editor's logic without
+Run `./build/bin/OkayEngine --selftest` to exercise the editor's logic without
 a window (used in CI where there is no display).
 
 ### One self-contained Windows .exe
@@ -51,7 +51,7 @@ cmake -S . -B build-win-editor \
   -DCMAKE_FIND_ROOT_PATH=/path/to/SDL2-x.y.z/x86_64-w64-mingw32 \
   -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
 cmake --build build-win-editor -j
-# -> build-win-editor/bin/okay-editor.exe  (a prebuilt copy is in dist/OkaySpaceEngine.exe)
+# -> build-win-editor/bin/OkayEngine.exe  (a prebuilt copy is in dist/OkayEngine.exe)
 ```
 
 ### Self-updating
@@ -147,11 +147,15 @@ Recent additions (v2.12–2.14):
   `set_interactable(bool)` — and a *Focusable* toggle for **keyboard/gamepad menu
   navigation**: arrows/WASD or the D-pad move focus, Enter/Space or gamepad A
   activates), *UI
-  Progress Bar* (`set_progress(0..1)`), *UI Slider* (drag to pick a value in a
-  min/max range; calls `on_change()`, read with `slider_value()` / set with
-  `set_slider(v)`), and *UI Toggle* (a labelled checkbox; calls `on_toggle()`,
-  read with `toggle_on()` / set with `set_toggle(true)`). All are previewed live
-  in the Scene viewport and render in the built game.
+  Progress Bar* / *UI Radial Progress* (`set_progress(0..1)`), *UI Slider* (drag
+  to pick a value in a min/max range; calls `on_change()`, read with
+  `slider_value()` / set with `set_slider(v)`), *UI Stepper* ([-] value [+] for a
+  quantity) and *UI Rating* (click a row of stars), both firing `on_change()`,
+  and *UI Toggle* (a labelled checkbox; calls `on_toggle()`, read with
+  `toggle_on()` / set with `set_toggle(true)`). Box widgets share a **shape**
+  picker (17 silhouettes: circle, pill, hexagon, pentagon, squircle, arrows, …)
+  that drives both how they're drawn and where they're clickable. All are
+  previewed live in the Scene viewport and render in the built game.
 - **Text** — add a *Text* component for score counters, labels, and HUD using
   the built-in 8x8 font (no font file needed). Use *Screen Space* for a fixed
   HUD (with an *Anchor* so a centered title or bottom-right score adapts to the

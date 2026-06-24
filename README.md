@@ -136,12 +136,17 @@ planet, `A` player ship.)*
 - **In-game UI like Unity** — a **Canvas** (CanvasScaler: constant-pixel or
   scale-with-screen) parents the widgets, with one **Event System** routing
   pointer input. Widgets: `UIButton` (`on_click()`), `UIPanel`, `UIImage`,
-  `UISlider`, `UIToggle`, `UIProgressBar`, `UIInputField` (real OS text input —
+  `UISlider`, `UIStepper` and `UIRating` (`on_change()`), `UIToggle`,
+  `UIProgressBar`, `UIRadialProgress`, `UIInputField` (real OS text input —
   caret, scroll, Integer/Decimal/Password types), `UIDropdown`, `UITooltip`,
   and screen-space text. Widgets are richly customizable (rounded corners,
-  borders, gradients, font scale, fills, outlines, data-bound text). A
-  **Scroll View** (wheel-scrollable, clipped) and **Layout Group** make
-  scrollable, auto-arranged lists — all rendered identically in built games.
+  borders, gradients, font scale, fills, outlines, data-bound text) and share a
+  library of **17 shapes** — Rectangle, Rounded, Circle, Pill, Triangle,
+  Diamond, Hexagon, Octagon, Parallelogram, Trapezoid, Pentagon, Squircle, Tab
+  (top-rounded) and Arrow Right/Left/Up/Down — used for both the silhouette and
+  the click hit-test. A **Scroll View** (wheel-scrollable, clipped) and **Layout
+  Group** make scrollable, auto-arranged lists — all rendered identically in
+  built games.
 - **Unity-style UI editing** — select, drag and resize any widget in the Scene
   view with anchor-correct handles; **snapping** to a pixel grid plus smart
   edge/center **alignment guides** to the canvas and siblings; arrow-key
@@ -185,7 +190,9 @@ planet, `A` player ship.)*
   stats + **increment**, **leaderboards**, **Steam Cloud**, friends, overlay)
   with an in-memory simulation backend by default and the real Steamworks
   backend behind `-DOKAY_WITH_STEAM`.
-- **Self-updating launcher** that pulls the latest from GitHub, rebuilds, runs.
+- **Graphical launcher** (account sign-in, searchable game library with
+  favorites, theme modes, New Project templates) that self-updates by pulling
+  the latest prebuilt build from GitHub and swapping it in — no console windows.
 - **Desktop GUI editor** (Dear ImGui docking + SDL2) — Unity-style **docked**
   Hierarchy / Scene / Inspector / Console / **Services** / **Script Editor**
   panels, a Play·Stop·Step·Build toolbar, a polished dark theme, a **New Project**
@@ -194,7 +201,7 @@ planet, `A` player ship.)*
   colored Console, a filesystem **asset browser** (open scenes / drop in prefabs),
   Add Component / Inspector for every component, scene save/load, **Build Game**,
   and an in-app self-updater. Ships as a single self-contained `.exe`
-  (`dist/OkaySpaceEngine.exe`). See [`docs/editor.md`](docs/editor.md).
+  (`dist/OkayEngine.exe`). See [`docs/editor.md`](docs/editor.md).
 - **Unity-parity editor polish** — a Unity-style **Add Component** (centered
   title + Search, categories that drill into submenus; the Scripts category lists
   your `.okay` files and "New Script…"); component headers with **enable
@@ -261,13 +268,14 @@ You have three options, easiest first.
 
 ### 1. Open the engine (prebuilt Windows binary)
 
-Download **`dist/OkaySpaceEngine.exe`** and double-click it — that single,
+Download **`dist/OkayEngine.exe`** and double-click it — that single,
 self-contained `.exe` *is* the engine: the full Dear ImGui editor. Make a scene,
 press **Play**, then **File → Build Game** (Ctrl+B) to export a standalone
 `<Game>.exe`. It self-updates from GitHub via **Engine → Check for Updates**.
 
-(`dist/OkaySpace.exe` is the headless console sandbox demo;
-`dist/OkaySpace-Launcher.exe` is the self-updating launcher — see below.)
+(`dist/OkaySpace.exe` is the graphical launcher — sign in, browse/launch your
+games, open the editor, and self-update — see below. `dist/OkaySpacePlayer.exe`
+is the standalone runtime that plays a built `.okayscene` game.)
 
 ### 2. The launcher (build, auto-update, and run in one step)
 
@@ -280,13 +288,17 @@ The launcher checks GitHub for a newer version, pulls it, rebuilds, and starts
 the game. Handy flags: `--check-only`, `--no-update`, `--no-run`,
 `--game <name>`, and `-- <args passed to the game>`.
 
-The launcher's **Account** tab lets a player sign in or create an account, and
-the engine exposes the same accounts to games via `okay::Account` and the
-`account_*` OkayScript builtins. Out of the box accounts are stored locally on
-the device (passwords salted and hashed with SHA-256, never in plaintext); point
-it at an auth server with `OKAY_ACCOUNT_SERVER` (or an `account_server.txt` next
-to the launcher) to go online. There's a runnable reference server in
-[`examples/account-server/`](examples/account-server/server.py). See
+The launcher's **Account** tab lets a player sign in or create an account, with
+usernames, a "Forgot password?" email reset, and change email / username /
+password from a profile panel. The engine exposes the same accounts to games via
+`okay::Account` and the `account_*` / `cloud_*` / `leaderboard_*` OkayScript
+builtins (token-validated cloud saves and leaderboards). Without a server,
+accounts are stored locally on the device (passwords salted and hashed with
+SHA-256, never in plaintext); point it at a managed backend (Supabase) or your
+own server with `OKAY_ACCOUNT_SERVER` + `OKAY_ACCOUNT_API_KEY` (or compile them
+in for a release that's online by default — only a publishable/anon key is ever
+shipped, protected by row-level security). There's a runnable reference server
+in [`examples/account-server/`](examples/account-server/server.py). See
 [docs/accounts.md](docs/accounts.md) for the full guide, server contract, and
 script API.
 

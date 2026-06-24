@@ -37,7 +37,7 @@ code changes. The editor's **Services** panel will then show
 Lay out the depot like this and upload with `steamcmd` / the Steamworks tool:
 
 ```
-OkaySpaceEngine.exe          # your build (editor or your game)
+OkayEngine.exe               # your build (editor or your game)
 steam_api64.dll              # from the Steamworks SDK redistributable_bin/win64
 steam_appid.txt              # optional for release (Steam injects the id)
 <your assets / .okayscene files>

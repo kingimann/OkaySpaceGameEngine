@@ -5,7 +5,7 @@ minutes. It uses only what ships in the box — no plugins, no external tools.
 
 ## 1. Open the engine
 
-Run **`dist/OkaySpaceEngine.exe`** (Windows). That single self-contained `.exe`
+Run **`dist/OkayEngine.exe`** (Windows). That single self-contained `.exe`
 *is* the editor: docked Hierarchy, Scene, Inspector, Console, Project, Services,
 and Script Editor panels around a 2D/3D viewport.
 

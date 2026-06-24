@@ -314,9 +314,13 @@ std::string LatestRef() {
     return sha.size() >= 7 ? sha : "main";
 }
 
-// A commit-pinned raw URL for a file in dist/ (ref is a SHA or "main").
+// URL of a published file: the named asset of the latest GitHub Release (what
+// the release workflow uploads). "releases/latest/download/<name>" always
+// redirects to the newest release, so it never serves a stale binary the way the
+// old raw dist/ URL did. (ref is unused now; kept for call-site compatibility.)
 std::string RawUrl(const std::string& ref, const std::string& name) {
-    return std::string(kRawRepo) + ref + "/dist/" + name;
+    (void)ref;
+    return "https://github.com/kingimann/OkaySpaceGameEngine/releases/latest/download/" + name;
 }
 
 // Compare dotted versions ("1.4.0"); returns -1 / 0 / 1 for a<b / a==b / a>b.
@@ -356,7 +360,7 @@ UpdateInfo CheckLatest() {
     info.checked = true;
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec);
-    info.ref = LatestRef();                       // pin to the latest commit
+    info.ref = "latest";                          // the latest GitHub Release
     fs::path vf = tmp / "okayspace_version.txt";
     if (!Download(RawUrl(info.ref, "VERSION.txt"), vf.string())) {
         info.error = "Couldn't reach GitHub (no internet, or curl/PowerShell missing).";
@@ -459,6 +463,7 @@ std::future<updater::UpdateInfo> g_updateCheck;  // async startup check (non-blo
 bool g_autoCheckDone = false;     // consumed the async result yet?
 bool g_openAbout = false;
 bool g_showNewProject = true;   // show the project chooser on launch
+std::string g_newProjectTemplate; // template title to preselect (from --template)
 
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
@@ -4155,6 +4160,12 @@ void DrawNewProjectPopup(EditorState& ed) {
         const int N = (int)(sizeof(tpls) / sizeof(tpls[0]));
         static int sel = 1;   // default: 3D Scene
         if (sel < 0 || sel >= N) sel = 1;
+        // Preselect the template requested via --template (launcher Create tab).
+        if (!g_newProjectTemplate.empty()) {
+            for (int i = 0; i < N; ++i)
+                if (g_newProjectTemplate == tpls[i].title) { sel = i; break; }
+            g_newProjectTemplate.clear();
+        }
         auto catColor = [](int c) -> ImVec4 {
             switch (c) { case C_3D:   return ImVec4(0.30f, 0.55f, 0.85f, 1);
                          case C_2D:   return ImVec4(0.30f, 0.70f, 0.45f, 1);
@@ -9767,6 +9778,15 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
 
     if (!PassesLauncherGate(argc, argv)) return 0;
+
+    // --template "<Title>": preselect a New Project template (from the launcher's
+    // Create tab). The New Project chooser is shown on launch and will highlight
+    // the matching template.
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--template" && i + 1 < argc) { g_newProjectTemplate = argv[i + 1]; ++i; }
+        else if (a.rfind("--template=", 0) == 0) g_newProjectTemplate = a.substr(11);
+    }
 
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO |

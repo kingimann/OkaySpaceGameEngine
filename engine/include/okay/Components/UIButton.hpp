@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/UI/UIShape.hpp"
@@ -25,6 +26,12 @@ public:
     /// it); the label shifts right to make room.
     std::string icon;
     float iconSize = 0.0f;
+    // Assignable click action (Unity-style OnClick): when clicked, call a named
+    // public script function. `clickTarget` is the object whose script to call
+    // (blank = this button's own object); `clickFunction` is the function name
+    // (blank = none). This runs in addition to a sibling script's on_click().
+    std::string clickTarget;
+    std::string clickFunction;
     Color color = Color::FromBytes(60, 90, 150);
     Color hoverColor = Color::FromBytes(80, 120, 200);
     Color pressedColor = Color::FromBytes(45, 70, 120);  // shown while held down
@@ -134,9 +141,19 @@ public:
 
 private:
     void Fire() {
+        // The sibling script's on_click() (back-compat / code-first buttons).
         if (gameObject)
             if (auto* sc = gameObject->GetComponent<ScriptComponent>())
                 if (sc->VM()) sc->VM()->CallEvent("on_click");
+        // The inspector-assigned action: a named public function on a chosen object.
+        if (!clickFunction.empty() && gameObject) {
+            GameObject* t = gameObject;
+            if (!clickTarget.empty() && gameObject->scene())
+                if (GameObject* g = gameObject->scene()->Find(clickTarget)) t = g;
+            if (t)
+                if (auto* tsc = t->GetComponent<ScriptComponent>())
+                    if (tsc->VM()) tsc->VM()->CallEvent(clickFunction);
+        }
     }
     void EaseColor(float dt) {
         Color t = CurrentColor();

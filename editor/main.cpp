@@ -5203,6 +5203,33 @@ static bool ShapeCombo(const char* label, UIShape& shape, EditorState& ed) {
     return false;
 }
 
+// The "public" (user-defined, assignable) function names on a GameObject's script —
+// what a Button's OnClick dropdown lists. Scans the retained source for top-level
+// `function NAME(`, skipping the engine lifecycle/event callbacks (start/update/
+// awake/on_*) which aren't meant to be wired by hand.
+static std::vector<std::string> ScriptPublicFunctions(GameObject* go) {
+    std::vector<std::string> out;
+    if (!go) return out;
+    auto* sc = go->GetComponent<ScriptComponent>();
+    if (!sc) return out;
+    const std::string& src = sc->Source();
+    for (std::size_t i = 0; (i = src.find("function", i)) != std::string::npos; ) {
+        bool boundary = (i == 0) || !(std::isalnum((unsigned char)src[i-1]) || src[i-1] == '_');
+        std::size_t j = i + 8;
+        i = j;
+        if (!boundary || j >= src.size() || !(src[j] == ' ' || src[j] == '\t')) continue;
+        while (j < src.size() && (src[j] == ' ' || src[j] == '\t')) ++j;
+        std::size_t s = j;
+        while (j < src.size() && (std::isalnum((unsigned char)src[j]) || src[j] == '_')) ++j;
+        std::string name = src.substr(s, j - s);
+        i = j;
+        if (name.empty() || name == "start" || name == "update" || name == "awake") continue;
+        if (name.rfind("on_", 0) == 0 || name.rfind("On", 0) == 0) continue;   // event callbacks
+        if (std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+    }
+    return out;
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     // Roomier spacing for the Inspector specifically (it was too compact).
@@ -6980,6 +7007,25 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Focusable##uib", &btn->focusable)) ed.dirty = true;
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
+
+            ImGui::SeparatorText("On Click (assign a function)");
+            { static char tgt[64]; static UIButton* tbound = nullptr;
+              if (tbound != btn) { std::strncpy(tgt, btn->clickTarget.c_str(), sizeof(tgt)-1); tgt[sizeof(tgt)-1]='\0'; tbound = btn; }
+              if (ImGui::InputText("Target Object##uibclk", tgt, sizeof(tgt))) { btn->clickTarget = tgt; ed.dirty = true; }
+              if (ImGui::IsItemHovered()) ImGui::SetTooltip("Object whose script holds the function (blank = this button's own object).");
+              GameObject* tobj = btn->clickTarget.empty() ? go : (go->scene() ? go->scene()->Find(btn->clickTarget) : nullptr);
+              std::vector<std::string> fns = ScriptPublicFunctions(tobj);
+              std::string cur = btn->clickFunction.empty() ? "(none)" : btn->clickFunction;
+              if (ImGui::BeginCombo("Function##uibclk", cur.c_str())) {
+                  if (ImGui::Selectable("(none)", btn->clickFunction.empty())) { btn->clickFunction.clear(); ed.dirty = true; }
+                  for (const auto& fn : fns)
+                      if (ImGui::Selectable(fn.c_str(), fn == btn->clickFunction)) { btn->clickFunction = fn; ed.dirty = true; }
+                  ImGui::EndCombo();
+              }
+              if (!tobj) ImGui::TextDisabled("Target object not found.");
+              else if (fns.empty()) ImGui::TextDisabled("No public functions on the target's script (add e.g. 'function fire() { ... }').");
+            }
+
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             ImGui::SeparatorText("Style");
             ShapeCombo("Shape##uib", btn->shape, ed);

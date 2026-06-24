@@ -223,13 +223,17 @@ public:
                 // bodyYaw. The old `yaw - bodyYaw` mixed the two sign conventions, so
                 // the head turned the wrong way (and cranked to ±2·yaw when the body
                 // already faced the camera).
-                Vec3 f = transform->localRotation * Vec3{0, 0, -1};
-                float bodyYaw = Mathf::Atan2(f.x, -f.z) * Mathf::Rad2Deg;
-                float rel = yaw + bodyYaw;
-                while (rel > 180.0f) rel -= 360.0f;
-                while (rel < -180.0f) rel += 360.0f;
-                ch->lookYaw   = rel;
-                ch->lookPitch = 18.0f - pitch;
+                // If the Character is set to look at the camera/target, let IT drive
+                // the head (yaw AND pitch toward the camera) — don't fight it here.
+                if (!ch->lookAtCamera && ch->lookAtTarget.empty()) {
+                    Vec3 f = transform->localRotation * Vec3{0, 0, -1};
+                    float bodyYaw = Mathf::Atan2(f.x, -f.z) * Mathf::Rad2Deg;
+                    float rel = yaw + bodyYaw;
+                    while (rel > 180.0f) rel -= 360.0f;
+                    while (rel < -180.0f) rel += 360.0f;
+                    ch->lookYaw   = rel;
+                    ch->lookPitch = 18.0f - pitch;
+                }
                 ch->bodyLean  = m_lean * leanAngle;   // body leans (camera stays put)
             }
     }

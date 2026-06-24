@@ -167,9 +167,12 @@ public:
             if (Character* ch = FindCharacter()) {
                 ch->anim = airborne ? 5 : (moving ? (running ? 3 : 2) : 1);
                 // The body already faces the aim yaw, so the head only tilts up/down
-                // with the pitch (12 = resting pitch, so it's level by default).
-                ch->lookYaw   = 0.0f;
-                ch->lookPitch = 12.0f - pitch;
+                // with the pitch (12 = resting pitch, so it's level by default). If the
+                // Character is set to look at the camera/target, let it drive the head.
+                if (!ch->lookAtCamera && ch->lookAtTarget.empty()) {
+                    ch->lookYaw   = 0.0f;
+                    ch->lookPitch = 12.0f - pitch;
+                }
                 ch->bodyLean  = m_lean * leanAngle;   // body peeks with the camera
             }
     }

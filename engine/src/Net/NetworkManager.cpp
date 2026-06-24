@@ -341,11 +341,14 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
 }
 
 void NetworkManager::ServerTick(float dt) {
-    std::uint8_t buf[1024];
+    // A full-size receive buffer: a UDP datagram can be up to ~64 KB, so a small
+    // fixed buffer silently truncated any larger message (e.g. a big reliable
+    // payload). Reused across ticks (thread-local) to avoid per-frame allocation.
+    static thread_local std::vector<std::uint8_t> buf(net::kMaxDatagram);
     net::Endpoint from;
     int n;
-    while ((n = m_socket.RecvFrom(buf, sizeof(buf), from)) > 0) {
-        net::Packet p(buf, static_cast<std::size_t>(n));
+    while ((n = m_socket.RecvFrom(buf.data(), buf.size(), from)) > 0) {
+        net::Packet p(buf.data(), static_cast<std::size_t>(n));
         std::uint8_t type = p.ReadU8();
         if (type == Join) {
             std::string name = p.ReadString();           // display name (may be empty)
@@ -554,11 +557,11 @@ void NetworkManager::ClientTick(float dt) {
         ResendReliable(m_relOut, m_serverEp, dt);   // keep retrying unacked messages
     }
 
-    std::uint8_t buf[1024];
+    static thread_local std::vector<std::uint8_t> buf(net::kMaxDatagram);
     net::Endpoint from;
     int n;
-    while ((n = m_socket.RecvFrom(buf, sizeof(buf), from)) > 0) {
-        net::Packet p(buf, static_cast<std::size_t>(n));
+    while ((n = m_socket.RecvFrom(buf.data(), buf.size(), from)) > 0) {
+        net::Packet p(buf.data(), static_cast<std::size_t>(n));
         std::uint8_t type = p.ReadU8();
         if (type == Welcome) {
             m_localId = p.ReadU32();

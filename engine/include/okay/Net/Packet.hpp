@@ -6,6 +6,13 @@
 
 namespace okay::net {
 
+/// The largest UDP datagram we ever receive into a single buffer. A UDP payload
+/// can be up to ~65507 bytes; sizing the receive buffer to the full range means a
+/// large message is never silently truncated. (Datagrams near this size rely on IP
+/// fragmentation, which is reliable on LAN; internet-safe app-level fragmentation
+/// keeps individual sends well under the path MTU — a separate transport step.)
+inline constexpr std::size_t kMaxDatagram = 65536;
+
 /// A little-endian byte buffer for serializing network messages. Write values
 /// in, send the bytes, then read them back out in the same order.
 class Packet {

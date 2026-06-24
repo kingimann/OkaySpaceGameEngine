@@ -385,7 +385,13 @@ int g_accentIndex = 0;            // current accent preset (persisted)
 bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
 int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
+int g_winW = 1040, g_winH = 680;  // last window size (persisted)
 const char* kThemeNames[] = {"Dark", "Midnight", "Light"};
+
+// Transient toast notification (bottom-right of the window).
+std::string g_toastMsg;
+Uint32 g_toastUntil = 0;
+void Toast(const std::string& m) { g_toastMsg = m; g_toastUntil = SDL_GetTicks() + 2600; }
 std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
 int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z, 2 Recently played
@@ -510,7 +516,11 @@ void LoadPrefs() {
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
+        else if (k == "win_w") { try { g_winW = std::stoi(v); } catch (...) {} }
+        else if (k == "win_h") { try { g_winH = std::stoi(v); } catch (...) {} }
     }
+    if (g_winW < 700)  g_winW = 700;
+    if (g_winH < 500)  g_winH = 500;
     if (g_themeIndex < 0 || g_themeIndex > 2) g_themeIndex = 0;
     if (g_uiScale < 0.8f) g_uiScale = 0.8f;
     if (g_uiScale > 1.6f) g_uiScale = 1.6f;
@@ -522,6 +532,8 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
+    f << "win_w=" << g_winW << "\n";
+    f << "win_h=" << g_winH << "\n";
     for (const auto& p : g_favorites) f << "fav=" << p << "\n";
     for (const auto& p : g_recent)    f << "recent=" << p << "\n";
 }
@@ -549,8 +561,9 @@ int main(int argc, char** argv) {
     g_upMutex = SDL_CreateMutex();
     SetUpMsg("OkaySpace v" + LocalVersion());
 
+    LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
     SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher  v" OKAY_ENGINE_VERSION,
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1040, 680,
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_winW, g_winH,
         SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
     if (!window) return 1;
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
@@ -563,8 +576,7 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr; // the launcher has a fixed layout
     ImGui::GetIO().ConfigDebugHighlightIdConflicts = false; // hide dev-only ID warnings
-    LoadPrefs();                 // accent + behavior options from launcher.cfg
-    ApplyAccent(g_accentIndex);  // applies the saved accent (calls DarkTheme)
+    ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
@@ -812,8 +824,10 @@ int main(int argc, char** argv) {
                              kTemplates, (int)(sizeof(kTemplates) / sizeof(kTemplates[0])));
                 ImGui::PopItemWidth();
                 ImGui::SameLine();
-                if (ImGui::Button("New Project", ImVec2(150, 0)))
+                if (ImGui::Button("New Project", ImVec2(150, 0))) {
                     LaunchEditor(editor, kTemplates[newTpl]);
+                    Toast(std::string("Opening editor: ") + kTemplates[newTpl]);
+                }
                 ImGui::TextDisabled("Opens the editor with the chosen template selected.");
             }
             ImGui::Dummy(ImVec2(0, 22));
@@ -976,6 +990,7 @@ int main(int argc, char** argv) {
                     account.Logout();
                     acctMessage.clear();
                     acctUser[0] = acctPass[0] = '\0';
+                    Toast("Signed out");
                 }
             } else {
                 ImGui::TextWrapped(account.IsOnline()
@@ -1052,7 +1067,7 @@ int main(int argc, char** argv) {
             ImGui::PopItemWidth();
             ImGui::Dummy(ImVec2(0, 12));
 
-            if (ImGui::Button("Save & apply", ImVec2(180, 46))) applyAccountSettings(false);
+            if (ImGui::Button("Save & apply", ImVec2(180, 46))) { applyAccountSettings(false); Toast("Settings saved"); }
             ImGui::SameLine();
             if (ImGui::Button("Use local (clear)", ImVec2(180, 46))) applyAccountSettings(true);
 
@@ -1127,6 +1142,21 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::SmallButton("GitHub repository"))
                 OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine");
+
+            // ---- Maintenance ----
+            ImGui::Dummy(ImVec2(0, 16));
+            ImGui::SeparatorText("Maintenance");
+            if (ImGui::Button("Open config folder")) OpenExternal(g_exeDir);
+            ImGui::SameLine();
+            if (ImGui::Button("Reset preferences")) {
+                g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
+                g_updateOnLaunch = false; g_playSort = 0;
+                ImGui::GetIO().FontGlobalScale = g_uiScale;
+                ApplyAccent(g_accentIndex);   // re-applies theme + accent
+                SavePrefs();
+                Toast("Preferences reset");
+            }
+            ImGui::TextDisabled("Preferences are stored in launcher.cfg next to the launcher.");
         }
 
         // ---- Footer (pinned to the bottom of the content panel) ----
@@ -1147,12 +1177,37 @@ int main(int argc, char** argv) {
         ImGui::EndChild();
         ImGui::End();
 
+        // ---- Toast notification (bottom-right, auto-fading) ----
+        if (SDL_GetTicks() < g_toastUntil && !g_toastMsg.empty()) {
+            float remain = (float)(g_toastUntil - SDL_GetTicks());
+            float alpha = remain > 400.0f ? 1.0f : remain / 400.0f;   // fade out
+            ImVec2 wp = vp->WorkPos, ws = vp->WorkSize;
+            ImGui::SetNextWindowPos(ImVec2(wp.x + ws.x - 18, wp.y + ws.y - 18), ImGuiCond_Always, ImVec2(1, 1));
+            ImGui::SetNextWindowBgAlpha(0.92f * alpha);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.97f, 1.0f, alpha));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(kAccent.x, kAccent.y, kAccent.z, alpha));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
+            if (ImGui::Begin("##toast", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted(g_toastMsg.c_str());
+            }
+            ImGui::End();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(2);
+        }
+
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 18, 20, 26, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
     }
+
+    // Remember the window size for next launch.
+    { int w = 0, h = 0; SDL_GetWindowSize(window, &w, &h);
+      if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     if (g_upMutex) { SDL_DestroyMutex(g_upMutex); g_upMutex = nullptr; }

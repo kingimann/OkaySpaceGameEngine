@@ -159,6 +159,20 @@ inline GameObject* OwningUIParent(GameObject* go) {
     return nullptr;
 }
 
+/// A button's text child: the first active direct child carrying a screen-space
+/// TextRenderer. When present, the button draws its label through that child
+/// (Unity's Button→Text object) instead of its built-in `label`, so the text can be
+/// styled/moved independently. Returns nullptr for legacy buttons with no child.
+inline GameObject* UIButtonTextChild(GameObject* go) {
+    if (!go || !go->transform) return nullptr;
+    for (Transform* c : go->transform->Children()) {
+        if (!c || !c->gameObject || !c->gameObject->active) continue;
+        if (auto* tr = c->gameObject->GetComponent<TextRenderer>())
+            if (tr->screenSpace) return c->gameObject;
+    }
+    return nullptr;
+}
+
 /// Resolve a widget to its final screen rect. Offsets/sizes scale by the owning
 /// Canvas factor. If the widget is parented under another UI widget, its anchor
 /// resolves WITHIN the parent's rect (so moving/resizing the parent moves the

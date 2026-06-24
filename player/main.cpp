@@ -1004,16 +1004,19 @@ int main(int argc, char** argv) {
                             SDL_RenderCopy(renderer, itex, nullptr, &ir); }
             }
             // Center the label at the button's font scale, within the area beside
-            // the icon.
-            float px = btn->fontScale;
-            float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-            float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f : 0.0f);
-            float right = o.x + btn->size.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f : 0.0f);
-            float tx = left + ((right - left) - tw) * 0.5f;
-            float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f + shift;
-            Color tcc = btn->CurrentTextColor();
-            SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255 * op)};
-            DrawText(renderer, btn->label, tx, ty, px, tc);
+            // the icon. Skip the built-in label when a child Text object provides it
+            // (Unity-style Button→Text) — that child draws itself in the text pass.
+            if (!UIButtonTextChild(up.get())) {
+                float px = btn->fontScale;
+                float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+                float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f : 0.0f);
+                float right = o.x + btn->size.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f : 0.0f);
+                float tx = left + ((right - left) - tw) * 0.5f;
+                float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f + shift;
+                Color tcc = btn->CurrentTextColor();
+                SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255 * op)};
+                DrawText(renderer, btn->label, tx, ty, px, tc);
+            }
         }
         for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // screen-space text — on top of panels/controls
             auto* tr = up->GetComponent<TextRenderer>();

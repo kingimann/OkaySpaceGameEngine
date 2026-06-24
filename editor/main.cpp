@@ -1201,6 +1201,32 @@ GameObject* EnsureUIRoot(EditorState& ed) {
     return canvas;
 }
 
+// Give a UIButton its own child Text object (Unity's Button→Text), so the label
+// can be styled/positioned independently. The child is a centered, screen-space
+// TextRenderer parented under the button; it follows the button's rect via the UI
+// parent rules, and the button stops drawing its built-in label (UIButtonTextChild).
+// Returns the child (or the existing one if the button already has text).
+GameObject* MakeButtonTextChild(EditorState& ed, GameObject* button) {
+    if (!button) return nullptr;
+    if (GameObject* existing = UIButtonTextChild(button)) return existing;
+    auto* btn = button->GetComponent<UIButton>();
+    GameObject* g = ed.scene().CreateGameObject("Text");
+    auto* t = g->AddComponent<TextRenderer>();
+    t->screenSpace = true;
+    t->anchor = UIAnchor::Center;
+    t->align = 1;                 // center horizontally
+    t->vcenter = true;
+    t->screenPos = {0.0f, 0.0f};  // centered within the parent button
+    if (btn) {
+        t->text = btn->label;
+        t->size = btn->size;
+        t->pixelSize = btn->fontScale;
+        t->color = btn->textColor;
+    }
+    g->transform->SetParent(button->transform, /*worldPositionStays=*/false);
+    return g;
+}
+
 void DrawMenuAndToolbar(EditorState& ed) {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
@@ -1443,7 +1469,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(g); ed.dirty = true; created = true;
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Button"))       addUI("Button",      [](GameObject* g){ g->AddComponent<UIButton>(); });
+            if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
             if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
             if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
             if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; });
@@ -4463,7 +4489,7 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Camera")) ed.Select(ed.CreateCamera());
         if (ImGui::MenuItem("Cube"))   ed.Select(ed.CreateCube());
         ImGui::Separator();
-        if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
+        if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); MakeButtonTextChild(ed, g); ed.Select(g); }
         if (ImGui::MenuItem("UI Text"))   { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Text"); auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
         ImGui::EndPopup();
     }
@@ -4704,7 +4730,7 @@ void DrawHierarchy(EditorState& ed) {
                 ed.Select(g); ed.dirty = true;
             };
             if (ImGui::MenuItem("Panel"))        mkUI("Panel",   [](GameObject* g){ g->AddComponent<UIPanel>(); });
-            if (ImGui::MenuItem("Button"))       mkUI("Button",  [](GameObject* g){ g->AddComponent<UIButton>(); });
+            if (ImGui::MenuItem("Button"))       { mkUI("Button", [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
             if (ImGui::MenuItem("Image"))        mkUI("Image",   [](GameObject* g){ g->AddComponent<UIImage>(); });
             if (ImGui::MenuItem("Text"))         mkUI("Text",    [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
             if (ImGui::MenuItem("Slider"))       mkUI("Slider",  [](GameObject* g){ g->AddComponent<UISlider>(); });
@@ -7177,10 +7203,33 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* btn = go->GetComponent<UIButton>()) {
         if (CompHeader("UI Button", btn, &toRemove)) {
+            // The label lives on the button, OR (Unity-style) on a child Text object.
+            // When a Text child exists, edit it here too so the field always drives the
+            // visible text; otherwise offer to split the text out into its own child.
+            GameObject* txtChild = UIButtonTextChild(go);
+            TextRenderer* childTr = txtChild ? txtChild->GetComponent<TextRenderer>() : nullptr;
             char lb[128];
-            std::strncpy(lb, btn->label.c_str(), sizeof(lb) - 1);
+            std::strncpy(lb, (childTr ? childTr->text : btn->label).c_str(), sizeof(lb) - 1);
             lb[sizeof(lb) - 1] = '\0';
-            if (ImGui::InputText("Label##uib", lb, sizeof(lb))) { btn->label = lb; ed.dirty = true; }
+            if (ImGui::InputText("Label##uib", lb, sizeof(lb))) {
+                btn->label = lb;
+                if (childTr) childTr->text = lb;
+                ed.dirty = true;
+            }
+            if (childTr) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Edit Text##uib")) ed.Select(txtChild);
+                ImGui::TextDisabled("Text is a child object (\"%s\") — select it to style/move.",
+                                    txtChild->name.c_str());
+            } else {
+                if (ImGui::SmallButton("Text as Child##uib")) {
+                    ed.PushUndo();
+                    ed.Select(MakeButtonTextChild(ed, go));
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Split the label into its own child Text object (Unity-style) so it can be styled and positioned independently.");
+            }
             float pos[2] = {btn->position.x, btn->position.y};
             if (ImGui::DragFloat2("Pos (px)##uib", pos, 1.0f)) { btn->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {btn->size.x, btn->size.y};
@@ -8486,13 +8535,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 40), 3.0f);
             dl->AddRect(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 110), 3.0f);
         }
-        float px = btn->fontScale * s;
-        float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-        float left  = a.x + (isz > 0.0f && !btn->iconRight ? isz + 12 * s : 0.0f);
-        float right = b.x - (isz > 0.0f &&  btn->iconRight ? isz + 12 * s : 0.0f);
-        DrawBitmapText(dl, btn->label, left + ((right - left) - tw) * 0.5f,
-                       a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f + shift, px,
-                       ToColor(btn->CurrentTextColor()));
+        // Skip the built-in label when a child Text object provides it (Unity-style
+        // Button→Text) — that child renders itself in the text pass.
+        if (!UIButtonTextChild(up.get())) {
+            float px = btn->fontScale * s;
+            float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+            float left  = a.x + (isz > 0.0f && !btn->iconRight ? isz + 12 * s : 0.0f);
+            float right = b.x - (isz > 0.0f &&  btn->iconRight ? isz + 12 * s : 0.0f);
+            DrawBitmapText(dl, btn->label, left + ((right - left) - tw) * 0.5f,
+                           a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f + shift, px,
+                           ToColor(btn->CurrentTextColor()));
+        }
     }
 
     // UI input fields: box + the text (or placeholder) + a caret when focused.

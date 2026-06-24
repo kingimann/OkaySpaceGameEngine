@@ -22,12 +22,28 @@
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Math/Vec2.hpp"
+#include "okay/Math/Vec3.hpp"
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
 #include <cstddef>
+#include <cmath>
+#include <functional>
 
 namespace okay {
+
+/// World-space UI context, set by the renderer (player / editor) for the current
+/// frame so the shared layout helpers can project a world-space Canvas's widgets
+/// onto the screen. The renderer supplies a projector (world point -> screen
+/// pixels + depth) and the camera's right axis (for billboarding); it is left
+/// inactive for normal screen-space UI, which is therefore completely unchanged.
+struct UIWorldCtx {
+    bool active = false;
+    std::function<bool(const Vec3&, Vec2&, float&)> project;  // returns false if behind camera
+    Vec3  right{1.0f, 0.0f, 0.0f};   // world axis that design +X runs along (camera right when billboarding)
+    float screenW = 0.0f, screenH = 0.0f;
+};
+inline UIWorldCtx& UIWorld() { static thread_local UIWorldCtx c; return c; }
 
 /// A uniform view of whatever screen-space UI widget lives on a GameObject: its
 /// anchor, its editable pixel offset, and its size. Every UI component
@@ -113,10 +129,40 @@ inline Canvas* OwningCanvas(GameObject* go) {
     return nullptr;
 }
 
-/// The pixel scale a widget is drawn at: its owning Canvas's scale factor for
-/// the current screen, or 1 if it has no Canvas.
+/// For a world-space Canvas: project its plane through the active camera and return
+/// the screen pixel of the canvas center (`screenCenter`) and `k`, the screen
+/// pixels per design pixel at that distance. false if the canvas is behind the
+/// camera or there's no active world context. A design-space point `p` then maps to
+/// screen as `screenCenter + (p - designResolution/2) * k`, and sizes scale by `k`.
+inline bool UIWorldCanvasMap(Canvas* cv, Vec2& screenCenter, float& k) {
+    UIWorldCtx& ctx = UIWorld();
+    if (!cv || !cv->worldSpace || !ctx.active || !ctx.project) return false;
+    if (!cv->gameObject || !cv->gameObject->transform) return false;
+    Vec3 center = cv->gameObject->transform->Position();
+    Vec3 right = cv->billboard ? ctx.right : cv->gameObject->transform->Right();
+    float ppu = cv->worldPixelsPerUnit > 0.001f ? cv->worldPixelsPerUnit : 1.0f;
+    float worldPerPx = 1.0f / ppu;
+    Vec2 c0; float depth = 0.0f;
+    if (!ctx.project(center, c0, depth)) return false;
+    Vec2 c1; float d1 = 0.0f;
+    if (!ctx.project(center + right * worldPerPx, c1, d1)) return false;
+    float dx = c1.x - c0.x, dy = c1.y - c0.y;
+    k = std::sqrt(dx * dx + dy * dy);                 // screen px per design px
+    if (k < 1e-5f) return false;
+    screenCenter = c0;
+    return true;
+}
+
+/// The pixel scale a widget is drawn at: for a world-space Canvas the projected
+/// design->screen scale `k`; otherwise its owning Canvas's screen scale factor (or
+/// 1 with no Canvas). Returning 0 for a world canvas behind the camera collapses
+/// the widget so it isn't drawn.
 inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
     Canvas* cv = OwningCanvas(go);
+    if (cv && cv->worldSpace) {
+        Vec2 sc; float k;
+        return UIWorldCanvasMap(cv, sc, k) ? k : 0.0f;
+    }
     return cv ? cv->ScaleFactor(screenW, screenH) : 1.0f;
 }
 
@@ -305,6 +351,27 @@ inline GameObject* UIButtonTextChild(GameObject* go) {
     return nullptr;
 }
 
+/// A widget's rect in its world-space Canvas's DESIGN pixel space (no projection):
+/// anchored within its UI parent if it has one, else within `designResolution`.
+/// Sizes are 1:1 design pixels (the projection applies the scale). Used only by the
+/// world-space path of GetUIScreenRect, so it never recurses back into projection.
+inline bool UIDesignRect(GameObject* go, float dW, float dH, Vec2& origin, Vec2& size) {
+    UIRect r = GetUIRect(go);
+    if (!r.valid || !r.position) return false;
+    size = r.size;
+    if (GameObject* parent = OwningUIParent(go)) {
+        Vec2 po, ps;
+        if (UIDesignRect(parent, dW, dH, po, ps)) {
+            origin = po + ResolveAnchor(r.anchor, *r.position, size, ps.x, ps.y);
+            if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll;
+            return true;
+        }
+    }
+    origin = ResolveAnchor(r.anchor, *r.position, size, dW, dH);
+    if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll;
+    return true;
+}
+
 /// Resolve a widget to its final screen rect. Offsets/sizes scale by the owning
 /// Canvas factor. If the widget is parented under another UI widget, its anchor
 /// resolves WITHIN the parent's rect (so moving/resizing the parent moves the
@@ -314,6 +381,20 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
                             Vec2& origin, Vec2& size, float* outScale = nullptr) {
     UIRect r = GetUIRect(go);
     if (!r.valid) return false;
+    // World-space Canvas: lay the widget out in design space, then project the
+    // canvas plane through the active camera. Every widget type goes through here,
+    // so this single branch makes them all render/hit-test in-world.
+    if (Canvas* cv = OwningCanvas(go); cv && cv->worldSpace) {
+        Vec2 sc; float k;
+        if (!UIWorldCanvasMap(cv, sc, k)) return false;   // behind camera / no context
+        Vec2 od, szd;
+        if (!UIDesignRect(go, cv->designResolution.x, cv->designResolution.y, od, szd)) return false;
+        Vec2 dctr{cv->designResolution.x * 0.5f, cv->designResolution.y * 0.5f};
+        origin = sc + (od - dctr) * k;
+        size = szd * k;
+        if (outScale) *outScale = k;
+        return true;
+    }
     float s = UIScaleFor(go, screenW, screenH);
     size = r.size * s;
     if (GameObject* parent = OwningUIParent(go)) {
@@ -358,6 +439,18 @@ inline float ScrollViewContentHeight(GameObject* sv) {
 inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
     UIRect r = GetUIRect(go);
     if (!r.valid || !r.position) return Vec2{0.0f, 0.0f};
+    // World-space Canvas: project the design-space origin through the camera so
+    // screen-space text (which uses this) lands on the in-world canvas too.
+    if (Canvas* cv = OwningCanvas(go); cv && cv->worldSpace) {
+        Vec2 sc; float k;
+        if (UIWorldCanvasMap(cv, sc, k)) {
+            Vec2 od, szd;
+            if (UIDesignRect(go, cv->designResolution.x, cv->designResolution.y, od, szd)) {
+                Vec2 dctr{cv->designResolution.x * 0.5f, cv->designResolution.y * 0.5f};
+                return sc + (od - dctr) * k;
+            }
+        }
+    }
     if (GameObject* parent = OwningUIParent(go)) {
         UIRect pr = GetUIRect(parent);
         if (pr.valid)

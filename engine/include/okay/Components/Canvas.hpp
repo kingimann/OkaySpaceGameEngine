@@ -29,6 +29,18 @@ public:
     bool  visible = true;              // hide/show every widget under this canvas
     float opacity = 1.0f;             // 0..1 master fade for this canvas's widgets
 
+    // ---- World-space mode (Unity's "World Space" render mode) ----
+    // When true, this canvas lives on a plane in the 3D world (at its GameObject's
+    // position) instead of the screen. Its widgets are authored in `designResolution`
+    // pixels and projected through the active camera each frame, so buttons, panels,
+    // images, sliders — every regular UI widget — render in-world (signs, terminals,
+    // nameplates). `worldPixelsPerUnit` sets the size (design px per world unit) and
+    // `billboard` keeps it facing the camera.
+    bool  worldSpace = false;
+    Vec2  designResolution{1280.0f, 720.0f};   // the canvas's own pixel space
+    float worldPixelsPerUnit = 300.0f;         // design px per world unit (bigger = smaller in-world)
+    bool  billboard = true;                    // always face the camera
+
     /// The pixel-scale this canvas applies for an actual screen of w x h. The
     /// user `scaleFactor` multiplies the result in both modes, so it always works
     /// as an extra UI zoom.

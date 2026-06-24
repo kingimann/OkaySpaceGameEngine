@@ -7085,6 +7085,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Sort Order##cv", &cv->sortOrder)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher canvases draw on top of lower ones.");
 
+            ImGui::SeparatorText("World Space (3D)");
+            if (ImGui::Checkbox("World Space##cv", &cv->worldSpace)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Render this canvas (and ALL its widgets) on a plane in the 3D world at this\n"
+                                  "object's position, instead of on the screen. Shows in the Game view / Play.");
+            if (cv->worldSpace) {
+                float dr[2] = {cv->designResolution.x, cv->designResolution.y};
+                if (ImGui::DragFloat2("Design Res##cvw", dr, 1.0f, 16.0f, 8000.0f)) { cv->designResolution = {dr[0], dr[1]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The canvas's own pixel space — author widgets against this size.");
+                if (ImGui::DragFloat("Pixels / Unit##cvw", &cv->worldPixelsPerUnit, 1.0f, 1.0f, 4000.0f, "%.0f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Design pixels per world unit (larger = the panel is smaller in-world).");
+                if (ImGui::Checkbox("Billboard (face camera)##cvw", &cv->billboard)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the canvas turned toward the camera. Off = it uses this object's orientation.");
+                ImGui::TextDisabled("Move/rotate this object to place the panel. Needs a main Camera.");
+            }
+
             // Live readout of the resulting scale for the current view.
             float liveScale = cv->ScaleFactor(UICanvas::Width(), UICanvas::Height());
             ImGui::TextDisabled("Current scale: %.2fx  (canvas %.0f x %.0f)",
@@ -8279,6 +8295,23 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (g->GetComponent<UITooltip>())        add(K_Tooltip);
     }
     edItems = SortUIDrawItems(objs, std::move(edItems));
+    // World-space Canvas projection (Game view): project widgets under a world-space
+    // Canvas through the scene's main camera, so the full UI renders in 3D exactly
+    // like the built game. (The Scene view shows them in Play; world-UI *labels*
+    // still preview in the Scene view via the K_WorldUI branch above.)
+    UIWorld().active = false;
+    if (gameView) {
+        if (Camera* mc = ed.scene().mainCamera) {
+            float cw = canvasSize.x, ch = canvasSize.y;
+            UIWorld().active = true;
+            UIWorld().screenW = cw; UIWorld().screenH = ch;
+            if (mc->gameObject && mc->gameObject->transform)
+                UIWorld().right = mc->gameObject->transform->Right();
+            UIWorld().project = [mc, cw, ch](const Vec3& p, Vec2& out, float& depth) {
+                return mc->WorldToScreen(p, cw, ch, out, &depth);   // canvas-local pixels
+            };
+        }
+    }
     for (const UIDrawItem& _it : edItems) {
         const auto& up = objs[_it.index];
         if (_it.kind == K_Scroll) {   // Scroll View backgrounds (behind content) + scrollbar
@@ -8794,6 +8827,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                         ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY),
                         IM_COL32(255, 80, 220, 200), 1.0f);
     }
+    UIWorld().active = false;   // end world-space UI projection for this overlay
 }
 
 // Click-to-select and drag-to-reposition for screen-space UI in the Scene view.

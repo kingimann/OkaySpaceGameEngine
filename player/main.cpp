@@ -654,6 +654,20 @@ int main(int argc, char** argv) {
             if (g->GetComponent<UITooltip>())        add(K_Tooltip);
         }
         uiItems = SortUIDrawItems(scene.Objects(), std::move(uiItems));
+        // World-space Canvas projection: hand the shared UI layout helpers a camera
+        // projector for this frame so any widget under a world-space Canvas renders
+        // (and hit-tests) in 3D. Cleared after the pass; screen-space UI is untouched.
+        UIWorld().active = false;
+        if (Camera* wcam = scene.mainCamera) {
+            int ww = w, hh = h;
+            UIWorld().active = true;
+            UIWorld().screenW = (float)ww; UIWorld().screenH = (float)hh;
+            if (wcam->gameObject && wcam->gameObject->transform)
+                UIWorld().right = wcam->gameObject->transform->Right();
+            UIWorld().project = [wcam, ww, hh](const Vec3& p, Vec2& out, float& depth) {
+                return wcam->WorldToScreen(p, (float)ww, (float)hh, out, &depth);
+            };
+        }
         for (const UIDrawItem& _it : uiItems) {
             const auto& up = scene.Objects()[_it.index];
             if (_it.kind == K_DropBg) {   // drop-target slot backgrounds (behind items)
@@ -1229,6 +1243,7 @@ int main(int argc, char** argv) {
             SDL_RenderFillRect(renderer, &bg);
             DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
         }
+        UIWorld().active = false;   // end of the frame's world-space UI projection
         SDL_RenderPresent(renderer);
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.

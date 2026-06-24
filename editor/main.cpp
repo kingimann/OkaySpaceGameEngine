@@ -8916,6 +8916,14 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 float s = UIScaleFor(g_uiDragTarget, canvasSize.x, canvasSize.y);
                 if (s < 1e-3f) s = 1.0f;
                 float dx = io.MouseDelta.x / s, dy = io.MouseDelta.y / s;
+                // World-space canvases project at a distance-dependent scale; when the
+                // panel is small/far `s` is tiny and `mouseDelta/s` would fling the
+                // widget (it "drops off"). Clamp the per-frame move to keep it sane.
+                if (Canvas* dcv = OwningCanvas(g_uiDragTarget); dcv && dcv->worldSpace) {
+                    const float maxStep = 60.0f;   // design px / frame
+                    dx = Mathf::Clamp(dx, -maxStep, maxStep);
+                    dy = Mathf::Clamp(dy, -maxStep, maxStep);
+                }
                 float grid = g_uiGrid > 0 ? (float)g_uiGrid : 1.0f;
                 auto snap = [&](float v) { return g_snap ? Mathf::Round(v / grid) * grid : v; };
                 if (g_uiResizeHandle >= 0 && r.sizePtr) {

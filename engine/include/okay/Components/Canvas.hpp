@@ -38,7 +38,7 @@ public:
     // `billboard` keeps it facing the camera.
     bool  worldSpace = false;
     Vec2  designResolution{1280.0f, 720.0f};   // the canvas's own pixel space
-    float worldPixelsPerUnit = 300.0f;         // design px per world unit (bigger = smaller in-world)
+    float worldPixelsPerUnit = 100.0f;         // design px per world unit (bigger = smaller in-world)
     bool  billboard = true;                    // always face the camera
 
     /// The pixel-scale this canvas applies for an actual screen of w x h. The

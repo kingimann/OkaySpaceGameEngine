@@ -3,6 +3,8 @@
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Mat4.hpp"
+#include "okay/Components/AnimClip.hpp"
+#include <unordered_map>
 #include <vector>
 #include <string>
 
@@ -61,6 +63,12 @@ public:
     float animSpeed = 1.0f;
     float animTime  = 0.0f;  // runtime clock (not serialized)
 
+    // ---- No-code custom clips ----
+    // Set a clips file and (optionally) a clip name and it loads + plays on Start,
+    // no scripting required. clipsFile is a path to a .okayanim text file.
+    std::string clipsFile;
+    std::string autoPlayClip;
+
     // Head look: layered on top of the current animation so the head turns/tilts
     // toward where the player (or camera) is aiming. Degrees; not serialized — the
     // controllers drive these as TARGETS every frame, and the head eases toward
@@ -89,6 +97,27 @@ public:
     //      anim == 0. Empty / all-zero = rest pose. ----
     std::vector<Vec3> pose;
 
+    // ---- Custom animation clips (keyframed, authored in text) ----
+    /// Register a clip (replacing any with the same name).
+    void AddClip(AnimClip clip);
+    /// Parse `clip` blocks from text and register them; returns how many loaded.
+    /// `error` is set on a parse failure. Bone tokens are the short names from
+    /// BoneIndex() (e.g. "r_uparm", "torso").
+    int  LoadClips(const std::string& text, std::string* error = nullptr);
+    bool LoadClipsFromFile(const std::string& path, std::string* error = nullptr);
+    /// Play a registered clip by name (resets its clock). While a clip plays it
+    /// drives the whole body, overriding the built-in `anim`. Returns false if no
+    /// such clip. Pass "" (or call StopClip) to return to the built-in animations.
+    bool PlayClip(const std::string& name);
+    void StopClip();
+    bool IsPlayingClip() const { return m_activeClip != nullptr; }
+    /// The clip currently playing, or "" — handy for state checks.
+    const std::string& PlayingClip() const { return m_activeClipName; }
+    /// Resolve a short bone token ("hips","torso","head","l_uparm","l_fore",
+    /// "l_hand","r_uparm","r_fore","r_hand","l_thigh","l_shin","l_foot","r_thigh",
+    /// "r_shin","r_foot") to a rig index, or -1. Case-insensitive.
+    static int BoneIndex(const std::string& token);
+
     // ---- Rig ----
     struct Bone { int parent; Vec3 joint; };
     static int  BoneCount();
@@ -105,7 +134,11 @@ public:
     void Skin(Mesh& m, const std::vector<int>& bone, const std::vector<Vec3>& rot) const;
 
     void Apply();
-    void Start() override { Apply(); }
+    void Start() override {
+        Apply();
+        if (!clipsFile.empty()) LoadClipsFromFile(clipsFile);
+        if (!autoPlayClip.empty()) PlayClip(autoPlayClip);
+    }
     void Update(float dt) override;
 
     std::string ToText() const;
@@ -119,6 +152,10 @@ private:
     float m_headYaw = 0.0f;        // eased head turn (toward lookYaw)
     float m_headPitch = 0.0f;      // eased head tilt (toward lookPitch)
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)
+    std::unordered_map<std::string, AnimClip> m_clips;  // registered custom clips
+    const AnimClip* m_activeClip = nullptr;             // currently playing (or null)
+    std::string m_activeClipName;
+    float m_clipTime = 0.0f;
     void EnsureRest() const;
 };
 

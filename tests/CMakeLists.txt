@@ -385,3 +385,7 @@ add_test(NAME account COMMAND test_account)
 add_executable(test_account_script test_account_script.cpp)
 target_link_libraries(test_account_script PRIVATE okay::engine)
 add_test(NAME account_script COMMAND test_account_script)
+
+add_executable(test_worldtoscreen test_worldtoscreen.cpp)
+target_link_libraries(test_worldtoscreen PRIVATE okay::engine)
+add_test(NAME worldtoscreen COMMAND test_worldtoscreen)

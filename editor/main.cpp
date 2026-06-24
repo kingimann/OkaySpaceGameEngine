@@ -8220,6 +8220,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // preview layers UI exactly like the built game does.
     // (UI draw items are queued and sorted below, once the scale/cull helpers exist.)
 
+    // The un-zoomed viewport rect: in-world UI is placed against the scene's own
+    // 2D camera (like the objects it labels), NOT the UI authoring zoom below.
+    const ImVec2 sceneCanvasPos = canvasPos, sceneCanvasSize = canvasSize;
+
     // Authoring zoom (Scene view only): scale/pan the canvas so the UI is easy to
     // edit. The Game view always shows the true 1:1 layout.
     if (!gameView) ApplyUIEditZoom(canvasPos, canvasSize);
@@ -8548,21 +8552,33 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // canvas. Only meaningful in the Game view, which shows the main camera (the
     // Scene view uses the free editor camera, so we skip it there).
         else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
-            if (!gameView || !ed.scene().mainCamera) continue;   // main-camera projection, Game view only
-            Camera* mc = ed.scene().mainCamera;
             auto* wu = up->GetComponent<WorldUI>();
             if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
             Vec3 wp = up->transform->Position() + wu->worldOffset;
-            Vec2 sp; float depth = 0.0f;
-            if (!mc->WorldToScreen(wp, canvasSize.x, canvasSize.y, sp, &depth)) continue;
-            if (wu->maxDistance > 0.0f && depth > wu->maxDistance) continue;
+            ImVec2 c;                          // final screen anchor (absolute pixels)
             float scale = wu->pixelSize;
-            if (wu->scaleWithDistance && depth > 0.001f)
-                scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
-                                     wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
+            if (gameView) {
+                // Game view: project through the scene's main camera (true 3D placement).
+                Camera* mc = ed.scene().mainCamera;
+                if (!mc) continue;
+                Vec2 sp; float depth = 0.0f;
+                if (!mc->WorldToScreen(wp, canvasSize.x, canvasSize.y, sp, &depth)) continue;
+                if (wu->maxDistance > 0.0f && depth > wu->maxDistance) continue;
+                if (wu->scaleWithDistance && depth > 0.001f)
+                    scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
+                                         wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
+                c = ImVec2(canvasPos.x + sp.x, canvasPos.y + sp.y);
+            } else {
+                // Scene view: place the label with the editor's 2D camera so it sits
+                // on its object while editing (an ortho view, so no distance scaling).
+                ImVec2 ctr(sceneCanvasPos.x + sceneCanvasSize.x * 0.5f,
+                           sceneCanvasPos.y + sceneCanvasSize.y * 0.5f);
+                float s2 = sceneCanvasSize.y / (ed.cameraZoom > 0.001f ? ed.cameraZoom : 1.0f);
+                c = ImVec2(ctr.x + (wp.x - ed.cameraPos.x) * s2,
+                           ctr.y - (wp.y - ed.cameraPos.y) * s2);
+            }
             float tw = wu->text.size() * (Font8x8::Width + 1) * scale;
             float th = Font8x8::Height * scale;
-            ImVec2 c(canvasPos.x + sp.x, canvasPos.y + sp.y);
             float tx = c.x - tw * 0.5f, ty = c.y - th * 0.5f;
             if (wu->background.a > 0.001f)
                 dl->AddRectFilled(ImVec2(tx - 5, ty - 4), ImVec2(tx + tw + 5, ty + th + 4), ToColor(wu->background), 4.0f);

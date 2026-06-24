@@ -5348,7 +5348,8 @@ static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, 
 // Shared shape dropdown: lists every UIShape by its canonical name (UIShapeName)
 // so all the widget pickers stay in sync as shapes are added — no more per-widget
 // hardcoded name arrays to fall out of date. Returns true when the value changed.
-static bool ShapeCombo(const char* label, UIShape& shape, EditorState& ed) {
+static bool ShapeCombo(const char* label, UIShape& shape, EditorState& ed,
+                       float* radius = nullptr, float defRadius = 12.0f) {
     static std::vector<const char*> names;
     if ((int)names.size() != kUIShapeCount) {
         names.clear();
@@ -5356,7 +5357,12 @@ static bool ShapeCombo(const char* label, UIShape& shape, EditorState& ed) {
     }
     int idx = (int)shape;
     if (ImGui::Combo(label, &idx, names.data(), (int)names.size())) {
-        shape = (UIShape)idx; ed.dirty = true; return true;
+        shape = (UIShape)idx; ed.dirty = true;
+        // Picking a radius-driven shape (e.g. Rounded) with the radius still at 0
+        // would render as a plain rectangle and read as "rounded doesn't work".
+        // Seed a sensible default so the corners actually round the moment it's chosen.
+        if (radius && *radius <= 0.0f && UIShapeUsesRadius(shape)) *radius = defRadius;
+        return true;
     }
     return false;
 }
@@ -7584,7 +7590,7 @@ void DrawInspector(EditorState& ed) {
             }
             AnchorCombo("Anchor##uim", im->anchor, ed);
             ImGui::SeparatorText("Shape");
-            ShapeCombo("Shape##uim", im->shape, ed);
+            ShapeCombo("Shape##uim", im->shape, ed, &im->cornerRadius);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The image silhouette: circle for avatars, pill/tab for cards, arrows for nav, etc. Applies to the colored fill when no texture is set.");
             if (UIShapeUsesRadius(im->shape))
                 if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
@@ -8121,6 +8127,15 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
 
+    // Mirror the player's Canvas sort-order rendering: draw widgets owned by a
+    // lower-sortOrder Canvas first so the editor preview layers UI the same way the
+    // built game does. stable_sort keeps creation order within one Canvas.
+    std::vector<std::size_t> edOrder(objs.size());
+    for (std::size_t i = 0; i < edOrder.size(); ++i) edOrder[i] = i;
+    std::stable_sort(edOrder.begin(), edOrder.end(), [&](std::size_t a, std::size_t b) {
+        return CanvasSortOrder(objs[a].get()) < CanvasSortOrder(objs[b].get());
+    });
+
     // Authoring zoom (Scene view only): scale/pan the canvas so the UI is easy to
     // edit. The Game view always shows the true 1:1 layout.
     if (!gameView) ApplyUIEditZoom(canvasPos, canvasSize);
@@ -8144,7 +8159,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     };
 
     // Scroll View backgrounds (drawn behind their content) + a scrollbar.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* sv = up->GetComponent<UIScrollView>();
         if (!sv || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8166,7 +8181,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 
     // Drop-target slot backgrounds (behind items), so slots are visible while
     // designing — mirrors what the running game draws.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* dt = up->GetComponent<UIDropTarget>();
         if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -8177,7 +8192,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI images (logos/icons): preview as a tinted rect with the path centered.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* im = up->GetComponent<UIImage>();
         if (!im || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -8199,7 +8214,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -8226,7 +8241,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
         }
     }
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8247,7 +8262,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI sliders: track + fill + knob.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8277,7 +8292,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!sl->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), sl->cornerRadius);
     }
     // UI steppers: [-] value [+]
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* st = up->GetComponent<UIStepper>();
         if (!st || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8299,7 +8314,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         DrawBitmapText(dl, vb, a.x + (sz.x - tw) * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
     }
     // UI ratings: a row of star diamonds, filled up to the value.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* rt = up->GetComponent<UIRating>();
         if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -8321,7 +8336,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
     }
     // UI toggles: box (+ inset check when on) and a label.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* tg = up->GetComponent<UIToggle>();
         if (!tg || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8352,7 +8367,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI radial / ring progress: a track ring + a filled arc (a pie when thickness<=0).
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* rp = up->GetComponent<UIRadialProgress>();
         if (!rp || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8384,7 +8399,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI tabs: a segmented bar with the selected segment highlighted + labels.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* tb = up->GetComponent<UITabs>();
         if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
         float s = uiScale(up.get());
@@ -8416,7 +8431,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // Scene view uses the free editor camera, so we skip it there).
     if (gameView && ed.scene().mainCamera) {
         Camera* mc = ed.scene().mainCamera;
-        for (const auto& up : objs) {
+        for (std::size_t _i : edOrder) { const auto& up = objs[_i];
             auto* wu = up->GetComponent<WorldUI>();
             if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
             Vec3 wp = up->transform->Position() + wu->worldOffset;
@@ -8444,7 +8459,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* btn = up->GetComponent<UIButton>();
         if (!btn || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8481,7 +8496,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI input fields: box + the text (or placeholder) + a caret when focused.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* in = up->GetComponent<UIInputField>();
         if (!in || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8513,7 +8528,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // Screen-space text (world-anchored text stays with the 2D scene draw). Drawn
     // AFTER panels/images/controls so a label always sits ON TOP of a panel rather
     // than being hidden behind it (only dropdown popups + tooltips go above it).
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active || !tr->screenSpace) continue;
         float s = uiScale(up.get());
@@ -8549,7 +8564,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI dropdowns: header (shows the selection + a caret); when open, the option
     // list below with the hovered/selected option highlighted. Drawn last among
     // widgets so an open list sits above its neighbours.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* dd = up->GetComponent<UIDropdown>();
         if (!dd || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8587,7 +8602,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI tooltips: when a sibling widget has been hovered long enough (Ready),
     // draw the hint box next to the cursor. Tooltips tick only while the scene
     // updates (Play / Game view), matching the built game.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* tt = up->GetComponent<UITooltip>();
         if (!tt || !up->active || !tt->Ready()) continue;
         Vec2 m = Input::MousePosition();

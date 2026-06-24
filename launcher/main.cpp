@@ -674,6 +674,8 @@ int main(int argc, char** argv) {
     char acctPass[64] = {0};
     char acctName[64] = {0};             // username (display name) on register
     char acctNewPass[64] = {0};          // change-password field (signed in)
+    char acctChgName[64] = {0};          // change-username field (signed in)
+    char acctChgEmail[64] = {0};         // change-email field (signed in)
     bool acctRegisterMode = false;       // false = sign in, true = create account
     std::string acctMessage;             // last error/status, shown under the form
     bool acctMessageError = true;
@@ -1038,20 +1040,50 @@ int main(int argc, char** argv) {
                     Toast("Signed out");
                 }
 
-                // ---- Change password ----
+                // ---- Account details ----
                 ImGui::Dummy(ImVec2(0, 14));
-                ImGui::SeparatorText("Change password");
-                ImGui::PushItemWidth(320);
+                ImGui::SeparatorText("Account details");
+                const float kFieldW = 300.0f, kBtnW = 170.0f;
+
+                // Change username (all backends).
+                ImGui::PushItemWidth(kFieldW);
+                ImGui::InputTextWithHint("##acctChgName", "New username", acctChgName, sizeof(acctChgName));
+                ImGui::PopItemWidth();
+                ImGui::SameLine();
+                if (ImGui::Button("Update username", ImVec2(kBtnW, 0))) {
+                    acct::Result r = account.ChangeUsername(acctChgName);
+                    acctMessageError = !r.ok;
+                    acctMessage = r.ok ? "Username updated." : r.error;
+                    if (r.ok) { acctChgName[0] = '\0'; Toast("Username updated"); }
+                }
+
+                // Change email (online / Supabase only).
+                if (account.UsesEmail()) {
+                    ImGui::PushItemWidth(kFieldW);
+                    ImGui::InputTextWithHint("##acctChgEmail", "New email", acctChgEmail, sizeof(acctChgEmail));
+                    ImGui::PopItemWidth();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Update email", ImVec2(kBtnW, 0))) {
+                        acct::Result r = account.ChangeEmail(acctChgEmail);
+                        acctMessageError = !r.ok;
+                        acctMessage = r.ok ? "Email change requested — confirm via the link sent to it."
+                                           : r.error;
+                        if (r.ok) { acctChgEmail[0] = '\0'; Toast("Email change requested"); }
+                    }
+                }
+
+                // Change password.
+                ImGui::PushItemWidth(kFieldW);
                 bool go = ImGui::InputTextWithHint("##acctNewPass", "New password", acctNewPass,
                               sizeof(acctNewPass), ImGuiInputTextFlags_Password |
                               ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::PopItemWidth();
                 ImGui::SameLine();
-                if (ImGui::Button("Update password", ImVec2(180, 0)) || go) {
+                if (ImGui::Button("Update password", ImVec2(kBtnW, 0)) || go) {
                     acct::Result r = account.ChangePassword(acctNewPass);
                     acctMessageError = !r.ok;
                     acctMessage = r.ok ? "Password updated." : r.error;
-                    if (r.ok) std::fill(acctNewPass, acctNewPass + sizeof(acctNewPass), '\0');
+                    if (r.ok) { std::fill(acctNewPass, acctNewPass + sizeof(acctNewPass), '\0'); Toast("Password updated"); }
                 }
                 if (!acctMessage.empty()) {
                     ImGui::PushTextWrapPos(0.0f);

@@ -430,6 +430,63 @@ public:
         return Fail("Changing the password isn't supported for this server.");
     }
 
+    /// Change the signed-in user's email (Supabase only). Supabase may send a
+    /// confirmation link to the new address before it takes effect.
+    Result ChangeEmail(const std::string& newEmail) {
+        if (!session_.loggedIn) return Fail("Sign in first.");
+        if (!LooksLikeEmail(newEmail)) return Fail("Enter a valid email address.");
+        if (provider_ != Provider::Supabase)
+            return Fail("Email change needs the online (Supabase) account server.");
+        ApiResponse r = Api("/auth/v1/user", "PUT",
+            "{\"email\":\"" + detail::JsonEscape(newEmail) + "\"}");
+        if (!r.reached) return Fail("Couldn't reach the account server.");
+        if (!r.ok) {
+            std::string e = detail::JsonField(r.body, "msg");
+            if (e.empty()) e = detail::JsonField(r.body, "message");
+            return Fail(e.empty() ? "Email change failed." : e);
+        }
+        Result ok; ok.ok = true; ok.session = session_; return ok;
+    }
+
+    /// Change the signed-in user's display username. Supabase stores it in user
+    /// metadata; the local backend renames the account. Updates the session.
+    Result ChangeUsername(const std::string& newUsername) {
+        if (!session_.loggedIn) return Fail("Sign in first.");
+        if (newUsername.size() < 2 || newUsername.size() > 32)
+            return Fail("Username must be 2–32 characters.");
+        if (provider_ == Provider::Supabase) {
+            ApiResponse r = Api("/auth/v1/user", "PUT",
+                "{\"data\":{\"username\":\"" + detail::JsonEscape(newUsername) + "\"}}");
+            if (!r.reached) return Fail("Couldn't reach the account server.");
+            if (!r.ok) {
+                std::string e = detail::JsonField(r.body, "msg");
+                if (e.empty()) e = detail::JsonField(r.body, "message");
+                return Fail(e.empty() ? "Username change failed." : e);
+            }
+            session_.username = newUsername;   // display name
+            SaveSession();
+            Result ok; ok.ok = true; ok.session = session_; return ok;
+        }
+        if (provider_ == Provider::Local) {
+            auto records = ReadDb();
+            std::string newKey = Lower(newUsername);
+            for (const auto& rec : records)            // must stay unique
+                if (Lower(rec.user) == newKey && Lower(rec.user) != Lower(session_.username))
+                    return Fail("That username is already taken.");
+            std::string key = Lower(session_.username);
+            for (auto& rec : records) {
+                if (Lower(rec.user) != key) continue;
+                rec.user = newUsername;
+                WriteDb(records);
+                session_.username = newUsername;
+                SaveSession();
+                Result ok; ok.ok = true; ok.session = session_; return ok;
+            }
+            return Fail("Account not found.");
+        }
+        return Fail("Changing the username isn't supported for this server.");
+    }
+
     /// Make an authenticated request to the account server, attaching the
     /// current session token as `Authorization: Bearer <token>`. `path` is the
     /// part after the server URL (e.g. "/profile"); `method` defaults to GET.

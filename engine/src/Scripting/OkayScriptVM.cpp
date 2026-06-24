@@ -19,6 +19,7 @@
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -1996,6 +1997,51 @@ struct OkayScriptVM::Impl {
         b["net_encrypted"] = [this](std::vector<Value>&) {
             NetworkManager* n = Net(); return Value{(n && n->Encrypted()) ? 1.0f : 0.0f};
         };
+        // ---- Supabase matchmaking / server browser --------------------
+        // A shared cache of the last browse, so scripts can list then join by index.
+        auto mmList = std::make_shared<std::vector<GameSession>>();
+        // mm_host(name, addr, port [, max, room, region]) -> session id ("" on fail).
+        b["mm_host"] = [](std::vector<Value>& a) {
+            if (a.size() < 3) return Value{std::string{}};
+            int max = a.size() > 3 ? (int)a[3].AsFloat() : 8;
+            std::string room   = a.size() > 4 ? a[4].AsString() : std::string{};
+            std::string region = a.size() > 5 ? a[5].AsString() : std::string{};
+            return Value{Matchmaking::Host(a[0].AsString(), a[1].AsString(),
+                                           (int)a[2].AsFloat(), max, room, region)};
+        };
+        b["mm_heartbeat"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            return Value{Matchmaking::Heartbeat(a[0].AsString(), (int)a[1].AsFloat()) ? 1.0f : 0.0f};
+        };
+        b["mm_unregister"] = [](std::vector<Value>& a) {
+            return Value{(!a.empty() && Matchmaking::Unregister(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        // mm_refresh([room]) -> number of open sessions found (cached for the getters).
+        b["mm_refresh"] = [mmList](std::vector<Value>& a) {
+            *mmList = Matchmaking::List(a.empty() ? std::string{} : a[0].AsString());
+            return Value{(float)mmList->size()};
+        };
+        b["mm_count"] = [mmList](std::vector<Value>&) { return Value{(float)mmList->size()}; };
+        // Field getters for a cached session by index.
+        auto at = [mmList](std::vector<Value>& a) -> const GameSession* {
+            if (a.empty()) return nullptr;
+            std::size_t i = (std::size_t)a[0].AsFloat();
+            return i < mmList->size() ? &(*mmList)[i] : nullptr;
+        };
+        b["mm_name"]    = [at](std::vector<Value>& a) { auto* g = at(a); return Value{g ? g->name : std::string{}}; };
+        b["mm_addr"]    = [at](std::vector<Value>& a) { auto* g = at(a); return Value{g ? g->hostAddr : std::string{}}; };
+        b["mm_port"]    = [at](std::vector<Value>& a) { auto* g = at(a); return Value{g ? (float)g->port : 0.0f}; };
+        b["mm_players"] = [at](std::vector<Value>& a) { auto* g = at(a); return Value{g ? (float)g->players : 0.0f}; };
+        b["mm_max"]     = [at](std::vector<Value>& a) { auto* g = at(a); return Value{g ? (float)g->maxPlayers : 0.0f}; };
+        b["mm_room"]    = [at](std::vector<Value>& a) { auto* g = at(a); return Value{g ? g->room : std::string{}}; };
+        // Join a cached session by index over the normal UDP transport.
+        b["mm_join"] = [this, at](std::vector<Value>& a) {
+            const GameSession* g = at(a);
+            if (!g) return Value{0.0f};
+            NetworkManager* n = EnsureNet();
+            return Value{(n && n->StartClient(g->hostAddr, (std::uint16_t)g->port)) ? 1.0f : 0.0f};
+        };
+
         // Send a message to everyone, or to one peer id.
         b["net_send"] = [this](std::vector<Value>& a) {
             if (NetworkManager* n = Net(); n && a.size() >= 2) n->Send(a[0].AsString(), a[1].AsString());

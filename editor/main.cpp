@@ -5580,8 +5580,14 @@ void DrawInspector(EditorState& ed) {
         if (ImGui::DragInt("Draw Order", &go->uiDrawOrder, 0.1f))
             ed.dirty = true;
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("0 = default type order. Non-zero overrides it: higher draws on top,\n"
-                              "letting this widget layer above/below other types without nesting.");
+            ImGui::SetTooltip(
+                "0 = default type order. Non-zero overrides it (higher draws on top), so this\n"
+                "widget can layer above/below other types without nesting. Default layers:\n"
+                "  image 1 | panel 2 | scroll 4 | bars 5-6 | slider/stepper 7-8 | rating 9\n"
+                "  toggle 10 | tabs 11 | button 12 | text 13 | dropdown 15 | input 16\n"
+                "Pick a value just above the layer of whatever you want to cover.");
+        int defLayer = UIDefaultLayer(go);
+        if (defLayer >= 0) { ImGui::SameLine(); ImGui::TextDisabled("(default %d)", defLayer); }
         ImGui::SameLine();
         if (ImGui::Button("Center in Canvas")) {
             UIRect r = GetUIRect(go);

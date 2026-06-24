@@ -13,6 +13,11 @@ namespace okay::net {
 /// keeps individual sends well under the path MTU — a separate transport step.)
 inline constexpr std::size_t kMaxDatagram = 65536;
 
+/// Sends larger than this are split into fragments, each kept under a conservative
+/// path MTU so they survive the open internet (where a ~64 KB datagram relying on
+/// IP fragmentation is often dropped). The receiver reassembles them.
+inline constexpr std::size_t kFragmentThreshold = 1200;
+
 /// A little-endian byte buffer for serializing network messages. Write values
 /// in, send the bytes, then read them back out in the same order.
 class Packet {

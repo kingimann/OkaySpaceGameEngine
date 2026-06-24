@@ -262,6 +262,53 @@ inline std::vector<std::string> JsonStringArray(const std::string& json,
     return out;
 }
 
+// Collect the string value of EVERY occurrence of "key":"value" — handy for a
+// PostgREST array of objects like [{"key":"a"},{"key":"b"}] -> ["a","b"].
+inline std::vector<std::string> JsonFieldValues(const std::string& json, const std::string& key) {
+    std::vector<std::string> out;
+    std::string needle = "\"" + key + "\"";
+    std::size_t pos = 0;
+    while ((pos = json.find(needle, pos)) != std::string::npos) {
+        std::size_t colon = json.find(':', pos + needle.size());
+        pos += needle.size();
+        if (colon == std::string::npos) break;
+        std::size_t q1 = json.find('"', colon + 1);
+        if (q1 == std::string::npos) break;
+        std::string s;
+        std::size_t j = q1 + 1;
+        for (; j < json.size(); ++j) {
+            char c = json[j];
+            if (c == '\\' && j + 1 < json.size()) { s += json[++j]; continue; }
+            if (c == '"') break;
+            s += c;
+        }
+        out.push_back(s);
+        pos = j + 1;
+    }
+    return out;
+}
+
+// Collect the numeric value of every "key":<number> occurrence (unquoted), for a
+// PostgREST array like [{"score":500},{"score":300}] -> [500, 300].
+inline std::vector<long> JsonNumberValues(const std::string& json, const std::string& key) {
+    std::vector<long> out;
+    std::string needle = "\"" + key + "\"";
+    std::size_t pos = 0;
+    while ((pos = json.find(needle, pos)) != std::string::npos) {
+        std::size_t colon = json.find(':', pos + needle.size());
+        pos += needle.size();
+        if (colon == std::string::npos) break;
+        std::size_t i = colon + 1;
+        while (i < json.size() && (json[i] == ' ' || json[i] == '\t')) ++i;
+        std::size_t start = i;
+        if (i < json.size() && (json[i] == '-' || json[i] == '+')) ++i;
+        while (i < json.size() && std::isdigit((unsigned char)json[i])) ++i;
+        if (i > start) { try { out.push_back(std::stol(json.substr(start, i - start))); } catch (...) {} }
+        pos = i;
+    }
+    return out;
+}
+
 } // namespace detail
 
 // ===========================================================================
@@ -496,12 +543,12 @@ public:
     /// profiles, ...). Returns a not-reached response for the local backend or
     /// when no one is signed in.
     ApiResponse Api(const std::string& path, const std::string& method = "GET",
-                    const std::string& jsonBody = {}) const {
+                    const std::string& jsonBody = {}, const std::string& extraHeader = {}) const {
         if (!IsOnline() || !session_.loggedIn) return {};
         std::string url = serverUrl_;
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += path.empty() || path.front() == '/' ? path : ("/" + path);
-        return HttpRequest(method, url, jsonBody, /*authToken=*/session_.token);
+        return HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
     }
 
     /// Confirm the saved session is still valid with the server (GET /verify
@@ -537,23 +584,42 @@ public:
     //   GET    /cloud                             -> 200 {"keys": [...]}
     bool CloudSave(const std::string& key, const std::string& data) {
         if (!CloudKeyOk(key)) return false;
+        if (provider_ == Provider::Supabase)   // upsert a row in the cloud_saves table
+            return Api("/rest/v1/cloud_saves", "POST",
+                       "[{\"key\":\"" + detail::JsonEscape(key) + "\",\"data\":\"" +
+                       detail::JsonEscape(data) + "\"}]",
+                       "Prefer: resolution=merge-duplicates,return=minimal").ok;
         return Api("/cloud/" + key, "POST",
                    "{\"data\":\"" + detail::JsonEscape(data) + "\"}").ok;
     }
     std::string CloudLoad(const std::string& key) {
         if (!CloudKeyOk(key)) return {};
+        if (provider_ == Provider::Supabase) {
+            ApiResponse r = Api("/rest/v1/cloud_saves?select=data&key=eq." + key, "GET");
+            return r.ok ? detail::JsonField(r.body, "data") : std::string{};  // [{"data":...}]
+        }
         ApiResponse r = Api("/cloud/" + key, "GET");
         return r.ok ? detail::JsonField(r.body, "data") : std::string{};
     }
     bool CloudHas(const std::string& key) {
         if (!CloudKeyOk(key)) return false;
+        if (provider_ == Provider::Supabase) {
+            ApiResponse r = Api("/rest/v1/cloud_saves?select=key&key=eq." + key, "GET");
+            return r.ok && r.body.find('{') != std::string::npos;  // non-empty result array
+        }
         return Api("/cloud/" + key, "GET").ok;
     }
     bool CloudDelete(const std::string& key) {
         if (!CloudKeyOk(key)) return false;
+        if (provider_ == Provider::Supabase)
+            return Api("/rest/v1/cloud_saves?key=eq." + key, "DELETE").ok;
         return Api("/cloud/" + key, "DELETE").ok;
     }
     std::vector<std::string> CloudList() {
+        if (provider_ == Provider::Supabase) {
+            ApiResponse r = Api("/rest/v1/cloud_saves?select=key", "GET");
+            return r.ok ? detail::JsonFieldValues(r.body, "key") : std::vector<std::string>{};
+        }
         ApiResponse r = Api("/cloud", "GET");
         return r.ok ? detail::JsonStringArray(r.body, "keys") : std::vector<std::string>{};
     }
@@ -569,12 +635,30 @@ public:
     //        {"entries": ["1,alice,500", "2,bob,300", ...]}  (rank,name,score)
     bool LeaderboardSubmit(const std::string& board, long score) {
         if (!CloudKeyOk(board)) return false;
+        if (provider_ == Provider::Supabase)   // upsert (board,user); a DB trigger keeps the best
+            return Api("/rest/v1/leaderboards", "POST",
+                       "[{\"board\":\"" + detail::JsonEscape(board) + "\",\"name\":\"" +
+                       detail::JsonEscape(session_.username) + "\",\"score\":" +
+                       std::to_string(score) + "}]",
+                       "Prefer: resolution=merge-duplicates,return=minimal").ok;
         return Api("/leaderboard/" + board, "POST",
                    "{\"score\":" + std::to_string(score) + "}").ok;
     }
     std::vector<ScoreEntry> LeaderboardTop(const std::string& board, int count = 10) {
         std::vector<ScoreEntry> out;
         if (!CloudKeyOk(board)) return out;
+        if (provider_ == Provider::Supabase) {
+            ApiResponse r = Api("/rest/v1/leaderboards?select=name,score&board=eq." + board +
+                                "&order=score.desc&limit=" + std::to_string(count), "GET");
+            if (!r.ok) return out;
+            auto names  = detail::JsonFieldValues(r.body, "name");
+            auto scores = detail::JsonNumberValues(r.body, "score");
+            for (std::size_t i = 0; i < names.size() && i < scores.size(); ++i) {
+                ScoreEntry e; e.name = names[i]; e.score = scores[i]; e.rank = (int)i + 1;
+                out.push_back(std::move(e));
+            }
+            return out;
+        }
         ApiResponse r = Api("/leaderboard/" + board + "?count=" + std::to_string(count), "GET");
         if (!r.ok) return out;
         for (const std::string& s : detail::JsonStringArray(r.body, "entries")) {
@@ -814,7 +898,8 @@ private:
     // {"error": ...} message; instead we capture the status code via -w.
     ApiResponse HttpRequest(const std::string& method, const std::string& url,
                             const std::string& jsonBody,
-                            const std::string& authToken) const {
+                            const std::string& authToken,
+                            const std::string& extraHeader = {}) const {
         std::error_code ec;
         fs::path dir   = fs::temp_directory_path(ec);
         std::string id = detail::RandomHex(8);
@@ -832,6 +917,8 @@ private:
             cfg += "header = \"apikey: " + apiKey_ + "\"\n";
         if (!authToken.empty())
             cfg += "header = \"Authorization: Bearer " + authToken + "\"\n";
+        if (!extraHeader.empty())                      // e.g. PostgREST "Prefer: ..."
+            cfg += "header = \"" + extraHeader + "\"\n";
         if (!jsonBody.empty()) {
             std::ofstream(bodyF, std::ios::trunc) << jsonBody;
             cfg += "header = \"Content-Type: application/json\"\n";

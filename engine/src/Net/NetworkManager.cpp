@@ -19,6 +19,9 @@ namespace {
         Fragment = 16   // one piece of a message too large for a single datagram
     };
     constexpr float kFragmentTtl = 5.0f;        // drop half-assembled messages after this
+    // Outer tag marking an encrypted datagram (nonce||ciphertext follows). Distinct
+    // from every Msg type (1..16) and from a plaintext message's leading type byte.
+    constexpr std::uint8_t kEncEnvelope = 0xEE;
     constexpr float kClientTimeout = 5.0f;
     constexpr float kReliableResend = 0.25f;   // resend an unacked message this often
 
@@ -61,6 +64,8 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     m_mode = Mode::Client;
     m_joined = false;
     m_kicked = false; m_kickReason.clear();
+    m_localUserId.clear();
+    if (encryption && net::SecureChannel::Available()) m_secure.GenerateKeys();
     OKAY_INFO("net: client connecting to ", m_serverEp.ToString());
     return true;
 }
@@ -297,7 +302,31 @@ void NetworkManager::ResendReliable(
 // Send a datagram, splitting it into MTU-sized fragments if it's too big to fit in
 // one. Small messages (the vast majority) go out directly. Each fragment carries
 // {Fragment, msgId, index, count} so the receiver can reassemble in order.
-void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* data, std::size_t size) {
+net::SecureChannel* NetworkManager::SessionFor(const net::Endpoint& ep) {
+    if (m_mode == Mode::Client) return (ep == m_serverEp) ? &m_secure : nullptr;
+    if (m_mode == Mode::Server) { auto it = m_clients.find(ep); return it != m_clients.end() ? &it->second.secure : nullptr; }
+    return nullptr;
+}
+
+bool NetworkManager::Encrypted() const {
+    if (m_mode == Mode::Client) return m_secure.Ready();
+    return m_mode == Mode::Server && encryption && net::SecureChannel::Available();
+}
+
+void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* data, std::size_t size,
+                                  bool allowEncrypt) {
+    // Encrypt once the session for this peer is established. The sealed blob is
+    // tagged with kEncEnvelope, then handed to the fragmentation step below — so
+    // encryption sits above fragmentation (the receiver reassembles, then decrypts).
+    std::vector<std::uint8_t> enc;
+    if (allowEncrypt && encryption) {
+        if (net::SecureChannel* s = SessionFor(to)) {
+            if (s->Ready() && s->Seal(data, size, enc)) {
+                enc.insert(enc.begin(), kEncEnvelope);
+                data = enc.data(); size = enc.size();
+            }
+        }
+    }
     if (size <= net::kFragmentThreshold) { m_socket.SendTo(to, data, size); return; }
     const std::size_t header = 1 + 4 + 4 + 4;            // type + msgId + index + count
     const std::size_t chunkMax = net::kFragmentThreshold - header;
@@ -422,6 +451,12 @@ void NetworkManager::ServerTick(float dt) {
             if (!TakeFragment(from, data, len, assembled)) continue;  // wait for the rest
             data = assembled.data(); len = assembled.size();
         }
+        std::vector<std::uint8_t> decrypted;   // holds the message if it was encrypted
+        if (len >= 1 && data[0] == kEncEnvelope) {
+            net::SecureChannel* s = SessionFor(from);
+            if (!s || !s->Open(data + 1, len - 1, decrypted)) continue;  // can't open -> drop
+            data = decrypted.data(); len = decrypted.size();
+        }
         net::Packet p(data, len);
         std::uint8_t type = p.ReadU8();
         if (type == Join) {
@@ -429,6 +464,7 @@ void NetworkManager::ServerTick(float dt) {
             std::string room = p.ReadString();           // lobby room (may be empty)
             std::string pass = p.ReadString();           // password (may be empty)
             std::string token = p.ReadString();           // identity token (may be empty)
+            std::string clientPk = p.ReadString();        // encryption public key (may be empty)
             bool existed = m_clients.count(from) != 0;
             std::string userId;
             if (!existed) {
@@ -440,7 +476,7 @@ void NetworkManager::ServerTick(float dt) {
                 else if (m_verifyToken && !m_verifyToken(token, userId)) why = "authentication failed";
                 if (why) {
                     net::Packet r(Reject); r.Write(std::string(why));
-                    SendDatagram(from, r.Data(), r.Size());
+                    SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/false);
                     continue;
                 }
             }
@@ -453,13 +489,23 @@ void NetworkManager::ServerTick(float dt) {
                 c.name = name.empty() ? ("Player" + std::to_string(c.id)) : name;
                 c.room = room;
                 c.userId = userId;
+                // Establish this client's encrypted session from its public key.
+                if (encryption && net::SecureChannel::Available() && !clientPk.empty()) {
+                    c.secure.GenerateKeys();
+                    c.secure.Establish(std::vector<std::uint8_t>(clientPk.begin(), clientPk.end()),
+                                       /*asServer=*/true);
+                }
             }
             c.lastSeen = 0.0f;
             net::Packet w(Welcome);
             w.Write(c.id);
             w.Write(serverName);
             w.Write(c.userId);   // tell the client its verified identity ("" if anon)
-            SendDatagram(from, w.Data(), w.Size());
+            {   // our public key so the client can establish its side ("" if none)
+                auto pk = c.secure.PublicKey();
+                w.Write(std::string(pk.begin(), pk.end()));
+            }
+            SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/false);  // pre-handshake
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
                 if (m_peerJoined) m_peerJoined(c.id, c.name);
@@ -624,7 +670,11 @@ void NetworkManager::ClientTick(float dt) {
             p.Write(m_localRoom);
             p.Write(password);          // matched against the server's password
             p.Write(m_authToken);       // identity token the server may verify
-            SendDatagram(m_serverEp, p.Data(), p.Size());
+            {   // our encryption public key ("" if encryption is off / unavailable)
+                auto pk = (encryption ? m_secure.PublicKey() : std::vector<std::uint8_t>{});
+                p.Write(std::string(pk.begin(), pk.end()));
+            }
+            SendDatagram(m_serverEp, p.Data(), p.Size(), /*allowEncrypt=*/false);  // pre-handshake
             m_joinTimer = 0.5f;
         }
     } else {
@@ -650,12 +700,22 @@ void NetworkManager::ClientTick(float dt) {
             if (!TakeFragment(from, data, len, assembled)) continue;
             data = assembled.data(); len = assembled.size();
         }
+        std::vector<std::uint8_t> decrypted;
+        if (len >= 1 && data[0] == kEncEnvelope) {
+            net::SecureChannel* s = SessionFor(from);
+            if (!s || !s->Open(data + 1, len - 1, decrypted)) continue;
+            data = decrypted.data(); len = decrypted.size();
+        }
         net::Packet p(data, len);
         std::uint8_t type = p.ReadU8();
         if (type == Welcome) {
             m_localId = p.ReadU32();
             m_serverName = p.ReadString();
             m_localUserId = p.ReadString();   // our verified identity ("" if anon)
+            std::string serverPk = p.ReadString();   // server's encryption public key
+            if (encryption && net::SecureChannel::Available() && !serverPk.empty() && !m_secure.Ready())
+                m_secure.Establish(std::vector<std::uint8_t>(serverPk.begin(), serverPk.end()),
+                                   /*asServer=*/false);
             m_joined = true;
             m_joinRejected = false;
             OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);

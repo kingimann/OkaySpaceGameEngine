@@ -1986,6 +1986,16 @@ struct OkayScriptVM::Impl {
         b["net_user_id"] = [this](std::vector<Value>&) {
             NetworkManager* n = Net(); return Value{n ? n->LocalUserId() : std::string{}};
         };
+        // Turn packet encryption on/off (set on both ends before host/join); returns
+        // the current setting (1/0). Needs a build with libsodium, else a no-op.
+        b["net_encrypt"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net()) { if (!a.empty()) n->encryption = (a[0].AsFloat() != 0.0f); return Value{n->encryption ? 1.0f : 0.0f}; }
+            return Value{0.0f};
+        };
+        // 1 once an encrypted session is established, else 0.
+        b["net_encrypted"] = [this](std::vector<Value>&) {
+            NetworkManager* n = Net(); return Value{(n && n->Encrypted()) ? 1.0f : 0.0f};
+        };
         // Send a message to everyone, or to one peer id.
         b["net_send"] = [this](std::vector<Value>& a) {
             if (NetworkManager* n = Net(); n && a.size() >= 2) n->Send(a[0].AsString(), a[1].AsString());

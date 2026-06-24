@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Net/UdpSocket.hpp"
+#include "okay/Net/SecureChannel.hpp"
 #include "okay/Math/Vec3.hpp"
 
 #include <cstdint>
@@ -79,6 +80,16 @@ public:
     /// a Supabase token via auth/v1/user), so the net core stays dependency-free.
     using TokenVerifier = std::function<bool(const std::string& token, std::string& outUserId)>;
     void SetTokenVerifier(TokenVerifier v) { m_verifyToken = std::move(v); }
+
+    /// Encrypt traffic. When true (and the engine is built with libsodium), peers
+    /// exchange public keys during the join handshake and all post-handshake
+    /// datagrams are sealed with XChaCha20-Poly1305 (confidentiality + integrity).
+    /// Set it on BOTH ends before host/join. If either end lacks encryption support,
+    /// the session falls back to plaintext, so it's safe to leave on. Default off.
+    bool encryption = false;
+    /// True once an encrypted session is established (client: with the server;
+    /// server: reported per-peer via PeerEncrypted). Handy for a HUD lock icon.
+    bool Encrypted() const;
     /// The verified account id a peer joined with (server only); "" if anonymous.
     std::string PeerUserId(std::uint32_t id) const;
     /// This peer's own verified id once joined (client), or "" if anonymous.
@@ -234,6 +245,7 @@ private:
         std::string name;
         std::string room;
         std::string userId;   // verified identity (from the token verifier), or ""
+        net::SecureChannel secure;   // per-client encrypted session (if negotiated)
         bool ready = false;
         // Per-client reliable channel (server side).
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client
@@ -247,7 +259,11 @@ private:
     // Datagram fragmentation: SendDatagram splits an oversized message into
     // MTU-sized pieces; TakeFragment reassembles them on the far side; PruneFragments
     // discards half-assembled messages whose fragments stopped arriving.
-    void SendDatagram(const net::Endpoint& to, const std::uint8_t* data, std::size_t size);
+    void SendDatagram(const net::Endpoint& to, const std::uint8_t* data, std::size_t size,
+                      bool allowEncrypt = true);
+    /// The encrypted session for an endpoint (client: the server; server: that
+    /// client), or nullptr if none / not established.
+    net::SecureChannel* SessionFor(const net::Endpoint& ep);
     struct FragAsm {
         std::uint32_t count = 0;
         std::uint32_t got   = 0;
@@ -276,6 +292,7 @@ private:
     char       m_localGlyph  = '@';
     std::uint32_t m_localId  = 0;
     std::string m_localName  = "Player";
+    net::SecureChannel m_secure; // client: encrypted session with the server
     std::string m_authToken;     // token presented on join ("" = anonymous)
     std::string m_localUserId;   // client: our own verified id once joined
     TokenVerifier m_verifyToken; // server: verifies joining clients' tokens

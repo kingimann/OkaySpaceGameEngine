@@ -91,8 +91,8 @@ void Account::Logout() { Get().Logout(); }
 bool Account::VerifySession() { return Get().VerifySession(); }
 
 account::ApiResponse Account::Api(const std::string& path, const std::string& method,
-                                 const std::string& jsonBody) {
-    return Get().Api(path, method, jsonBody);
+                                 const std::string& jsonBody, const std::string& extraHeader) {
+    return Get().Api(path, method, jsonBody, extraHeader);
 }
 
 bool Account::CloudSave(const std::string& key, const std::string& data) {

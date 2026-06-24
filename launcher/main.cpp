@@ -672,12 +672,15 @@ int main(int argc, char** argv) {
 
     char acctUser[64] = {0};
     char acctPass[64] = {0};
+    char acctName[64] = {0};             // username (display name) on register
+    char acctNewPass[64] = {0};          // change-password field (signed in)
     bool acctRegisterMode = false;       // false = sign in, true = create account
     std::string acctMessage;             // last error/status, shown under the form
     bool acctMessageError = true;
     bool acctBusy = false;
 
     char playFilter[128] = {0};   // Play-tab search box
+    char marketFilter[128] = {0}; // Marketplace search box
     int tab = 0; // 0 Create, 1 Play, 2 Marketplace, 3 Account, 4 Settings
     if (g_updateOnLaunch) StartUpdateCheck();   // opt-in auto-check at startup
     bool running = true;
@@ -690,6 +693,22 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) running = false;
+            // Drag & drop a .okayscene onto the launcher to play it instantly.
+            else if (e.type == SDL_DROPFILE && e.drop.file) {
+                std::string dropped = e.drop.file;
+                SDL_free(e.drop.file);
+                std::string ext;
+                auto dot = dropped.rfind('.');
+                if (dot != std::string::npos) for (char ch : dropped.substr(dot)) ext += (char)std::tolower((unsigned char)ch);
+                if (ext == ".okayscene" && !player.empty()) {
+                    Launch(player, dropped);
+                    RecordPlayed(dropped); SavePrefs();
+                    Toast("Playing dropped game");
+                    tab = 1;
+                } else {
+                    Toast("Drop a .okayscene game file to play it");
+                }
+            }
         }
         // Once a background download finishes, re-detect the runtimes so the
         // "not found" notices clear without needing a restart.
@@ -698,6 +717,17 @@ int main(int argc, char** argv) {
             player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
             scenes = FindScenes();
             rescannedAfterUpdate = true;
+        }
+        // Toast once when an update check finishes.
+        {
+            static int lastUp = -1;
+            int us = (int)GetState();
+            if (us != lastUp) {
+                if (us == (int)Up_Updated) Toast("Update installed — restart to finish");
+                else if (us == (int)Up_Failed) Toast("Update check failed");
+                else if (us == (int)Up_UpToDate && lastUp == (int)Up_Checking) Toast("You're up to date");
+                lastUp = us;
+            }
         }
 
         ImGui_ImplSDLRenderer2_NewFrame();
@@ -930,7 +960,21 @@ int main(int argc, char** argv) {
             sectionHeader("Marketplace", nullptr);
             ImGui::TextDisabled("Starter templates — open one in the editor (New Project) to begin.");
             ImGui::Spacing();
+            ImGui::PushItemWidth(-1);
+            ImGui::InputTextWithHint("##marketFilter", "Search templates...", marketFilter, sizeof(marketFilter));
+            ImGui::PopItemWidth();
+            ImGui::Dummy(ImVec2(0, 4));
+            auto mlower = [](std::string s) {
+                for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
+                return s;
+            };
+            std::string mneedle = mlower(marketFilter);
+            int mShown = 0;
             for (const auto& t : templates) {
+                if (!mneedle.empty() &&
+                    mlower(std::string(t.name) + " " + t.desc).find(mneedle) == std::string::npos)
+                    continue;
+                ++mShown;
                 ImGui::PushID(t.name);
                 ImGui::BeginChild(t.name, ImVec2(0, 70), true);
                 if (ImGui::IsWindowHovered()) {
@@ -950,6 +994,7 @@ int main(int argc, char** argv) {
                 ImGui::EndChild();
                 ImGui::PopID();
             }
+            if (mShown == 0) ImGui::TextDisabled("No templates match \"%s\".", marketFilter);
             ImGui::Dummy(ImVec2(0, 8));
             ImGui::TextDisabled("Opens the editor's New Project on the chosen template. "
                                 "Community content marketplace coming soon.");
@@ -992,6 +1037,29 @@ int main(int argc, char** argv) {
                     acctUser[0] = acctPass[0] = '\0';
                     Toast("Signed out");
                 }
+
+                // ---- Change password ----
+                ImGui::Dummy(ImVec2(0, 14));
+                ImGui::SeparatorText("Change password");
+                ImGui::PushItemWidth(320);
+                bool go = ImGui::InputTextWithHint("##acctNewPass", "New password", acctNewPass,
+                              sizeof(acctNewPass), ImGuiInputTextFlags_Password |
+                              ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::PopItemWidth();
+                ImGui::SameLine();
+                if (ImGui::Button("Update password", ImVec2(180, 0)) || go) {
+                    acct::Result r = account.ChangePassword(acctNewPass);
+                    acctMessageError = !r.ok;
+                    acctMessage = r.ok ? "Password updated." : r.error;
+                    if (r.ok) std::fill(acctNewPass, acctNewPass + sizeof(acctNewPass), '\0');
+                }
+                if (!acctMessage.empty()) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1)
+                                                        : ImVec4(0.55f, 0.9f, 0.6f, 1),
+                                       "%s", acctMessage.c_str());
+                    ImGui::PopTextWrapPos();
+                }
             } else {
                 ImGui::TextWrapped(account.IsOnline()
                     ? "Sign in to your OkaySpace account to sync your work."
@@ -1017,6 +1085,9 @@ int main(int argc, char** argv) {
                 const char* idHint = account.UsesEmail() ? "Email" : "Username";
                 ImGui::PushItemWidth(320);
                 ImGui::InputTextWithHint("##acctUser", idHint, acctUser, sizeof(acctUser));
+                // For Supabase, sign-up also takes a display username.
+                if (acctRegisterMode && account.UsesEmail())
+                    ImGui::InputTextWithHint("##acctName", "Username (display name)", acctName, sizeof(acctName));
                 bool submit = ImGui::InputTextWithHint("##acctPass", "Password", acctPass,
                                   sizeof(acctPass), ImGuiInputTextFlags_Password |
                                   ImGuiInputTextFlags_EnterReturnsTrue);
@@ -1028,19 +1099,30 @@ int main(int argc, char** argv) {
                 if (ImGui::Button(btn, ImVec2(200, 48)) || submit) {
                     acctBusy = true;
                     acct::Result r = acctRegisterMode
-                        ? account.Register(acctUser, acctPass)
+                        ? account.Register(acctUser, acctPass, acctName)
                         : account.Login(acctUser, acctPass);
                     acctBusy = false;
                     acctMessageError = !r.ok;
                     if (r.ok) {
                         acctMessage.clear();
-                        // Don't leave the password sitting in memory longer than needed.
                         std::fill(acctPass, acctPass + sizeof(acctPass), '\0');
+                        if (account.IsLoggedIn()) Toast("Signed in");
                     } else {
                         acctMessage = r.error;
                     }
                 }
                 ImGui::EndDisabled();
+
+                // Forgot password (online/Supabase): emails a reset link.
+                if (account.UsesEmail()) {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Forgot password?", ImVec2(180, 48))) {
+                        acct::Result r = account.RequestPasswordReset(acctUser);
+                        acctMessageError = !r.ok;
+                        acctMessage = r.ok ? "Password reset email sent — check your inbox."
+                                           : r.error;
+                    }
+                }
 
                 if (!acctMessage.empty()) {
                     ImGui::Dummy(ImVec2(0, 6));

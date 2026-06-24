@@ -346,15 +346,23 @@ public:
     const Session& CurrentSession() const { return session_; }
     bool IsLoggedIn() const { return session_.loggedIn; }
 
-    /// Create a new account. For Supabase the identifier is an email; for local
-    /// and custom backends it's a username.
-    Result Register(const std::string& username, const std::string& password) {
-        std::string err = Validate(username, password);
+    /// Create a new account (2-arg form: no separate display name).
+    Result Register(const std::string& id, const std::string& password) {
+        return Register(id, password, std::string{});
+    }
+    /// Create a new account. For Supabase `id` is the email and `username` is an
+    /// optional display name (stored in user metadata); for local/custom backends
+    /// `id` is the username and `username` is ignored.
+    Result Register(const std::string& id, const std::string& password,
+                    const std::string& username) {
+        std::string err = Validate(id, password);
+        if (err.empty() && !username.empty() && (username.size() < 2 || username.size() > 32))
+            err = "Username must be 2–32 characters.";
         if (!err.empty()) return Fail(err);
         switch (provider_) {
-            case Provider::Supabase: return SupabaseAuth(true, username, password);
-            case Provider::Custom:   return RemoteAuth("register", username, password);
-            default:                 return LocalRegister(username, password);
+            case Provider::Supabase: return SupabaseAuth(true, id, password, username);
+            case Provider::Custom:   return RemoteAuth("register", id, password);
+            default:                 return LocalRegister(id, password);
         }
     }
 
@@ -374,6 +382,52 @@ public:
         session_ = {};
         std::error_code ec;
         fs::remove(SessionPath(), ec);
+    }
+
+    /// Send a password-reset email (Supabase only). The user follows the emailed
+    /// link to set a new password. Returns ok when the request was accepted.
+    Result RequestPasswordReset(const std::string& email) {
+        if (provider_ != Provider::Supabase)
+            return Fail("Password reset needs the online (Supabase) account server.");
+        if (!LooksLikeEmail(email)) return Fail("Enter a valid email address.");
+        std::string base = serverUrl_;
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        ApiResponse r = HttpRequest("POST", base + "/auth/v1/recover",
+                                    "{\"email\":\"" + detail::JsonEscape(email) + "\"}", {});
+        if (!r.reached) return Fail("Couldn't reach the account server.");
+        if (!r.ok) return Fail("Couldn't start password reset (HTTP " + std::to_string(r.status) + ").");
+        Result ok; ok.ok = true; return ok;
+    }
+
+    /// Change the signed-in user's password. Supabase: PUT auth/v1/user with the
+    /// bearer token. Local: re-hash. Requires being signed in.
+    Result ChangePassword(const std::string& newPassword) {
+        if (!session_.loggedIn) return Fail("Sign in first.");
+        if (newPassword.size() < 6) return Fail("Password must be at least 6 characters.");
+        if (provider_ == Provider::Supabase) {
+            ApiResponse r = Api("/auth/v1/user", "PUT",
+                "{\"password\":\"" + detail::JsonEscape(newPassword) + "\"}");
+            if (!r.reached) return Fail("Couldn't reach the account server.");
+            if (!r.ok) {
+                std::string e = detail::JsonField(r.body, "msg");
+                if (e.empty()) e = detail::JsonField(r.body, "message");
+                return Fail(e.empty() ? "Password change failed." : e);
+            }
+            Result ok; ok.ok = true; ok.session = session_; return ok;
+        }
+        if (provider_ == Provider::Local) {
+            auto records = ReadDb();
+            std::string key = Lower(session_.username);
+            for (auto& rec : records) {
+                if (Lower(rec.user) != key) continue;
+                rec.salt = detail::RandomHex(16);
+                rec.hash = detail::HashPassword(newPassword, rec.salt);
+                WriteDb(records);
+                Result ok; ok.ok = true; ok.session = session_; return ok;
+            }
+            return Fail("Account not found.");
+        }
+        return Fail("Changing the password isn't supported for this server.");
     }
 
     /// Make an authenticated request to the account server, attaching the
@@ -657,13 +711,17 @@ private:
     // Both take the project's anon key as the `apikey` header (added by
     // HttpRequest) and return {"access_token": "...", "user": {...}} on success,
     // or an error object on failure.
-    Result SupabaseAuth(bool signUp, const std::string& email, const std::string& password) {
+    Result SupabaseAuth(bool signUp, const std::string& email, const std::string& password,
+                        const std::string& username = {}) {
         std::string base = serverUrl_;
         if (!base.empty() && base.back() == '/') base.pop_back();
         std::string url = base + (signUp ? "/auth/v1/signup"
                                          : "/auth/v1/token?grant_type=password");
         std::string body = "{\"email\":\"" + detail::JsonEscape(email) +
-                           "\",\"password\":\"" + detail::JsonEscape(password) + "\"}";
+                           "\",\"password\":\"" + detail::JsonEscape(password) + "\"";
+        if (signUp && !username.empty())   // store the display name in user metadata
+            body += ",\"data\":{\"username\":\"" + detail::JsonEscape(username) + "\"}";
+        body += "}";
         ApiResponse r = HttpRequest("POST", url, body, /*authToken=*/{});
 
         if (!r.reached)
@@ -686,7 +744,9 @@ private:
                             "(Turn off email confirmation in Supabase for instant sign-in.)");
             return Fail("Server response was missing an access token.");
         }
-        return Succeed(email, token);
+        // Display the username from user metadata when present; else the email.
+        std::string display = detail::JsonField(r.body, "username");
+        return Succeed(display.empty() ? email : display, token);
     }
 
     // Perform one HTTP request via the system `curl` so the launcher/engine need

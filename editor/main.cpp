@@ -5414,7 +5414,7 @@ static std::vector<std::string> ScriptPublicFunctions(GameObject* go) {
         std::string name = src.substr(s, j - s);
         i = j;
         if (name.empty() || name == "start" || name == "update" || name == "awake") continue;
-        if (name.rfind("on_", 0) == 0 || name.rfind("On", 0) == 0) continue;   // event callbacks
+        if (name.rfind("on_", 0) == 0) continue;   // lowercase engine event callbacks (on_click, on_key, ...)
         if (std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
     }
     return out;
@@ -7270,7 +7270,21 @@ void DrawInspector(EditorState& ed) {
             { static char tgt[64]; static UIButton* tbound = nullptr;
               if (tbound != btn) { std::strncpy(tgt, btn->clickTarget.c_str(), sizeof(tgt)-1); tgt[sizeof(tgt)-1]='\0'; tbound = btn; }
               if (ImGui::InputText("Target Object##uibclk", tgt, sizeof(tgt))) { btn->clickTarget = tgt; ed.dirty = true; }
-              if (ImGui::IsItemHovered()) ImGui::SetTooltip("Object whose script holds the function (blank = this button's own object).");
+              // Drag an object from the Hierarchy onto the field to set the target
+              // (Unity-style) — its public functions then populate the dropdown below.
+              if (ImGui::BeginDragDropTarget()) {
+                  if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
+                      GameObject* dropped = *static_cast<GameObject* const*>(p->Data);
+                      if (dropped) {
+                          // blank target = the button's own object; otherwise store the name.
+                          btn->clickTarget = (dropped == go) ? std::string{} : dropped->name;
+                          std::strncpy(tgt, btn->clickTarget.c_str(), sizeof(tgt)-1); tgt[sizeof(tgt)-1]='\0';
+                          ed.dirty = true;
+                      }
+                  }
+                  ImGui::EndDragDropTarget();
+              }
+              if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag an object here from the Hierarchy (or type its name). Blank = this button's own object.");
               GameObject* tobj = btn->clickTarget.empty() ? go : (go->scene() ? go->scene()->Find(btn->clickTarget) : nullptr);
               std::vector<std::string> fns = ScriptPublicFunctions(tobj);
               std::string cur = btn->clickFunction.empty() ? "(none)" : btn->clickFunction;
@@ -7280,8 +7294,11 @@ void DrawInspector(EditorState& ed) {
                       if (ImGui::Selectable(fn.c_str(), fn == btn->clickFunction)) { btn->clickFunction = fn; ed.dirty = true; }
                   ImGui::EndCombo();
               }
-              if (!tobj) ImGui::TextDisabled("Target object not found.");
-              else if (fns.empty()) ImGui::TextDisabled("No public functions on the target's script (add e.g. 'function fire() { ... }').");
+              if (!tobj) ImGui::TextDisabled("Target object not found — drag one from the Hierarchy.");
+              else if (!tobj->GetComponent<ScriptComponent>())
+                  ImGui::TextDisabled("'%s' has no Script component to call into.", tobj->name.c_str());
+              else if (fns.empty())
+                  ImGui::TextDisabled("No functions on '%s' script — add e.g. 'function fire() { ... }'.", tobj->name.c_str());
             }
 
             AnchorCombo("Anchor##uib", btn->anchor, ed);

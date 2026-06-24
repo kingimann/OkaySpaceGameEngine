@@ -1,5 +1,74 @@
 OkaySpace Game Engine — Changelog
 
+v2.148.0  (Canvas sort order: stack UI canvases)
+  - The Canvas "Sort Order" now actually layers canvases in built games: a popup
+    or modal Canvas with a higher Sort Order draws on top of the HUD. Widgets that
+    share a Canvas keep their authored order (single-canvas UIs are unchanged).
+    (The editor preview will honor Sort Order in the next build.)
+
+v2.147.0  (Hierarchy right-click UI, Flow Graph upgrades)
+  - Hierarchy right-click now has a "UI" submenu to create any UI widget (Panel,
+    Button, Image, Text, Slider, Toggle, Stepper, Rating, Progress Bar, Radial,
+    Input Field, Dropdown, Tabs, Scroll View) — Unity-style create-in-place.
+  - Flow Graph: fixed a Dear ImGui error, and added + Instruction / + Condition,
+    pan (drag empty space) over a grid, Reset View, per-node delete, and a
+    running/idle light (the Trigger node glows green while running in Play).
+
+v2.146.0  (Flow Graph for visual scripting)
+  - New Flow Graph window (Windows > Flow Graph): a node view of the selected
+    object's Actions — Trigger, Condition gates and Instructions wired top to
+    bottom. Reuses the existing Actions execution; drag nodes to arrange, edit
+    values in the Inspector.
+
+v2.145.0  (In-world UI, assignable button clicks, player look-at-camera)
+  - In-world (3D) UI: a World UI component draws a label (optional background +
+    health/progress bar) floating over a 3D point — nameplates, health bars,
+    markers, damage numbers. Scales with distance; shows in the Game view + game.
+  - Buttons can call a chosen public script function on click, picked from a
+    dropdown in the inspector (Unity-style OnClick) — no on_click() needed.
+  - The PLAYER can now look at the camera: the Third Person / Shooter controllers
+    defer to a Character's "Look at Camera"/"Look at Object", so the head turns
+    (yaw AND pitch) toward the camera instead of only left/right.
+
+v2.144.0  (Look-at camera, easier multiplayer starter)
+  - Character "Look at Camera" / "Look at Object": the head now aims at the camera
+    (or a named target) on its own — no controller or script needed. Controllers
+    still drive the look when attached.
+  - Multiplayer starter template is clearer: sets a name, explains that peers
+    auto-spawn and sync, and shows a live connection HUD (offline / hosting+peers /
+    client+ping) built from the net_* script builtins.
+
+v2.143.0  (UI parenting, cursor lock, net crash fix, gestures/emotions)
+  - UI children now follow their parent in built games (a widget parented under a
+    panel/card moves and resizes with it, matching the editor).
+  - First/Third Person controllers get a "Lock + Hide Cursor" option for mouse-look
+    (on by default for first person).
+  - Fixed a crash when stopping Play after hosting/joining (the editor kept using a
+    freed Network Manager — use-after-free).
+  - Character gains hand gestures (Point, Clap, Thumbs Up, Salute, Wave Both) and
+    emotion poses (Cheer, Sad, Angry, Think), selectable in the inspector or from
+    scripts.
+
+v2.142.0  (UI widget round-up: rating hover, tabs/radial, scroll view)
+  - Star rating: stars light up as you hover, and half ratings now render as real
+    half-filled stars (click the set value again to clear).
+  - Tabs and Radial Progress now show up (and are selectable) in the editor — they
+    were drawn at zero size / had no preview before.
+  - Scroll view: the scrollbar is grab-and-draggable (and click-to-jump), and the
+    content height auto-fits the child widgets so scrolling just works.
+  - UI shapes render solid in the editor (removed the anti-aliased seam lines).
+
+v2.141.0  (Character + camera fixes, more UI shapes, UI widget fixes)
+  - Player head now looks in the correct direction in third person (the look yaw
+    was inverted, turning the head away from where you aimed).
+  - Jump no longer crosses the character's hands — the arms swing up and out.
+  - Body lean (Q/E peek) no longer inverted; the body rolls toward the lean.
+  - Camera spring-arm eases back out after clearing a wall instead of popping.
+  - UI images get 7 new shapes: Pentagon, Squircle, Tab (top-rounded), and
+    Arrow Right/Left/Up/Down. Tidier UI Image inspector (cleaner Shape picker).
+  - Stepper, Rating and Radial Progress widgets are visible again in the editor
+    (they were drawn at zero size and couldn't be selected or moved).
+
 v2.134.0  (Friendly Action names, double jump + no infinite jump, fly-cam fix)
   - Visual scripting (Actions) is much easier to read: every condition and instruction
     now has a plain-English name (e.g. "Set Variable", "Play Sound", "Move Toward Object"

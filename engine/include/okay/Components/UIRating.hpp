@@ -42,13 +42,32 @@ public:
         return Mathf::Clamp(i, 0, count - 1);
     }
 
-    /// Fill fraction (0, 0.5 or 1) of star `i` for the current value.
+    /// The value to draw: the live hover preview while the pointer is over the
+    /// stars, otherwise the committed value. Lets the renderer light up stars as
+    /// the player sweeps across them (and back down) before they click.
+    float DisplayValue() const { return (!readOnly && m_hovering) ? m_hoverValue : value; }
+
+    /// Fill fraction (0, 0.5 or 1) of star `i` for the displayed value.
     float StarFill(int i) const {
-        float f = value - (float)i;
+        float f = DisplayValue() - (float)i;
         if (f >= 1.0f) return 1.0f;
         if (f <= 0.0f) return 0.0f;
-        return allowHalf ? (f >= 0.5f ? (f >= 1.0f ? 1.0f : 0.5f) : (f > 0.0f ? 0.5f : 0.0f))
-                         : (f >= 0.5f ? 1.0f : 0.0f);
+        return allowHalf ? (f >= 0.5f ? 0.5f : 0.0f) : (f >= 0.5f ? 1.0f : 0.0f);
+    }
+
+    /// The rating the pointer `p` maps to (1..count, or half-steps when allowHalf):
+    /// the star it's over, minus a half if it's on that star's left half.
+    float ValueAt(const Vec2& p) const {
+        int i = StarAt(p);
+        if (i < 0) return value;
+        float v = (float)(i + 1);
+        if (allowHalf) {
+            Vec2 o = ResolveAnchor(anchor, position, size);
+            float cw = CellWidth();
+            float local = (p.x - o.x) - (float)i * cw;
+            if (local < cw * 0.5f) v -= 0.5f;            // left half = half star
+        }
+        return v;
     }
 
     void SetValue(float v) {
@@ -62,25 +81,22 @@ public:
     }
 
     void Update(float) override {
-        if (readOnly) return;
+        if (readOnly) { m_hovering = false; return; }
+        Vec2 m = Input::MousePosition();
+        m_hovering = StarAt(m) >= 0;                      // pointer is over the stars
+        if (!m_hovering) return;
+        m_hoverValue = ValueAt(m);                         // live preview as you sweep
         if (Input::GetMouseButtonDown(0)) {
-            int i = StarAt(Input::MousePosition());
-            if (i < 0) return;
-            float v = (float)(i + 1);
-            if (allowHalf) {
-                Vec2 o = ResolveAnchor(anchor, position, size);
-                float cw = CellWidth();
-                float local = (Input::MousePosition().x - o.x) - (float)i * cw;
-                if (local < cw * 0.5f) v -= 0.5f;       // left half = half star
-            }
-            // Click the only filled star again to clear (common rating UX).
-            if (v == value) v = 0.0f;
+            float v = m_hoverValue;
+            if (v == value) v = 0.0f;                      // click the set value again to clear
             SetValue(v);
         }
     }
 
 private:
-    bool m_focused = false;
+    bool  m_focused = false;
+    bool  m_hovering = false;
+    float m_hoverValue = 0.0f;
 };
 
 } // namespace okay

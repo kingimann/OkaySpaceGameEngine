@@ -1,7 +1,11 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/Camera.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Scene.hpp"
+#include "okay/Scene/Transform.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Math/Mathf.hpp"
 #include <cmath>
 #include <sstream>
 
@@ -208,10 +212,16 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_RUPARM] = {0, 0, -150};
         r[B_RFORE]  = {0, 0, -15 + 28 * std::sin(t * 8.0f)};
         r[B_LUPARM] = {0, 0, 6};
-    } else if (anim == 5) {                // jump
-        r[B_LUPARM] = {0, 0, 140};   r[B_RUPARM] = {0, 0, -140};
-        r[B_LTHIGH] = {-22, 0, 0};   r[B_RTHIGH] = {-22, 0, 0};
-        r[B_LSHIN]  = {35, 0, 0};    r[B_RSHIN]  = {35, 0, 0};
+    } else if (anim == 5) {                // jump (arms swing up & out — never crossing)
+        // Raise the arms up-and-OUT to the sides with bent elbows. The old pose
+        // rotated each upper arm 140° about Z, which swings the hands up and over
+        // the centerline so they cross in front of the face; ~58° keeps each arm
+        // on its own side. (+Z spreads the left arm out, −Z the right — same sense
+        // as the idle/walk spread, just larger.)
+        r[B_LUPARM] = {-18, 0, 58};   r[B_RUPARM] = {-18, 0, -58};
+        r[B_LFORE]  = {32, 0, 0};     r[B_RFORE]  = {32, 0, 0};   // elbows bent up
+        r[B_LTHIGH] = {-22, 0, 0};    r[B_RTHIGH] = {-22, 0, 0};
+        r[B_LSHIN]  = {35, 0, 0};     r[B_RSHIN]  = {35, 0, 0};
     } else if (anim == 6) {                // crouch (deep squat: hips low, feet planted)
         float s = std::sin(t * 2.2f);      // gentle breathing
         // Thighs forward + shins folded hard back so the knees come up while the
@@ -235,6 +245,57 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LUPARM] = {16, 0, 14};   r[B_RUPARM] = {16, 0, -14};   // arms slightly out front
         r[B_LFORE]  = {24, 0, 0};    r[B_RFORE]  = {24, 0, 0};
     }
+    // ---- Hand gestures (8-12) and emotions (13-16) -----------------------------
+    // The rig is blocky with no face, so "emotions" read through body language
+    // (posture, head tilt, bounce). +X on an upper arm swings it forward, +X on a
+    // forearm bends the elbow up, +Z spreads the LEFT arm out (−Z the right);
+    // arm Z is kept well under 90° so the hands never cross in front.
+    else if (anim == 8) {                  // point forward (right arm)
+        r[B_RUPARM] = {88, 0, -8};         // raise to horizontal, pointing ahead
+        r[B_RFORE]  = {2, 0, 0};           // arm straight
+        r[B_LUPARM] = {0, 0, 4};           // left arm rests
+        r[B_TORSO]  = {0, -6, 0};          // slight turn into the point
+    } else if (anim == 9) {                // clap (hands meet in front, repeating)
+        float c = 18.0f * (0.5f + 0.5f * std::sin(t * 7.0f));   // 0..18 open/close
+        r[B_LUPARM] = {62, 0, -22 + c};    r[B_RUPARM] = {62, 0, 22 - c};
+        r[B_LFORE]  = {46, 0, 18};         r[B_RFORE]  = {46, 0, -18};
+        r[B_HEAD]   = {-4, 0, 0};
+    } else if (anim == 10) {               // thumbs up (right fist up at the side)
+        r[B_RUPARM] = {6, 0, -18};
+        r[B_RFORE]  = {128, 0, -6};        // forearm up, fist by the chest
+        r[B_LUPARM] = {0, 0, 4};
+    } else if (anim == 11) {               // salute (right hand to the brow)
+        r[B_RUPARM] = {26, 0, -74};        // upper arm out to the side
+        r[B_RFORE]  = {128, 0, -28};       // forearm folded up to the forehead
+        r[B_HEAD]   = {-6, 0, 0};
+        r[B_TORSO]  = {-2, 0, 0};          // stand tall
+    } else if (anim == 12) {               // wave-both / surrender-style open hands
+        float s2 = std::sin(t * 6.0f);
+        r[B_LUPARM] = {0, 0, 120};         r[B_RUPARM] = {0, 0, -120};   // both arms up & out
+        r[B_LFORE]  = {0, 0, 20 + 14 * s2}; r[B_RFORE] = {0, 0, -20 - 14 * s2};
+    } else if (anim == 13) {               // happy / cheer (arms up, bouncing)
+        float b = std::sin(t * 6.0f);
+        r[B_LUPARM] = {-14, 0, 82};        r[B_RUPARM] = {-14, 0, -82};  // raised in a V
+        r[B_LFORE]  = {18, 0, 0};          r[B_RFORE]  = {18, 0, 0};
+        r[B_HEAD]   = {-12, 0, 0};         // chin up, upbeat
+        r[B_TORSO]  = {-4 + 2.0f * b, 0, 0};
+    } else if (anim == 14) {               // sad / dejected (slumped, head down)
+        float b = std::sin(t * 1.4f);
+        r[B_TORSO]  = {20 + 1.0f * b, 0, 0};   // slump forward
+        r[B_HEAD]   = {26, 0, 0};              // look down
+        r[B_LUPARM] = {12, 0, 2};          r[B_RUPARM] = {12, 0, -2};    // arms hang limp, slightly fwd
+    } else if (anim == 15) {               // angry (lean in, fists up)
+        float b = std::sin(t * 5.0f);
+        r[B_TORSO]  = {14, 1.5f * b, 0};       // hunch + small aggressive sway
+        r[B_HEAD]   = {12, 0, 0};              // head down/forward (glaring)
+        r[B_LUPARM] = {28, 0, -14};        r[B_RUPARM] = {28, 0, 14};    // elbows in
+        r[B_LFORE]  = {72, 0, 0};          r[B_RFORE]  = {72, 0, 0};     // fists up
+    } else if (anim == 16) {               // think / idle-curious (hand near chin)
+        r[B_RUPARM] = {30, 0, -26};
+        r[B_RFORE]  = {118, 0, -10};       // hand up to the chin
+        r[B_HEAD]   = {-4, 14, 0};         // slight quizzical tilt
+        r[B_LUPARM] = {6, 0, 6};
+    }
 
     // Head look: layer the (eased) gaze on top of whatever the animation set, so the
     // head turns and tilts toward where the player is looking. Clamped so the neck
@@ -243,10 +304,11 @@ std::vector<Vec3> Character::PoseAt(float t) const {
     if (anim != 0) {
         r[B_HEAD].x += -Mathf::Clamp(m_headPitch, -55.0f, 55.0f);
         r[B_HEAD].y +=  Mathf::Clamp(m_headYaw,   -72.0f, 72.0f);
-        // Body lean (peek): roll the torso sideways. Splitting a little onto the hips
-        // makes it read as a whole-body lean rather than just a bent waist. (The 180°
-        // Y flip in Apply() negates the roll sense, hence the minus.)
-        float lean = -Mathf::Clamp(m_bodyLean, -40.0f, 40.0f);
+        // Body lean (peek): roll the torso sideways toward the lean direction.
+        // Splitting a little onto the hips makes it read as a whole-body lean rather
+        // than just a bent waist. (bodyLean > 0 = lean to the player's right, e.g. the
+        // 'E' key; this rolls the body that way to match.)
+        float lean = Mathf::Clamp(m_bodyLean, -40.0f, 40.0f);
         r[B_TORSO].z += lean * 0.7f;
         r[B_HIPS].z  += lean * 0.3f;
     }
@@ -297,6 +359,30 @@ void Character::Apply() {
 void Character::Update(float dt) {
     if (anim == 0) return;
     animTime += dt * animSpeed;
+
+    // Auto look-at: drive lookYaw/lookPitch so the head aims at the main camera or a
+    // named target. Same sign convention the controllers use: the head Euler-Y offset
+    // is (body heading − target heading), and +pitch raises the gaze.
+    if ((lookAtCamera || !lookAtTarget.empty()) && gameObject && gameObject->transform) {
+        Scene* sc = gameObject->scene();
+        Transform* tgt = nullptr;
+        if (sc && !lookAtTarget.empty()) { if (GameObject* g = sc->Find(lookAtTarget)) tgt = g->transform; }
+        else if (lookAtCamera && sc && sc->mainCamera) tgt = sc->mainCamera->transform;
+        if (tgt) {
+            Vec3 self = gameObject->transform->Position(); self.y += lookHeight;
+            Vec3 dir = tgt->Position() - self;
+            Vec3 fwd = gameObject->transform->localRotation * Vec3{0, 0, -1};
+            float bodyYaw = Mathf::Atan2(fwd.x, -fwd.z) * Mathf::Rad2Deg;
+            float aimYaw  = Mathf::Atan2(dir.x, -dir.z) * Mathf::Rad2Deg;
+            float relY = bodyYaw - aimYaw;
+            while (relY > 180.0f) relY -= 360.0f;
+            while (relY < -180.0f) relY += 360.0f;
+            float horiz = std::sqrt(dir.x * dir.x + dir.z * dir.z);
+            lookYaw   = relY;
+            lookPitch = Mathf::Atan2(dir.y, horiz) * Mathf::Rad2Deg;
+        }
+    }
+
     // Ease the head toward the look target so it moves smoothly (frame-rate
     // independent) instead of snapping to the camera each frame.
     float k = headTurnSpeed > 0.0f ? (1.0f - std::exp(-headTurnSpeed * dt)) : 1.0f;

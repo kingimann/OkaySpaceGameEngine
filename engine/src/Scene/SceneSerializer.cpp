@@ -45,6 +45,7 @@
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIInputField.hpp"
+#include "okay/Components/WorldUI.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UITextBind.hpp"
@@ -510,7 +511,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)btn->shape << " " << (btn->shadow ? 1 : 0) << " "
             << btn->shadowColor.r << " " << btn->shadowColor.g << " " << btn->shadowColor.b << " " << btn->shadowColor.a
             << " " << btn->shadowOffset.x << " " << btn->shadowOffset.y
-            << " " << btn->shadowSoftness << "\n";
+            << " " << btn->shadowSoftness
+            // extended: assigned OnClick action (target object + public function)
+            << " " << Quote(btn->clickTarget) << " " << Quote(btn->clickFunction) << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -537,6 +540,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << Quote(nm->startRoom) << " "
             << nm->maxPlayers << " " << nm->snapshotRate << " "
             << Quote(nm->serverName) << " " << Quote(nm->password) << "\n";
+    }
+    if (auto* wu = go->GetComponent<WorldUI>()) {
+        out << "  worldui " << Quote(wu->text) << " "
+            << wu->color.r << " " << wu->color.g << " " << wu->color.b << " " << wu->color.a << " "
+            << wu->background.r << " " << wu->background.g << " " << wu->background.b << " " << wu->background.a << " "
+            << wu->worldOffset.x << " " << wu->worldOffset.y << " " << wu->worldOffset.z << " "
+            << wu->pixelSize << " " << (wu->scaleWithDistance ? 1 : 0) << " "
+            << wu->maxDistance << " " << wu->bar << " "
+            << wu->barColor.r << " " << wu->barColor.g << " " << wu->barColor.b << " " << wu->barColor.a << "\n";
     }
     if (auto* in = go->GetComponent<UIInputField>()) {
         out << "  uiinput " << in->position.x << " " << in->position.y << " "
@@ -1477,6 +1489,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 btn->shape = (UIShape)sp; btn->shadow = (sh != 0); btn->shadowColor = sc;
                                 in >> std::ws; // optional shadow softness (added later)
                                 if (std::isdigit(in.peek()) || in.peek() == '.') in >> btn->shadowSoftness;
+                                in >> std::ws; // optional assigned OnClick (target + function), added later
+                                if (in.peek() == '"') { btn->clickTarget = ReadQuoted(in); btn->clickFunction = ReadQuoted(in); }
                             }
                         }
                     }
@@ -1559,6 +1573,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (in.peek() == '"') nm->serverName = ReadQuoted(in);
                     in >> std::ws;
                     if (in.peek() == '"') nm->password = ReadQuoted(in);
+                } else if (field == "worldui") {
+                    auto* wu = go->AddComponent<WorldUI>();
+                    wu->text = ReadQuoted(in);
+                    Color c, bg, bc; Vec3 off; int sd = 1;
+                    in >> c.r >> c.g >> c.b >> c.a
+                       >> bg.r >> bg.g >> bg.b >> bg.a
+                       >> off.x >> off.y >> off.z
+                       >> wu->pixelSize >> sd >> wu->maxDistance >> wu->bar
+                       >> bc.r >> bc.g >> bc.b >> bc.a;
+                    wu->color = c; wu->background = bg; wu->worldOffset = off;
+                    wu->scaleWithDistance = (sd != 0); wu->barColor = bc;
                 } else if (field == "uiinput") {
                     auto* inp = go->AddComponent<UIInputField>();
                     int an = 0; Color c;

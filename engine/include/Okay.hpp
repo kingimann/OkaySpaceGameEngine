@@ -85,6 +85,7 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIRating.hpp"
+#include "okay/Components/WorldUI.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UITabs.hpp"
 #include "okay/Components/UIScrollView.hpp"

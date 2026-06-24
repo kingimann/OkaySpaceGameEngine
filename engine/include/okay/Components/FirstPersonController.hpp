@@ -8,6 +8,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -46,6 +47,7 @@ public:
     bool  canJump = true;
     bool  driveAnimation = true;        // set a sibling Character's anim from movement
     bool  showBody = false;             // first person: hide your own body (no head clipping)
+    bool  lockCursor = true;            // hide + lock the cursor to the window while playing
 
     // ---- Stance: crouch & prone ----
     // Lower your profile to fit under things / take cover. Each has its own speed
@@ -74,7 +76,10 @@ public:
 
     float yaw = 0.0f, pitch = 0.0f;     // look angles (degrees)
 
-    void Start() override { ApplyBodyVisibility(); }
+    void Start() override {
+        ApplyBodyVisibility();
+        if (lockCursor) Cursor::Capture(true);   // hide + lock for mouse-look
+    }
 
     // First person: the player's own camera should IGNORE the body (so you don't
     // see the inside of your own head) — but the body must still exist for the
@@ -91,6 +96,9 @@ public:
     void Update(float dt) override {
         if (!transform) return;
         ApplyBodyVisibility();
+        // Keep the cursor hidden + locked while playing (re-assert if something freed
+        // it). Turn lockCursor off to author with a normal pointer / click screen UI.
+        if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
 
         // ---- Mouse look ----
         // Mouse-right turns right and mouse-up looks up. The camera looks down its

@@ -471,6 +471,7 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
+bool g_showFlowGraph = false;    // node/flow-graph view of the selected object's Actions
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
 bool g_showGrid = true;          // draw the XZ ground grid in the Scene view
@@ -1200,6 +1201,32 @@ GameObject* EnsureUIRoot(EditorState& ed) {
     return canvas;
 }
 
+// Give a UIButton its own child Text object (Unity's Button→Text), so the label
+// can be styled/positioned independently. The child is a centered, screen-space
+// TextRenderer parented under the button; it follows the button's rect via the UI
+// parent rules, and the button stops drawing its built-in label (UIButtonTextChild).
+// Returns the child (or the existing one if the button already has text).
+GameObject* MakeButtonTextChild(EditorState& ed, GameObject* button) {
+    if (!button) return nullptr;
+    if (GameObject* existing = UIButtonTextChild(button)) return existing;
+    auto* btn = button->GetComponent<UIButton>();
+    GameObject* g = ed.scene().CreateGameObject("Text");
+    auto* t = g->AddComponent<TextRenderer>();
+    t->screenSpace = true;
+    t->anchor = UIAnchor::Center;
+    t->align = 1;                 // center horizontally
+    t->vcenter = true;
+    t->screenPos = {0.0f, 0.0f};  // centered within the parent button
+    if (btn) {
+        t->text = btn->label;
+        t->size = btn->size;
+        t->pixelSize = btn->fontScale;
+        t->color = btn->textColor;
+    }
+    g->transform->SetParent(button->transform, /*worldPositionStays=*/false);
+    return g;
+}
+
 void DrawMenuAndToolbar(EditorState& ed) {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
@@ -1264,6 +1291,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
+        ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
         ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
@@ -1426,6 +1454,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             };
             if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>();        ed.dirty = true; created = true; }
             if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
+            if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
             if (ImGui::MenuItem("UI Document"))  {
                 GameObject* root = EnsureUIRoot(ed);
                 GameObject* g = ed.CreateEmpty("UIDocument");
@@ -1439,7 +1469,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(g); ed.dirty = true; created = true;
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Button"))       addUI("Button",      [](GameObject* g){ g->AddComponent<UIButton>(); });
+            if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
             if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
             if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
             if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; });
@@ -4459,7 +4489,7 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Camera")) ed.Select(ed.CreateCamera());
         if (ImGui::MenuItem("Cube"))   ed.Select(ed.CreateCube());
         ImGui::Separator();
-        if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
+        if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); MakeButtonTextChild(ed, g); ed.Select(g); }
         if (ImGui::MenuItem("UI Text"))   { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Text"); auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
         ImGui::EndPopup();
     }
@@ -4684,6 +4714,35 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Cylinder")) ed.CreateMesh("Cylinder");
             if (ImGui::MenuItem("Plane"))    ed.CreateMesh("Plane");
             if (ImGui::MenuItem("Pyramid"))  ed.CreatePyramid();
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("UI")) {
+            // Create a UI widget under the canvas/UI root and centre it (so it's
+            // visible), mirroring the top GameObject > UI menu — Unity-style
+            // right-click-to-create in the Hierarchy.
+            auto mkUI = [&](const char* name, auto build) {
+                GameObject* root = EnsureUIRoot(ed);
+                GameObject* g = ed.CreateEmpty(name);
+                build(g);
+                if (root) g->transform->SetParent(root->transform, false);
+                UIRect r = GetUIRect(g);
+                if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
+                ed.Select(g); ed.dirty = true;
+            };
+            if (ImGui::MenuItem("Panel"))        mkUI("Panel",   [](GameObject* g){ g->AddComponent<UIPanel>(); });
+            if (ImGui::MenuItem("Button"))       { mkUI("Button", [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
+            if (ImGui::MenuItem("Image"))        mkUI("Image",   [](GameObject* g){ g->AddComponent<UIImage>(); });
+            if (ImGui::MenuItem("Text"))         mkUI("Text",    [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+            if (ImGui::MenuItem("Slider"))       mkUI("Slider",  [](GameObject* g){ g->AddComponent<UISlider>(); });
+            if (ImGui::MenuItem("Toggle"))       mkUI("Toggle",  [](GameObject* g){ g->AddComponent<UIToggle>(); });
+            if (ImGui::MenuItem("Stepper"))      mkUI("Stepper", [](GameObject* g){ g->AddComponent<UIStepper>(); });
+            if (ImGui::MenuItem("Rating"))       mkUI("Rating",  [](GameObject* g){ g->AddComponent<UIRating>(); });
+            if (ImGui::MenuItem("Progress Bar")) mkUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
+            if (ImGui::MenuItem("Radial Progress")) mkUI("Radial", [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
+            if (ImGui::MenuItem("Input Field"))  mkUI("InputField", [](GameObject* g){ g->AddComponent<UIInputField>(); });
+            if (ImGui::MenuItem("Dropdown"))     mkUI("Dropdown", [](GameObject* g){ g->AddComponent<UIDropdown>(); });
+            if (ImGui::MenuItem("Tabs"))         mkUI("Tabs",    [](GameObject* g){ g->AddComponent<UITabs>(); });
+            if (ImGui::MenuItem("Scroll View"))  mkUI("ScrollView", [](GameObject* g){ g->AddComponent<UIScrollView>(); });
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
@@ -4931,6 +4990,131 @@ static const char* ActionOpLabel(const ActionOpInfo* ops, int n, const std::stri
     return op.c_str();
 }
 
+// A flow-graph (node) view of the selected object's Actions: the Trigger as a node,
+// its Conditions as gate nodes, and the Instructions wired top-to-bottom. It reads
+// the live ActionList (so it always matches the Inspector and the running game) and
+// reuses the proven execution — this is a visual layer, not a second script system.
+// Nodes are draggable within the window (session layout). Edit values in the Inspector.
+static void DrawFlowGraph(EditorState& ed) {
+    if (!g_showFlowGraph) return;
+    if (!ImGui::Begin("Flow Graph", &g_showFlowGraph, ImGuiWindowFlags_HorizontalScrollbar)) { ImGui::End(); return; }
+    GameObject* go = ed.selected();
+    ActionList* al = go ? go->GetComponent<ActionList>() : nullptr;
+    if (!al) {
+        ImGui::TextDisabled("Select an object with an Actions component to see its flow graph.");
+        ImGui::TextDisabled("(Add one via Add Component > Actions, or the Actions inspector.)");
+        ImGui::End(); return;
+    }
+    ImGui::Text("Flow of '%s'", go->name.c_str());
+    ImGui::SameLine(); ImGui::TextDisabled("— drag nodes; drag empty space to pan");
+
+    // Toolbar: add/clear nodes (edits the live ActionList, mirrored in the Inspector)
+    // and a running indicator that lights up while the list executes in Play.
+    int delIns = -1, delCond = -1;            // node-delete requests, applied after layout
+    static std::unordered_map<void*, ImVec2> panMap;
+    ImVec2& pan = panMap[(void*)al];
+    if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({kInstrOps[0].op, {}}); ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({kCondOps[0].op, {}}); ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset View")) pan = ImVec2(0, 0);
+    ImGui::SameLine();
+    if (al->IsRunning()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1.0f), "● running");
+    else                 ImGui::TextDisabled("○ idle");
+    ImGui::Separator();
+
+    static const char* trigs[] = {"On Start","On Update","On Key","On Collision","On Click",
+        "On Key Up","On Message","On Trigger Enter","On Trigger Exit","On Mouse Enter",
+        "On Mouse Exit","On Mouse Down","On Mouse Up","On Mouse Over"};
+    int ti = (int)al->trigger;
+    const char* trigLabel = (ti >= 0 && ti < (int)IM_ARRAYSIZE(trigs)) ? trigs[ti] : "Trigger";
+
+    ImVec2 cp = ImGui::GetCursorScreenPos();
+    ImVec2 cs = ImGui::GetContentRegionAvail();
+    if (cs.x < 80) cs.x = 80; if (cs.y < 80) cs.y = 80;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(cp, ImVec2(cp.x + cs.x, cp.y + cs.y), IM_COL32(24, 26, 32, 255), 4.0f);
+    for (float gx = std::fmod(pan.x, 32.0f); gx < cs.x; gx += 32.0f)   // panning grid
+        dl->AddLine(ImVec2(cp.x + gx, cp.y), ImVec2(cp.x + gx, cp.y + cs.y), IM_COL32(255, 255, 255, 12));
+    for (float gy = std::fmod(pan.y, 32.0f); gy < cs.y; gy += 32.0f)
+        dl->AddLine(ImVec2(cp.x, cp.y + gy), ImVec2(cp.x + cs.x, cp.y + gy), IM_COL32(255, 255, 255, 12));
+    dl->PushClipRect(cp, ImVec2(cp.x + cs.x, cp.y + cs.y), true);
+
+    // Full-canvas button under the nodes: reserves the window bounds AND pans the
+    // view when you drag empty space (nodes, drawn after, take drag priority).
+    ImGui::SetCursorScreenPos(cp);
+    ImGui::InvisibleButton("flow_bg", cs);
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pan.x += ImGui::GetIO().MouseDelta.x; pan.y += ImGui::GetIO().MouseDelta.y; }
+
+    static std::unordered_map<std::string, ImVec2> pos;
+    auto key = [&](const char* role, int i) {
+        char b[64]; std::snprintf(b, sizeof(b), "%p:%s:%d", (void*)al, role, i); return std::string(b);
+    };
+    const float NW = 190.0f, NH = 46.0f, GAPY = 72.0f;
+    // Draw a node; *del set true if its little ✕ was clicked (cond/instruction only).
+    auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col, bool* del) -> ImVec2 {
+        if (pos.find(k) == pos.end()) pos[k] = def;
+        ImVec2 r = pos[k];
+        ImVec2 p{cp.x + r.x + pan.x, cp.y + r.y + pan.y};
+        ImGui::SetCursorScreenPos(p);
+        ImGui::PushID(k.c_str());
+        ImGui::InvisibleButton("nd", ImVec2(NW, NH));
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pos[k].x += ImGui::GetIO().MouseDelta.x; pos[k].y += ImGui::GetIO().MouseDelta.y; }
+        bool hov = ImGui::IsItemHovered();
+        if (del) {                                    // delete handle in the top-right corner
+            ImGui::SetCursorScreenPos(ImVec2(p.x + NW - 18, p.y + 3));
+            if (ImGui::InvisibleButton("x", ImVec2(15, 15))) *del = true;
+        }
+        ImGui::PopID();
+        dl->AddRectFilled(p, ImVec2(p.x + NW, p.y + NH), col, 6.0f);
+        dl->AddRect(p, ImVec2(p.x + NW, p.y + NH), hov ? IM_COL32(255,255,255,150) : IM_COL32(255,255,255,40), 6.0f);
+        dl->AddText(ImVec2(p.x + 9, p.y + 6), IM_COL32(236,239,246,255), title);
+        if (!sub.empty()) dl->AddText(ImVec2(p.x + 9, p.y + 25), IM_COL32(172,178,192,255), sub.c_str());
+        if (del) dl->AddText(ImVec2(p.x + NW - 15, p.y + 3), IM_COL32(235, 150, 150, 255), "x");
+        return ImVec2(p.x + NW * 0.5f, p.y + NH * 0.5f);
+    };
+    auto wire = [&](ImVec2 a, ImVec2 b, ImU32 col) {
+        dl->AddBezierCubic(a, ImVec2(a.x, (a.y + b.y) * 0.5f), ImVec2(b.x, (a.y + b.y) * 0.5f), b, col, 2.5f);
+    };
+
+    std::string tsub;
+    if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnMessage)
+        tsub = "\"" + al->triggerKey + "\"";
+    ImU32 trigCol = al->IsRunning() ? IM_COL32(70, 150, 70, 255) : IM_COL32(150, 92, 42, 255);
+    ImVec2 trigC = node(key("trig", 0), ImVec2(30, 18), trigLabel, tsub, trigCol, nullptr);
+
+    for (std::size_t i = 0; i < al->conditions.size(); ++i) {
+        bool d = false;
+        ImVec2 c = node(key("cond", (int)i), ImVec2(30 + NW + 60, 18 + i * GAPY),
+                        ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), al->conditions[i].op), "if",
+                        IM_COL32(58, 112, 92, 255), &d);
+        if (d) delCond = (int)i;
+        wire(ImVec2(trigC.x + NW * 0.5f, trigC.y), ImVec2(c.x - NW * 0.5f, c.y), IM_COL32(120, 185, 150, 200));
+    }
+
+    float startY = 18.0f + (al->conditions.empty() ? GAPY : (float)al->conditions.size() * GAPY);
+    ImVec2 prev = trigC;
+    for (std::size_t i = 0; i < al->instructions.size(); ++i) {
+        std::string sub;
+        for (const auto& a : al->instructions[i].args) { if (!sub.empty()) sub += " "; sub += a; }
+        if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
+        bool d = false;
+        ImVec2 c = node(key("ins", (int)i), ImVec2(30, startY + i * GAPY),
+                        ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), al->instructions[i].op), sub,
+                        IM_COL32(50, 82, 142, 255), &d);
+        if (d) delIns = (int)i;
+        wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
+        prev = c;
+    }
+    if (al->instructions.empty())
+        dl->AddText(ImVec2(cp.x + 30 + pan.x, cp.y + startY + 12 + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions yet — use + Instruction)");
+
+    dl->PopClipRect();
+    if (delIns >= 0 && delIns < (int)al->instructions.size()) { al->instructions.erase(al->instructions.begin() + delIns); ed.dirty = true; }
+    if (delCond >= 0 && delCond < (int)al->conditions.size()) { al->conditions.erase(al->conditions.begin() + delCond); ed.dirty = true; }
+    ImGui::End();
+}
+
 static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
                           int id, bool& dirty) {
     int action = 0;
@@ -5156,7 +5340,7 @@ static bool IsPolyUIShape(UIShape s) {
 static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, float radius,
                             ImU32 fill, ImU32 border, float borderW) {
     if (sz.x < 1.0f || sz.y < 1.0f) return;
-    const int STEPS = 28;
+    const int STEPS = 40;
     static std::vector<ImVec2> rightPts, leftPts;
     rightPts.clear(); leftPts.clear();
     for (int i = 0; i <= STEPS; ++i) {
@@ -5166,12 +5350,74 @@ static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, 
         rightPts.push_back(ImVec2(a.x + x1, a.y + fy));
         leftPts.push_back(ImVec2(a.x + x0, a.y + fy));
     }
-    std::vector<ImVec2> poly = rightPts;
-    for (auto it = leftPts.rbegin(); it != leftPts.rend(); ++it) poly.push_back(*it);
-    if (poly.size() < 3) return;
-    dl->AddConvexPolyFilled(poly.data(), (int)poly.size(), fill);
-    if (borderW > 0.0f)
+    if (rightPts.size() < 2) return;
+    // Fill as a strip of convex quads between adjacent sampled rows. Unlike a single
+    // AddConvexPolyFilled, this renders CONCAVE silhouettes (e.g. arrows) correctly,
+    // matching exactly the per-row spans the game fills. Anti-aliased fill feathers
+    // each quad's edge, so abutting quads would show seam lines and the shape looks
+    // streaky — turn AA fill OFF for the strip so it reads as one solid shape, then
+    // restore it for the (stroked) border.
+    ImDrawListFlags savedFlags = dl->Flags;
+    dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;
+    for (std::size_t i = 0; i + 1 < rightPts.size(); ++i) {
+        ImVec2 quad[4] = { leftPts[i], rightPts[i], rightPts[i + 1], leftPts[i + 1] };
+        dl->AddConvexPolyFilled(quad, 4, fill);
+    }
+    dl->Flags = savedFlags;
+    if (borderW > 0.0f) {
+        std::vector<ImVec2> poly = rightPts;
+        for (auto it = leftPts.rbegin(); it != leftPts.rend(); ++it) poly.push_back(*it);
         dl->AddPolyline(poly.data(), (int)poly.size(), border, ImDrawFlags_Closed, borderW);
+    }
+}
+
+// Shared shape dropdown: lists every UIShape by its canonical name (UIShapeName)
+// so all the widget pickers stay in sync as shapes are added — no more per-widget
+// hardcoded name arrays to fall out of date. Returns true when the value changed.
+static bool ShapeCombo(const char* label, UIShape& shape, EditorState& ed,
+                       float* radius = nullptr, float defRadius = 12.0f) {
+    static std::vector<const char*> names;
+    if ((int)names.size() != kUIShapeCount) {
+        names.clear();
+        for (int i = 0; i < kUIShapeCount; ++i) names.push_back(UIShapeName(i));
+    }
+    int idx = (int)shape;
+    if (ImGui::Combo(label, &idx, names.data(), (int)names.size())) {
+        shape = (UIShape)idx; ed.dirty = true;
+        // Picking a radius-driven shape (e.g. Rounded) with the radius still at 0
+        // would render as a plain rectangle and read as "rounded doesn't work".
+        // Seed a sensible default so the corners actually round the moment it's chosen.
+        if (radius && *radius <= 0.0f && UIShapeUsesRadius(shape)) *radius = defRadius;
+        return true;
+    }
+    return false;
+}
+
+// The "public" (user-defined, assignable) function names on a GameObject's script —
+// what a Button's OnClick dropdown lists. Scans the retained source for top-level
+// `function NAME(`, skipping the engine lifecycle/event callbacks (start/update/
+// awake/on_*) which aren't meant to be wired by hand.
+static std::vector<std::string> ScriptPublicFunctions(GameObject* go) {
+    std::vector<std::string> out;
+    if (!go) return out;
+    auto* sc = go->GetComponent<ScriptComponent>();
+    if (!sc) return out;
+    const std::string& src = sc->Source();
+    for (std::size_t i = 0; (i = src.find("function", i)) != std::string::npos; ) {
+        bool boundary = (i == 0) || !(std::isalnum((unsigned char)src[i-1]) || src[i-1] == '_');
+        std::size_t j = i + 8;
+        i = j;
+        if (!boundary || j >= src.size() || !(src[j] == ' ' || src[j] == '\t')) continue;
+        while (j < src.size() && (src[j] == ' ' || src[j] == '\t')) ++j;
+        std::size_t s = j;
+        while (j < src.size() && (std::isalnum((unsigned char)src[j]) || src[j] == '_')) ++j;
+        std::string name = src.substr(s, j - s);
+        i = j;
+        if (name.empty() || name == "start" || name == "update" || name == "awake") continue;
+        if (name.rfind("on_", 0) == 0 || name.rfind("On", 0) == 0) continue;   // event callbacks
+        if (std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+    }
+    return out;
 }
 
 void DrawInspector(EditorState& ed) {
@@ -5317,8 +5563,9 @@ void DrawInspector(EditorState& ed) {
 
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
 
-    // UI layering + quick-center for any screen-space widget (draw order is the
-    // scene's object order; later = on top, which is also what picking selects).
+    // UI layering + quick-center for any screen-space widget. Draw order follows the
+    // hierarchy (a later sibling / a child draws on top); Bring to Front / Send to
+    // Back reorder the widget among its siblings to change that.
     if (IsUIElement(go)) {
         if (ImGui::Button("Bring to Front")) { ed.scene().MoveToFront(go); ed.dirty = true; }
         ImGui::SameLine();
@@ -5754,9 +6001,22 @@ void DrawInspector(EditorState& ed) {
             coledit("Backpack##char", ch->pack);
 
             ImGui::SeparatorText("Animation (plays in Play mode)");
-            const char* anims[] = {"None","Idle","Walk","Run","Wave","Jump"};
-            ImGui::SetNextItemWidth(150); ImGui::Combo("Animation##char", &ch->anim, anims, 6);
+            const char* anims[] = {"None","Idle","Walk","Run","Wave","Jump","Crouch","Prone",
+                                   "Point","Clap","Thumbs Up","Salute","Wave Both",
+                                   "Cheer (happy)","Sad","Angry","Think"};
+            ImGui::SetNextItemWidth(150);
+            ImGui::Combo("Animation##char", &ch->anim, anims, IM_ARRAYSIZE(anims));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle/walk/run/jump are driven by the controllers; the gestures and emotions (Point...Think) are poses you can trigger from scripts (set a Character's anim) or preview here.");
             if (ch->anim != 0) ImGui::SliderFloat("Anim Speed##char", &ch->animSpeed, 0.1f, 3.0f);
+
+            ImGui::SeparatorText("Head look");
+            if (ImGui::Checkbox("Look at Camera##char", &ch->lookAtCamera)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the head to face the main camera each frame (no controller/script needed). A First/Third-Person controller overrides this with its own aim.");
+            { static char lookBuf[48]; static Character* lbound = nullptr;
+              if (lbound != ch) { std::strncpy(lookBuf, ch->lookAtTarget.c_str(), sizeof(lookBuf)-1); lookBuf[sizeof(lookBuf)-1]='\0'; lbound = ch; }
+              if (ImGui::InputText("Look at Object##char", lookBuf, sizeof(lookBuf))) { ch->lookAtTarget = lookBuf; ed.dirty = true; }
+              if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional: name of an object to look at instead of the camera (e.g. the player). Leave blank to use the camera."); }
+            if (ImGui::SliderFloat("Head Turn Speed##char", &ch->headTurnSpeed, 0.0f, 20.0f)) ed.dirty = true;
 
             if (c) { ch->Apply(); ed.dirty = true; }
         }
@@ -6185,6 +6445,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragInt("Max Jumps##fp", &fp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }
             if (ImGui::Checkbox("Drive Animation##fp", &fp->driveAnimation)) ed.dirty = true;
+            if (ImGui::Checkbox("Lock + Hide Cursor##fp", &fp->lockCursor)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing (mouse-look). Off keeps a normal pointer for clicking UI.");
 
             ImGui::SeparatorText("Run / Stance");
             if (KeyBindCombo("Sprint Key##fp", fp->sprintKey)) ed.dirty = true;
@@ -6229,6 +6491,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Jump##tp", &tp->canJump)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##tp", &tp->driveAnimation)) ed.dirty = true;
+            if (ImGui::Checkbox("Lock + Hide Cursor##tp", &tp->lockCursor)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing. Off keeps a normal pointer for clicking UI.");
             if (tp->canJump) { ImGui::SetNextItemWidth(90);
                 if (ImGui::DragInt("Max Jumps##tp", &tp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }
@@ -6912,12 +7176,61 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uidoc")) toRemove = doc;
         }
     }
+    if (auto* wu = go->GetComponent<WorldUI>()) {
+        if (CompHeader("World UI (3D label)", wu, &toRemove)) {
+            char tb[160]; std::strncpy(tb, wu->text.c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
+            if (ImGui::InputText("Text##wu", tb, sizeof(tb))) { wu->text = tb; ed.dirty = true; }
+            float c[4] = {wu->color.r, wu->color.g, wu->color.b, wu->color.a};
+            if (ImGui::ColorEdit4("Text Color##wu", c)) { wu->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
+            float bg[4] = {wu->background.r, wu->background.g, wu->background.b, wu->background.a};
+            if (ImGui::ColorEdit4("Background##wu", bg)) { wu->background = {bg[0],bg[1],bg[2],bg[3]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Panel behind the text. Set alpha to 0 for no panel.");
+            float off[3] = {wu->worldOffset.x, wu->worldOffset.y, wu->worldOffset.z};
+            if (ImGui::DragFloat3("World Offset##wu", off, 0.05f)) { wu->worldOffset = {off[0],off[1],off[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Offset from the object in world units (default: 2 above it).");
+            if (ImGui::DragFloat("Size##wu", &wu->pixelSize, 0.05f, 0.2f, 16.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Scale With Distance##wu", &wu->scaleWithDistance)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Distance##wu", &wu->maxDistance, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = always visible; otherwise hide when farther than this.");
+            if (ImGui::DragFloat("Bar (0..1, <0 = none)##wu", &wu->bar, 0.01f, -1.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A health/progress bar under the text. Drive it from a script (set the WorldUI's bar).");
+            if (wu->bar >= 0.0f) {
+                float bc[4] = {wu->barColor.r, wu->barColor.g, wu->barColor.b, wu->barColor.a};
+                if (ImGui::ColorEdit4("Bar Color##wu", bc)) { wu->barColor = {bc[0],bc[1],bc[2],bc[3]}; ed.dirty = true; }
+            }
+            ImGui::TextDisabled("Floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
+            if (ImGui::SmallButton("Remove##wu")) toRemove = wu;
+        }
+    }
     if (auto* btn = go->GetComponent<UIButton>()) {
         if (CompHeader("UI Button", btn, &toRemove)) {
+            // The label lives on the button, OR (Unity-style) on a child Text object.
+            // When a Text child exists, edit it here too so the field always drives the
+            // visible text; otherwise offer to split the text out into its own child.
+            GameObject* txtChild = UIButtonTextChild(go);
+            TextRenderer* childTr = txtChild ? txtChild->GetComponent<TextRenderer>() : nullptr;
             char lb[128];
-            std::strncpy(lb, btn->label.c_str(), sizeof(lb) - 1);
+            std::strncpy(lb, (childTr ? childTr->text : btn->label).c_str(), sizeof(lb) - 1);
             lb[sizeof(lb) - 1] = '\0';
-            if (ImGui::InputText("Label##uib", lb, sizeof(lb))) { btn->label = lb; ed.dirty = true; }
+            if (ImGui::InputText("Label##uib", lb, sizeof(lb))) {
+                btn->label = lb;
+                if (childTr) childTr->text = lb;
+                ed.dirty = true;
+            }
+            if (childTr) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Edit Text##uib")) ed.Select(txtChild);
+                ImGui::TextDisabled("Text is a child object (\"%s\") — select it to style/move.",
+                                    txtChild->name.c_str());
+            } else {
+                if (ImGui::SmallButton("Text as Child##uib")) {
+                    ed.PushUndo();
+                    ed.Select(MakeButtonTextChild(ed, go));
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Split the label into its own child Text object (Unity-style) so it can be styled and positioned independently.");
+            }
             float pos[2] = {btn->position.x, btn->position.y};
             if (ImGui::DragFloat2("Pos (px)##uib", pos, 1.0f)) { btn->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {btn->size.x, btn->size.y};
@@ -6934,11 +7247,28 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Focusable##uib", &btn->focusable)) ed.dirty = true;
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
+
+            ImGui::SeparatorText("On Click (assign a function)");
+            { static char tgt[64]; static UIButton* tbound = nullptr;
+              if (tbound != btn) { std::strncpy(tgt, btn->clickTarget.c_str(), sizeof(tgt)-1); tgt[sizeof(tgt)-1]='\0'; tbound = btn; }
+              if (ImGui::InputText("Target Object##uibclk", tgt, sizeof(tgt))) { btn->clickTarget = tgt; ed.dirty = true; }
+              if (ImGui::IsItemHovered()) ImGui::SetTooltip("Object whose script holds the function (blank = this button's own object).");
+              GameObject* tobj = btn->clickTarget.empty() ? go : (go->scene() ? go->scene()->Find(btn->clickTarget) : nullptr);
+              std::vector<std::string> fns = ScriptPublicFunctions(tobj);
+              std::string cur = btn->clickFunction.empty() ? "(none)" : btn->clickFunction;
+              if (ImGui::BeginCombo("Function##uibclk", cur.c_str())) {
+                  if (ImGui::Selectable("(none)", btn->clickFunction.empty())) { btn->clickFunction.clear(); ed.dirty = true; }
+                  for (const auto& fn : fns)
+                      if (ImGui::Selectable(fn.c_str(), fn == btn->clickFunction)) { btn->clickFunction = fn; ed.dirty = true; }
+                  ImGui::EndCombo();
+              }
+              if (!tobj) ImGui::TextDisabled("Target object not found.");
+              else if (fns.empty()) ImGui::TextDisabled("No public functions on the target's script (add e.g. 'function fire() { ... }').");
+            }
+
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             ImGui::SeparatorText("Style");
-            int bshp = (int)btn->shape;
-            const char* bshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##uib", &bshp, bshapes, kUIShapeCount)) { btn->shape = (UIShape)bshp; ed.dirty = true; }
+            ShapeCombo("Shape##uib", btn->shape, ed);
             if (UIShapeUsesRadius(btn->shape))
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
@@ -6990,9 +7320,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##uip", pn->anchor, ed);
             ImGui::SeparatorText("Style");
-            int shp = (int)pn->shape;
-            const char* shapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##uip", &shp, shapes, kUIShapeCount)) { pn->shape = (UIShape)shp; ed.dirty = true; }
+            ShapeCombo("Shape##uip", pn->shape, ed);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The panel's silhouette — circle, pill, hexagon, etc. Octagon/Parallelogram/Trapezoid use Corner Radius for their cut/skew.");
             if (UIShapeUsesRadius(pn->shape))
                 if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
@@ -7037,9 +7365,7 @@ void DrawInspector(EditorState& ed) {
             int ct = (int)in->contentType;
             if (ImGui::Combo("Content Type##uif", &ct, cts, 4)) { in->contentType = (UIInputField::ContentType)ct; ed.dirty = true; }
             AnchorCombo("Anchor##uif", in->anchor, ed);
-            int ishp = (int)in->shape;
-            const char* fshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##uif", &ishp, fshapes, kUIShapeCount)) { in->shape = (UIShape)ishp; ed.dirty = true; }
+            ShapeCombo("Shape##uif", in->shape, ed);
             if (UIShapeUsesRadius(in->shape))
                 if (ImGui::DragFloat("Corner Radius##uif", &in->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Focus Ring##uif", &in->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
@@ -7058,9 +7384,7 @@ void DrawInspector(EditorState& ed) {
             float sz[2] = {dd->size.x, dd->size.y};
             if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##udd", dd->anchor, ed);
-            int dshp = (int)dd->shape;
-            const char* dshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##udd", &dshp, dshapes, kUIShapeCount)) { dd->shape = (UIShape)dshp; ed.dirty = true; }
+            ShapeCombo("Shape##udd", dd->shape, ed);
             if (UIShapeUsesRadius(dd->shape))
                 if (ImGui::DragFloat("Corner Radius##udd", &dd->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             char ph[96]; std::strncpy(ph, dd->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
@@ -7227,12 +7551,16 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sv->size.x, sv->size.y};
             if (ImGui::DragFloat2("Viewport (px)##usv", sz, 1.0f, 16.0f, 8000.0f)) { sv->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::Checkbox("Auto content height##usv", &sv->autoContent)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the scroll range to the child widgets automatically.");
+            ImGui::BeginDisabled(sv->autoContent);
             if (ImGui::DragFloat("Content Height##usv", &sv->contentHeight, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            ImGui::EndDisabled();
             if (ImGui::SliderFloat("Scroll##usv", &sv->scroll, 0.0f, sv->ScrollMax())) ed.dirty = true;
             float c[4] = {sv->background.r, sv->background.g, sv->background.b, sv->background.a};
             if (ImGui::ColorEdit4("Background##usv", c)) { sv->background = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##usv", sv->anchor, ed);
-            ImGui::TextDisabled("Parent UI widgets to this; the wheel scrolls them.");
+            ImGui::TextDisabled("Parent UI widgets to this; the wheel or scrollbar scrolls them.");
             if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
@@ -7249,9 +7577,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
-            int pshp = (int)pb->shape;
-            const char* pshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##upb", &pshp, pshapes, kUIShapeCount)) { pb->shape = (UIShape)pshp; ed.dirty = true; }
+            ShapeCombo("Shape##upb", pb->shape, ed);
             if (UIShapeUsesRadius(pb->shape))
                 if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Gradient Fill##upb", &pb->gradientFill)) ed.dirty = true;
@@ -7313,19 +7639,11 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("corners stay fixed; edges/center stretch to size");
             }
             AnchorCombo("Anchor##uim", im->anchor, ed);
-            ImGui::SeparatorText("Fill & shape");
-            const char* fills[] = {"None", "Left", "Right", "Up", "Down"};
-            int fm = (int)im->fillMode;
-            if (ImGui::Combo("Fill Mode##uim", &fm, fills, 5)) { im->fillMode = (UIImage::FillMode)fm; ed.dirty = true; }
-            if (im->fillMode != UIImage::FillMode::None) {
-                if (ImGui::SliderFloat("Fill Amount##uim", &im->fillAmount, 0.0f, 1.0f)) ed.dirty = true;
-                ImGui::TextDisabled("for cooldowns / health bars; drive with ui_set_progress-style scripts");
-            }
-            if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
-            int ishp = (int)im->shape;
-            const char* ishapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape (no texture)##uim", &ishp, ishapes, kUIShapeCount)) { im->shape = (UIShape)ishp; ed.dirty = true; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Silhouette of the colored fill when there's no texture set. For a shaped colored box, a UI Panel also works.");
+            ImGui::SeparatorText("Shape");
+            ShapeCombo("Shape##uim", im->shape, ed, &im->cornerRadius);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The image silhouette: circle for avatars, pill/tab for cards, arrows for nav, etc. Applies to the colored fill when no texture is set.");
+            if (UIShapeUsesRadius(im->shape))
+                if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -7344,9 +7662,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Knob##usl", kc)) { sl->knob = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
             AnchorCombo("Anchor##usl", sl->anchor, ed);
-            int sshp = (int)sl->trackShape;
-            const char* sshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Track Shape##usl", &sshp, sshapes, kUIShapeCount)) { sl->trackShape = (UIShape)sshp; ed.dirty = true; }
+            ShapeCombo("Track Shape##usl", sl->trackShape, ed);
             if (sl->trackShape == UIShape::Rounded)
                 if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Round Knob##usl", &sl->roundKnob)) ed.dirty = true;
@@ -7387,9 +7703,7 @@ void DrawInspector(EditorState& ed) {
             float tc[4] = {st->textColor.r, st->textColor.g, st->textColor.b, st->textColor.a};
             if (ImGui::ColorEdit4("Text##ust", tc)) { st->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##ust", st->anchor, ed);
-            int sshp = (int)st->shape;
-            const char* stshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##ust", &sshp, stshapes, kUIShapeCount)) { st->shape = (UIShape)sshp; ed.dirty = true; }
+            ShapeCombo("Shape##ust", st->shape, ed);
             if (UIShapeUsesRadius(st->shape))
                 if (ImGui::DragFloat("Corner Radius##ust", &st->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Interactable##ust", &st->interactable)) ed.dirty = true;
@@ -7453,9 +7767,7 @@ void DrawInspector(EditorState& ed) {
             float sz[2] = {tb->size.x, tb->size.y};
             if (ImGui::DragFloat2("Size (px)##utb", sz, 1.0f, 8.0f, 4000.0f)) { tb->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##utb", tb->anchor, ed);
-            int tshp = (int)tb->shape;
-            const char* tshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##utb", &tshp, tshapes, kUIShapeCount)) { tb->shape = (UIShape)tshp; ed.dirty = true; }
+            ShapeCombo("Shape##utb", tb->shape, ed);
             if (UIShapeUsesRadius(tb->shape))
                 if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (tb->Count() > 0) {
@@ -7729,6 +8041,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
+            if (item(!go->GetComponent<WorldUI>(), "World UI (3D label)")) { go->AddComponent<WorldUI>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIStepper>(), "UI Stepper")) { go->AddComponent<UIStepper>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRating>(), "UI Rating")) { go->AddComponent<UIRating>(); ed.dirty = true; }
@@ -7864,6 +8177,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
 
+    // Mirror the player's draw order: Canvas sortOrder first, then hierarchy
+    // pre-order (parent before children, sibling order honored) so the editor
+    // preview layers UI exactly like the built game does.
+    std::vector<std::size_t> edOrder = BuildUIDrawOrder(objs);
+
     // Authoring zoom (Scene view only): scale/pan the canvas so the UI is easy to
     // edit. The Game view always shows the true 1:1 layout.
     if (!gameView) ApplyUIEditZoom(canvasPos, canvasSize);
@@ -7887,7 +8205,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     };
 
     // Scroll View backgrounds (drawn behind their content) + a scrollbar.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* sv = up->GetComponent<UIScrollView>();
         if (!sv || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -7909,7 +8227,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 
     // Drop-target slot backgrounds (behind items), so slots are visible while
     // designing — mirrors what the running game draws.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* dt = up->GetComponent<UIDropTarget>();
         if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -7920,7 +8238,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI images (logos/icons): preview as a tinted rect with the path centered.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* im = up->GetComponent<UIImage>();
         if (!im || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -7942,7 +8260,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -7969,7 +8287,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
         }
     }
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -7990,7 +8308,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI sliders: track + fill + knob.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8020,7 +8338,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!sl->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), sl->cornerRadius);
     }
     // UI steppers: [-] value [+]
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* st = up->GetComponent<UIStepper>();
         if (!st || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8042,7 +8360,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         DrawBitmapText(dl, vb, a.x + (sz.x - tw) * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
     }
     // UI ratings: a row of star diamonds, filled up to the value.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* rt = up->GetComponent<UIRating>();
         if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -8054,12 +8372,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             float cx = a.x + i * cw + cw * 0.5f;
             float cy = a.y + sz.y * 0.5f, r = d * 0.5f;
             ImVec2 pts[4] = { ImVec2(cx, cy - r), ImVec2(cx + r, cy), ImVec2(cx, cy + r), ImVec2(cx - r, cy) };
-            ImU32 col = ToColor(rt->StarFill(i) >= 0.5f ? rt->on : rt->off);
-            dl->AddConvexPolyFilled(pts, 4, col);
+            float f = rt->StarFill(i);                 // 0, 0.5 or 1 (uses hover preview)
+            dl->AddConvexPolyFilled(pts, 4, ToColor(rt->off));   // empty base
+            if (f > 0.0f) {
+                if (f < 1.0f) dl->PushClipRect(ImVec2(cx - r, cy - r), ImVec2(cx - r + 2.0f * r * f, cy + r), true);
+                dl->AddConvexPolyFilled(pts, 4, ToColor(rt->on));
+                if (f < 1.0f) dl->PopClipRect();
+            }
         }
     }
     // UI toggles: box (+ inset check when on) and a label.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* tg = up->GetComponent<UIToggle>();
         if (!tg || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8089,8 +8412,100 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!tg->interactable) dl->AddRectFilled(a, b, IM_COL32(30, 30, 35, 150), tg->cornerRadius);
     }
 
+    // UI radial / ring progress: a track ring + a filled arc (a pie when thickness<=0).
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        auto* rp = up->GetComponent<UIRadialProgress>();
+        if (!rp || !up->active || UIHidden(up.get())) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        ImVec2 ctr(a.x + sz.x * 0.5f, a.y + sz.y * 0.5f);
+        float outerR = Mathf::Min(sz.x, sz.y) * 0.5f;
+        float th = rp->thickness > 0.0f ? rp->thickness * s : outerR;   // <=0 => pie (fills to center)
+        float midR = Mathf::Max(0.5f, outerR - th * 0.5f);
+        const float kPi = 3.14159265358979f;
+        // Match UIRadialProgress::Sample: 0 = 12 o'clock, +clockwise. ImGui angles are
+        // 0 = +X and grow clockwise on a y-down canvas, so top = -PI/2.
+        float a0 = -kPi * 0.5f + rp->EffectiveStart() * kPi / 180.0f;
+        float span = rp->Fraction() * 2.0f * kPi;
+        float aMin = rp->clockwise ? a0 : a0 - span;
+        float aMax = rp->clockwise ? a0 + span : a0;
+        dl->AddCircle(ctr, midR, ToColor(rp->background), 48, th);        // full track ring
+        if (span > 0.0001f) {
+            dl->PathArcTo(ctr, midR, aMin, aMax, 48);
+            dl->PathStroke(ToColor(rp->fill), 0, th);                    // filled arc
+        }
+        if (rp->showPercent) {
+            char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(rp->Fraction() * 100.0f + 0.5f));
+            float px = 2.0f * s;
+            float tw = std::strlen(pct) * (Font8x8::Width + 1) * px;
+            DrawBitmapText(dl, pct, ctr.x - tw * 0.5f, ctr.y - Font8x8::Height * px * 0.5f, px, ToColor(rp->textColor));
+        }
+    }
+
+    // UI tabs: a segmented bar with the selected segment highlighted + labels.
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        auto* tb = up->GetComponent<UITabs>();
+        if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
+        float s = uiScale(up.get());
+        Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
+        if (svCull(up.get(), o, sz)) continue;
+        ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
+        if (IsPolyUIShape(tb->shape))
+            DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), tb->shape, tb->cornerRadius, ToColor(tb->background), IM_COL32(0, 0, 0, 0), 0.0f);
+        else
+            dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), ToColor(tb->background), tb->cornerRadius);
+        int n = tb->Count();
+        float segW = sz.x / (float)n;
+        ImVec2 selA(a.x + segW * tb->value + 2.0f, a.y + 2.0f);
+        ImVec2 selB(a.x + segW * (tb->value + 1) - 2.0f, a.y + sz.y - 2.0f);
+        dl->AddRectFilled(selA, selB, ToColor(tb->selected), tb->cornerRadius);
+        float px = 2.0f * s;
+        for (int i = 0; i < n; ++i) {
+            const std::string& lbl = tb->tabs[i];
+            float tw = lbl.size() * (Font8x8::Width + 1) * px;
+            ImU32 c = ToColor(i == tb->value ? tb->selectedTextColor : tb->textColor);
+            DrawBitmapText(dl, lbl, a.x + segW * i + (segW - tw) * 0.5f,
+                           a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, c);
+        }
+        if (!tb->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), tb->cornerRadius);
+    }
+
+    // In-world UI (3D labels/markers): project each through the main camera onto the
+    // canvas. Only meaningful in the Game view, which shows the main camera (the
+    // Scene view uses the free editor camera, so we skip it there).
+    if (gameView && ed.scene().mainCamera) {
+        Camera* mc = ed.scene().mainCamera;
+        for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+            auto* wu = up->GetComponent<WorldUI>();
+            if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
+            Vec3 wp = up->transform->Position() + wu->worldOffset;
+            Vec2 sp; float depth = 0.0f;
+            if (!mc->WorldToScreen(wp, canvasSize.x, canvasSize.y, sp, &depth)) continue;
+            if (wu->maxDistance > 0.0f && depth > wu->maxDistance) continue;
+            float scale = wu->pixelSize;
+            if (wu->scaleWithDistance && depth > 0.001f)
+                scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
+                                     wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
+            float tw = wu->text.size() * (Font8x8::Width + 1) * scale;
+            float th = Font8x8::Height * scale;
+            ImVec2 c(canvasPos.x + sp.x, canvasPos.y + sp.y);
+            float tx = c.x - tw * 0.5f, ty = c.y - th * 0.5f;
+            if (wu->background.a > 0.001f)
+                dl->AddRectFilled(ImVec2(tx - 5, ty - 4), ImVec2(tx + tw + 5, ty + th + 4), ToColor(wu->background), 4.0f);
+            DrawBitmapText(dl, wu->text, tx, ty, scale, ToColor(wu->color));
+            if (wu->bar >= 0.0f) {
+                float bw = tw > 36.0f ? tw : 36.0f;
+                float bx = c.x - bw * 0.5f, by = ty + th + 3.0f, bh = 4.0f * scale;
+                dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), ToColor(wu->barBackground), 2.0f);
+                dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * Mathf::Clamp01(wu->bar), by + bh), ToColor(wu->barColor), 2.0f);
+            }
+        }
+    }
+
     // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* btn = up->GetComponent<UIButton>();
         if (!btn || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8117,17 +8532,21 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 40), 3.0f);
             dl->AddRect(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 110), 3.0f);
         }
-        float px = btn->fontScale * s;
-        float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-        float left  = a.x + (isz > 0.0f && !btn->iconRight ? isz + 12 * s : 0.0f);
-        float right = b.x - (isz > 0.0f &&  btn->iconRight ? isz + 12 * s : 0.0f);
-        DrawBitmapText(dl, btn->label, left + ((right - left) - tw) * 0.5f,
-                       a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f + shift, px,
-                       ToColor(btn->CurrentTextColor()));
+        // Skip the built-in label when a child Text object provides it (Unity-style
+        // Button→Text) — that child renders itself in the text pass.
+        if (!UIButtonTextChild(up.get())) {
+            float px = btn->fontScale * s;
+            float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+            float left  = a.x + (isz > 0.0f && !btn->iconRight ? isz + 12 * s : 0.0f);
+            float right = b.x - (isz > 0.0f &&  btn->iconRight ? isz + 12 * s : 0.0f);
+            DrawBitmapText(dl, btn->label, left + ((right - left) - tw) * 0.5f,
+                           a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f + shift, px,
+                           ToColor(btn->CurrentTextColor()));
+        }
     }
 
     // UI input fields: box + the text (or placeholder) + a caret when focused.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* in = up->GetComponent<UIInputField>();
         if (!in || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8159,7 +8578,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // Screen-space text (world-anchored text stays with the 2D scene draw). Drawn
     // AFTER panels/images/controls so a label always sits ON TOP of a panel rather
     // than being hidden behind it (only dropdown popups + tooltips go above it).
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active || !tr->screenSpace) continue;
         float s = uiScale(up.get());
@@ -8195,7 +8614,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI dropdowns: header (shows the selection + a caret); when open, the option
     // list below with the hovered/selected option highlighted. Drawn last among
     // widgets so an open list sits above its neighbours.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* dd = up->GetComponent<UIDropdown>();
         if (!dd || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8233,7 +8652,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI tooltips: when a sibling widget has been hovered long enough (Ready),
     // draw the hint box next to the cursor. Tooltips tick only while the scene
     // updates (Play / Game view), matching the built game.
-    for (const auto& up : objs) {
+    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
         auto* tt = up->GetComponent<UITooltip>();
         if (!tt || !up->active || !tt->Ready()) continue;
         Vec2 m = Input::MousePosition();
@@ -9955,6 +10374,15 @@ int main(int argc, char** argv) {
             Input::FeedKeys({}); // release everything in edit mode
         }
 
+        // Keep each scroll view's contentHeight matched to its children so the
+        // scrollbar/clip preview is right while editing and the wheel/drag work in Play.
+        for (const auto& up : ed.scene().Objects())
+            if (auto* sv = up->GetComponent<UIScrollView>())
+                if (sv->autoContent) {
+                    float ch = ScrollViewContentHeight(up.get());
+                    sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
+                }
+
         if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
@@ -10049,6 +10477,7 @@ int main(int argc, char** argv) {
         if (g_showServices)  DrawServices(ed);
         if (g_showScriptEditor) DrawScriptEditor(ed);
         DrawScriptDocs();
+        DrawFlowGraph(ed);
         if (g_showStats)     DrawStats(ed);
         if (g_showSaveManager) DrawSaveManager(ed);
         if (g_showScenes)    DrawScenes(ed);

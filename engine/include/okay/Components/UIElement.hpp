@@ -6,15 +6,23 @@
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UISlider.hpp"
+#include "okay/Components/UIStepper.hpp"
+#include "okay/Components/UIRating.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UITabs.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Math/Vec2.hpp"
+#include <vector>
+#include <algorithm>
+#include <unordered_map>
+#include <cstddef>
 
 namespace okay {
 
@@ -53,10 +61,14 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* p = go->GetComponent<UIPanel>())       { r.valid = true; r.anchor = p->anchor; r.anchorPtr = &p->anchor;  r.position = &p->position;  r.sizePtr = &p->size;  r.size = p->size; }
     else if (auto* im = go->GetComponent<UIImage>())      { r.valid = true; r.anchor = im->anchor; r.anchorPtr = &im->anchor; r.position = &im->position; r.sizePtr = &im->size; r.size = im->size; }
     else if (auto* sl = go->GetComponent<UISlider>())     { r.valid = true; r.anchor = sl->anchor; r.anchorPtr = &sl->anchor; r.position = &sl->position; r.sizePtr = &sl->size; r.size = sl->size; }
+    else if (auto* sp = go->GetComponent<UIStepper>())    { r.valid = true; r.anchor = sp->anchor; r.anchorPtr = &sp->anchor; r.position = &sp->position; r.sizePtr = &sp->size; r.size = sp->size; }
+    else if (auto* rt = go->GetComponent<UIRating>())     { r.valid = true; r.anchor = rt->anchor; r.anchorPtr = &rt->anchor; r.position = &rt->position; r.sizePtr = &rt->size; r.size = rt->size; }
     else if (auto* tg = go->GetComponent<UIToggle>())     { r.valid = true; r.anchor = tg->anchor; r.anchorPtr = &tg->anchor; r.position = &tg->position; r.sizePtr = &tg->size; r.size = tg->size; }
     else if (auto* pb = go->GetComponent<UIProgressBar>()){ r.valid = true; r.anchor = pb->anchor; r.anchorPtr = &pb->anchor; r.position = &pb->position; r.sizePtr = &pb->size; r.size = pb->size; }
+    else if (auto* rp = go->GetComponent<UIRadialProgress>()){ r.valid = true; r.anchor = rp->anchor; r.anchorPtr = &rp->anchor; r.position = &rp->position; r.sizePtr = &rp->size; r.size = rp->size; }
     else if (auto* in = go->GetComponent<UIInputField>()) { r.valid = true; r.anchor = in->anchor; r.anchorPtr = &in->anchor; r.position = &in->position; r.sizePtr = &in->size; r.size = in->size; }
     else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.anchorPtr = &dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
+    else if (auto* tb = go->GetComponent<UITabs>())       { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
     else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.anchorPtr = &sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
     else if (auto* lg = go->GetComponent<UILayoutGroup>()){ // a controller (no size): movable by its origin, not resizable
         r.valid = true; r.anchor = lg->anchor; r.anchorPtr = &lg->anchor; r.position = &lg->origin; r.sizePtr = nullptr;
@@ -81,7 +93,10 @@ inline bool IsUIFocused(GameObject* go) {
     if (auto* b = go->GetComponent<UIButton>())   return b->IsFocused();
     if (auto* t = go->GetComponent<UIToggle>())   return t->IsFocused();
     if (auto* s = go->GetComponent<UISlider>())   return s->IsFocused();
+    if (auto* p = go->GetComponent<UIStepper>())  return p->IsFocused();
+    if (auto* r = go->GetComponent<UIRating>())   return r->IsFocused();
     if (auto* d = go->GetComponent<UIDropdown>()) return d->IsFocused();
+    if (auto* tb = go->GetComponent<UITabs>())    return tb->IsFocused();
     return false;
 }
 
@@ -107,6 +122,67 @@ inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
 inline bool UIHidden(GameObject* go) {
     Canvas* cv = OwningCanvas(go);
     return cv && !cv->visible;
+}
+
+/// The sort order of a widget's owning Canvas (0 if it has none). Higher draws on
+/// top — renderers iterate UI in this order so a popup/HUD Canvas can sit above the
+/// rest. A stable sort by this keeps same-Canvas widgets in their authored order.
+inline int CanvasSortOrder(GameObject* go) {
+    Canvas* cv = OwningCanvas(go);
+    return cv ? cv->sortOrder : 0;
+}
+
+/// The order UI should be drawn in: primary key the owning Canvas's sortOrder
+/// (higher draws on top), secondary key the scene's hierarchy PRE-ORDER (a parent
+/// before its children, earlier siblings before later ones). Returns indices into
+/// `objects`. Renderers iterate their per-type passes over this order so that
+/// nested widgets layer like Unity — a child panel sits above its parent panel,
+/// and bring-to-front/send-to-back (sibling reordering) takes effect — without
+/// changing the relative order of the type passes themselves. `objects` is the
+/// scene's `std::vector<std::unique_ptr<GameObject>>`.
+template <class ObjVec>
+inline std::vector<std::size_t> BuildUIDrawOrder(const ObjVec& objects) {
+    const std::size_t n = objects.size();
+    std::unordered_map<GameObject*, std::size_t> pos;
+    pos.reserve(n * 2);
+    for (std::size_t i = 0; i < n; ++i) pos[objects[i].get()] = i;
+
+    // Assign a pre-order rank by walking the transform tree from each root (an
+    // object with no parent), in scene order. Unvisited objects (shouldn't happen)
+    // fall back to their scene index, sorted after the visited ones.
+    std::vector<std::size_t> pre(n, n);   // n = "unset"
+    std::size_t counter = 0;
+    // Iterative DFS to avoid deep recursion on large hierarchies.
+    std::vector<Transform*> stack;
+    auto visitRoot = [&](Transform* root) {
+        stack.clear();
+        stack.push_back(root);
+        while (!stack.empty()) {
+            Transform* t = stack.back(); stack.pop_back();
+            if (!t || !t->gameObject) continue;
+            auto it = pos.find(t->gameObject);
+            if (it != pos.end() && pre[it->second] == n) pre[it->second] = counter++;
+            // Push children in reverse so the first child is processed first.
+            const auto& ch = t->Children();
+            for (auto rit = ch.rbegin(); rit != ch.rend(); ++rit) stack.push_back(*rit);
+        }
+    };
+    for (std::size_t i = 0; i < n; ++i) {
+        Transform* t = objects[i]->transform;
+        if (t && !t->Parent()) visitRoot(t);
+    }
+    // Any object not reached (orphaned transform) gets a rank after the rest.
+    for (std::size_t i = 0; i < n; ++i)
+        if (pre[i] == n) pre[i] = counter++;
+
+    std::vector<std::size_t> order(n);
+    for (std::size_t i = 0; i < n; ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        int sa = CanvasSortOrder(objects[a].get()), sb = CanvasSortOrder(objects[b].get());
+        if (sa != sb) return sa < sb;
+        return pre[a] < pre[b];
+    });
+    return order;
 }
 
 /// The master opacity [0,1] the widget should be drawn at (its Canvas's opacity,
@@ -140,6 +216,20 @@ inline GameObject* OwningUIParent(GameObject* go) {
     return nullptr;
 }
 
+/// A button's text child: the first active direct child carrying a screen-space
+/// TextRenderer. When present, the button draws its label through that child
+/// (Unity's Button→Text object) instead of its built-in `label`, so the text can be
+/// styled/moved independently. Returns nullptr for legacy buttons with no child.
+inline GameObject* UIButtonTextChild(GameObject* go) {
+    if (!go || !go->transform) return nullptr;
+    for (Transform* c : go->transform->Children()) {
+        if (!c || !c->gameObject || !c->gameObject->active) continue;
+        if (auto* tr = c->gameObject->GetComponent<TextRenderer>())
+            if (tr->screenSpace) return c->gameObject;
+    }
+    return nullptr;
+}
+
 /// Resolve a widget to its final screen rect. Offsets/sizes scale by the owning
 /// Canvas factor. If the widget is parented under another UI widget, its anchor
 /// resolves WITHIN the parent's rect (so moving/resizing the parent moves the
@@ -166,6 +256,40 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
     if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll * s;
     if (outScale) *outScale = s;
     return true;
+}
+
+/// Total height of a Scroll View's content: the furthest bottom edge of its direct
+/// UI children (resolved within the viewport), so `contentHeight` can track the
+/// actual content instead of being hand-tuned. Returns 0 if it has no UI children.
+inline float ScrollViewContentHeight(GameObject* sv) {
+    UIRect svr = GetUIRect(sv);
+    if (!svr.valid || !sv || !sv->transform) return 0.0f;
+    float maxBottom = 0.0f;
+    for (Transform* c : sv->transform->Children()) {
+        if (!c || !c->gameObject || !c->gameObject->active) continue;
+        UIRect r = GetUIRect(c->gameObject);
+        if (!r.valid || !r.position) continue;
+        Vec2 local = ResolveAnchor(r.anchor, *r.position, r.size, svr.size.x, svr.size.y);
+        maxBottom = local.y + r.size.y > maxBottom ? local.y + r.size.y : maxBottom;
+    }
+    return maxBottom;
+}
+
+/// The top-left screen pixel of a widget, resolved WITHIN its UI parent when it has
+/// one (so moving/resizing the parent moves the child — Unity-style), else against
+/// the whole screen. Unscaled (Canvas scale = 1); the renderers that don't apply a
+/// Canvas scale use this so children follow their parent. Mirrors GetUIScreenRect's
+/// anchor math without the scale factor.
+inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
+    UIRect r = GetUIRect(go);
+    if (!r.valid || !r.position) return Vec2{0.0f, 0.0f};
+    if (GameObject* parent = OwningUIParent(go)) {
+        UIRect pr = GetUIRect(parent);
+        if (pr.valid)
+            return UIResolveOrigin(parent, screenW, screenH) +
+                   ResolveAnchor(r.anchor, *r.position, r.size, pr.size.x, pr.size.y);
+    }
+    return ResolveAnchor(r.anchor, *r.position, r.size, screenW, screenH);
 }
 
 /// Whether a point (screen pixels) falls inside a widget's scaled rect.

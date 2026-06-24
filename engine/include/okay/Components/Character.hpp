@@ -55,7 +55,9 @@ public:
     bool hasCape       = false;
 
     // ---- Animation (plays in Play mode) ----
-    int   anim      = 1;     // 0 none,1 idle,2 walk,3 run,4 wave,5 jump,6 crouch,7 prone
+    int   anim      = 1;     // 0 none,1 idle,2 walk,3 run,4 wave,5 jump,6 crouch,7 prone,
+                             // 8 point,9 clap,10 thumbs-up,11 salute,12 wave-both,
+                             // 13 cheer/happy,14 sad,15 angry,16 think (gestures + emotions)
     float animSpeed = 1.0f;
     float animTime  = 0.0f;  // runtime clock (not serialized)
 
@@ -68,6 +70,14 @@ public:
     float headTurnSpeed = 9.0f;   // how fast the head eases toward the look target
     float HeadYaw()   const { return m_headYaw; }
     float HeadPitch() const { return m_headPitch; }
+
+    // Auto look-at: each frame, aim the head at the scene's main camera (or a named
+    // target) with no controller or script needed — for NPCs that track the player,
+    // or a character that makes eye contact with the camera. A First/Third-Person
+    // controller, if attached, drives the look itself and overrides this.
+    bool lookAtCamera = false;
+    std::string lookAtTarget;     // object name to look at (takes priority over lookAtCamera)
+    float lookHeight = 1.5f;      // head pivot height above the object's origin (aim from here)
 
     // Body lean: roll the upper body sideways (peeking around cover). Target in
     // degrees (+ leans to the body's right); eased like the head. Not serialized —

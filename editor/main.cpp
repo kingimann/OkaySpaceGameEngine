@@ -7222,25 +7222,22 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* btn = go->GetComponent<UIButton>()) {
         if (CompHeader("UI Button", btn, &toRemove)) {
-            // The label lives on the button, OR (Unity-style) on a child Text object.
-            // When a Text child exists, edit it here too so the field always drives the
-            // visible text; otherwise offer to split the text out into its own child.
+            // The label lives on a child Text object (Unity-style). When one exists,
+            // text is edited/styled THERE — don't show a duplicate text field on the
+            // button. Only the legacy case (no child) edits the built-in label here.
             GameObject* txtChild = UIButtonTextChild(go);
             TextRenderer* childTr = txtChild ? txtChild->GetComponent<TextRenderer>() : nullptr;
-            char lb[128];
-            std::strncpy(lb, (childTr ? childTr->text : btn->label).c_str(), sizeof(lb) - 1);
-            lb[sizeof(lb) - 1] = '\0';
-            if (ImGui::InputText("Label##uib", lb, sizeof(lb))) {
-                btn->label = lb;
-                if (childTr) childTr->text = lb;
-                ed.dirty = true;
-            }
             if (childTr) {
-                ImGui::SameLine();
+                ImGui::TextDisabled("Text is the child object \"%s\".", txtChild->name.c_str());
                 if (ImGui::SmallButton("Edit Text##uib")) ed.Select(txtChild);
-                ImGui::TextDisabled("Text is a child object (\"%s\") — select it to style/move.",
-                                    txtChild->name.c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Select the child Text object to edit/style/position the label.");
             } else {
+                char lb[128];
+                std::strncpy(lb, btn->label.c_str(), sizeof(lb) - 1);
+                lb[sizeof(lb) - 1] = '\0';
+                if (ImGui::InputText("Label##uib", lb, sizeof(lb))) { btn->label = lb; ed.dirty = true; }
+                ImGui::SameLine();
                 if (ImGui::SmallButton("Text as Child##uib")) {
                     ed.PushUndo();
                     ed.Select(MakeButtonTextChild(ed, go));
@@ -7306,7 +7303,9 @@ void DrawInspector(EditorState& ed) {
             ShapeCombo("Shape##uib", btn->shape, ed);
             if (UIShapeUsesRadius(btn->shape))
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
+            // Font Scale only styles the built-in label; with a child Text it's edited there.
+            if (!childTr)
+                if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Drop Shadow##uib", &btn->shadow)) ed.dirty = true;
             if (btn->shadow) {
                 float sc[4] = {btn->shadowColor.r, btn->shadowColor.g, btn->shadowColor.b, btn->shadowColor.a};
@@ -7322,8 +7321,12 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Hover Grow##uib", &btn->hoverScale, 0.01f, 1.0f, 2.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale when hovered/focused (1 = none)");
-            float htc[4] = {btn->hoverTextColor.r, btn->hoverTextColor.g, btn->hoverTextColor.b, btn->hoverTextColor.a};
-            if (ImGui::ColorEdit4("Hover Text##uib", htc)) { btn->hoverTextColor = {htc[0], htc[1], htc[2], htc[3]}; ed.dirty = true; }
+            // Hover Text color only applies to the built-in label; with a child Text,
+            // style the child instead.
+            if (!childTr) {
+                float htc[4] = {btn->hoverTextColor.r, btn->hoverTextColor.g, btn->hoverTextColor.b, btn->hoverTextColor.a};
+                if (ImGui::ColorEdit4("Hover Text##uib", htc)) { btn->hoverTextColor = {htc[0], htc[1], htc[2], htc[3]}; ed.dirty = true; }
+            }
             if (ImGui::DragFloat("Transition Speed##uib", &btn->transitionSpeed, 0.2f, 0.0f, 30.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth color fade on hover/press (0 = instant)");
             if (ImGui::DragFloat("Press Offset##uib", &btn->pressOffset, 0.1f, 0.0f, 16.0f)) ed.dirty = true;

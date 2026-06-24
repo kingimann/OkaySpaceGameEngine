@@ -221,6 +221,25 @@ int main() {
         CHECK(gotAtClient == 1);
     }
 
+    // --- Large message: a payload bigger than the old 1 KB recv buffer arrives
+    //     intact (previously it was silently truncated). ------------------------
+    {
+        // ~6 KB of varied bytes so any truncation or corruption is caught.
+        std::string big;
+        big.reserve(6000);
+        for (int i = 0; i < 6000; ++i) big.push_back((char)('A' + (i * 7 + 3) % 26));
+        std::string gotBig;
+        server->SetMessageHandler([&](const NetworkManager::NetMessage& m){ if (m.channel == "big") gotBig = m.data; });
+        client->SendReliable("big", big);
+        for (int i = 0; i < 150; ++i) {
+            serverScene.Update(0.02f); clientScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (!gotBig.empty()) break;
+        }
+        CHECK(gotBig.size() == big.size());   // not truncated at 1 KB
+        CHECK(gotBig == big);                 // and byte-for-byte intact
+    }
+
     // --- Kick: the server disconnects a client, which learns it was kicked ---
     {
         std::uint32_t cid = client->LocalId();

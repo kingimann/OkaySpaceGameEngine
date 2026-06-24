@@ -387,7 +387,8 @@ int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
 const char* kThemeNames[] = {"Dark", "Midnight", "Light"};
 std::vector<std::string> g_favorites;   // favorited game paths (persisted)
-int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z
+std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
+int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z, 2 Recently played
 
 bool IsFavorite(const std::string& p) {
     return std::find(g_favorites.begin(), g_favorites.end(), p) != g_favorites.end();
@@ -396,6 +397,17 @@ void ToggleFavorite(const std::string& p) {
     auto it = std::find(g_favorites.begin(), g_favorites.end(), p);
     if (it != g_favorites.end()) g_favorites.erase(it);
     else g_favorites.push_back(p);
+}
+// Index in the recent list (0 = most recent), or a large number if not present.
+std::size_t RecentRank(const std::string& p) {
+    auto it = std::find(g_recent.begin(), g_recent.end(), p);
+    return it == g_recent.end() ? (std::size_t)1e9 : (std::size_t)(it - g_recent.begin());
+}
+void RecordPlayed(const std::string& p) {
+    auto it = std::find(g_recent.begin(), g_recent.end(), p);
+    if (it != g_recent.end()) g_recent.erase(it);
+    g_recent.insert(g_recent.begin(), p);
+    if (g_recent.size() > 16) g_recent.resize(16);
 }
 
 // Apply the selected theme (g_themeIndex), accent (kAccent), and UI scale.
@@ -497,6 +509,7 @@ void LoadPrefs() {
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
         else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
+        else if (k == "recent" && !v.empty()) g_recent.push_back(v);
     }
     if (g_themeIndex < 0 || g_themeIndex > 2) g_themeIndex = 0;
     if (g_uiScale < 0.8f) g_uiScale = 0.8f;
@@ -510,6 +523,7 @@ void SavePrefs() {
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "play_sort=" << g_playSort << "\n";
     for (const auto& p : g_favorites) f << "fav=" << p << "\n";
+    for (const auto& p : g_recent)    f << "recent=" << p << "\n";
 }
 
 } // namespace
@@ -559,13 +573,18 @@ int main(int argc, char** argv) {
     std::vector<fs::path> scenes = FindScenes();
     bool rescannedAfterUpdate = false;
 
-    struct Template { const char* name; const char* desc; };
+    // `tmpl` is the editor's New Project template title (passed via --template).
+    struct Template { const char* name; const char* desc; const char* tmpl; };
     const Template templates[] = {
-        {"Platformer",     "Side-scrolling jump-and-run starter."},
-        {"Top-Down",       "Top-down movement and rooms."},
-        {"Coin Collector", "A complete pickup-the-coins game."},
-        {"Main Menu (UI)", "A title screen with buttons."},
-        {"Snake",          "The classic, fully playable."},
+        {"Platformer",     "Side-scrolling jump-and-run starter.",  "Platformer"},
+        {"Top-Down",       "Top-down movement and rooms.",          "Top-Down"},
+        {"Coin Collector", "A complete pickup-the-coins game.",     "Coin Collector"},
+        {"Main Menu (UI)", "A title screen with buttons.",          "Main Menu"},
+        {"Snake",          "The classic, fully playable.",          "Snake"},
+        {"First Person",   "FPS character: mouse-look, WASD, jump.", "First Person"},
+        {"Third Person",   "Orbit-camera character controller.",    "Third Person"},
+        {"Inventory",      "Drag & drop item grid.",                "Inventory"},
+        {"Multiplayer",    "Host / join networked starter.",        "Multiplayer"},
     };
 
     // ---- Account ----
@@ -672,6 +691,12 @@ int main(int argc, char** argv) {
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field).
+        if (!ImGui::GetIO().WantTextInput) {
+            for (int i = 0; i < 5; ++i)
+                if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
+        }
 
         ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
@@ -820,8 +845,9 @@ int main(int argc, char** argv) {
                 ImGui::PushItemWidth(-1);
                 ImGui::InputTextWithHint("##playFilter", "Search games...", playFilter, sizeof(playFilter));
                 ImGui::PopItemWidth();
-                ImGui::PushItemWidth(170);
-                if (ImGui::Combo("##playsort", &g_playSort, "Favorites first\0Name A\xE2\x80\x93Z\0")) SavePrefs();
+                ImGui::PushItemWidth(180);
+                if (ImGui::Combo("##playsort", &g_playSort,
+                                 "Favorites first\0Name A\xE2\x80\x93Z\0Recently played\0")) SavePrefs();
                 ImGui::PopItemWidth();
                 ImGui::SameLine();
                 if (ImGui::Button("Open games folder")) OpenExternal(g_exeDir);
@@ -834,6 +860,9 @@ int main(int argc, char** argv) {
                     if (g_playSort == 0) {
                         bool fa = IsFavorite(scenes[a].string()), fb = IsFavorite(scenes[b].string());
                         if (fa != fb) return fa;
+                    } else if (g_playSort == 2) {
+                        std::size_t ra = RecentRank(scenes[a].string()), rb = RecentRank(scenes[b].string());
+                        if (ra != rb) return ra < rb;
                     }
                     return lower(scenes[a].filename().string()) < lower(scenes[b].filename().string());
                 });
@@ -870,7 +899,10 @@ int main(int argc, char** argv) {
                     ImGui::SameLine();
                     if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(scenes[i].parent_path().string());
                     ImGui::SameLine();
-                    if (ImGui::Button("Play", ImVec2(80, 40))) Launch(player, path);
+                    if (ImGui::Button("Play", ImVec2(80, 40))) {
+                        Launch(player, path);
+                        RecordPlayed(path); SavePrefs();
+                    }
                     ImGui::EndChild();
                     ImGui::PopID();
                 }
@@ -899,13 +931,14 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 6);
                 ImGui::BeginDisabled(editor.empty());
-                if (ImGui::Button("Open", ImVec2(90, 44))) LaunchEditor(editor);
+                if (ImGui::Button("Open", ImVec2(90, 44))) LaunchEditor(editor, t.tmpl);
                 ImGui::EndDisabled();
                 ImGui::EndChild();
                 ImGui::PopID();
             }
             ImGui::Dummy(ImVec2(0, 8));
-            ImGui::TextDisabled("Community content marketplace coming soon.");
+            ImGui::TextDisabled("Opens the editor's New Project on the chosen template. "
+                                "Community content marketplace coming soon.");
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
 

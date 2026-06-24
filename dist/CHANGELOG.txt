@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.144.0  (Look-at camera, easier multiplayer starter)
+  - Character "Look at Camera" / "Look at Object": the head now aims at the camera
+    (or a named target) on its own — no controller or script needed. Controllers
+    still drive the look when attached.
+  - Multiplayer starter template is clearer: sets a name, explains that peers
+    auto-spawn and sync, and shows a live connection HUD (offline / hosting+peers /
+    client+ping) built from the net_* script builtins.
+
 v2.143.0  (UI parenting, cursor lock, net crash fix, gestures/emotions)
   - UI children now follow their parent in built games (a widget parented under a
     panel/card moves and resizes with it, matching the editor).

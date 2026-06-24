@@ -202,7 +202,9 @@ public:
                 float allow = dl;
                 RaycastHit3D hit = sc->physics3D().Raycast(*sc, target, dn, dl + cameraCollisionSkin, gameObject);
                 if (hit.hit) allow = Mathf::Max(0.0f, hit.distance - cameraCollisionSkin);
-                if (allow <= m_springLen) {
+                if (m_springLen < 0.0f) {
+                    m_springLen = allow;   // first frame: start at the correct length (no ease-out from a stale default)
+                } else if (allow <= m_springLen) {
                     m_springLen = allow;
                 } else {
                     float e = cameraCollisionRecover > 0.0f
@@ -242,7 +244,7 @@ private:
     bool m_haveMouse = false;
     bool m_aiming = false;
     float m_aim = 0.0f;             // 0 = hip, 1 = aiming
-    float m_springLen = distance;   // eased spring-arm length (camera collision)
+    float m_springLen = -1.0f;      // eased spring-arm length (camera collision); <0 = uninitialized
     float m_lean = 0.0f;            // eased lean (-1..+1)
     int   m_jumpsUsed = 0;         // jumps since last grounded (for double-jump)
     float m_fireCooldown = 0.0f;

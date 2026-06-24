@@ -8236,10 +8236,6 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // preview layers UI exactly like the built game does.
     // (UI draw items are queued and sorted below, once the scale/cull helpers exist.)
 
-    // The un-zoomed viewport rect: in-world UI is placed against the scene's own
-    // 2D camera (like the objects it labels), NOT the UI authoring zoom below.
-    const ImVec2 sceneCanvasPos = canvasPos, sceneCanvasSize = canvasSize;
-
     // Authoring zoom (Scene view only): scale/pan the canvas so the UI is easy to
     // edit. The Game view always shows the true 1:1 layout.
     if (!gameView) ApplyUIEditZoom(canvasPos, canvasSize);
@@ -8295,23 +8291,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (g->GetComponent<UITooltip>())        add(K_Tooltip);
     }
     edItems = SortUIDrawItems(objs, std::move(edItems));
-    // World-space Canvas projection (Game view): project widgets under a world-space
-    // Canvas through the scene's main camera, so the full UI renders in 3D exactly
-    // like the built game. (The Scene view shows them in Play; world-UI *labels*
-    // still preview in the Scene view via the K_WorldUI branch above.)
-    UIWorld().active = false;
-    if (gameView) {
-        if (Camera* mc = ed.scene().mainCamera) {
-            float cw = canvasSize.x, ch = canvasSize.y;
-            UIWorld().active = true;
-            UIWorld().screenW = cw; UIWorld().screenH = ch;
-            if (mc->gameObject && mc->gameObject->transform)
-                UIWorld().right = mc->gameObject->transform->Right();
-            UIWorld().project = [mc, cw, ch](const Vec3& p, Vec2& out, float& depth) {
-                return mc->WorldToScreen(p, cw, ch, out, &depth);   // canvas-local pixels
-            };
-        }
-    }
+    // World-space UI (the WorldUI label and any world-space Canvas) is projected
+    // with the UIWorld() context the CALLER installed — the 2D ortho map in the
+    // Scene 2D view, the perspective camera in the 3D/Game view — so in-world UI
+    // lines up with the objects and gizmos in whatever view you're looking at.
     for (const UIDrawItem& _it : edItems) {
         const auto& up = objs[_it.index];
         if (_it.kind == K_Scroll) {   // Scroll View backgrounds (behind content) + scrollbar
@@ -8587,29 +8570,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
             auto* wu = up->GetComponent<WorldUI>();
             if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
+            UIWorldCtx& wctx = UIWorld();
+            if (!wctx.active || !wctx.project) continue;   // no projector for this view
             Vec3 wp = up->transform->Position() + wu->worldOffset;
-            ImVec2 c;                          // final screen anchor (absolute pixels)
+            Vec2 sp; float depth = 1.0f;
+            if (!wctx.project(wp, sp, depth)) continue;    // behind the camera
+            if (wu->maxDistance > 0.0f && depth > wu->maxDistance) continue;
             float scale = wu->pixelSize;
-            if (gameView) {
-                // Game view: project through the scene's main camera (true 3D placement).
-                Camera* mc = ed.scene().mainCamera;
-                if (!mc) continue;
-                Vec2 sp; float depth = 0.0f;
-                if (!mc->WorldToScreen(wp, canvasSize.x, canvasSize.y, sp, &depth)) continue;
-                if (wu->maxDistance > 0.0f && depth > wu->maxDistance) continue;
-                if (wu->scaleWithDistance && depth > 0.001f)
-                    scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
-                                         wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
-                c = ImVec2(canvasPos.x + sp.x, canvasPos.y + sp.y);
-            } else {
-                // Scene view: place the label with the editor's 2D camera so it sits
-                // on its object while editing (an ortho view, so no distance scaling).
-                ImVec2 ctr(sceneCanvasPos.x + sceneCanvasSize.x * 0.5f,
-                           sceneCanvasPos.y + sceneCanvasSize.y * 0.5f);
-                float s2 = sceneCanvasSize.y / (ed.cameraZoom > 0.001f ? ed.cameraZoom : 1.0f);
-                c = ImVec2(ctr.x + (wp.x - ed.cameraPos.x) * s2,
-                           ctr.y - (wp.y - ed.cameraPos.y) * s2);
-            }
+            if (wu->scaleWithDistance && depth > 0.001f)
+                scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
+                                     wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
+            ImVec2 c(canvasPos.x + sp.x, canvasPos.y + sp.y);   // projector returns canvas-local px
             float tw = wu->text.size() * (Font8x8::Width + 1) * scale;
             float th = Font8x8::Height * scale;
             float tx = c.x - tw * 0.5f, ty = c.y - th * 0.5f;
@@ -9171,6 +9142,21 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    // In-world UI projector for this (2D ortho) view: map a world point with the
+    // same camera the scene is drawn with, returning canvas-local pixels. So world
+    // UI / world-space canvases sit on their objects while editing in 2D.
+    {
+        ImVec2 cp = canvasPos; ImVec2 cs = canvasSize;
+        Vec2 cam = camPos; float sc = scale;
+        UIWorld().active = true;
+        UIWorld().right = {1.0f, 0.0f, 0.0f};
+        UIWorld().screenW = cs.x; UIWorld().screenH = cs.y;
+        UIWorld().project = [cp, cs, cam, sc](const Vec3& wp, Vec2& out, float& depth) {
+            out = Vec2{cs.x * 0.5f + (wp.x - cam.x) * sc, cs.y * 0.5f - (wp.y - cam.y) * sc};
+            depth = 1.0f; return true;   // ortho: no distance falloff
+        };
+    }
+
     // Screen-space UI (text, images, panels, bars, sliders, toggles, buttons).
     DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
@@ -9341,6 +9327,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     Vec3 eye = ed.camTarget + dir * ed.camDist;
     Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
     Mat4 proj = Mat4::Perspective(g_editorFov, canvasSize.x / canvasSize.y, g_editorNear, 2000.0f);
+    // Camera right axis (for billboarding world-space canvases). Editor camera by
+    // default; the Game view overrides it with the main camera's right below.
+    Vec3 camRight = Vec3::Cross((ed.camTarget - eye).Normalized(), Vec3::Up).Normalized();
     // Where the 3D image is drawn within the panel. The Game view honors the main
     // camera's normalized viewport rect (Unity's Camera.rect) for split-screen /
     // mini-map / picture-in-picture; the Scene view always fills the panel.
@@ -9350,6 +9339,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (Camera* mc = SceneCamera(ed.scene())) {
             eye = mc->gameObject->transform->Position();
             view = mc->ViewMatrix();
+            if (mc->gameObject && mc->gameObject->transform) camRight = mc->gameObject->transform->Right();
             // Clamp the rect to 0..1 and compute the on-panel pixel rectangle. Unity's
             // rect y is measured from the BOTTOM, so flip it for top-left screen space.
             float rw = Mathf::Clamp(mc->rectW, 0.01f, 1.0f), rh = Mathf::Clamp(mc->rectH, 0.01f, 1.0f);
@@ -9647,6 +9637,24 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         for (int i = 0; i < 5; ++i)
             dl->AddText(ImVec2(box0.x + 8, box0.y + 6 + lh * i),
                         IM_COL32(120, 230, 150, 255), lines[i]);
+    }
+
+    // In-world UI projector for this (perspective) view: project a world point with
+    // the SAME view*projection the scene is rendered with, returning canvas-local
+    // pixels — so world UI / world-space canvases align with the 3D objects and
+    // gizmos. This is what lets you see where in-world UI sits while editing.
+    {
+        Mat4 wvp = vp; ImVec2 cs = canvasSize;
+        UIWorld().active = true;
+        UIWorld().right = camRight;
+        UIWorld().screenW = cs.x; UIWorld().screenH = cs.y;
+        UIWorld().project = [wvp, cs](const Vec3& wp, Vec2& out, float& depth) -> bool {
+            Vec4 c = wvp * Vec4{wp.x, wp.y, wp.z, 1.0f};
+            if (c.w <= 0.05f) return false;                  // behind the camera
+            out = Vec2{cs.x * 0.5f + (c.x / c.w) * cs.x * 0.5f,
+                       cs.y * 0.5f - (c.y / c.w) * cs.y * 0.5f};   // canvas-local px
+            depth = c.w; return true;
+        };
     }
 
     // Screen-space UI draws on top of the 3D view too, so UI added to a 3D

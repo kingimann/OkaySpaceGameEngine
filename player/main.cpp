@@ -614,9 +614,16 @@ int main(int argc, char** argv) {
             }
         }
 
-        // In-game UI (screen space), drawn on top of everything.
+        // In-game UI (screen space), drawn on top of everything. Iterate widgets in
+        // Canvas sort-order (higher draws on top) — a stable sort, so widgets that
+        // share a Canvas (or have none) keep their authored order.
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-        for (const auto& up : scene.Objects()) {           // drop-target slot backgrounds (behind items)
+        std::vector<std::size_t> uiOrder(scene.Objects().size());
+        for (std::size_t i = 0; i < uiOrder.size(); ++i) uiOrder[i] = i;
+        std::stable_sort(uiOrder.begin(), uiOrder.end(), [&](std::size_t a, std::size_t b) {
+            return CanvasSortOrder(scene.Objects()[a].get()) < CanvasSortOrder(scene.Objects()[b].get());
+        });
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // drop-target slot backgrounds (behind items)
             auto* dt = up->GetComponent<UIDropTarget>();
             if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;
             Vec2 o, sz; if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
@@ -631,7 +638,7 @@ int main(int argc, char** argv) {
                 SDL_RenderDrawRect(renderer, &br);
             }
         }
-        for (const auto& up : scene.Objects()) {           // images (logos/icons) first
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // images (logos/icons) first
             auto* im = up->GetComponent<UIImage>();
             if (!im || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
@@ -683,7 +690,7 @@ int main(int argc, char** argv) {
                             im->color, im->color, false, false, op);
             }
         }
-        for (const auto& up : scene.Objects()) {           // panels (backgrounds) first
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // panels (backgrounds) first
             auto* pn = up->GetComponent<UIPanel>();
             if (!pn || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
@@ -708,7 +715,7 @@ int main(int argc, char** argv) {
                             pn->color, pn->colorBottom, pn->useGradient, pn->gradientHorizontal, op);
             }
         }
-        for (const auto& up : scene.Objects()) {           // drop-target highlight (drag feedback)
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // drop-target highlight (drag feedback)
             auto* dt = up->GetComponent<UIDropTarget>();
             if (!dt || !up->active || !dt->showHighlight || !dt->IsHovered()) continue;
             Vec2 o, sz;
@@ -719,7 +726,7 @@ int main(int argc, char** argv) {
                                    (Uint8)(hc.b * 255), (Uint8)(hc.a * 255));
             SDL_RenderFillRect(renderer, &hr);
         }
-        for (const auto& up : scene.Objects()) {           // scroll-view backgrounds + scrollbar
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // scroll-view backgrounds + scrollbar
             auto* sv = up->GetComponent<UIScrollView>();
             if (!sv || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
@@ -742,7 +749,7 @@ int main(int argc, char** argv) {
                 SDL_RenderFillRect(renderer, &thumb);
             }
         }
-        for (const auto& up : scene.Objects()) {           // progress bars
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // progress bars
             auto* pb = up->GetComponent<UIProgressBar>();
             if (!pb || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
@@ -767,7 +774,7 @@ int main(int argc, char** argv) {
                          o.y + (pb->size.y - Font8x8::Height * px) * 0.5f, px, tc);
             }
         }
-        for (const auto& up : scene.Objects()) {           // radial / ring progress
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // radial / ring progress
             auto* rp = up->GetComponent<UIRadialProgress>();
             if (!rp || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
@@ -796,7 +803,7 @@ int main(int argc, char** argv) {
                          o.y + (rp->size.y - Font8x8::Height * ps) * 0.5f, ps, tc);
             }
         }
-        for (const auto& up : scene.Objects()) {           // sliders
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // sliders
             auto* sl = up->GetComponent<UISlider>();
             if (!sl || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
@@ -832,7 +839,7 @@ int main(int argc, char** argv) {
             if (!sl->interactable) { SDL_Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
                 SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
-        for (const auto& up : scene.Objects()) {           // numeric steppers
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // numeric steppers
             auto* st = up->GetComponent<UIStepper>();
             if (!st || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
@@ -861,7 +868,7 @@ int main(int argc, char** argv) {
                      o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
             if (!st->interactable) { SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &bg); }
         }
-        for (const auto& up : scene.Objects()) {           // star ratings
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // star ratings
             auto* rt = up->GetComponent<UIRating>();
             if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
             float op = UIOpacity(up.get());
@@ -890,7 +897,7 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        for (const auto& up : scene.Objects()) {           // toggles (checkboxes)
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // toggles (checkboxes)
             auto* tg = up->GetComponent<UIToggle>();
             if (!tg || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
@@ -930,7 +937,7 @@ int main(int argc, char** argv) {
             if (!tg->interactable) { SDL_Rect dr{box.x, box.y, box.w, box.h};
                 SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
-        for (const auto& up : scene.Objects()) {           // segmented tab bars
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // segmented tab bars
             auto* tb = up->GetComponent<UITabs>();
             if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
             float op = UIOpacity(up.get());
@@ -957,7 +964,7 @@ int main(int argc, char** argv) {
             }
             if (!tb->interactable) { SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &bar); }
         }
-        for (const auto& up : scene.Objects()) {
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];
             auto* btn = up->GetComponent<UIButton>();
             if (!btn || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
@@ -1008,7 +1015,7 @@ int main(int argc, char** argv) {
             SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255 * op)};
             DrawText(renderer, btn->label, tx, ty, px, tc);
         }
-        for (const auto& up : scene.Objects()) {           // screen-space text — on top of panels/controls
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // screen-space text — on top of panels/controls
             auto* tr = up->GetComponent<TextRenderer>();
             if (!tr || !up->active || !tr->screenSpace || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
@@ -1041,7 +1048,7 @@ int main(int argc, char** argv) {
             DrawText(renderer, disp, o.x, o.y, p, col, ls, lp);
             if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp);
         }
-        for (const auto& up : scene.Objects()) {           // in-world UI labels/markers (3D -> screen)
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // in-world UI labels/markers (3D -> screen)
             auto* wu = up->GetComponent<WorldUI>();
             if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
             Camera* mc = scene.mainCamera;
@@ -1074,7 +1081,7 @@ int main(int argc, char** argv) {
                 FillUIShape(renderer, fb, UIShape::Rounded, 2.0f, wu->barColor, wu->barColor, false, false, op);
             }
         }
-        for (const auto& up : scene.Objects()) {           // dropdowns (header + open list)
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // dropdowns (header + open list)
             auto* dd = up->GetComponent<UIDropdown>();
             if (!dd || !up->active || UIHidden(up.get())) continue;
             Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
@@ -1103,7 +1110,7 @@ int main(int argc, char** argv) {
             if (!dd->interactable) { SDL_Rect dr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
                 SDL_SetRenderDrawColor(renderer, 30, 30, 35, 150); SDL_RenderFillRect(renderer, &dr); }
         }
-        for (const auto& up : scene.Objects()) {           // input fields (box + text + caret)
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // input fields (box + text + caret)
             auto* in = up->GetComponent<UIInputField>();
             if (!in || !up->active || UIHidden(up.get())) continue;
             Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
@@ -1140,7 +1147,7 @@ int main(int argc, char** argv) {
             }
         }
         SDL_RenderSetClipRect(renderer, nullptr);   // end scroll clipping
-        for (const auto& up : scene.Objects()) {           // keyboard/gamepad focus ring
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // keyboard/gamepad focus ring
             if (!up->active || !IsUIFocused(up.get())) continue;
             UIRect r = GetUIRect(up.get());
             if (!r.valid || !r.position) continue;
@@ -1151,7 +1158,7 @@ int main(int argc, char** argv) {
             SDL_Rect ring2{ring.x - 1, ring.y - 1, ring.w + 2, ring.h + 2};
             SDL_RenderDrawRect(renderer, &ring2);
         }
-        for (const auto& up : scene.Objects()) {           // tooltips (hover hints)
+        for (std::size_t _i : uiOrder) { const auto& up = scene.Objects()[_i];   // tooltips (hover hints)
             auto* tt = up->GetComponent<UITooltip>();
             if (!tt || !up->active || !tt->Ready()) continue;
             Vec2 m = Input::MousePosition();

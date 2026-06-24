@@ -120,6 +120,14 @@ inline bool UIHidden(GameObject* go) {
     return cv && !cv->visible;
 }
 
+/// The sort order of a widget's owning Canvas (0 if it has none). Higher draws on
+/// top — renderers iterate UI in this order so a popup/HUD Canvas can sit above the
+/// rest. A stable sort by this keeps same-Canvas widgets in their authored order.
+inline int CanvasSortOrder(GameObject* go) {
+    Canvas* cv = OwningCanvas(go);
+    return cv ? cv->sortOrder : 0;
+}
+
 /// The master opacity [0,1] the widget should be drawn at (its Canvas's opacity,
 /// or 1 if none). Multiply each widget's color alpha by this.
 inline float UIOpacity(GameObject* go) {

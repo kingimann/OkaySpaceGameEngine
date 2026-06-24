@@ -66,5 +66,26 @@ int main() {
                        &Character::BoneIndex, Character::BoneCount(), &e2);
     CHECK(!e2.empty());
 
+    // clipsFile / autoPlayClip survive a save/load round-trip...
+    {
+        Character a;
+        a.clipsFile = "hero.okayanim";
+        a.autoPlayClip = "wave";
+        Character b;
+        b.FromText(a.ToText());
+        CHECK(b.clipsFile == "hero.okayanim");
+        CHECK(b.autoPlayClip == "wave");
+    }
+    // ...and an older save without those fields still loads (defaults stay empty).
+    {
+        Character base;
+        std::string legacy = base.ToText();
+        for (int k = 0; k < 2; ++k) legacy.erase(legacy.find_last_of(' '));  // drop the 2 clip tokens
+        Character c;
+        c.FromText(legacy);
+        CHECK(c.autoPlayClip.empty());        // field absent -> stays default
+        CHECK_NEAR(c.height, base.height, 1e-4f);   // the rest parsed fine
+    }
+
     TEST_MAIN_RESULT();
 }

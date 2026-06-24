@@ -487,7 +487,11 @@ std::string Character::ToText() const {
       << (hasHat ? 1 : 0) << ' ' << hatStyle << ' ' << glassesStyle << ' '
       << (hasMask ? 1 : 0) << ' ' << (hasScarf ? 1 : 0) << ' ' << (hasShoulderPads ? 1 : 0) << ' '
       << (hasBackpack ? 1 : 0) << ' ' << (hasCape ? 1 : 0) << ' '
-      << anim << ' ' << animSpeed;
+      << anim << ' ' << animSpeed << ' '
+      // Custom-clip fields last so older saves (which lack them) still parse; "-"
+      // stands in for an empty value (single tokens, no embedded spaces).
+      << (clipsFile.empty() ? "-" : clipsFile) << ' '
+      << (autoPlayClip.empty() ? "-" : autoPlayClip);
     return o.str();
 }
 
@@ -505,6 +509,10 @@ void Character::FromText(const std::string& text) {
     hasHair = hh != 0; hasBelt = hbelt != 0; hasJacket = hj != 0; hasGloves = hg != 0;
     hasHat = hhat != 0; hasMask = hm != 0; hasScarf = hs != 0; hasShoulderPads = hsp != 0;
     hasBackpack = hbp != 0; hasCape = hc != 0;
+    // Optional trailing custom-clip fields (absent in older saves -> left default).
+    std::string cf, ap;
+    if (in >> cf && cf != "-") clipsFile = cf;
+    if (in >> ap && ap != "-") autoPlayClip = ap;
     m_built = false;
 }
 

@@ -449,10 +449,8 @@ void Character::Update(float dt) {
             float bodyYaw = Mathf::Atan2(fwd.x, -fwd.z) * Mathf::Rad2Deg;
             float aimYaw  = Mathf::Atan2(dir.x, -dir.z) * Mathf::Rad2Deg;
             float relY = bodyYaw - aimYaw;
-            while (relY > 180.0f) relY -= 360.0f;
-            while (relY < -180.0f) relY += 360.0f;
             float horiz = std::sqrt(dir.x * dir.x + dir.z * dir.z);
-            lookYaw   = relY;
+            lookYaw   = NeckYaw(relY);   // ease back near ±180 instead of cranking sideways
             lookPitch = Mathf::Atan2(dir.y, horiz) * Mathf::Rad2Deg;
         }
     }

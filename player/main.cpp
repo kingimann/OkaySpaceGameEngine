@@ -1075,17 +1075,30 @@ int main(int argc, char** argv) {
                          (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255 * op)};
             SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
                          (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
+            // Under a world-space Canvas, text projects with the canvas (so labels
+            // sit on the 3D panel like the other widgets) instead of anchoring to the
+            // screen. UIResolveOrigin/UIScaleFor are world-aware; pixelSize scales by k.
+            Canvas* tcv = OwningCanvas(up.get());
+            bool tWorld = tcv && tcv->worldSpace;
+            float p = tr->pixelSize, ls = tr->letterSpacing, lp = tr->lineSpacing;
+            float tk = 1.0f;
+            if (tWorld) {
+                tk = UIScaleFor(up.get(), (float)w, (float)h);
+                if (tk <= 0.0f) continue;   // canvas behind the camera
+                p *= tk;
+            }
             if (tr->background) {                       // label background box
-                Vec2 b = tr->BoxTopLeft((float)w, (float)h);
-                SDL_Rect br{(int)b.x, (int)b.y, (int)tr->size.x, (int)tr->size.y};
+                Vec2 b = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
+                                : tr->BoxTopLeft((float)w, (float)h);
+                SDL_Rect br{(int)b.x, (int)b.y, (int)(tr->size.x * tk), (int)(tr->size.y * tk)};
                 SDL_SetRenderDrawColor(renderer, (Uint8)(tr->backgroundColor.r * 255),
                                        (Uint8)(tr->backgroundColor.g * 255), (Uint8)(tr->backgroundColor.b * 255),
                                        (Uint8)(tr->backgroundColor.a * 255 * op));
                 SDL_RenderFillRect(renderer, &br);
             }
-            Vec2 o = tr->ResolvedScreenPos((float)w, (float)h);   // align handled inside
+            Vec2 o = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
+                            : tr->ResolvedScreenPos((float)w, (float)h);   // align handled inside
             std::string disp = tr->DisplayText();
-            float p = tr->pixelSize, ls = tr->letterSpacing, lp = tr->lineSpacing;
             if (tr->shadow)
                 DrawText(renderer, disp, o.x + tr->shadowOffset.x * p,
                          o.y + tr->shadowOffset.y * p, p, sh, ls, lp);

@@ -8670,10 +8670,15 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         else if (_it.kind == K_Text) {   // screen-space text — on top of panels/controls
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active || !tr->screenSpace) continue;
-        float s = uiScale(up.get());
+        float s = uiScale(up.get());   // for a world-space canvas this is the projected scale k
+        Canvas* tcv = OwningCanvas(up.get());
+        bool tWorld = tcv && tcv->worldSpace;
+        if (tWorld && s <= 0.0f) continue;   // canvas behind the camera
         ImU32 col = ToColor(tr->color);
         ImU32 sh = ToColor(tr->shadowColor);
-        Vec2 box = tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);   // box top-left
+        // World-space canvas text projects with the canvas; screen text anchors to the screen.
+        Vec2 box = tWorld ? UIResolveOrigin(up.get(), canvasSize.x, canvasSize.y)
+                          : tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);
         Vec2 boxSz{tr->size.x * s, tr->size.y * s};
         if (UIScrollView* sv = OwningScrollView(up.get())) box.y -= sv->scroll * s;
         if (svCull(up.get(), box, boxSz)) continue;
@@ -8681,7 +8686,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ImVec2(canvasPos.x + box.x, canvasPos.y + box.y),
                               ImVec2(canvasPos.x + box.x + boxSz.x, canvasPos.y + box.y + boxSz.y),
                               ToColor(tr->backgroundColor), 4.0f);
-        Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s);   // text inside box
+        Vec2 o = tWorld ? box : tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s);   // text inside box
         if (UIScrollView* sv = OwningScrollView(up.get())) o.y -= sv->scroll * s;
         float px = tr->pixelSize * s, ls = tr->letterSpacing, lp = tr->lineSpacing;
         std::string disp = tr->DisplayText();

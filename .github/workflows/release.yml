@@ -32,6 +32,16 @@ jobs:
           tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
           echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
 
+      - name: Fetch libsodium (MinGW prebuilt)
+        # Statically linked into the exes for authenticated packet encryption — no
+        # extra DLL ships. If this step is removed, the build is simply unencrypted.
+        run: |
+          curl -sSL -o libsodium-mingw.tar.gz \
+            "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-mingw.tar.gz"
+          mkdir -p libsodium-mingw
+          tar xzf libsodium-mingw.tar.gz -C libsodium-mingw
+          echo "OKAY_SODIUM_MINGW_PREFIX=$PWD/libsodium-mingw/libsodium-win64" >> "$GITHUB_ENV"
+
       - name: Build Windows distribution
         # Bake the account server into the binaries from repo secrets (if set),
         # so released builds are online by default with no key file shipped.

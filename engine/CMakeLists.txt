@@ -68,6 +68,44 @@ if(WIN32)
     target_link_libraries(okay_engine PUBLIC ws2_32)
 endif()
 
+# ---- Optional packet encryption (libsodium) --------------------------
+# Authenticated encryption for the UDP transport. Enabled when libsodium is found.
+#  * Native: discovered via pkg-config (apt: libsodium-dev).
+#  * MinGW cross-compile: point -DOKAY_SODIUM_PREFIX at the prebuilt
+#    libsodium-win64 dir (the one containing include/sodium.h and lib/libsodium.a).
+# Without it the transport still builds and runs — just unencrypted (the
+# NetworkManager encryption toggle becomes a no-op), so it's a soft dependency.
+if(OKAY_USE_SODIUM)
+    set(_okay_sodium FALSE)
+    if(OKAY_SODIUM_PREFIX)
+        # Explicit prefix (e.g. the MinGW prebuilt): reference the static lib directly
+        # rather than via find_library, which is fussy across cross toolchains.
+        set(_sodium_a "${OKAY_SODIUM_PREFIX}/lib/libsodium.a")
+        if(EXISTS "${_sodium_a}" AND EXISTS "${OKAY_SODIUM_PREFIX}/include/sodium.h")
+            target_include_directories(okay_engine SYSTEM PUBLIC "${OKAY_SODIUM_PREFIX}/include")
+            target_link_libraries(okay_engine PUBLIC "${_sodium_a}")
+            target_compile_definitions(okay_engine PUBLIC SODIUM_STATIC=1)  # static .a on Windows
+            set(_okay_sodium TRUE)
+        endif()
+    else()
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(SODIUM QUIET libsodium)
+            if(SODIUM_FOUND)
+                target_include_directories(okay_engine SYSTEM PRIVATE ${SODIUM_INCLUDE_DIRS})
+                target_link_libraries(okay_engine PUBLIC ${SODIUM_LIBRARIES})
+                set(_okay_sodium TRUE)
+            endif()
+        endif()
+    endif()
+    if(_okay_sodium)
+        target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_SODIUM)
+        message(STATUS "OkaySpace: packet encryption ENABLED (libsodium)")
+    else()
+        message(STATUS "OkaySpace: libsodium not found; packet encryption disabled")
+    endif()
+endif()
+
 # ---- Optional scripting backends -------------------------------------
 # Lua: real Lua embedding. Enable with -DOKAY_WITH_LUA=ON (needs liblua dev).
 # Disabled by default — the engine ships OkayScript as its scripting language.

@@ -218,6 +218,10 @@ add_executable(test_net_auth test_net_auth.cpp)
 target_link_libraries(test_net_auth PRIVATE okay::engine)
 add_test(NAME net_auth COMMAND test_net_auth)
 
+add_executable(test_net_crypto test_net_crypto.cpp)
+target_link_libraries(test_net_crypto PRIVATE okay::engine)
+add_test(NAME net_crypto COMMAND test_net_crypto)
+
 add_executable(test_visualscript test_visualscript.cpp)
 target_link_libraries(test_visualscript PRIVATE okay::engine)
 add_test(NAME visualscript COMMAND test_visualscript)

@@ -41,6 +41,10 @@ EXTRA=()
 # secret), so the release build is online with no key file on disk.
 [ -n "${OKAY_DEFAULT_ACCOUNT_URL:-}" ] && EXTRA+=("-DOKAY_DEFAULT_ACCOUNT_URL=$OKAY_DEFAULT_ACCOUNT_URL")
 [ -n "${OKAY_DEFAULT_ACCOUNT_KEY:-}" ] && EXTRA+=("-DOKAY_DEFAULT_ACCOUNT_KEY=$OKAY_DEFAULT_ACCOUNT_KEY")
+# Authenticated packet encryption (libsodium). Point OKAY_SODIUM_MINGW_PREFIX at the
+# extracted libsodium-win64 prebuilt (contains include/sodium.h and lib/libsodium.a).
+# It's statically linked, so no extra DLL ships. If unset, the build is unencrypted.
+[ -n "${OKAY_SODIUM_MINGW_PREFIX:-}" ] && EXTRA+=("-DOKAY_SODIUM_PREFIX=$OKAY_SODIUM_MINGW_PREFIX")
 
 cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake \

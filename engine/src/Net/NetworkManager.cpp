@@ -574,6 +574,7 @@ void NetworkManager::ServerTick(float dt) {
                 s.x = p.ReadF32(); s.y = p.ReadF32(); s.z = p.ReadF32();
                 s.glyph = static_cast<char>(p.ReadU8());
                 it->second.state = s;
+                it->second.hasState = true;   // we now know where this client is (for interest culling)
                 it->second.lastSeen = 0.0f;
                 ApplyPeer(s); // host sees the client move
             }
@@ -636,21 +637,43 @@ void NetworkManager::ServerTick(float dt) {
         for (auto& [ep, recipient] : m_clients) {
             const std::string& room = recipient.room;
             bool hostHere = (m_localRoom == room);
-            std::uint32_t count = hostHere ? 1 : 0;
-            for (auto& [ep2, c] : m_clients) if (c.room == room) ++count;
+            // Interest culling needs the recipient's own position; until it has
+            // reported one, hold its snapshots (a tick or two) so we never spawn a
+            // far peer on it from a default origin.
+            if (interestRadius > 0.0f && !recipient.hasState) continue;
+            Vec3 rpos{recipient.state.x, recipient.state.y, recipient.state.z};
+
+            // Build only the peers this recipient needs THIS tick: skip its own
+            // avatar (interest), skip peers outside interestRadius (interest), and
+            // skip peers whose state is unchanged since we last sent it (delta).
+            std::vector<PeerState> include;
+            auto consider = [&](const PeerState& s, bool known) {
+                if (s.id == recipient.id) return;                   // don't echo their own avatar
+                if (interestRadius > 0.0f) {                        // area-of-interest cull
+                    if (!known) return;                             // position unknown -> don't sync yet
+                    float dx = s.x - rpos.x, dy = s.y - rpos.y, dz = s.z - rpos.z;
+                    if (dx * dx + dy * dy + dz * dz > interestRadius * interestRadius) return;
+                }
+                auto it = recipient.sentStates.find(s.id);          // delta: only if changed
+                bool changed = it == recipient.sentStates.end() ||
+                               std::fabs(it->second.x - s.x) > 1e-4f ||
+                               std::fabs(it->second.y - s.y) > 1e-4f ||
+                               std::fabs(it->second.z - s.z) > 1e-4f ||
+                               it->second.glyph != s.glyph;
+                if (!changed) return;
+                recipient.sentStates[s.id] = s;
+                include.push_back(s);
+            };
+            if (hostHere) consider(PeerState{0, lp.x, lp.y, lp.z, m_localGlyph}, true);
+            for (auto& [ep2, c] : m_clients) if (c.room == room) consider(c.state, c.hasState);
+            if (include.empty()) continue;                          // nothing changed -> send nothing
 
             net::Packet snap(Snapshot);
-            snap.Write(count);
-            if (hostHere) {
-                snap.Write(std::uint32_t(0));
-                snap.Write(lp.x); snap.Write(lp.y); snap.Write(lp.z);
-                snap.Write(std::uint8_t(m_localGlyph));
-            }
-            for (auto& [ep2, c] : m_clients) {
-                if (c.room != room) continue;
-                snap.Write(c.id);
-                snap.Write(c.state.x); snap.Write(c.state.y); snap.Write(c.state.z);
-                snap.Write(std::uint8_t(c.state.glyph));
+            snap.Write(std::uint32_t(include.size()));
+            for (const PeerState& s : include) {
+                snap.Write(s.id);
+                snap.Write(s.x); snap.Write(s.y); snap.Write(s.z);
+                snap.Write(std::uint8_t(s.glyph));
             }
             SendDatagram(recipient.endpoint, snap.Data(), snap.Size());
         }

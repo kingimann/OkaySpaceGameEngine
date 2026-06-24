@@ -5156,7 +5156,7 @@ static bool IsPolyUIShape(UIShape s) {
 static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, float radius,
                             ImU32 fill, ImU32 border, float borderW) {
     if (sz.x < 1.0f || sz.y < 1.0f) return;
-    const int STEPS = 28;
+    const int STEPS = 40;
     static std::vector<ImVec2> rightPts, leftPts;
     rightPts.clear(); leftPts.clear();
     for (int i = 0; i <= STEPS; ++i) {
@@ -5166,12 +5166,35 @@ static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, 
         rightPts.push_back(ImVec2(a.x + x1, a.y + fy));
         leftPts.push_back(ImVec2(a.x + x0, a.y + fy));
     }
-    std::vector<ImVec2> poly = rightPts;
-    for (auto it = leftPts.rbegin(); it != leftPts.rend(); ++it) poly.push_back(*it);
-    if (poly.size() < 3) return;
-    dl->AddConvexPolyFilled(poly.data(), (int)poly.size(), fill);
-    if (borderW > 0.0f)
+    if (rightPts.size() < 2) return;
+    // Fill as a strip of convex quads between adjacent sampled rows. Unlike a single
+    // AddConvexPolyFilled, this renders CONCAVE silhouettes (e.g. arrows) correctly,
+    // matching exactly the per-row spans the game fills.
+    for (std::size_t i = 0; i + 1 < rightPts.size(); ++i) {
+        ImVec2 quad[4] = { leftPts[i], rightPts[i], rightPts[i + 1], leftPts[i + 1] };
+        dl->AddConvexPolyFilled(quad, 4, fill);
+    }
+    if (borderW > 0.0f) {
+        std::vector<ImVec2> poly = rightPts;
+        for (auto it = leftPts.rbegin(); it != leftPts.rend(); ++it) poly.push_back(*it);
         dl->AddPolyline(poly.data(), (int)poly.size(), border, ImDrawFlags_Closed, borderW);
+    }
+}
+
+// Shared shape dropdown: lists every UIShape by its canonical name (UIShapeName)
+// so all the widget pickers stay in sync as shapes are added — no more per-widget
+// hardcoded name arrays to fall out of date. Returns true when the value changed.
+static bool ShapeCombo(const char* label, UIShape& shape, EditorState& ed) {
+    static std::vector<const char*> names;
+    if ((int)names.size() != kUIShapeCount) {
+        names.clear();
+        for (int i = 0; i < kUIShapeCount; ++i) names.push_back(UIShapeName(i));
+    }
+    int idx = (int)shape;
+    if (ImGui::Combo(label, &idx, names.data(), (int)names.size())) {
+        shape = (UIShape)idx; ed.dirty = true; return true;
+    }
+    return false;
 }
 
 void DrawInspector(EditorState& ed) {
@@ -6936,9 +6959,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             ImGui::SeparatorText("Style");
-            int bshp = (int)btn->shape;
-            const char* bshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##uib", &bshp, bshapes, kUIShapeCount)) { btn->shape = (UIShape)bshp; ed.dirty = true; }
+            ShapeCombo("Shape##uib", btn->shape, ed);
             if (UIShapeUsesRadius(btn->shape))
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
@@ -6990,9 +7011,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##uip", pn->anchor, ed);
             ImGui::SeparatorText("Style");
-            int shp = (int)pn->shape;
-            const char* shapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##uip", &shp, shapes, kUIShapeCount)) { pn->shape = (UIShape)shp; ed.dirty = true; }
+            ShapeCombo("Shape##uip", pn->shape, ed);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The panel's silhouette — circle, pill, hexagon, etc. Octagon/Parallelogram/Trapezoid use Corner Radius for their cut/skew.");
             if (UIShapeUsesRadius(pn->shape))
                 if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
@@ -7037,9 +7056,7 @@ void DrawInspector(EditorState& ed) {
             int ct = (int)in->contentType;
             if (ImGui::Combo("Content Type##uif", &ct, cts, 4)) { in->contentType = (UIInputField::ContentType)ct; ed.dirty = true; }
             AnchorCombo("Anchor##uif", in->anchor, ed);
-            int ishp = (int)in->shape;
-            const char* fshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##uif", &ishp, fshapes, kUIShapeCount)) { in->shape = (UIShape)ishp; ed.dirty = true; }
+            ShapeCombo("Shape##uif", in->shape, ed);
             if (UIShapeUsesRadius(in->shape))
                 if (ImGui::DragFloat("Corner Radius##uif", &in->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Focus Ring##uif", &in->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
@@ -7058,9 +7075,7 @@ void DrawInspector(EditorState& ed) {
             float sz[2] = {dd->size.x, dd->size.y};
             if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##udd", dd->anchor, ed);
-            int dshp = (int)dd->shape;
-            const char* dshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##udd", &dshp, dshapes, kUIShapeCount)) { dd->shape = (UIShape)dshp; ed.dirty = true; }
+            ShapeCombo("Shape##udd", dd->shape, ed);
             if (UIShapeUsesRadius(dd->shape))
                 if (ImGui::DragFloat("Corner Radius##udd", &dd->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             char ph[96]; std::strncpy(ph, dd->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
@@ -7249,9 +7264,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
-            int pshp = (int)pb->shape;
-            const char* pshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##upb", &pshp, pshapes, kUIShapeCount)) { pb->shape = (UIShape)pshp; ed.dirty = true; }
+            ShapeCombo("Shape##upb", pb->shape, ed);
             if (UIShapeUsesRadius(pb->shape))
                 if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Gradient Fill##upb", &pb->gradientFill)) ed.dirty = true;
@@ -7313,19 +7326,11 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("corners stay fixed; edges/center stretch to size");
             }
             AnchorCombo("Anchor##uim", im->anchor, ed);
-            ImGui::SeparatorText("Fill & shape");
-            const char* fills[] = {"None", "Left", "Right", "Up", "Down"};
-            int fm = (int)im->fillMode;
-            if (ImGui::Combo("Fill Mode##uim", &fm, fills, 5)) { im->fillMode = (UIImage::FillMode)fm; ed.dirty = true; }
-            if (im->fillMode != UIImage::FillMode::None) {
-                if (ImGui::SliderFloat("Fill Amount##uim", &im->fillAmount, 0.0f, 1.0f)) ed.dirty = true;
-                ImGui::TextDisabled("for cooldowns / health bars; drive with ui_set_progress-style scripts");
-            }
-            if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
-            int ishp = (int)im->shape;
-            const char* ishapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape (no texture)##uim", &ishp, ishapes, kUIShapeCount)) { im->shape = (UIShape)ishp; ed.dirty = true; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Silhouette of the colored fill when there's no texture set. For a shaped colored box, a UI Panel also works.");
+            ImGui::SeparatorText("Shape");
+            ShapeCombo("Shape##uim", im->shape, ed);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The image silhouette: circle for avatars, pill/tab for cards, arrows for nav, etc. Applies to the colored fill when no texture is set.");
+            if (UIShapeUsesRadius(im->shape))
+                if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -7344,9 +7349,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Knob##usl", kc)) { sl->knob = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
             AnchorCombo("Anchor##usl", sl->anchor, ed);
-            int sshp = (int)sl->trackShape;
-            const char* sshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Track Shape##usl", &sshp, sshapes, kUIShapeCount)) { sl->trackShape = (UIShape)sshp; ed.dirty = true; }
+            ShapeCombo("Track Shape##usl", sl->trackShape, ed);
             if (sl->trackShape == UIShape::Rounded)
                 if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Round Knob##usl", &sl->roundKnob)) ed.dirty = true;
@@ -7387,9 +7390,7 @@ void DrawInspector(EditorState& ed) {
             float tc[4] = {st->textColor.r, st->textColor.g, st->textColor.b, st->textColor.a};
             if (ImGui::ColorEdit4("Text##ust", tc)) { st->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##ust", st->anchor, ed);
-            int sshp = (int)st->shape;
-            const char* stshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##ust", &sshp, stshapes, kUIShapeCount)) { st->shape = (UIShape)sshp; ed.dirty = true; }
+            ShapeCombo("Shape##ust", st->shape, ed);
             if (UIShapeUsesRadius(st->shape))
                 if (ImGui::DragFloat("Corner Radius##ust", &st->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Interactable##ust", &st->interactable)) ed.dirty = true;
@@ -7453,9 +7454,7 @@ void DrawInspector(EditorState& ed) {
             float sz[2] = {tb->size.x, tb->size.y};
             if (ImGui::DragFloat2("Size (px)##utb", sz, 1.0f, 8.0f, 4000.0f)) { tb->size = {sz[0], sz[1]}; ed.dirty = true; }
             AnchorCombo("Anchor##utb", tb->anchor, ed);
-            int tshp = (int)tb->shape;
-            const char* tshapes[] = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid"};
-            if (ImGui::Combo("Shape##utb", &tshp, tshapes, kUIShapeCount)) { tb->shape = (UIShape)tshp; ed.dirty = true; }
+            ShapeCombo("Shape##utb", tb->shape, ed);
             if (UIShapeUsesRadius(tb->shape))
                 if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (tb->Count() > 0) {

@@ -15,27 +15,36 @@ namespace okay {
 ///   Octagon       — rectangle with 45° chamfered corners (cut size = corner radius)
 ///   Parallelogram — slanted box (skew = corner radius)
 ///   Trapezoid     — narrower at the top (top inset = corner radius)
+///   Pentagon      — house/badge: triangular cap over a square base
+///   Squircle      — rounded superellipse (modern app-icon look)
+///   TabTop        — only the top corners rounded (cards, tab headers; radius)
+///   ArrowRight/Left/Up/Down — block arrows for nav, carousels, callouts
 /// The renderer turns every shape into per-row spans so the same fill/clip/hit-test
 /// code works for all of them. New values are appended so saved scenes stay valid.
 enum class UIShape { Rectangle, Rounded, Circle, Pill,
-                     Triangle, Diamond, Hexagon, Octagon, Parallelogram, Trapezoid };
+                     Triangle, Diamond, Hexagon, Octagon, Parallelogram, Trapezoid,
+                     Pentagon, Squircle, TabTop,
+                     ArrowRight, ArrowLeft, ArrowUp, ArrowDown };
 
 /// Number of UIShape values + their display names (index by (int)UIShape) — shared
 /// by the editor's shape dropdowns so they all list the same set.
-inline constexpr int kUIShapeCount = 10;
+inline constexpr int kUIShapeCount = 17;
 inline const char* UIShapeName(int i) {
     static const char* names[kUIShapeCount] = {
         "Rectangle", "Rounded", "Circle", "Pill",
-        "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid" };
+        "Triangle", "Diamond", "Hexagon", "Octagon", "Parallelogram", "Trapezoid",
+        "Pentagon", "Squircle", "Tab (top round)",
+        "Arrow Right", "Arrow Left", "Arrow Up", "Arrow Down" };
     return (i >= 0 && i < kUIShapeCount) ? names[i] : "?";
 }
 
 /// Whether the shape reads the corner-radius value (Rounded corners, the Octagon
-/// chamfer, the Parallelogram skew and the Trapezoid top inset all scale with it),
-/// so editors know when to show the radius control.
+/// chamfer, the Parallelogram skew, the Trapezoid top inset and the TabTop caps all
+/// scale with it), so editors know when to show the radius control.
 inline bool UIShapeUsesRadius(UIShape s) {
     return s == UIShape::Rounded || s == UIShape::Octagon ||
-           s == UIShape::Parallelogram || s == UIShape::Trapezoid;
+           s == UIShape::Parallelogram || s == UIShape::Trapezoid ||
+           s == UIShape::TabTop;
 }
 
 /// For a widget occupying the box [0,w] x [0,h] (local pixels), compute the inside
@@ -105,6 +114,61 @@ inline bool UIShapeRowSpan(UIShape shape, float w, float h, float radius, int ro
         const float inset = Mathf::Clamp(radius > 0.0f ? radius : w * 0.2f, 0.0f, w * 0.45f);
         const float topInset = inset * (1.0f - cy / h);  // full inset at top -> 0 at base
         x0 = topInset; x1 = w - topInset;
+        return x1 > x0;
+    }
+
+    if (shape == UIShape::Pentagon) {                    // triangular cap over a square base
+        const float cap = h * 0.42f;                     // height of the roof
+        if (cy < cap) {                                  // roof: widen apex -> full width
+            const float half = (w * 0.5f) * (cy / cap);
+            x0 = w * 0.5f - half; x1 = w * 0.5f + half;
+        } else { x0 = 0.0f; x1 = w; }                    // square body
+        return x1 > x0;
+    }
+
+    if (shape == UIShape::Squircle) {                    // |x|^n + |y|^n = 1 superellipse
+        const float n = 4.0f, rx = w * 0.5f, ry = h * 0.5f;
+        const float ny = (cy - ry) / ry;                 // -1..1
+        const float t = 1.0f - std::pow(std::fabs(ny), n);
+        if (t <= 0.0f) return false;
+        const float dx = rx * std::pow(t, 1.0f / n);
+        x0 = rx - dx; x1 = rx + dx;
+        return x1 > x0;
+    }
+
+    if (shape == UIShape::TabTop) {                      // only the top corners rounded
+        const float r = Mathf::Clamp(radius, 0.0f, std::min(w, h) * 0.5f);
+        float inset = 0.0f;
+        if (cy < r) { const float dy = r - cy; inset = r - std::sqrt(std::max(0.0f, r * r - dy * dy)); }
+        x0 = inset; x1 = w - inset;
+        return x1 > x0;
+    }
+
+    // Block arrows: a triangular head plus a centred rectangular shaft. The span
+    // stays a single interval per row (so fill + hit-test work), even though the
+    // overall silhouette is concave.
+    if (shape == UIShape::ArrowRight || shape == UIShape::ArrowLeft) {
+        const float headBase = w * 0.5f;                 // where the head meets the shaft
+        const float band = h * 0.27f;                    // shaft half-height
+        const float t = 1.0f - std::fabs(cy - h * 0.5f) / (h * 0.5f); // 0 at edges, 1 mid
+        const bool inShaft = cy >= h * 0.5f - band && cy <= h * 0.5f + band;
+        if (shape == UIShape::ArrowRight) {
+            x0 = inShaft ? 0.0f : headBase;
+            x1 = headBase + (w - headBase) * t;          // head tip reaches w at mid-row
+        } else {
+            x0 = headBase * (1.0f - t);                  // head tip reaches 0 at mid-row
+            x1 = inShaft ? w : headBase;
+        }
+        return x1 > x0;
+    }
+    if (shape == UIShape::ArrowUp || shape == UIShape::ArrowDown) {
+        const float headH = h * 0.5f, shaftHalf = w * 0.25f;
+        float headFrac;                                  // 0 at the head's base .. 1 at its tip
+        bool inHead;
+        if (shape == UIShape::ArrowUp) { inHead = cy < headH; headFrac = inHead ? cy / headH : 0.0f; }
+        else                           { inHead = cy > h - headH; headFrac = inHead ? (h - cy) / headH : 0.0f; }
+        if (inHead) { const float half = (w * 0.5f) * headFrac; x0 = w * 0.5f - half; x1 = w * 0.5f + half; }
+        else        { x0 = w * 0.5f - shaftHalf; x1 = w * 0.5f + shaftHalf; }
         return x1 > x0;
     }
 

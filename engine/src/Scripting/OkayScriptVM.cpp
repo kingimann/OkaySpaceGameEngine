@@ -1976,6 +1976,16 @@ struct OkayScriptVM::Impl {
             if (NetworkManager* n = Net()) { if (!a.empty()) n->SetLocalName(a[0].AsString()); return Value{n->LocalName()}; }
             return Value{std::string{}};
         };
+        // Set the identity token presented on join (e.g. a Supabase access token);
+        // returns the current token. The host verifies it if it has a verifier.
+        b["net_auth_token"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net()) { if (!a.empty()) n->SetAuthToken(a[0].AsString()); return Value{n->AuthToken()}; }
+            return Value{std::string{}};
+        };
+        // This peer's verified account id once joined ("" if anonymous/unverified).
+        b["net_user_id"] = [this](std::vector<Value>&) {
+            NetworkManager* n = Net(); return Value{n ? n->LocalUserId() : std::string{}};
+        };
         // Send a message to everyone, or to one peer id.
         b["net_send"] = [this](std::vector<Value>& a) {
             if (NetworkManager* n = Net(); n && a.size() >= 2) n->Send(a[0].AsString(), a[1].AsString());

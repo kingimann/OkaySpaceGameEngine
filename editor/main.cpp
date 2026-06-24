@@ -4690,6 +4690,35 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Pyramid"))  ed.CreatePyramid();
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("UI")) {
+            // Create a UI widget under the canvas/UI root and centre it (so it's
+            // visible), mirroring the top GameObject > UI menu — Unity-style
+            // right-click-to-create in the Hierarchy.
+            auto mkUI = [&](const char* name, auto build) {
+                GameObject* root = EnsureUIRoot(ed);
+                GameObject* g = ed.CreateEmpty(name);
+                build(g);
+                if (root) g->transform->SetParent(root->transform, false);
+                UIRect r = GetUIRect(g);
+                if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
+                ed.Select(g); ed.dirty = true;
+            };
+            if (ImGui::MenuItem("Panel"))        mkUI("Panel",   [](GameObject* g){ g->AddComponent<UIPanel>(); });
+            if (ImGui::MenuItem("Button"))       mkUI("Button",  [](GameObject* g){ g->AddComponent<UIButton>(); });
+            if (ImGui::MenuItem("Image"))        mkUI("Image",   [](GameObject* g){ g->AddComponent<UIImage>(); });
+            if (ImGui::MenuItem("Text"))         mkUI("Text",    [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+            if (ImGui::MenuItem("Slider"))       mkUI("Slider",  [](GameObject* g){ g->AddComponent<UISlider>(); });
+            if (ImGui::MenuItem("Toggle"))       mkUI("Toggle",  [](GameObject* g){ g->AddComponent<UIToggle>(); });
+            if (ImGui::MenuItem("Stepper"))      mkUI("Stepper", [](GameObject* g){ g->AddComponent<UIStepper>(); });
+            if (ImGui::MenuItem("Rating"))       mkUI("Rating",  [](GameObject* g){ g->AddComponent<UIRating>(); });
+            if (ImGui::MenuItem("Progress Bar")) mkUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
+            if (ImGui::MenuItem("Radial Progress")) mkUI("Radial", [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
+            if (ImGui::MenuItem("Input Field"))  mkUI("InputField", [](GameObject* g){ g->AddComponent<UIInputField>(); });
+            if (ImGui::MenuItem("Dropdown"))     mkUI("Dropdown", [](GameObject* g){ g->AddComponent<UIDropdown>(); });
+            if (ImGui::MenuItem("Tabs"))         mkUI("Tabs",    [](GameObject* g){ g->AddComponent<UITabs>(); });
+            if (ImGui::MenuItem("Scroll View"))  mkUI("ScrollView", [](GameObject* g){ g->AddComponent<UIScrollView>(); });
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
             ed.PushUndo();
             if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) { ed.Select(p); ed.dirty = true; }

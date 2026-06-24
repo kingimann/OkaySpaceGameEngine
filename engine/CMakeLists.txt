@@ -31,6 +31,7 @@ add_library(okay_engine
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
     src/Components/Character.cpp
+    src/Components/AnimClip.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Platform/Steam/Steam.cpp
     src/Components/SteamManager.cpp

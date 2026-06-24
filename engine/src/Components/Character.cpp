@@ -6,8 +6,11 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <cctype>
 #include <cmath>
+#include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 namespace okay {
 
@@ -16,6 +19,21 @@ enum { B_HIPS, B_TORSO, B_HEAD,
        B_LTHIGH, B_LSHIN, B_LFOOT, B_RTHIGH, B_RSHIN, B_RFOOT, B_COUNT };
 
 int Character::BoneCount() { return B_COUNT; }
+
+int Character::BoneIndex(const std::string& token) {
+    static const std::unordered_map<std::string, int> m = {
+        {"hips", B_HIPS}, {"torso", B_TORSO}, {"head", B_HEAD},
+        {"l_uparm", B_LUPARM}, {"l_fore", B_LFORE}, {"l_hand", B_LHAND},
+        {"r_uparm", B_RUPARM}, {"r_fore", B_RFORE}, {"r_hand", B_RHAND},
+        {"l_thigh", B_LTHIGH}, {"l_shin", B_LSHIN}, {"l_foot", B_LFOOT},
+        {"r_thigh", B_RTHIGH}, {"r_shin", B_RSHIN}, {"r_foot", B_RFOOT},
+    };
+    std::string key;
+    key.reserve(token.size());
+    for (char c : token) key += (char)std::tolower((unsigned char)c);
+    auto it = m.find(key);
+    return it != m.end() ? it->second : -1;
+}
 
 const char* Character::BoneName(int i) {
     static const char* n[B_COUNT] = {
@@ -357,7 +375,62 @@ void Character::Apply() {
     mr->doubleSided = true;
 }
 
+void Character::AddClip(AnimClip clip) {
+    std::string name = clip.name;
+    m_clips[name] = std::move(clip);
+    if (m_activeClipName == name) m_activeClip = &m_clips[name];  // keep pointer valid on replace
+}
+
+int Character::LoadClips(const std::string& text, std::string* error) {
+    auto clips = AnimClip::ParseAll(text, &Character::BoneIndex, B_COUNT, error);
+    for (auto& c : clips) AddClip(std::move(c));
+    return (int)clips.size();
+}
+
+bool Character::LoadClipsFromFile(const std::string& path, std::string* error) {
+    std::ifstream f(path);
+    if (!f) { if (error) *error = "cannot open " + path; return false; }
+    std::stringstream ss; ss << f.rdbuf();
+    return LoadClips(ss.str(), error) > 0;
+}
+
+bool Character::PlayClip(const std::string& name) {
+    if (name.empty()) { StopClip(); return true; }
+    auto it = m_clips.find(name);
+    if (it == m_clips.end()) return false;
+    m_activeClip = &it->second;
+    m_activeClipName = name;
+    m_clipTime = 0.0f;
+    return true;
+}
+
+void Character::StopClip() {
+    m_activeClip = nullptr;
+    m_activeClipName.clear();
+    m_clipTime = 0.0f;
+}
+
 void Character::Update(float dt) {
+    // A custom clip, if one is playing, drives the whole body and overrides the
+    // built-in animations.
+    if (m_activeClip) {
+        m_clipTime += dt * animSpeed;
+        float dur = m_activeClip->Duration();
+        if (dur > 0.0f) {
+            if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur);
+            else if (m_clipTime > dur) m_clipTime = dur;
+        }
+        auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
+        if (!mr) return;
+        EnsureRest();
+        Mesh m = m_rest;
+        Skin(m, m_bone, m_activeClip->Sample(m_clipTime));
+        for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }  // face -Z (see Apply)
+        m.normals.clear();
+        mr->mesh = std::move(m);
+        mr->doubleSided = true;
+        return;
+    }
     if (anim == 0) return;
     animTime += dt * animSpeed;
 

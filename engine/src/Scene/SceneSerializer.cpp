@@ -757,6 +757,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
         if (go->layer != 0) out << "  layer " << go->layer << "\n";
+        if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
         int parent = t->Parent() ? IndexOf(scene, t->Parent()->gameObject) : -1;
         out << "  parent " << parent << "\n";
         WriteComponents(out, go);
@@ -823,6 +824,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
                 else if (field == "layer") { in >> go->layer; }
+                else if (field == "uiorder") { in >> go->uiDrawOrder; }
                 else if (field == "parent") { int p = -1; in >> p; if (p >= 0) parentLinks.push_back({idx, p}); }
                 else if (field == "transform") {
                     Vec3 p, s; Quat q;
@@ -1894,6 +1896,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
         if (go->layer != 0) out << "  layer " << go->layer << "\n";
+        if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
         Transform* parent = go->transform->Parent();
         int pIdx = -1;
         if (parent) {

@@ -5571,6 +5571,18 @@ void DrawInspector(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::Button("Send to Back"))   { ed.scene().MoveToBack(go);  ed.dirty = true; }
         ImGui::SameLine();
+        // Per-object draw-order override. 0 = use the widget's default type order
+        // (images under panels under text, etc.). Any non-zero value places this
+        // widget in the single UI pass by this key instead — higher draws on top —
+        // so it can layer freely against widgets of ANY other type, even when they
+        // are not nested. Hierarchy order breaks ties between equal values.
+        ImGui::SetNextItemWidth(90.0f);
+        if (ImGui::DragInt("Draw Order", &go->uiDrawOrder, 0.1f))
+            ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("0 = default type order. Non-zero overrides it: higher draws on top,\n"
+                              "letting this widget layer above/below other types without nesting.");
+        ImGui::SameLine();
         if (ImGui::Button("Center in Canvas")) {
             UIRect r = GetUIRect(go);
             if (r.position) {
@@ -8180,7 +8192,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // Mirror the player's draw order: Canvas sortOrder first, then hierarchy
     // pre-order (parent before children, sibling order honored) so the editor
     // preview layers UI exactly like the built game does.
-    std::vector<std::size_t> edOrder = BuildUIDrawOrder(objs);
+    // (UI draw items are queued and sorted below, once the scale/cull helpers exist.)
 
     // Authoring zoom (Scene view only): scale/pan the canvas so the UI is easy to
     // edit. The Game view always shows the true 1:1 layout.
@@ -8204,8 +8216,41 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         return (o.y + sz.y < vo.y) || (o.y > vo.y + sv->size.y * s);
     };
 
-    // Scroll View backgrounds (drawn behind their content) + a scrollbar.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+    // Single UI preview pass: queue every widget's draw-block, then sort by Canvas
+    // sortOrder, each object's uiDrawOrder override (else its default type layer), and
+    // hierarchy pre-order. With no overrides this reproduces the old per-type pass
+    // order exactly; a non-zero uiDrawOrder lets a widget layer against any other type.
+    // The layer constants below ARE that historic pass order.
+    enum UIK { K_Scroll = 0, K_DropBg, K_Image, K_Panel, K_Progress, K_Slider,
+               K_Stepper, K_Rating, K_Toggle, K_Radial, K_Tabs, K_WorldUI, K_Button,
+               K_Input, K_Text, K_Dropdown, K_Tooltip };
+    std::vector<UIDrawItem> edItems;
+    for (std::size_t _qi = 0; _qi < objs.size(); ++_qi) {
+        GameObject* g = objs[_qi].get();
+        if (!g) continue;
+        auto add = [&](int k) { edItems.push_back(UIDrawItem{_qi, k, k}); };
+        if (g->GetComponent<UIScrollView>())     add(K_Scroll);
+        if (g->GetComponent<UIDropTarget>())     add(K_DropBg);
+        if (g->GetComponent<UIImage>())          add(K_Image);
+        if (g->GetComponent<UIPanel>())          add(K_Panel);
+        if (g->GetComponent<UIProgressBar>())    add(K_Progress);
+        if (g->GetComponent<UISlider>())         add(K_Slider);
+        if (g->GetComponent<UIStepper>())        add(K_Stepper);
+        if (g->GetComponent<UIRating>())         add(K_Rating);
+        if (g->GetComponent<UIToggle>())         add(K_Toggle);
+        if (g->GetComponent<UIRadialProgress>()) add(K_Radial);
+        if (g->GetComponent<UITabs>())           add(K_Tabs);
+        if (g->GetComponent<WorldUI>())          add(K_WorldUI);
+        if (g->GetComponent<UIButton>())         add(K_Button);
+        if (g->GetComponent<UIInputField>())     add(K_Input);
+        if (g->GetComponent<TextRenderer>())     add(K_Text);
+        if (g->GetComponent<UIDropdown>())       add(K_Dropdown);
+        if (g->GetComponent<UITooltip>())        add(K_Tooltip);
+    }
+    edItems = SortUIDrawItems(objs, std::move(edItems));
+    for (const UIDrawItem& _it : edItems) {
+        const auto& up = objs[_it.index];
+        if (_it.kind == K_Scroll) {   // Scroll View backgrounds (behind content) + scrollbar
         auto* sv = up->GetComponent<UIScrollView>();
         if (!sv || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8227,7 +8272,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 
     // Drop-target slot backgrounds (behind items), so slots are visible while
     // designing — mirrors what the running game draws.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_DropBg) {   // drop-target slot backgrounds (behind items)
         auto* dt = up->GetComponent<UIDropTarget>();
         if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -8238,7 +8283,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI images (logos/icons): preview as a tinted rect with the path centered.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Image) {   // images (logos/icons)
         auto* im = up->GetComponent<UIImage>();
         if (!im || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -8260,7 +8305,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Panel) {   // panels (backgrounds)
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -8287,7 +8332,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
         }
     }
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Progress) {   // progress bars
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8308,7 +8353,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI sliders: track + fill + knob.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Slider) {   // sliders
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8338,7 +8383,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!sl->interactable) dl->AddRectFilled(a, ImVec2(a.x + sz.x, a.y + sz.y), IM_COL32(30, 30, 35, 150), sl->cornerRadius);
     }
     // UI steppers: [-] value [+]
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Stepper) {   // numeric steppers
         auto* st = up->GetComponent<UIStepper>();
         if (!st || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8360,7 +8405,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         DrawBitmapText(dl, vb, a.x + (sz.x - tw) * 0.5f, a.y + (sz.y - Font8x8::Height * px) * 0.5f, px, tcol);
     }
     // UI ratings: a row of star diamonds, filled up to the value.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Rating) {   // star ratings
         auto* rt = up->GetComponent<UIRating>();
         if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
@@ -8382,7 +8427,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
     }
     // UI toggles: box (+ inset check when on) and a label.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Toggle) {   // toggles (checkboxes)
         auto* tg = up->GetComponent<UIToggle>();
         if (!tg || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8413,7 +8458,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI radial / ring progress: a track ring + a filled arc (a pie when thickness<=0).
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Radial) {   // radial / ring progress
         auto* rp = up->GetComponent<UIRadialProgress>();
         if (!rp || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8445,7 +8490,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI tabs: a segmented bar with the selected segment highlighted + labels.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Tabs) {   // segmented tab bars
         auto* tb = up->GetComponent<UITabs>();
         if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
         float s = uiScale(up.get());
@@ -8475,9 +8520,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // In-world UI (3D labels/markers): project each through the main camera onto the
     // canvas. Only meaningful in the Game view, which shows the main camera (the
     // Scene view uses the free editor camera, so we skip it there).
-    if (gameView && ed.scene().mainCamera) {
-        Camera* mc = ed.scene().mainCamera;
-        for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
+            if (!gameView || !ed.scene().mainCamera) continue;   // main-camera projection, Game view only
+            Camera* mc = ed.scene().mainCamera;
             auto* wu = up->GetComponent<WorldUI>();
             if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
             Vec3 wp = up->transform->Position() + wu->worldOffset;
@@ -8502,10 +8547,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * Mathf::Clamp01(wu->bar), by + bh), ToColor(wu->barColor), 2.0f);
             }
         }
-    }
-
-    // UI buttons: screen-space, pinned to the canvas (pixels from its top-left).
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Button) {   // buttons (box, icon, label)
         auto* btn = up->GetComponent<UIButton>();
         if (!btn || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8546,7 +8588,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     }
 
     // UI input fields: box + the text (or placeholder) + a caret when focused.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Input) {   // input fields (box + text + caret)
         auto* in = up->GetComponent<UIInputField>();
         if (!in || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8578,7 +8620,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // Screen-space text (world-anchored text stays with the 2D scene draw). Drawn
     // AFTER panels/images/controls so a label always sits ON TOP of a panel rather
     // than being hidden behind it (only dropdown popups + tooltips go above it).
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Text) {   // screen-space text — on top of panels/controls
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active || !tr->screenSpace) continue;
         float s = uiScale(up.get());
@@ -8614,7 +8656,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI dropdowns: header (shows the selection + a caret); when open, the option
     // list below with the hovered/selected option highlighted. Drawn last among
     // widgets so an open list sits above its neighbours.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Dropdown) {   // dropdowns (header + open list)
         auto* dd = up->GetComponent<UIDropdown>();
         if (!dd || !up->active || UIHidden(up.get())) continue;
         float s = uiScale(up.get());
@@ -8652,7 +8694,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // UI tooltips: when a sibling widget has been hovered long enough (Ready),
     // draw the hint box next to the cursor. Tooltips tick only while the scene
     // updates (Play / Game view), matching the built game.
-    for (std::size_t _i : edOrder) { const auto& up = objs[_i];
+        else if (_it.kind == K_Tooltip) {   // tooltips (hover hints)
         auto* tt = up->GetComponent<UITooltip>();
         if (!tt || !up->active || !tt->Ready()) continue;
         Vec2 m = Input::MousePosition();
@@ -8664,7 +8706,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         dl->AddRectFilled(a, b, ToColor(tt->background), 4.0f);
         dl->AddRect(a, b, ToColor(tt->borderColor), 4.0f);
         DrawBitmapText(dl, tt->text, a.x + 6, a.y + 5, px, ToColor(tt->textColor));
-    }
+        }
+    }   // end single UI preview pass
 
     // Selection highlight for the selected widget — works for every UI type and
     // in both the 2D and 3D Scene views (the Game view stays clean). Drag the

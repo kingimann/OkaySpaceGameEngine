@@ -192,3 +192,18 @@ for (const okay::GameSession& s : okay::Matchmaking::List("arena"))
     printf("%s  %d/%d  @%s:%d\n", s.name.c_str(), s.players, s.maxPlayers, s.hostAddr.c_str(), s.port);
 // pick one: net->StartClient(chosen.hostAddr, chosen.port);
 ```
+
+From OkayScript:
+
+```javascript
+// Host
+var id = mm_host("My Game", my_addr, 45000, 8, "arena");  // -> session id
+// each ~15s: mm_heartbeat(id, net_peers() + 1);
+// on quit:  mm_unregister(id);
+
+// Client: browse then join by index
+var n = mm_refresh("arena");          // fetch open sessions, returns the count
+for (var i = 0; i < n; i = i + 1)
+    print(mm_name(i) + "  " + mm_players(i) + "/" + mm_max(i) + "  @" + mm_addr(i));
+if (n > 0) mm_join(0);                // connects over UDP to that session
+```

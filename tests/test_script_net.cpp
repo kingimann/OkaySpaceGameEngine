@@ -65,5 +65,28 @@ int main() {
 
     hn->Stop();
     cn->Stop();
+
+    // --- mm_* matchmaking builtins (offline contract) ------------------------
+    // With no account backend configured, hosting/browsing no-op cleanly: a game
+    // using them offline just finds no sessions instead of erroring.
+    {
+        const char* mmSrc =
+            "var hostId = \"x\"; var found = -1; var firstName = \"y\";\n"
+            "function start() {\n"
+            "  hostId = mm_host(\"My Game\", \"127.0.0.1\", 45000, 8, \"arena\");\n"
+            "  found = mm_refresh(\"arena\");\n"
+            "  firstName = mm_name(0);\n"
+            "}\n";
+        Scene s("MM"); s.physicsEnabled = false;
+        GameObject* g = s.CreateGameObject("MMLogic");
+        g->AddComponent<ScriptComponent>("okayscript")->LoadSource(mmSrc);
+        s.Start();
+        auto* vm = g->GetComponent<ScriptComponent>()->VM();
+        CHECK(vm != nullptr);
+        CHECK(vm->GetGlobal("hostId").AsString().empty());   // can't advertise offline
+        CHECK(vm->GetGlobal("found").AsFloat() == 0.0f);     // no sessions
+        CHECK(vm->GetGlobal("firstName").AsString().empty()); // out-of-range getter is safe
+    }
+
     TEST_MAIN_RESULT();
 }

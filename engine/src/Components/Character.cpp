@@ -249,10 +249,11 @@ std::vector<Vec3> Character::PoseAt(float t) const {
     if (anim != 0) {
         r[B_HEAD].x += -Mathf::Clamp(m_headPitch, -55.0f, 55.0f);
         r[B_HEAD].y +=  Mathf::Clamp(m_headYaw,   -72.0f, 72.0f);
-        // Body lean (peek): roll the torso sideways. Splitting a little onto the hips
-        // makes it read as a whole-body lean rather than just a bent waist. (The 180°
-        // Y flip in Apply() negates the roll sense, hence the minus.)
-        float lean = -Mathf::Clamp(m_bodyLean, -40.0f, 40.0f);
+        // Body lean (peek): roll the torso sideways toward the lean direction.
+        // Splitting a little onto the hips makes it read as a whole-body lean rather
+        // than just a bent waist. (bodyLean > 0 = lean to the player's right, e.g. the
+        // 'E' key; this rolls the body that way to match.)
+        float lean = Mathf::Clamp(m_bodyLean, -40.0f, 40.0f);
         r[B_TORSO].z += lean * 0.7f;
         r[B_HIPS].z  += lean * 0.3f;
     }

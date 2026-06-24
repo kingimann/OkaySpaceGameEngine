@@ -463,6 +463,7 @@ std::future<updater::UpdateInfo> g_updateCheck;  // async startup check (non-blo
 bool g_autoCheckDone = false;     // consumed the async result yet?
 bool g_openAbout = false;
 bool g_showNewProject = true;   // show the project chooser on launch
+std::string g_newProjectTemplate; // template title to preselect (from --template)
 
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
@@ -4159,6 +4160,12 @@ void DrawNewProjectPopup(EditorState& ed) {
         const int N = (int)(sizeof(tpls) / sizeof(tpls[0]));
         static int sel = 1;   // default: 3D Scene
         if (sel < 0 || sel >= N) sel = 1;
+        // Preselect the template requested via --template (launcher Create tab).
+        if (!g_newProjectTemplate.empty()) {
+            for (int i = 0; i < N; ++i)
+                if (g_newProjectTemplate == tpls[i].title) { sel = i; break; }
+            g_newProjectTemplate.clear();
+        }
         auto catColor = [](int c) -> ImVec4 {
             switch (c) { case C_3D:   return ImVec4(0.30f, 0.55f, 0.85f, 1);
                          case C_2D:   return ImVec4(0.30f, 0.70f, 0.45f, 1);
@@ -9771,6 +9778,15 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
 
     if (!PassesLauncherGate(argc, argv)) return 0;
+
+    // --template "<Title>": preselect a New Project template (from the launcher's
+    // Create tab). The New Project chooser is shown on launch and will highlight
+    // the matching template.
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--template" && i + 1 < argc) { g_newProjectTemplate = argv[i + 1]; ++i; }
+        else if (a.rfind("--template=", 0) == 0) g_newProjectTemplate = a.substr(11);
+    }
 
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO |

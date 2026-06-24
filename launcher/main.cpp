@@ -322,13 +322,14 @@ unsigned long CurrentPid() {
 // Launch the editor with a handshake token: "--launcher <pid>". The editor refuses
 // to start unless this token is present AND that launcher process is still alive,
 // so the engine can only be opened through (and alongside) the launcher.
-void LaunchEditor(const std::string& exe) {
+void LaunchEditor(const std::string& exe, const std::string& tmpl = "") {
     if (exe.empty()) return;
-    std::string tok = "--launcher " + std::to_string(CurrentPid());
+    std::string args = "--launcher " + std::to_string(CurrentPid());
+    if (!tmpl.empty()) args += " --template \"" + tmpl + "\"";
 #if defined(_WIN32)
-    std::string cmd = "start \"\" \"" + exe + "\" " + tok;
+    std::string cmd = "start \"\" \"" + exe + "\" " + args;
 #else
-    std::string cmd = "\"" + exe + "\" " + tok + " >/dev/null 2>&1 &";
+    std::string cmd = "\"" + exe + "\" " + args + " >/dev/null 2>&1 &";
 #endif
     RunCmd(cmd, false);
 }
@@ -382,9 +383,25 @@ const AccentPreset kAccentPresets[] = {
 };
 int g_accentIndex = 0;            // current accent preset (persisted)
 bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
+int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
+float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
+const char* kThemeNames[] = {"Dark", "Midnight", "Light"};
+std::vector<std::string> g_favorites;   // favorited game paths (persisted)
+int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z
 
+bool IsFavorite(const std::string& p) {
+    return std::find(g_favorites.begin(), g_favorites.end(), p) != g_favorites.end();
+}
+void ToggleFavorite(const std::string& p) {
+    auto it = std::find(g_favorites.begin(), g_favorites.end(), p);
+    if (it != g_favorites.end()) g_favorites.erase(it);
+    else g_favorites.push_back(p);
+}
+
+// Apply the selected theme (g_themeIndex), accent (kAccent), and UI scale.
 void DarkTheme() {
-    ImGui::StyleColorsDark();
+    const bool light = (g_themeIndex == 2);
+    if (light) ImGui::StyleColorsLight(); else ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
     // Soft, modern rounding + generous spacing for a clean, flat look.
     s.WindowRounding = 0.0f;
@@ -399,31 +416,60 @@ void DarkTheme() {
     ImVec4* c = s.Colors;
     const ImVec4 accent = kAccent;
     const ImVec4 accentDim = kAccentDim;
-    c[ImGuiCol_WindowBg]         = ImVec4(0.055f, 0.065f, 0.085f, 1.0f);
-    c[ImGuiCol_ChildBg]          = ImVec4(0.100f, 0.112f, 0.142f, 1.0f);
-    c[ImGuiCol_PopupBg]          = ImVec4(0.100f, 0.112f, 0.142f, 0.98f);
-    c[ImGuiCol_Border]           = ImVec4(1, 1, 1, 0.055f);
-    c[ImGuiCol_Text]             = ImVec4(0.93f, 0.95f, 0.98f, 1.0f);
-    c[ImGuiCol_TextDisabled]     = ImVec4(0.50f, 0.54f, 0.63f, 1.0f);
-    c[ImGuiCol_Button]           = ImVec4(0.16f, 0.18f, 0.24f, 1.0f);
+    const bool darkGrabs = !light;
+    if (g_themeIndex == 1) {                              // Midnight (deep, bluer)
+        c[ImGuiCol_WindowBg]  = ImVec4(0.035f, 0.040f, 0.060f, 1.0f);
+        c[ImGuiCol_ChildBg]   = ImVec4(0.070f, 0.080f, 0.110f, 1.0f);
+        c[ImGuiCol_PopupBg]   = ImVec4(0.070f, 0.080f, 0.110f, 0.98f);
+        c[ImGuiCol_Border]    = ImVec4(1, 1, 1, 0.05f);
+        c[ImGuiCol_Text]      = ImVec4(0.90f, 0.93f, 0.98f, 1.0f);
+        c[ImGuiCol_TextDisabled] = ImVec4(0.46f, 0.50f, 0.60f, 1.0f);
+        c[ImGuiCol_Button]    = ImVec4(0.12f, 0.14f, 0.20f, 1.0f);
+        c[ImGuiCol_FrameBg]   = ImVec4(0.10f, 0.12f, 0.17f, 1.0f);
+        c[ImGuiCol_FrameBgHovered] = ImVec4(0.14f, 0.16f, 0.23f, 1.0f);
+        c[ImGuiCol_FrameBgActive]  = ImVec4(0.16f, 0.19f, 0.27f, 1.0f);
+        c[ImGuiCol_Separator] = ImVec4(1, 1, 1, 0.06f);
+    } else if (light) {                                   // Light
+        c[ImGuiCol_WindowBg]  = ImVec4(0.93f, 0.94f, 0.96f, 1.0f);
+        c[ImGuiCol_ChildBg]   = ImVec4(0.99f, 0.99f, 1.00f, 1.0f);
+        c[ImGuiCol_PopupBg]   = ImVec4(0.99f, 0.99f, 1.00f, 0.98f);
+        c[ImGuiCol_Border]    = ImVec4(0, 0, 0, 0.10f);
+        c[ImGuiCol_Text]      = ImVec4(0.10f, 0.12f, 0.16f, 1.0f);
+        c[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.48f, 0.55f, 1.0f);
+        c[ImGuiCol_Button]    = ImVec4(0.87f, 0.89f, 0.93f, 1.0f);
+        c[ImGuiCol_FrameBg]   = ImVec4(0.90f, 0.92f, 0.96f, 1.0f);
+        c[ImGuiCol_FrameBgHovered] = ImVec4(0.85f, 0.88f, 0.93f, 1.0f);
+        c[ImGuiCol_FrameBgActive]  = ImVec4(0.82f, 0.86f, 0.92f, 1.0f);
+        c[ImGuiCol_Separator] = ImVec4(0, 0, 0, 0.10f);
+    } else {                                              // Dark (default)
+        c[ImGuiCol_WindowBg]  = ImVec4(0.055f, 0.065f, 0.085f, 1.0f);
+        c[ImGuiCol_ChildBg]   = ImVec4(0.100f, 0.112f, 0.142f, 1.0f);
+        c[ImGuiCol_PopupBg]   = ImVec4(0.100f, 0.112f, 0.142f, 0.98f);
+        c[ImGuiCol_Border]    = ImVec4(1, 1, 1, 0.055f);
+        c[ImGuiCol_Text]      = ImVec4(0.93f, 0.95f, 0.98f, 1.0f);
+        c[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.54f, 0.63f, 1.0f);
+        c[ImGuiCol_Button]    = ImVec4(0.16f, 0.18f, 0.24f, 1.0f);
+        c[ImGuiCol_FrameBg]   = ImVec4(0.14f, 0.16f, 0.21f, 1.0f);
+        c[ImGuiCol_FrameBgHovered] = ImVec4(0.18f, 0.21f, 0.27f, 1.0f);
+        c[ImGuiCol_FrameBgActive]  = ImVec4(0.20f, 0.24f, 0.31f, 1.0f);
+        c[ImGuiCol_Separator] = ImVec4(1, 1, 1, 0.07f);
+    }
+    // Accent-tinted slots (shared by all themes).
     c[ImGuiCol_ButtonHovered]    = accent;
     c[ImGuiCol_ButtonActive]     = accentDim;
     c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.28f);
     c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.45f);
     c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.65f);
-    c[ImGuiCol_Separator]        = ImVec4(1, 1, 1, 0.07f);
     c[ImGuiCol_SeparatorHovered] = accent;
     c[ImGuiCol_SeparatorActive]  = accent;
-    c[ImGuiCol_FrameBg]          = ImVec4(0.14f, 0.16f, 0.21f, 1.0f);
-    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.18f, 0.21f, 0.27f, 1.0f);
-    c[ImGuiCol_FrameBgActive]    = ImVec4(0.20f, 0.24f, 0.31f, 1.0f);
     c[ImGuiCol_CheckMark]        = accent;
     c[ImGuiCol_SliderGrab]       = accent;
     c[ImGuiCol_SliderGrabActive] = accentDim;
     c[ImGuiCol_ScrollbarBg]      = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_ScrollbarGrab]    = ImVec4(1, 1, 1, 0.13f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(1, 1, 1, 0.22f);
+    c[ImGuiCol_ScrollbarGrab]    = ImVec4(darkGrabs ? 1.f : 0.f, darkGrabs ? 1.f : 0.f, darkGrabs ? 1.f : 0.f, 0.16f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(darkGrabs ? 1.f : 0.f, darkGrabs ? 1.f : 0.f, darkGrabs ? 1.f : 0.f, 0.28f);
     c[ImGuiCol_ScrollbarGrabActive]  = accent;
+    ImGui::GetIO().FontGlobalScale = g_uiScale;
 }
 
 // Apply an accent preset and restyle the whole UI live.
@@ -446,13 +492,24 @@ void LoadPrefs() {
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
         while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' ')) v.pop_back();
         if (k == "accent") { try { g_accentIndex = std::stoi(v); } catch (...) {} }
+        else if (k == "theme") { try { g_themeIndex = std::stoi(v); } catch (...) {} }
+        else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
+        else if (k == "play_sort") { try { g_playSort = std::stoi(v); } catch (...) {} }
+        else if (k == "fav" && !v.empty()) g_favorites.push_back(v);
     }
+    if (g_themeIndex < 0 || g_themeIndex > 2) g_themeIndex = 0;
+    if (g_uiScale < 0.8f) g_uiScale = 0.8f;
+    if (g_uiScale > 1.6f) g_uiScale = 1.6f;
 }
 void SavePrefs() {
     std::ofstream f(fs::path(g_exeDir) / "launcher.cfg", std::ios::trunc);
     f << "accent=" << g_accentIndex << "\n";
+    f << "theme=" << g_themeIndex << "\n";
+    f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
+    f << "play_sort=" << g_playSort << "\n";
+    for (const auto& p : g_favorites) f << "fav=" << p << "\n";
 }
 
 } // namespace
@@ -713,6 +770,26 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Open Editor", ImVec2(240, 60))) LaunchEditor(editor);
                 ImGui::Dummy(ImVec2(0, 6));
                 ImGui::TextDisabled("%s", editor.c_str());
+
+                // ---- New Project: pick a template, open the editor on it ----
+                ImGui::Dummy(ImVec2(0, 16));
+                ImGui::SeparatorText("New project");
+                // Titles must match the editor's New Project templates exactly.
+                static const char* kTemplates[] = {
+                    "2D Scene", "3D Scene", "First Person", "Third Person",
+                    "Third Person Shooter", "Point & Click", "Platformer", "Top-Down",
+                    "Coin Collector", "Snake", "Main Menu", "Inventory", "Multiplayer",
+                };
+                static int newTpl = 1;   // default 3D Scene
+                ImGui::TextDisabled("Template");
+                ImGui::PushItemWidth(280);
+                ImGui::Combo("##newtpl", &newTpl,
+                             kTemplates, (int)(sizeof(kTemplates) / sizeof(kTemplates[0])));
+                ImGui::PopItemWidth();
+                ImGui::SameLine();
+                if (ImGui::Button("New Project", ImVec2(150, 0)))
+                    LaunchEditor(editor, kTemplates[newTpl]);
+                ImGui::TextDisabled("Opens the editor with the chosen template selected.");
             }
             ImGui::Dummy(ImVec2(0, 22));
             ImGui::SeparatorText("Tips");
@@ -735,21 +812,42 @@ int main(int argc, char** argv) {
                 ImGui::TextWrapped("Build one from the editor (File > Build Game), then put it "
                                    "next to the launcher or in a 'games' folder and hit Refresh.");
             } else {
-                // Search box (case-insensitive substring match on the file name).
-                ImGui::PushItemWidth(-1);
-                ImGui::InputTextWithHint("##playFilter", "Search games...", playFilter, sizeof(playFilter));
-                ImGui::PopItemWidth();
                 auto lower = [](std::string s) {
                     for (char& c : s) c = (char)std::tolower((unsigned char)c);
                     return s;
                 };
+                // Toolbar: search, sort, open-folder.
+                ImGui::PushItemWidth(-1);
+                ImGui::InputTextWithHint("##playFilter", "Search games...", playFilter, sizeof(playFilter));
+                ImGui::PopItemWidth();
+                ImGui::PushItemWidth(170);
+                if (ImGui::Combo("##playsort", &g_playSort, "Favorites first\0Name A\xE2\x80\x93Z\0")) SavePrefs();
+                ImGui::PopItemWidth();
+                ImGui::SameLine();
+                if (ImGui::Button("Open games folder")) OpenExternal(g_exeDir);
+                ImGui::Dummy(ImVec2(0, 6));
+
+                // Display order: optional favorites-first, then name A–Z.
+                std::vector<std::size_t> order(scenes.size());
+                for (std::size_t i = 0; i < scenes.size(); ++i) order[i] = i;
+                std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+                    if (g_playSort == 0) {
+                        bool fa = IsFavorite(scenes[a].string()), fb = IsFavorite(scenes[b].string());
+                        if (fa != fb) return fa;
+                    }
+                    return lower(scenes[a].filename().string()) < lower(scenes[b].filename().string());
+                });
+
                 std::string needle = lower(playFilter);
                 int shown = 0;
-                for (std::size_t i = 0; i < scenes.size(); ++i) {
+                for (std::size_t oi = 0; oi < order.size(); ++oi) {
+                    std::size_t i = order[oi];
                     std::string name = scenes[i].filename().string();
                     if (!needle.empty() && lower(name).find(needle) == std::string::npos)
                         continue;
                     ++shown;
+                    std::string path = scenes[i].string();
+                    bool fav = IsFavorite(path);
                     ImGui::PushID((int)i);
                     ImGui::BeginChild("game", ImVec2(0, 62), true);
                     if (ImGui::IsWindowHovered()) {
@@ -761,13 +859,18 @@ int main(int argc, char** argv) {
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
                     ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", name.c_str());
                     ImGui::TextDisabled("%s", scenes[i].parent_path().string().c_str());
-                    // Right-aligned Folder + Play buttons.
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80 - 90);
+                    // Right-aligned: favorite star, Folder, Play.
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - (36 + 82 + 80 + 20));
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8);
-                    if (ImGui::Button("Folder", ImVec2(82, 40)))
-                        OpenExternal(scenes[i].parent_path().string());
+                    ImGui::PushStyleColor(ImGuiCol_Text,
+                        fav ? ImVec4(1.0f, 0.80f, 0.25f, 1) : ImVec4(0.55f, 0.58f, 0.65f, 1));
+                    if (ImGui::Button("*", ImVec2(36, 40))) { ToggleFavorite(path); SavePrefs(); }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(fav ? "Unfavorite" : "Favorite");
                     ImGui::SameLine();
-                    if (ImGui::Button("Play", ImVec2(80, 40))) Launch(player, scenes[i].string());
+                    if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(scenes[i].parent_path().string());
+                    ImGui::SameLine();
+                    if (ImGui::Button("Play", ImVec2(80, 40))) Launch(player, path);
                     ImGui::EndChild();
                     ImGui::PopID();
                 }
@@ -809,13 +912,34 @@ int main(int argc, char** argv) {
             if (account.IsLoggedIn()) {
                 const auto& s = account.CurrentSession();
                 ImGui::Dummy(ImVec2(0, 8));
-                ImGui::Text("Signed in as");
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "%s", s.username.c_str());
-                ImGui::TextDisabled("%s", account.IsOnline()
-                    ? "Online account." : "Local account (dev fallback, stored on this device).");
-                ImGui::Dummy(ImVec2(0, 18));
-                if (ImGui::Button("Sign out", ImVec2(200, 48))) {
+                // Profile card: avatar initial + name + account details.
+                ImGui::BeginChild("profile", ImVec2(0, 110), true);
+                ImVec2 cp = ImGui::GetCursorScreenPos();
+                float r = 30.0f;
+                ImVec2 ctr(cp.x + r + 4, cp.y + r + 6);
+                ImGui::GetWindowDrawList()->AddCircleFilled(ctr, r, ImGui::GetColorU32(kAccentDim), 32);
+                ImGui::GetWindowDrawList()->AddCircle(ctr, r, ImGui::GetColorU32(kAccent), 32, 2.0f);
+                char initial[2] = { (char)(s.username.empty() ? '?' : std::toupper((unsigned char)s.username[0])), 0 };
+                ImVec2 ts = ImGui::CalcTextSize(initial);
+                ImGui::GetWindowDrawList()->AddText(ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f),
+                                                    ImGui::GetColorU32(ImVec4(1, 1, 1, 1)), initial);
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + r * 2 + 22);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
+                ImGui::TextColored(ImVec4(0.92f, 0.94f, 0.98f, 1), "%s", s.username.c_str());
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + r * 2 + 22);
+                ImGui::TextColored(account.IsOnline() ? ImVec4(0.55f, 0.9f, 0.6f, 1)
+                                                      : ImVec4(0.70f, 0.72f, 0.78f, 1),
+                                   account.IsOnline() ? "Online" : "Local (this device)");
+                if (account.IsOnline()) {
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + r * 2 + 22);
+                    ImGui::TextDisabled("%s", account.ServerUrl().c_str());
+                }
+                ImGui::EndChild();
+                ImGui::Dummy(ImVec2(0, 12));
+                if (account.IsOnline() && ImGui::Button("Re-check session", ImVec2(180, 44)))
+                    account.VerifySession();
+                if (account.IsOnline()) ImGui::SameLine();
+                if (ImGui::Button("Sign out", ImVec2(160, 44))) {
                     account.Logout();
                     acctMessage.clear();
                     acctUser[0] = acctPass[0] = '\0';
@@ -915,6 +1039,14 @@ int main(int argc, char** argv) {
             // ---- Appearance ----
             ImGui::Dummy(ImVec2(0, 16));
             ImGui::SeparatorText("Appearance");
+            ImGui::TextDisabled("Theme");
+            for (int i = 0; i < 3; ++i) {
+                if (i) ImGui::SameLine();
+                if (ImGui::RadioButton(kThemeNames[i], g_themeIndex == i)) {
+                    g_themeIndex = i; DarkTheme(); SavePrefs();
+                }
+            }
+            ImGui::Dummy(ImVec2(0, 6));
             ImGui::TextDisabled("Accent color");
             const int accentCount = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
             for (int i = 0; i < accentCount; ++i) {
@@ -934,6 +1066,15 @@ int main(int argc, char** argv) {
             }
             ImGui::SameLine();
             ImGui::TextDisabled("  %s", kAccentPresets[g_accentIndex].name);
+
+            ImGui::Dummy(ImVec2(0, 6));
+            ImGui::TextDisabled("UI scale");
+            ImGui::PushItemWidth(280);
+            if (ImGui::SliderFloat("##uiscale", &g_uiScale, 0.8f, 1.6f, "%.2fx"))
+                ImGui::GetIO().FontGlobalScale = g_uiScale;   // live preview
+            ImGui::PopItemWidth();
+            ImGui::SameLine();
+            if (ImGui::Button("Apply##scale")) { DarkTheme(); SavePrefs(); }
 
             // ---- Behavior ----
             ImGui::Dummy(ImVec2(0, 16));

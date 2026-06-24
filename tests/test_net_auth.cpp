@@ -78,5 +78,50 @@ int main() {
         CHECK(c->LocalUserId().empty());    // anonymous
     }
 
+    // --- Encrypted session: messages still round-trip; wire is sealed -----------
+    {
+        Scene es("EncServer");
+        auto* esrv = es.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        esrv->encryption = true;
+        std::string gotMsg, gotBig;
+        esrv->SetMessageHandler([&](const NetworkManager::NetMessage& m){
+            if (m.channel == "secret") gotMsg = m.data;
+            if (m.channel == "big")    gotBig = m.data;
+        });
+        CHECK(esrv->StartServer(0));
+        es.Start();
+        std::uint16_t eport = esrv->ServerPort();
+
+        Scene ec("EncClient");
+        auto* ecli = ec.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        ecli->encryption = true;
+        CHECK(ecli->StartClient("127.0.0.1", eport));
+        ec.Start();
+        for (int i = 0; i < 250; ++i) {
+            es.Update(0.02f); ec.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (ecli->Joined()) break;
+        }
+        CHECK(ecli->Joined());
+
+        // A large payload exercises encrypt -> fragment -> reassemble -> decrypt.
+        std::string big; big.reserve(8000);
+        for (int i = 0; i < 8000; ++i) big.push_back((char)('a' + (i * 3 + 1) % 26));
+        ecli->SendReliable("secret", "top secret payload");
+        ecli->SendReliable("big", big);
+        for (int i = 0; i < 250; ++i) {
+            es.Update(0.02f); ec.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (!gotMsg.empty() && !gotBig.empty()) break;
+        }
+        CHECK(gotMsg == "top secret payload");   // delivered through the encrypted channel
+        CHECK(gotBig == big);                    // large encrypted+fragmented message intact
+
+        if (okay::net::SecureChannel::Available()) {   // only when built with libsodium
+            CHECK(ecli->Encrypted());
+            CHECK(esrv->Encrypted());
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

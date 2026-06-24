@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.139.0  (Online accounts, account management, launcher polish)
+  - Online accounts: sign in / register against a managed backend (Supabase) or your own
+    server, with token-validated requests, verify-on-launch, cloud saves and leaderboards.
+    A local-only backend remains as a dev fallback when no server is configured.
+  - Account management: usernames, "Forgot password?" email reset, change password, and now
+    change your email and username too — all from a polished "Account details" panel.
+  - Launcher polish: theme modes (Dark / Midnight / Light) with accent presets and UI scale,
+    Play-tab search with favorites and sorting, a New Project template picker, drag-and-drop
+    to play, toasts, and a tidier Settings/About layout. No command-prompt windows pop up.
+  - Self-updater fixed for both the launcher and editor: builds now pull individual release
+    assets from the latest GitHub release.
+
 v2.134.0  (Friendly Action names, double jump + no infinite jump, fly-cam fix)
   - Visual scripting (Actions) is much easier to read: every condition and instruction
     now has a plain-English name (e.g. "Set Variable", "Play Sound", "Move Toward Object"

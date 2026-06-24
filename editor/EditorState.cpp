@@ -42,7 +42,10 @@ void EditorState::StopNetwork() {
 
 void EditorState::TickServices(float dt) {
     if (m_steam) m_steam->RunCallbacks();
-    if (m_net) m_net->Update(dt);
+    // While playing, the scene's own Update() already ticks m_net (it's a scene
+    // component); ticking it again here would double-step the netcode. Only drive
+    // it from here in edit mode (so Host/Join previews work without pressing Play).
+    if (m_net && !m_playing) m_net->Update(dt);
 }
 
 void EditorState::Achievement(const std::string& id) {
@@ -382,6 +385,10 @@ void EditorState::Play() {
 void EditorState::Stop() {
     if (!m_playing) return;
     m_playing = false;
+    // Deserialize rebuilds the scene, destroying every live component — including
+    // any NetworkManager m_net points at. Drop the pointer first so TickServices
+    // never dereferences freed memory (a use-after-free crash).
+    m_net = nullptr;
     SceneSerializer::Deserialize(m_scene, m_snapshot); // restore edit state
     m_selected = nullptr;
 }

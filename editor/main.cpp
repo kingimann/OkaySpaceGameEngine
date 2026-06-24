@@ -6214,6 +6214,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragInt("Max Jumps##fp", &fp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }
             if (ImGui::Checkbox("Drive Animation##fp", &fp->driveAnimation)) ed.dirty = true;
+            if (ImGui::Checkbox("Lock + Hide Cursor##fp", &fp->lockCursor)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing (mouse-look). Off keeps a normal pointer for clicking UI.");
 
             ImGui::SeparatorText("Run / Stance");
             if (KeyBindCombo("Sprint Key##fp", fp->sprintKey)) ed.dirty = true;
@@ -6258,6 +6260,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Jump##tp", &tp->canJump)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##tp", &tp->driveAnimation)) ed.dirty = true;
+            if (ImGui::Checkbox("Lock + Hide Cursor##tp", &tp->lockCursor)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing. Off keeps a normal pointer for clicking UI.");
             if (tp->canJump) { ImGui::SetNextItemWidth(90);
                 if (ImGui::DragInt("Max Jumps##tp", &tp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }

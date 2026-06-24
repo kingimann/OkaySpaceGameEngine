@@ -9,6 +9,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -74,6 +75,7 @@ public:
     float mouseSensitivity = 0.2f;      // degrees per pixel
     bool  invertY = false;              // invert vertical mouse look
     bool  invertX = false;             // invert horizontal mouse look
+    bool  lockCursor = false;           // hide + lock the cursor while playing (off: keep the pointer for UI)
     float distance  = 5.0f;             // camera distance from the player
     float minDistance = 2.0f, maxDistance = 12.0f;
     float zoomSpeed = 1.0f;             // wheel zoom step
@@ -100,6 +102,8 @@ public:
 
     void Update(float dt) override {
         if (!transform) return;
+        // Optionally hide + lock the cursor while playing (re-assert if freed).
+        if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
 
         // ---- Camera orbit input ----
         // Mouse-right orbits the camera right and mouse-up looks up — matching the

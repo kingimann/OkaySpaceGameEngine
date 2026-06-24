@@ -4980,7 +4980,21 @@ static void DrawFlowGraph(EditorState& ed) {
         ImGui::End(); return;
     }
     ImGui::Text("Flow of '%s'", go->name.c_str());
-    ImGui::SameLine(); ImGui::TextDisabled("— drag nodes to arrange; edit values in the Inspector");
+    ImGui::SameLine(); ImGui::TextDisabled("— drag nodes; drag empty space to pan");
+
+    // Toolbar: add/clear nodes (edits the live ActionList, mirrored in the Inspector)
+    // and a running indicator that lights up while the list executes in Play.
+    int delIns = -1, delCond = -1;            // node-delete requests, applied after layout
+    static std::unordered_map<void*, ImVec2> panMap;
+    ImVec2& pan = panMap[(void*)al];
+    if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({kInstrOps[0].op, {}}); ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({kCondOps[0].op, {}}); ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset View")) pan = ImVec2(0, 0);
+    ImGui::SameLine();
+    if (al->IsRunning()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1.0f), "● running");
+    else                 ImGui::TextDisabled("○ idle");
     ImGui::Separator();
 
     static const char* trigs[] = {"On Start","On Update","On Key","On Collision","On Click",
@@ -4994,26 +5008,43 @@ static void DrawFlowGraph(EditorState& ed) {
     if (cs.x < 80) cs.x = 80; if (cs.y < 80) cs.y = 80;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(cp, ImVec2(cp.x + cs.x, cp.y + cs.y), IM_COL32(24, 26, 32, 255), 4.0f);
+    for (float gx = std::fmod(pan.x, 32.0f); gx < cs.x; gx += 32.0f)   // panning grid
+        dl->AddLine(ImVec2(cp.x + gx, cp.y), ImVec2(cp.x + gx, cp.y + cs.y), IM_COL32(255, 255, 255, 12));
+    for (float gy = std::fmod(pan.y, 32.0f); gy < cs.y; gy += 32.0f)
+        dl->AddLine(ImVec2(cp.x, cp.y + gy), ImVec2(cp.x + cs.x, cp.y + gy), IM_COL32(255, 255, 255, 12));
+    dl->PushClipRect(cp, ImVec2(cp.x + cs.x, cp.y + cs.y), true);
+
+    // Full-canvas button under the nodes: reserves the window bounds AND pans the
+    // view when you drag empty space (nodes, drawn after, take drag priority).
+    ImGui::SetCursorScreenPos(cp);
+    ImGui::InvisibleButton("flow_bg", cs);
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pan.x += ImGui::GetIO().MouseDelta.x; pan.y += ImGui::GetIO().MouseDelta.y; }
 
     static std::unordered_map<std::string, ImVec2> pos;
     auto key = [&](const char* role, int i) {
         char b[64]; std::snprintf(b, sizeof(b), "%p:%s:%d", (void*)al, role, i); return std::string(b);
     };
     const float NW = 190.0f, NH = 46.0f, GAPY = 72.0f;
-    auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col) -> ImVec2 {
+    // Draw a node; *del set true if its little ✕ was clicked (cond/instruction only).
+    auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col, bool* del) -> ImVec2 {
         if (pos.find(k) == pos.end()) pos[k] = def;
         ImVec2 r = pos[k];
-        ImVec2 p{cp.x + r.x, cp.y + r.y};
+        ImVec2 p{cp.x + r.x + pan.x, cp.y + r.y + pan.y};
         ImGui::SetCursorScreenPos(p);
         ImGui::PushID(k.c_str());
         ImGui::InvisibleButton("nd", ImVec2(NW, NH));
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pos[k].x += ImGui::GetIO().MouseDelta.x; pos[k].y += ImGui::GetIO().MouseDelta.y; }
         bool hov = ImGui::IsItemHovered();
+        if (del) {                                    // delete handle in the top-right corner
+            ImGui::SetCursorScreenPos(ImVec2(p.x + NW - 18, p.y + 3));
+            if (ImGui::InvisibleButton("x", ImVec2(15, 15))) *del = true;
+        }
         ImGui::PopID();
         dl->AddRectFilled(p, ImVec2(p.x + NW, p.y + NH), col, 6.0f);
         dl->AddRect(p, ImVec2(p.x + NW, p.y + NH), hov ? IM_COL32(255,255,255,150) : IM_COL32(255,255,255,40), 6.0f);
         dl->AddText(ImVec2(p.x + 9, p.y + 6), IM_COL32(236,239,246,255), title);
         if (!sub.empty()) dl->AddText(ImVec2(p.x + 9, p.y + 25), IM_COL32(172,178,192,255), sub.c_str());
+        if (del) dl->AddText(ImVec2(p.x + NW - 15, p.y + 3), IM_COL32(235, 150, 150, 255), "x");
         return ImVec2(p.x + NW * 0.5f, p.y + NH * 0.5f);
     };
     auto wire = [&](ImVec2 a, ImVec2 b, ImU32 col) {
@@ -5023,12 +5054,15 @@ static void DrawFlowGraph(EditorState& ed) {
     std::string tsub;
     if (al->trigger == ActionList::Trigger::OnKey || al->trigger == ActionList::Trigger::OnMessage)
         tsub = "\"" + al->triggerKey + "\"";
-    ImVec2 trigC = node(key("trig", 0), ImVec2(30, 18), trigLabel, tsub, IM_COL32(150, 92, 42, 255));
+    ImU32 trigCol = al->IsRunning() ? IM_COL32(70, 150, 70, 255) : IM_COL32(150, 92, 42, 255);
+    ImVec2 trigC = node(key("trig", 0), ImVec2(30, 18), trigLabel, tsub, trigCol, nullptr);
 
     for (std::size_t i = 0; i < al->conditions.size(); ++i) {
+        bool d = false;
         ImVec2 c = node(key("cond", (int)i), ImVec2(30 + NW + 60, 18 + i * GAPY),
                         ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), al->conditions[i].op), "if",
-                        IM_COL32(58, 112, 92, 255));
+                        IM_COL32(58, 112, 92, 255), &d);
+        if (d) delCond = (int)i;
         wire(ImVec2(trigC.x + NW * 0.5f, trigC.y), ImVec2(c.x - NW * 0.5f, c.y), IM_COL32(120, 185, 150, 200));
     }
 
@@ -5038,16 +5072,20 @@ static void DrawFlowGraph(EditorState& ed) {
         std::string sub;
         for (const auto& a : al->instructions[i].args) { if (!sub.empty()) sub += " "; sub += a; }
         if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
+        bool d = false;
         ImVec2 c = node(key("ins", (int)i), ImVec2(30, startY + i * GAPY),
                         ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), al->instructions[i].op), sub,
-                        IM_COL32(50, 82, 142, 255));
+                        IM_COL32(50, 82, 142, 255), &d);
+        if (d) delIns = (int)i;
         wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
         prev = c;
     }
     if (al->instructions.empty())
-        dl->AddText(ImVec2(cp.x + 30, cp.y + startY + 12), IM_COL32(150, 150, 160, 255), "(no instructions yet — add them in the Inspector)");
+        dl->AddText(ImVec2(cp.x + 30 + pan.x, cp.y + startY + 12 + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions yet — use + Instruction)");
 
-    ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + cs.y));   // keep the window content sized
+    dl->PopClipRect();
+    if (delIns >= 0 && delIns < (int)al->instructions.size()) { al->instructions.erase(al->instructions.begin() + delIns); ed.dirty = true; }
+    if (delCond >= 0 && delCond < (int)al->conditions.size()) { al->conditions.erase(al->conditions.begin() + delCond); ed.dirty = true; }
     ImGui::End();
 }
 

@@ -678,6 +678,7 @@ int main(int argc, char** argv) {
     bool acctBusy = false;
 
     char playFilter[128] = {0};   // Play-tab search box
+    char marketFilter[128] = {0}; // Marketplace search box
     int tab = 0; // 0 Create, 1 Play, 2 Marketplace, 3 Account, 4 Settings
     if (g_updateOnLaunch) StartUpdateCheck();   // opt-in auto-check at startup
     bool running = true;
@@ -690,6 +691,22 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) running = false;
+            // Drag & drop a .okayscene onto the launcher to play it instantly.
+            else if (e.type == SDL_DROPFILE && e.drop.file) {
+                std::string dropped = e.drop.file;
+                SDL_free(e.drop.file);
+                std::string ext;
+                auto dot = dropped.rfind('.');
+                if (dot != std::string::npos) for (char ch : dropped.substr(dot)) ext += (char)std::tolower((unsigned char)ch);
+                if (ext == ".okayscene" && !player.empty()) {
+                    Launch(player, dropped);
+                    RecordPlayed(dropped); SavePrefs();
+                    Toast("Playing dropped game");
+                    tab = 1;
+                } else {
+                    Toast("Drop a .okayscene game file to play it");
+                }
+            }
         }
         // Once a background download finishes, re-detect the runtimes so the
         // "not found" notices clear without needing a restart.
@@ -698,6 +715,17 @@ int main(int argc, char** argv) {
             player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
             scenes = FindScenes();
             rescannedAfterUpdate = true;
+        }
+        // Toast once when an update check finishes.
+        {
+            static int lastUp = -1;
+            int us = (int)GetState();
+            if (us != lastUp) {
+                if (us == (int)Up_Updated) Toast("Update installed — restart to finish");
+                else if (us == (int)Up_Failed) Toast("Update check failed");
+                else if (us == (int)Up_UpToDate && lastUp == (int)Up_Checking) Toast("You're up to date");
+                lastUp = us;
+            }
         }
 
         ImGui_ImplSDLRenderer2_NewFrame();
@@ -930,7 +958,21 @@ int main(int argc, char** argv) {
             sectionHeader("Marketplace", nullptr);
             ImGui::TextDisabled("Starter templates — open one in the editor (New Project) to begin.");
             ImGui::Spacing();
+            ImGui::PushItemWidth(-1);
+            ImGui::InputTextWithHint("##marketFilter", "Search templates...", marketFilter, sizeof(marketFilter));
+            ImGui::PopItemWidth();
+            ImGui::Dummy(ImVec2(0, 4));
+            auto mlower = [](std::string s) {
+                for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
+                return s;
+            };
+            std::string mneedle = mlower(marketFilter);
+            int mShown = 0;
             for (const auto& t : templates) {
+                if (!mneedle.empty() &&
+                    mlower(std::string(t.name) + " " + t.desc).find(mneedle) == std::string::npos)
+                    continue;
+                ++mShown;
                 ImGui::PushID(t.name);
                 ImGui::BeginChild(t.name, ImVec2(0, 70), true);
                 if (ImGui::IsWindowHovered()) {
@@ -950,6 +992,7 @@ int main(int argc, char** argv) {
                 ImGui::EndChild();
                 ImGui::PopID();
             }
+            if (mShown == 0) ImGui::TextDisabled("No templates match \"%s\".", marketFilter);
             ImGui::Dummy(ImVec2(0, 8));
             ImGui::TextDisabled("Opens the editor's New Project on the chosen template. "
                                 "Community content marketplace coming soon.");

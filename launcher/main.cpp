@@ -366,8 +366,22 @@ std::vector<fs::path> FindScenes() {
 }
 
 // Shared accent so UI code can match the theme.
-const ImVec4 kAccent(0.30f, 0.62f, 1.00f, 1.0f);     // friendly blue
-const ImVec4 kAccentDim(0.22f, 0.44f, 0.74f, 1.0f);
+// Mutable so the Appearance setting can recolor the UI live (DarkTheme() reads
+// these, so changing them and re-applying restyles everything).
+ImVec4 kAccent(0.30f, 0.62f, 1.00f, 1.0f);     // friendly blue
+ImVec4 kAccentDim(0.22f, 0.44f, 0.74f, 1.0f);
+
+// Selectable accent colors (name, main, dim).
+struct AccentPreset { const char* name; ImVec4 col; ImVec4 dim; };
+const AccentPreset kAccentPresets[] = {
+    {"Blue",   ImVec4(0.30f, 0.62f, 1.00f, 1), ImVec4(0.22f, 0.44f, 0.74f, 1)},
+    {"Green",  ImVec4(0.28f, 0.80f, 0.47f, 1), ImVec4(0.20f, 0.56f, 0.33f, 1)},
+    {"Purple", ImVec4(0.62f, 0.46f, 1.00f, 1), ImVec4(0.44f, 0.32f, 0.74f, 1)},
+    {"Orange", ImVec4(1.00f, 0.56f, 0.26f, 1), ImVec4(0.74f, 0.40f, 0.18f, 1)},
+    {"Pink",   ImVec4(1.00f, 0.40f, 0.66f, 1), ImVec4(0.74f, 0.28f, 0.48f, 1)},
+};
+int g_accentIndex = 0;            // current accent preset (persisted)
+bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
 
 void DarkTheme() {
     ImGui::StyleColorsDark();
@@ -412,6 +426,35 @@ void DarkTheme() {
     c[ImGuiCol_ScrollbarGrabActive]  = accent;
 }
 
+// Apply an accent preset and restyle the whole UI live.
+void ApplyAccent(int idx) {
+    int n = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+    if (idx < 0 || idx >= n) idx = 0;
+    g_accentIndex = idx;
+    kAccent    = kAccentPresets[idx].col;
+    kAccentDim = kAccentPresets[idx].dim;
+    DarkTheme();          // re-apply the palette with the new accent
+}
+
+// Launcher preferences persisted next to the exe (launcher.cfg).
+void LoadPrefs() {
+    std::ifstream f(fs::path(g_exeDir) / "launcher.cfg");
+    std::string line;
+    while (std::getline(f, line)) {
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' ')) v.pop_back();
+        if (k == "accent") { try { g_accentIndex = std::stoi(v); } catch (...) {} }
+        else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
+    }
+}
+void SavePrefs() {
+    std::ofstream f(fs::path(g_exeDir) / "launcher.cfg", std::ios::trunc);
+    f << "accent=" << g_accentIndex << "\n";
+    f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -449,7 +492,8 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr; // the launcher has a fixed layout
     ImGui::GetIO().ConfigDebugHighlightIdConflicts = false; // hide dev-only ID warnings
-    DarkTheme();
+    LoadPrefs();                 // accent + behavior options from launcher.cfg
+    ApplyAccent(g_accentIndex);  // applies the saved accent (calls DarkTheme)
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
@@ -547,6 +591,7 @@ int main(int argc, char** argv) {
 
     char playFilter[128] = {0};   // Play-tab search box
     int tab = 0; // 0 Create, 1 Play, 2 Marketplace, 3 Account, 4 Settings
+    if (g_updateOnLaunch) StartUpdateCheck();   // opt-in auto-check at startup
     bool running = true;
     while (running) {
         // Current account service for this frame. Held by reference so existing
@@ -866,6 +911,48 @@ int main(int argc, char** argv) {
                 ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.6f, 1), "%s", setStatus.c_str());
                 ImGui::PopTextWrapPos();
             }
+
+            // ---- Appearance ----
+            ImGui::Dummy(ImVec2(0, 16));
+            ImGui::SeparatorText("Appearance");
+            ImGui::TextDisabled("Accent color");
+            const int accentCount = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
+            for (int i = 0; i < accentCount; ++i) {
+                ImGui::PushID(i);
+                ImGui::PushStyleColor(ImGuiCol_Button, kAccentPresets[i].col);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccentPresets[i].col);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccentPresets[i].dim);
+                bool current = (g_accentIndex == i);
+                if (ImGui::Button(current ? "*" : " ", ImVec2(34, 34))) {
+                    ApplyAccent(i);
+                    SavePrefs();
+                }
+                ImGui::PopStyleColor(3);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kAccentPresets[i].name);
+                ImGui::PopID();
+                if (i < accentCount - 1) ImGui::SameLine();
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("  %s", kAccentPresets[g_accentIndex].name);
+
+            // ---- Behavior ----
+            ImGui::Dummy(ImVec2(0, 16));
+            ImGui::SeparatorText("Behavior");
+            if (ImGui::Checkbox("Check for updates when the launcher starts", &g_updateOnLaunch))
+                SavePrefs();
+
+            // ---- About ----
+            ImGui::Dummy(ImVec2(0, 16));
+            ImGui::SeparatorText("About");
+            ImGui::Text("OkaySpace Engine");
+            ImGui::SameLine();
+            ImGui::TextDisabled("v%s", OKAY_ENGINE_VERSION);
+            ImGui::TextDisabled("A small Unity-inspired C++ game engine.");
+            if (ImGui::SmallButton("Documentation"))
+                OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/blob/main/README.md");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("GitHub repository"))
+                OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine");
         }
 
         // ---- Footer (pinned to the bottom of the content panel) ----

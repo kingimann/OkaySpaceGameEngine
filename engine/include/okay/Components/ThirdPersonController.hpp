@@ -295,7 +295,9 @@ public:
                 RaycastHit3D hit = sc->physics3D().Raycast(*sc, from, dn,
                                                            dist + cameraCollisionSkin, gameObject);
                 if (hit.hit) allow = Mathf::Max(0.0f, hit.distance - cameraCollisionSkin);
-                if (allow <= m_springLen) {
+                if (m_springLen < 0.0f) {
+                    m_springLen = allow;   // first frame: start at the correct length (no ease-out from a stale default)
+                } else if (allow <= m_springLen) {
                     m_springLen = allow;   // blocked: pull in immediately
                 } else {
                     float e = cameraCollisionRecover > 0.0f
@@ -372,7 +374,7 @@ private:
     float m_stanceDrop = 0.0f;        // smoothed look-target drop for crouch/prone
     Vec3 m_camPos{0, 0, 0};
     bool m_haveCamPos = false;
-    float m_springLen = distance;   // eased spring-arm length (camera collision)
+    float m_springLen = -1.0f;      // eased spring-arm length (camera collision); <0 = uninitialized
     float m_groundContact = 0.0f;   // time-to-live of the last ground contact
     float m_coyote = 0.0f;          // remaining coyote-time window
     float m_jumpBuf = 0.0f;         // remaining jump-buffer window

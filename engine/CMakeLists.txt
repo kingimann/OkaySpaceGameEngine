@@ -153,6 +153,13 @@ if(OKAY_WITH_STEAM)
     message(STATUS "OkaySpace: Steamworks backend ENABLED (${_steam_lib})")
 endif()
 
+# Bake a default Steam App ID into the build (release uses the real id; dev stays
+# 480 = Spacewar). Set with -DOKAY_STEAM_APP_ID=<id>.
+if(DEFINED OKAY_STEAM_APP_ID)
+    target_compile_definitions(okay_engine PUBLIC OKAY_STEAM_APP_ID=${OKAY_STEAM_APP_ID})
+    message(STATUS "OkaySpace: default Steam App ID = ${OKAY_STEAM_APP_ID}")
+endif()
+
 # C#: real Mono embedding. Enable with -DOKAY_WITH_CSHARP=ON (needs Mono dev).
 if(OKAY_WITH_CSHARP)
     find_package(PkgConfig QUIET)

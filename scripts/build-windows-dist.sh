@@ -47,6 +47,16 @@ EXTRA=()
 # extracted libsodium-win64 prebuilt (contains include/sodium.h and lib/libsodium.a).
 # It's statically linked, so no extra DLL ships. If unset, the build is unencrypted.
 [ -n "${OKAY_SODIUM_MINGW_PREFIX:-}" ] && EXTRA+=("-DOKAY_SODIUM_PREFIX=$OKAY_SODIUM_MINGW_PREFIX")
+# Bake the Steam App ID into the release build (defaults to OkaySpace's app, 1172560;
+# override or set to 480 for a generic/dev build).
+OKAY_STEAM_APP_ID="${OKAY_STEAM_APP_ID:-1172560}"
+EXTRA+=("-DOKAY_STEAM_APP_ID=$OKAY_STEAM_APP_ID")
+# Real Steamworks backend (achievements/cloud/etc.): set STEAMWORKS_SDK_PATH to the
+# extracted SDK. Without it the simulation backend is used (still a valid release —
+# it just doesn't talk to the live Steam client).
+if [ -n "${STEAMWORKS_SDK_PATH:-}" ]; then
+    EXTRA+=("-DOKAY_WITH_STEAM=ON" "-DSTEAMWORKS_SDK_PATH=$STEAMWORKS_SDK_PATH")
+fi
 
 cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake \
@@ -87,6 +97,14 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
 [ -f dist/VERSION.txt ] && cp dist/VERSION.txt "$OUT_DIR/Tools/"
 [ -f docs/accounts.md ] && cp docs/accounts.md "$OUT_DIR/Tools/"
+
+# When built against the real Steamworks SDK, ship its redistributable DLL next to
+# every exe that initializes Steam (the launcher at top, the tools in Tools/).
+if [ -n "${STEAMWORKS_SDK_PATH:-}" ] && [ -f "$STEAMWORKS_SDK_PATH/redistributable_bin/win64/steam_api64.dll" ]; then
+    cp "$STEAMWORKS_SDK_PATH/redistributable_bin/win64/steam_api64.dll" "$OUT_DIR/"
+    cp "$STEAMWORKS_SDK_PATH/redistributable_bin/win64/steam_api64.dll" "$OUT_DIR/Tools/"
+    echo "Bundled steam_api64.dll (Steamworks backend)."
+fi
 
 cat > "$OUT_DIR/README.txt" <<'EOF'
 OkaySpace

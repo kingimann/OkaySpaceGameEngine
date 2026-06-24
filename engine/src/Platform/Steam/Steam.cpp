@@ -8,7 +8,13 @@ namespace {
         static std::unique_ptr<ISteamService> s;
         return s;
     }
-    std::uint32_t& AppId() { static std::uint32_t id = 480; return id; }
+    // Default Steam App ID. 480 = Valve's Spacewar test app (dev default); a
+    // release build bakes the real id in with -DOKAY_STEAM_APP_ID=<id>. SetAppId()
+    // can still override at runtime before the service is created.
+#ifndef OKAY_STEAM_APP_ID
+#define OKAY_STEAM_APP_ID 480
+#endif
+    std::uint32_t& AppId() { static std::uint32_t id = OKAY_STEAM_APP_ID; return id; }
 }
 
 void Steam::SetAppId(std::uint32_t appId) {

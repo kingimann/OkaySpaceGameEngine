@@ -26,9 +26,17 @@ it's missing.
 ## Each release
 ```bash
 export SDL2_MINGW_PREFIX=/path/to/SDL2-<ver>/x86_64-w64-mingw32   # to build the dist
+# Optional — real Steam achievements/cloud (bundles steam_api64.dll automatically):
+# export STEAMWORKS_SDK_PATH=/path/to/steamworks_sdk
 STEAM_USER=your-builder-account ./upload.sh
 ```
-- `upload.sh` builds `../build-win-dist/` (if absent) and uploads it.
+- `upload.sh` builds `../build-win-dist/` (if absent) and uploads it. The build
+  **bakes in App ID 1172560** automatically (`OKAY_STEAM_APP_ID`), so the shipped
+  exes report as this app — no `steam_appid.txt` needed in the depot (Steam injects
+  the id at launch).
+- Without `STEAMWORKS_SDK_PATH` the build uses the simulation backend: a valid
+  release that runs fine, it just doesn't talk to the live Steam client. Set it to
+  light up real achievements/stats/cloud (and ship `steam_api64.dll`).
 - First login prompts for password + Steam Guard; SteamCMD caches the session
   afterward (good for a CI builder account).
 - **Go live:** by default the build uploads but isn't published — open the

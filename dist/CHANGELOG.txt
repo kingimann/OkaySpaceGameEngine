@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.145.0  (In-world UI, assignable button clicks, player look-at-camera)
+  - In-world (3D) UI: a World UI component draws a label (optional background +
+    health/progress bar) floating over a 3D point — nameplates, health bars,
+    markers, damage numbers. Scales with distance; shows in the Game view + game.
+  - Buttons can call a chosen public script function on click, picked from a
+    dropdown in the inspector (Unity-style OnClick) — no on_click() needed.
+  - The PLAYER can now look at the camera: the Third Person / Shooter controllers
+    defer to a Character's "Look at Camera"/"Look at Object", so the head turns
+    (yaw AND pitch) toward the camera instead of only left/right.
+
 v2.144.0  (Look-at camera, easier multiplayer starter)
   - Character "Look at Camera" / "Look at Object": the head now aims at the camera
     (or a named target) on its own — no controller or script needed. Controllers

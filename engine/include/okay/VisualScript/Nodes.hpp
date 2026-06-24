@@ -6,6 +6,10 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
+#include "okay/Components/AudioSource.hpp"
+#include "okay/Physics/Rigidbody2D.hpp"
+#include "okay/Physics/Physics2D.hpp"
+#include "okay/Math/Vec2.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
@@ -618,6 +622,77 @@ struct SteamLeaderboardNode : VsNode {
     explicit SteamLeaderboardNode(std::string b) : board(std::move(b)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override { okay::Steam::Get().UploadLeaderboardScore(board, (std::int32_t)In(0, g, ctx).AsFloat()); return 0; }
+};
+
+// ---- Audio ------------------------------------------------------------
+// Play the AudioSource on this object (sound effects, one-shots).
+struct PlaySoundNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject) if (auto* au = ctx.gameObject->GetComponent<AudioSource>()) au->Play();
+        return 0;
+    }
+};
+
+// ---- Physics (sibling Rigidbody2D) ------------------------------------
+struct AddForceNode : VsNode {     // in0=x, in1=y (continuous force)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject) if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
+            rb->AddForce({In(0, g, ctx).AsFloat(), In(1, g, ctx).AsFloat()});
+        return 0;
+    }
+};
+struct AddImpulseNode : VsNode {   // in0=x, in1=y (instant kick — jumps/knockback)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject) if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
+            rb->AddImpulse({In(0, g, ctx).AsFloat(), In(1, g, ctx).AsFloat()});
+        return 0;
+    }
+};
+struct SetVelocityNode : VsNode {  // in0=x, in1=y
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject) if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
+            rb->velocity = {In(0, g, ctx).AsFloat(), In(1, g, ctx).AsFloat()};
+        return 0;
+    }
+};
+struct VelAxisNode : VsNode {      // 0=x, 1=y of this object's Rigidbody2D velocity
+    int axis;
+    explicit VelAxisNode(int a) : axis(a) {}
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject) if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
+            return axis == 0 ? rb->velocity.x : rb->velocity.y;
+        return 0.0f;
+    }
+};
+// Cast a 2D ray (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist]) -> did it hit?
+struct RaycastNode : VsNode {
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        if (!ctx.gameObject || !ctx.gameObject->scene()) return false;
+        Vec2 o{In(0, g, ctx).AsFloat(), In(1, g, ctx).AsFloat()};
+        Vec2 d{In(2, g, ctx).AsFloat(), In(3, g, ctx).AsFloat()};
+        float maxDist = In(4, g, ctx, VsValue{1e9f}).AsFloat();
+        return ctx.gameObject->scene()->physics().Raycast(*ctx.gameObject->scene(), o, d, maxDist).hit;
+    }
+};
+
+// ---- Tween / easing (shape a 0..1 t for smooth motion) ----------------
+struct EaseNode : VsNode {
+    enum class Mode { In, Out, InOut } mode;
+    explicit EaseNode(Mode m) : mode(m) {}
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        float t = In(0, g, ctx).AsFloat();
+        if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+        switch (mode) {
+            case Mode::In:    return t * t;
+            case Mode::Out:   return 1.0f - (1.0f - t) * (1.0f - t);
+            case Mode::InOut: return t * t * (3.0f - 2.0f * t);   // smoothstep
+        }
+        return t;
+    }
 };
 
 /// Construct a node from its text-format type name and arguments.

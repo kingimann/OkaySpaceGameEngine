@@ -46,6 +46,11 @@ passes any value type through), `Concat` (in0+in1 as strings),
 **Data — Steam**: `SteamName`, `SteamIsUnlocked <achievement>`,
 `SteamGetStat <name>`
 
+**Data — physics & tween**: `VelX` / `VelY` (this object's Rigidbody2D velocity),
+`Raycast` (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist] → did it hit?),
+`EaseIn` / `EaseOut` / `EaseInOut` (shape a 0..1 `t` for smooth motion — feed into
+`Lerp`)
+
 **Actions** (1 exec out): `SetVar <name>`, `AddVar <name>` (add in0 to a variable),
 `Toggle <name>` (flip a boolean variable), `Print`, `LogWarn`, `LogError`,
 `Translate` (in0=x, in1=y), `SetPosition` (in0=x, in1=y),
@@ -58,6 +63,10 @@ object's position), `Destroy` (remove this object — terminal, no exec out)
 
 **Actions — Steam**: `SteamUnlock <achievement>`, `SteamSetStat <name>` (in0=value),
 `SteamStore`, `SteamLeaderboard <board>` (in0=score)
+
+**Actions — audio & physics**: `PlaySound` (play this object's AudioSource),
+`AddForce` (in0=x, in1=y), `AddImpulse` (in0=x, in1=y — jumps/knockback),
+`SetVelocity` (in0=x, in1=y) — all on the sibling Rigidbody2D
 
 **Flow**:
 - `Branch` — exec out 0 = true, exec out 1 = false; data in0 = condition

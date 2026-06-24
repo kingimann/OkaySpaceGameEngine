@@ -8218,12 +8218,13 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 
     // Single UI preview pass: queue every widget's draw-block, then sort by Canvas
     // sortOrder, each object's uiDrawOrder override (else its default type layer), and
-    // hierarchy pre-order. With no overrides this reproduces the old per-type pass
-    // order exactly; a non-zero uiDrawOrder lets a widget layer against any other type.
-    // The layer constants below ARE that historic pass order.
-    enum UIK { K_Scroll = 0, K_DropBg, K_Image, K_Panel, K_Progress, K_Slider,
-               K_Stepper, K_Rating, K_Toggle, K_Radial, K_Tabs, K_WorldUI, K_Button,
-               K_Input, K_Text, K_Dropdown, K_Tooltip };
+    // hierarchy pre-order. The layer VALUES below are the player's canonical type
+    // order, so the editor preview layers UI identically to the built game (including
+    // for uiDrawOrder overrides). With no overrides existing scenes are unchanged.
+    enum UIK { K_DropBg = 0, K_Image = 1, K_Panel = 2, K_Scroll = 4, K_Progress = 5,
+               K_Radial = 6, K_Slider = 7, K_Stepper = 8, K_Rating = 9, K_Toggle = 10,
+               K_Tabs = 11, K_Button = 12, K_Text = 13, K_WorldUI = 14, K_Dropdown = 15,
+               K_Input = 16, K_Tooltip = 18 };
     std::vector<UIDrawItem> edItems;
     for (std::size_t _qi = 0; _qi < objs.size(); ++_qi) {
         GameObject* g = objs[_qi].get();

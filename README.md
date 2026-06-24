@@ -151,7 +151,12 @@ planet, `A` player ship.)*
   view with anchor-correct handles; **snapping** to a pixel grid plus smart
   edge/center **alignment guides** to the canvas and siblings; arrow-key
   nudging; a **3×3 anchor preset** grid (re-anchors without moving the widget);
-  Bring to Front / Send to Back, Center in Canvas, and Fill Width/Height/Canvas.
+  Bring to Front / Send to Back, a per-widget **Draw Order** override, Center in
+  Canvas, and Fill Width/Height/Canvas.
+- **UI layering** — one draw pass ordered by Canvas **Sort Order**, then each
+  widget's **Draw Order** (0 = default type order; non-zero layers it against any
+  other type, higher on top), then the hierarchy (child over parent, sibling
+  order). The editor preview matches the built game exactly.
 - **UI Toolkit (OkayUI markup)** — a **UIDocument** authors whole HUDs/menus as
   text: every widget type, customization keys (corner/border/gradient/font/
   align/outline/fill/…), `tooltip=`, percent sizing (`50%`), `name=` (script-

@@ -18,6 +18,9 @@
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UIDraggable.hpp"   // UIDropTarget
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/WorldUI.hpp"
 #include "okay/Math/Vec2.hpp"
 #include <vector>
 #include <algorithm>
@@ -228,6 +231,33 @@ inline std::vector<UIDrawItem> SortUIDrawItems(const ObjVec& objects,
         return a.layer < b.layer;
     });
     return items;
+}
+
+/// The canonical default draw layer for whatever UI widget a GameObject carries
+/// (the order the single UI pass uses when uiDrawOrder is 0). Higher draws on top.
+/// This is the shared scale a non-zero uiDrawOrder competes on, so the editor can
+/// show the user which number a widget would need to beat. Returns -1 for non-UI
+/// objects. Box widgets are checked before text, matching GetUIRect.
+inline int UIDefaultLayer(GameObject* go) {
+    if (!go) return -1;
+    if (go->GetComponent<UIDropTarget>())     return 0;   // slot background
+    if (go->GetComponent<UIImage>())          return 1;
+    if (go->GetComponent<UIPanel>())          return 2;
+    if (go->GetComponent<UIScrollView>())     return 4;
+    if (go->GetComponent<UIProgressBar>())    return 5;
+    if (go->GetComponent<UIRadialProgress>()) return 6;
+    if (go->GetComponent<UISlider>())         return 7;
+    if (go->GetComponent<UIStepper>())        return 8;
+    if (go->GetComponent<UIRating>())         return 9;
+    if (go->GetComponent<UIToggle>())         return 10;
+    if (go->GetComponent<UITabs>())           return 11;
+    if (go->GetComponent<UIButton>())         return 12;
+    if (go->GetComponent<WorldUI>())          return 14;
+    if (go->GetComponent<UIDropdown>())       return 15;
+    if (go->GetComponent<UIInputField>())     return 16;
+    if (go->GetComponent<UITooltip>())        return 18;
+    if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? 13 : -1;
+    return -1;
 }
 
 /// The master opacity [0,1] the widget should be drawn at (its Canvas's opacity,

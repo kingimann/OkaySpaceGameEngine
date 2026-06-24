@@ -1,5 +1,6 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/Packet.hpp"
+#include "okay/Net/RelayProtocol.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -30,6 +31,13 @@ namespace {
         net::Packet p(ReliableMsg);
         p.Write(seq); p.Write(channel); p.Write(data);
         return std::vector<std::uint8_t>(p.Data(), p.Data() + p.Size());
+    }
+
+    // A relay peer is identified by a slot id carried in the Endpoint's address,
+    // with a sentinel port so it can never be confused with a real address. The
+    // server keys its client table by these, so relay routing needs no other change.
+    net::Endpoint SlotEndpoint(std::uint32_t slot) {
+        return net::Endpoint{slot, net::kRelaySlotPort};
     }
 }
 
@@ -70,12 +78,77 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     return true;
 }
 
+bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t relayPort,
+                                const std::string& code, bool asHost) {
+    Stop();
+    if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
+    m_netStarted = true;
+    if (!m_socket.Open()) { OKAY_ERROR("net: failed to open relay socket"); Stop(); return false; }
+    if (!net::UdpSocket::Resolve(relayHost, relayPort, m_relayEp)) {
+        OKAY_ERROR("net: cannot resolve relay ", relayHost);
+        Stop();
+        return false;
+    }
+    m_relay = true;
+    m_relayWelcomed = false;
+    m_relayCode = code;
+    m_relaySlot = 0;
+    m_relayHelloTimer = 0.0f;
+    m_kicked = false; m_kickReason.clear();
+    if (asHost) {
+        m_mode = Mode::Server;
+        m_localId = 0;
+        if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
+        OKAY_INFO("net: hosting '", serverName, "' via relay ", m_relayEp.ToString(),
+                  " (session '", code, "')");
+    } else {
+        m_mode = Mode::Client;
+        m_joined = false;
+        m_localUserId.clear();
+        if (encryption && net::SecureChannel::Available()) m_secure.GenerateKeys();
+        OKAY_INFO("net: joining session '", code, "' via relay ", m_relayEp.ToString());
+    }
+    return true;
+}
+
+bool NetworkManager::HostViaRelay(const std::string& relayHost, std::uint16_t relayPort,
+                                  const std::string& code) {
+    return StartRelay(relayHost, relayPort, code, /*asHost=*/true);
+}
+
+bool NetworkManager::JoinViaRelay(const std::string& relayHost, std::uint16_t relayPort,
+                                  const std::string& code) {
+    return StartRelay(relayHost, relayPort, code, /*asHost=*/false);
+}
+
+// Announce ourselves to the relay on connect and ~once a second after, so it can
+// pair us and so the NAT mapping the relay talks back through stays open.
+void NetworkManager::RelayKeepAlive(float dt) {
+    if (!m_relay) return;
+    m_relayHelloTimer -= dt;
+    if (m_relayHelloTimer > 0.0f) return;
+    m_relayHelloTimer = 1.0f;
+    net::Packet h(net::RelayHello);
+    h.Write(std::uint8_t(m_mode == Mode::Server ? net::RelayHost : net::RelayClient));
+    h.Write(m_relayCode);
+    m_socket.SendTo(m_relayEp, h.Data(), h.Size());
+}
+
 void NetworkManager::Stop() {
     if (m_mode == Mode::Client && m_joined && m_socket.IsOpen()) {
         net::Packet p(Leave);
         p.Write(m_localId);
         SendDatagram(m_serverEp, p.Data(), p.Size());
     }
+    if (m_relay && m_socket.IsOpen()) {            // free our slot on the relay
+        net::Packet bye(net::RelayBye);
+        m_socket.SendTo(m_relayEp, bye.Data(), bye.Size());
+    }
+    m_relay = false;
+    m_relayWelcomed = false;
+    m_relaySlot = 0;
+    m_relayCode.clear();
+    m_relayEp = net::Endpoint{};
     m_socket.Close();
     if (m_netStarted) { net::Shutdown(); m_netStarted = false; }
     m_clients.clear();
@@ -327,7 +400,7 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
             }
         }
     }
-    if (size <= net::kFragmentThreshold) { m_socket.SendTo(to, data, size); return; }
+    if (size <= net::kFragmentThreshold) { Transmit(to, data, size); return; }
     const std::size_t header = 1 + 4 + 4 + 4;            // type + msgId + index + count
     const std::size_t chunkMax = net::kFragmentThreshold - header;
     std::uint32_t count = static_cast<std::uint32_t>((size + chunkMax - 1) / chunkMax);
@@ -338,7 +411,57 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
         net::Packet h(Fragment); h.Write(id); h.Write(i); h.Write(count);
         std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
         dg.insert(dg.end(), data + off, data + off + len);
-        m_socket.SendTo(to, dg.data(), dg.size());
+        Transmit(to, dg.data(), dg.size());
+    }
+}
+
+// One physical datagram out. Direct mode sends straight to the peer; relay mode
+// wraps it in a RelayData frame addressed by the peer's slot (carried in `to`'s
+// address) and sends it to the relay, which forwards it on.
+void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data, std::size_t size) {
+    if (!m_relay) { m_socket.SendTo(to, data, size); return; }
+    net::Packet h(net::RelayData);
+    h.Write(to.address);                       // destination slot
+    std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
+    dg.insert(dg.end(), data, data + size);
+    m_socket.SendTo(m_relayEp, dg.data(), dg.size());
+}
+
+// One physical datagram in. Direct mode is a pass-through. Relay mode peels the
+// RelayData header (substituting a synthetic slot-endpoint as the sender) and
+// quietly handles RelayWelcome control frames, looping until it has an actual
+// application payload to return (or nothing is pending).
+int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoint& from) {
+    for (;;) {
+        int n = m_socket.RecvFrom(buffer, capacity, from);
+        if (n <= 0 || !m_relay) return n;
+        if (!(from == m_relayEp)) continue;          // only the relay should reach us
+        auto* b = static_cast<std::uint8_t*>(buffer);
+        std::uint8_t tag = b[0];
+        if (tag == net::RelayWelcome) {
+            net::Packet p(b, static_cast<std::size_t>(n));
+            p.ReadU8();
+            std::uint32_t yourSlot = p.ReadU32();
+            std::uint32_t hostSlot = p.ReadU32();
+            if (p.Ok()) {
+                m_relaySlot = yourSlot;
+                m_relayWelcomed = true;
+                if (m_mode == Mode::Client) m_serverEp = SlotEndpoint(hostSlot);
+            }
+            continue;
+        }
+        if (tag == net::RelayData) {
+            const std::size_t payloadOff = 1 + 4;    // tag + srcSlot
+            if (static_cast<std::size_t>(n) < payloadOff) continue;
+            net::Packet hp(b, payloadOff);
+            hp.ReadU8();
+            std::uint32_t srcSlot = hp.ReadU32();
+            std::size_t payload = static_cast<std::size_t>(n) - payloadOff;
+            std::memmove(buffer, b + payloadOff, payload);
+            from = SlotEndpoint(srcSlot);
+            return static_cast<int>(payload);
+        }
+        // Unknown relay tag — ignore and keep reading.
     }
 }
 
@@ -439,11 +562,12 @@ void NetworkManager::ServerTick(float dt) {
     // A full-size receive buffer: a UDP datagram can be up to ~64 KB, so a small
     // fixed buffer silently truncated any larger message (e.g. a big reliable
     // payload). Reused across ticks (thread-local) to avoid per-frame allocation.
+    RelayKeepAlive(dt);
     PruneFragments(dt);
     static thread_local std::vector<std::uint8_t> buf(net::kMaxDatagram);
     net::Endpoint from;
     int n;
-    while ((n = m_socket.RecvFrom(buf.data(), buf.size(), from)) > 0) {
+    while ((n = ReceiveFrom(buf.data(), buf.size(), from)) > 0) {
         const std::uint8_t* data = buf.data();
         std::size_t len = static_cast<std::size_t>(n);
         std::vector<std::uint8_t> assembled;   // holds the message if this was a fragment
@@ -685,7 +809,12 @@ void NetworkManager::ServerTick(float dt) {
 
 void NetworkManager::ClientTick(float dt) {
     m_clock += dt;
-    if (!m_joined) {
+    RelayKeepAlive(dt);
+    // Through a relay we don't know the host's (synthetic) endpoint until the relay
+    // pairs us, so hold the join handshake until then (the recv loop below still
+    // runs, so the relay's welcome is processed).
+    bool awaitingRelay = m_relay && !m_relayWelcomed;
+    if (!m_joined && !awaitingRelay) {
         m_joinTimer -= dt;
         if (m_joinTimer <= 0.0f) {
             net::Packet p(Join);
@@ -715,7 +844,7 @@ void NetworkManager::ClientTick(float dt) {
     static thread_local std::vector<std::uint8_t> buf(net::kMaxDatagram);
     net::Endpoint from;
     int n;
-    while ((n = m_socket.RecvFrom(buf.data(), buf.size(), from)) > 0) {
+    while ((n = ReceiveFrom(buf.data(), buf.size(), from)) > 0) {
         const std::uint8_t* data = buf.data();
         std::size_t len = static_cast<std::size_t>(n);
         std::vector<std::uint8_t> assembled;

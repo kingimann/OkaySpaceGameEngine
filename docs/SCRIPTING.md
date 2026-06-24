@@ -205,6 +205,9 @@ editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
 |---|---|
 | `net_host(port)` | Start a server on this machine |
 | `net_join("ip", port)` | Connect to a host |
+| `net_host_relay("relay_ip", relay_port, "code")` | Host **via a relay** (NAT traversal — no port-forwarding) |
+| `net_join_relay("relay_ip", relay_port, "code")` | Join a relay-hosted session by the same code |
+| `net_relay_ready()` | 1 once the relay has paired this peer |
 | `net_disconnect()` | Leave / stop the session |
 | `net_connected()` / `net_is_server()` / `net_is_client()` | Status |
 | `net_id()` / `net_peers()` | Your peer id / connected peer count |

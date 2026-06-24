@@ -34,6 +34,24 @@ public:
     bool StartClient(const std::string& host, std::uint16_t port);
     void Stop();
 
+    // ---- Relay (NAT traversal) ----------------------------------------
+    /// Host a session *through a relay* instead of binding a public port. Both
+    /// the host and its clients connect outward to the same relay and announce a
+    /// shared `code`; the relay forwards traffic between them. This is what lets
+    /// players behind home routers / NATs play together with no port-forwarding.
+    /// The relay never sees plaintext — encryption (if enabled) still runs end to
+    /// end. Run a relay with the `okayspace-relay` binary.
+    bool HostViaRelay(const std::string& relayHost, std::uint16_t relayPort,
+                      const std::string& code);
+    /// Join a relay-hosted session by the same code the host used.
+    bool JoinViaRelay(const std::string& relayHost, std::uint16_t relayPort,
+                      const std::string& code);
+    /// True while this peer is routing through a relay (host or client).
+    bool Relayed() const { return m_relay; }
+    /// True once the relay has paired this peer (assigned a slot / host wired up).
+    bool RelayReady() const { return m_relay && m_relayWelcomed; }
+
+
     Mode mode() const { return m_mode; }
     bool IsServer() const { return m_mode == Mode::Server; }
     bool IsClient() const { return m_mode == Mode::Client; }
@@ -269,6 +287,16 @@ private:
     // discards half-assembled messages whose fragments stopped arriving.
     void SendDatagram(const net::Endpoint& to, const std::uint8_t* data, std::size_t size,
                       bool allowEncrypt = true);
+    // Physical I/O, relay-aware. Transmit either sends straight to `to` (direct
+    // mode) or wraps the bytes in a relay frame addressed by `to`'s slot and sends
+    // them to the relay. ReceiveFrom transparently consumes relay control frames
+    // and hands back application payloads with a synthetic slot-endpoint as `from`,
+    // so the server/client logic above is identical in both modes.
+    void Transmit(const net::Endpoint& to, const std::uint8_t* data, std::size_t size);
+    int  ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoint& from);
+    void RelayKeepAlive(float dt);   // re-announce to the relay so the NAT stays open
+    bool StartRelay(const std::string& relayHost, std::uint16_t relayPort,
+                    const std::string& code, bool asHost);
     /// The encrypted session for an endpoint (client: the server; server: that
     /// client), or nullptr if none / not established.
     net::SecureChannel* SessionFor(const net::Endpoint& ep);
@@ -294,6 +322,16 @@ private:
     Mode m_mode = Mode::Offline;
     net::UdpSocket m_socket;
     bool m_netStarted = false;
+
+    // Relay routing (NAT traversal). When m_relay is set, every physical send goes
+    // to m_relayEp framed with a slot id, and every peer is keyed by a synthetic
+    // Endpoint{slot} so the rest of the code is unchanged.
+    bool m_relay = false;
+    bool m_relayWelcomed = false;     // relay has assigned our slot / wired the host
+    net::Endpoint m_relayEp{};        // the relay's real address
+    std::string m_relayCode;          // shared session code
+    std::uint32_t m_relaySlot = 0;    // our slot (set on welcome)
+    float m_relayHelloTimer = 0.0f;   // re-hello cadence (NAT keepalive)
 
     // Local peer
     Transform* m_localAvatar = nullptr;

@@ -1948,6 +1948,24 @@ struct OkayScriptVM::Impl {
             std::uint16_t port = (std::uint16_t)(a.size() < 2 ? 45000 : (int)a[1].AsFloat());
             return Value{(n && n->StartClient(host, port)) ? 1.0f : 0.0f};
         };
+        // Relay (NAT traversal): host/join through a shared relay + session code,
+        // so peers behind routers connect without port-forwarding.
+        b["net_host_relay"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            if (!n || a.size() < 3) return Value{0.0f};
+            return Value{n->HostViaRelay(a[0].AsString(), (std::uint16_t)(int)a[1].AsFloat(),
+                                         a[2].AsString()) ? 1.0f : 0.0f};
+        };
+        b["net_join_relay"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            if (!n || a.size() < 3) return Value{0.0f};
+            return Value{n->JoinViaRelay(a[0].AsString(), (std::uint16_t)(int)a[1].AsFloat(),
+                                         a[2].AsString()) ? 1.0f : 0.0f};
+        };
+        // 1 once the relay has paired this peer (host wired up / slot assigned).
+        b["net_relay_ready"] = [this](std::vector<Value>&) {
+            NetworkManager* n = Net(); return Value{(n && n->RelayReady()) ? 1.0f : 0.0f};
+        };
         b["net_disconnect"] = [this](std::vector<Value>&) {
             if (NetworkManager* n = Net()) n->Stop();
             return Value{};

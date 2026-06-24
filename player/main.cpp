@@ -430,7 +430,7 @@ int main(int argc, char** argv) {
         // the clip to none.
         auto enterScroll = [&](GameObject* g, Vec2& o) {
             if (UIScrollView* psv = OwningScrollView(g)) {
-                Vec2 vp = ResolveAnchor(psv->anchor, psv->position, psv->size, (float)w, (float)h);
+                Vec2 vp = UIResolveOrigin(psv->gameObject, (float)w, (float)h);
                 o.y -= psv->scroll;
                 SDL_Rect clip{(int)vp.x, (int)vp.y, (int)psv->size.x, (int)psv->size.y};
                 SDL_RenderSetClipRect(renderer, &clip);
@@ -635,7 +635,7 @@ int main(int argc, char** argv) {
             auto* im = up->GetComponent<UIImage>();
             if (!im || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
-            Vec2 o = ResolveAnchor(im->anchor, im->position, im->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)im->size.x, (int)im->size.y};
             // Radial/linear fill: shrink the drawn rect to fillAmount along an axis.
@@ -687,7 +687,7 @@ int main(int argc, char** argv) {
             auto* pn = up->GetComponent<UIPanel>();
             if (!pn || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
-            Vec2 o = ResolveAnchor(pn->anchor, pn->position, pn->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
             if (pn->shadow) {                               // drop shadow behind (same shape)
@@ -723,7 +723,7 @@ int main(int argc, char** argv) {
             auto* sv = up->GetComponent<UIScrollView>();
             if (!sv || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
-            Vec2 o = ResolveAnchor(sv->anchor, sv->position, sv->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             SDL_Rect box{(int)o.x, (int)o.y, (int)sv->size.x, (int)sv->size.y};
             SDL_SetRenderDrawColor(renderer, (Uint8)(sv->background.r * 255), (Uint8)(sv->background.g * 255),
                                    (Uint8)(sv->background.b * 255), (Uint8)(sv->background.a * 255 * op));
@@ -746,7 +746,7 @@ int main(int argc, char** argv) {
             auto* pb = up->GetComponent<UIProgressBar>();
             if (!pb || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
-            Vec2 o = ResolveAnchor(pb->anchor, pb->position, pb->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
             FillUIShape(renderer, bg, pb->shape, pb->cornerRadius,
@@ -771,7 +771,7 @@ int main(int argc, char** argv) {
             auto* rp = up->GetComponent<UIRadialProgress>();
             if (!rp || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
-            Vec2 o = ResolveAnchor(rp->anchor, rp->position, rp->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             int bw = (int)rp->size.x, bh = (int)rp->size.y;
             for (int y = 0; y < bh; ++y)
@@ -800,7 +800,7 @@ int main(int argc, char** argv) {
             auto* sl = up->GetComponent<UISlider>();
             if (!sl || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
-            Vec2 o = ResolveAnchor(sl->anchor, sl->position, sl->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
             FillUIShape(renderer, bg, sl->trackShape, sl->cornerRadius,
@@ -836,7 +836,7 @@ int main(int argc, char** argv) {
             auto* st = up->GetComponent<UIStepper>();
             if (!st || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
-            Vec2 o = ResolveAnchor(st->anchor, st->position, st->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bg{(int)o.x, (int)o.y, (int)st->size.x, (int)st->size.y};
             FillUIShape(renderer, bg, st->shape, st->cornerRadius, st->background, st->background, false, false, op);
@@ -865,7 +865,7 @@ int main(int argc, char** argv) {
             auto* rt = up->GetComponent<UIRating>();
             if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
             float op = UIOpacity(up.get());
-            Vec2 o = ResolveAnchor(rt->anchor, rt->position, rt->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             float cw = rt->CellWidth();
             float d = Mathf::Min(cw, rt->size.y);          // star size (square cell)
@@ -894,7 +894,7 @@ int main(int argc, char** argv) {
             auto* tg = up->GetComponent<UIToggle>();
             if (!tg || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
-            Vec2 o = ResolveAnchor(tg->anchor, tg->position, tg->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect box{(int)o.x, (int)o.y, (int)tg->size.x, (int)tg->size.y};
             float t = tg->AnimT();                          // 0=off..1=on (smoothed)
@@ -934,7 +934,7 @@ int main(int argc, char** argv) {
             auto* tb = up->GetComponent<UITabs>();
             if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
             float op = UIOpacity(up.get());
-            Vec2 o = ResolveAnchor(tb->anchor, tb->position, tb->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect bar{(int)o.x, (int)o.y, (int)tb->size.x, (int)tb->size.y};
             FillUIShape(renderer, bar, tb->shape, tb->cornerRadius,
@@ -962,7 +962,7 @@ int main(int argc, char** argv) {
             if (!btn || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
             Color bg = btn->DisplayColor();
-            Vec2 o = ResolveAnchor(btn->anchor, btn->position, btn->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect r{(int)o.x, (int)o.y, (int)btn->size.x, (int)btn->size.y};
             if (btn->hoverScale != 1.0f && (btn->IsHovered() || btn->IsFocused())) {
@@ -1044,7 +1044,7 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {           // dropdowns (header + open list)
             auto* dd = up->GetComponent<UIDropdown>();
             if (!dd || !up->active || UIHidden(up.get())) continue;
-            Vec2 o = ResolveAnchor(dd->anchor, dd->position, dd->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect hdr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
             FillUIShape(renderer, hdr, dd->shape, dd->cornerRadius,
@@ -1073,7 +1073,7 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {           // input fields (box + text + caret)
             auto* in = up->GetComponent<UIInputField>();
             if (!in || !up->active || UIHidden(up.get())) continue;
-            Vec2 o = ResolveAnchor(in->anchor, in->position, in->size, (float)w, (float)h);
+            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
             SDL_Rect box{(int)o.x, (int)o.y, (int)in->size.x, (int)in->size.y};
             Color bg = in->CurrentColor();

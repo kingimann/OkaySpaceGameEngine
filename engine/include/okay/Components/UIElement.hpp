@@ -196,6 +196,23 @@ inline float ScrollViewContentHeight(GameObject* sv) {
     return maxBottom;
 }
 
+/// The top-left screen pixel of a widget, resolved WITHIN its UI parent when it has
+/// one (so moving/resizing the parent moves the child — Unity-style), else against
+/// the whole screen. Unscaled (Canvas scale = 1); the renderers that don't apply a
+/// Canvas scale use this so children follow their parent. Mirrors GetUIScreenRect's
+/// anchor math without the scale factor.
+inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
+    UIRect r = GetUIRect(go);
+    if (!r.valid || !r.position) return Vec2{0.0f, 0.0f};
+    if (GameObject* parent = OwningUIParent(go)) {
+        UIRect pr = GetUIRect(parent);
+        if (pr.valid)
+            return UIResolveOrigin(parent, screenW, screenH) +
+                   ResolveAnchor(r.anchor, *r.position, r.size, pr.size.x, pr.size.y);
+    }
+    return ResolveAnchor(r.anchor, *r.position, r.size, screenW, screenH);
+}
+
 /// Whether a point (screen pixels) falls inside a widget's scaled rect.
 inline bool UIScreenContains(GameObject* go, const Vec2& p, float screenW, float screenH) {
     Vec2 o, sz;

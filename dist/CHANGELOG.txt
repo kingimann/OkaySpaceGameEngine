@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.146.0  (Flow Graph for visual scripting)
+  - New Flow Graph window (Windows > Flow Graph): a node view of the selected
+    object's Actions — Trigger, Condition gates and Instructions wired top to
+    bottom. Reuses the existing Actions execution; drag nodes to arrange, edit
+    values in the Inspector.
+
 v2.145.0  (In-world UI, assignable button clicks, player look-at-camera)
   - In-world (3D) UI: a World UI component draws a label (optional background +
     health/progress bar) floating over a 3D point — nameplates, health bars,

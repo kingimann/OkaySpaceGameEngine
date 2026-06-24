@@ -7248,12 +7248,16 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sv->size.x, sv->size.y};
             if (ImGui::DragFloat2("Viewport (px)##usv", sz, 1.0f, 16.0f, 8000.0f)) { sv->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::Checkbox("Auto content height##usv", &sv->autoContent)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the scroll range to the child widgets automatically.");
+            ImGui::BeginDisabled(sv->autoContent);
             if (ImGui::DragFloat("Content Height##usv", &sv->contentHeight, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            ImGui::EndDisabled();
             if (ImGui::SliderFloat("Scroll##usv", &sv->scroll, 0.0f, sv->ScrollMax())) ed.dirty = true;
             float c[4] = {sv->background.r, sv->background.g, sv->background.b, sv->background.a};
             if (ImGui::ColorEdit4("Background##usv", c)) { sv->background = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##usv", sv->anchor, ed);
-            ImGui::TextDisabled("Parent UI widgets to this; the wheel scrolls them.");
+            ImGui::TextDisabled("Parent UI widgets to this; the wheel or scrollbar scrolls them.");
             if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
@@ -10024,6 +10028,15 @@ int main(int argc, char** argv) {
         } else if (!ed.isPlaying()) {
             Input::FeedKeys({}); // release everything in edit mode
         }
+
+        // Keep each scroll view's contentHeight matched to its children so the
+        // scrollbar/clip preview is right while editing and the wheel/drag work in Play.
+        for (const auto& up : ed.scene().Objects())
+            if (auto* sv = up->GetComponent<UIScrollView>())
+                if (sv->autoContent) {
+                    float ch = ScrollViewContentHeight(up.get());
+                    sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
+                }
 
         if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
         ed.TickServices(dt); // Steam callbacks + networking every frame

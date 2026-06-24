@@ -394,6 +394,15 @@ int main(int argc, char** argv) {
         { int cw, ch; SDL_GetRendererOutputSize(renderer, &cw, &ch);
           UICanvas::Set((float)cw, (float)ch); }
 
+        // Auto-size scroll views from their children before updating, so the wheel
+        // and scrollbar use the real content extent (not a stale hand-set value).
+        for (const auto& up : scene.Objects())
+            if (auto* sv = up->GetComponent<UIScrollView>())
+                if (sv->autoContent) {
+                    float ch = ScrollViewContentHeight(up.get());
+                    sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
+                }
+
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
         Time::Step(dt);

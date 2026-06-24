@@ -179,6 +179,23 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
     return true;
 }
 
+/// Total height of a Scroll View's content: the furthest bottom edge of its direct
+/// UI children (resolved within the viewport), so `contentHeight` can track the
+/// actual content instead of being hand-tuned. Returns 0 if it has no UI children.
+inline float ScrollViewContentHeight(GameObject* sv) {
+    UIRect svr = GetUIRect(sv);
+    if (!svr.valid || !sv || !sv->transform) return 0.0f;
+    float maxBottom = 0.0f;
+    for (Transform* c : sv->transform->Children()) {
+        if (!c || !c->gameObject || !c->gameObject->active) continue;
+        UIRect r = GetUIRect(c->gameObject);
+        if (!r.valid || !r.position) continue;
+        Vec2 local = ResolveAnchor(r.anchor, *r.position, r.size, svr.size.x, svr.size.y);
+        maxBottom = local.y + r.size.y > maxBottom ? local.y + r.size.y : maxBottom;
+    }
+    return maxBottom;
+}
+
 /// Whether a point (screen pixels) falls inside a widget's scaled rect.
 inline bool UIScreenContains(GameObject* go, const Vec2& p, float screenW, float screenH) {
     Vec2 o, sz;

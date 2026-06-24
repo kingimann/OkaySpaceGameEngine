@@ -90,6 +90,10 @@ void Account::Logout() { Get().Logout(); }
 
 bool Account::VerifySession() { return Get().VerifySession(); }
 
+bool Account::VerifyToken(const std::string& token, std::string& outUserId) {
+    return Get().VerifyToken(token, outUserId);
+}
+
 account::ApiResponse Account::Api(const std::string& path, const std::string& method,
                                  const std::string& jsonBody, const std::string& extraHeader) {
     return Get().Api(path, method, jsonBody, extraHeader);

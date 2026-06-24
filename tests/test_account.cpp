@@ -107,6 +107,14 @@ int main() {
         CHECK(bad.error.find("email") != std::string::npos);
         // Short password is caught locally too (no network).
         CHECK(!sb.Login("user@example.com", "123").ok);
+
+        // VerifyToken: an empty token is rejected with no network call; the local
+        // backend never verifies. (A real token is checked against auth/v1/user.)
+        std::string uid = "x";
+        CHECK(!sb.VerifyToken("", uid));            // empty -> false, clears uid
+        CHECK(uid.empty());
+        acct::AccountService localSvc(dir, "", "");
+        CHECK(!localSvc.VerifyToken("anything", uid));   // offline/local -> false
     }
 
     // ---- session persists across service instances ----

@@ -49,6 +49,11 @@ public:
     /// whether a player remains signed in.
     static bool VerifySession();
 
+    /// Verify another party's access token (e.g. a multiplayer host checking a
+    /// joining client's token); on success sets `outUserId`. Wire into
+    /// NetworkManager::SetTokenVerifier for authenticated multiplayer.
+    static bool VerifyToken(const std::string& token, std::string& outUserId);
+
     /// Make an authenticated request to the account server with the current
     /// session token (Authorization: Bearer ...). For building server features
     /// on top of accounts (cloud saves, profiles, ...).

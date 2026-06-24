@@ -20,6 +20,10 @@ of the box, but accounts live on one device. For real accounts that follow the
 player, point the client at a server. The recommended path is **Supabase** (a
 hosted auth backend — nothing to run yourself).
 
+> Building cloud saves, leaderboards, matchmaking, or authenticated multiplayer on
+> top of accounts? See **[supabase-backend.md](supabase-backend.md)** for the table
+> SQL, RLS policies, and wiring.
+
 ## Connecting to Supabase (recommended)
 
 1. Create a free project at [supabase.com](https://supabase.com). In

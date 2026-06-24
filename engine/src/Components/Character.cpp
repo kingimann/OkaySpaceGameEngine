@@ -222,19 +222,20 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LFORE]  = {32, 0, 0};     r[B_RFORE]  = {32, 0, 0};   // elbows bent up
         r[B_LTHIGH] = {-22, 0, 0};    r[B_RTHIGH] = {-22, 0, 0};
         r[B_LSHIN]  = {35, 0, 0};     r[B_RSHIN]  = {35, 0, 0};
-    } else if (anim == 6) {                // crouch (deep squat: hips low, feet planted)
+    } else if (anim == 6) {                // crouch (Minecraft-style sneak: hunch forward, feet planted)
         float s = std::sin(t * 2.2f);      // gentle breathing
-        // Thighs forward + shins folded hard back so the knees come up while the
-        // feet stay roughly under the hips; StanceOffset() then lowers the body so
-        // the feet land back on the ground (the knee-fold raises them by ~the same
-        // amount the body drops).
-        r[B_LTHIGH] = {100, 0, 0};   r[B_RTHIGH] = {100, 0, 0};
-        r[B_LSHIN]  = {-150, 0, 0};  r[B_RSHIN]  = {-150, 0, 0};
-        r[B_LFOOT]  = {55, 0, 0};    r[B_RFOOT]  = {55, 0, 0};   // keep the soles flat
-        r[B_TORSO]  = {26 + 1.5f * s, 0, 0};
-        r[B_HEAD]   = {-18, 0, 0};
-        r[B_LUPARM] = {-30, 0, 10};  r[B_RUPARM] = {-30, 0, -10};
-        r[B_LFORE]  = {42, 0, 0};    r[B_RFORE]  = {42, 0, 0};
+        // Minecraft's sneak isn't a deep squat — the upper body pivots forward at
+        // the waist and the head dips while the legs stay nearly straight and the
+        // feet stay planted. A small knee bend lowers the stance a touch; the strong
+        // torso lean is the signature read.
+        r[B_HIPS]   = {10, 0, 0};                            // tip the pelvis forward
+        r[B_TORSO]  = {34 + 1.5f * s, 0, 0};                 // the forward hunch
+        r[B_HEAD]   = {-24, 0, 0};                           // bring the head up to look ahead
+        r[B_LTHIGH] = {18, 0, 0};    r[B_RTHIGH] = {18, 0, 0};   // slight knee crouch
+        r[B_LSHIN]  = {-30, 0, 0};   r[B_RSHIN]  = {-30, 0, 0};
+        r[B_LFOOT]  = {12, 0, 0};    r[B_RFOOT]  = {12, 0, 0};   // soles stay flat
+        r[B_LUPARM] = {16, 0, 8};    r[B_RUPARM] = {16, 0, -8};  // arms hang slightly forward
+        r[B_LFORE]  = {20, 0, 0};    r[B_RFORE]  = {20, 0, 0};
     } else if (anim == 7) {                // prone (whole body flat on the ground)
         // Rotate ONLY the hips 90° so the body lies flat: the torso/head swing
         // forward along the ground and the legs swing straight back — no counter
@@ -316,7 +317,7 @@ std::vector<Vec3> Character::PoseAt(float t) const {
 }
 
 Vec3 Character::StanceOffset() const {
-    if (anim == 6) return {0.0f, -0.571f, 0.0f};  // crouch: drop the body so the feet plant
+    if (anim == 6) return {0.0f, -0.12f, 0.0f};   // crouch: light knee bend, feet stay planted (forward-hunch sneak)
     if (anim == 7) return {0.0f, -0.78f, 0.0f};   // prone: lay the body on the ground
     return {0.0f, 0.0f, 0.0f};
 }

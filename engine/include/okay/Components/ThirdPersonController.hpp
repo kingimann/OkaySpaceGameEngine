@@ -45,7 +45,7 @@ public:
     bool  toggleStance = true;          // tap to toggle vs hold
     float crouchSpeed = 2.2f;
     float proneSpeed  = 1.1f;
-    float crouchHeightDrop = 0.6f;      // how far the look target lowers when crouched
+    float crouchHeightDrop = 0.4f;      // Minecraft-style modest dip when crouched
     float proneHeightDrop  = 1.1f;      // ...and when prone
     float stanceLerp = 12.0f;           // how fast the target height eases
 

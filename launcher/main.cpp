@@ -672,6 +672,8 @@ int main(int argc, char** argv) {
 
     char acctUser[64] = {0};
     char acctPass[64] = {0};
+    char acctName[64] = {0};             // username (display name) on register
+    char acctNewPass[64] = {0};          // change-password field (signed in)
     bool acctRegisterMode = false;       // false = sign in, true = create account
     std::string acctMessage;             // last error/status, shown under the form
     bool acctMessageError = true;
@@ -1035,6 +1037,29 @@ int main(int argc, char** argv) {
                     acctUser[0] = acctPass[0] = '\0';
                     Toast("Signed out");
                 }
+
+                // ---- Change password ----
+                ImGui::Dummy(ImVec2(0, 14));
+                ImGui::SeparatorText("Change password");
+                ImGui::PushItemWidth(320);
+                bool go = ImGui::InputTextWithHint("##acctNewPass", "New password", acctNewPass,
+                              sizeof(acctNewPass), ImGuiInputTextFlags_Password |
+                              ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::PopItemWidth();
+                ImGui::SameLine();
+                if (ImGui::Button("Update password", ImVec2(180, 0)) || go) {
+                    acct::Result r = account.ChangePassword(acctNewPass);
+                    acctMessageError = !r.ok;
+                    acctMessage = r.ok ? "Password updated." : r.error;
+                    if (r.ok) std::fill(acctNewPass, acctNewPass + sizeof(acctNewPass), '\0');
+                }
+                if (!acctMessage.empty()) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1)
+                                                        : ImVec4(0.55f, 0.9f, 0.6f, 1),
+                                       "%s", acctMessage.c_str());
+                    ImGui::PopTextWrapPos();
+                }
             } else {
                 ImGui::TextWrapped(account.IsOnline()
                     ? "Sign in to your OkaySpace account to sync your work."
@@ -1060,6 +1085,9 @@ int main(int argc, char** argv) {
                 const char* idHint = account.UsesEmail() ? "Email" : "Username";
                 ImGui::PushItemWidth(320);
                 ImGui::InputTextWithHint("##acctUser", idHint, acctUser, sizeof(acctUser));
+                // For Supabase, sign-up also takes a display username.
+                if (acctRegisterMode && account.UsesEmail())
+                    ImGui::InputTextWithHint("##acctName", "Username (display name)", acctName, sizeof(acctName));
                 bool submit = ImGui::InputTextWithHint("##acctPass", "Password", acctPass,
                                   sizeof(acctPass), ImGuiInputTextFlags_Password |
                                   ImGuiInputTextFlags_EnterReturnsTrue);
@@ -1071,19 +1099,30 @@ int main(int argc, char** argv) {
                 if (ImGui::Button(btn, ImVec2(200, 48)) || submit) {
                     acctBusy = true;
                     acct::Result r = acctRegisterMode
-                        ? account.Register(acctUser, acctPass)
+                        ? account.Register(acctUser, acctPass, acctName)
                         : account.Login(acctUser, acctPass);
                     acctBusy = false;
                     acctMessageError = !r.ok;
                     if (r.ok) {
                         acctMessage.clear();
-                        // Don't leave the password sitting in memory longer than needed.
                         std::fill(acctPass, acctPass + sizeof(acctPass), '\0');
+                        if (account.IsLoggedIn()) Toast("Signed in");
                     } else {
                         acctMessage = r.error;
                     }
                 }
                 ImGui::EndDisabled();
+
+                // Forgot password (online/Supabase): emails a reset link.
+                if (account.UsesEmail()) {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Forgot password?", ImVec2(180, 48))) {
+                        acct::Result r = account.RequestPasswordReset(acctUser);
+                        acctMessageError = !r.ok;
+                        acctMessage = r.ok ? "Password reset email sent — check your inbox."
+                                           : r.error;
+                    }
+                }
 
                 if (!acctMessage.empty()) {
                     ImGui::Dummy(ImVec2(0, 6));

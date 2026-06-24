@@ -120,6 +120,20 @@ int main() {
         CHECK(!fresh.IsLoggedIn());      // logout cleared the saved session
     }
 
+    // ---- change password (local) + reset gating ----
+    {
+        acct::AccountService svc(dir);
+        CHECK(svc.Login("alice", "s3cret!").ok);
+        CHECK(svc.ChangePassword("newpass1").ok);
+        svc.Logout();
+        CHECK(!svc.Login("alice", "s3cret!").ok);   // old password no longer works
+        CHECK(svc.Login("alice", "newpass1").ok);   // new password works
+        // Password reset is a Supabase-only feature.
+        CHECK(!svc.RequestPasswordReset("a@b.com").ok);
+        // 3-arg register (username is ignored on the local backend).
+        CHECK(svc.Register("bob", "passbob", "Bobby").ok);
+    }
+
     fs::remove_all(dir);
     TEST_MAIN_RESULT();
 }

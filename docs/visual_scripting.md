@@ -19,13 +19,34 @@ entry <name> <id>            # mark an entry node ("OnStart" / "OnUpdate")
 
 **Events** (1 exec out): `OnStart`, `OnUpdate`
 
-**Data**: `Const <value>`, `GetVar <name>`, `Time`, `DeltaTime`, `AxisX`,
-`AxisY`, `Add`, `Sub`, `Mul`, `Div`, `Compare <op>` (`>` `<` `>=` `<=` `==` `!=`)
+**Data — values & queries**: `Const <value>`, `GetVar <name>`, `Time`,
+`DeltaTime`, `AxisX`, `AxisY`, `Key <c>` / `KeyDown <c>` (held / pressed-this-frame,
+single-char keys like OkayScript), `MouseX`, `MouseY`, `GetPosition` (Vec3),
+`GetX` / `GetY` / `GetZ` (this object's local position component)
 
-**Actions** (1 exec out): `SetVar <name>`, `Print`, `Translate` (in0=x, in1=y),
-`SetPosition` (in0=x, in1=y), `Rotate` (in0=degrees)
+**Data — math**: `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Min`, `Max`, `Pow` (two
+inputs); `Abs`, `Neg`, `Sqrt`, `Sin`, `Cos`, `Floor`, `Round`, `Sign` (one
+input; trig in radians); `Clamp` (in0=value, in1=lo, in2=hi); `Lerp` (in0=a,
+in1=b, in2=t); `Random` (0..1); `RandomRange` (in0=lo, in1=hi)
 
-**Flow**: `Branch` — exec out 0 = true, exec out 1 = false; data in0 = condition
+**Data — logic & misc**: `Compare <op>` (`>` `<` `>=` `<=` `==` `!=`), `And`,
+`Or`, `Xor` (two inputs), `Not`, `Select` (in0=cond, in1=if-true, in2=if-false —
+passes any value type through), `Concat` (in0+in1 as strings),
+`MakeVec3` (in0=x, in1=y, in2=z), `VecX` / `VecY` / `VecZ` (in0=vector)
+
+**Actions** (1 exec out): `SetVar <name>`, `AddVar <name>` (add in0 to a variable),
+`Print`, `Translate` (in0=x, in1=y), `SetPosition` (in0=x, in1=y),
+`Rotate` (in0=degrees), `SetRotation` (in0=absolute degrees about Z),
+`SetScale` (in0=x, in1=y, in2=z; default 1), `Destroy` (remove this object —
+terminal, no exec out)
+
+**Flow**:
+- `Branch` — exec out 0 = true, exec out 1 = false; data in0 = condition
+- `Sequence <n>` — fire each of `n` exec outputs in order (default 2)
+- `Once` — pass through only the first time it's reached (one-shot setup)
+- `Timer <seconds>` — pass through at most once every `seconds` (accumulates
+  `DeltaTime`); ideal for "every N seconds" pulses under `OnUpdate`
+- `FlipFlop` — alternate between exec out 0 and 1 on each execution
 
 ## Example: move right at 2 units/sec
 

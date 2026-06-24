@@ -91,5 +91,122 @@ int main() {
         CHECK_NEAR(vsc->GetVariable("took_false").AsFloat(), 0.0f, 0.001f);
     }
 
+    // --- Expanded data nodes: math, logic, select, vectors. ---
+    {
+        const char* src = R"OKAYVS(
+            node 0 OnStart
+            node 1 Const 7
+            node 2 Const 3
+            node 3 Mod
+            node 4 SetVar m
+            node 10 Const 2
+            node 11 Const 9
+            node 12 Max
+            node 13 SetVar mx
+            node 20 Const -5
+            node 21 Abs
+            node 22 SetVar ab
+            node 30 Const true
+            node 31 Const 100
+            node 32 Const 200
+            node 33 Select
+            node 34 SetVar sel
+            node 40 Const 5
+            node 41 Const 6
+            node 42 Const 7
+            node 43 MakeVec3
+            node 44 VecZ
+            node 45 SetVar vz
+            data 3 0 1 0
+            data 3 1 2 0
+            data 4 0 3 0
+            data 12 0 10 0
+            data 12 1 11 0
+            data 13 0 12 0
+            data 21 0 20 0
+            data 22 0 21 0
+            data 33 0 30 0
+            data 33 1 31 0
+            data 33 2 32 0
+            data 34 0 33 0
+            data 43 0 40 0
+            data 43 1 41 0
+            data 43 2 42 0
+            data 44 0 43 0
+            data 45 0 44 0
+            exec 0 0 4
+            exec 4 0 13
+            exec 13 0 22
+            exec 22 0 34
+            exec 34 0 45
+            entry OnStart 0
+        )OKAYVS";
+        Scene scene("VS4");
+        auto* vsc = scene.CreateGameObject("Math")->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(vsc->LoadFromText(src, &err));
+        if (!err.empty()) std::cerr << "  parse: " << err << "\n";
+        scene.Start();
+        CHECK_NEAR(vsc->GetVariable("m").AsFloat(), 1.0f, 0.001f);    // 7 % 3
+        CHECK_NEAR(vsc->GetVariable("mx").AsFloat(), 9.0f, 0.001f);   // max(2,9)
+        CHECK_NEAR(vsc->GetVariable("ab").AsFloat(), 5.0f, 0.001f);   // abs(-5)
+        CHECK_NEAR(vsc->GetVariable("sel").AsFloat(), 100.0f, 0.001f);// true -> a
+        CHECK_NEAR(vsc->GetVariable("vz").AsFloat(), 7.0f, 0.001f);   // z of (5,6,7)
+    }
+
+    // --- Sequence fires every output in order. ---
+    {
+        const char* src = R"OKAYVS(
+            node 0 OnStart
+            node 1 Sequence 2
+            node 2 SetVar a
+            node 3 SetVar b
+            node 4 Const 1
+            data 2 0 4 0
+            data 3 0 4 0
+            exec 0 0 1
+            exec 1 0 2
+            exec 1 1 3
+            entry OnStart 0
+        )OKAYVS";
+        Scene scene("VS5");
+        auto* vsc = scene.CreateGameObject("Seq")->AddComponent<VisualScriptComponent>();
+        CHECK(vsc->LoadFromText(src));
+        scene.Start();
+        CHECK_NEAR(vsc->GetVariable("a").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vsc->GetVariable("b").AsFloat(), 1.0f, 0.001f);
+    }
+
+    // --- Stateful flow: Once gates, Timer pulses, AddVar accumulates. ---
+    {
+        const char* src = R"OKAYVS(
+            node 0 OnUpdate
+            node 1 Sequence 2
+            node 2 Once
+            node 3 AddVar inits
+            node 4 Const 1
+            node 5 Timer 1.0
+            node 6 AddVar ticks
+            node 7 Const 1
+            data 3 0 4 0
+            data 6 0 7 0
+            exec 0 0 1
+            exec 1 0 2
+            exec 1 1 5
+            exec 2 0 3
+            exec 5 0 6
+            entry OnUpdate 0
+        )OKAYVS";
+        Scene scene("VS6");
+        auto* vsc = scene.CreateGameObject("Flow")->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(vsc->LoadFromText(src, &err));
+        if (!err.empty()) std::cerr << "  parse: " << err << "\n";
+        scene.Start();
+        for (int i = 0; i < 12; ++i) scene.Update(0.25f);  // 3.0s -> Timer fires at 1,2,3s
+        CHECK_NEAR(vsc->GetVariable("inits").AsFloat(), 1.0f, 0.001f);  // Once: ran a single time
+        CHECK_NEAR(vsc->GetVariable("ticks").AsFloat(), 3.0f, 0.001f);  // Timer: 3 pulses
+    }
+
     TEST_MAIN_RESULT();
 }

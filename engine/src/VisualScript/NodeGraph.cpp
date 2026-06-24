@@ -100,11 +100,60 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         else { if (err) *err = "unknown compare op '" + o + "'"; return nullptr; }
         return std::make_unique<CompareNode>(op);
     }
+    // Unary math.
+    if (type == "Abs")   return std::make_unique<UnaryMathNode>(UnaryMathNode::Op::Abs);
+    if (type == "Neg")   return std::make_unique<UnaryMathNode>(UnaryMathNode::Op::Neg);
+    if (type == "Sqrt")  return std::make_unique<UnaryMathNode>(UnaryMathNode::Op::Sqrt);
+    if (type == "Sin")   return std::make_unique<UnaryMathNode>(UnaryMathNode::Op::Sin);
+    if (type == "Cos")   return std::make_unique<UnaryMathNode>(UnaryMathNode::Op::Cos);
+    if (type == "Floor") return std::make_unique<UnaryMathNode>(UnaryMathNode::Op::Floor);
+    if (type == "Round") return std::make_unique<UnaryMathNode>(UnaryMathNode::Op::Round);
+    if (type == "Sign")  return std::make_unique<UnaryMathNode>(UnaryMathNode::Op::Sign);
+    // Binary math.
+    if (type == "Mod")   return std::make_unique<MathFnNode>(MathFnNode::Op::Mod);
+    if (type == "Min")   return std::make_unique<MathFnNode>(MathFnNode::Op::Min);
+    if (type == "Max")   return std::make_unique<MathFnNode>(MathFnNode::Op::Max);
+    if (type == "Pow")   return std::make_unique<MathFnNode>(MathFnNode::Op::Pow);
+    if (type == "Clamp") return std::make_unique<ClampNode>();
+    if (type == "Lerp")  return std::make_unique<LerpNode>();
+    if (type == "Random")      return std::make_unique<RandomNode>();
+    if (type == "RandomRange") return std::make_unique<RandomRangeNode>();
+    // Logic.
+    if (type == "And") return std::make_unique<LogicNode>(LogicNode::Op::And);
+    if (type == "Or")  return std::make_unique<LogicNode>(LogicNode::Op::Or);
+    if (type == "Xor") return std::make_unique<LogicNode>(LogicNode::Op::Xor);
+    if (type == "Not") return std::make_unique<NotNode>();
+    if (type == "Select") return std::make_unique<SelectNode>();
+    if (type == "Concat") return std::make_unique<ConcatNode>();
+    // Vectors.
+    if (type == "MakeVec3") return std::make_unique<MakeVec3Node>();
+    if (type == "VecX") return std::make_unique<BreakVec3Node>(0);
+    if (type == "VecY") return std::make_unique<BreakVec3Node>(1);
+    if (type == "VecZ") return std::make_unique<BreakVec3Node>(2);
+    // Input.
+    if (type == "Key")     { if (!need(1)) return nullptr; return std::make_unique<KeyNode>(args[0].empty() ? ' ' : args[0][0]); }
+    if (type == "KeyDown") { if (!need(1)) return nullptr; return std::make_unique<KeyDownNode>(args[0].empty() ? ' ' : args[0][0]); }
+    if (type == "MouseX") return std::make_unique<MouseXNode>();
+    if (type == "MouseY") return std::make_unique<MouseYNode>();
+    // Transform getters.
+    if (type == "GetPosition") return std::make_unique<GetPositionNode>();
+    if (type == "GetX") return std::make_unique<GetAxisNode>(0);
+    if (type == "GetY") return std::make_unique<GetAxisNode>(1);
+    if (type == "GetZ") return std::make_unique<GetAxisNode>(2);
+
     if (type == "Print")       return std::make_unique<PrintNode>();
     if (type == "Translate")   return std::make_unique<TranslateNode>();
     if (type == "SetPosition") return std::make_unique<SetPositionNode>();
     if (type == "Rotate")      return std::make_unique<RotateNode>();
     if (type == "Branch")      return std::make_unique<BranchNode>();
+    if (type == "AddVar")      { if (!need(1)) return nullptr; return std::make_unique<AddVarNode>(args[0]); }
+    if (type == "SetScale")    return std::make_unique<SetScaleNode>();
+    if (type == "SetRotation") return std::make_unique<SetRotationNode>();
+    if (type == "Destroy")     return std::make_unique<DestroyNode>();
+    if (type == "Once")        return std::make_unique<OnceNode>();
+    if (type == "FlipFlop")    return std::make_unique<FlipFlopNode>();
+    if (type == "Timer")       { if (!need(1)) return nullptr; return std::make_unique<TimerNode>(ParseValue(args[0]).AsFloat()); }
+    if (type == "Sequence")    { int c = args.empty() ? 2 : (int)ParseValue(args[0]).AsFloat(); return std::make_unique<SequenceNode>(c); }
     if (err) *err = "unknown node type '" + type + "'";
     return nullptr;
 }

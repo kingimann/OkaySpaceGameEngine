@@ -64,6 +64,26 @@ public:
     void SetLocalName(const std::string& name) { m_localName = name; }
     const std::string& LocalName() const { return m_localName; }
 
+    // ---- Identity (authenticated join) --------------------------------
+    /// The auth token this peer presents when joining (e.g. a Supabase access
+    /// token). Set it before joining; the server can verify it to bind the peer to
+    /// a real account. "" = anonymous.
+    void SetAuthToken(const std::string& token) { m_authToken = token; }
+    const std::string& AuthToken() const { return m_authToken; }
+
+    /// Server: a hook that verifies each joining client's token. Return true and set
+    /// `outUserId` to accept (binding the peer to that identity); return false to
+    /// reject the join with "authentication failed". If unset, joins are NOT
+    /// authenticated (an open server — the default, unchanged behavior). The engine
+    /// never talks to an auth backend itself: the host supplies this (e.g. verifying
+    /// a Supabase token via auth/v1/user), so the net core stays dependency-free.
+    using TokenVerifier = std::function<bool(const std::string& token, std::string& outUserId)>;
+    void SetTokenVerifier(TokenVerifier v) { m_verifyToken = std::move(v); }
+    /// The verified account id a peer joined with (server only); "" if anonymous.
+    std::string PeerUserId(std::uint32_t id) const;
+    /// This peer's own verified id once joined (client), or "" if anonymous.
+    const std::string& LocalUserId() const { return m_localUserId; }
+
     /// The "room" (lobby) this peer is in. Peers only see avatars and receive
     /// broadcast messages from others in the *same* room, so one server can host
     /// many independent matches. Set it before joining. Default room is "".
@@ -213,6 +233,7 @@ private:
         float lastSeen;
         std::string name;
         std::string room;
+        std::string userId;   // verified identity (from the token verifier), or ""
         bool ready = false;
         // Per-client reliable channel (server side).
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client
@@ -255,6 +276,9 @@ private:
     char       m_localGlyph  = '@';
     std::uint32_t m_localId  = 0;
     std::string m_localName  = "Player";
+    std::string m_authToken;     // token presented on join ("" = anonymous)
+    std::string m_localUserId;   // client: our own verified id once joined
+    TokenVerifier m_verifyToken; // server: verifies joining clients' tokens
     std::string m_localRoom;     // "" = default room
     bool m_ready = false;        // this peer's ready flag
     bool m_matchStarted = false; // set when StartMatch reaches this peer's room

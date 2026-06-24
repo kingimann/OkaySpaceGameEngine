@@ -381,6 +381,11 @@ std::string NetworkManager::PeerName(std::uint32_t id) const {
     return {};
 }
 
+std::string NetworkManager::PeerUserId(std::uint32_t id) const {
+    for (auto& [ep, c] : m_clients) if (c.id == id) return c.userId;
+    return {};
+}
+
 void NetworkManager::Send(const std::string& channel, const std::string& data) {
     if (m_mode == Mode::Server) {
         // Server originates a message: stamp it with our id (0) and fan out to
@@ -423,12 +428,16 @@ void NetworkManager::ServerTick(float dt) {
             std::string name = p.ReadString();           // display name (may be empty)
             std::string room = p.ReadString();           // lobby room (may be empty)
             std::string pass = p.ReadString();           // password (may be empty)
+            std::string token = p.ReadString();           // identity token (may be empty)
             bool existed = m_clients.count(from) != 0;
+            std::string userId;
             if (!existed) {
-                // Gate new joins on capacity and password; refuse politely.
+                // Gate new joins on capacity, password and (if a verifier is set)
+                // identity; refuse politely.
                 const char* why = nullptr;
                 if ((int)m_clients.size() >= maxPlayers) why = "server is full";
                 else if (!password.empty() && pass != password) why = "wrong password";
+                else if (m_verifyToken && !m_verifyToken(token, userId)) why = "authentication failed";
                 if (why) {
                     net::Packet r(Reject); r.Write(std::string(why));
                     SendDatagram(from, r.Data(), r.Size());
@@ -443,11 +452,13 @@ void NetworkManager::ServerTick(float dt) {
                 c.state = {c.id, 0, 0, 0, '@'};
                 c.name = name.empty() ? ("Player" + std::to_string(c.id)) : name;
                 c.room = room;
+                c.userId = userId;
             }
             c.lastSeen = 0.0f;
             net::Packet w(Welcome);
             w.Write(c.id);
             w.Write(serverName);
+            w.Write(c.userId);   // tell the client its verified identity ("" if anon)
             SendDatagram(from, w.Data(), w.Size());
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
@@ -612,6 +623,7 @@ void NetworkManager::ClientTick(float dt) {
             p.Write(m_localName);
             p.Write(m_localRoom);
             p.Write(password);          // matched against the server's password
+            p.Write(m_authToken);       // identity token the server may verify
             SendDatagram(m_serverEp, p.Data(), p.Size());
             m_joinTimer = 0.5f;
         }
@@ -643,6 +655,7 @@ void NetworkManager::ClientTick(float dt) {
         if (type == Welcome) {
             m_localId = p.ReadU32();
             m_serverName = p.ReadString();
+            m_localUserId = p.ReadString();   // our verified identity ("" if anon)
             m_joined = true;
             m_joinRejected = false;
             OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);

@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.148.0  (Canvas sort order: stack UI canvases)
+  - The Canvas "Sort Order" now actually layers canvases in built games: a popup
+    or modal Canvas with a higher Sort Order draws on top of the HUD. Widgets that
+    share a Canvas keep their authored order (single-canvas UIs are unchanged).
+    (The editor preview will honor Sort Order in the next build.)
+
 v2.147.0  (Hierarchy right-click UI, Flow Graph upgrades)
   - Hierarchy right-click now has a "UI" submenu to create any UI widget (Panel,
     Button, Image, Text, Slider, Toggle, Stepper, Rating, Progress Bar, Radial,

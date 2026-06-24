@@ -241,6 +241,57 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LUPARM] = {16, 0, 14};   r[B_RUPARM] = {16, 0, -14};   // arms slightly out front
         r[B_LFORE]  = {24, 0, 0};    r[B_RFORE]  = {24, 0, 0};
     }
+    // ---- Hand gestures (8-12) and emotions (13-16) -----------------------------
+    // The rig is blocky with no face, so "emotions" read through body language
+    // (posture, head tilt, bounce). +X on an upper arm swings it forward, +X on a
+    // forearm bends the elbow up, +Z spreads the LEFT arm out (−Z the right);
+    // arm Z is kept well under 90° so the hands never cross in front.
+    else if (anim == 8) {                  // point forward (right arm)
+        r[B_RUPARM] = {88, 0, -8};         // raise to horizontal, pointing ahead
+        r[B_RFORE]  = {2, 0, 0};           // arm straight
+        r[B_LUPARM] = {0, 0, 4};           // left arm rests
+        r[B_TORSO]  = {0, -6, 0};          // slight turn into the point
+    } else if (anim == 9) {                // clap (hands meet in front, repeating)
+        float c = 18.0f * (0.5f + 0.5f * std::sin(t * 7.0f));   // 0..18 open/close
+        r[B_LUPARM] = {62, 0, -22 + c};    r[B_RUPARM] = {62, 0, 22 - c};
+        r[B_LFORE]  = {46, 0, 18};         r[B_RFORE]  = {46, 0, -18};
+        r[B_HEAD]   = {-4, 0, 0};
+    } else if (anim == 10) {               // thumbs up (right fist up at the side)
+        r[B_RUPARM] = {6, 0, -18};
+        r[B_RFORE]  = {128, 0, -6};        // forearm up, fist by the chest
+        r[B_LUPARM] = {0, 0, 4};
+    } else if (anim == 11) {               // salute (right hand to the brow)
+        r[B_RUPARM] = {26, 0, -74};        // upper arm out to the side
+        r[B_RFORE]  = {128, 0, -28};       // forearm folded up to the forehead
+        r[B_HEAD]   = {-6, 0, 0};
+        r[B_TORSO]  = {-2, 0, 0};          // stand tall
+    } else if (anim == 12) {               // wave-both / surrender-style open hands
+        float s2 = std::sin(t * 6.0f);
+        r[B_LUPARM] = {0, 0, 120};         r[B_RUPARM] = {0, 0, -120};   // both arms up & out
+        r[B_LFORE]  = {0, 0, 20 + 14 * s2}; r[B_RFORE] = {0, 0, -20 - 14 * s2};
+    } else if (anim == 13) {               // happy / cheer (arms up, bouncing)
+        float b = std::sin(t * 6.0f);
+        r[B_LUPARM] = {-14, 0, 82};        r[B_RUPARM] = {-14, 0, -82};  // raised in a V
+        r[B_LFORE]  = {18, 0, 0};          r[B_RFORE]  = {18, 0, 0};
+        r[B_HEAD]   = {-12, 0, 0};         // chin up, upbeat
+        r[B_TORSO]  = {-4 + 2.0f * b, 0, 0};
+    } else if (anim == 14) {               // sad / dejected (slumped, head down)
+        float b = std::sin(t * 1.4f);
+        r[B_TORSO]  = {20 + 1.0f * b, 0, 0};   // slump forward
+        r[B_HEAD]   = {26, 0, 0};              // look down
+        r[B_LUPARM] = {12, 0, 2};          r[B_RUPARM] = {12, 0, -2};    // arms hang limp, slightly fwd
+    } else if (anim == 15) {               // angry (lean in, fists up)
+        float b = std::sin(t * 5.0f);
+        r[B_TORSO]  = {14, 1.5f * b, 0};       // hunch + small aggressive sway
+        r[B_HEAD]   = {12, 0, 0};              // head down/forward (glaring)
+        r[B_LUPARM] = {28, 0, -14};        r[B_RUPARM] = {28, 0, 14};    // elbows in
+        r[B_LFORE]  = {72, 0, 0};          r[B_RFORE]  = {72, 0, 0};     // fists up
+    } else if (anim == 16) {               // think / idle-curious (hand near chin)
+        r[B_RUPARM] = {30, 0, -26};
+        r[B_RFORE]  = {118, 0, -10};       // hand up to the chin
+        r[B_HEAD]   = {-4, 14, 0};         // slight quizzical tilt
+        r[B_LUPARM] = {6, 0, 6};
+    }
 
     // Head look: layer the (eased) gaze on top of whatever the animation set, so the
     // head turns and tilts toward where the player is looking. Clamped so the neck

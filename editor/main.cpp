@@ -5783,8 +5783,12 @@ void DrawInspector(EditorState& ed) {
             coledit("Backpack##char", ch->pack);
 
             ImGui::SeparatorText("Animation (plays in Play mode)");
-            const char* anims[] = {"None","Idle","Walk","Run","Wave","Jump"};
-            ImGui::SetNextItemWidth(150); ImGui::Combo("Animation##char", &ch->anim, anims, 6);
+            const char* anims[] = {"None","Idle","Walk","Run","Wave","Jump","Crouch","Prone",
+                                   "Point","Clap","Thumbs Up","Salute","Wave Both",
+                                   "Cheer (happy)","Sad","Angry","Think"};
+            ImGui::SetNextItemWidth(150);
+            ImGui::Combo("Animation##char", &ch->anim, anims, IM_ARRAYSIZE(anims));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle/walk/run/jump are driven by the controllers; the gestures and emotions (Point...Think) are poses you can trigger from scripts (set a Character's anim) or preview here.");
             if (ch->anim != 0) ImGui::SliderFloat("Anim Speed##char", &ch->animSpeed, 0.1f, 3.0f);
 
             if (c) { ch->Apply(); ed.dirty = true; }

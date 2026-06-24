@@ -55,7 +55,9 @@ public:
     bool hasCape       = false;
 
     // ---- Animation (plays in Play mode) ----
-    int   anim      = 1;     // 0 none,1 idle,2 walk,3 run,4 wave,5 jump,6 crouch,7 prone
+    int   anim      = 1;     // 0 none,1 idle,2 walk,3 run,4 wave,5 jump,6 crouch,7 prone,
+                             // 8 point,9 clap,10 thumbs-up,11 salute,12 wave-both,
+                             // 13 cheer/happy,14 sad,15 angry,16 think (gestures + emotions)
     float animSpeed = 1.0f;
     float animTime  = 0.0f;  // runtime clock (not serialized)
 

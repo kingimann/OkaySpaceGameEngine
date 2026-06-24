@@ -1,0 +1,18 @@
+// SteamPipe depot-build script for OkaySpace depot 1172561.
+// Takes everything under the app's contentroot (content/) recursively.
+"DepotBuildConfig"
+{
+	"DepotID"	"1172561"
+
+	// Include all files under contentroot, mapped to the depot root.
+	"FileMapping"
+	{
+		"LocalPath"	"*"
+		"DepotPath"	"."
+		"recursive"	"1"
+	}
+
+	// Don't ship debug symbols / scratch files.
+	"FileExclusion"	"*.pdb"
+	"FileExclusion"	"*.log"
+}

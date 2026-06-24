@@ -24,6 +24,13 @@ public:
     /// static are not expected to move at runtime.
     bool isStatic = false;
 
+    /// Per-object UI layering override. 0 = use the widget's default type layer
+    /// (the historic per-type pass order); any non-zero value places this widget in
+    /// the single UI draw pass by this key instead (higher = drawn later / on top),
+    /// letting non-nested widgets of different types be layered freely. Ignored by
+    /// non-UI objects. Hierarchy pre-order breaks ties.
+    int uiDrawOrder = 0;
+
     /// Every GameObject has a Transform from birth.
     Transform* transform = nullptr;
 

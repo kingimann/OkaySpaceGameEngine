@@ -132,24 +132,20 @@ inline int CanvasSortOrder(GameObject* go) {
     return cv ? cv->sortOrder : 0;
 }
 
-/// The order UI should be drawn in: primary key the owning Canvas's sortOrder
-/// (higher draws on top), secondary key the scene's hierarchy PRE-ORDER (a parent
-/// before its children, earlier siblings before later ones). Returns indices into
-/// `objects`. Renderers iterate their per-type passes over this order so that
-/// nested widgets layer like Unity — a child panel sits above its parent panel,
-/// and bring-to-front/send-to-back (sibling reordering) takes effect — without
-/// changing the relative order of the type passes themselves. `objects` is the
-/// scene's `std::vector<std::unique_ptr<GameObject>>`.
+/// A hierarchy PRE-ORDER rank per object (index into `objects`): a parent comes
+/// before its children, earlier siblings before later ones. Walking the transform
+/// tree from each root (in scene order) gives every object a rank; orphaned
+/// transforms (shouldn't happen) get ranks after the rest. This is the tie-breaker
+/// the UI draw order uses so nested widgets layer like Unity and bring-to-front /
+/// send-to-back (sibling reordering) takes effect. `objects` is the scene's
+/// `std::vector<std::unique_ptr<GameObject>>`.
 template <class ObjVec>
-inline std::vector<std::size_t> BuildUIDrawOrder(const ObjVec& objects) {
+inline std::vector<std::size_t> BuildUIPreOrder(const ObjVec& objects) {
     const std::size_t n = objects.size();
     std::unordered_map<GameObject*, std::size_t> pos;
     pos.reserve(n * 2);
     for (std::size_t i = 0; i < n; ++i) pos[objects[i].get()] = i;
 
-    // Assign a pre-order rank by walking the transform tree from each root (an
-    // object with no parent), in scene order. Unvisited objects (shouldn't happen)
-    // fall back to their scene index, sorted after the visited ones.
     std::vector<std::size_t> pre(n, n);   // n = "unset"
     std::size_t counter = 0;
     // Iterative DFS to avoid deep recursion on large hierarchies.
@@ -171,10 +167,21 @@ inline std::vector<std::size_t> BuildUIDrawOrder(const ObjVec& objects) {
         Transform* t = objects[i]->transform;
         if (t && !t->Parent()) visitRoot(t);
     }
-    // Any object not reached (orphaned transform) gets a rank after the rest.
     for (std::size_t i = 0; i < n; ++i)
         if (pre[i] == n) pre[i] = counter++;
+    return pre;
+}
 
+/// The order UI should be drawn in: primary key the owning Canvas's sortOrder
+/// (higher draws on top), secondary key the scene's hierarchy PRE-ORDER. Returns
+/// indices into `objects`. Renderers that still use per-type passes iterate this so
+/// nested widgets layer like Unity — a child panel above its parent — and sibling
+/// reordering takes effect. The single-pass renderer instead uses BuildUIPreOrder
+/// directly together with each widget's layer (see BuildUIDrawList).
+template <class ObjVec>
+inline std::vector<std::size_t> BuildUIDrawOrder(const ObjVec& objects) {
+    const std::size_t n = objects.size();
+    std::vector<std::size_t> pre = BuildUIPreOrder(objects);
     std::vector<std::size_t> order(n);
     for (std::size_t i = 0; i < n; ++i) order[i] = i;
     std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
@@ -183,6 +190,44 @@ inline std::vector<std::size_t> BuildUIDrawOrder(const ObjVec& objects) {
         return pre[a] < pre[b];
     });
     return order;
+}
+
+/// One queued UI draw: which object (index into the scene list), an opaque renderer
+/// `kind` tag identifying the draw block to run, and the widget's default type
+/// `layer` (its historic per-type pass position). A single object can produce more
+/// than one item (e.g. a drop target draws a background then a highlight).
+struct UIDrawItem {
+    std::size_t index;   // index into the scene object list
+    int         kind;    // renderer-defined draw-block selector
+    int         layer;   // default type layer (pass order) + final tie-breaker
+};
+
+/// Sort queued UI draw items into a single drawing pass. The key is, in order:
+///   1. owning Canvas sortOrder (higher draws later / on top),
+///   2. the object's uiDrawOrder override if non-zero, else the item's type layer,
+///   3. hierarchy pre-order (parent before child, sibling order),
+///   4. the type layer again (so an object's own multi-layer parts keep their order,
+///      and an overridden object's widgets keep type order among themselves).
+/// With every uiDrawOrder left at 0 this reproduces the historic per-type pass order
+/// exactly (key 2 == type layer), so existing scenes are unchanged; a non-zero
+/// uiDrawOrder lets a widget layer freely against widgets of any other type.
+template <class ObjVec>
+inline std::vector<UIDrawItem> SortUIDrawItems(const ObjVec& objects,
+                                               std::vector<UIDrawItem> items) {
+    std::vector<std::size_t> pre = BuildUIPreOrder(objects);
+    auto eff = [&](const UIDrawItem& it) {
+        int o = objects[it.index]->uiDrawOrder;
+        return o != 0 ? o : it.layer;
+    };
+    std::stable_sort(items.begin(), items.end(), [&](const UIDrawItem& a, const UIDrawItem& b) {
+        int ca = CanvasSortOrder(objects[a.index].get()), cb = CanvasSortOrder(objects[b.index].get());
+        if (ca != cb) return ca < cb;
+        int ea = eff(a), eb = eff(b);
+        if (ea != eb) return ea < eb;
+        if (pre[a.index] != pre[b.index]) return pre[a.index] < pre[b.index];
+        return a.layer < b.layer;
+    });
+    return items;
 }
 
 /// The master opacity [0,1] the widget should be drawn at (its Canvas's opacity,

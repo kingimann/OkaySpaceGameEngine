@@ -132,6 +132,16 @@ int main() {
         CHECK(!svc.RequestPasswordReset("a@b.com").ok);
         // 3-arg register (username is ignored on the local backend).
         CHECK(svc.Register("bob", "passbob", "Bobby").ok);
+
+        // Change username = rename the local account; email change is online-only.
+        CHECK(svc.Login("alice", "newpass1").ok);
+        CHECK(svc.ChangeUsername("alice2").ok);
+        CHECK(svc.CurrentSession().username == "alice2");
+        CHECK(!svc.ChangeUsername("bob").ok);        // taken
+        CHECK(!svc.ChangeEmail("x@y.com").ok);       // Supabase only
+        svc.Logout();
+        CHECK(!svc.Login("alice", "newpass1").ok);   // old name gone
+        CHECK(svc.Login("alice2", "newpass1").ok);   // new name works
     }
 
     fs::remove_all(dir);

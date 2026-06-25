@@ -16,6 +16,7 @@
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/SurvivalStats.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
@@ -104,6 +105,12 @@ std::string ReadQuoted(std::istream& in) {
         else out += c;
     }
     return out;
+}
+
+// Read the three shared publish toggles trailing every stat_* line.
+void ReadStatTail(std::istream& in, StatComponent* c) {
+    int pp = 1, pb = 1, sm = 1; in >> pp >> pb >> sm;
+    c->publishPrefs = (pp != 0); c->publishBar = (pb != 0); c->sendMessages = (sm != 0);
 }
 
 // Read an optional trailing UI anchor enum (added in a later format version).
@@ -317,6 +324,42 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sv->maxWarmth << " " << sv->coldDrain << " " << sv->warmRegen << " "
             << sv->freezeDamage << " " << (sv->publishPrefs ? 1 : 0) << " "
             << (sv->publishBars ? 1 : 0) << " " << (sv->sendMessages ? 1 : 0) << "\n";
+    }
+    auto statTail = [](std::ostream& o, StatComponent* c) {
+        o << " " << (c->publishPrefs ? 1 : 0) << " " << (c->publishBar ? 1 : 0)
+          << " " << (c->sendMessages ? 1 : 0) << "\n";
+    };
+    if (auto* c = go->GetComponent<HealthStat>()) {
+        out << "  stat_health " << c->maxHealth << " " << c->armor << " " << c->regenPerSecond
+            << " " << c->regenDelay << " " << c->lowThreshold; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<HungerStat>()) {
+        out << "  stat_hunger " << c->maxHunger << " " << c->drainPerSecond << " "
+            << c->sprintMultiplier << " " << c->lowThreshold; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<ThirstStat>()) {
+        out << "  stat_thirst " << c->maxThirst << " " << c->drainPerSecond << " "
+            << c->sprintMultiplier << " " << c->lowThreshold; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<StaminaStat>()) {
+        out << "  stat_stamina " << c->maxStamina << " " << c->regenPerSecond << " " << c->regenDelay
+            << " " << c->sprintCost << " " << c->jumpCost << " " << c->exhaustedUntil; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<OxygenStat>()) {
+        out << "  stat_oxygen " << c->maxOxygen << " " << c->drainPerSecond << " "
+            << c->refillPerSecond; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<TemperatureStat>()) {
+        out << "  stat_temp " << c->maxWarmth << " " << c->coldDrain << " "
+            << c->warmRegen; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<SleepStat>()) {
+        out << "  stat_sleep " << c->maxEnergy << " " << c->drainPerSecond << " "
+            << c->restPerSecond << " " << c->tiredThreshold; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<SanityStat>()) {
+        out << "  stat_sanity " << c->maxSanity << " " << c->drainInDark << " "
+            << c->regenInLight << " " << c->lowThreshold; statTail(out, c);
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
@@ -1209,6 +1252,39 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> sv->maxWarmth >> sv->coldDrain >> sv->warmRegen >> sv->freezeDamage;
                     int pp = 1, pb = 1, sm = 1; in >> pp >> pb >> sm;
                     sv->publishPrefs = (pp != 0); sv->publishBars = (pb != 0); sv->sendMessages = (sm != 0);
+                } else if (field == "stat_health") {
+                    auto* c = go->AddComponent<HealthStat>();
+                    in >> c->maxHealth >> c->armor >> c->regenPerSecond >> c->regenDelay >> c->lowThreshold;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_hunger") {
+                    auto* c = go->AddComponent<HungerStat>();
+                    in >> c->maxHunger >> c->drainPerSecond >> c->sprintMultiplier >> c->lowThreshold;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_thirst") {
+                    auto* c = go->AddComponent<ThirstStat>();
+                    in >> c->maxThirst >> c->drainPerSecond >> c->sprintMultiplier >> c->lowThreshold;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_stamina") {
+                    auto* c = go->AddComponent<StaminaStat>();
+                    in >> c->maxStamina >> c->regenPerSecond >> c->regenDelay >> c->sprintCost
+                       >> c->jumpCost >> c->exhaustedUntil;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_oxygen") {
+                    auto* c = go->AddComponent<OxygenStat>();
+                    in >> c->maxOxygen >> c->drainPerSecond >> c->refillPerSecond;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_temp") {
+                    auto* c = go->AddComponent<TemperatureStat>();
+                    in >> c->maxWarmth >> c->coldDrain >> c->warmRegen;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_sleep") {
+                    auto* c = go->AddComponent<SleepStat>();
+                    in >> c->maxEnergy >> c->drainPerSecond >> c->restPerSecond >> c->tiredThreshold;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_sanity") {
+                    auto* c = go->AddComponent<SanityStat>();
+                    in >> c->maxSanity >> c->drainInDark >> c->regenInLight >> c->lowThreshold;
+                    ReadStatTail(in, c);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

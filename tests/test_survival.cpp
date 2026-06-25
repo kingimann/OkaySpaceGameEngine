@@ -108,5 +108,89 @@ int main() {
         CHECK(!v2->sendMessages);
     }
 
+    // --- Individual HealthStat: regen after delay, death deactivates -----
+    {
+        Scene s("ihealth");
+        GameObject* p = s.CreateGameObject("P");
+        auto* h = p->AddComponent<HealthStat>();
+        h->regenPerSecond = 10.0f; h->regenDelay = 0.0f;
+        s.Start();
+        h->Damage(40.0f);
+        CHECK_NEAR(h->health, 60.0f, 1e-3f);
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);  // ~+10 over 1s
+        CHECK(h->health > 65.0f);
+        h->Damage(1000.0f);
+        CHECK(h->IsDead());
+        CHECK(!p->active);
+    }
+
+    // --- Individual stats are independent (Hunger doesn't touch Health) --
+    {
+        Scene s("indep");
+        GameObject* p = s.CreateGameObject("P");
+        auto* hp = p->AddComponent<HealthStat>();
+        auto* hu = p->AddComponent<HungerStat>();
+        hu->drainPerSecond = 80.0f;                 // empties fast
+        s.Start();
+        for (int i = 0; i < 180; ++i) s.Update(1.0f / 60.0f);
+        CHECK_NEAR(hu->hunger, 0.0f, 1e-3f);
+        CHECK(hu->starving);
+        CHECK_NEAR(hp->health, 100.0f, 1e-3f);      // standalone: no cross-talk
+    }
+
+    // --- StaminaStat: sprint drains, exhaustion locks until recovered ----
+    {
+        Scene s("istam");
+        GameObject* p = s.CreateGameObject("P");
+        auto* st = p->AddComponent<StaminaStat>();
+        st->sprintCost = 200.0f; st->exhaustedUntil = 50.0f; st->regenPerSecond = 40.0f; st->regenDelay = 0.0f;
+        s.Start();
+        st->SetSprinting(true);
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(st->stamina < 30.0f);                 // drained to exhaustion (then idle-regens)
+        CHECK(st->exhausted);
+        CHECK(!st->CanSprint());
+        st->SetSprinting(false);
+        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f); // recover past threshold
+        CHECK(!st->exhausted);
+        CHECK(st->stamina >= 50.0f);
+    }
+
+    // --- OxygenStat drains submerged, refills surfaced -------------------
+    {
+        Scene s("iox");
+        GameObject* p = s.CreateGameObject("P");
+        auto* ox = p->AddComponent<OxygenStat>();
+        ox->drainPerSecond = 50.0f; ox->refillPerSecond = 50.0f;
+        s.Start();
+        ox->SetSubmerged(true);
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(ox->oxygen < 60.0f);
+        float low = ox->oxygen;
+        ox->SetSubmerged(false);
+        for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);
+        CHECK(ox->oxygen > low);                    // refilled
+    }
+
+    // --- Individual stat serialization round-trip ------------------------
+    {
+        Scene s("iser");
+        GameObject* p = s.CreateGameObject("P");
+        p->AddComponent<HealthStat>()->maxHealth = 250.0f;
+        auto* st = p->AddComponent<StaminaStat>(); st->jumpCost = 33.0f; st->sendMessages = false;
+        p->AddComponent<SanityStat>()->drainInDark = 7.0f;
+        std::string txt = SceneSerializer::SerializeObject(*p);
+        CHECK(txt.find("stat_health ") != std::string::npos);
+        CHECK(txt.find("stat_stamina ") != std::string::npos);
+        CHECK(txt.find("stat_sanity ") != std::string::npos);
+        Scene s2("iser2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        CHECK(c2 != nullptr);
+        CHECK_NEAR(c2->GetComponent<HealthStat>()->maxHealth, 250.0f, 1e-3f);
+        CHECK_NEAR(c2->GetComponent<StaminaStat>()->jumpCost, 33.0f, 1e-3f);
+        CHECK(!c2->GetComponent<StaminaStat>()->sendMessages);
+        CHECK_NEAR(c2->GetComponent<SanityStat>()->drainInDark, 7.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

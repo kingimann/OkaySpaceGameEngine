@@ -6972,6 +6972,26 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##svsv")) toRemove = c;
         }
     }
+    if (auto* c = go->GetComponent<SurvivalZone>()) {
+        if (CompHeader("Survival Zone (trigger)", c, &toRemove)) {
+            ImGui::TextDisabled("Drives survival state on bodies inside a trigger collider.");
+            const char* kinds[] = { "Radiation", "Water", "Cold", "Fire (warm)", "Danger (sanity)",
+                                    "Submerged", "Poison", "Status Effect", "Damage", "Heal" };
+            if (ImGui::Combo("Effect##svz", &c->effect, kinds, IM_ARRAYSIZE(kinds))) ed.dirty = true;
+            auto eff = (SurvivalZone::Effect)c->effect;
+            if (eff == SurvivalZone::Effect::Poison || eff == SurvivalZone::Effect::Damage ||
+                eff == SurvivalZone::Effect::Heal)
+                if (ImGui::DragFloat("Amount##svz", &c->amount, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (eff == SurvivalZone::Effect::Status) {
+                char nm[64]; std::strncpy(nm, c->effectName.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
+                if (ImGui::InputText("Effect Name##svz", nm, sizeof(nm))) { c->effectName = nm; ed.dirty = true; }
+                if (ImGui::DragFloat("HP / s (+heal/-dmg)##svz", &c->amount, 0.5f, -10000.0f, 10000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Duration##svz", &c->duration, 0.1f, 0.0f, 600.0f, "%.1f s")) ed.dirty = true;
+            }
+            ImGui::TextDisabled("Needs a trigger Collider (isTrigger). Toggle effects clear on exit.");
+            if (ImGui::SmallButton("Remove##svz")) toRemove = c;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8664,6 +8684,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CarryWeightStat>(), "Stat: Carry Weight")) { go->AddComponent<CarryWeightStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<StatusEffectStat>(), "Status Effects")) { go->AddComponent<StatusEffectStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalSave>(), "Survival Save / Load")) { go->AddComponent<SurvivalSave>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SurvivalZone>(), "Survival Zone (trigger)")) { go->AddComponent<SurvivalZone>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

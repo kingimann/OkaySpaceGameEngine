@@ -17,6 +17,9 @@ avoid hazards, survive.
 - **Campfire** (orange) — warms you.
 - **Lake** (blue, large) — gets you wet and submerged (oxygen drains — don't linger).
 - **Toxic Pit** (purple) — poisons you.
+- **Wolves** — `NPCController` predators that wander and hunt you, biting in range.
+- **Crafting** — start with cloth; the bottom-right buttons craft a bandage and use
+  it to heal (`Crafting` + `Consumables` on an `Inventory`).
 - HUD bars (top-left): Health, Hunger, Thirst, Stamina, Oxygen; a clock shows the time.
 - Progress auto-saves to `okaysurvival.okayprefs` and reloads on next launch.
 

@@ -4,6 +4,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/NativeUIActions.hpp"
+#include "okay/Components/Consumables.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
@@ -182,7 +183,10 @@ private:
             GameObject* t = gameObject;
             if (!clickTarget.empty() && gameObject->scene())
                 if (GameObject* g = gameObject->scene()->Find(clickTarget)) t = g;
-            if (t && !InvokeNativeUIAction(t, clickFunction, clickArg))
+            bool handled = false;
+            if (t && clickFunction == "UseItem")   // Consumables (dispatched here to avoid a header cycle)
+                if (auto* cons = t->GetComponent<Consumables>()) { cons->UseIndex((int)clickArg); handled = true; }
+            if (t && !handled && !InvokeNativeUIAction(t, clickFunction, clickArg))
                 if (auto* tsc = t->GetComponent<ScriptComponent>())
                     if (tsc->VM()) tsc->VM()->CallEvent(clickFunction);
         }

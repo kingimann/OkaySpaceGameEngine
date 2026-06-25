@@ -22,6 +22,8 @@
 #include "okay/Components/SurvivalZone.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
+#include "okay/Components/NPCController.hpp"
+#include "okay/Components/Crafting.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
@@ -410,6 +412,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (c->controlSun ? 1 : 0) << " " << (c->rotateSun ? 1 : 0) << " " << (c->controlSky ? 1 : 0)
             << " " << c->dayIntensity << " " << c->nightIntensity << " " << c->dayAmbient << " " << c->nightAmbient;
         col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
+        out << "\n";
+    }
+    if (auto* c = go->GetComponent<NPCController>()) {
+        out << "  npc " << c->behavior << " " << c->moveSpeed << " " << c->sightRange << " "
+            << c->wanderRadius << " " << c->attackRange << " " << c->attackDamage << " "
+            << c->attackInterval << " " << (c->faceMovement ? 1 : 0) << " " << Quote(c->targetName) << "\n";
+    }
+    if (auto* c = go->GetComponent<Crafting>()) {
+        out << "  crafting " << c->recipes.size();
+        for (const auto& r : c->recipes) {
+            out << " " << Quote(r.output) << " " << r.outputCount << " " << r.inputs.size();
+            for (const auto& in : r.inputs) out << " " << Quote(in.item) << " " << in.count;
+        }
         out << "\n";
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
@@ -1389,6 +1404,27 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     c->paused = (ps != 0); c->controlSun = (cs != 0); c->rotateSun = (rs != 0); c->controlSky = (ck != 0);
                     auto col = [&](Color& k) { in >> k.r >> k.g >> k.b; k.a = 1.0f; };
                     col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
+                } else if (field == "npc") {
+                    auto* c = go->AddComponent<NPCController>();
+                    int fm = 1;
+                    in >> c->behavior >> c->moveSpeed >> c->sightRange >> c->wanderRadius
+                       >> c->attackRange >> c->attackDamage >> c->attackInterval >> fm;
+                    c->faceMovement = (fm != 0);
+                    c->targetName = ReadQuoted(in);
+                } else if (field == "crafting") {
+                    auto* c = go->AddComponent<Crafting>();
+                    int n = 0; in >> n;
+                    for (int i = 0; i < n; ++i) {
+                        Crafting::Recipe r;
+                        r.output = ReadQuoted(in); in >> r.outputCount;
+                        int ni = 0; in >> ni;
+                        for (int j = 0; j < ni; ++j) {
+                            Crafting::Ingredient ing;
+                            ing.item = ReadQuoted(in); in >> ing.count;
+                            r.inputs.push_back(ing);
+                        }
+                        c->recipes.push_back(std::move(r));
+                    }
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

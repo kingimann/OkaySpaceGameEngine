@@ -58,6 +58,21 @@ static void Zone(Scene& s, const char* name, float x, float z, float size,
     sz->effect = (int)effect; sz->amount = amount;
 }
 
+// A wolf: a dark capsule that wanders and chases/bites the player.
+static void Wolf(Scene& s, float x, float z) {
+    GameObject* w = s.CreateGameObject("Wolf");
+    w->transform->localPosition = {x, 0.6f, z};
+    auto* mr = w->AddComponent<MeshRenderer>();
+    mr->mesh = Mesh::Capsule(); mr->color = Color::FromBytes(70, 70, 80);
+    w->AddComponent<Rigidbody3D>();
+    auto* col = w->AddComponent<CapsuleCollider3D>();
+    col->radius = 0.4f; col->height = 1.2f;
+    auto* n = w->AddComponent<NPCController>();
+    n->behavior = (int)NPCController::Behavior::Chase;
+    n->moveSpeed = 3.2f; n->sightRange = 12.0f; n->wanderRadius = 8.0f;
+    n->attackRange = 1.6f; n->attackDamage = 7.0f; n->attackInterval = 1.2f;
+}
+
 static void Bar(Scene& s, const char* name, float y, Color fill) {
     GameObject* g = s.CreateGameObject(name);
     auto* pb = g->AddComponent<UIProgressBar>();
@@ -128,6 +143,19 @@ int main(int argc, char** argv) {
     auto* save = player->AddComponent<SurvivalSave>();
     save->saveKey = "okaysurvival"; save->loadOnStart = true;
 
+    // Inventory + crafting: start with cloth, craft a bandage, use it to heal.
+    auto* inv = player->AddComponent<Inventory>();
+    inv->Add("cloth", 4);
+    auto* craft = player->AddComponent<Crafting>();
+    craft->AddRecipe("bandage", 1, {{"cloth", 2}});
+    auto* cons = player->AddComponent<Consumables>();
+    cons->AddRecipe("bandage", "Heal", 35.0f);   // index 0 -> Use heals 35
+
+    // ---- Wolves: they wander and hunt the player ----
+    Wolf(scene, -18.0f, -2.0f);
+    Wolf(scene,  18.0f,  4.0f);
+    Wolf(scene,  -2.0f, 18.0f);
+
     // ---- Camera (the controller orbits it behind the player) ----
     GameObject* camObj = scene.CreateGameObject("Main Camera");
     auto* cam = camObj->AddComponent<Camera>();
@@ -142,6 +170,22 @@ int main(int argc, char** argv) {
     Bar(scene, "StaminaBar", 104.0f, Color::FromBytes( 90, 200, 110));
     Bar(scene, "OxygenBar",  132.0f, Color::FromBytes(120, 200, 230));
 
+    // Crafting buttons: craft a bandage from cloth, then use it to heal.
+    {
+        GameObject* b = scene.CreateGameObject("CraftBandageBtn");
+        auto* btn = b->AddComponent<UIButton>();
+        btn->label = "Craft Bandage"; btn->position = {20.0f, 20.0f}; btn->size = {150.0f, 34.0f};
+        btn->anchor = UIAnchor::BottomRight;
+        btn->clickTarget = "Player"; btn->clickFunction = "Craft"; btn->clickArg = 0.0f;  // recipe 0
+    }
+    {
+        GameObject* b = scene.CreateGameObject("UseBandageBtn");
+        auto* btn = b->AddComponent<UIButton>();
+        btn->label = "Use Bandage"; btn->position = {20.0f, 60.0f}; btn->size = {150.0f, 34.0f};
+        btn->anchor = UIAnchor::BottomRight;
+        btn->clickTarget = "Player"; btn->clickFunction = "UseItem"; btn->clickArg = 0.0f; // consumable 0
+    }
+
     GameObject* clock = scene.CreateGameObject("Clock");
     auto* tr = clock->AddComponent<TextRenderer>();
     tr->screenPos = {20.0f, 168.0f}; tr->pixelSize = 0.18f; tr->anchor = UIAnchor::TopLeft;
@@ -151,7 +195,8 @@ int main(int argc, char** argv) {
     auto* ht = hint->AddComponent<TextRenderer>();
     ht->screenPos = {20.0f, 16.0f}; ht->pixelSize = 0.14f; ht->anchor = UIAnchor::BottomLeft;
     ht->text = "WASD move, Shift run, Space jump. Eat at the bush, drink at the well,\n"
-               "warm at the fire, avoid the toxic pit. Survive!";
+               "warm at the fire, avoid the toxic pit and the wolves. Craft & use\n"
+               "bandages (buttons, bottom-right) to heal. Survive!";
 
     // ---- Write the game files ----
     if (!SceneSerializer::SaveToFile(scene, outDir + "game.okayscene")) {

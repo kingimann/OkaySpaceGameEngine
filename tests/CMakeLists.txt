@@ -393,3 +393,7 @@ add_test(NAME worldtoscreen COMMAND test_worldtoscreen)
 add_executable(test_worldcanvas test_worldcanvas.cpp)
 target_link_libraries(test_worldcanvas PRIVATE okay::engine)
 add_test(NAME worldcanvas COMMAND test_worldcanvas)
+
+add_executable(test_vehicle test_vehicle.cpp)
+target_link_libraries(test_vehicle PRIVATE okay::engine)
+add_test(NAME vehicle COMMAND test_vehicle)

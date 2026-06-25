@@ -7164,6 +7164,30 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cc3")) toRemove = cc;
         }
     }
+    if (auto* v = go->GetComponent<VehicleController>()) {
+        if (CompHeader("Vehicle Controller (Car)", v, &toRemove)) {
+            if (ImGui::DragFloat("Max Speed##veh", &v->maxSpeed, 0.5f, 0.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Reverse Speed##veh", &v->reverseSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##veh", &v->acceleration, 0.5f, 0.5f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Brake Force##veh", &v->brakeForce, 0.5f, 0.5f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Drag (coast)##veh", &v->drag, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Turn Speed##veh", &v->turnSpeed, 1.0f, 0.0f, 400.0f, "%.0f deg/s")) ed.dirty = true;
+            if (ImGui::DragFloat("Grip##veh", &v->grip, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast sideways slide is killed. Higher = sticky cornering, lower = slidey.");
+            if (ImGui::DragFloat("Handbrake Grip##veh", &v->handbrakeGrip, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grip while the handbrake (Space) is held. Low = drift.");
+            if (ImGui::DragFloat("Ground Check##veh", &v->groundCheckDistance, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Follow Camera##veh", &v->followCamera)) ed.dirty = true;
+            if (v->followCamera) {
+                if (ImGui::DragFloat("Cam Distance##veh", &v->camDistance, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Cam Height##veh", &v->camHeight, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Cam Smoothing##veh", &v->camLerp, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+            }
+            ImGui::TextDisabled("Drive: W/S or arrows = gas/reverse, A/D = steer,");
+            ImGui::TextDisabled("Space = handbrake. Needs a Rigidbody3D + collider.");
+            if (ImGui::SmallButton("Remove##veh")) toRemove = v;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8852,6 +8876,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<TopDownController>(), "Top Down Controller")) { go->AddComponent<TopDownController>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { go->AddComponent<ThirdPersonShooterController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

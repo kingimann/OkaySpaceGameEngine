@@ -1,6 +1,39 @@
-# Survival Kit — ready-made gameplay scripts
+# Survival Kit — ready-made gameplay
 
-The Survival Kit is a set of pre-written, fully customizable scripts for common
+The Survival Kit covers common survival-game mechanics in two flavours:
+
+- **Survival Stats (native)** — a single built-in C++ component (*Add Component ▸
+  Gameplay ▸ Survival Stats (native)*) with every stat wired together. Recommended
+  for the stat simulation: it runs in native code (no script VM), and empty
+  hunger/thirst/oxygen/warmth call `Damage()` **directly** rather than bouncing
+  through messages. See [Native component](#native-component-survival-stats) below.
+- **Scripts** — pre-written, fully customizable OkaySource you can open and edit,
+  including per-stat scripts (Health, Hunger, …) and an all-in-one. Use these when
+  you want methods callable straight from a **Button's On Click** with no code, or a
+  starting point you can rewrite.
+
+Both publish the same saved values, fill the same `*Bar` progress widgets, and send
+the same messages, so a HUD built for one works with the other.
+
+## Native component (Survival Stats)
+
+Drop **Survival Stats (native)** on the Player and tune the Inspector groups
+(Health, Hunger, Thirst, Stamina, Oxygen, Temperature, Output). Each frame it drains
+the stats, and when hunger/thirst/oxygen/warmth hit zero it damages health directly;
+`armor` soaks incoming damage and health regenerates while fed + hydrated after a
+`regenDelay` pause. On death it broadcasts `died`, plays a sibling AudioSource, and
+deactivates the object.
+
+Methods (call from another native component or engine code; the C++ public API):
+`Damage`, `Heal`, `Eat`, `Drink`, `Breathe`, `Warm`, `AddArmor`, `Revive`,
+`SetSprinting`, `SetSubmerged`, `SetCold`, plus `Fraction()` / `…Fraction()` /
+`IsDead()` / `CanSprint()`. **Output** toggles control whether it writes saved
+values, fills `*Bar` widgets, and broadcasts messages. For no-code On-Click buttons
+(Eat/Drink), use the script flavour below — On Click dispatches to scripts.
+
+## Scripts — ready-made and editable
+
+The Survival Kit is also a set of pre-written, fully customizable scripts for common
 survival-game mechanics. Drop them onto your Player (or any object) and tune the
 numbers in the Inspector — no coding required, but every script is plain
 OkaySource you can open and edit.

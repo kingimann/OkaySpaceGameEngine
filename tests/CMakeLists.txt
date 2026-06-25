@@ -397,3 +397,7 @@ add_test(NAME worldcanvas COMMAND test_worldcanvas)
 add_executable(test_vehicle test_vehicle.cpp)
 target_link_libraries(test_vehicle PRIVATE okay::engine)
 add_test(NAME vehicle COMMAND test_vehicle)
+
+add_executable(test_survival test_survival.cpp)
+target_link_libraries(test_survival PRIVATE okay::engine)
+add_test(NAME survival COMMAND test_survival)

@@ -7223,6 +7223,63 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##veh2")) toRemove = v2;
         }
     }
+    if (auto* sv = go->GetComponent<SurvivalStats>()) {
+        if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
+            ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
+            if (ImGui::TreeNodeEx("Health##sv", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::DragFloat("Max Health##sv", &sv->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Armor##sv", &sv->armor, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Regen / s (fed)##sv", &sv->regenWhenFed, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Regen Delay##sv", &sv->regenDelay, 0.1f, 0.0f, 60.0f, "%.1f s")) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNodeEx("Hunger##sv")) {
+                if (ImGui::DragFloat("Max##svh", &sv->maxHunger, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Drain / s##svh", &sv->hungerDrain, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Starve Dmg / s##svh", &sv->starveDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNodeEx("Thirst##sv")) {
+                if (ImGui::DragFloat("Max##svt", &sv->maxThirst, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Drain / s##svt", &sv->thirstDrain, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Dehydrate Dmg / s##svt", &sv->dehydrateDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNodeEx("Stamina##sv")) {
+                if (ImGui::DragFloat("Max##svs", &sv->maxStamina, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Regen / s##svs", &sv->staminaRegen, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Sprint Cost / s##svs", &sv->sprintCost, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Sprint Drain x##svs", &sv->sprintDrainMult, 0.1f, 0.0f, 10.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNodeEx("Oxygen##sv")) {
+                if (ImGui::DragFloat("Max##svo", &sv->maxOxygen, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Drain / s##svo", &sv->oxygenDrain, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Refill / s##svo", &sv->oxygenRefill, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Drown Dmg / s##svo", &sv->drownDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNodeEx("Temperature##sv")) {
+                if (ImGui::DragFloat("Max Warmth##svw", &sv->maxWarmth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Cold Drain / s##svw", &sv->coldDrain, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Warm Regen / s##svw", &sv->warmRegen, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Freeze Dmg / s##svw", &sv->freezeDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNodeEx("Output##sv")) {
+                if (ImGui::Checkbox("Saved values##svp", &sv->publishPrefs)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write {health}, {hunger}, ... each frame for UI text binds.");
+                if (ImGui::Checkbox("Fill *Bar widgets##svp", &sv->publishBars)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fill same-named progress bars: HealthBar, HungerBar, ...");
+                if (ImGui::Checkbox("Broadcast messages##svp", &sv->sendMessages)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("died / starving / dehydrated / drowning / freezing -> ActionList OnMessage.");
+                ImGui::TreePop();
+            }
+            ImGui::TextDisabled("Methods: Eat/Drink/Heal/Breathe/Warm/Damage,");
+            ImGui::TextDisabled("SetSprinting/SetSubmerged/SetCold, Revive.");
+            if (ImGui::SmallButton("Remove##sv")) toRemove = sv;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8913,6 +8970,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

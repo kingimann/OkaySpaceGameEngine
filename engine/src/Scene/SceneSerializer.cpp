@@ -15,6 +15,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
@@ -305,6 +306,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << v2->brakeForce << " " << v2->drag << " " << v2->turnSpeed << " " << v2->grip
             << " " << v2->handbrakeGrip << " " << (v2->sideView ? 1 : 0)
             << " " << (int)(unsigned char)v2->handbrakeKey << "\n";
+    }
+    if (auto* sv = go->GetComponent<SurvivalStats>()) {
+        out << "  survival " << sv->maxHealth << " " << sv->armor << " " << sv->regenWhenFed
+            << " " << sv->regenDelay << " " << sv->maxHunger << " " << sv->hungerDrain << " "
+            << sv->starveDamage << " " << sv->maxThirst << " " << sv->thirstDrain << " "
+            << sv->dehydrateDamage << " " << sv->maxStamina << " " << sv->staminaRegen << " "
+            << sv->sprintCost << " " << sv->sprintDrainMult << " " << sv->maxOxygen << " "
+            << sv->oxygenDrain << " " << sv->oxygenRefill << " " << sv->drownDamage << " "
+            << sv->maxWarmth << " " << sv->coldDrain << " " << sv->warmRegen << " "
+            << sv->freezeDamage << " " << (sv->publishPrefs ? 1 : 0) << " "
+            << (sv->publishBars ? 1 : 0) << " " << (sv->sendMessages ? 1 : 0) << "\n";
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
@@ -1187,6 +1199,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> v2->drag >> v2->turnSpeed >> v2->grip >> v2->handbrakeGrip;
                     int sv = 0; in >> sv; v2->sideView = (sv != 0);
                     int hk = 32; in >> hk; v2->handbrakeKey = (char)hk;
+                } else if (field == "survival") {
+                    auto* sv = go->AddComponent<SurvivalStats>();
+                    in >> sv->maxHealth >> sv->armor >> sv->regenWhenFed >> sv->regenDelay
+                       >> sv->maxHunger >> sv->hungerDrain >> sv->starveDamage
+                       >> sv->maxThirst >> sv->thirstDrain >> sv->dehydrateDamage
+                       >> sv->maxStamina >> sv->staminaRegen >> sv->sprintCost >> sv->sprintDrainMult
+                       >> sv->maxOxygen >> sv->oxygenDrain >> sv->oxygenRefill >> sv->drownDamage
+                       >> sv->maxWarmth >> sv->coldDrain >> sv->warmRegen >> sv->freezeDamage;
+                    int pp = 1, pb = 1, sm = 1; in >> pp >> pb >> sm;
+                    sv->publishPrefs = (pp != 0); sv->publishBars = (pb != 0); sv->sendMessages = (sm != 0);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

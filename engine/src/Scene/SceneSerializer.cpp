@@ -20,6 +20,7 @@
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/SurvivalZone.hpp"
+#include "okay/Components/Consumables.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
@@ -394,6 +395,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* c = go->GetComponent<SurvivalZone>()) {
         out << "  survivalzone " << c->effect << " " << c->amount << " " << c->duration
             << " " << Quote(c->effectName) << "\n";
+    }
+    if (auto* c = go->GetComponent<Consumables>()) {
+        out << "  consumables " << (c->requireInventory ? 1 : 0) << " " << (c->consumeOnDrop ? 1 : 0)
+            << " " << (c->destroyDroppedItem ? 1 : 0) << " " << c->recipes.size();
+        for (const auto& r : c->recipes)
+            out << " " << Quote(r.item) << " " << Quote(r.action) << " " << r.amount;
+        out << "\n";
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
@@ -1354,6 +1362,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* c = go->AddComponent<SurvivalZone>();
                     in >> c->effect >> c->amount >> c->duration;
                     c->effectName = ReadQuoted(in);
+                } else if (field == "consumables") {
+                    auto* c = go->AddComponent<Consumables>();
+                    int ri = 1, cd = 1, dd = 1, n = 0;
+                    in >> ri >> cd >> dd >> n;
+                    c->requireInventory = (ri != 0); c->consumeOnDrop = (cd != 0); c->destroyDroppedItem = (dd != 0);
+                    for (int i = 0; i < n; ++i) {
+                        Consumables::Recipe r;
+                        r.item = ReadQuoted(in); r.action = ReadQuoted(in); in >> r.amount;
+                        c->recipes.push_back(r);
+                    }
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

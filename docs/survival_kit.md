@@ -105,6 +105,23 @@ the zone applies its effect; "while inside" effects clear again on exit:
 Put it on an object with a trigger `Collider` (isTrigger on). A radiation room, a
 lake, a snowfield, a campfire, or a gas cloud each become drag-and-drop scenery.
 
+## Items → stats (Consumables)
+
+**Add Component ▸ Gameplay ▸ Consumables (items → stats)** maps item names to a
+survival effect, so the inventory and drag-and-drop you already have feed the stats —
+no scripting. Add recipes like `apple → Eat 30`, `water → Drink 25`, `medkit →
+Heal 50` (any native verb: `Eat`/`Drink`/`Heal`/`Breathe`/`Warm`/`Damage`/`Poison`/
+`Cure`/`Bandage`/`TakeAntiRad`/…). Put it on the Player alongside the stats.
+
+Two ways it fires:
+- **`Use(item)`** — removes one from a sibling **Inventory** (when *Require Inventory*)
+  and applies the effect. Call it from a hotbar button or a script.
+- **Drag & drop** — drop a world item (a `Draggable`) onto the Player; if the dropped
+  object's name or tag matches a recipe, the effect is applied and (with *Destroy
+  Dropped Item*) the world item is removed. So dragging a berry onto the player eats
+  it, a water bottle drinks it, a medkit heals — straight out of the existing
+  Draggable/DropZone system.
+
 ## Making it show up (it's wired for you)
 
 Every component **publishes itself each frame** so you see it working immediately:

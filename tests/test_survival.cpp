@@ -488,5 +488,65 @@ int main() {
         CHECK_NEAR(z2->duration, 4.0f, 1e-3f);
     }
 
+    // --- Consumables: Use() pulls from Inventory + applies the effect ----
+    {
+        Scene s("consume");
+        GameObject* p = s.CreateGameObject("Player");
+        auto* sv = p->AddComponent<SurvivalStats>();
+        auto* inv = p->AddComponent<Inventory>();
+        auto* cons = p->AddComponent<Consumables>();
+        cons->AddRecipe("water", "Drink", 30.0f);
+        cons->AddRecipe("apple", "Eat", 25.0f);
+        s.Start();
+        sv->thirst = 40.0f; sv->hunger = 50.0f;
+        inv->Add("water", 2);
+        CHECK(cons->Use("water"));                           // consumes one + drinks
+        CHECK_NEAR(sv->thirst, 70.0f, 1e-3f);
+        CHECK(inv->Count("water") == 1);
+        CHECK(!cons->Use("apple"));                          // not in inventory
+        CHECK_NEAR(sv->hunger, 50.0f, 1e-3f);                // so no effect
+        CHECK(!cons->Use("rock"));                           // no recipe
+    }
+
+    // --- Drag-drop a world item onto the player -> consumed + destroyed --
+    {
+        Scene s("drop");
+        GameObject* p = s.CreateGameObject("Player");
+        auto* hp = p->AddComponent<HealthStat>(); hp->regenPerSecond = 0.0f;
+        auto* cons = p->AddComponent<Consumables>();
+        cons->requireInventory = false;                      // world item, not in a bag
+        cons->AddRecipe("medkit", "Heal", 40.0f);
+        s.Start();
+        hp->health = 50.0f;
+        GameObject* kit = s.CreateGameObject("medkit");
+        bool consumed = cons->ConsumeDropped(kit);
+        CHECK(consumed);
+        CHECK_NEAR(hp->health, 90.0f, 1e-3f);                // healed
+        s.Update(1.0f / 60.0f);                              // flush the deferred destroy
+        CHECK(s.Find("medkit") == nullptr);                  // dropped item destroyed
+    }
+
+    // --- Consumables serialization (recipe list round-trip) --------------
+    {
+        Scene s("conser");
+        GameObject* p = s.CreateGameObject("P");
+        auto* cons = p->AddComponent<Consumables>();
+        cons->requireInventory = false; cons->destroyDroppedItem = false;
+        cons->AddRecipe("berry", "Eat", 12.0f);
+        cons->AddRecipe("potion", "Heal", 60.0f);
+        std::string txt = SceneSerializer::SerializeObject(*p);
+        CHECK(txt.find("consumables ") != std::string::npos);
+        Scene s2("conser2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        auto* k2 = c2 ? c2->GetComponent<Consumables>() : nullptr;
+        CHECK(k2 != nullptr);
+        CHECK(!k2->requireInventory);
+        CHECK(!k2->destroyDroppedItem);
+        CHECK(k2->recipes.size() == 2);
+        CHECK(k2->recipes[1].item == "potion");
+        CHECK(k2->recipes[1].action == "Heal");
+        CHECK_NEAR(k2->recipes[1].amount, 60.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

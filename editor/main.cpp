@@ -7074,6 +7074,9 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Attack Interval##npc", &c->attackInterval, 0.05f, 0.05f, 10.0f, "%.2f s")) ed.dirty = true;
             }
             if (ImGui::Checkbox("Face Movement##npc", &c->faceMovement)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Health##npc", &c->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Damage() kills it at 0 (a MeleeAttacker can fight it).");
+            if (ImGui::Checkbox("Invulnerable##npc", &c->invulnerable)) ed.dirty = true;
             ImGui::TextDisabled("Moves a sibling Rigidbody3D toward/from the target.");
             if (ImGui::SmallButton("Remove##npc")) toRemove = c;
         }
@@ -7122,6 +7125,50 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("Add an Inventory component for crafting to draw from.");
             ImGui::TextDisabled("Craft(name)/CraftIndex from a menu button (On Click 'Craft', Amount=index).");
             if (ImGui::SmallButton("Remove##craft")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<CraftingMenu>()) {
+        if (CompHeader("Crafting Menu (auto UI)", c, &toRemove)) {
+            ImGui::TextDisabled("Auto-builds a button per Crafting recipe at play.");
+            char k[2] = { c->toggleKey, 0 };
+            if (ImGui::InputText("Toggle Key##cmenu", k, sizeof(k))) { c->toggleKey = k[0]; ed.dirty = true; }
+            if (ImGui::Checkbox("Open at start##cmenu", &c->open)) ed.dirty = true;
+            float p[2] = { c->position.x, c->position.y };
+            if (ImGui::DragFloat2("Position##cmenu", p)) { c->position = {p[0], p[1]}; ed.dirty = true; }
+            float bs[2] = { c->buttonSize.x, c->buttonSize.y };
+            if (ImGui::DragFloat2("Button Size##cmenu", bs)) { c->buttonSize = {bs[0], bs[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Spacing##cmenu", &c->spacing, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (!go->GetComponent<Crafting>())
+                ImGui::TextDisabled("Add a Crafting component for it to build buttons from.");
+            if (ImGui::SmallButton("Remove##cmenu")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<MeleeAttacker>()) {
+        if (CompHeader("Melee Attacker", c, &toRemove)) {
+            ImGui::TextDisabled("Hits NPCs in a cone in front on attack input.");
+            if (ImGui::DragFloat("Damage##melee", &c->damage, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Range##melee", &c->range, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Arc##melee", &c->arc, 1.0f, 1.0f, 360.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Cooldown##melee", &c->cooldown, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            char k[2] = { c->attackKey, 0 };
+            if (ImGui::InputText("Attack Key##melee", k, sizeof(k))) { c->attackKey = k[0]; ed.dirty = true; }
+            if (ImGui::Checkbox("Left Mouse Too##melee", &c->useMouse)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##melee")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<Spawner>()) {
+        if (CompHeader("Spawner", c, &toRemove)) {
+            ImGui::TextDisabled("Clones a template object near here over time.");
+            char tn[48]; std::strncpy(tn, c->templateName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
+            if (ImGui::InputText("Template##spwn", tn, sizeof(tn))) { c->templateName = tn; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of a scene object to clone (hidden at play as the blueprint).");
+            if (ImGui::DragFloat("Interval##spwn", &c->interval, 0.1f, 0.05f, 600.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::DragInt("Max Alive##spwn", &c->maxAlive, 0.1f, 1, 1000)) ed.dirty = true;
+            if (ImGui::DragInt("Total (0=endless)##spwn", &c->totalToSpawn, 0.1f, 0, 100000)) ed.dirty = true;
+            if (ImGui::DragFloat("Spawn Radius##spwn", &c->spawnRadius, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Start Delay##spwn", &c->startDelay, 0.1f, 0.0f, 600.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::Checkbox("Hide Template##spwn", &c->deactivateTemplate)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
@@ -8821,6 +8868,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<DayNightCycle>(), "Day / Night Cycle")) { go->AddComponent<DayNightCycle>(); ed.dirty = true; }
             if (item(!go->GetComponent<NPCController>(), "NPC Controller")) { go->AddComponent<NPCController>(); ed.dirty = true; }
             if (item(!go->GetComponent<Crafting>(), "Crafting")) { go->AddComponent<Crafting>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CraftingMenu>(), "Crafting Menu (auto UI)")) { go->AddComponent<CraftingMenu>(); ed.dirty = true; }
+            if (item(!go->GetComponent<MeleeAttacker>(), "Melee Attacker")) { go->AddComponent<MeleeAttacker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Spawner>(), "Spawner")) { go->AddComponent<Spawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

@@ -24,6 +24,9 @@
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/Crafting.hpp"
+#include "okay/Components/MeleeAttacker.hpp"
+#include "okay/Components/Spawner.hpp"
+#include "okay/Components/CraftingMenu.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
@@ -417,7 +420,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* c = go->GetComponent<NPCController>()) {
         out << "  npc " << c->behavior << " " << c->moveSpeed << " " << c->sightRange << " "
             << c->wanderRadius << " " << c->attackRange << " " << c->attackDamage << " "
-            << c->attackInterval << " " << (c->faceMovement ? 1 : 0) << " " << Quote(c->targetName) << "\n";
+            << c->attackInterval << " " << (c->faceMovement ? 1 : 0) << " " << Quote(c->targetName)
+            << " " << c->maxHealth << " " << (c->invulnerable ? 1 : 0) << "\n";
+    }
+    if (auto* c = go->GetComponent<MeleeAttacker>()) {
+        out << "  melee " << c->damage << " " << c->range << " " << c->arc << " " << c->cooldown
+            << " " << (int)(unsigned char)c->attackKey << " " << (c->useMouse ? 1 : 0) << "\n";
+    }
+    if (auto* c = go->GetComponent<Spawner>()) {
+        out << "  spawner " << Quote(c->templateName) << " " << c->interval << " " << c->maxAlive
+            << " " << c->totalToSpawn << " " << c->spawnRadius << " " << c->startDelay
+            << " " << (c->deactivateTemplate ? 1 : 0) << "\n";
+    }
+    if (auto* c = go->GetComponent<CraftingMenu>()) {
+        out << "  craftmenu " << (int)(unsigned char)c->toggleKey << " " << (c->open ? 1 : 0)
+            << " " << c->position.x << " " << c->position.y << " " << c->buttonSize.x << " "
+            << c->buttonSize.y << " " << c->spacing << " " << (int)c->anchor << "\n";
     }
     if (auto* c = go->GetComponent<Crafting>()) {
         out << "  crafting " << c->recipes.size();
@@ -1411,6 +1429,29 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> c->attackRange >> c->attackDamage >> c->attackInterval >> fm;
                     c->faceMovement = (fm != 0);
                     c->targetName = ReadQuoted(in);
+                    in >> std::ws;   // optional combat health (added later)
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
+                        in >> c->maxHealth; c->health = c->maxHealth;
+                        int iv = 0; in >> iv; c->invulnerable = (iv != 0);
+                    }
+                } else if (field == "melee") {
+                    auto* c = go->AddComponent<MeleeAttacker>();
+                    int key = 'f', um = 1;
+                    in >> c->damage >> c->range >> c->arc >> c->cooldown >> key >> um;
+                    c->attackKey = (char)key; c->useMouse = (um != 0);
+                } else if (field == "spawner") {
+                    auto* c = go->AddComponent<Spawner>();
+                    c->templateName = ReadQuoted(in);
+                    int dt = 1;
+                    in >> c->interval >> c->maxAlive >> c->totalToSpawn >> c->spawnRadius
+                       >> c->startDelay >> dt;
+                    c->deactivateTemplate = (dt != 0);
+                } else if (field == "craftmenu") {
+                    auto* c = go->AddComponent<CraftingMenu>();
+                    int key = 'c', op = 0, anch = 0;
+                    in >> key >> op >> c->position.x >> c->position.y >> c->buttonSize.x
+                       >> c->buttonSize.y >> c->spacing >> anch;
+                    c->toggleKey = (char)key; c->open = (op != 0); c->anchor = (UIAnchor)anch;
                 } else if (field == "crafting") {
                     auto* c = go->AddComponent<Crafting>();
                     int n = 0; in >> n;

@@ -151,10 +151,23 @@ int main(int argc, char** argv) {
     auto* cons = player->AddComponent<Consumables>();
     cons->AddRecipe("bandage", "Heal", 35.0f);   // index 0 -> Use heals 35
 
-    // ---- Wolves: they wander and hunt the player ----
-    Wolf(scene, -18.0f, -2.0f);
-    Wolf(scene,  18.0f,  4.0f);
-    Wolf(scene,  -2.0f, 18.0f);
+    // ---- Wolves: a template + dens that spawn them over time ----
+    Wolf(scene, -26.0f, -24.0f);     // the "Wolf" blueprint (hidden by the spawners)
+    for (int i = 0; i < 2; ++i) {
+        GameObject* den = scene.CreateGameObject("Den");
+        den->transform->localPosition = {i ? 20.0f : -20.0f, 0.2f, i ? 16.0f : -16.0f};
+        auto* mr = den->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Sphere(); mr->color = Color::FromBytes(60, 55, 50);
+        den->transform->localScale = {1.5f, 0.6f, 1.5f};
+        auto* sp = den->AddComponent<Spawner>();
+        sp->templateName = "Wolf"; sp->interval = 12.0f; sp->maxAlive = 2;
+        sp->spawnRadius = 3.0f; sp->startDelay = 8.0f;
+    }
+
+    // Let the player fight back, and a toggleable craft menu (press C).
+    player->AddComponent<MeleeAttacker>();   // F or left-mouse to swing
+    auto* menu = player->AddComponent<CraftingMenu>();
+    menu->toggleKey = 'c'; menu->position = {20.0f, 110.0f};
 
     // ---- Camera (the controller orbits it behind the player) ----
     GameObject* camObj = scene.CreateGameObject("Main Camera");
@@ -170,14 +183,7 @@ int main(int argc, char** argv) {
     Bar(scene, "StaminaBar", 104.0f, Color::FromBytes( 90, 200, 110));
     Bar(scene, "OxygenBar",  132.0f, Color::FromBytes(120, 200, 230));
 
-    // Crafting buttons: craft a bandage from cloth, then use it to heal.
-    {
-        GameObject* b = scene.CreateGameObject("CraftBandageBtn");
-        auto* btn = b->AddComponent<UIButton>();
-        btn->label = "Craft Bandage"; btn->position = {20.0f, 20.0f}; btn->size = {150.0f, 34.0f};
-        btn->anchor = UIAnchor::BottomRight;
-        btn->clickTarget = "Player"; btn->clickFunction = "Craft"; btn->clickArg = 0.0f;  // recipe 0
-    }
+    // Use button (the craft buttons are auto-built by the player's CraftingMenu, press C).
     {
         GameObject* b = scene.CreateGameObject("UseBandageBtn");
         auto* btn = b->AddComponent<UIButton>();
@@ -194,9 +200,9 @@ int main(int argc, char** argv) {
     GameObject* hint = scene.CreateGameObject("Hint");
     auto* ht = hint->AddComponent<TextRenderer>();
     ht->screenPos = {20.0f, 16.0f}; ht->pixelSize = 0.14f; ht->anchor = UIAnchor::BottomLeft;
-    ht->text = "WASD move, Shift run, Space jump. Eat at the bush, drink at the well,\n"
-               "warm at the fire, avoid the toxic pit and the wolves. Craft & use\n"
-               "bandages (buttons, bottom-right) to heal. Survive!";
+    ht->text = "WASD move, Shift run, Space jump, F / click to attack. Eat at the bush,\n"
+               "drink at the well, warm at the fire. Fight the wolves. Press C to craft\n"
+               "a bandage (from cloth), then Use Bandage (bottom-right) to heal. Survive!";
 
     // ---- Write the game files ----
     if (!SceneSerializer::SaveToFile(scene, outDir + "game.okayscene")) {

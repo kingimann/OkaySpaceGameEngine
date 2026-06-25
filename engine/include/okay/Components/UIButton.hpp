@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/NativeUIActions.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/UI/UIShape.hpp"
 #include "okay/Render/Color.hpp"
@@ -36,6 +37,9 @@ public:
     // (blank = none). This runs in addition to a sibling script's on_click().
     std::string clickTarget;
     std::string clickFunction;
+    // Amount passed to a native On Click method (e.g. Eat 25, Drink 30). Native
+    // verbs take this; script CallEvent ignores it (it takes no args).
+    float clickArg = 0.0f;
     Color color = Color::FromBytes(60, 90, 150);
     Color hoverColor = Color::FromBytes(80, 120, 200);
     Color pressedColor = Color::FromBytes(45, 70, 120);  // shown while held down
@@ -171,12 +175,14 @@ private:
         if (gameObject)
             if (auto* sc = gameObject->GetComponent<ScriptComponent>())
                 if (sc->VM()) sc->VM()->CallEvent("on_click");
-        // The inspector-assigned action: a named public function on a chosen object.
+        // The inspector-assigned action: a named function on a chosen object. Native
+        // gameplay verbs (Eat/Drink/Damage/…) dispatch directly; otherwise fall back
+        // to a script's public function so custom handlers still work.
         if (!clickFunction.empty() && gameObject) {
             GameObject* t = gameObject;
             if (!clickTarget.empty() && gameObject->scene())
                 if (GameObject* g = gameObject->scene()->Find(clickTarget)) t = g;
-            if (t)
+            if (t && !InvokeNativeUIAction(t, clickFunction, clickArg))
                 if (auto* tsc = t->GetComponent<ScriptComponent>())
                     if (tsc->VM()) tsc->VM()->CallEvent(clickFunction);
         }

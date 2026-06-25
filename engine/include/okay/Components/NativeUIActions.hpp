@@ -2,6 +2,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/SurvivalAfflictions.hpp"
 #include <string>
 #include <vector>
 
@@ -66,6 +67,25 @@ inline bool InvokeNativeUIAction(GameObject* go, const std::string& fn, float ar
         if (fn == "Restore")     { c->Restore(arg);     return true; }
         if (fn == "SetInDanger") { c->SetInDanger(on);  return true; }
     }
+    if (auto* c = go->GetComponent<RadiationStat>()) {
+        if (fn == "AddRadiation")   { c->AddRadiation(arg);   return true; }
+        if (fn == "TakeAntiRad")    { c->TakeAntiRad(arg);    return true; }
+        if (fn == "SetInRadiation") { c->SetInRadiation(on);  return true; }
+    }
+    if (auto* c = go->GetComponent<BleedingStat>()) {
+        if (fn == "Wound")   { c->Wound(arg);   return true; }
+        if (fn == "Bandage") { c->Bandage();    return true; }
+    }
+    if (auto* c = go->GetComponent<PoisonStat>()) {
+        if (fn == "Poison")  { c->Poison(arg);  return true; }
+        if (fn == "Cure")    { c->Cure(arg);    return true; }
+        if (fn == "CureAll") { c->CureAll();    return true; }
+    }
+    if (auto* c = go->GetComponent<WetnessStat>()) {
+        if (fn == "AddWetness") { c->AddWetness(arg); return true; }
+        if (fn == "DryOff")     { c->DryOff(arg);     return true; }
+        if (fn == "SetInWater") { c->SetInWater(on);  return true; }
+    }
     return false;
 }
 
@@ -88,6 +108,10 @@ inline std::vector<std::string> NativeUIActionNames(GameObject* go) {
     if (go->GetComponent<TemperatureStat>()) add({"Warm", "SetCold", "SetNearFire"});
     if (go->GetComponent<SleepStat>())       add({"Rest", "SetResting"});
     if (go->GetComponent<SanityStat>())      add({"Restore", "SetInDanger"});
+    if (go->GetComponent<RadiationStat>())   add({"AddRadiation", "TakeAntiRad", "SetInRadiation"});
+    if (go->GetComponent<BleedingStat>())    add({"Wound", "Bandage"});
+    if (go->GetComponent<PoisonStat>())      add({"Poison", "Cure", "CureAll"});
+    if (go->GetComponent<WetnessStat>())     add({"AddWetness", "DryOff", "SetInWater"});
     return out;
 }
 

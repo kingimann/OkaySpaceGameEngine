@@ -237,5 +237,99 @@ int main() {
         CHECK_NEAR(b2->clickArg, 35.0f, 1e-3f);
     }
 
+    // --- Bleeding drains a sibling HealthStat until bandaged --------------
+    {
+        Scene s("bleed");
+        GameObject* p = s.CreateGameObject("P");
+        auto* hp = p->AddComponent<HealthStat>(); hp->regenPerSecond = 0.0f;
+        auto* bl = p->AddComponent<BleedingStat>();
+        bl->clotPerSecond = 0.0f; bl->damagePerSecond = 20.0f;   // bleeds until bandaged
+        s.Start();
+        bl->Wound(100.0f);                                       // full bleed
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(hp->health < 90.0f);                               // lost HP to bleeding
+        CHECK(bl->bleeding);
+        bl->Bandage();
+        float after = hp->health;
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(!bl->bleeding);
+        CHECK_NEAR(hp->health, after, 1e-3f);                    // stopped after bandage
+    }
+
+    // --- Radiation builds in a zone and poisons SurvivalStats health -----
+    {
+        Scene s("rad");
+        GameObject* p = s.CreateGameObject("P");
+        auto* sv = p->AddComponent<SurvivalStats>(); sv->regenWhenFed = 0.0f;
+        auto* rd = p->AddComponent<RadiationStat>();
+        rd->gainPerSecond = 100.0f; rd->sickThreshold = 50.0f; rd->damagePerSecond = 10.0f;
+        s.Start();
+        rd->SetInRadiation(true);
+        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);    // 2s: ramps past threshold
+        CHECK(rd->sick);
+        CHECK(sv->health < 100.0f);                              // irradiated -> health damage
+        rd->SetInRadiation(false);
+        rd->TakeAntiRad(1000.0f);
+        s.Update(1.0f / 60.0f);
+        CHECK_NEAR(rd->radiation, 0.0f, 1e-3f);
+        CHECK(!rd->sick);
+    }
+
+    // --- Poison fades on its own; Cure clears it -------------------------
+    {
+        Scene s("poison");
+        GameObject* p = s.CreateGameObject("P");
+        p->AddComponent<HealthStat>()->regenPerSecond = 0.0f;
+        auto* po = p->AddComponent<PoisonStat>();
+        po->decayPerSecond = 10.0f; po->damagePerSecond = 5.0f;
+        s.Start();
+        po->Poison(50.0f);
+        float start = po->poison;
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(po->poison < start);                               // metabolised over time
+        po->CureAll();
+        CHECK_NEAR(po->poison, 0.0f, 1e-3f);
+        s.Update(1.0f / 60.0f);                                  // flag refreshes next tick
+        CHECK(!po->poisoned);
+    }
+
+    // --- Wetness soaks/dries and chills a sibling SurvivalStats ----------
+    {
+        Scene s("wet");
+        GameObject* p = s.CreateGameObject("P");
+        auto* sv = p->AddComponent<SurvivalStats>();
+        auto* we = p->AddComponent<WetnessStat>();
+        we->soakPerSecond = 100.0f; we->chillPerSecond = 20.0f;
+        s.Start();
+        we->SetInWater(true);
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(we->wetness > 50.0f);
+        CHECK(sv->warmth < 100.0f);                              // wet -> chilled
+        we->SetInWater(false);
+        float wet = we->wetness;
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(we->wetness < wet);                                // dries off
+    }
+
+    // --- Affliction dispatch + serialization -----------------------------
+    {
+        Scene s("affser");
+        GameObject* p = s.CreateGameObject("P");
+        auto* bl = p->AddComponent<BleedingStat>();
+        p->AddComponent<RadiationStat>()->sickThreshold = 33.0f;
+        s.Start();
+        CHECK(InvokeNativeUIAction(p, "Wound", 40.0f));
+        CHECK_NEAR(bl->bleed, 40.0f, 1e-3f);
+        CHECK(InvokeNativeUIAction(p, "Bandage", 0.0f));
+        CHECK_NEAR(bl->bleed, 0.0f, 1e-3f);
+        std::string txt = SceneSerializer::SerializeObject(*p);
+        CHECK(txt.find("stat_bleed ") != std::string::npos);
+        CHECK(txt.find("stat_radiation ") != std::string::npos);
+        Scene s2("affser2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        CHECK(c2 && c2->GetComponent<BleedingStat>() != nullptr);
+        CHECK_NEAR(c2->GetComponent<RadiationStat>()->sickThreshold, 33.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

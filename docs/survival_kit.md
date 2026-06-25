@@ -47,6 +47,26 @@ Unlike the all-in-one, standalone stats **don't cross-talk** — an empty `Stat:
 Hunger` won't drain `Stat: Health`. Use **Survival Stats** when you want hunger/
 thirst to damage health.
 
+## Afflictions (damage-over-time effects)
+
+*Add Component ▸ Gameplay ▸ Stat: Radiation / Bleeding / Poison / Wetness*. These are
+"danger meters" — the bar **fills toward harm** (full = bad) and, while active, they
+damage the object's health source directly (the all-in-one `SurvivalStats` if
+present, else a `HealthStat` sibling). Put them on the same object as your health
+component.
+
+| Component | What it does | Key fields | Methods | Message |
+|-----------|--------------|-----------|---------|---------|
+| **Stat: Radiation** | Builds in irradiated zones, decays out; past `sickThreshold` poisons health | `gainPerSecond`, `decayPerSecond`, `sickThreshold`, `damagePerSecond` | `AddRadiation`, `TakeAntiRad`, `SetInRadiation` | `irradiated` |
+| **Stat: Bleeding** | Wounds drain health (scaled by level), clot slowly; bandage stops it | `damagePerSecond`, `clotPerSecond` | `Wound`, `Bandage`, `Heal` | `bleeding` |
+| **Stat: Poison** | Toxin damages health and fades over time; antidote clears | `damagePerSecond`, `decayPerSecond` | `Poison`, `Cure`, `CureAll` | `poisoned` |
+| **Stat: Wetness** | Soaks in water/rain, dries off; while wet it chills the warmth source | `soakPerSecond`, `dryPerSecond`, `chillPerSecond`, `soakedThreshold` | `AddWetness`, `DryOff`, `SetInWater` | `soaked` |
+
+They fill `RadiationBar` / `BleedBar` / `PoisonBar` / `WetnessBar` and save
+`radiation` / `bleed` / `poison` / `wetness`. Drive them from triggers — e.g. a
+radiation volume calling `SetInRadiation`, a water volume calling `SetInWater`, a
+trap calling `Wound`, or a bandage button calling `Bandage`.
+
 ## Making it show up (it's wired for you)
 
 Every component **publishes itself each frame** so you see it working immediately:

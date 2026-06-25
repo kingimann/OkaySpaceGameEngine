@@ -6992,6 +6992,40 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##svz")) toRemove = c;
         }
     }
+    if (auto* c = go->GetComponent<Consumables>()) {
+        if (CompHeader("Consumables (items -> stats)", c, &toRemove)) {
+            ImGui::TextDisabled("Maps item names to a survival effect (Eat/Drink/Heal/...).");
+            if (ImGui::Checkbox("Require Inventory##cons", &c->requireInventory)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use() removes the item from a sibling Inventory first.");
+            if (ImGui::Checkbox("Consume on Drop##cons", &c->consumeOnDrop)) ed.dirty = true;
+            if (c->consumeOnDrop)
+                if (ImGui::Checkbox("Destroy Dropped Item##cons", &c->destroyDroppedItem)) ed.dirty = true;
+            ImGui::Separator();
+            int removeAt = -1;
+            for (int i = 0; i < (int)c->recipes.size(); ++i) {
+                ImGui::PushID(i);
+                auto& r = c->recipes[i];
+                char it[48]; std::strncpy(it, r.item.c_str(), sizeof(it) - 1); it[sizeof(it) - 1] = '\0';
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::InputText("##itm", it, sizeof(it))) { r.item = it; ed.dirty = true; }
+                ImGui::SameLine();
+                const char* verbs[] = { "Eat", "Drink", "Heal", "Breathe", "Warm", "Damage",
+                                        "Poison", "Cure", "Bandage", "TakeAntiRad", "DryOff", "Restore", "Rest" };
+                int vi = 0; for (int k = 0; k < IM_ARRAYSIZE(verbs); ++k) if (r.action == verbs[k]) vi = k;
+                ImGui::SetNextItemWidth(100);
+                if (ImGui::Combo("##act", &vi, verbs, IM_ARRAYSIZE(verbs))) { r.action = verbs[vi]; ed.dirty = true; }
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                if (ImGui::DragFloat("##amt", &r.amount, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) removeAt = i;
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { c->recipes.erase(c->recipes.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::SmallButton("+ Recipe##cons")) { c->AddRecipe("item", "Eat", 25.0f); ed.dirty = true; }
+            ImGui::TextDisabled("Use(item) from a hotbar/script, or drop a matching item here.");
+            if (ImGui::SmallButton("Remove##cons")) toRemove = c;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8685,6 +8719,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<StatusEffectStat>(), "Status Effects")) { go->AddComponent<StatusEffectStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalSave>(), "Survival Save / Load")) { go->AddComponent<SurvivalSave>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalZone>(), "Survival Zone (trigger)")) { go->AddComponent<SurvivalZone>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Consumables>(), "Consumables (items -> stats)")) { go->AddComponent<Consumables>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

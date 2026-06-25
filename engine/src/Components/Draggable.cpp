@@ -3,6 +3,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/UIAnchor.hpp"      // UICanvas::Width/Height (window size)
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/Consumables.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -141,6 +142,10 @@ void Draggable::Update(float) {
             Prefs::SetString("drop_source", gameObject->name);
             Fire(gameObject, "on_drop");
             Fire(target, "on_receive");
+            // Native survival hook: a matching item dropped on a Consumables target is
+            // eaten/drunk/applied (and removed) with no scripting.
+            if (auto* cons = target->GetComponent<Consumables>())
+                cons->ConsumeDropped(gameObject);
         } else if (returnToStart) {
             gameObject->transform->SetPosition(m_start);
         }

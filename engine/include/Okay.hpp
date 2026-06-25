@@ -134,6 +134,7 @@
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/SurvivalZone.hpp"
+#include "okay/Components/Consumables.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"

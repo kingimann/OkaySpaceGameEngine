@@ -40,6 +40,26 @@ and each script exposes methods you can call from a **Button's On Click**, an
 - `armor` reduces incoming damage; health regen pauses for `regenDelay` after a hit,
   then resumes only while fed **and** hydrated.
 
+## Making it show up (it's wired for you)
+
+Every script **publishes itself each frame** so you see it working immediately:
+
+- It writes a **saved value** per stat (`health`, `hunger`, `thirst`, `stamina`,
+  `oxygen`, `warmth`, `energy`, `sanity`). Put a UI text with `bind="HP: {health}"`
+  and it updates live.
+- It pushes the 0–1 fraction to a **same-named progress bar** if one exists:
+  `HealthBar`, `HungerBar`, `ThirstBar`, `StaminaBar`, `OxygenBar`,
+  `TemperatureBar`, `EnergyBar`, `SanityBar`. Add a `progress` widget with that
+  `name`/`id` and it fills automatically — no extra wiring.
+- When a stat hits a critical point it **broadcasts a message** (`died`,
+  `starving`, `dehydrated`, `drowning`, `freezing`, `insane`) you can catch with an
+  Action List `OnMessage` trigger (e.g. show a game-over panel, play a sound).
+- On **death**, Health / Survival log it, send `died`, play the object's
+  `AudioSource`, and deactivate the object — so something visibly happens.
+
+A 10-second HUD: add a `progress` widget named `HealthBar` (and `HungerBar`, …) to a
+Canvas, drop **Survival (all-in-one)** on the Player, press Play — the bars drain.
+
 ### Wiring example
 
 Give the Player the **Survival (all-in-one)** component, then on a "Drink" button

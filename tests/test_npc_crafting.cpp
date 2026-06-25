@@ -124,5 +124,98 @@ int main() {
         CHECK(cr2->recipes[0].inputs[1].count == 3);
     }
 
+    // --- NPC takes damage and dies --------------------------------------
+    {
+        Scene s("npchp");
+        auto* npc = s.CreateGameObject("Wolf");
+        auto* n = npc->AddComponent<NPCController>();
+        n->maxHealth = 20.0f;
+        s.Start();
+        n->Damage(8.0f);
+        CHECK_NEAR(n->health, 12.0f, 1e-3f);
+        CHECK(!n->IsDead());
+        n->Damage(100.0f);
+        CHECK(n->IsDead());
+        s.Update(1.0f / 60.0f);                          // flush destroy
+        CHECK(s.Find("Wolf") == nullptr);
+    }
+
+    // --- Melee attacker hits NPCs in the cone in front ------------------
+    {
+        Scene s("melee");
+        GameObject* p = s.CreateGameObject("Player");      // identity rotation -> faces +Z
+        auto* atk = p->AddComponent<MeleeAttacker>();
+        atk->damage = 15.0f; atk->range = 3.0f; atk->arc = 120.0f;
+        GameObject* front = s.CreateGameObject("Front");
+        front->transform->SetPosition({0, 0, 2});          // ahead, in range
+        auto* nf = front->AddComponent<NPCController>(); nf->maxHealth = 100.0f;
+        GameObject* behind = s.CreateGameObject("Behind");
+        behind->transform->SetPosition({0, 0, -2});        // behind, outside the cone
+        auto* nb = behind->AddComponent<NPCController>(); nb->maxHealth = 100.0f;
+        s.Start();
+        atk->Swing();
+        CHECK_NEAR(nf->health, 85.0f, 1e-3f);              // hit
+        CHECK_NEAR(nb->health, 100.0f, 1e-3f);             // missed (behind)
+    }
+
+    // --- Spawner clones a template up to maxAlive -----------------------
+    {
+        Scene s("spawn");
+        GameObject* tmpl = s.CreateGameObject("Wolf");
+        tmpl->AddComponent<NPCController>();
+        auto* sp = s.CreateGameObject("Den")->AddComponent<Spawner>();
+        sp->templateName = "Wolf"; sp->maxAlive = 3; sp->interval = 0.1f; sp->startDelay = 0.0f;
+        s.Start();
+        CHECK(sp->SpawnOne() != nullptr);
+        CHECK(sp->SpawnOne() != nullptr);
+        CHECK(sp->AliveCount() == 2);
+        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);   // keeps spawning, capped
+        CHECK(sp->AliveCount() <= 3);                      // never exceeds maxAlive
+        CHECK(sp->AliveCount() == 3);
+    }
+
+    // --- Crafting menu auto-builds a button per recipe ------------------
+    {
+        Scene s("cmenu");
+        GameObject* p = s.CreateGameObject("Player");
+        p->AddComponent<Inventory>();
+        auto* cr = p->AddComponent<Crafting>();
+        cr->AddRecipe("torch", 1, {{"wood", 1}});
+        cr->AddRecipe("axe", 1, {{"wood", 2}});
+        auto* cm = p->AddComponent<CraftingMenu>(); cm->open = true;
+        s.Start();
+        s.Update(1.0f / 60.0f);
+        auto btns = s.FindObjectsOfType<UIButton>();
+        CHECK(btns.size() == 2);
+        bool craftWired = false;
+        for (auto* b : btns) if (b->clickFunction == "Craft" && b->clickTarget == "Player") craftWired = true;
+        CHECK(craftWired);
+    }
+
+    // --- Serialization: melee / spawner / craftmenu / npc health --------
+    {
+        Scene s("ser2");
+        GameObject* g = s.CreateGameObject("Hero");
+        auto* n = g->AddComponent<NPCController>(); n->maxHealth = 55.0f; n->invulnerable = true;
+        auto* m = g->AddComponent<MeleeAttacker>(); m->damage = 22.0f; m->arc = 90.0f; m->attackKey = 'g';
+        auto* sp = g->AddComponent<Spawner>(); sp->templateName = "Mob"; sp->maxAlive = 7; sp->totalToSpawn = 20;
+        auto* cm = g->AddComponent<CraftingMenu>(); cm->toggleKey = 'b'; cm->open = true;
+        std::string txt = SceneSerializer::SerializeObject(*g);
+        CHECK(txt.find("melee ") != std::string::npos);
+        CHECK(txt.find("spawner ") != std::string::npos);
+        CHECK(txt.find("craftmenu ") != std::string::npos);
+        Scene s2("ser2b");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        CHECK(c2 != nullptr);
+        CHECK_NEAR(c2->GetComponent<NPCController>()->maxHealth, 55.0f, 1e-3f);
+        CHECK(c2->GetComponent<NPCController>()->invulnerable);
+        CHECK_NEAR(c2->GetComponent<MeleeAttacker>()->damage, 22.0f, 1e-3f);
+        CHECK(c2->GetComponent<MeleeAttacker>()->attackKey == 'g');
+        CHECK(c2->GetComponent<Spawner>()->templateName == "Mob");
+        CHECK(c2->GetComponent<Spawner>()->totalToSpawn == 20);
+        CHECK(c2->GetComponent<CraftingMenu>()->toggleKey == 'b');
+        CHECK(c2->GetComponent<CraftingMenu>()->open);
+    }
+
     TEST_MAIN_RESULT();
 }

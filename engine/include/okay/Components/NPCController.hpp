@@ -36,14 +36,36 @@ public:
     float attackInterval = 1.0f;   // seconds between bites
     bool  faceMovement = true;     // turn to face the direction of travel
 
+    // ---- Combat target (so the player can fight back) ----
+    float maxHealth = 30.0f, health = 30.0f;
+    bool  invulnerable = false;
+
+    bool IsDead() const { return m_dead; }
+    /// Take damage; on death broadcasts `npc_died`, plays a sibling AudioSource and
+    /// removes the object. Call from a player weapon (MeleeAttacker) or a trap.
+    void Damage(float amount) {
+        if (m_dead || invulnerable || amount <= 0.0f) return;
+        health -= amount;
+        if (health <= 0.0f) {
+            health = 0.0f; m_dead = true;
+            Broadcast("npc_died");
+            if (gameObject) {
+                if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play();
+                if (gameObject->scene()) gameObject->scene()->Destroy(gameObject);
+                else gameObject->active = false;
+            }
+        }
+    }
+
     void Start() override {
+        health = maxHealth; m_dead = false;
         if (transform) m_home = transform->Position();
         m_seed = (uint32_t)(std::fabs(m_home.x) * 73856093.0f + std::fabs(m_home.z) * 19349663.0f) + 1u;
         PickWander();
     }
 
     void Update(float dt) override {
-        if (!transform || dt <= 0.0f) return;
+        if (!transform || dt <= 0.0f || m_dead) return;
         Vec3 pos = transform->Position();
         Behavior b = (Behavior)behavior;
         if (m_atkTimer > 0.0f) m_atkTimer -= dt;
@@ -83,8 +105,11 @@ private:
         if (m_atkTimer > 0.0f) return;
         DamageHealthOn(tgt, attackDamage);
         m_atkTimer = attackInterval;
+        Broadcast("npc_attack");
+    }
+    void Broadcast(const std::string& msg) {
         Scene* s = gameObject ? gameObject->scene() : nullptr;
-        if (s) for (ActionList* al : s->FindObjectsOfType<ActionList>()) al->ReceiveMessage("npc_attack");
+        if (s) for (ActionList* al : s->FindObjectsOfType<ActionList>()) al->ReceiveMessage(msg);
     }
     void PickWander() {
         float a = Rand() * 6.2831853f;
@@ -105,6 +130,7 @@ private:
     }
     Vec3 m_home{0, 0, 0}, m_wander{0, 0, 0};
     float m_atkTimer = 0.0f;
+    bool m_dead = false;
     uint32_t m_seed = 1u;
 };
 

@@ -19,7 +19,31 @@ heading. Pick a **Behavior**:
 Fields: `moveSpeed`, `targetName` (default `Player`), `sightRange`, `wanderRadius`,
 `attackRange`, `attackDamage`, `attackInterval`, `faceMovement`. Chase damages the
 target's health source (`SurvivalStats` or `HealthStat`), so it drops the player's
-health directly.
+health directly. NPCs also have **`health`/`maxHealth`** and `Damage()` — at 0 HP they
+broadcast `npc_died`, play a sibling AudioSource, and despawn, so the player can fight
+them.
+
+## Player attacks (Melee Attacker)
+
+*Add Component ▸ Gameplay ▸ Melee Attacker.* On attack input (`attackKey`, default F,
+and/or left mouse) it hits every NPC within `range` inside a `arc`-degree cone in
+front for `damage`, on a `cooldown`. Broadcasts `player_attack`. `Swing()` is exposed
+for custom inputs/scripts.
+
+## Spawner (enemy waves / loot)
+
+*Add Component ▸ Gameplay ▸ Spawner.* Names a `templateName` object to clone (hidden as
+a blueprint at play) and spawns copies near itself every `interval` seconds, keeping
+at most `maxAlive` of its own spawns alive and stopping after `totalToSpawn`
+(0 = endless). Spawns land within `spawnRadius`. `SpawnOne()` and `AliveCount()` are
+exposed. Make a "den" that drips out wolves, a chest that refills loot, etc.
+
+## Crafting menu (auto UI)
+
+*Add Component ▸ Gameplay ▸ Crafting Menu.* Builds one button per recipe of a sibling
+`Crafting` at play (labelled with the output, wired to craft it), and toggles the
+whole panel with `toggleKey` (default C). Zero UI wiring — add it next to a `Crafting`
++ `Inventory` and you have a working craft menu.
 
 ## Crafting
 

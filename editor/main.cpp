@@ -7183,6 +7183,22 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Cam Height##veh", &v->camHeight, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Cam Smoothing##veh", &v->camLerp, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
             }
+            ImGui::Separator();
+            if (ImGui::Checkbox("Raycast Suspension##veh", &v->suspension)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Per-wheel down-rays drive a vertical spring (ride height,\nbump absorption) and tilt the chassis when cornering/braking.");
+            if (v->suspension) {
+                if (ImGui::DragFloat("Ride Height##veh", &v->rideHeight, 0.05f, 0.05f, 5.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Spring Strength##veh", &v->springStrength, 1.0f, 1.0f, 400.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Spring Damping##veh", &v->springDamping, 0.2f, 0.0f, 60.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Suspension Travel##veh", &v->suspensionTravel, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Wheel Base##veh", &v->wheelBase, 0.1f, 0.2f, 12.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Track Width##veh", &v->trackWidth, 0.1f, 0.2f, 8.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Body Lean##veh", &v->bodyLean, 0.05f, 0.0f, 4.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Chassis lean from accel/cornering. 0 = no dynamic lean.");
+                if (ImGui::DragFloat("Max Tilt##veh", &v->maxTilt, 0.5f, 0.0f, 45.0f, "%.0f deg")) ed.dirty = true;
+                if (ImGui::DragFloat("Tilt Smoothing##veh", &v->tiltSmooth, 0.2f, 0.0f, 30.0f)) ed.dirty = true;
+            }
+            ImGui::Separator();
             ImGui::TextDisabled("Drive: W/S or arrows = gas/reverse, A/D = steer,");
             ImGui::TextDisabled("Space = handbrake. Needs a Rigidbody3D + collider.");
             if (ImGui::SmallButton("Remove##veh")) toRemove = v;

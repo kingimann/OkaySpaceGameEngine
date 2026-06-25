@@ -295,6 +295,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
             << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
             << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
+        if (v->suspension)
+            out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
+                << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
+                << v->trackWidth << " " << v->bodyLean << " " << v->maxTilt << " " << v->tiltSmooth << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -1166,6 +1170,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int fc = 0; in >> fc; v->followCamera = (fc != 0);
                     in >> v->camDistance >> v->camHeight >> v->camLerp;
                     int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
+                } else if (field == "vehiclesusp") {
+                    auto* v = go->GetComponent<VehicleController>();
+                    int on = 0; in >> on;
+                    float rh, ss, sd, st, wb, tw, bl, mt, ts;
+                    in >> rh >> ss >> sd >> st >> wb >> tw >> bl >> mt >> ts;
+                    if (v) {
+                        v->suspension = (on != 0);
+                        v->rideHeight = rh; v->springStrength = ss; v->springDamping = sd;
+                        v->suspensionTravel = st; v->wheelBase = wb; v->trackWidth = tw;
+                        v->bodyLean = bl; v->maxTilt = mt; v->tiltSmooth = ts;
+                    }
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

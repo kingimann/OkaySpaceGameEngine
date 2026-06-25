@@ -403,7 +403,23 @@ int main(int argc, char** argv) {
         // Publish the render-target size so anchored UI widgets and their
         // hit-tests (run inside scene.Update) agree on where things sit.
         { int cw, ch; SDL_GetRendererOutputSize(renderer, &cw, &ch);
-          UICanvas::Set((float)cw, (float)ch); }
+          UICanvas::Set((float)cw, (float)ch);
+          // Make the world-space UI projector live during scene.Update too, so a
+          // world-space button's Contains() hit-tests where it actually appears
+          // on screen (the draw pass re-installs the same projector each frame).
+          UIWorld().active = false;
+          if (Camera* wcam = scene.mainCamera) {
+              UIWorld().active = true;
+              UIWorld().screenW = (float)cw; UIWorld().screenH = (float)ch;
+              if (wcam->gameObject && wcam->gameObject->transform)
+                  UIWorld().right = wcam->gameObject->transform->Right();
+              UIWorld().project = [wcam, cw, ch](const Vec3& p, Vec2& out, float& depth) {
+                  return wcam->WorldToScreen(p, (float)cw, (float)ch, out, &depth);
+              };
+              UIWorld().rectOf = [cw, ch](GameObject* go, Vec2& o, Vec2& sz) {
+                  return GetUIScreenRect(go, (float)cw, (float)ch, o, sz);
+              };
+          } }
 
         // Auto-size scroll views from their children before updating, so the wheel
         // and scrollbar use the real content extent (not a stale hand-set value).
@@ -677,6 +693,9 @@ int main(int argc, char** argv) {
                 UIWorld().right = wcam->gameObject->transform->Right();
             UIWorld().project = [wcam, ww, hh](const Vec3& p, Vec2& out, float& depth) {
                 return wcam->WorldToScreen(p, (float)ww, (float)hh, out, &depth);
+            };
+            UIWorld().rectOf = [ww, hh](GameObject* go, Vec2& o, Vec2& sz) {
+                return GetUIScreenRect(go, (float)ww, (float)hh, o, sz);
             };
         }
         for (const UIDrawItem& _it : uiItems) {
@@ -1027,12 +1046,23 @@ int main(int argc, char** argv) {
             if (!btn || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
             Color bg = btn->DisplayColor();
-            Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+            // World-aware rect + scale: a 3D button (own object / world canvas)
+            // projects through the camera, so its box and label shrink with
+            // distance. A screen-space button keeps its design size and k=1,
+            // unchanged from before.
+            float bk = 1.0f;
+            Vec2 o, bsz;
+            if (btn->IsWorldSpaceUI()) {
+                GetUIScreenRect(up.get(), (float)w, (float)h, o, bsz, &bk);
+            } else {
+                o = UIResolveOrigin(up.get(), (float)w, (float)h);
+                bsz = btn->size;
+            }
             enterScroll(up.get(), o);
-            SDL_Rect r{(int)o.x, (int)o.y, (int)btn->size.x, (int)btn->size.y};
+            SDL_Rect r{(int)o.x, (int)o.y, (int)bsz.x, (int)bsz.y};
             if (btn->hoverScale != 1.0f && (btn->IsHovered() || btn->IsFocused())) {
-                int gx = (int)(btn->size.x * (btn->hoverScale - 1.0f) * 0.5f);
-                int gy = (int)(btn->size.y * (btn->hoverScale - 1.0f) * 0.5f);
+                int gx = (int)(bsz.x * (btn->hoverScale - 1.0f) * 0.5f);
+                int gy = (int)(bsz.y * (btn->hoverScale - 1.0f) * 0.5f);
                 r.x -= gx; r.y -= gy; r.w += 2 * gx; r.h += 2 * gy;
             }
             if (btn->shadow) {                              // drop shadow behind (same shape)
@@ -1052,12 +1082,12 @@ int main(int argc, char** argv) {
             }
             // Optional icon (left by default, right when iconRight); the label
             // takes the remaining space. Press shifts content down slightly.
-            float shift = btn->PressShift();
-            float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize : 0.0f;
+            float shift = btn->PressShift() * bk;
+            float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize * bk : 0.0f;
             if (isz > 0.0f) {
                 SDL_Texture* itex = GetTexture(renderer, btn->icon, baseDir, textureCache);
-                float ix = btn->iconRight ? (o.x + btn->size.x - isz - 8.0f) : (o.x + 8.0f);
-                SDL_Rect ir{(int)ix, (int)(o.y + (btn->size.y - isz) * 0.5f + shift), (int)isz, (int)isz};
+                float ix = btn->iconRight ? (o.x + bsz.x - isz - 8.0f * bk) : (o.x + 8.0f * bk);
+                SDL_Rect ir{(int)ix, (int)(o.y + (bsz.y - isz) * 0.5f + shift), (int)isz, (int)isz};
                 if (itex) { SDL_SetTextureColorMod(itex, 255, 255, 255); SDL_SetTextureAlphaMod(itex, 255);
                             SDL_RenderCopy(renderer, itex, nullptr, &ir); }
             }
@@ -1065,12 +1095,12 @@ int main(int argc, char** argv) {
             // the icon. Skip the built-in label when a child Text object provides it
             // (Unity-style Button→Text) — that child draws itself in the text pass.
             if (!UIButtonTextChild(up.get())) {
-                float px = btn->fontScale;
+                float px = btn->fontScale * bk;
                 float tw = btn->label.size() * (Font8x8::Width + 1) * px;
-                float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f : 0.0f);
-                float right = o.x + btn->size.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f : 0.0f);
+                float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f * bk : 0.0f);
+                float right = o.x + bsz.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f * bk : 0.0f);
                 float tx = left + ((right - left) - tw) * 0.5f;
-                float ty = o.y + (btn->size.y - Font8x8::Height * px) * 0.5f + shift;
+                float ty = o.y + (bsz.y - Font8x8::Height * px) * 0.5f + shift;
                 Color tcc = btn->CurrentTextColor();
                 SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255 * op)};
                 DrawText(renderer, btn->label, tx, ty, px, tc);
@@ -1086,11 +1116,12 @@ int main(int argc, char** argv) {
                          (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255 * op)};
             SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
                          (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
-            // Under a world-space Canvas, text projects with the canvas (so labels
-            // sit on the 3D panel like the other widgets) instead of anchoring to the
-            // screen. UIResolveOrigin/UIScaleFor are world-aware; pixelSize scales by k.
+            // In-world text projects through the camera (so it sits in 3D like the
+            // other widgets) instead of anchoring to the screen — either under a
+            // world-space Canvas, or as a standalone WorldSpaceUI object (its own 3D
+            // text). UIResolveOrigin/UIScaleFor are world-aware; pixelSize scales by k.
             Canvas* tcv = OwningCanvas(up.get());
-            bool tWorld = tcv && tcv->worldSpace;
+            bool tWorld = (tcv && tcv->worldSpace) || WorldUIRoot(up.get()) != nullptr;
             float p = tr->pixelSize, ls = tr->letterSpacing, lp = tr->lineSpacing;
             float tk = 1.0f;
             if (tWorld) {

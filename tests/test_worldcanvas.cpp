@@ -71,6 +71,38 @@ int main() {
         CHECK_NEAR(o2.x, 400.0f, 0.5f);
     }
 
+    // --- Runtime click: a world-space button hit-tests where it projects -------
+    // The renderer supplies UIWorld().rectOf so UIButton::Contains() can test the
+    // projected on-screen rect instead of the button's flat screen coordinates.
+    {
+        Scene s3("Click");
+        GameObject* wb = s3.CreateGameObject("WBtn");
+        UIButton* bb = wb->AddComponent<UIButton>();
+        bb->anchor = UIAnchor::Center; bb->position = {0.0f, 0.0f}; bb->size = {200.0f, 100.0f};
+        wb->AddComponent<WorldSpaceUI>();
+        // A screen-space button (no WorldSpaceUI) for the gating check.
+        GameObject* sbo = s3.CreateGameObject("ScreenBtn");
+        UIButton* sb = sbo->AddComponent<UIButton>();
+        sb->anchor = UIAnchor::TopLeft; sb->position = {10.0f, 10.0f}; sb->size = {80.0f, 40.0f};
+
+        // rectOf reports the world button at a fixed projected rect far from its
+        // screen-space anchor, so the two hit-test paths are clearly distinguishable.
+        UIWorld().active = true;
+        UIWorld().rectOf = [&](GameObject* go, Vec2& o, Vec2& sz) {
+            if (go == wb) { o = Vec2{500.0f, 400.0f}; sz = Vec2{120.0f, 60.0f}; return true; }
+            return GetUIScreenRect(go, 800.0f, 600.0f, o, sz);   // others: real rect
+        };
+        CHECK(bb->IsWorldSpaceUI());
+        CHECK(!sb->IsWorldSpaceUI());
+        // World button: clickable inside the PROJECTED rect, not at its design anchor.
+        CHECK(bb->Contains(Vec2{560.0f, 430.0f}));
+        CHECK(!bb->Contains(Vec2{400.0f, 300.0f}));
+        // Screen button ignores the world path: still hit-tests its own silhouette.
+        CHECK(sb->Contains(Vec2{20.0f, 20.0f}));
+        CHECK(!sb->Contains(Vec2{500.0f, 400.0f}));
+        UIWorld().rectOf = nullptr;
+    }
+
     UIWorld().active = false;
     TEST_MAIN_RESULT();
 }

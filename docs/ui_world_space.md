@@ -33,6 +33,20 @@ and the canvas plane is projected to the screen (billboarded by default). Becaus
 this rides the same `GetUIScreenRect` path every widget already uses, all widget
 types come along automatically and screen-space UI is unaffected.
 
+### Standalone 3D widgets (`WorldSpaceUI` component)
+Any single UI widget (button, text, panel, image…) becomes its own in-world 3D
+object by adding the **World Space UI (3D)** component — no Canvas needed. It
+renders at the object's Transform position (move it with the gizmo), keeps its
+anchor and pixel offset, and its child widgets (e.g. a button's label) come along.
+Create them from any **Create ▸ UI ▸ 3D UI (in-world)** menu.
+
+- **Pixels / Unit** — design px per world unit (smaller = bigger in-world).
+- **Billboard** — always face the camera.
+- **Constant size** — keep a fixed on-screen size regardless of camera distance
+  (it still moves in 3D, it just never shrinks or grows). **Size Scale** multiplies
+  that fixed size (1.0 = the widget's authored design pixels). Great for markers,
+  nameplates and waypoint icons that should stay readable at any range.
+
 Notes / limits:
 - Best results with **Billboard** on (or the panel roughly facing the camera);
   widgets are drawn as axis-aligned rects, so a steeply tilted panel in perspective

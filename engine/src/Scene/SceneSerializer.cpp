@@ -651,7 +651,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  eventsystem\n";
     }
     if (auto* w3 = go->GetComponent<WorldSpaceUI>()) {
-        out << "  worldui3d " << w3->pixelsPerUnit << " " << (w3->billboard ? 1 : 0) << "\n";
+        out << "  worldui3d " << w3->pixelsPerUnit << " " << (w3->billboard ? 1 : 0)
+            << " " << (w3->constantSize ? 1 : 0) << " " << w3->constantScale << "\n";
     }
     if (auto* pb = go->GetComponent<UIProgressBar>()) {
         out << "  uiprogress " << pb->position.x << " " << pb->position.y << " "
@@ -1749,6 +1750,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> w3->pixelsPerUnit;
                     in >> std::ws;
                     if (std::isdigit(in.peek())) { int bb = 1; in >> bb; w3->billboard = (bb != 0); }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int cs = 0; in >> cs; w3->constantSize = (cs != 0); }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') in >> w3->constantScale;
                 } else if (field == "eventsystem") {
                     go->AddComponent<EventSystem>();
                 } else if (field == "uiprogress") {

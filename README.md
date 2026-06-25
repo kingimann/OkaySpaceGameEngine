@@ -468,7 +468,9 @@ the rest join over LAN or a forwarded port.
 - [`docs/web_mobile.md`](docs/web_mobile.md) — build your game for the **web** (WASM) and **mobile**.
 - [`docs/editor.md`](docs/editor.md) — the desktop editor and **Build Game**.
 - [`docs/scripting.md`](docs/scripting.md) — the OkayScript language + builtins.
-- [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime.
+- [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime + no-code Action Lists (incl. **raycasting**).
+- [`docs/survival_kit.md`](docs/survival_kit.md) — ready-made **health / hunger / thirst / stamina / oxygen / temperature** scripts.
+- [`docs/ui_world_space.md`](docs/ui_world_space.md) — **in-world (3D) UI**: world canvases and standalone 3D widgets.
 - [`docs/steam_release.md`](docs/steam_release.md) — shipping on Steam.
 
 ## Extending it

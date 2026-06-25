@@ -51,6 +51,50 @@ std::string Rest(const ActionList::Item& it, std::size_t i) {
     for (; i < it.args.size(); ++i) { if (!s.empty()) s += " "; s += it.args[i]; }
     return s;
 }
+
+// Resolve a raycast direction token into a world-space direction for `go`.
+// Keywords are relative to the object's facing (forward/back/up/down/left/right);
+// "toward:<name>" aims at a named object. Returns false if the token isn't a known
+// keyword (so the caller can fall back to raw "x y z" numbers).
+bool RayDirFromToken(GameObject* go, const std::string& tok, Vec3& dir) {
+    if (!go || !go->transform) return false;
+    Transform* t = go->transform;
+    if (tok == "forward") { dir = t->Forward();           return true; }
+    if (tok == "back")    { dir = t->Forward() * -1.0f;   return true; }
+    if (tok == "up")      { dir = t->Up();                return true; }
+    if (tok == "down")    { dir = t->Up() * -1.0f;        return true; }
+    if (tok == "right")   { dir = t->Right();             return true; }
+    if (tok == "left")    { dir = t->Right() * -1.0f;     return true; }
+    if (tok.rfind("toward:", 0) == 0) {
+        Scene* s = go->scene();
+        GameObject* tgt = s ? s->Find(tok.substr(7)) : nullptr;
+        if (!tgt || !tgt->transform) return false;
+        Vec3 d = tgt->transform->Position() - go->transform->Position();
+        if (d.SqrMagnitude() < 1e-8f) return false;
+        dir = d.Normalized();
+        return true;
+    }
+    return false;
+}
+
+// Cast a ray for an action item. args[base] is a direction token (keyword or the
+// first of a raw "x y z" triple, kept for back-compat); the distance follows.
+// Returns the nearest hit (the object's own colliders are ignored).
+RaycastHit3D ActionRaycast(GameObject* go, const ActionList::Item& it, std::size_t base) {
+    RaycastHit3D miss;
+    Scene* s = go ? go->scene() : nullptr;
+    if (!s || !go || !go->transform) return miss;
+    Vec3 dir; float dist;
+    if (RayDirFromToken(go, Str(it, base), dir)) {
+        dist = it.args.size() > base + 1 ? Num(it, base + 1) : 100.0f;
+    } else {
+        dir = {Num(it, base + 0), Num(it, base + 1), Num(it, base + 2)};
+        if (dir.SqrMagnitude() < 1e-8f) dir = go->transform->Forward();
+        dist = it.args.size() > base + 3 ? Num(it, base + 3) : 100.0f;
+    }
+    if (dist <= 0.0f) dist = 1e9f;
+    return s->physics3D().Raycast(*s, go->transform->Position(), dir.Normalized(), dist, go);
+}
 } // namespace
 
 std::string ActionList::ToText() const {
@@ -135,6 +179,24 @@ bool ActionList::EvalConditions() {
         else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
         else if (op == "dist_gt")  { float d; ok = distTo(Str(c, 0), d) && d > Num(c, 1); }
         else if (op == "exists")   { Scene* s = GetScene(); ok = s && s->Find(Str(c, 0)) != nullptr; }
+        else if (op == "raycast") {
+            // Cast a ray in a chosen direction; pass if it hits any collider.
+            // Args: <direction> [distance].  direction = forward/back/up/down/
+            // left/right (relative to facing) or toward:<object>.
+            ok = ActionRaycast(gameObject, c, 0).hit;
+        }
+        else if (op == "raycast_tag") {
+            // Like raycast, but only passes if the hit object has the given tag.
+            // Args: <tag> <direction> [distance].
+            RaycastHit3D h = ActionRaycast(gameObject, c, 1);
+            ok = h.hit && h.gameObject && h.gameObject->tag == Str(c, 0);
+        }
+        else if (op == "raycast_name") {
+            // Like raycast, but only passes if it hits the named object.
+            // Args: <object> <direction> [distance].
+            RaycastHit3D h = ActionRaycast(gameObject, c, 1);
+            ok = h.hit && h.gameObject && h.gameObject->name == Str(c, 0);
+        }
         if (!ok) return false;   // all conditions must pass (AND)
     }
     return true;
@@ -364,6 +426,22 @@ void ActionList::Update(float dt) {
         else if (op == "send_to") {              // message one named object's action lists
             if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
                 for (ActionList* a : g->GetComponents<ActionList>()) a->ReceiveMessage(Str(it, 1));
+        }
+        else if (op == "raycast") {              // cast a ray, store the result in variables
+            // Args: <direction> [distance] [prefix].  direction = forward/back/up/
+            // down/left/right or toward:<object>. Writes <prefix>_hit (1/0),
+            // <prefix>_dist and <prefix>_x/_y/_z (the hit point) so later
+            // instructions can branch on them (if_goto) or use the position.
+            if (scene && gameObject) {
+                RaycastHit3D h = ActionRaycast(gameObject, it, 0);
+                std::string pre = it.args.size() > 2 ? Str(it, 2) : std::string("ray");
+                if (pre.empty()) pre = "ray";
+                Vars()[pre + "_hit"]  = h.hit ? 1.0f : 0.0f;
+                Vars()[pre + "_dist"] = h.distance;
+                Vars()[pre + "_x"] = h.point.x;
+                Vars()[pre + "_y"] = h.point.y;
+                Vars()[pre + "_z"] = h.point.z;
+            }
         }
         else if (op == "if_goto") {              // conditional jump: var <op> value -> instruction line
             const std::string& cmp = Str(it, 1);

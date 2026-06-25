@@ -22,6 +22,7 @@
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Components/WorldSpaceUI.hpp"
+#include "okay/Components/UIWorldContext.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <vector>
@@ -33,18 +34,9 @@
 
 namespace okay {
 
-/// World-space UI context, set by the renderer (player / editor) for the current
-/// frame so the shared layout helpers can project a world-space Canvas's widgets
-/// onto the screen. The renderer supplies a projector (world point -> screen
-/// pixels + depth) and the camera's right axis (for billboarding); it is left
-/// inactive for normal screen-space UI, which is therefore completely unchanged.
-struct UIWorldCtx {
-    bool active = false;
-    std::function<bool(const Vec3&, Vec2&, float&)> project;  // returns false if behind camera
-    Vec3  right{1.0f, 0.0f, 0.0f};   // world axis that design +X runs along (camera right when billboarding)
-    float screenW = 0.0f, screenH = 0.0f;
-};
-inline UIWorldCtx& UIWorld() { static thread_local UIWorldCtx c; return c; }
+/// (UIWorldCtx / UIWorld() now live in UIWorldContext.hpp, included above, so that
+/// low-level UI components — e.g. UIButton's hit-test — can consult the world
+/// projector without pulling in this whole layer.)
 
 /// A uniform view of whatever screen-space UI widget lives on a GameObject: its
 /// anchor, its editable pixel offset, and its size. Every UI component
@@ -154,31 +146,69 @@ inline bool UIWorldCanvasMap(Canvas* cv, Vec2& screenCenter, float& k) {
     return true;
 }
 
-/// A standalone in-world widget (this object carries a WorldSpaceUI marker), or
-/// nullptr. Each such widget is its own 3D object placed at its Transform.
+/// The in-world UI root governing a widget: the nearest object (itself or an
+/// ancestor) carrying a WorldSpaceUI marker, or nullptr. So a child Text under a
+/// 3D Button projects with the button (the whole subtree is in-world), not as a
+/// stray screen label.
+GameObject* OwningUIParent(GameObject* go);   // defined below; used by the in-world subtree layout
+
+inline GameObject* WorldUIRoot(GameObject* go) {
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
+        if (t->gameObject && t->gameObject->GetComponent<WorldSpaceUI>())
+            return t->gameObject;
+    return nullptr;
+}
 inline WorldSpaceUI* SelfWorldUI(GameObject* go) {
-    return go ? go->GetComponent<WorldSpaceUI>() : nullptr;
+    GameObject* root = WorldUIRoot(go);
+    return root ? root->GetComponent<WorldSpaceUI>() : nullptr;
 }
 
-/// Project a standalone in-world widget's plane (centered at its own Transform)
-/// through the active camera: `screenCenter` is the object's projected pixel and
-/// `k` is screen px per design px. false if behind the camera / no world context.
+/// The widget's design-space rect RELATIVE to its WorldUIRoot (no projection): the
+/// root sits at design origin; descendants anchor within their UI parent. Lets a
+/// whole in-world subtree (button + its label) lay out together, then project once.
+inline bool UISelfDesignRect(GameObject* go, GameObject* root, Vec2& o, Vec2& sz) {
+    UIRect r = GetUIRect(go);
+    if (!r.valid || !r.position) return false;
+    sz = r.size;
+    if (go != root) {
+        if (GameObject* parent = OwningUIParent(go)) {
+            Vec2 po, ps;
+            if (UISelfDesignRect(parent, root, po, ps)) {
+                o = po + ResolveAnchor(r.anchor, *r.position, sz, ps.x, ps.y);
+                return true;
+            }
+        }
+    }
+    o = ResolveAnchor(r.anchor, *r.position, sz, 0.0f, 0.0f);   // root: centered on its 3D point
+    return true;
+}
+
+/// Project a widget's WorldUIRoot plane through the active camera: `screenCenter`
+/// is the root's projected pixel and `k` is screen px per design px. false if
+/// behind the camera / no world context.
 inline bool UIWorldSelfMap(GameObject* go, Vec2& screenCenter, float& k) {
-    WorldSpaceUI* w = SelfWorldUI(go);
+    GameObject* root = WorldUIRoot(go);
+    WorldSpaceUI* w = root ? root->GetComponent<WorldSpaceUI>() : nullptr;
     UIWorldCtx& ctx = UIWorld();
-    if (!w || !ctx.active || !ctx.project || !go || !go->transform) return false;
-    Vec3 center = go->transform->Position();
-    Vec3 right = w->billboard ? ctx.right : go->transform->Right();
+    if (!w || !ctx.active || !ctx.project || !root || !root->transform) return false;
+    Vec3 center = root->transform->Position();
+    Vec3 right = w->billboard ? ctx.right : root->transform->Right();
     float ppu = w->pixelsPerUnit > 0.001f ? w->pixelsPerUnit : 1.0f;
     float worldPerPx = 1.0f / ppu;
     Vec2 c0; float depth = 0.0f;
     if (!ctx.project(center, c0, depth)) return false;
+    screenCenter = c0;
+    // Constant screen size: ignore distance and use a fixed design->screen scale
+    // so the widget never shrinks/grows with the camera (it still moves in 3D).
+    if (w->constantSize) {
+        k = w->constantScale > 1e-4f ? w->constantScale : 1.0f;
+        return true;
+    }
     Vec2 c1; float d1 = 0.0f;
     if (!ctx.project(center + right * worldPerPx, c1, d1)) return false;
     float dx = c1.x - c0.x, dy = c1.y - c0.y;
     k = std::sqrt(dx * dx + dy * dy);
     if (k < 1e-5f) return false;
-    screenCenter = c0;
     return true;
 }
 
@@ -414,14 +444,16 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
                             Vec2& origin, Vec2& size, float* outScale = nullptr) {
     UIRect r = GetUIRect(go);
     if (!r.valid) return false;
-    // Standalone in-world widget: its own object is the anchor point. The widget's
-    // rect (anchor + offset, around its own size) projects at its Transform.
-    if (SelfWorldUI(go) && r.position) {
+    // In-world widget (it or an ancestor has WorldSpaceUI): lay the subtree out in
+    // design space relative to the root, then project the root's plane once. So a
+    // 3D button and its child label move/scale together in the world.
+    if (GameObject* wroot = WorldUIRoot(go)) {
         Vec2 sc; float k;
         if (!UIWorldSelfMap(go, sc, k)) return false;
-        Vec2 od = ResolveAnchor(r.anchor, *r.position, r.size, 0.0f, 0.0f);
+        Vec2 od, szd;
+        if (!UISelfDesignRect(go, wroot, od, szd)) return false;
         origin = sc + od * k;
-        size = r.size * k;
+        size = szd * k;
         if (outScale) *outScale = k;
         return true;
     }
@@ -483,11 +515,11 @@ inline float ScrollViewContentHeight(GameObject* sv) {
 inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
     UIRect r = GetUIRect(go);
     if (!r.valid || !r.position) return Vec2{0.0f, 0.0f};
-    // Standalone in-world widget: project around its own Transform.
-    if (SelfWorldUI(go)) {
-        Vec2 sc; float k;
-        if (UIWorldSelfMap(go, sc, k))
-            return sc + ResolveAnchor(r.anchor, *r.position, r.size, 0.0f, 0.0f) * k;
+    // In-world widget (self or ancestor WorldSpaceUI): project the subtree rect.
+    if (GameObject* wroot = WorldUIRoot(go)) {
+        Vec2 sc; float k; Vec2 od, szd;
+        if (UIWorldSelfMap(go, sc, k) && UISelfDesignRect(go, wroot, od, szd))
+            return sc + od * k;
     }
     // World-space Canvas: project the design-space origin through the camera so
     // screen-space text (which uses this) lands on the in-world canvas too.

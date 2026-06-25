@@ -105,7 +105,29 @@ a **Trigger** (`OnStart`, `OnUpdate`, `OnKey`, `OnCollision`, `OnClick`,
 
 - **Conditions**: `always`, `key`, `key_down`, `key_up`, `mouse`, `mouse_down`,
   `chance`, `var_eq`, `var_neq`, `var_gt`, `var_lt`, `prefs_eq`, `prefs_gt`,
-  `has_tag`, `is_active`, `dist_lt`, `dist_gt`, `exists`.
+  `has_tag`, `is_active`, `dist_lt`, `dist_gt`, `exists`, `raycast`,
+  `raycast_tag`, `raycast_name`.
+
+### Raycasting (no code)
+
+Cast a ray from the object and react to what it hits — line of sight, ground
+checks, shooting, interaction, etc. The Inspector gives you a **Direction**
+dropdown (Forward / Back / Up / Down / Left / Right — relative to the object's
+facing — or **Toward Object** to aim at a named object) and a **Distance**, so
+there are no raw vectors to type. The Scene view draws the ray live: **green**
+to the hit point (with a marker), **yellow** when it hits nothing — so you can
+see exactly where it points before you press Play.
+
+- Condition `raycast` — passes if the ray hits any collider. Args: `<direction> [distance]`.
+- Condition `raycast_tag` — passes only if the hit object has a tag. Args: `<tag> <direction> [distance]`.
+- Condition `raycast_name` — passes only if it hits a named object. Args: `<object> <direction> [distance]`.
+- Instruction `raycast` — casts and **stores the result in variables**:
+  `<prefix>_hit` (1/0), `<prefix>_dist`, and `<prefix>_x/_y/_z` (the hit point),
+  so later instructions can branch with `if_goto` or use the position. Args:
+  `<direction> [distance] [prefix]` (prefix defaults to `ray`).
+
+`direction` is one of `forward`, `back`, `up`, `down`, `left`, `right`, or
+`toward:<ObjectName>`. The caster's own colliders are ignored.
 - **Instructions**: movement (`move`, `set_pos`, `rotate`, `set_scale(3)`,
   `move_toward`, `look_at`), control (`wait`, `goto`, `stop`), variables
   (`set_var`, `add_var`, `mul_var`, `div_var`, `copy_var`, `rand_var`),
@@ -114,7 +136,8 @@ a **Trigger** (`OnStart`, `OnUpdate`, `OnKey`, `OnCollision`, `OnClick`,
   `set_color`, `emit`, `play_anim`, `play_sound`, `set_cam`, `set_bg`,
   `set_light`, `set_ambient`), physics (`velocity`, `impulse`), data
   (`set_prefs`, `add_prefs`, `save_prefs`), **scenes** (`load_scene`,
-  `load_scene_index`, `load_next_scene`), **multiplayer** (`net_host`,
+  `load_scene_index`, `load_next_scene`), **raycasting** (`raycast` — store the
+  hit in variables, see below), **multiplayer** (`net_host`,
   `net_join`, `net_send`, `net_set` synced vars, `net_spawn` replicated spawn,
   `net_disconnect`), **Steam** (`steam_unlock`, `steam_set_stat`,
   `steam_inc_stat`), messaging (`send`), and `log`.

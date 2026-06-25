@@ -7280,6 +7280,105 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##sv")) toRemove = sv;
         }
     }
+    // Individual native stat components. A small lambda renders the shared output
+    // toggles so each block stays compact.
+    auto statOutputs = [&](StatComponent* c, const char* id) {
+        if (ImGui::TreeNodeEx((std::string("Output##") + id).c_str())) {
+            if (ImGui::Checkbox((std::string("Saved value##") + id).c_str(), &c->publishPrefs)) ed.dirty = true;
+            if (ImGui::Checkbox((std::string("Fill *Bar##") + id).c_str(), &c->publishBar)) ed.dirty = true;
+            if (ImGui::Checkbox((std::string("Broadcast msg##") + id).c_str(), &c->sendMessages)) ed.dirty = true;
+            ImGui::TreePop();
+        }
+    };
+    if (auto* c = go->GetComponent<HealthStat>()) {
+        if (CompHeader("Stat: Health", c, &toRemove)) {
+            if (ImGui::DragFloat("Max Health##sth", &c->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Armor##sth", &c->armor, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Regen / s##sth", &c->regenPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Regen Delay##sth", &c->regenDelay, 0.1f, 0.0f, 60.0f, "%.1f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Low Threshold##sth", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            statOutputs(c, "sth");
+            ImGui::TextDisabled("Methods: Damage, Heal, AddArmor, Revive. Death -> 'died'.");
+            if (ImGui::SmallButton("Remove##sth")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<HungerStat>()) {
+        if (CompHeader("Stat: Hunger", c, &toRemove)) {
+            if (ImGui::DragFloat("Max##sthu", &c->maxHunger, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Drain / s##sthu", &c->drainPerSecond, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Sprint x##sthu", &c->sprintMultiplier, 0.1f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Low Threshold##sthu", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            statOutputs(c, "sthu");
+            ImGui::TextDisabled("Methods: Eat, SetSprinting. Empty -> 'starving'.");
+            if (ImGui::SmallButton("Remove##sthu")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<ThirstStat>()) {
+        if (CompHeader("Stat: Thirst", c, &toRemove)) {
+            if (ImGui::DragFloat("Max##stt", &c->maxThirst, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Drain / s##stt", &c->drainPerSecond, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Sprint x##stt", &c->sprintMultiplier, 0.1f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Low Threshold##stt", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            statOutputs(c, "stt");
+            ImGui::TextDisabled("Methods: Drink, SetSprinting. Empty -> 'dehydrated'.");
+            if (ImGui::SmallButton("Remove##stt")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<StaminaStat>()) {
+        if (CompHeader("Stat: Stamina", c, &toRemove)) {
+            if (ImGui::DragFloat("Max##sts", &c->maxStamina, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Regen / s##sts", &c->regenPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Regen Delay##sts", &c->regenDelay, 0.1f, 0.0f, 60.0f, "%.1f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Sprint Cost / s##sts", &c->sprintCost, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Jump Cost##sts", &c->jumpCost, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Recover Until##sts", &c->exhaustedUntil, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            statOutputs(c, "sts");
+            ImGui::TextDisabled("Methods: TryJump, SetSprinting, CanSprint.");
+            if (ImGui::SmallButton("Remove##sts")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<OxygenStat>()) {
+        if (CompHeader("Stat: Oxygen", c, &toRemove)) {
+            if (ImGui::DragFloat("Max##sto", &c->maxOxygen, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Drain / s##sto", &c->drainPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Refill / s##sto", &c->refillPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            statOutputs(c, "sto");
+            ImGui::TextDisabled("Methods: Breathe, SetSubmerged. Empty -> 'drowning'.");
+            if (ImGui::SmallButton("Remove##sto")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<TemperatureStat>()) {
+        if (CompHeader("Stat: Temperature", c, &toRemove)) {
+            if (ImGui::DragFloat("Max Warmth##stmp", &c->maxWarmth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Cold Drain / s##stmp", &c->coldDrain, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Warm Regen / s##stmp", &c->warmRegen, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            statOutputs(c, "stmp");
+            ImGui::TextDisabled("Methods: Warm, SetCold, SetNearFire. Empty -> 'freezing'.");
+            if (ImGui::SmallButton("Remove##stmp")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<SleepStat>()) {
+        if (CompHeader("Stat: Sleep / Energy", c, &toRemove)) {
+            if (ImGui::DragFloat("Max Energy##stsl", &c->maxEnergy, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Drain / s##stsl", &c->drainPerSecond, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Rest / s##stsl", &c->restPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Tired Threshold##stsl", &c->tiredThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            statOutputs(c, "stsl");
+            ImGui::TextDisabled("Methods: Rest, SetResting.");
+            if (ImGui::SmallButton("Remove##stsl")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<SanityStat>()) {
+        if (CompHeader("Stat: Sanity", c, &toRemove)) {
+            if (ImGui::DragFloat("Max##stsn", &c->maxSanity, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Drain in Danger / s##stsn", &c->drainInDark, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Regen Safe / s##stsn", &c->regenInLight, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Low Threshold##stsn", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            statOutputs(c, "stsn");
+            ImGui::TextDisabled("Methods: Restore, SetInDanger. Empty -> 'insane'.");
+            if (ImGui::SmallButton("Remove##stsn")) toRemove = c;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8971,6 +9070,14 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
+            if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ThirstStat>(), "Stat: Thirst")) { go->AddComponent<ThirstStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<StaminaStat>(), "Stat: Stamina")) { go->AddComponent<StaminaStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<OxygenStat>(), "Stat: Oxygen")) { go->AddComponent<OxygenStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TemperatureStat>(), "Stat: Temperature")) { go->AddComponent<TemperatureStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SleepStat>(), "Stat: Sleep / Energy")) { go->AddComponent<SleepStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SanityStat>(), "Stat: Sanity")) { go->AddComponent<SanityStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

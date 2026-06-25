@@ -31,6 +31,19 @@ Methods (call from another native component or engine code; the C++ public API):
 values, fills `*Bar` widgets, and broadcasts messages. For no-code On-Click buttons
 (Eat/Drink), use the script flavour below — On Click dispatches to scripts.
 
+### Individual native stat components
+
+Prefer to mix and match? *Add Component ▸ Gameplay ▸ Stat: Health / Hunger / Thirst /
+Stamina / Oxygen / Temperature / Sleep / Sanity* adds just that one stat as a native
+component — e.g. Health + Stamina for an action game, no hunger/thirst. Each drains/
+regenerates on its own, publishes the same saved value + `*Bar` widget, and
+broadcasts the same critical message (`starving`, `dehydrated`, `drowning`,
+`freezing`, `exhausted`, `insane`); `Stat: Health` handles death (broadcasts `died`,
+plays a sibling AudioSource, deactivates). Per-component **Output** toggles control
+saved value / bar / message. Unlike the all-in-one, standalone stats **don't
+cross-talk** — an empty `Stat: Hunger` won't drain `Stat: Health`; use SurvivalStats
+when you want hunger/thirst to damage health.
+
 ## Scripts — ready-made and editable
 
 The Survival Kit is also a set of pre-written, fully customizable scripts for common

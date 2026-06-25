@@ -101,6 +101,8 @@ the zone applies its effect; "while inside" effects clear again on exit:
 | Poison | adds `amount` toxin (on enter) | PoisonStat |
 | Status Effect | `Apply(name, duration, amount)` (on enter) | Status Effects |
 | Damage / Heal | one-shot `amount` (on enter) | health source |
+| Eat | restores `amount` hunger (on enter) — a berry bush | SurvivalStats / Hunger |
+| Drink | restores `amount` thirst (on enter) — a well | SurvivalStats / Thirst |
 
 Put it on an object with a trigger `Collider` (isTrigger on). A radiation room, a
 lake, a snowfield, a campfire, or a gas cloud each become drag-and-drop scenery.

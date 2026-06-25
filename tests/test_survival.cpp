@@ -192,5 +192,50 @@ int main() {
         CHECK_NEAR(c2->GetComponent<SanityStat>()->drainInDark, 7.0f, 1e-3f);
     }
 
+    // --- Native On Click dispatch (button -> SurvivalStats method) -------
+    {
+        Scene s("invoke");
+        GameObject* p = s.CreateGameObject("Player");
+        auto* sv = p->AddComponent<SurvivalStats>();
+        s.Start();
+        sv->thirst = 40.0f;
+        CHECK(InvokeNativeUIAction(p, "Drink", 30.0f));    // handled
+        CHECK_NEAR(sv->thirst, 70.0f, 1e-3f);
+        sv->health = 50.0f;
+        CHECK(InvokeNativeUIAction(p, "Heal", 25.0f));
+        CHECK_NEAR(sv->health, 75.0f, 1e-3f);
+        CHECK(!InvokeNativeUIAction(p, "NotAMethod", 1.0f));   // unknown -> false
+        auto names = NativeUIActionNames(p);
+        CHECK(std::find(names.begin(), names.end(), "Eat") != names.end());
+    }
+
+    // --- Dispatch to an individual stat component ------------------------
+    {
+        Scene s("invoke2");
+        GameObject* p = s.CreateGameObject("P");
+        auto* hu = p->AddComponent<HungerStat>();
+        s.Start();
+        hu->hunger = 20.0f;
+        CHECK(InvokeNativeUIAction(p, "Eat", 50.0f));
+        CHECK_NEAR(hu->hunger, 70.0f, 1e-3f);
+        CHECK(!InvokeNativeUIAction(p, "Drink", 10.0f));   // HungerStat has no Drink
+    }
+
+    // --- Button clickArg round-trips through serialization ---------------
+    {
+        Scene s("btnser");
+        GameObject* b = s.CreateGameObject("EatBtn");
+        auto* btn = b->AddComponent<UIButton>();
+        btn->clickTarget = "Player"; btn->clickFunction = "Eat"; btn->clickArg = 35.0f;
+        std::string txt = SceneSerializer::SerializeObject(*b);
+        Scene s2("btnser2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        auto* b2 = c2 ? c2->GetComponent<UIButton>() : nullptr;
+        CHECK(b2 != nullptr);
+        CHECK(b2->clickFunction == "Eat");
+        CHECK(b2->clickTarget == "Player");
+        CHECK_NEAR(b2->clickArg, 35.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

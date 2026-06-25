@@ -7026,6 +7026,35 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cons")) toRemove = c;
         }
     }
+    if (auto* c = go->GetComponent<DayNightCycle>()) {
+        if (CompHeader("Day / Night Cycle", c, &toRemove)) {
+            int h = (int)c->time; int m = (int)((c->time - h) * 60.0f);
+            ImGui::Text("Time: %02d:%02d  (%s)", h, m, c->IsNight() ? "night" : "day");
+            if (ImGui::SliderFloat("Time of Day##dnc", &c->time, 0.0f, 24.0f, "%.2f h")) ed.dirty = true;
+            if (ImGui::DragFloat("Day Length##dnc", &c->dayLengthSeconds, 1.0f, 1.0f, 100000.0f, "%.0f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Real seconds for a full 24h day.");
+            if (ImGui::Checkbox("Paused##dnc", &c->paused)) ed.dirty = true;
+            if (ImGui::Checkbox("Drive Sun Light##dnc", &c->controlSun)) ed.dirty = true;
+            if (c->controlSun) {
+                if (ImGui::Checkbox("Rotate Sun##dnc", &c->rotateSun)) ed.dirty = true;
+                if (ImGui::DragFloat("Day Intensity##dnc", &c->dayIntensity, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Night Intensity##dnc", &c->nightIntensity, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Day Ambient##dnc", &c->dayAmbient, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Night Ambient##dnc", &c->nightAmbient, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Drive Sky Color##dnc", &c->controlSky)) ed.dirty = true;
+            if (c->controlSky) {
+                float d[3] = { c->skyDay.r, c->skyDay.g, c->skyDay.b };
+                if (ImGui::ColorEdit3("Day Sky##dnc", d)) { c->skyDay = {d[0], d[1], d[2], 1}; ed.dirty = true; }
+                float ho[3] = { c->skyHorizon.r, c->skyHorizon.g, c->skyHorizon.b };
+                if (ImGui::ColorEdit3("Horizon##dnc", ho)) { c->skyHorizon = {ho[0], ho[1], ho[2], 1}; ed.dirty = true; }
+                float n[3] = { c->skyNight.r, c->skyNight.g, c->skyNight.b };
+                if (ImGui::ColorEdit3("Night Sky##dnc", n)) { c->skyNight = {n[0], n[1], n[2], 1}; ed.dirty = true; }
+            }
+            ImGui::TextDisabled("Drives the Sun light + main camera sky. Bind UI text with {hour}.");
+            if (ImGui::SmallButton("Remove##dnc")) toRemove = c;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8720,6 +8749,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<SurvivalSave>(), "Survival Save / Load")) { go->AddComponent<SurvivalSave>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalZone>(), "Survival Zone (trigger)")) { go->AddComponent<SurvivalZone>(); ed.dirty = true; }
             if (item(!go->GetComponent<Consumables>(), "Consumables (items -> stats)")) { go->AddComponent<Consumables>(); ed.dirty = true; }
+            if (item(!go->GetComponent<DayNightCycle>(), "Day / Night Cycle")) { go->AddComponent<DayNightCycle>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

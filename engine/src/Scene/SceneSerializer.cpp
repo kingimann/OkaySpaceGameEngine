@@ -21,6 +21,7 @@
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/SurvivalZone.hpp"
 #include "okay/Components/Consumables.hpp"
+#include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
@@ -401,6 +402,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (c->destroyDroppedItem ? 1 : 0) << " " << c->recipes.size();
         for (const auto& r : c->recipes)
             out << " " << Quote(r.item) << " " << Quote(r.action) << " " << r.amount;
+        out << "\n";
+    }
+    if (auto* c = go->GetComponent<DayNightCycle>()) {
+        auto col = [&](const Color& k) { out << " " << k.r << " " << k.g << " " << k.b; };
+        out << "  daynight " << c->dayLengthSeconds << " " << c->time << " " << (c->paused ? 1 : 0)
+            << " " << (c->controlSun ? 1 : 0) << " " << (c->rotateSun ? 1 : 0) << " " << (c->controlSky ? 1 : 0)
+            << " " << c->dayIntensity << " " << c->nightIntensity << " " << c->dayAmbient << " " << c->nightAmbient;
+        col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
         out << "\n";
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
@@ -1372,6 +1381,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         r.item = ReadQuoted(in); r.action = ReadQuoted(in); in >> r.amount;
                         c->recipes.push_back(r);
                     }
+                } else if (field == "daynight") {
+                    auto* c = go->AddComponent<DayNightCycle>();
+                    int ps = 0, cs = 1, rs = 1, ck = 1;
+                    in >> c->dayLengthSeconds >> c->time >> ps >> cs >> rs >> ck
+                       >> c->dayIntensity >> c->nightIntensity >> c->dayAmbient >> c->nightAmbient;
+                    c->paused = (ps != 0); c->controlSun = (cs != 0); c->rotateSun = (rs != 0); c->controlSky = (ck != 0);
+                    auto col = [&](Color& k) { in >> k.r >> k.g >> k.b; k.a = 1.0f; };
+                    col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

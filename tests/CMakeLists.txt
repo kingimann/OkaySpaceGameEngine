@@ -401,3 +401,7 @@ add_test(NAME vehicle COMMAND test_vehicle)
 add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
 add_test(NAME survival COMMAND test_survival)
+
+add_executable(test_daynight test_daynight.cpp)
+target_link_libraries(test_daynight PRIVATE okay::engine)
+add_test(NAME daynight COMMAND test_daynight)

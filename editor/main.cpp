@@ -6931,6 +6931,47 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##stwe")) toRemove = c;
         }
     }
+    if (auto* c = go->GetComponent<CarryWeightStat>()) {
+        if (CompHeader("Stat: Carry Weight", c, &toRemove)) {
+            ImGui::TextDisabled("Over the limit: drains stamina, slows movement.");
+            if (ImGui::DragFloat("Max Load##stcw", &c->maxLoad, 1.0f, 0.0f, 1000000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Over Stamina Drain / s##stcw", &c->overStaminaDrain, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Min Speed Factor##stcw", &c->minSpeedFactor, 0.05f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Movement multiplier when heavily overloaded. Read SpeedFactor() from a controller.");
+            statOutputs(c, "stcw");
+            ImGui::TextDisabled("Methods: AddLoad, RemoveLoad, SetLoad. Over -> 'encumbered'.");
+            if (ImGui::SmallButton("Remove##stcw")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<StatusEffectStat>()) {
+        if (CompHeader("Status Effects", c, &toRemove)) {
+            ImGui::TextDisabled("Timed buffs/debuffs (code/trigger-driven).");
+            ImGui::TextDisabled("Apply(name, duration, hpPerSecond): -hp = damage, +hp = heal.");
+            if (ImGui::Checkbox("Broadcast messages##stse", &c->sendMessages)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("<name> on apply, <name>_expired on end -> ActionList OnMessage.");
+            ImGui::Text("Active now: %d", c->ActiveCount());
+            ImGui::TextDisabled("Methods: Apply, Remove, Clear, Has, Remaining.");
+            if (ImGui::SmallButton("Remove##stse")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<SurvivalSave>()) {
+        if (CompHeader("Survival Save / Load", c, &toRemove)) {
+            ImGui::TextDisabled("Persists current stat values across sessions.");
+            char key[64]; std::strncpy(key, c->saveKey.c_str(), sizeof(key) - 1); key[sizeof(key) - 1] = '\0';
+            if (ImGui::InputText("Save Key##svsv", key, sizeof(key))) { c->saveKey = key; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Writes <key>.okayprefs beside the game.");
+            if (ImGui::Checkbox("Load on Start##svsv", &c->loadOnStart)) ed.dirty = true;
+            if (ImGui::Checkbox("Save Continuously##svsv", &c->saveContinuously)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror current values to Prefs every frame (still call Save() to write the file).");
+            if (ed.isPlaying()) {
+                if (ImGui::SmallButton("Save Now##svsv")) c->Save();
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Load Now##svsv")) c->Load();
+            }
+            ImGui::TextDisabled("Methods: Save, Load (On Click-callable).");
+            if (ImGui::SmallButton("Remove##svsv")) toRemove = c;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8620,6 +8661,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<BleedingStat>(), "Stat: Bleeding")) { go->AddComponent<BleedingStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<PoisonStat>(), "Stat: Poison")) { go->AddComponent<PoisonStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<WetnessStat>(), "Stat: Wetness")) { go->AddComponent<WetnessStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CarryWeightStat>(), "Stat: Carry Weight")) { go->AddComponent<CarryWeightStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<StatusEffectStat>(), "Status Effects")) { go->AddComponent<StatusEffectStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SurvivalSave>(), "Survival Save / Load")) { go->AddComponent<SurvivalSave>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

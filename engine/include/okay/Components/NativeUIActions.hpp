@@ -3,6 +3,7 @@
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
+#include "okay/Components/SurvivalSystems.hpp"
 #include <string>
 #include <vector>
 
@@ -86,6 +87,15 @@ inline bool InvokeNativeUIAction(GameObject* go, const std::string& fn, float ar
         if (fn == "DryOff")     { c->DryOff(arg);     return true; }
         if (fn == "SetInWater") { c->SetInWater(on);  return true; }
     }
+    if (auto* c = go->GetComponent<CarryWeightStat>()) {
+        if (fn == "AddLoad")    { c->AddLoad(arg);    return true; }
+        if (fn == "RemoveLoad") { c->RemoveLoad(arg); return true; }
+        if (fn == "SetLoad")    { c->SetLoad(arg);    return true; }
+    }
+    if (auto* c = go->GetComponent<SurvivalSave>()) {
+        if (fn == "Save") { c->Save(); return true; }
+        if (fn == "Load") { c->Load(); return true; }
+    }
     return false;
 }
 
@@ -112,6 +122,8 @@ inline std::vector<std::string> NativeUIActionNames(GameObject* go) {
     if (go->GetComponent<BleedingStat>())    add({"Wound", "Bandage"});
     if (go->GetComponent<PoisonStat>())      add({"Poison", "Cure", "CureAll"});
     if (go->GetComponent<WetnessStat>())     add({"AddWetness", "DryOff", "SetInWater"});
+    if (go->GetComponent<CarryWeightStat>()) add({"AddLoad", "RemoveLoad", "SetLoad"});
+    if (go->GetComponent<SurvivalSave>())    add({"Save", "Load"});
     return out;
 }
 

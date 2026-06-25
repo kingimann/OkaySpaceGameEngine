@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <cmath>
+#include <cstdio>
 using namespace okay;
 
 // Native SurvivalStats: stats drain over time, empty stats damage health directly
@@ -329,6 +330,101 @@ int main() {
         GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
         CHECK(c2 && c2->GetComponent<BleedingStat>() != nullptr);
         CHECK_NEAR(c2->GetComponent<RadiationStat>()->sickThreshold, 33.0f, 1e-3f);
+    }
+
+    // --- Carry weight: over the limit drains stamina + slows -------------
+    {
+        Scene s("carry");
+        GameObject* p = s.CreateGameObject("P");
+        auto* st = p->AddComponent<StaminaStat>(); st->regenPerSecond = 0.0f;
+        auto* cw = p->AddComponent<CarryWeightStat>();
+        cw->maxLoad = 50.0f; cw->overStaminaDrain = 30.0f; cw->minSpeedFactor = 0.4f;
+        s.Start();
+        cw->AddLoad(40.0f);
+        s.Update(1.0f / 60.0f);
+        CHECK(!cw->OverLimit());
+        CHECK_NEAR(cw->SpeedFactor(), 1.0f, 1e-3f);
+        cw->AddLoad(40.0f);                                  // 80 > 50 -> encumbered
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(cw->encumbered);
+        CHECK(cw->SpeedFactor() < 1.0f);
+        CHECK(st->stamina < 100.0f);                         // drained while overloaded
+        cw->RemoveLoad(60.0f);                               // back to 20
+        s.Update(1.0f / 60.0f);
+        CHECK(!cw->encumbered);
+    }
+
+    // --- Status effects: timed debuff damages, then expires --------------
+    {
+        Scene s("status");
+        GameObject* p = s.CreateGameObject("P");
+        auto* hp = p->AddComponent<HealthStat>(); hp->regenPerSecond = 0.0f;
+        auto* se = p->AddComponent<StatusEffectStat>();
+        s.Start();
+        se->Apply("burning", 1.0f, -20.0f);                  // 20 dmg/s for 1s
+        CHECK(se->Has("burning"));
+        CHECK(se->ActiveCount() == 1);
+        for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f); // 0.5s
+        CHECK(hp->health < 100.0f);
+        CHECK(se->Remaining("burning") > 0.0f);
+        for (int i = 0; i < 40; ++i) s.Update(1.0f / 60.0f); // past 1s total
+        CHECK(!se->Has("burning"));                          // expired
+        CHECK(se->ActiveCount() == 0);
+        // Heal-over-time buff
+        hp->health = 50.0f;
+        se->Apply("regen", 1.0f, 30.0f);
+        for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);
+        CHECK(hp->health > 55.0f);
+    }
+
+    // --- Save / Load round-trips live values across a fresh component ----
+    {
+        std::remove("test_survsave.okayprefs");
+        {
+            Scene s("save");
+            GameObject* p = s.CreateGameObject("P");
+            auto* sv = p->AddComponent<SurvivalStats>();
+            auto* save = p->AddComponent<SurvivalSave>();
+            save->saveKey = "test_survsave"; save->loadOnStart = false;
+            s.Start();
+            sv->health = 42.0f; sv->hunger = 17.0f; sv->thirst = 88.0f;
+            save->Save();
+        }
+        {
+            Scene s2("load");
+            GameObject* p = s2.CreateGameObject("P");
+            auto* sv = p->AddComponent<SurvivalStats>();
+            auto* save = p->AddComponent<SurvivalSave>();
+            save->saveKey = "test_survsave"; save->loadOnStart = true;
+            s2.Start();                                      // fills to max
+            CHECK_NEAR(sv->health, 100.0f, 1e-3f);           // not loaded yet (deferred)
+            s2.Update(1.0f / 60.0f);                         // first frame -> Load()
+            CHECK_NEAR(sv->health, 42.0f, 0.5f);
+            CHECK_NEAR(sv->hunger, 17.0f, 0.5f);
+            CHECK_NEAR(sv->thirst, 88.0f, 0.5f);
+        }
+        std::remove("test_survsave.okayprefs");
+    }
+
+    // --- Systems serialization round-trip --------------------------------
+    {
+        Scene s("sysser");
+        GameObject* p = s.CreateGameObject("P");
+        p->AddComponent<CarryWeightStat>()->maxLoad = 75.0f;
+        p->AddComponent<StatusEffectStat>()->sendMessages = false;
+        auto* save = p->AddComponent<SurvivalSave>();
+        save->saveKey = "mygame"; save->saveContinuously = true;
+        std::string txt = SceneSerializer::SerializeObject(*p);
+        CHECK(txt.find("stat_carry ") != std::string::npos);
+        CHECK(txt.find("statuseffect ") != std::string::npos);
+        CHECK(txt.find("survivalsave ") != std::string::npos);
+        Scene s2("sysser2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        CHECK(c2 != nullptr);
+        CHECK_NEAR(c2->GetComponent<CarryWeightStat>()->maxLoad, 75.0f, 1e-3f);
+        CHECK(!c2->GetComponent<StatusEffectStat>()->sendMessages);
+        CHECK(c2->GetComponent<SurvivalSave>()->saveKey == "mygame");
+        CHECK(c2->GetComponent<SurvivalSave>()->saveContinuously);
     }
 
     TEST_MAIN_RESULT();

@@ -67,6 +67,23 @@ They fill `RadiationBar` / `BleedBar` / `PoisonBar` / `WetnessBar` and save
 radiation volume calling `SetInRadiation`, a water volume calling `SetInWater`, a
 trap calling `Wound`, or a bandage button calling `Bandage`.
 
+## Systems (weight, effects, save/load)
+
+- **Stat: Carry Weight** — items add `load`; over `maxLoad` the object is *encumbered*:
+  it drains the stamina source and reports `SpeedFactor()` (1.0 → `minSpeedFactor`) a
+  movement controller can multiply in. Fills `LoadBar`, saves `load`, broadcasts
+  `encumbered`. Methods: `AddLoad`, `RemoveLoad`, `SetLoad`.
+- **Status Effects** — a generic timed buff/debuff layer. `Apply(name, duration,
+  hpPerSecond)` ticks the health source each frame (negative = damage, positive =
+  heal) and auto-expires; re-applying a name refreshes its timer. Broadcasts `<name>`
+  on apply and `<name>_expired` on end. Methods: `Apply`, `Remove`, `Clear`, `Has`,
+  `Remaining`, `ActiveCount`. Code/trigger-driven (a fire applies `burning`, a potion
+  applies `regen`).
+- **Survival Save / Load** — persists live values across sessions. With **Load on
+  Start** it restores saved current values into the sibling stats on the first frame;
+  `Save()` writes a `<saveKey>.okayprefs` file (and `Save`/`Load` are On Click-
+  callable). Covers every stat + affliction + carry weight on the same object.
+
 ## Making it show up (it's wired for you)
 
 Every component **publishes itself each frame** so you see it working immediately:

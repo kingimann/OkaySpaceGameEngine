@@ -7012,7 +7012,11 @@ void DrawInspector(EditorState& ed) {
                 AnchorCombo("Anchor##txt", tr->anchor, ed);
                 const char* aligns[] = {"Left", "Center", "Right"};
                 if (ImGui::Combo("Align##txt", &tr->align, aligns, 3)) ed.dirty = true;
-                if (ImGui::Checkbox("Vertical Center##txt", &tr->vcenter)) ed.dirty = true;
+                const char* valigns[] = {"Top", "Middle", "Bottom"};
+                int va = tr->alignBottom ? 2 : (tr->vcenter ? 1 : 0);
+                if (ImGui::Combo("V-Align##txt", &va, valigns, 3)) {
+                    tr->alignBottom = (va == 2); tr->vcenter = (va == 1); ed.dirty = true;
+                }
                 if (ImGui::Checkbox("Background##txt", &tr->background)) ed.dirty = true;
                 if (tr->background) {
                     float bg[4] = {tr->backgroundColor.r, tr->backgroundColor.g, tr->backgroundColor.b, tr->backgroundColor.a};
@@ -7033,7 +7037,22 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::Checkbox("Bold##txt", &tr->bold)) ed.dirty = true;
             ImGui::SameLine();
+            if (ImGui::Checkbox("Italic##txt", &tr->italic)) ed.dirty = true;
+            ImGui::SameLine();
             if (ImGui::Checkbox("UPPERCASE##txt", &tr->uppercase)) ed.dirty = true;
+            // Vertical color gradient (top = Color, bottom = this).
+            if (ImGui::Checkbox("Gradient##txt", &tr->gradient)) ed.dirty = true;
+            if (tr->gradient) {
+                float cb[4] = {tr->colorBottom.r, tr->colorBottom.g, tr->colorBottom.b, tr->colorBottom.a};
+                if (ImGui::ColorEdit4("Bottom Color##txt", cb)) { tr->colorBottom = {cb[0], cb[1], cb[2], cb[3]}; ed.dirty = true; }
+            }
+            // Typewriter reveal: show first N chars, optionally auto-typing.
+            if (ImGui::DragInt("Visible Chars##txt", &tr->visibleChars, 0.5f, -1, 100000))
+                ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("-1 = show all. Lower to reveal only the first N characters.");
+            if (ImGui::DragFloat("Type Speed##txt", &tr->typeSpeed, 0.5f, 0.0f, 200.0f, "%.0f cps"))
+                ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
@@ -8181,16 +8200,30 @@ void DrawInspector(EditorState& ed) {
 // Draw a string with the engine's 8x8 bitmap font into an ImGui draw list, so
 // the editor viewport shows the same text the built game will (HUDs, labels).
 void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
-                    float px, ImU32 col, float letterSp = 0.0f, float lineSp = 0.0f) {
+                    float px, ImU32 col, float letterSp = 0.0f, float lineSp = 0.0f,
+                    bool italic = false, bool gradient = false, ImU32 col2 = 0) {
     if (px < 1.0f) px = 1.0f;
+    const float slant = italic ? 0.30f : 0.0f;
+    int ca = (col >> IM_COL32_A_SHIFT) & 0xFF, cr = (col >> IM_COL32_R_SHIFT) & 0xFF;
+    int cg = (col >> IM_COL32_G_SHIFT) & 0xFF, cb = (col >> IM_COL32_B_SHIFT) & 0xFF;
+    int ba = (col2 >> IM_COL32_A_SHIFT) & 0xFF, br = (col2 >> IM_COL32_R_SHIFT) & 0xFF;
+    int bg = (col2 >> IM_COL32_G_SHIFT) & 0xFF, bb = (col2 >> IM_COL32_B_SHIFT) & 0xFF;
     float cx = ox;
     for (char ch : text) {
         if (ch == '\n') { oy += (Font8x8::Height + 1 + lineSp) * px; cx = ox; continue; }
-        for (int y = 0; y < Font8x8::Height; ++y)
+        for (int y = 0; y < Font8x8::Height; ++y) {
+            ImU32 rc = col;
+            if (gradient) {
+                float t = (float)y / (float)(Font8x8::Height - 1);
+                rc = IM_COL32((int)(cr + (br - cr) * t), (int)(cg + (bg - cg) * t),
+                              (int)(cb + (bb - cb) * t), (int)(ca + (ba - ca) * t));
+            }
+            float sx = (Font8x8::Height - 1 - y) * slant * px;
             for (int x = 0; x < Font8x8::Width; ++x)
                 if (Font8x8::Pixel(ch, x, y))
-                    dl->AddRectFilled(ImVec2(cx + x * px, oy + y * px),
-                                      ImVec2(cx + (x + 1) * px, oy + (y + 1) * px), col);
+                    dl->AddRectFilled(ImVec2(cx + x * px + sx, oy + y * px),
+                                      ImVec2(cx + (x + 1) * px + sx, oy + (y + 1) * px), rc);
+        }
         cx += (Font8x8::Width + 1 + letterSp) * px;
     }
 }
@@ -8691,18 +8724,19 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float px = tr->pixelSize * s, ls = tr->letterSpacing, lp = tr->lineSpacing;
         std::string disp = tr->DisplayText();
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
+        bool it = tr->italic; ImU32 c2 = ToColor(tr->colorBottom);
         if (tr->shadow)
             DrawBitmapText(dl, disp, bx + tr->shadowOffset.x * px,
-                           by + tr->shadowOffset.y * px, px, sh, ls, lp);
+                           by + tr->shadowOffset.y * px, px, sh, ls, lp, it);
         if (tr->outline) {                            // 4-direction outline
             ImU32 oc = ToColor(tr->outlineColor);
-            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp);
-            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp);
-            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp);
-            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp);
+            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp, it);
+            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp, it);
+            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp, it);
+            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp, it);
         }
-        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp);
-        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp);  // faux-bold
+        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp, it, tr->gradient, c2);
+        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp, it, tr->gradient, c2);  // faux-bold
     }
 
     // UI dropdowns: header (shows the selection + a caret); when open, the option

@@ -110,19 +110,30 @@ static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, flo
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
 // in screen pixels, each font pixel `px` screen pixels wide.
 static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float oy,
-                     float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f) {
+                     float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f,
+                     bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0}) {
     if (px < 1.0f) px = 1.0f;
-    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    if (!gradient) SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
     float cx = ox;
     for (char ch : text) {
         if (ch == '\n') { oy += (Font8x8::Height + 1 + lineSp) * px; cx = ox; continue; }
-        for (int y = 0; y < Font8x8::Height; ++y)
+        for (int y = 0; y < Font8x8::Height; ++y) {
+            if (gradient) {   // top row uses col, bottom row uses col2
+                float t = (float)y / (float)(Font8x8::Height - 1);
+                SDL_SetRenderDrawColor(r, (Uint8)(col.r + (col2.r - col.r) * t),
+                                       (Uint8)(col.g + (col2.g - col.g) * t),
+                                       (Uint8)(col.b + (col2.b - col.b) * t),
+                                       (Uint8)(col.a + (col2.a - col.a) * t));
+            }
+            float sx = (Font8x8::Height - 1 - y) * slant * px;   // italic: higher rows lean right
             for (int x = 0; x < Font8x8::Width; ++x)
                 if (Font8x8::Pixel(ch, x, y)) {
-                    SDL_Rect cell{(int)(cx + x * px), (int)(oy + y * px),
+                    SDL_Rect cell{(int)(cx + x * px + sx), (int)(oy + y * px),
                                   (int)px + 1, (int)px + 1};
                     SDL_RenderFillRect(r, &cell);
                 }
+        }
         cx += (Font8x8::Width + 1 + letterSp) * px; // inter-glyph gap + letter spacing
     }
 }
@@ -1099,17 +1110,20 @@ int main(int argc, char** argv) {
             Vec2 o = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
                             : tr->ResolvedScreenPos((float)w, (float)h);   // align handled inside
             std::string disp = tr->DisplayText();
+            bool it = tr->italic;
+            SDL_Color c2{(Uint8)(tr->colorBottom.r * 255), (Uint8)(tr->colorBottom.g * 255),
+                         (Uint8)(tr->colorBottom.b * 255), (Uint8)(tr->colorBottom.a * 255 * op)};
             if (tr->shadow)
                 DrawText(renderer, disp, o.x + tr->shadowOffset.x * p,
-                         o.y + tr->shadowOffset.y * p, p, sh, ls, lp);
+                         o.y + tr->shadowOffset.y * p, p, sh, ls, lp, it);
             if (tr->outline) {
-                DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp);
-                DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp);
-                DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp);
-                DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp);
+                DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp, it);
+                DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp, it);
+                DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp, it);
+                DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp, it);
             }
-            DrawText(renderer, disp, o.x, o.y, p, col, ls, lp);
-            if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp);
+            DrawText(renderer, disp, o.x, o.y, p, col, ls, lp, it, tr->gradient, c2);
+            if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp, it, tr->gradient, c2);
         }
             else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
             auto* wu = up->GetComponent<WorldUI>();

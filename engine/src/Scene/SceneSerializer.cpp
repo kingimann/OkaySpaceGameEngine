@@ -457,7 +457,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tr->backgroundColor.r << " " << tr->backgroundColor.g << " "
             << tr->backgroundColor.b << " " << tr->backgroundColor.a
             << " " << tr->letterSpacing << " " << tr->lineSpacing
-            << " " << (tr->uppercase ? 1 : 0) << " " << (tr->wrap ? 1 : 0) << "\n";
+            << " " << (tr->uppercase ? 1 : 0) << " " << (tr->wrap ? 1 : 0)
+            // Newer options (optional, back-compat): italic, gradient + bottom color,
+            // typewriter (visibleChars + typeSpeed), bottom-align.
+            << " " << (tr->italic ? 1 : 0) << " " << (tr->gradient ? 1 : 0) << " "
+            << tr->colorBottom.r << " " << tr->colorBottom.g << " " << tr->colorBottom.b << " " << tr->colorBottom.a
+            << " " << tr->visibleChars << " " << tr->typeSpeed << " " << (tr->alignBottom ? 1 : 0) << "\n";
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -1397,6 +1402,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int uc = 0, wr = 0;
                         in >> tr->letterSpacing >> tr->lineSpacing >> uc >> wr;
                         tr->uppercase = (uc != 0); tr->wrap = (wr != 0);
+                    }
+                    in >> std::ws; // optional italic/gradient/typewriter/bottom-align (newer)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int it = 0, gr = 0, ab = 0; Color cb;
+                        in >> it >> gr >> cb.r >> cb.g >> cb.b >> cb.a
+                           >> tr->visibleChars >> tr->typeSpeed >> ab;
+                        tr->italic = (it != 0); tr->gradient = (gr != 0);
+                        tr->colorBottom = cb; tr->alignBottom = (ab != 0);
                     }
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;

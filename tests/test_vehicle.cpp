@@ -118,5 +118,45 @@ int main() {
         Input::FeedKeys({});
     }
 
+    // --- Raycast suspension: settles to ride height over a floor ---------
+    {
+        Scene s("susp");
+        GameObject* floor = s.CreateGameObject("Floor");
+        floor->transform->SetPosition({0, -0.5f, 0});      // top surface at y=0
+        auto* fb = floor->AddComponent<BoxCollider3D>(); fb->size = {200, 1, 200};
+        floor->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+        GameObject* car = s.CreateGameObject("Car");
+        car->transform->SetPosition({0, 4.0f, 0});         // dropped from above
+        car->AddComponent<Rigidbody3D>();                  // gravity on
+        car->AddComponent<BoxCollider3D>()->size = {1.6f, 0.5f, 2.4f};
+        auto* v = car->AddComponent<VehicleController>();
+        v->suspension = true; v->rideHeight = 0.8f; v->springStrength = 80.0f; v->springDamping = 12.0f;
+        s.Start();
+        Input::FeedKeys({});
+        for (int i = 0; i < 240; ++i) s.Update(1.0f / 60.0f);   // ~4s to settle
+        CHECK(v->IsGrounded());
+        CHECK_NEAR(car->transform->Position().y, 0.8f, 0.2f);   // rests at ride height
+    }
+
+    // --- Suspension serialization round-trip ----------------------------
+    {
+        Scene s("suspser");
+        GameObject* car = s.CreateGameObject("Car");
+        auto* v = car->AddComponent<VehicleController>();
+        v->suspension = true; v->rideHeight = 1.1f; v->springStrength = 72.0f;
+        v->wheelBase = 3.0f; v->maxTilt = 22.0f;
+        std::string txt = SceneSerializer::SerializeObject(*car);
+        CHECK(txt.find("vehiclesusp ") != std::string::npos);
+        Scene s2("suspser2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        auto* v2 = c2 ? c2->GetComponent<VehicleController>() : nullptr;
+        CHECK(v2 != nullptr);
+        CHECK(v2->suspension);
+        CHECK_NEAR(v2->rideHeight, 1.1f, 1e-3f);
+        CHECK_NEAR(v2->wheelBase, 3.0f, 1e-3f);
+        CHECK_NEAR(v2->maxTilt, 22.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

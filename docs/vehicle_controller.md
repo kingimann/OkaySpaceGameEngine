@@ -38,6 +38,22 @@ quick top-down/kinematic car).
 down-ray hit — useful for engine-sound pitch, skid effects, or disabling control in
 the air.
 
+## Raycast suspension (opt-in)
+
+Tick **Raycast Suspension** on a `VehicleController` for a sim-ish ride. Four
+down-rays at the `wheelBase × trackWidth` corners feed a critically-damped vertical
+spring that holds the body at `rideHeight`, soaks up bumps, and keeps it grounded
+over terrain. The chassis rolls and pitches from per-wheel compression (so it leans
+with the ground) plus dynamic `bodyLean` from acceleration (squat/dive) and
+cornering — clamped to `maxTilt` and eased by `tiltSmooth`.
+
+The spring is applied through the Rigidbody3D's force accumulator with gravity
+feed-forward, so it composes with normal gravity/collision and settles exactly at
+ride height. Needs a Rigidbody3D (gravity on) and a collider; `suspensionTravel`
+sets how far the wheels droop before the car is considered airborne. Leave it off
+for the pure arcade feel — everything else (throttle, steering, grip, handbrake)
+works the same either way.
+
 ## 2D vehicles (`VehicleController2D`)
 
 The 2D sibling, *Add Component ▸ Gameplay ▸ Vehicle Controller 2D* (adds a
@@ -54,6 +70,7 @@ handbrake). `Speed()` returns the signed forward speed.
 
 ## Roadmap
 
-This is the arcade model. Per-wheel **raycast suspension** (spring/damper per wheel,
-weight transfer, bump handling) can layer on top later for a more simulation feel —
-the arcade controller stays as the simple default.
+The arcade model is the default; raycast suspension (above) is the opt-in sim layer.
+A future upgrade would be true torque-based body dynamics (angular velocity / inertia
+on the Rigidbody3D) so the chassis rolls from forces at the wheels rather than the
+current ride-height-plus-tilt approximation.

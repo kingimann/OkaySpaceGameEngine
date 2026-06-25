@@ -6976,11 +6976,12 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Survival Zone (trigger)", c, &toRemove)) {
             ImGui::TextDisabled("Drives survival state on bodies inside a trigger collider.");
             const char* kinds[] = { "Radiation", "Water", "Cold", "Fire (warm)", "Danger (sanity)",
-                                    "Submerged", "Poison", "Status Effect", "Damage", "Heal" };
+                                    "Submerged", "Poison", "Status Effect", "Damage", "Heal", "Eat (hunger)", "Drink (thirst)" };
             if (ImGui::Combo("Effect##svz", &c->effect, kinds, IM_ARRAYSIZE(kinds))) ed.dirty = true;
             auto eff = (SurvivalZone::Effect)c->effect;
             if (eff == SurvivalZone::Effect::Poison || eff == SurvivalZone::Effect::Damage ||
-                eff == SurvivalZone::Effect::Heal)
+                eff == SurvivalZone::Effect::Heal   || eff == SurvivalZone::Effect::Eat ||
+                eff == SurvivalZone::Effect::Drink)
                 if (ImGui::DragFloat("Amount##svz", &c->amount, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
             if (eff == SurvivalZone::Effect::Status) {
                 char nm[64]; std::strncpy(nm, c->effectName.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';

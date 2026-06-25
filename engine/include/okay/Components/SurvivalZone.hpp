@@ -16,7 +16,7 @@ namespace okay {
 /// Poison (adds toxin), Status (applies a named timed effect), Damage, Heal.
 class SurvivalZone : public Behaviour {
 public:
-    enum class Effect { Radiation, Water, Cold, Fire, Danger, Submerged, Poison, Status, Damage, Heal };
+    enum class Effect { Radiation, Water, Cold, Fire, Danger, Submerged, Poison, Status, Damage, Heal, Eat, Drink };
     int   effect = (int)Effect::Radiation;
     float amount = 25.0f;            // poison/damage/heal amount, or status hpPerSecond
     float duration = 5.0f;           // status effect duration (Status only)
@@ -64,6 +64,18 @@ private:
             break;
         case Effect::Damage: if (inside) DamageHealthOn(g, amount); break;
         case Effect::Heal:   if (inside) HealOn(g, amount); break;
+        case Effect::Eat:    // a berry bush / food source restores hunger
+            if (inside) {
+                if (auto* s = g->GetComponent<SurvivalStats>()) s->Eat(amount);
+                else if (auto* h = g->GetComponent<HungerStat>()) h->Eat(amount);
+            }
+            break;
+        case Effect::Drink:  // a well / water source restores thirst
+            if (inside) {
+                if (auto* s = g->GetComponent<SurvivalStats>()) s->Drink(amount);
+                else if (auto* t = g->GetComponent<ThirstStat>()) t->Drink(amount);
+            }
+            break;
         }
     }
     static void SetSubmerged(GameObject* g, bool on) {

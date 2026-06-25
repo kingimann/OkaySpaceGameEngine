@@ -7056,6 +7056,74 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##dnc")) toRemove = c;
         }
     }
+    if (auto* c = go->GetComponent<NPCController>()) {
+        if (CompHeader("NPC Controller", c, &toRemove)) {
+            const char* bs[] = { "Idle", "Wander", "Follow", "Flee", "Chase (attack)" };
+            if (ImGui::Combo("Behavior##npc", &c->behavior, bs, IM_ARRAYSIZE(bs))) ed.dirty = true;
+            char tn[48]; std::strncpy(tn, c->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
+            if (ImGui::InputText("Target##npc", tn, sizeof(tn))) { c->targetName = tn; ed.dirty = true; }
+            if (ImGui::DragFloat("Move Speed##npc", &c->moveSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Sight Range##npc", &c->sightRange, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Wander Radius##npc", &c->wanderRadius, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
+            auto bh = (NPCController::Behavior)c->behavior;
+            if (bh == NPCController::Behavior::Chase || bh == NPCController::Behavior::Follow) {
+                if (ImGui::DragFloat("Attack/Stop Range##npc", &c->attackRange, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            }
+            if (bh == NPCController::Behavior::Chase) {
+                if (ImGui::DragFloat("Attack Damage##npc", &c->attackDamage, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Attack Interval##npc", &c->attackInterval, 0.05f, 0.05f, 10.0f, "%.2f s")) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Face Movement##npc", &c->faceMovement)) ed.dirty = true;
+            ImGui::TextDisabled("Moves a sibling Rigidbody3D toward/from the target.");
+            if (ImGui::SmallButton("Remove##npc")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<Crafting>()) {
+        if (CompHeader("Crafting", c, &toRemove)) {
+            ImGui::TextDisabled("Recipes consume Inventory items to make an output.");
+            int removeAt = -1;
+            for (int i = 0; i < (int)c->recipes.size(); ++i) {
+                ImGui::PushID(i);
+                auto& r = c->recipes[i];
+                char outb[40]; std::strncpy(outb, r.output.c_str(), sizeof(outb) - 1); outb[sizeof(outb) - 1] = '\0';
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::InputText("##out", outb, sizeof(outb))) { r.output = outb; ed.dirty = true; }
+                ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                if (ImGui::DragInt("x##outc", &r.outputCount, 0.1f, 1, 999)) ed.dirty = true;
+                ImGui::SameLine();
+                if (c->Inv()) ImGui::TextDisabled(c->CanCraft(r) ? "(ready)" : "(missing)");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X##rmr")) removeAt = i;
+                int rmIng = -1;
+                for (int j = 0; j < (int)r.inputs.size(); ++j) {
+                    ImGui::PushID(j);
+                    auto& in = r.inputs[j];
+                    ImGui::Indent(16.0f);
+                    char ib[40]; std::strncpy(ib, in.item.c_str(), sizeof(ib) - 1); ib[sizeof(ib) - 1] = '\0';
+                    ImGui::SetNextItemWidth(100);
+                    if (ImGui::InputText("##ing", ib, sizeof(ib))) { in.item = ib; ed.dirty = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragInt("##ingc", &in.count, 0.1f, 1, 999)) ed.dirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("x##rmi")) rmIng = j;
+                    ImGui::Unindent(16.0f);
+                    ImGui::PopID();
+                }
+                if (rmIng >= 0) { r.inputs.erase(r.inputs.begin() + rmIng); ed.dirty = true; }
+                ImGui::Indent(16.0f);
+                if (ImGui::SmallButton("+ ingredient")) { r.inputs.push_back({"item", 1}); ed.dirty = true; }
+                ImGui::Unindent(16.0f);
+                ImGui::Separator();
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { c->recipes.erase(c->recipes.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::SmallButton("+ Recipe##craft")) { c->AddRecipe("output", 1, {{"item", 1}}); ed.dirty = true; }
+            if (!go->GetComponent<Inventory>())
+                ImGui::TextDisabled("Add an Inventory component for crafting to draw from.");
+            ImGui::TextDisabled("Craft(name)/CraftIndex from a menu button (On Click 'Craft', Amount=index).");
+            if (ImGui::SmallButton("Remove##craft")) toRemove = c;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8751,6 +8819,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<SurvivalZone>(), "Survival Zone (trigger)")) { go->AddComponent<SurvivalZone>(); ed.dirty = true; }
             if (item(!go->GetComponent<Consumables>(), "Consumables (items -> stats)")) { go->AddComponent<Consumables>(); ed.dirty = true; }
             if (item(!go->GetComponent<DayNightCycle>(), "Day / Night Cycle")) { go->AddComponent<DayNightCycle>(); ed.dirty = true; }
+            if (item(!go->GetComponent<NPCController>(), "NPC Controller")) { go->AddComponent<NPCController>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Crafting>(), "Crafting")) { go->AddComponent<Crafting>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

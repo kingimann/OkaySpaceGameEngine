@@ -35,6 +35,13 @@ public:
 
     /// Use one `item`: removes it from a sibling Inventory (if required), then applies
     /// its survival effect to this object. Returns true if it was consumed.
+    /// Use the recipe at `index` (for a hotbar/menu button via On Click, since it
+    /// can only pass a number). Returns true if consumed.
+    bool UseIndex(int index) {
+        if (index < 0 || index >= (int)recipes.size()) return false;
+        return Use(recipes[index].item);
+    }
+
     bool Use(const std::string& item) {
         const Recipe* r = Find(item);
         if (!r) return false;

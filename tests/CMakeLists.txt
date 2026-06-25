@@ -405,3 +405,7 @@ add_test(NAME survival COMMAND test_survival)
 add_executable(test_daynight test_daynight.cpp)
 target_link_libraries(test_daynight PRIVATE okay::engine)
 add_test(NAME daynight COMMAND test_daynight)
+
+add_executable(test_npc_crafting test_npc_crafting.cpp)
+target_link_libraries(test_npc_crafting PRIVATE okay::engine)
+add_test(NAME npc_crafting COMMAND test_npc_crafting)

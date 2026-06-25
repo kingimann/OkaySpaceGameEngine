@@ -7188,6 +7188,25 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##veh")) toRemove = v;
         }
     }
+    if (auto* v2 = go->GetComponent<VehicleController2D>()) {
+        if (CompHeader("Vehicle Controller 2D", v2, &toRemove)) {
+            if (ImGui::Checkbox("Side View (platformer)##veh2", &v2->sideView)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = top-down (steer + drift). On = side-scroller car (A/D drive, gravity on).");
+            if (ImGui::DragFloat("Max Speed##veh2", &v2->maxSpeed, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
+            if (!v2->sideView) if (ImGui::DragFloat("Reverse Speed##veh2", &v2->reverseSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Acceleration##veh2", &v2->acceleration, 0.5f, 0.5f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Brake Force##veh2", &v2->brakeForce, 0.5f, 0.5f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Drag (coast)##veh2", &v2->drag, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (!v2->sideView) {
+                if (ImGui::DragFloat("Turn Speed##veh2", &v2->turnSpeed, 1.0f, 0.0f, 600.0f, "%.0f deg/s")) ed.dirty = true;
+                if (ImGui::DragFloat("Grip##veh2", &v2->grip, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Handbrake Grip##veh2", &v2->handbrakeGrip, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
+            }
+            ImGui::TextDisabled(v2->sideView ? "A/D drive, Space brake. Needs Rigidbody2D + collider."
+                                             : "W/S gas, A/D steer, Space handbrake (drift).");
+            if (ImGui::SmallButton("Remove##veh2")) toRemove = v2;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8877,6 +8896,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { go->AddComponent<ThirdPersonShooterController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

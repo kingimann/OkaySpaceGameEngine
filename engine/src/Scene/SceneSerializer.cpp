@@ -14,6 +14,7 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/VehicleController.hpp"
+#include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
@@ -294,6 +295,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
             << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
             << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
+    }
+    if (auto* v2 = go->GetComponent<VehicleController2D>()) {
+        out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
+            << " " << v2->brakeForce << " " << v2->drag << " " << v2->turnSpeed << " " << v2->grip
+            << " " << v2->handbrakeGrip << " " << (v2->sideView ? 1 : 0)
+            << " " << (int)(unsigned char)v2->handbrakeKey << "\n";
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
@@ -1159,6 +1166,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int fc = 0; in >> fc; v->followCamera = (fc != 0);
                     in >> v->camDistance >> v->camHeight >> v->camLerp;
                     int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
+                } else if (field == "vehicle2d") {
+                    auto* v2 = go->AddComponent<VehicleController2D>();
+                    in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce
+                       >> v2->drag >> v2->turnSpeed >> v2->grip >> v2->handbrakeGrip;
+                    int sv = 0; in >> sv; v2->sideView = (sv != 0);
+                    int hk = 32; in >> hk; v2->handbrakeKey = (char)hk;
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

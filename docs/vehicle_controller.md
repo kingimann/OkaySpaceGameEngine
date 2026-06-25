@@ -38,6 +38,20 @@ quick top-down/kinematic car).
 down-ray hit — useful for engine-sound pitch, skid effects, or disabling control in
 the air.
 
+## 2D vehicles (`VehicleController2D`)
+
+The 2D sibling, *Add Component ▸ Gameplay ▸ Vehicle Controller 2D* (adds a
+Rigidbody2D). Two modes:
+
+- **Top-down** (default): throttle drives along the sprite's facing (its local +Y),
+  A/D steer (speed-scaled, reverse-aware), grip/handbrake drift — the arcade model in
+  the XY plane. Set `gravityScale = 0` on the Rigidbody2D.
+- **Side view** (`sideView = true`): a platformer car — A/D drive along world X with
+  gravity on, no steering.
+
+Same feel knobs (max/reverse speed, acceleration, brake, drag, turn, grip,
+handbrake). `Speed()` returns the signed forward speed.
+
 ## Roadmap
 
 This is the arcade model. Per-wheel **raycast suspension** (spring/damper per wheel,

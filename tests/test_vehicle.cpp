@@ -82,5 +82,41 @@ int main() {
         CHECK(v2->handbrakeKey == 'b');
     }
 
+    // --- 2D top-down vehicle drives along facing + serializes -----------
+    {
+        Scene s("v2d");
+        GameObject* car = s.CreateGameObject("Car2D");
+        auto* rb = car->AddComponent<Rigidbody2D>(); rb->gravityScale = 0.0f;
+        auto* v = car->AddComponent<VehicleController2D>();
+        v->maxSpeed = 12.0f; v->acceleration = 40.0f;
+        s.Start();
+        Input::FeedKeys({'w'});
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(v->Speed() > 9.0f);                         // accelerated
+        CHECK(car->transform->Position().y > 3.0f);       // top-down faces +Y
+        Input::FeedKeys({});
+        std::string txt = SceneSerializer::SerializeObject(*car);
+        CHECK(txt.find("vehicle2d ") != std::string::npos);
+        Scene s2("v2d2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        auto* v2 = c2 ? c2->GetComponent<VehicleController2D>() : nullptr;
+        CHECK(v2 != nullptr);
+        CHECK_NEAR(v2->maxSpeed, 12.0f, 1e-3f);
+    }
+
+    // --- 2D side-view car drives along X ------------------------------
+    {
+        Scene s("v2dside");
+        GameObject* car = s.CreateGameObject("Car2D");
+        auto* rb = car->AddComponent<Rigidbody2D>(); rb->gravityScale = 0.0f;
+        auto* v = car->AddComponent<VehicleController2D>();
+        v->sideView = true; v->maxSpeed = 10.0f; v->acceleration = 40.0f;
+        s.Start();
+        Input::FeedKeys({'d'});
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(rb->velocity.x > 8.0f);                     // drives right along X
+        Input::FeedKeys({});
+    }
+
     TEST_MAIN_RESULT();
 }

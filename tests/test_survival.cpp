@@ -427,5 +427,66 @@ int main() {
         CHECK(c2->GetComponent<SurvivalSave>()->saveContinuously);
     }
 
+    // --- Survival zone toggles state on enter/exit -----------------------
+    {
+        Scene s("zone");
+        GameObject* player = s.CreateGameObject("Player");
+        auto* rad = player->AddComponent<RadiationStat>();
+        auto* pcol = player->AddComponent<BoxCollider3D>();
+        GameObject* zone = s.CreateGameObject("RadZone");
+        auto* z = zone->AddComponent<SurvivalZone>();
+        z->effect = (int)SurvivalZone::Effect::Radiation;
+        s.Start();
+        CHECK(!rad->inRadiation);
+        z->Enter(pcol->gameObject);                          // body steps in
+        CHECK(rad->inRadiation);
+        z->Exit(pcol->gameObject);                           // and out
+        CHECK(!rad->inRadiation);
+    }
+
+    // --- Water zone sets wetness + submerged; one-shot poison zone -------
+    {
+        Scene s("zone2");
+        GameObject* p = s.CreateGameObject("Player");
+        auto* we = p->AddComponent<WetnessStat>();
+        auto* sv = p->AddComponent<SurvivalStats>();
+        auto* po = p->AddComponent<PoisonStat>();
+        s.Start();
+        GameObject* water = s.CreateGameObject("Water");
+        auto* wz = water->AddComponent<SurvivalZone>();
+        wz->effect = (int)SurvivalZone::Effect::Water;
+        wz->Enter(p);
+        CHECK(we->inWater);
+        CHECK(sv->submerged);
+        wz->Exit(p);
+        CHECK(!we->inWater);
+        CHECK(!sv->submerged);
+
+        GameObject* gas = s.CreateGameObject("GasCloud");
+        auto* gz = gas->AddComponent<SurvivalZone>();
+        gz->effect = (int)SurvivalZone::Effect::Poison; gz->amount = 30.0f;
+        gz->Enter(p);
+        CHECK_NEAR(po->poison, 30.0f, 1e-3f);                // one-shot on enter
+    }
+
+    // --- Survival zone serialization -------------------------------------
+    {
+        Scene s("zoneser");
+        GameObject* z = s.CreateGameObject("Z");
+        auto* sz = z->AddComponent<SurvivalZone>();
+        sz->effect = (int)SurvivalZone::Effect::Status; sz->effectName = "burning";
+        sz->amount = -12.0f; sz->duration = 4.0f;
+        std::string txt = SceneSerializer::SerializeObject(*z);
+        CHECK(txt.find("survivalzone ") != std::string::npos);
+        Scene s2("zoneser2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        auto* z2 = c2 ? c2->GetComponent<SurvivalZone>() : nullptr;
+        CHECK(z2 != nullptr);
+        CHECK(z2->effect == (int)SurvivalZone::Effect::Status);
+        CHECK(z2->effectName == "burning");
+        CHECK_NEAR(z2->amount, -12.0f, 1e-3f);
+        CHECK_NEAR(z2->duration, 4.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

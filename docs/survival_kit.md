@@ -84,6 +84,27 @@ trap calling `Wound`, or a bandage button calling `Bandage`.
   `Save()` writes a `<saveKey>.okayprefs` file (and `Save`/`Load` are On Click-
   callable). Covers every stat + affliction + carry weight on the same object.
 
+## Zones (drive state from the world)
+
+**Add Component ▸ Gameplay ▸ Survival Zone (trigger)** turns a trigger collider into
+a survival volume — no scripting. When a body carrying the matching component enters,
+the zone applies its effect; "while inside" effects clear again on exit:
+
+| Effect | While inside | Needs |
+|--------|--------------|-------|
+| Radiation | `SetInRadiation(true)` | RadiationStat |
+| Water | `SetInWater(true)` + `SetSubmerged(true)` | WetnessStat / Oxygen / SurvivalStats |
+| Cold | `SetCold(true)` | TemperatureStat / SurvivalStats |
+| Fire (warm) | `SetNearFire(true)` | TemperatureStat |
+| Danger (sanity) | `SetInDanger(true)` | SanityStat |
+| Submerged | `SetSubmerged(true)` | Oxygen / SurvivalStats |
+| Poison | adds `amount` toxin (on enter) | PoisonStat |
+| Status Effect | `Apply(name, duration, amount)` (on enter) | Status Effects |
+| Damage / Heal | one-shot `amount` (on enter) | health source |
+
+Put it on an object with a trigger `Collider` (isTrigger on). A radiation room, a
+lake, a snowfield, a campfire, or a gas cloud each become drag-and-drop scenery.
+
 ## Making it show up (it's wired for you)
 
 Every component **publishes itself each frame** so you see it working immediately:

@@ -19,6 +19,7 @@
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
+#include "okay/Components/SurvivalZone.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
@@ -389,6 +390,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* c = go->GetComponent<SurvivalSave>()) {
         out << "  survivalsave " << Quote(c->saveKey) << " " << (c->loadOnStart ? 1 : 0)
             << " " << (c->saveContinuously ? 1 : 0) << "\n";
+    }
+    if (auto* c = go->GetComponent<SurvivalZone>()) {
+        out << "  survivalzone " << c->effect << " " << c->amount << " " << c->duration
+            << " " << Quote(c->effectName) << "\n";
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
@@ -1345,6 +1350,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     c->saveKey = ReadQuoted(in);
                     int lo = 1, sc = 0; in >> lo >> sc;
                     c->loadOnStart = (lo != 0); c->saveContinuously = (sc != 0);
+                } else if (field == "survivalzone") {
+                    auto* c = go->AddComponent<SurvivalZone>();
+                    in >> c->effect >> c->amount >> c->duration;
+                    c->effectName = ReadQuoted(in);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

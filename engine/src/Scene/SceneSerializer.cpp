@@ -46,6 +46,7 @@
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/WorldUI.hpp"
+#include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UITextBind.hpp"
@@ -648,6 +649,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (go->GetComponent<EventSystem>()) {
         out << "  eventsystem\n";
+    }
+    if (auto* w3 = go->GetComponent<WorldSpaceUI>()) {
+        out << "  worldui3d " << w3->pixelsPerUnit << " " << (w3->billboard ? 1 : 0) << "\n";
     }
     if (auto* pb = go->GetComponent<UIProgressBar>()) {
         out << "  uiprogress " << pb->position.x << " " << pb->position.y << " "
@@ -1740,6 +1744,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (std::isdigit(p3) || p3 == '-') { int bb = 1; in >> bb; cv->billboard = (bb != 0); }
                         }
                     }
+                } else if (field == "worldui3d") {
+                    auto* w3 = go->AddComponent<WorldSpaceUI>();
+                    in >> w3->pixelsPerUnit;
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int bb = 1; in >> bb; w3->billboard = (bb != 0); }
                 } else if (field == "eventsystem") {
                     go->AddComponent<EventSystem>();
                 } else if (field == "uiprogress") {

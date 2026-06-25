@@ -51,6 +51,26 @@ int main() {
     CHECK(GetUIScreenRect(btnObj, 800.0f, 600.0f, o, sz, &k));
     CHECK_NEAR(o.x, 400.0f, 0.5f);
 
+    // --- Standalone in-world widget (WorldSpaceUI): its OWN object is the anchor ---
+    {
+        Scene s2("Self");
+        GameObject* wb = s2.CreateGameObject("WBtn");
+        wb->transform->localPosition = {0.0f, 0.0f, 0.0f};
+        UIButton* bb = wb->AddComponent<UIButton>();
+        bb->anchor = UIAnchor::Center; bb->position = {0.0f, 0.0f}; bb->size = {200.0f, 100.0f};
+        WorldSpaceUI* w = wb->AddComponent<WorldSpaceUI>();
+        w->pixelsPerUnit = 100.0f; w->billboard = true;
+        Vec2 o2, sz2; float k2 = 0.0f;
+        CHECK(GetUIScreenRect(wb, 800.0f, 600.0f, o2, sz2, &k2));
+        CHECK_NEAR(k2, 1.0f, 0.001f);
+        CHECK_NEAR(sz2.x, 200.0f, 0.5f);
+        CHECK_NEAR(o2.x, 300.0f, 0.5f);   // centered on the object at world (0,0)
+        CHECK_NEAR(o2.y, 250.0f, 0.5f);
+        wb->transform->localPosition = {1.0f, 0.0f, 0.0f};   // moving the object moves it
+        CHECK(GetUIScreenRect(wb, 800.0f, 600.0f, o2, sz2, &k2));
+        CHECK_NEAR(o2.x, 400.0f, 0.5f);
+    }
+
     UIWorld().active = false;
     TEST_MAIN_RESULT();
 }

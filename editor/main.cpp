@@ -4491,6 +4491,22 @@ void DrawHierarchy(EditorState& ed) {
         ImGui::Separator();
         if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); MakeButtonTextChild(ed, g); ed.Select(g); }
         if (ImGui::MenuItem("UI Text"))   { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Text"); auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
+        // 3D UI: each widget is its own standalone object in the world (WorldSpaceUI),
+        // anchors intact, no Canvas. Placed at the editor camera's focus point.
+        if (ImGui::BeginMenu("3D UI (in-world)")) {
+            auto make3d = [&](const char* name, auto addWidget) {
+                GameObject* g = ed.CreateEmpty(name);
+                addWidget(g);
+                g->AddComponent<WorldSpaceUI>();
+                if (g->transform) g->transform->localPosition = ed.camTarget;
+                ed.Select(g); ed.dirty = true;
+            };
+            if (ImGui::MenuItem("Button")) make3d("Button3D", [&](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; MakeButtonTextChild(ed, g); });
+            if (ImGui::MenuItem("Text"))   make3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+            if (ImGui::MenuItem("Panel"))  make3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
+            if (ImGui::MenuItem("Image"))  make3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
+            ImGui::EndMenu();
+        }
         ImGui::EndPopup();
     }
     ImGui::SameLine();
@@ -5402,7 +5418,11 @@ static std::vector<std::string> ScriptPublicFunctions(GameObject* go) {
     if (!go) return out;
     auto* sc = go->GetComponent<ScriptComponent>();
     if (!sc) return out;
-    const std::string& src = sc->Source();
+    // Prefer the LIVE editor buffer (functions you just typed, before recompiling);
+    // fall back to the last-compiled source. This is why the dropdown was empty —
+    // Source() only updates on Run, so freshly-typed functions weren't seen.
+    const char* live = PeekCodeBuffer(sc);
+    std::string src = live ? std::string(live) : sc->Source();
     for (std::size_t i = 0; (i = src.find("function", i)) != std::string::npos; ) {
         bool boundary = (i == 0) || !(std::isalnum((unsigned char)src[i-1]) || src[i-1] == '_');
         std::size_t j = i + 8;
@@ -7058,6 +7078,17 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
+        }
+    }
+    if (auto* w3 = go->GetComponent<WorldSpaceUI>()) {
+        if (CompHeader("World Space UI (3D)", w3, &toRemove)) {
+            if (ImGui::DragFloat("Pixels / Unit##w3", &w3->pixelsPerUnit, 1.0f, 1.0f, 4000.0f, "%.0f"))
+                ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Design pixels per world unit (smaller = bigger in-world).");
+            if (ImGui::Checkbox("Billboard (face camera)##w3", &w3->billboard)) ed.dirty = true;
+            ImGui::TextDisabled("This UI widget renders in the 3D world at this object's");
+            ImGui::TextDisabled("position. Move it with the transform gizmo.");
+            if (ImGui::SmallButton("Remove##w3")) toRemove = w3;
         }
     }
     if (auto* cv = go->GetComponent<Canvas>()) {

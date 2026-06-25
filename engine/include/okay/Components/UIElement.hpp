@@ -21,6 +21,7 @@
 #include "okay/Components/UIDraggable.hpp"   // UIDropTarget
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/WorldUI.hpp"
+#include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <vector>
@@ -153,11 +154,43 @@ inline bool UIWorldCanvasMap(Canvas* cv, Vec2& screenCenter, float& k) {
     return true;
 }
 
+/// A standalone in-world widget (this object carries a WorldSpaceUI marker), or
+/// nullptr. Each such widget is its own 3D object placed at its Transform.
+inline WorldSpaceUI* SelfWorldUI(GameObject* go) {
+    return go ? go->GetComponent<WorldSpaceUI>() : nullptr;
+}
+
+/// Project a standalone in-world widget's plane (centered at its own Transform)
+/// through the active camera: `screenCenter` is the object's projected pixel and
+/// `k` is screen px per design px. false if behind the camera / no world context.
+inline bool UIWorldSelfMap(GameObject* go, Vec2& screenCenter, float& k) {
+    WorldSpaceUI* w = SelfWorldUI(go);
+    UIWorldCtx& ctx = UIWorld();
+    if (!w || !ctx.active || !ctx.project || !go || !go->transform) return false;
+    Vec3 center = go->transform->Position();
+    Vec3 right = w->billboard ? ctx.right : go->transform->Right();
+    float ppu = w->pixelsPerUnit > 0.001f ? w->pixelsPerUnit : 1.0f;
+    float worldPerPx = 1.0f / ppu;
+    Vec2 c0; float depth = 0.0f;
+    if (!ctx.project(center, c0, depth)) return false;
+    Vec2 c1; float d1 = 0.0f;
+    if (!ctx.project(center + right * worldPerPx, c1, d1)) return false;
+    float dx = c1.x - c0.x, dy = c1.y - c0.y;
+    k = std::sqrt(dx * dx + dy * dy);
+    if (k < 1e-5f) return false;
+    screenCenter = c0;
+    return true;
+}
+
 /// The pixel scale a widget is drawn at: for a world-space Canvas the projected
 /// design->screen scale `k`; otherwise its owning Canvas's screen scale factor (or
 /// 1 with no Canvas). Returning 0 for a world canvas behind the camera collapses
 /// the widget so it isn't drawn.
 inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
+    if (SelfWorldUI(go)) {                 // standalone in-world widget
+        Vec2 sc; float k;
+        return UIWorldSelfMap(go, sc, k) ? k : 0.0f;
+    }
     Canvas* cv = OwningCanvas(go);
     if (cv && cv->worldSpace) {
         Vec2 sc; float k;
@@ -381,6 +414,17 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
                             Vec2& origin, Vec2& size, float* outScale = nullptr) {
     UIRect r = GetUIRect(go);
     if (!r.valid) return false;
+    // Standalone in-world widget: its own object is the anchor point. The widget's
+    // rect (anchor + offset, around its own size) projects at its Transform.
+    if (SelfWorldUI(go) && r.position) {
+        Vec2 sc; float k;
+        if (!UIWorldSelfMap(go, sc, k)) return false;
+        Vec2 od = ResolveAnchor(r.anchor, *r.position, r.size, 0.0f, 0.0f);
+        origin = sc + od * k;
+        size = r.size * k;
+        if (outScale) *outScale = k;
+        return true;
+    }
     // World-space Canvas: lay the widget out in design space, then project the
     // canvas plane through the active camera. Every widget type goes through here,
     // so this single branch makes them all render/hit-test in-world.
@@ -439,6 +483,12 @@ inline float ScrollViewContentHeight(GameObject* sv) {
 inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
     UIRect r = GetUIRect(go);
     if (!r.valid || !r.position) return Vec2{0.0f, 0.0f};
+    // Standalone in-world widget: project around its own Transform.
+    if (SelfWorldUI(go)) {
+        Vec2 sc; float k;
+        if (UIWorldSelfMap(go, sc, k))
+            return sc + ResolveAnchor(r.anchor, *r.position, r.size, 0.0f, 0.0f) * k;
+    }
     // World-space Canvas: project the design-space origin through the camera so
     // screen-space text (which uses this) lands on the in-world canvas too.
     if (Canvas* cv = OwningCanvas(go); cv && cv->worldSpace) {

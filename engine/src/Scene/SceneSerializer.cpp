@@ -17,6 +17,7 @@
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/FreeRoamController.hpp"
@@ -360,6 +361,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* c = go->GetComponent<SanityStat>()) {
         out << "  stat_sanity " << c->maxSanity << " " << c->drainInDark << " "
             << c->regenInLight << " " << c->lowThreshold; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<RadiationStat>()) {
+        out << "  stat_radiation " << c->maxRadiation << " " << c->gainPerSecond << " "
+            << c->decayPerSecond << " " << c->sickThreshold << " " << c->damagePerSecond; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<BleedingStat>()) {
+        out << "  stat_bleed " << c->maxBleed << " " << c->damagePerSecond << " "
+            << c->clotPerSecond; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<PoisonStat>()) {
+        out << "  stat_poison " << c->maxPoison << " " << c->damagePerSecond << " "
+            << c->decayPerSecond; statTail(out, c);
+    }
+    if (auto* c = go->GetComponent<WetnessStat>()) {
+        out << "  stat_wet " << c->maxWetness << " " << c->soakPerSecond << " " << c->dryPerSecond
+            << " " << c->chillPerSecond << " " << c->soakedThreshold; statTail(out, c);
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
@@ -1285,6 +1302,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "stat_sanity") {
                     auto* c = go->AddComponent<SanityStat>();
                     in >> c->maxSanity >> c->drainInDark >> c->regenInLight >> c->lowThreshold;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_radiation") {
+                    auto* c = go->AddComponent<RadiationStat>();
+                    in >> c->maxRadiation >> c->gainPerSecond >> c->decayPerSecond
+                       >> c->sickThreshold >> c->damagePerSecond;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_bleed") {
+                    auto* c = go->AddComponent<BleedingStat>();
+                    in >> c->maxBleed >> c->damagePerSecond >> c->clotPerSecond;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_poison") {
+                    auto* c = go->AddComponent<PoisonStat>();
+                    in >> c->maxPoison >> c->damagePerSecond >> c->decayPerSecond;
+                    ReadStatTail(in, c);
+                } else if (field == "stat_wet") {
+                    auto* c = go->AddComponent<WetnessStat>();
+                    in >> c->maxWetness >> c->soakPerSecond >> c->dryPerSecond
+                       >> c->chillPerSecond >> c->soakedThreshold;
                     ReadStatTail(in, c);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;

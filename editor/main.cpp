@@ -6882,6 +6882,55 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##stsn")) toRemove = c;
         }
     }
+    if (auto* c = go->GetComponent<RadiationStat>()) {
+        if (CompHeader("Stat: Radiation", c, &toRemove)) {
+            ImGui::TextDisabled("Builds in zones; past threshold it poisons Health.");
+            if (ImGui::DragFloat("Max##strd", &c->maxRadiation, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Gain / s (in zone)##strd", &c->gainPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Decay / s##strd", &c->decayPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Sick Threshold##strd", &c->sickThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Damage / s##strd", &c->damagePerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            statOutputs(c, "strd");
+            ImGui::TextDisabled("Methods: AddRadiation, TakeAntiRad, SetInRadiation.");
+            if (ImGui::SmallButton("Remove##strd")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<BleedingStat>()) {
+        if (CompHeader("Stat: Bleeding", c, &toRemove)) {
+            ImGui::TextDisabled("Wounds drain Health until bandaged.");
+            if (ImGui::DragFloat("Max Bleed##stbl", &c->maxBleed, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Damage / s (full)##stbl", &c->damagePerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Clot / s##stbl", &c->clotPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            statOutputs(c, "stbl");
+            ImGui::TextDisabled("Methods: Wound, Bandage, Heal.");
+            if (ImGui::SmallButton("Remove##stbl")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<PoisonStat>()) {
+        if (CompHeader("Stat: Poison", c, &toRemove)) {
+            ImGui::TextDisabled("Toxin damages Health, then fades; antidote clears.");
+            if (ImGui::DragFloat("Max Poison##stpo", &c->maxPoison, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Damage / s (full)##stpo", &c->damagePerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Decay / s##stpo", &c->decayPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            statOutputs(c, "stpo");
+            ImGui::TextDisabled("Methods: Poison, Cure, CureAll.");
+            if (ImGui::SmallButton("Remove##stpo")) toRemove = c;
+        }
+    }
+    if (auto* c = go->GetComponent<WetnessStat>()) {
+        if (CompHeader("Stat: Wetness", c, &toRemove)) {
+            ImGui::TextDisabled("Soaks in water/rain; chills warmth while wet.");
+            if (ImGui::DragFloat("Max Wetness##stwe", &c->maxWetness, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Soak / s##stwe", &c->soakPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Dry / s##stwe", &c->dryPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Chill Warmth / s##stwe", &c->chillPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Warmth drained from a sibling Temperature/Survival while soaked. 0 = off.");
+            if (ImGui::DragFloat("Soaked Threshold##stwe", &c->soakedThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            statOutputs(c, "stwe");
+            ImGui::TextDisabled("Methods: AddWetness, DryOff, SetInWater.");
+            if (ImGui::SmallButton("Remove##stwe")) toRemove = c;
+        }
+    }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         if (CompHeader("First Person Controller", fp, &toRemove)) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -8567,6 +8616,10 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<TemperatureStat>(), "Stat: Temperature")) { go->AddComponent<TemperatureStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<SleepStat>(), "Stat: Sleep / Energy")) { go->AddComponent<SleepStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<SanityStat>(), "Stat: Sanity")) { go->AddComponent<SanityStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<RadiationStat>(), "Stat: Radiation")) { go->AddComponent<RadiationStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BleedingStat>(), "Stat: Bleeding")) { go->AddComponent<BleedingStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<PoisonStat>(), "Stat: Poison")) { go->AddComponent<PoisonStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<WetnessStat>(), "Stat: Wetness")) { go->AddComponent<WetnessStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { go->AddComponent<ClickToMoveController>(); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }

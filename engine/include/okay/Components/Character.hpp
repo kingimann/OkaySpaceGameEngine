@@ -93,6 +93,22 @@ public:
     float bodyLean = 0.0f;
     float BodyLean() const { return m_bodyLean; }
 
+    /// Fold a desired head yaw (degrees, relative to the body) into what the neck can
+    /// actually do: pass it straight through up to ~72°, then ease back toward 0 as
+    /// the target swings past the neck's reach toward ±180°. This stops the head from
+    /// cranking to a hard sideways pose (and "facing the camera" when the body already
+    /// faces it) when the camera comes around the front. Shared by the controllers and
+    /// the auto look-at so they behave consistently.
+    static float NeckYaw(float relDeg) {
+        while (relDeg > 180.0f)  relDeg -= 360.0f;
+        while (relDeg < -180.0f) relDeg += 360.0f;
+        const float lim = 72.0f;                 // comfortable neck turn
+        float m = relDeg < 0.0f ? -relDeg : relDeg;
+        if (m <= lim) return relDeg;
+        float t = (180.0f - m) / (180.0f - lim); // 1 at the limit, 0 when fully behind
+        return (relDeg < 0.0f ? -1.0f : 1.0f) * lim * t;
+    }
+
     // ---- Manual pose: per-bone local rotation (euler deg). Applied when
     //      anim == 0. Empty / all-zero = rest pose. ----
     std::vector<Vec3> pose;

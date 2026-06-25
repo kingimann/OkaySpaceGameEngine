@@ -38,6 +38,51 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.x, 42.0f, 0.001f);
     }
 
+    // --- Inspector-assigned OnClick: calls a named function on a target object ---
+    {
+        Scene scene("ClickTarget");
+        GameObject* logic = scene.CreateGameObject("Logic");
+        auto* lsc = logic->AddComponent<ScriptComponent>("okayscript");
+        CHECK(lsc->LoadSource("var fired = 0; function boom() { fired = 1; }"));
+        GameObject* go = scene.CreateGameObject("Btn");
+        auto* b = go->AddComponent<UIButton>();
+        b->position = {0, 0}; b->size = {100, 40};
+        b->clickTarget = "Logic"; b->clickFunction = "boom";
+        scene.Start();
+        Input::FeedMouse({50, 20}, 0);
+        Input::FeedMouse({50, 20}, 1u << 0);
+        scene.Update(0.016f);
+        CHECK(b->WasClicked());
+        CHECK_NEAR(lsc->VM()->GetGlobal("fired").AsFloat(), 1.0f, 0.001f);
+    }
+
+    // --- Text options: typewriter reveal + alignment fields round-trip ---
+    {
+        Scene scene("Txt");
+        GameObject* go = scene.CreateGameObject("Label");
+        auto* tr = go->AddComponent<TextRenderer>();
+        tr->text = "HELLO";
+        tr->italic = true; tr->gradient = true; tr->alignBottom = true;
+        // Manual reveal: only the first 3 chars.
+        tr->visibleChars = 3;
+        CHECK(tr->DisplayText() == "HEL");
+        tr->visibleChars = -1;
+        CHECK(tr->DisplayText() == "HELLO");
+        // Auto typewriter: 10 chars/sec, advances with Update.
+        tr->typeSpeed = 10.0f; tr->ResetReveal();
+        CHECK(tr->DisplayText().empty());           // nothing revealed yet
+        tr->Update(0.25f);                           // 2.5 chars -> 2 visible
+        CHECK(tr->DisplayText() == "HE");
+        tr->Update(1.0f);                            // well past the end
+        CHECK(tr->DisplayText() == "HELLO");
+        // New fields survive serialization.
+        std::string txt = SceneSerializer::Serialize(scene);
+        Scene loaded("L"); CHECK(SceneSerializer::Deserialize(loaded, txt));
+        auto* lt = loaded.Find("Label")->GetComponent<TextRenderer>();
+        CHECK(lt && lt->italic && lt->gradient && lt->alignBottom);
+        CHECK_NEAR(lt->typeSpeed, 10.0f, 0.001f);
+    }
+
     // --- A click outside the button does nothing ---
     {
         Scene scene("Miss");

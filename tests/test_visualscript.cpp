@@ -298,5 +298,66 @@ int main() {
         CHECK_NEAR(vsc->GetVariable("unlocked").AsFloat(), 0.0f, 0.001f); // no Steam -> false
     }
 
+    // --- Tween easing curves at t=0.5. ---
+    {
+        const char* src = R"OKAYVS(
+            node 0 OnStart
+            node 1 Const 0.5
+            node 2 EaseIn
+            node 3 SetVar ein
+            node 4 EaseOut
+            node 5 SetVar eout
+            node 6 EaseInOut
+            node 7 SetVar eio
+            data 2 0 1 0
+            data 3 0 2 0
+            data 4 0 1 0
+            data 5 0 4 0
+            data 6 0 1 0
+            data 7 0 6 0
+            exec 0 0 3
+            exec 3 0 5
+            exec 5 0 7
+            entry OnStart 0
+        )OKAYVS";
+        Scene scene("VSE");
+        auto* vsc = scene.CreateGameObject("Ease")->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(vsc->LoadFromText(src, &err));
+        if (!err.empty()) std::cerr << "  parse: " << err << "\n";
+        scene.Start();
+        CHECK_NEAR(vsc->GetVariable("ein").AsFloat(), 0.25f, 0.001f);   // t^2
+        CHECK_NEAR(vsc->GetVariable("eout").AsFloat(), 0.75f, 0.001f);  // 1-(1-t)^2
+        CHECK_NEAR(vsc->GetVariable("eio").AsFloat(), 0.5f, 0.001f);    // smoothstep
+    }
+
+    // --- Physics: SetVelocity writes the sibling Rigidbody2D; VelX reads it. ---
+    {
+        const char* src = R"OKAYVS(
+            node 0 OnStart
+            node 1 Const 3
+            node 2 Const 4
+            node 3 SetVelocity
+            node 4 VelX
+            node 5 SetVar vx
+            data 3 0 1 0
+            data 3 1 2 0
+            data 5 0 4 0
+            exec 0 0 3
+            exec 3 0 5
+            entry OnStart 0
+        )OKAYVS";
+        Scene scene("VSP");
+        GameObject* go = scene.CreateGameObject("Body");
+        go->AddComponent<Rigidbody2D>();
+        auto* vsc = go->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(vsc->LoadFromText(src, &err));
+        if (!err.empty()) std::cerr << "  parse: " << err << "\n";
+        scene.Start();
+        CHECK_NEAR(vsc->GetVariable("vx").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(go->GetComponent<Rigidbody2D>()->velocity.x, 3.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

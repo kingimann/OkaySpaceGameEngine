@@ -1,0 +1,30 @@
+// SteamPipe app-build script for OkaySpace (App ID 1172560).
+// Publishes the OkaySpace engine/toolset ITSELF (launcher + editor + player +
+// relay) to depot 1172561, so the Steam app auto-updates for everyone.
+//
+// The content is the Windows distribution produced by scripts/build-windows-dist.sh
+// (build-win-dist/: OkaySpace.exe + SDL2.dll + Tools/). upload.sh builds it for you.
+//
+// Run via:  STEAM_USER=<builder> ./upload.sh   (or upload.bat on Windows)
+"appbuild"
+{
+	"appid"	"1172560"
+	"desc"	"OkaySpace build"        // shown on the Steamworks "Builds" page; edit per release
+
+	"buildoutput"	"output/"            // build logs + chunk cache (gitignored)
+	"contentroot"	"../build-win-dist/" // the engine distribution (build-windows-dist.sh output)
+
+	// Branch to publish to automatically after upload:
+	//   ""         = upload only; set it live yourself on the Steamworks Builds page (SAFEST)
+	//   "default"  = go live to ALL players immediately (this is the auto-update switch)
+	//   "beta"     = push to a "beta" branch first to test, then promote in the dashboard
+	"setlive"	""
+
+	"preview"	"0"              // "1" = dry run (no upload), great for a first test
+	"local"	""
+
+	"depots"
+	{
+		"1172561"	"depot_build_1172561.vdf"
+	}
+}

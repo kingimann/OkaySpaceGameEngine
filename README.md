@@ -354,6 +354,25 @@ cross-compiles the Windows build on every `v*` tag (and on demand) and attaches
 the zip to the GitHub Release. (`scripts/build-windows-exe.sh` builds just the
 single-file console demo.)
 
+**Distribution layout** — the build is organized so the thing you double-click is
+at the top and the rest is tucked into `Tools/`:
+
+```
+OkaySpace.exe        ← the launcher (start here)
+SDL2.dll             ← required beside OkaySpace.exe
+README.txt
+Tools/
+  OkayEngine.exe        the editor
+  OkaySpacePlayer.exe   standalone game runtime
+  okayspace-relay.exe   multiplayer NAT relay (see docs/relay.md)
+  SDL2.dll              copy — each .exe needs the DLL in its own folder
+  VERSION.txt
+```
+
+Windows resolves load-time DLLs from each exe's own directory, so `SDL2.dll` is
+intentionally duplicated next to the `Tools/` exes — keep every `.exe` together
+with an `SDL2.dll`. Full details in [docs/packaging.md](docs/packaging.md).
+
 ### Optional backends
 
 These are off by default to keep the core dependency-free:
@@ -449,7 +468,10 @@ the rest join over LAN or a forwarded port.
 - [`docs/web_mobile.md`](docs/web_mobile.md) — build your game for the **web** (WASM) and **mobile**.
 - [`docs/editor.md`](docs/editor.md) — the desktop editor and **Build Game**.
 - [`docs/scripting.md`](docs/scripting.md) — the OkayScript language + builtins.
-- [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime.
+- [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime + no-code Action Lists (incl. **raycasting**).
+- [`docs/survival_kit.md`](docs/survival_kit.md) — ready-made **health / hunger / thirst / stamina / oxygen / temperature** scripts.
+- [`docs/ui_world_space.md`](docs/ui_world_space.md) — **in-world (3D) UI**: world canvases and standalone 3D widgets.
+- [`docs/ui_html.md`](docs/ui_html.md) — author menus/HUDs in an **HTML + CSS** subset (UIDocument).
 - [`docs/steam_release.md`](docs/steam_release.md) — shipping on Steam.
 
 ## Extending it

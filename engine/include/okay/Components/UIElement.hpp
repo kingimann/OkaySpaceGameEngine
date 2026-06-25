@@ -21,13 +21,22 @@
 #include "okay/Components/UIDraggable.hpp"   // UIDropTarget
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/WorldUI.hpp"
+#include "okay/Components/WorldSpaceUI.hpp"
+#include "okay/Components/UIWorldContext.hpp"
 #include "okay/Math/Vec2.hpp"
+#include "okay/Math/Vec3.hpp"
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
 #include <cstddef>
+#include <cmath>
+#include <functional>
 
 namespace okay {
+
+/// (UIWorldCtx / UIWorld() now live in UIWorldContext.hpp, included above, so that
+/// low-level UI components — e.g. UIButton's hit-test — can consult the world
+/// projector without pulling in this whole layer.)
 
 /// A uniform view of whatever screen-space UI widget lives on a GameObject: its
 /// anchor, its editable pixel offset, and its size. Every UI component
@@ -113,10 +122,110 @@ inline Canvas* OwningCanvas(GameObject* go) {
     return nullptr;
 }
 
-/// The pixel scale a widget is drawn at: its owning Canvas's scale factor for
-/// the current screen, or 1 if it has no Canvas.
+/// For a world-space Canvas: project its plane through the active camera and return
+/// the screen pixel of the canvas center (`screenCenter`) and `k`, the screen
+/// pixels per design pixel at that distance. false if the canvas is behind the
+/// camera or there's no active world context. A design-space point `p` then maps to
+/// screen as `screenCenter + (p - designResolution/2) * k`, and sizes scale by `k`.
+inline bool UIWorldCanvasMap(Canvas* cv, Vec2& screenCenter, float& k) {
+    UIWorldCtx& ctx = UIWorld();
+    if (!cv || !cv->worldSpace || !ctx.active || !ctx.project) return false;
+    if (!cv->gameObject || !cv->gameObject->transform) return false;
+    Vec3 center = cv->gameObject->transform->Position();
+    Vec3 right = cv->billboard ? ctx.right : cv->gameObject->transform->Right();
+    float ppu = cv->worldPixelsPerUnit > 0.001f ? cv->worldPixelsPerUnit : 1.0f;
+    float worldPerPx = 1.0f / ppu;
+    Vec2 c0; float depth = 0.0f;
+    if (!ctx.project(center, c0, depth)) return false;
+    Vec2 c1; float d1 = 0.0f;
+    if (!ctx.project(center + right * worldPerPx, c1, d1)) return false;
+    float dx = c1.x - c0.x, dy = c1.y - c0.y;
+    k = std::sqrt(dx * dx + dy * dy);                 // screen px per design px
+    if (k < 1e-5f) return false;
+    screenCenter = c0;
+    return true;
+}
+
+/// The in-world UI root governing a widget: the nearest object (itself or an
+/// ancestor) carrying a WorldSpaceUI marker, or nullptr. So a child Text under a
+/// 3D Button projects with the button (the whole subtree is in-world), not as a
+/// stray screen label.
+GameObject* OwningUIParent(GameObject* go);   // defined below; used by the in-world subtree layout
+
+inline GameObject* WorldUIRoot(GameObject* go) {
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
+        if (t->gameObject && t->gameObject->GetComponent<WorldSpaceUI>())
+            return t->gameObject;
+    return nullptr;
+}
+inline WorldSpaceUI* SelfWorldUI(GameObject* go) {
+    GameObject* root = WorldUIRoot(go);
+    return root ? root->GetComponent<WorldSpaceUI>() : nullptr;
+}
+
+/// The widget's design-space rect RELATIVE to its WorldUIRoot (no projection): the
+/// root sits at design origin; descendants anchor within their UI parent. Lets a
+/// whole in-world subtree (button + its label) lay out together, then project once.
+inline bool UISelfDesignRect(GameObject* go, GameObject* root, Vec2& o, Vec2& sz) {
+    UIRect r = GetUIRect(go);
+    if (!r.valid || !r.position) return false;
+    sz = r.size;
+    if (go != root) {
+        if (GameObject* parent = OwningUIParent(go)) {
+            Vec2 po, ps;
+            if (UISelfDesignRect(parent, root, po, ps)) {
+                o = po + ResolveAnchor(r.anchor, *r.position, sz, ps.x, ps.y);
+                return true;
+            }
+        }
+    }
+    o = ResolveAnchor(r.anchor, *r.position, sz, 0.0f, 0.0f);   // root: centered on its 3D point
+    return true;
+}
+
+/// Project a widget's WorldUIRoot plane through the active camera: `screenCenter`
+/// is the root's projected pixel and `k` is screen px per design px. false if
+/// behind the camera / no world context.
+inline bool UIWorldSelfMap(GameObject* go, Vec2& screenCenter, float& k) {
+    GameObject* root = WorldUIRoot(go);
+    WorldSpaceUI* w = root ? root->GetComponent<WorldSpaceUI>() : nullptr;
+    UIWorldCtx& ctx = UIWorld();
+    if (!w || !ctx.active || !ctx.project || !root || !root->transform) return false;
+    Vec3 center = root->transform->Position();
+    Vec3 right = w->billboard ? ctx.right : root->transform->Right();
+    float ppu = w->pixelsPerUnit > 0.001f ? w->pixelsPerUnit : 1.0f;
+    float worldPerPx = 1.0f / ppu;
+    Vec2 c0; float depth = 0.0f;
+    if (!ctx.project(center, c0, depth)) return false;
+    screenCenter = c0;
+    // Constant screen size: ignore distance and use a fixed design->screen scale
+    // so the widget never shrinks/grows with the camera (it still moves in 3D).
+    if (w->constantSize) {
+        k = w->constantScale > 1e-4f ? w->constantScale : 1.0f;
+        return true;
+    }
+    Vec2 c1; float d1 = 0.0f;
+    if (!ctx.project(center + right * worldPerPx, c1, d1)) return false;
+    float dx = c1.x - c0.x, dy = c1.y - c0.y;
+    k = std::sqrt(dx * dx + dy * dy);
+    if (k < 1e-5f) return false;
+    return true;
+}
+
+/// The pixel scale a widget is drawn at: for a world-space Canvas the projected
+/// design->screen scale `k`; otherwise its owning Canvas's screen scale factor (or
+/// 1 with no Canvas). Returning 0 for a world canvas behind the camera collapses
+/// the widget so it isn't drawn.
 inline float UIScaleFor(GameObject* go, float screenW, float screenH) {
+    if (SelfWorldUI(go)) {                 // standalone in-world widget
+        Vec2 sc; float k;
+        return UIWorldSelfMap(go, sc, k) ? k : 0.0f;
+    }
     Canvas* cv = OwningCanvas(go);
+    if (cv && cv->worldSpace) {
+        Vec2 sc; float k;
+        return UIWorldCanvasMap(cv, sc, k) ? k : 0.0f;
+    }
     return cv ? cv->ScaleFactor(screenW, screenH) : 1.0f;
 }
 
@@ -305,6 +414,27 @@ inline GameObject* UIButtonTextChild(GameObject* go) {
     return nullptr;
 }
 
+/// A widget's rect in its world-space Canvas's DESIGN pixel space (no projection):
+/// anchored within its UI parent if it has one, else within `designResolution`.
+/// Sizes are 1:1 design pixels (the projection applies the scale). Used only by the
+/// world-space path of GetUIScreenRect, so it never recurses back into projection.
+inline bool UIDesignRect(GameObject* go, float dW, float dH, Vec2& origin, Vec2& size) {
+    UIRect r = GetUIRect(go);
+    if (!r.valid || !r.position) return false;
+    size = r.size;
+    if (GameObject* parent = OwningUIParent(go)) {
+        Vec2 po, ps;
+        if (UIDesignRect(parent, dW, dH, po, ps)) {
+            origin = po + ResolveAnchor(r.anchor, *r.position, size, ps.x, ps.y);
+            if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll;
+            return true;
+        }
+    }
+    origin = ResolveAnchor(r.anchor, *r.position, size, dW, dH);
+    if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll;
+    return true;
+}
+
 /// Resolve a widget to its final screen rect. Offsets/sizes scale by the owning
 /// Canvas factor. If the widget is parented under another UI widget, its anchor
 /// resolves WITHIN the parent's rect (so moving/resizing the parent moves the
@@ -314,6 +444,33 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
                             Vec2& origin, Vec2& size, float* outScale = nullptr) {
     UIRect r = GetUIRect(go);
     if (!r.valid) return false;
+    // In-world widget (it or an ancestor has WorldSpaceUI): lay the subtree out in
+    // design space relative to the root, then project the root's plane once. So a
+    // 3D button and its child label move/scale together in the world.
+    if (GameObject* wroot = WorldUIRoot(go)) {
+        Vec2 sc; float k;
+        if (!UIWorldSelfMap(go, sc, k)) return false;
+        Vec2 od, szd;
+        if (!UISelfDesignRect(go, wroot, od, szd)) return false;
+        origin = sc + od * k;
+        size = szd * k;
+        if (outScale) *outScale = k;
+        return true;
+    }
+    // World-space Canvas: lay the widget out in design space, then project the
+    // canvas plane through the active camera. Every widget type goes through here,
+    // so this single branch makes them all render/hit-test in-world.
+    if (Canvas* cv = OwningCanvas(go); cv && cv->worldSpace) {
+        Vec2 sc; float k;
+        if (!UIWorldCanvasMap(cv, sc, k)) return false;   // behind camera / no context
+        Vec2 od, szd;
+        if (!UIDesignRect(go, cv->designResolution.x, cv->designResolution.y, od, szd)) return false;
+        Vec2 dctr{cv->designResolution.x * 0.5f, cv->designResolution.y * 0.5f};
+        origin = sc + (od - dctr) * k;
+        size = szd * k;
+        if (outScale) *outScale = k;
+        return true;
+    }
     float s = UIScaleFor(go, screenW, screenH);
     size = r.size * s;
     if (GameObject* parent = OwningUIParent(go)) {
@@ -358,6 +515,24 @@ inline float ScrollViewContentHeight(GameObject* sv) {
 inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
     UIRect r = GetUIRect(go);
     if (!r.valid || !r.position) return Vec2{0.0f, 0.0f};
+    // In-world widget (self or ancestor WorldSpaceUI): project the subtree rect.
+    if (GameObject* wroot = WorldUIRoot(go)) {
+        Vec2 sc; float k; Vec2 od, szd;
+        if (UIWorldSelfMap(go, sc, k) && UISelfDesignRect(go, wroot, od, szd))
+            return sc + od * k;
+    }
+    // World-space Canvas: project the design-space origin through the camera so
+    // screen-space text (which uses this) lands on the in-world canvas too.
+    if (Canvas* cv = OwningCanvas(go); cv && cv->worldSpace) {
+        Vec2 sc; float k;
+        if (UIWorldCanvasMap(cv, sc, k)) {
+            Vec2 od, szd;
+            if (UIDesignRect(go, cv->designResolution.x, cv->designResolution.y, od, szd)) {
+                Vec2 dctr{cv->designResolution.x * 0.5f, cv->designResolution.y * 0.5f};
+                return sc + (od - dctr) * k;
+            }
+        }
+    }
     if (GameObject* parent = OwningUIParent(go)) {
         UIRect pr = GetUIRect(parent);
         if (pr.valid)

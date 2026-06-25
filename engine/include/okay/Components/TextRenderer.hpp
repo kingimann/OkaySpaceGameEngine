@@ -37,6 +37,20 @@ public:
     int align = 0;
     /// Vertically center the text in its box (else top-aligned).
     bool vcenter = true;
+    /// Bottom-align the text in its box (overrides vcenter). Together with vcenter
+    /// this gives Top / Center / Bottom vertical alignment.
+    bool alignBottom = false;
+    /// Faux-italic: shear the glyphs to the right for emphasis.
+    bool  italic = false;
+    /// Vertical color gradient: the top of each glyph uses `color`, the bottom uses
+    /// `colorBottom` (for titles / fancy labels). Off by default.
+    bool  gradient = false;
+    Color colorBottom = Color::FromBytes(120, 160, 255);
+    /// Typewriter reveal: only the first `visibleChars` characters are drawn
+    /// (-1 = all). If `typeSpeed` > 0, the count auto-advances at that many
+    /// characters per second (dialogue that types itself out).
+    int   visibleChars = -1;
+    float typeSpeed = 0.0f;
     /// Optional filled box drawn behind the text (a label background / chip).
     bool  background = false;
     Color backgroundColor = Color::FromBytes(0, 0, 0, 140);
@@ -66,8 +80,23 @@ public:
 
     /// The string actually drawn: optionally upper-cased and word-wrapped to the
     /// box. Existing '\n' line breaks are preserved.
+    /// Auto-advance the typewriter reveal when typeSpeed > 0.
+    void Update(float dt) override {
+        if (typeSpeed > 0.0f) m_reveal += typeSpeed * dt;
+    }
+    /// Restart the typewriter reveal from the first character.
+    void ResetReveal() { m_reveal = 0.0f; }
+    /// How many characters are currently visible (-1 = all): the auto-advancing
+    /// reveal when typeSpeed > 0, else the manual `visibleChars`.
+    int EffectiveVisible() const {
+        if (typeSpeed > 0.0f) return (int)m_reveal;
+        return visibleChars;
+    }
+
     std::string DisplayText() const {
         std::string s = text;
+        int vis = EffectiveVisible();
+        if (vis >= 0 && vis < (int)s.size()) s = s.substr(0, (std::size_t)vis);
         if (uppercase)
             for (char& c : s) c = (char)std::toupper((unsigned char)c);
         if (wrap && size.x > 0.0f && pixelSize > 0.0f) {
@@ -132,9 +161,13 @@ public:
         float x = box.x;
         if (align == 1)      x += (size.x * scale - tw) * 0.5f;
         else if (align == 2) x +=  size.x * scale - tw;
-        float y = box.y + (vcenter ? (size.y * scale - th) * 0.5f : 0.0f);
+        float y = box.y + (alignBottom ? (size.y * scale - th)
+                                       : vcenter ? (size.y * scale - th) * 0.5f : 0.0f);
         return {x, y};
     }
+
+private:
+    float m_reveal = 0.0f;   // runtime typewriter progress (chars), when typeSpeed > 0
 };
 
 } // namespace okay

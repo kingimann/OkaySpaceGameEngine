@@ -759,6 +759,11 @@ SDL_GameController* g_pad = nullptr;
 // otherwise the Scene viewport). Mouse input is fed relative to this so UI
 // buttons hit-test correctly while playing.
 ImVec2 g_playCanvasPos = ImVec2(0, 0);
+// Game-view canvas size + whether its camera is perspective, captured each frame
+// so the world-space UI projector can be re-established before the scene ticks
+// (so a 3D button hit-tests where the Game view draws it). 0 until first drawn.
+ImVec2 g_playCanvasSize = ImVec2(1280, 720);
+bool   g_playPersp = true;
 
 // Shortest distance (pixels) from point p to the segment a-b, for handle picking.
 static float SegDistPx(ImVec2 p, ImVec2 a, ImVec2 b) {
@@ -863,6 +868,480 @@ const char* StarterScript(const std::string& lang) {
            "        transform.position.y += Input.GetAxis(\"Vertical\") * speed * Time.deltaTime;\n"
            "    }\n"
            "}\n";
+}
+
+// Ready-made gameplay scripts so users can drop common survival mechanics onto an
+// object without writing them. Each is a self-contained OkaySource component with
+// inspector-tweakable fields and public methods (Eat/Drink/Damage/Heal/...) you can
+// call from a Button's On Click, an Action List, or another script. The combined
+// "Survival" script wires all four stats together (hunger/thirst empty -> health
+// drains; stamina powers sprinting), since stats need to interact in one class.
+inline const char* SurvivalScript(const std::string& which) {
+    if (which == "Health")
+        return
+        "public class Health : OkaySource {\n"
+        "    [Header(\"Health\")]\n"
+        "    public float maxHealth = 100f;\n"
+        "    public float health = 100f;\n"
+        "    public float armor = 0f;                 // flat damage reduction per hit\n"
+        "    public float regenPerSecond = 0f;        // passive heal (0 = off)\n"
+        "    public float regenDelay = 0f;            // seconds after a hit before regen resumes\n"
+        "    [Header(\"State (read-only)\")]\n"
+        "    public bool  dead = false;\n"
+        "    public bool  lowHealth = false;\n"
+        "    public float lowThreshold = 25f;\n"
+        "    float regenTimer = 0f;\n"
+        "\n"
+        "    void Start() { health = maxHealth; dead = false; Publish(); }\n"
+        "\n"
+        "    void Update() {\n"
+        "        if (dead) { return; }\n"
+        "        if (regenTimer > 0f) { regenTimer = regenTimer - Time.deltaTime; }\n"
+        "        if (regenPerSecond > 0f && regenTimer <= 0f) {\n"
+        "            health = health + regenPerSecond * Time.deltaTime;\n"
+        "            if (health > maxHealth) { health = maxHealth; }\n"
+        "        }\n"
+        "        lowHealth = health <= lowThreshold;\n"
+        "        Publish();\n"
+        "    }\n"
+        "\n"
+        "    // Pushes the value to a \"health\" saved value (for bind=\"HP: {health}\") and to a\n"
+        "    // progress bar named \"HealthBar\" if one exists. Hook your HUD up to either.\n"
+        "    void Publish() {\n"
+        "        prefs_set(\"health\", health);\n"
+        "        ui_set_progress(\"HealthBar\", Fraction());\n"
+        "    }\n"
+        "\n"
+        "    public void Damage(float amount) {\n"
+        "        if (dead) { return; }\n"
+        "        float dmg = amount - armor;\n"
+        "        if (dmg < 0f) { dmg = 0f; }\n"
+        "        health = health - dmg;\n"
+        "        regenTimer = regenDelay;\n"
+        "        Publish();\n"
+        "        if (health <= 0f) {\n"
+        "            health = 0f; dead = true;\n"
+        "            Debug.Log(\"You died!\");\n"
+        "            send_message(\"died\");          // other objects can react (OnMessage \"died\")\n"
+        "            play_sound(\"\");                // plays this object's AudioSource if present\n"
+        "            set_active(0);                 // hide the dead object\n"
+        "        }\n"
+        "    }\n"
+        "    public void Heal(float amount) { if (dead) { return; } health = health + amount; if (health > maxHealth) { health = maxHealth; } Publish(); }\n"
+        "    public void AddArmor(float a) { armor = armor + a; }\n"
+        "    public void Revive() { dead = false; health = maxHealth; set_active(1); Publish(); }\n"
+        "    public float Fraction() { if (maxHealth <= 0f) { return 0f; } return health / maxHealth; }\n"
+        "}\n";
+    if (which == "Hunger")
+        return
+        "public class Hunger : OkaySource {\n"
+        "    [Header(\"Hunger\")]\n"
+        "    public float maxHunger = 100f;\n"
+        "    public float hunger = 100f;\n"
+        "    public float drainPerSecond = 1.5f;\n"
+        "    public float sprintMultiplier = 2f;\n"
+        "    public bool  sprinting = false;\n"
+        "    [Header(\"State (read-only)\")]\n"
+        "    public bool  starving = false;\n"
+        "    public bool  low = false;\n"
+        "    public float lowThreshold = 25f;\n"
+        "\n"
+        "    void Start() { hunger = maxHunger; Publish(); }\n"
+        "\n"
+        "    void Update() {\n"
+        "        float m = 1f;\n"
+        "        if (sprinting) { m = sprintMultiplier; }\n"
+        "        hunger = hunger - drainPerSecond * m * Time.deltaTime;\n"
+        "        if (hunger < 0f) { hunger = 0f; }\n"
+        "        starving = hunger <= 0f;\n"
+        "        low = hunger <= lowThreshold;\n"
+        "        if (starving) { send_message(\"starving\"); }\n"
+        "        Publish();\n"
+        "    }\n"
+        "\n"
+        "    void Publish() {\n"
+        "        prefs_set(\"hunger\", hunger);\n"
+        "        ui_set_progress(\"HungerBar\", Fraction());\n"
+        "    }\n"
+        "\n"
+        "    public void Eat(float amount) { hunger = hunger + amount; if (hunger > maxHunger) { hunger = maxHunger; } Publish(); }\n"
+        "    public void SetSprinting(float on) { sprinting = on != 0f; }\n"
+        "    public float Fraction() { if (maxHunger <= 0f) { return 0f; } return hunger / maxHunger; }\n"
+        "}\n";
+    if (which == "Thirst")
+        return
+        "public class Thirst : OkaySource {\n"
+        "    [Header(\"Thirst\")]\n"
+        "    public float maxThirst = 100f;\n"
+        "    public float thirst = 100f;\n"
+        "    public float drainPerSecond = 2f;\n"
+        "    public float sprintMultiplier = 2f;\n"
+        "    public bool  sprinting = false;\n"
+        "    [Header(\"State (read-only)\")]\n"
+        "    public bool  dehydrated = false;\n"
+        "    public bool  low = false;\n"
+        "    public float lowThreshold = 25f;\n"
+        "\n"
+        "    void Start() { thirst = maxThirst; Publish(); }\n"
+        "\n"
+        "    void Update() {\n"
+        "        float m = 1f;\n"
+        "        if (sprinting) { m = sprintMultiplier; }\n"
+        "        thirst = thirst - drainPerSecond * m * Time.deltaTime;\n"
+        "        if (thirst < 0f) { thirst = 0f; }\n"
+        "        dehydrated = thirst <= 0f;\n"
+        "        low = thirst <= lowThreshold;\n"
+        "        if (dehydrated) { send_message(\"dehydrated\"); }\n"
+        "        Publish();\n"
+        "    }\n"
+        "\n"
+        "    void Publish() {\n"
+        "        prefs_set(\"thirst\", thirst);\n"
+        "        ui_set_progress(\"ThirstBar\", Fraction());\n"
+        "    }\n"
+        "\n"
+        "    public void Drink(float amount) { thirst = thirst + amount; if (thirst > maxThirst) { thirst = maxThirst; } Publish(); }\n"
+        "    public void SetSprinting(float on) { sprinting = on != 0f; }\n"
+        "    public float Fraction() { if (maxThirst <= 0f) { return 0f; } return thirst / maxThirst; }\n"
+        "}\n";
+    if (which == "Stamina")
+        return
+        "public class Stamina : OkaySource {\n"
+        "    [Header(\"Stamina\")]\n"
+        "    public float maxStamina = 100f;\n"
+        "    public float stamina = 100f;\n"
+        "    public float regenPerSecond = 12f;\n"
+        "    public float regenDelay = 1f;\n"
+        "    public float sprintCost = 20f;\n"
+        "    public float jumpCost = 15f;\n"
+        "    public float exhaustedUntil = 20f;\n"
+        "    public bool  sprinting = false;\n"
+        "    [Header(\"State (read-only)\")]\n"
+        "    public bool  exhausted = false;\n"
+        "    float regenTimer = 0f;\n"
+        "\n"
+        "    void Start() { stamina = maxStamina; Publish(); }\n"
+        "\n"
+        "    void Update() {\n"
+        "        float dt = Time.deltaTime;\n"
+        "        if (regenTimer > 0f) { regenTimer = regenTimer - dt; }\n"
+        "        if (sprinting && stamina > 0f && !exhausted) {\n"
+        "            stamina = stamina - sprintCost * dt;\n"
+        "            regenTimer = regenDelay;\n"
+        "            if (stamina <= 0f) { stamina = 0f; exhausted = true; }\n"
+        "        } else {\n"
+        "            if (regenTimer <= 0f) {\n"
+        "                stamina = stamina + regenPerSecond * dt;\n"
+        "                if (stamina > maxStamina) { stamina = maxStamina; }\n"
+        "            }\n"
+        "        }\n"
+        "        if (exhausted && stamina >= exhaustedUntil) { exhausted = false; }\n"
+        "        Publish();\n"
+        "    }\n"
+        "\n"
+        "    void Publish() {\n"
+        "        prefs_set(\"stamina\", stamina);\n"
+        "        ui_set_progress(\"StaminaBar\", Fraction());\n"
+        "    }\n"
+        "\n"
+        "    public bool TryJump() {\n"
+        "        if (stamina < jumpCost) { return false; }\n"
+        "        stamina = stamina - jumpCost; regenTimer = regenDelay; Publish();\n"
+        "        return true;\n"
+        "    }\n"
+        "    public void SetSprinting(float on) { sprinting = on != 0f; }\n"
+        "    public bool  CanSprint() { return stamina > 0f && !exhausted; }\n"
+        "    public float Fraction() { if (maxStamina <= 0f) { return 0f; } return stamina / maxStamina; }\n"
+        "}\n";
+    if (which == "Oxygen")
+        return
+        "public class Oxygen : OkaySource {\n"
+        "    [Header(\"Oxygen / Breath\")]\n"
+        "    public float maxOxygen = 100f;\n"
+        "    public float oxygen = 100f;\n"
+        "    public float drainPerSecond = 8f;\n"
+        "    public float refillPerSecond = 25f;\n"
+        "    public bool  submerged = false;\n"
+        "    [Header(\"State (read-only)\")]\n"
+        "    public bool  outOfAir = false;\n"
+        "\n"
+        "    void Start() { oxygen = maxOxygen; Publish(); }\n"
+        "\n"
+        "    void Update() {\n"
+        "        if (submerged) {\n"
+        "            oxygen = oxygen - drainPerSecond * Time.deltaTime;\n"
+        "            if (oxygen < 0f) { oxygen = 0f; }\n"
+        "        } else {\n"
+        "            oxygen = oxygen + refillPerSecond * Time.deltaTime;\n"
+        "            if (oxygen > maxOxygen) { oxygen = maxOxygen; }\n"
+        "        }\n"
+        "        outOfAir = oxygen <= 0f;\n"
+        "        if (outOfAir) { send_message(\"drowning\"); }\n"
+        "        Publish();\n"
+        "    }\n"
+        "\n"
+        "    void Publish() {\n"
+        "        prefs_set(\"oxygen\", oxygen);\n"
+        "        ui_set_progress(\"OxygenBar\", Fraction());\n"
+        "    }\n"
+        "\n"
+        "    public void Breathe(float amount) { oxygen = oxygen + amount; if (oxygen > maxOxygen) { oxygen = maxOxygen; } Publish(); }\n"
+        "    public void SetSubmerged(float on) { submerged = on != 0f; }\n"
+        "    public float Fraction() { if (maxOxygen <= 0f) { return 0f; } return oxygen / maxOxygen; }\n"
+        "}\n";
+    if (which == "Temperature")
+        return
+        "public class Temperature : OkaySource {\n"
+        "    [Header(\"Warmth / Temperature\")]\n"
+        "    public float maxWarmth = 100f;\n"
+        "    public float warmth = 100f;\n"
+        "    public float coldDrain = 3f;\n"
+        "    public float warmRegen = 6f;\n"
+        "    public bool  cold = false;\n"
+        "    public bool  nearFire = false;\n"
+        "    [Header(\"State (read-only)\")]\n"
+        "    public bool  freezing = false;\n"
+        "\n"
+        "    void Start() { warmth = maxWarmth; Publish(); }\n"
+        "\n"
+        "    void Update() {\n"
+        "        float dt = Time.deltaTime;\n"
+        "        if (nearFire) {\n"
+        "            warmth = warmth + warmRegen * dt;\n"
+        "        } else {\n"
+        "            if (cold) { warmth = warmth - coldDrain * dt; }\n"
+        "        }\n"
+        "        if (warmth < 0f) { warmth = 0f; }\n"
+        "        if (warmth > maxWarmth) { warmth = maxWarmth; }\n"
+        "        freezing = warmth <= 0f;\n"
+        "        if (freezing) { send_message(\"freezing\"); }\n"
+        "        Publish();\n"
+        "    }\n"
+        "\n"
+        "    void Publish() {\n"
+        "        prefs_set(\"warmth\", warmth);\n"
+        "        ui_set_progress(\"TemperatureBar\", Fraction());\n"
+        "    }\n"
+        "\n"
+        "    public void Warm(float amount) { warmth = warmth + amount; if (warmth > maxWarmth) { warmth = maxWarmth; } Publish(); }\n"
+        "    public void SetCold(float on) { cold = on != 0f; }\n"
+        "    public void SetNearFire(float on) { nearFire = on != 0f; }\n"
+        "    public float Fraction() { if (maxWarmth <= 0f) { return 0f; } return warmth / maxWarmth; }\n"
+        "}\n";
+    if (which == "Sleep")
+        return
+        "public class Sleep : OkaySource {\n"
+        "    [Header(\"Energy / Rest\")]\n"
+        "    public float maxEnergy = 100f;\n"
+        "    public float energy = 100f;\n"
+        "    public float drainPerSecond = 0.5f;\n"
+        "    public float restPerSecond = 20f;\n"
+        "    public bool  resting = false;\n"
+        "    [Header(\"State (read-only)\")]\n"
+        "    public bool  exhausted = false;\n"
+        "    public float tiredThreshold = 20f;\n"
+        "    public bool  tired = false;\n"
+        "\n"
+        "    void Start() { energy = maxEnergy; Publish(); }\n"
+        "\n"
+        "    void Update() {\n"
+        "        float dt = Time.deltaTime;\n"
+        "        if (resting) {\n"
+        "            energy = energy + restPerSecond * dt;\n"
+        "        } else {\n"
+        "            energy = energy - drainPerSecond * dt;\n"
+        "        }\n"
+        "        if (energy < 0f) { energy = 0f; }\n"
+        "        if (energy > maxEnergy) { energy = maxEnergy; }\n"
+        "        exhausted = energy <= 0f;\n"
+        "        tired = energy <= tiredThreshold;\n"
+        "        Publish();\n"
+        "    }\n"
+        "\n"
+        "    void Publish() {\n"
+        "        prefs_set(\"energy\", energy);\n"
+        "        ui_set_progress(\"EnergyBar\", Fraction());\n"
+        "    }\n"
+        "\n"
+        "    public void Rest(float amount) { energy = energy + amount; if (energy > maxEnergy) { energy = maxEnergy; } Publish(); }\n"
+        "    public void SetResting(float on) { resting = on != 0f; }\n"
+        "    public float Fraction() { if (maxEnergy <= 0f) { return 0f; } return energy / maxEnergy; }\n"
+        "}\n";
+    if (which == "Sanity")
+        return
+        "public class Sanity : OkaySource {\n"
+        "    [Header(\"Sanity\")]\n"
+        "    public float maxSanity = 100f;\n"
+        "    public float sanity = 100f;\n"
+        "    public float drainInDark = 4f;\n"
+        "    public float regenInLight = 3f;\n"
+        "    public bool  inDanger = false;\n"
+        "    [Header(\"State (read-only)\")]\n"
+        "    public bool  insane = false;\n"
+        "    public bool  low = false;\n"
+        "    public float lowThreshold = 25f;\n"
+        "\n"
+        "    void Start() { sanity = maxSanity; Publish(); }\n"
+        "\n"
+        "    void Update() {\n"
+        "        float dt = Time.deltaTime;\n"
+        "        if (inDanger) {\n"
+        "            sanity = sanity - drainInDark * dt;\n"
+        "        } else {\n"
+        "            sanity = sanity + regenInLight * dt;\n"
+        "        }\n"
+        "        if (sanity < 0f) { sanity = 0f; }\n"
+        "        if (sanity > maxSanity) { sanity = maxSanity; }\n"
+        "        insane = sanity <= 0f;\n"
+        "        low = sanity <= lowThreshold;\n"
+        "        if (insane) { send_message(\"insane\"); }\n"
+        "        Publish();\n"
+        "    }\n"
+        "\n"
+        "    void Publish() {\n"
+        "        prefs_set(\"sanity\", sanity);\n"
+        "        ui_set_progress(\"SanityBar\", Fraction());\n"
+        "    }\n"
+        "\n"
+        "    public void Restore(float amount) { sanity = sanity + amount; if (sanity > maxSanity) { sanity = maxSanity; } Publish(); }\n"
+        "    public void SetInDanger(float on) { inDanger = on != 0f; }\n"
+        "    public float Fraction() { if (maxSanity <= 0f) { return 0f; } return sanity / maxSanity; }\n"
+        "}\n";
+    // Combined survival system (recommended): every stat in one component,
+    // interacting and publishing to saved values + HUD progress bars each frame.
+    return
+        "public class Survival : OkaySource {\n"
+        "    [Header(\"Health\")]\n"
+        "    public float maxHealth = 100f;\n"
+        "    public float health = 100f;\n"
+        "    public float armor = 0f;\n"
+        "    public float regenWhenFed = 1f;\n"
+        "    public float regenDelay = 5f;\n"
+        "    public bool  dead = false;\n"
+        "\n"
+        "    [Header(\"Hunger\")]\n"
+        "    public float maxHunger = 100f;\n"
+        "    public float hunger = 100f;\n"
+        "    public float hungerDrain = 1.5f;\n"
+        "    public float starveDamage = 2f;\n"
+        "\n"
+        "    [Header(\"Thirst\")]\n"
+        "    public float maxThirst = 100f;\n"
+        "    public float thirst = 100f;\n"
+        "    public float thirstDrain = 2f;\n"
+        "    public float dehydrateDamage = 3f;\n"
+        "\n"
+        "    [Header(\"Stamina\")]\n"
+        "    public float maxStamina = 100f;\n"
+        "    public float stamina = 100f;\n"
+        "    public float staminaRegen = 12f;\n"
+        "    public float sprintCost = 20f;\n"
+        "    public float sprintDrainMult = 2f;\n"
+        "    public bool  sprinting = false;\n"
+        "\n"
+        "    [Header(\"Oxygen\")]\n"
+        "    public float maxOxygen = 100f;\n"
+        "    public float oxygen = 100f;\n"
+        "    public float oxygenDrain = 8f;\n"
+        "    public float oxygenRefill = 25f;\n"
+        "    public float drownDamage = 5f;\n"
+        "    public bool  submerged = false;\n"
+        "\n"
+        "    [Header(\"Temperature\")]\n"
+        "    public float maxWarmth = 100f;\n"
+        "    public float warmth = 100f;\n"
+        "    public float coldDrain = 3f;\n"
+        "    public float warmRegen = 6f;\n"
+        "    public float freezeDamage = 2f;\n"
+        "    public bool  cold = false;\n"
+        "\n"
+        "    float regenTimer = 0f;\n"
+        "\n"
+        "    void Start() {\n"
+        "        health = maxHealth; hunger = maxHunger; thirst = maxThirst;\n"
+        "        stamina = maxStamina; oxygen = maxOxygen; warmth = maxWarmth;\n"
+        "        dead = false; Publish();\n"
+        "    }\n"
+        "\n"
+        "    void Update() {\n"
+        "        if (dead) { return; }\n"
+        "        float dt = Time.deltaTime;\n"
+        "        float drainMult = 1f;\n"
+        "        if (sprinting && stamina > 0f) { drainMult = sprintDrainMult; }\n"
+        "\n"
+        "        hunger = hunger - hungerDrain * drainMult * dt;  if (hunger < 0f) { hunger = 0f; }\n"
+        "        thirst = thirst - thirstDrain * drainMult * dt;  if (thirst < 0f) { thirst = 0f; }\n"
+        "\n"
+        "        if (sprinting && stamina > 0f) {\n"
+        "            stamina = stamina - sprintCost * dt;  if (stamina < 0f) { stamina = 0f; }\n"
+        "        } else {\n"
+        "            stamina = stamina + staminaRegen * dt;  if (stamina > maxStamina) { stamina = maxStamina; }\n"
+        "        }\n"
+        "\n"
+        "        if (submerged) {\n"
+        "            oxygen = oxygen - oxygenDrain * dt;  if (oxygen < 0f) { oxygen = 0f; }\n"
+        "        } else {\n"
+        "            oxygen = oxygen + oxygenRefill * dt;  if (oxygen > maxOxygen) { oxygen = maxOxygen; }\n"
+        "        }\n"
+        "\n"
+        "        if (cold) {\n"
+        "            warmth = warmth - coldDrain * dt;  if (warmth < 0f) { warmth = 0f; }\n"
+        "        } else {\n"
+        "            warmth = warmth + warmRegen * dt;  if (warmth > maxWarmth) { warmth = maxWarmth; }\n"
+        "        }\n"
+        "\n"
+        "        bool tookEnv = false;\n"
+        "        if (hunger <= 0f) { Damage(starveDamage * dt); tookEnv = true; }\n"
+        "        if (thirst <= 0f) { Damage(dehydrateDamage * dt); tookEnv = true; }\n"
+        "        if (oxygen <= 0f) { Damage(drownDamage * dt); tookEnv = true; }\n"
+        "        if (warmth <= 0f) { Damage(freezeDamage * dt); tookEnv = true; }\n"
+        "\n"
+        "        if (regenTimer > 0f) { regenTimer = regenTimer - dt; }\n"
+        "        if (!tookEnv && regenTimer <= 0f && hunger > 0f && thirst > 0f && regenWhenFed > 0f) {\n"
+        "            health = health + regenWhenFed * dt;\n"
+        "            if (health > maxHealth) { health = maxHealth; }\n"
+        "        }\n"
+        "        Publish();\n"
+        "    }\n"
+        "\n"
+        "    // Publish every stat to a saved value (use bind=\"HP: {health}\" on UI text) and\n"
+        "    // to a same-named progress bar if it exists: HealthBar, HungerBar, ThirstBar,\n"
+        "    // StaminaBar, OxygenBar, TemperatureBar. Add those bars and they fill live.\n"
+        "    void Publish() {\n"
+        "        prefs_set(\"health\", health);   ui_set_progress(\"HealthBar\", health / maxHealth);\n"
+        "        prefs_set(\"hunger\", hunger);   ui_set_progress(\"HungerBar\", hunger / maxHunger);\n"
+        "        prefs_set(\"thirst\", thirst);   ui_set_progress(\"ThirstBar\", thirst / maxThirst);\n"
+        "        prefs_set(\"stamina\", stamina); ui_set_progress(\"StaminaBar\", stamina / maxStamina);\n"
+        "        prefs_set(\"oxygen\", oxygen);   ui_set_progress(\"OxygenBar\", oxygen / maxOxygen);\n"
+        "        prefs_set(\"warmth\", warmth);   ui_set_progress(\"TemperatureBar\", warmth / maxWarmth);\n"
+        "    }\n"
+        "\n"
+        "    public void Damage(float amount) {\n"
+        "        if (dead) { return; }\n"
+        "        float dmg = amount - armor;\n"
+        "        if (dmg < 0f) { dmg = 0f; }\n"
+        "        health = health - dmg;\n"
+        "        regenTimer = regenDelay;\n"
+        "        if (health <= 0f) {\n"
+        "            health = 0f; dead = true;\n"
+        "            Debug.Log(\"You died!\");\n"
+        "            send_message(\"died\");\n"
+        "            play_sound(\"\");\n"
+        "            set_active(0);\n"
+        "        }\n"
+        "    }\n"
+        "    public void Heal(float a)  { if (dead) { return; } health = health + a; if (health > maxHealth) { health = maxHealth; } }\n"
+        "    public void Eat(float a)   { hunger = hunger + a; if (hunger > maxHunger) { hunger = maxHunger; } }\n"
+        "    public void Drink(float a) { thirst = thirst + a; if (thirst > maxThirst) { thirst = maxThirst; } }\n"
+        "    public void Breathe(float a){ oxygen = oxygen + a; if (oxygen > maxOxygen) { oxygen = maxOxygen; } }\n"
+        "    public void Warm(float a)  { warmth = warmth + a; if (warmth > maxWarmth) { warmth = maxWarmth; } }\n"
+        "    public void AddArmor(float a) { armor = armor + a; }\n"
+        "    public void Revive() { dead = false; health = maxHealth; set_active(1); }\n"
+        "    public void SetSprinting(float on) { sprinting = on != 0f; }\n"
+        "    public void SetSubmerged(float on) { submerged = on != 0f; }\n"
+        "    public void SetCold(float on) { cold = on != 0f; }\n"
+        "    public bool CanSprint() { return stamina > 0f; }\n"
+        "}\n";
 }
 } // namespace extide
 
@@ -1487,6 +1966,23 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Draggable"))    addUI("Draggable",   [](GameObject* g){ g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
             if (ImGui::MenuItem("Drop Target"))  addUI("DropTarget",  [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
             if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
+            ImGui::Separator();
+            // 3D UI: each widget is its own standalone object in the world (a
+            // WorldSpaceUI marker), NOT under the 2D Canvas. Placed at the camera focus.
+            if (ImGui::BeginMenu("3D UI (in-world)")) {
+                auto add3d = [&](const char* nm, auto build) {
+                    GameObject* g = ed.CreateEmpty(nm);
+                    build(g);
+                    g->AddComponent<WorldSpaceUI>();
+                    if (g->transform) g->transform->localPosition = ed.camTarget;
+                    ed.Select(g); ed.dirty = true; created = true;
+                };
+                if (ImGui::MenuItem("Button")) add3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
+                if (ImGui::MenuItem("Text"))   add3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+                if (ImGui::MenuItem("Panel"))  add3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
+                if (ImGui::MenuItem("Image"))  add3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
         if (created) ed.Achievement("FIRST_OBJECT");
@@ -2113,6 +2609,30 @@ void DrawProject(EditorState& ed) {
                 ConsoleLog("Created " + p.string());
                 nameOnCreate(p);
             }
+            // Ready-made gameplay scripts (drop onto an object, tweak in the Inspector).
+            if (ImGui::BeginMenu("New Script from Template")) {
+                if (ImGui::BeginMenu("Survival")) {
+                    auto makeScript = [&](const char* name) {
+                        fs::path p = uniquePath(name, ".okay");
+                        std::ofstream(p) << extide::SurvivalScript(name);
+                        ConsoleLog("Created " + p.string());
+                        nameOnCreate(p);
+                    };
+                    if (ImGui::MenuItem("Survival (all-in-one)")) makeScript("Survival");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Health, Hunger, Thirst, Stamina, Oxygen & Temperature wired together.");
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Health"))      makeScript("Health");
+                    if (ImGui::MenuItem("Hunger"))      makeScript("Hunger");
+                    if (ImGui::MenuItem("Thirst"))      makeScript("Thirst");
+                    if (ImGui::MenuItem("Stamina"))     makeScript("Stamina");
+                    if (ImGui::MenuItem("Oxygen"))      makeScript("Oxygen");
+                    if (ImGui::MenuItem("Temperature")) makeScript("Temperature");
+                    if (ImGui::MenuItem("Sleep / Energy")) makeScript("Sleep");
+                    if (ImGui::MenuItem("Sanity"))      makeScript("Sanity");
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::MenuItem("New Data Asset")) {   // Scriptable Object
                 fs::path p = uniquePath("NewData", ".okaydata");
                 std::ofstream(p) << "# Scriptable Object: key = value fields\n"
@@ -2500,6 +3020,32 @@ void DrawStats(EditorState& ed) {
     if (ImGui::CollapsingHeader("Environment (Sky & Light)")) {
         auto& rs = ed.scene().renderSettings;
         if (ImGui::Checkbox("Skybox", &rs.skybox)) ed.dirty = true;
+        // Sky presets: one click sets the three gradient colors (and matching fog)
+        // to a ready-made look, so you don't have to hand-pick colors.
+        struct SkyPreset { const char* name; float top[3], hz[3], bot[3]; };
+        static const SkyPreset kSky[] = {
+            {"Clear Day",  {0.27f,0.47f,0.78f}, {0.59f,0.73f,0.88f}, {0.47f,0.47f,0.51f}},
+            {"Sunset",     {0.20f,0.18f,0.42f}, {0.95f,0.50f,0.25f}, {0.30f,0.18f,0.20f}},
+            {"Dawn",       {0.32f,0.40f,0.66f}, {0.96f,0.72f,0.62f}, {0.40f,0.38f,0.42f}},
+            {"Night",      {0.02f,0.03f,0.10f}, {0.06f,0.08f,0.18f}, {0.03f,0.03f,0.06f}},
+            {"Overcast",   {0.60f,0.62f,0.66f}, {0.74f,0.76f,0.79f}, {0.50f,0.50f,0.52f}},
+            {"Stormy",     {0.22f,0.24f,0.28f}, {0.38f,0.40f,0.44f}, {0.18f,0.19f,0.22f}},
+            {"Dusk",       {0.12f,0.10f,0.28f}, {0.55f,0.30f,0.45f}, {0.16f,0.12f,0.20f}},
+            {"Space",      {0.01f,0.01f,0.03f}, {0.03f,0.02f,0.08f}, {0.00f,0.00f,0.02f}},
+            {"Alien",      {0.10f,0.30f,0.18f}, {0.45f,0.85f,0.35f}, {0.12f,0.22f,0.14f}},
+            {"Mars",       {0.45f,0.26f,0.18f}, {0.85f,0.55f,0.38f}, {0.40f,0.22f,0.15f}},
+        };
+        if (ImGui::BeginCombo("Sky Preset", "Choose a preset...")) {
+            for (const SkyPreset& p : kSky)
+                if (ImGui::Selectable(p.name)) {
+                    rs.skybox   = true;
+                    rs.skyTop     = {p.top[0], p.top[1], p.top[2], 1};
+                    rs.skyHorizon = {p.hz[0],  p.hz[1],  p.hz[2],  1};
+                    rs.skyBottom  = {p.bot[0], p.bot[1], p.bot[2], 1};
+                    ed.dirty = true;
+                }
+            ImGui::EndCombo();
+        }
         float t[3] = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
         if (ImGui::ColorEdit3("Sky Top", t)) { rs.skyTop = {t[0], t[1], t[2], 1}; ed.dirty = true; }
         float hz[3] = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
@@ -4491,6 +5037,22 @@ void DrawHierarchy(EditorState& ed) {
         ImGui::Separator();
         if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); MakeButtonTextChild(ed, g); ed.Select(g); }
         if (ImGui::MenuItem("UI Text"))   { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Text"); auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
+        // 3D UI: each widget is its own standalone object in the world (WorldSpaceUI),
+        // anchors intact, no Canvas. Placed at the editor camera's focus point.
+        if (ImGui::BeginMenu("3D UI (in-world)")) {
+            auto make3d = [&](const char* name, auto addWidget) {
+                GameObject* g = ed.CreateEmpty(name);
+                addWidget(g);
+                g->AddComponent<WorldSpaceUI>();
+                if (g->transform) g->transform->localPosition = ed.camTarget;
+                ed.Select(g); ed.dirty = true;
+            };
+            if (ImGui::MenuItem("Button")) make3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
+            if (ImGui::MenuItem("Text"))   make3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+            if (ImGui::MenuItem("Panel"))  make3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
+            if (ImGui::MenuItem("Image"))  make3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
+            ImGui::EndMenu();
+        }
         ImGui::EndPopup();
     }
     ImGui::SameLine();
@@ -4673,6 +5235,35 @@ void DrawHierarchy(EditorState& ed) {
                     node->transform->SetParent(parent->transform, true);  // keep world pose
                     ed.Select(parent); ed.dirty = true;
                 }
+                // Explicit re-parenting: make this object a child of any other object
+                // (Unity's "drag onto parent", but from a menu). Descendants of this
+                // object are skipped so you can't create a cycle. World pose is kept.
+                if (ImGui::BeginMenu("Parent To")) {
+                    bool any = false;
+                    for (const auto& up : ed.scene().Objects()) {
+                        GameObject* cand = up.get();
+                        if (!cand || cand == node) continue;
+                        bool isDescendant = false;          // can't parent to own subtree
+                        for (Transform* t = cand->transform; t; t = t->Parent())
+                            if (t == node->transform) { isDescendant = true; break; }
+                        if (isDescendant) continue;
+                        if (node->transform->Parent() == cand->transform) continue; // already
+                        any = true;
+                        if (ImGui::MenuItem(cand->name.c_str())) {
+                            ed.PushUndo();
+                            node->transform->SetParent(cand->transform, true);  // keep world pose
+                            ed.dirty = true;
+                        }
+                    }
+                    if (!any) ImGui::TextDisabled("(no eligible objects)");
+                    ImGui::EndMenu();
+                }
+                if (ImGui::MenuItem("Unparent (to top level)", nullptr, false,
+                                    node->transform->Parent() != nullptr)) {
+                    ed.PushUndo();
+                    node->transform->SetParent(nullptr, true);   // keep world pose
+                    ed.dirty = true;
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Focus (frame)")) {
                     ed.camTarget = node->transform->Position();
@@ -4743,6 +5334,22 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Dropdown"))     mkUI("Dropdown", [](GameObject* g){ g->AddComponent<UIDropdown>(); });
             if (ImGui::MenuItem("Tabs"))         mkUI("Tabs",    [](GameObject* g){ g->AddComponent<UITabs>(); });
             if (ImGui::MenuItem("Scroll View"))  mkUI("ScrollView", [](GameObject* g){ g->AddComponent<UIScrollView>(); });
+            ImGui::Separator();
+            // 3D UI: standalone in-world objects (WorldSpaceUI), separate from 2D UI.
+            if (ImGui::BeginMenu("3D UI (in-world)")) {
+                auto mk3d = [&](const char* nm, auto build) {
+                    GameObject* g = ed.CreateEmpty(nm);
+                    build(g);
+                    g->AddComponent<WorldSpaceUI>();
+                    if (g->transform) g->transform->localPosition = ed.camTarget;
+                    ed.Select(g); ed.dirty = true;
+                };
+                if (ImGui::MenuItem("Button")) mk3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
+                if (ImGui::MenuItem("Text"))   mk3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+                if (ImGui::MenuItem("Panel"))  mk3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
+                if (ImGui::MenuItem("Image"))  mk3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
@@ -4911,6 +5518,9 @@ static const ActionOpInfo kCondOps[] = {
     {"dist_lt",  "Closer Than",          "object distance",            "Passes if the named object is closer than the distance.",      "World"},
     {"dist_gt",  "Farther Than",         "object distance",            "Passes if the named object is farther than the distance.",     "World"},
     {"exists",   "Object Exists",        "name",                       "Passes if an object with that name exists in the scene.",      "World"},
+    {"raycast",   "Raycast Hits",        "direction [distance]",       "Casts a ray in a direction; passes if it hits a collider. Pick the direction below.", "World"},
+    {"raycast_tag","Raycast Hits Tag",   "tag direction [distance]",   "Like Raycast Hits, but only passes if the hit object has the given tag.", "World"},
+    {"raycast_name","Raycast Hits Object","object direction [distance]","Like Raycast Hits, but only passes if it hits the named object.", "World"},
 };
 
 // Instructions — "do these, top to bottom".
@@ -4957,6 +5567,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"set_timescale","Set Game Speed",    "scale (1 = normal)",   "Slow-mo or fast-forward (0.5 = half, 2 = double).",        "Scene"},
     {"wait",        "Wait",               "seconds",              "Pause here before the next instruction.",                 "Flow"},
     {"goto",        "Jump To Line",       "line number",          "Jump to an instruction line (0 = first).",                "Flow"},
+    {"raycast",     "Raycast (store hit)","direction [distance] [prefix]","Cast a ray; store <prefix>_hit, _dist and _x/_y/_z (hit point) in variables (prefix defaults to 'ray').", "World"},
     {"if_goto",     "Jump If",            "var cmp value line",   "Jump to a line if a test passes (cmp: eq neq gt lt ge le).","Flow"},
     {"stop",        "Stop",               "",                     "Stop running the rest of this list.",                     "Flow"},
     {"call",        "Call Script Event",  "event name",           "Call a function on this object's Script.",                "Flow"},
@@ -5137,6 +5748,64 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
     }
     if (ImGui::IsItemHovered() && ops[cur].desc[0]) ImGui::SetTooltip("%s", ops[cur].desc);
     ImGui::SameLine();
+    // Friendly editor for the raycast family: a Direction dropdown + Distance, plus
+    // a Tag/Object field (raycast_tag / raycast_name) and a Prefix (the store-hit
+    // instruction). Falls through to the generic text field for every other op.
+    bool isRay = it.op.rfind("raycast", 0) == 0;
+    if (isRay) {
+        bool isTag  = (it.op == "raycast_tag");
+        bool isName = (it.op == "raycast_name");
+        bool isInstr = (ops == kInstrOps);          // the store-hit instruction
+        std::size_t dirIdx = (isTag || isName) ? 1 : 0;
+        auto getArg = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string{}; };
+        auto setArg = [&](std::size_t i, const std::string& v) {
+            while (it.args.size() <= i) it.args.push_back("");
+            it.args[i] = v; dirty = true;
+        };
+        // Tag / target-object field comes first for the filtered variants.
+        if (isTag || isName) {
+            char tb[96]; std::strncpy(tb, getArg(0).c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
+            ImGui::SetNextItemWidth(96);
+            if (ImGui::InputTextWithHint("##rtgt", isTag ? "tag" : "object", tb, sizeof(tb))) setArg(0, tb);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(isTag ? "Only count hits on objects with this tag." : "Only count a hit on this exact object (by name).");
+            ImGui::SameLine();
+        }
+        // Direction dropdown. "Toward Object" stores the token "toward:<name>".
+        static const char* dlabel[] = {"Forward","Back","Up","Down","Left","Right","Toward Object"};
+        static const char* dtok[]   = {"forward","back","up","down","left","right","toward"};
+        std::string curTok = getArg(dirIdx);
+        int di = 0; for (int k=0;k<6;k++) if (curTok==dtok[k]) di=k;
+        bool toward = curTok.rfind("toward:",0)==0 || curTok=="toward";
+        if (toward) di = 6;
+        ImGui::SetNextItemWidth(110);
+        if (ImGui::Combo("##rdir", &di, dlabel, IM_ARRAYSIZE(dlabel))) {
+            if (di < 6) setArg(dirIdx, dtok[di]);
+            else setArg(dirIdx, "toward:" + (curTok.rfind("toward:",0)==0 ? curTok.substr(7) : std::string()));
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which way the ray points (relative to this object's facing),\nor 'Toward Object' to aim at a named object.");
+        // When aiming toward an object, show the object-name field.
+        if (di == 6) {
+            ImGui::SameLine();
+            std::string nm = curTok.rfind("toward:",0)==0 ? curTok.substr(7) : std::string();
+            char nb[96]; std::strncpy(nb, nm.c_str(), sizeof(nb)-1); nb[sizeof(nb)-1]='\0';
+            ImGui::SetNextItemWidth(96);
+            if (ImGui::InputTextWithHint("##rtoward", "object", nb, sizeof(nb))) setArg(dirIdx, "toward:" + std::string(nb));
+        }
+        // Distance.
+        ImGui::SameLine();
+        float dist = getArg(dirIdx+1).empty() ? 100.0f : (float)std::atof(getArg(dirIdx+1).c_str());
+        ImGui::SetNextItemWidth(70);
+        if (ImGui::DragFloat("##rdist", &dist, 0.25f, 0.0f, 100000.0f, "%.1f")) setArg(dirIdx+1, std::to_string(dist));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the ray reaches.");
+        // Store-hit instruction: a variable prefix (defaults to 'ray').
+        if (isInstr) {
+            ImGui::SameLine();
+            char pb[64]; std::strncpy(pb, getArg(dirIdx+2).c_str(), sizeof(pb)-1); pb[sizeof(pb)-1]='\0';
+            ImGui::SetNextItemWidth(70);
+            if (ImGui::InputTextWithHint("##rpre", "prefix", pb, sizeof(pb))) setArg(dirIdx+2, pb);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stores <prefix>_hit, _dist, _x, _y, _z variables.");
+        }
+    } else {
     std::string joined;
     for (auto& a : it.args) { if (!joined.empty()) joined += ' '; joined += a; }
     char buf[256];
@@ -5150,6 +5819,7 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         dirty = true;
     }
     if (ImGui::IsItemHovered() && ops[cur].hint[0]) ImGui::SetTooltip("Values: %s", ops[cur].hint);
+    }
     ImGui::SameLine(); if (ImGui::SmallButton("^")) action = 2;
     ImGui::SameLine(); if (ImGui::SmallButton("v")) action = 3;
     ImGui::SameLine(); if (ImGui::SmallButton("X")) { action = 1; dirty = true; }
@@ -5402,20 +6072,68 @@ static std::vector<std::string> ScriptPublicFunctions(GameObject* go) {
     if (!go) return out;
     auto* sc = go->GetComponent<ScriptComponent>();
     if (!sc) return out;
-    const std::string& src = sc->Source();
+    // Prefer the LIVE editor buffer (functions you just typed, before recompiling);
+    // fall back to the last-compiled source. This is why the dropdown was empty —
+    // Source() only updates on Run, so freshly-typed functions weren't seen.
+    const char* live = PeekCodeBuffer(sc);
+    std::string src = live ? std::string(live) : sc->Source();
+    auto isIdent = [](unsigned char c) { return std::isalnum(c) || c == '_'; };
+    auto consider = [&](const std::string& name) {
+        if (name.empty()) return;
+        std::string lower = name; for (auto& ch : lower) ch = (char)std::tolower((unsigned char)ch);
+        if (lower == "start" || lower == "update" || lower == "awake") return;
+        if (lower.rfind("on_", 0) == 0) return;     // engine event callbacks (on_click, ...)
+        if (std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+    };
+    auto wordAt = [&](std::size_t i, const char* kw) {
+        std::size_t n = std::strlen(kw);
+        if (src.compare(i, n, kw) != 0) return false;
+        bool before = (i == 0) || !isIdent((unsigned char)src[i-1]);
+        bool after  = (i + n >= src.size()) || !isIdent((unsigned char)src[i+n]);
+        return before && after;
+    };
+    // OkayScript style: `function name(...)`.
     for (std::size_t i = 0; (i = src.find("function", i)) != std::string::npos; ) {
-        bool boundary = (i == 0) || !(std::isalnum((unsigned char)src[i-1]) || src[i-1] == '_');
+        bool boundary = (i == 0) || !isIdent((unsigned char)src[i-1]);
         std::size_t j = i + 8;
         i = j;
         if (!boundary || j >= src.size() || !(src[j] == ' ' || src[j] == '\t')) continue;
         while (j < src.size() && (src[j] == ' ' || src[j] == '\t')) ++j;
         std::size_t s = j;
-        while (j < src.size() && (std::isalnum((unsigned char)src[j]) || src[j] == '_')) ++j;
-        std::string name = src.substr(s, j - s);
+        while (j < src.size() && isIdent((unsigned char)src[j])) ++j;
+        consider(src.substr(s, j - s));
         i = j;
-        if (name.empty() || name == "start" || name == "update" || name == "awake") continue;
-        if (name.rfind("on_", 0) == 0 || name.rfind("On", 0) == 0) continue;   // event callbacks
-        if (std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+    }
+    // C# / OkaySource style: `public [static|virtual|override|async] <type> name(...)`.
+    // The method name is the identifier immediately before the '(' on the
+    // declaration; skip `public class/struct/enum/interface`.
+    for (std::size_t i = 0; (i = src.find("public", i)) != std::string::npos; ) {
+        std::size_t start = i; i += 6;
+        if (start != 0 && isIdent((unsigned char)src[start-1])) continue;
+        if (i >= src.size() || isIdent((unsigned char)src[i])) continue;   // "publicX"
+        auto skipWs = [&] { while (i < src.size() && std::isspace((unsigned char)src[i])) ++i; };
+        auto readWord = [&]() -> std::string {
+            std::size_t s = i; while (i < src.size() && isIdent((unsigned char)src[i])) ++i;
+            return src.substr(s, i - s);
+        };
+        skipWs();
+        // Not a method: a type/field declaration we should ignore.
+        if (wordAt(i, "class") || wordAt(i, "struct") || wordAt(i, "enum") || wordAt(i, "interface"))
+            continue;
+        // Skip modifiers, then the return type, keeping the LAST word before '(' as the name.
+        std::string prev, word;
+        bool sawParen = false;
+        for (int guard = 0; guard < 8 && i < src.size(); ++guard) {
+            word = readWord();
+            // allow generic/array return types like List<int> or float[]
+            while (i < src.size() && (src[i] == '<' || src[i] == '>' || src[i] == '[' ||
+                                      src[i] == ']' || src[i] == ',' || src[i] == '.')) ++i;
+            skipWs();
+            if (i < src.size() && src[i] == '(') { sawParen = true; break; }
+            if (word.empty()) break;
+            prev = word;   // `word` is the type so far; `prev`..`word` shifts as we go
+        }
+        if (sawParen && !word.empty()) consider(word);   // identifier right before '('
     }
     return out;
 }
@@ -7012,7 +7730,11 @@ void DrawInspector(EditorState& ed) {
                 AnchorCombo("Anchor##txt", tr->anchor, ed);
                 const char* aligns[] = {"Left", "Center", "Right"};
                 if (ImGui::Combo("Align##txt", &tr->align, aligns, 3)) ed.dirty = true;
-                if (ImGui::Checkbox("Vertical Center##txt", &tr->vcenter)) ed.dirty = true;
+                const char* valigns[] = {"Top", "Middle", "Bottom"};
+                int va = tr->alignBottom ? 2 : (tr->vcenter ? 1 : 0);
+                if (ImGui::Combo("V-Align##txt", &va, valigns, 3)) {
+                    tr->alignBottom = (va == 2); tr->vcenter = (va == 1); ed.dirty = true;
+                }
                 if (ImGui::Checkbox("Background##txt", &tr->background)) ed.dirty = true;
                 if (tr->background) {
                     float bg[4] = {tr->backgroundColor.r, tr->backgroundColor.g, tr->backgroundColor.b, tr->backgroundColor.a};
@@ -7033,12 +7755,45 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::Checkbox("Bold##txt", &tr->bold)) ed.dirty = true;
             ImGui::SameLine();
+            if (ImGui::Checkbox("Italic##txt", &tr->italic)) ed.dirty = true;
+            ImGui::SameLine();
             if (ImGui::Checkbox("UPPERCASE##txt", &tr->uppercase)) ed.dirty = true;
+            // Vertical color gradient (top = Color, bottom = this).
+            if (ImGui::Checkbox("Gradient##txt", &tr->gradient)) ed.dirty = true;
+            if (tr->gradient) {
+                float cb[4] = {tr->colorBottom.r, tr->colorBottom.g, tr->colorBottom.b, tr->colorBottom.a};
+                if (ImGui::ColorEdit4("Bottom Color##txt", cb)) { tr->colorBottom = {cb[0], cb[1], cb[2], cb[3]}; ed.dirty = true; }
+            }
+            // Typewriter reveal: show first N chars, optionally auto-typing.
+            if (ImGui::DragInt("Visible Chars##txt", &tr->visibleChars, 0.5f, -1, 100000))
+                ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("-1 = show all. Lower to reveal only the first N characters.");
+            if (ImGui::DragFloat("Type Speed##txt", &tr->typeSpeed, 0.5f, 0.0f, 200.0f, "%.0f cps"))
+                ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
+        }
+    }
+    if (auto* w3 = go->GetComponent<WorldSpaceUI>()) {
+        if (CompHeader("World Space UI (3D)", w3, &toRemove)) {
+            if (ImGui::DragFloat("Pixels / Unit##w3", &w3->pixelsPerUnit, 1.0f, 1.0f, 4000.0f, "%.0f"))
+                ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Design pixels per world unit (smaller = bigger in-world).");
+            if (ImGui::Checkbox("Billboard (face camera)##w3", &w3->billboard)) ed.dirty = true;
+            if (ImGui::Checkbox("Constant size (don't resize with distance)##w3", &w3->constantSize)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep a fixed on-screen size no matter how near/far the camera is.\nThe widget still moves in 3D, it just never shrinks or grows.");
+            if (w3->constantSize) {
+                if (ImGui::DragFloat("Size Scale##w3", &w3->constantScale, 0.01f, 0.05f, 20.0f, "%.2f"))
+                    ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplier on the fixed size (1.0 = authored design pixels).");
+            }
+            ImGui::TextDisabled("This UI widget renders in the 3D world at this object's");
+            ImGui::TextDisabled("position. Move it with the transform gizmo.");
+            if (ImGui::SmallButton("Remove##w3")) toRemove = w3;
         }
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
@@ -7084,6 +7839,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra UI zoom on top of the scale mode.");
             if (ImGui::DragInt("Sort Order##cv", &cv->sortOrder)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher canvases draw on top of lower ones.");
+
+            ImGui::SeparatorText("World Space (3D)");
+            if (ImGui::Checkbox("World Space##cv", &cv->worldSpace)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Render this canvas (and ALL its widgets) on a plane in the 3D world at this\n"
+                                  "object's position, instead of on the screen. Shows in the Game view / Play.");
+            if (cv->worldSpace) {
+                float dr[2] = {cv->designResolution.x, cv->designResolution.y};
+                if (ImGui::DragFloat2("Design Res##cvw", dr, 1.0f, 16.0f, 8000.0f)) { cv->designResolution = {dr[0], dr[1]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The canvas's own pixel space — author widgets against this size.");
+                if (ImGui::DragFloat("Pixels / Unit##cvw", &cv->worldPixelsPerUnit, 1.0f, 1.0f, 4000.0f, "%.0f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Design pixels per world unit (larger = the panel is smaller in-world).");
+                if (ImGui::Checkbox("Billboard (face camera)##cvw", &cv->billboard)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the canvas turned toward the camera. Off = it uses this object's orientation.");
+                ImGui::TextDisabled("Move/rotate this object to place the panel. Needs a main Camera.");
+            }
 
             // Live readout of the resulting scale for the current view.
             float liveScale = cv->ScaleFactor(UICanvas::Width(), UICanvas::Height());
@@ -7222,25 +7993,22 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* btn = go->GetComponent<UIButton>()) {
         if (CompHeader("UI Button", btn, &toRemove)) {
-            // The label lives on the button, OR (Unity-style) on a child Text object.
-            // When a Text child exists, edit it here too so the field always drives the
-            // visible text; otherwise offer to split the text out into its own child.
+            // The label lives on a child Text object (Unity-style). When one exists,
+            // text is edited/styled THERE — don't show a duplicate text field on the
+            // button. Only the legacy case (no child) edits the built-in label here.
             GameObject* txtChild = UIButtonTextChild(go);
             TextRenderer* childTr = txtChild ? txtChild->GetComponent<TextRenderer>() : nullptr;
-            char lb[128];
-            std::strncpy(lb, (childTr ? childTr->text : btn->label).c_str(), sizeof(lb) - 1);
-            lb[sizeof(lb) - 1] = '\0';
-            if (ImGui::InputText("Label##uib", lb, sizeof(lb))) {
-                btn->label = lb;
-                if (childTr) childTr->text = lb;
-                ed.dirty = true;
-            }
             if (childTr) {
-                ImGui::SameLine();
+                ImGui::TextDisabled("Text is the child object \"%s\".", txtChild->name.c_str());
                 if (ImGui::SmallButton("Edit Text##uib")) ed.Select(txtChild);
-                ImGui::TextDisabled("Text is a child object (\"%s\") — select it to style/move.",
-                                    txtChild->name.c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Select the child Text object to edit/style/position the label.");
             } else {
+                char lb[128];
+                std::strncpy(lb, btn->label.c_str(), sizeof(lb) - 1);
+                lb[sizeof(lb) - 1] = '\0';
+                if (ImGui::InputText("Label##uib", lb, sizeof(lb))) { btn->label = lb; ed.dirty = true; }
+                ImGui::SameLine();
                 if (ImGui::SmallButton("Text as Child##uib")) {
                     ed.PushUndo();
                     ed.Select(MakeButtonTextChild(ed, go));
@@ -7270,7 +8038,21 @@ void DrawInspector(EditorState& ed) {
             { static char tgt[64]; static UIButton* tbound = nullptr;
               if (tbound != btn) { std::strncpy(tgt, btn->clickTarget.c_str(), sizeof(tgt)-1); tgt[sizeof(tgt)-1]='\0'; tbound = btn; }
               if (ImGui::InputText("Target Object##uibclk", tgt, sizeof(tgt))) { btn->clickTarget = tgt; ed.dirty = true; }
-              if (ImGui::IsItemHovered()) ImGui::SetTooltip("Object whose script holds the function (blank = this button's own object).");
+              // Drag an object from the Hierarchy onto the field to set the target
+              // (Unity-style) — its public functions then populate the dropdown below.
+              if (ImGui::BeginDragDropTarget()) {
+                  if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
+                      GameObject* dropped = *static_cast<GameObject* const*>(p->Data);
+                      if (dropped) {
+                          // blank target = the button's own object; otherwise store the name.
+                          btn->clickTarget = (dropped == go) ? std::string{} : dropped->name;
+                          std::strncpy(tgt, btn->clickTarget.c_str(), sizeof(tgt)-1); tgt[sizeof(tgt)-1]='\0';
+                          ed.dirty = true;
+                      }
+                  }
+                  ImGui::EndDragDropTarget();
+              }
+              if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag an object here from the Hierarchy (or type its name). Blank = this button's own object.");
               GameObject* tobj = btn->clickTarget.empty() ? go : (go->scene() ? go->scene()->Find(btn->clickTarget) : nullptr);
               std::vector<std::string> fns = ScriptPublicFunctions(tobj);
               std::string cur = btn->clickFunction.empty() ? "(none)" : btn->clickFunction;
@@ -7280,8 +8062,11 @@ void DrawInspector(EditorState& ed) {
                       if (ImGui::Selectable(fn.c_str(), fn == btn->clickFunction)) { btn->clickFunction = fn; ed.dirty = true; }
                   ImGui::EndCombo();
               }
-              if (!tobj) ImGui::TextDisabled("Target object not found.");
-              else if (fns.empty()) ImGui::TextDisabled("No public functions on the target's script (add e.g. 'function fire() { ... }').");
+              if (!tobj) ImGui::TextDisabled("Target object not found — drag one from the Hierarchy.");
+              else if (!tobj->GetComponent<ScriptComponent>())
+                  ImGui::TextDisabled("'%s' has no Script component to call into.", tobj->name.c_str());
+              else if (fns.empty())
+                  ImGui::TextDisabled("No functions on '%s' script — add e.g. 'function fire() { ... }'.", tobj->name.c_str());
             }
 
             AnchorCombo("Anchor##uib", btn->anchor, ed);
@@ -7289,7 +8074,9 @@ void DrawInspector(EditorState& ed) {
             ShapeCombo("Shape##uib", btn->shape, ed);
             if (UIShapeUsesRadius(btn->shape))
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
+            // Font Scale only styles the built-in label; with a child Text it's edited there.
+            if (!childTr)
+                if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Drop Shadow##uib", &btn->shadow)) ed.dirty = true;
             if (btn->shadow) {
                 float sc[4] = {btn->shadowColor.r, btn->shadowColor.g, btn->shadowColor.b, btn->shadowColor.a};
@@ -7305,8 +8092,12 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Hover Grow##uib", &btn->hoverScale, 0.01f, 1.0f, 2.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale when hovered/focused (1 = none)");
-            float htc[4] = {btn->hoverTextColor.r, btn->hoverTextColor.g, btn->hoverTextColor.b, btn->hoverTextColor.a};
-            if (ImGui::ColorEdit4("Hover Text##uib", htc)) { btn->hoverTextColor = {htc[0], htc[1], htc[2], htc[3]}; ed.dirty = true; }
+            // Hover Text color only applies to the built-in label; with a child Text,
+            // style the child instead.
+            if (!childTr) {
+                float htc[4] = {btn->hoverTextColor.r, btn->hoverTextColor.g, btn->hoverTextColor.b, btn->hoverTextColor.a};
+                if (ImGui::ColorEdit4("Hover Text##uib", htc)) { btn->hoverTextColor = {htc[0], htc[1], htc[2], htc[3]}; ed.dirty = true; }
+            }
             if (ImGui::DragFloat("Transition Speed##uib", &btn->transitionSpeed, 0.2f, 0.0f, 30.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth color fade on hover/press (0 = instant)");
             if (ImGui::DragFloat("Press Offset##uib", &btn->pressOffset, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
@@ -8020,6 +8811,33 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<ActionList>(), "Actions (Visual Script)")) { go->AddComponent<ActionList>(); ed.dirty = true; }
           } EndCat(o); }
 
+        // Ready-made gameplay scripts: one click attaches a pre-written, fully
+        // customizable survival component (tweak its fields in the Inspector or open
+        // it in the Script Editor). The source is stored on the object, so it saves
+        // with the scene and ships with the game — no separate file to manage.
+        { bool o = BeginCat("Survival Kit");
+          if (o) {
+            auto attach = [&](const char* which) {
+                auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+                std::string src = extide::SurvivalScript(which);
+                std::string err; sc->LoadSource(src, &err);
+                SetCodeBuffer(sc, src);      // so the Script Editor shows it for tweaking
+                if (!err.empty()) ConsoleLog("Survival script error: " + err);
+                else ConsoleLog(std::string("Added ") + which + " to " + go->name);
+                ed.dirty = true;
+            };
+            if (F("Survival (all-in-one)") && ImGui::MenuItem("Survival (all-in-one)")) attach("Survival");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Health, Hunger, Thirst, Stamina, Oxygen & Temperature in one component, already wired together.");
+            if (F("Health")      && ImGui::MenuItem("Health"))      attach("Health");
+            if (F("Hunger")      && ImGui::MenuItem("Hunger"))      attach("Hunger");
+            if (F("Thirst")      && ImGui::MenuItem("Thirst"))      attach("Thirst");
+            if (F("Stamina")     && ImGui::MenuItem("Stamina"))     attach("Stamina");
+            if (F("Oxygen")      && ImGui::MenuItem("Oxygen"))      attach("Oxygen");
+            if (F("Temperature") && ImGui::MenuItem("Temperature")) attach("Temperature");
+            if (F("Sleep / Energy") && ImGui::MenuItem("Sleep / Energy")) attach("Sleep");
+            if (F("Sanity")      && ImGui::MenuItem("Sanity"))      attach("Sanity");
+          } EndCat(o); }
+
         { bool o = BeginCat("Audio");
           if (o) {
             if (item(!go->GetComponent<AudioSource>(), "Audio Source")) { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
@@ -8145,16 +8963,30 @@ void DrawInspector(EditorState& ed) {
 // Draw a string with the engine's 8x8 bitmap font into an ImGui draw list, so
 // the editor viewport shows the same text the built game will (HUDs, labels).
 void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
-                    float px, ImU32 col, float letterSp = 0.0f, float lineSp = 0.0f) {
+                    float px, ImU32 col, float letterSp = 0.0f, float lineSp = 0.0f,
+                    bool italic = false, bool gradient = false, ImU32 col2 = 0) {
     if (px < 1.0f) px = 1.0f;
+    const float slant = italic ? 0.30f : 0.0f;
+    int ca = (col >> IM_COL32_A_SHIFT) & 0xFF, cr = (col >> IM_COL32_R_SHIFT) & 0xFF;
+    int cg = (col >> IM_COL32_G_SHIFT) & 0xFF, cb = (col >> IM_COL32_B_SHIFT) & 0xFF;
+    int ba = (col2 >> IM_COL32_A_SHIFT) & 0xFF, br = (col2 >> IM_COL32_R_SHIFT) & 0xFF;
+    int bg = (col2 >> IM_COL32_G_SHIFT) & 0xFF, bb = (col2 >> IM_COL32_B_SHIFT) & 0xFF;
     float cx = ox;
     for (char ch : text) {
         if (ch == '\n') { oy += (Font8x8::Height + 1 + lineSp) * px; cx = ox; continue; }
-        for (int y = 0; y < Font8x8::Height; ++y)
+        for (int y = 0; y < Font8x8::Height; ++y) {
+            ImU32 rc = col;
+            if (gradient) {
+                float t = (float)y / (float)(Font8x8::Height - 1);
+                rc = IM_COL32((int)(cr + (br - cr) * t), (int)(cg + (bg - cg) * t),
+                              (int)(cb + (bb - cb) * t), (int)(ca + (ba - ca) * t));
+            }
+            float sx = (Font8x8::Height - 1 - y) * slant * px;
             for (int x = 0; x < Font8x8::Width; ++x)
                 if (Font8x8::Pixel(ch, x, y))
-                    dl->AddRectFilled(ImVec2(cx + x * px, oy + y * px),
-                                      ImVec2(cx + (x + 1) * px, oy + (y + 1) * px), col);
+                    dl->AddRectFilled(ImVec2(cx + x * px + sx, oy + y * px),
+                                      ImVec2(cx + (x + 1) * px + sx, oy + (y + 1) * px), rc);
+        }
         cx += (Font8x8::Width + 1 + letterSp) * px;
     }
 }
@@ -8255,6 +9087,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (g->GetComponent<UITooltip>())        add(K_Tooltip);
     }
     edItems = SortUIDrawItems(objs, std::move(edItems));
+    // World-space UI (the WorldUI label and any world-space Canvas) is projected
+    // with the UIWorld() context the CALLER installed — the 2D ortho map in the
+    // Scene 2D view, the perspective camera in the 3D/Game view — so in-world UI
+    // lines up with the objects and gizmos in whatever view you're looking at.
     for (const UIDrawItem& _it : edItems) {
         const auto& up = objs[_it.index];
         if (_it.kind == K_Scroll) {   // Scroll View backgrounds (behind content) + scrollbar
@@ -8528,21 +9364,21 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // canvas. Only meaningful in the Game view, which shows the main camera (the
     // Scene view uses the free editor camera, so we skip it there).
         else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
-            if (!gameView || !ed.scene().mainCamera) continue;   // main-camera projection, Game view only
-            Camera* mc = ed.scene().mainCamera;
             auto* wu = up->GetComponent<WorldUI>();
             if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
+            UIWorldCtx& wctx = UIWorld();
+            if (!wctx.active || !wctx.project) continue;   // no projector for this view
             Vec3 wp = up->transform->Position() + wu->worldOffset;
-            Vec2 sp; float depth = 0.0f;
-            if (!mc->WorldToScreen(wp, canvasSize.x, canvasSize.y, sp, &depth)) continue;
+            Vec2 sp; float depth = 1.0f;
+            if (!wctx.project(wp, sp, depth)) continue;    // behind the camera
             if (wu->maxDistance > 0.0f && depth > wu->maxDistance) continue;
             float scale = wu->pixelSize;
             if (wu->scaleWithDistance && depth > 0.001f)
                 scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
                                      wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
+            ImVec2 c(canvasPos.x + sp.x, canvasPos.y + sp.y);   // projector returns canvas-local px
             float tw = wu->text.size() * (Font8x8::Width + 1) * scale;
             float th = Font8x8::Height * scale;
-            ImVec2 c(canvasPos.x + sp.x, canvasPos.y + sp.y);
             float tx = c.x - tw * 0.5f, ty = c.y - th * 0.5f;
             if (wu->background.a > 0.001f)
                 dl->AddRectFilled(ImVec2(tx - 5, ty - 4), ImVec2(tx + tw + 5, ty + th + 4), ToColor(wu->background), 4.0f);
@@ -8630,10 +9466,15 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         else if (_it.kind == K_Text) {   // screen-space text — on top of panels/controls
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active || !tr->screenSpace) continue;
-        float s = uiScale(up.get());
+        float s = uiScale(up.get());   // for in-world text this is the projected scale k
+        Canvas* tcv = OwningCanvas(up.get());
+        bool tWorld = (tcv && tcv->worldSpace) || WorldUIRoot(up.get()) != nullptr;
+        if (tWorld && s <= 0.0f) continue;   // behind the camera
         ImU32 col = ToColor(tr->color);
         ImU32 sh = ToColor(tr->shadowColor);
-        Vec2 box = tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);   // box top-left
+        // World-space canvas text projects with the canvas; screen text anchors to the screen.
+        Vec2 box = tWorld ? UIResolveOrigin(up.get(), canvasSize.x, canvasSize.y)
+                          : tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);
         Vec2 boxSz{tr->size.x * s, tr->size.y * s};
         if (UIScrollView* sv = OwningScrollView(up.get())) box.y -= sv->scroll * s;
         if (svCull(up.get(), box, boxSz)) continue;
@@ -8641,23 +9482,24 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ImVec2(canvasPos.x + box.x, canvasPos.y + box.y),
                               ImVec2(canvasPos.x + box.x + boxSz.x, canvasPos.y + box.y + boxSz.y),
                               ToColor(tr->backgroundColor), 4.0f);
-        Vec2 o = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s);   // text inside box
+        Vec2 o = tWorld ? box : tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s);   // text inside box
         if (UIScrollView* sv = OwningScrollView(up.get())) o.y -= sv->scroll * s;
         float px = tr->pixelSize * s, ls = tr->letterSpacing, lp = tr->lineSpacing;
         std::string disp = tr->DisplayText();
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
+        bool it = tr->italic; ImU32 c2 = ToColor(tr->colorBottom);
         if (tr->shadow)
             DrawBitmapText(dl, disp, bx + tr->shadowOffset.x * px,
-                           by + tr->shadowOffset.y * px, px, sh, ls, lp);
+                           by + tr->shadowOffset.y * px, px, sh, ls, lp, it);
         if (tr->outline) {                            // 4-direction outline
             ImU32 oc = ToColor(tr->outlineColor);
-            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp);
-            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp);
-            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp);
-            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp);
+            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp, it);
+            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp, it);
+            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp, it);
+            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp, it);
         }
-        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp);
-        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp);  // faux-bold
+        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp, it, tr->gradient, c2);
+        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp, it, tr->gradient, c2);  // faux-bold
     }
 
     // UI dropdowns: header (shows the selection + a caret); when open, the option
@@ -8758,6 +9600,80 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                         ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY),
                         IM_COL32(255, 80, 220, 200), 1.0f);
     }
+    UIWorld().active = false;   // end world-space UI projection for this overlay
+}
+
+// Install the UIWorld() projector for a viewport, matching how that viewport draws
+// the scene: the 2D ortho camera in 2D mode, the perspective editor/main camera in
+// 3D. ONE source of truth so in-world UI editing (pick/drag) and rendering agree.
+// Returns coordinates canvas-LOCAL (relative to canvasPos), like the screen-space
+// path, so DrawUIOverlay's `canvasPos + o` and the pickers line up.
+static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
+                                      bool view3D, bool gameView) {
+    UIWorld().active = true;
+    UIWorld().screenW = canvasSize.x; UIWorld().screenH = canvasSize.y;
+    ImVec2 cs = canvasSize;
+    if (view3D) {
+        Mat4 view, proj; Vec3 right{1.0f, 0.0f, 0.0f};
+        if (gameView) {
+            Camera* mc = SceneCamera(ed.scene());
+            if (!mc || !mc->gameObject) { UIWorld().active = false; return; }
+            view = mc->ViewMatrix();
+            proj = mc->ProjectionMatrix(cs.x / cs.y);
+            right = mc->gameObject->transform->Right();
+        } else {
+            float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
+            Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
+                     Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
+            Vec3 eye = ed.camTarget + dir * ed.camDist;
+            view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
+            proj = Mat4::Perspective(g_editorFov, cs.x / cs.y, g_editorNear, 2000.0f);
+            right = Vec3::Cross((ed.camTarget - eye).Normalized(), Vec3::Up).Normalized();
+        }
+        UIWorld().right = right;
+        Mat4 vp = proj * view;
+        UIWorld().project = [vp, cs](const Vec3& wp, Vec2& out, float& depth) -> bool {
+            Vec4 c = vp * Vec4{wp.x, wp.y, wp.z, 1.0f};
+            if (c.w <= 0.05f) return false;
+            out = Vec2{cs.x * 0.5f + (c.x / c.w) * cs.x * 0.5f,
+                       cs.y * 0.5f - (c.y / c.w) * cs.y * 0.5f};
+            depth = c.w; return true;
+        };
+    } else {
+        Vec2 camPos = ed.cameraPos; float zoom = ed.cameraZoom;
+        if (gameView) {
+            if (Camera* mc = SceneCamera(ed.scene())) {
+                Vec3 cp = mc->gameObject->transform->Position();
+                camPos = {cp.x, cp.y}; zoom = mc->orthographicSize * 2.0f;
+            }
+        }
+        float scale = cs.y / (zoom > 0.001f ? zoom : 1.0f);
+        UIWorld().right = {1.0f, 0.0f, 0.0f};
+        UIWorld().project = [camPos, scale, cs](const Vec3& wp, Vec2& out, float& depth) -> bool {
+            out = Vec2{cs.x * 0.5f + (wp.x - camPos.x) * scale, cs.y * 0.5f - (wp.y - camPos.y) * scale};
+            depth = 1.0f; return true;
+        };
+    }
+    // Let low-level hit-tests (UIButton::Contains) ask for a widget's projected
+    // on-screen rect so a 3D button is clickable where it actually appears.
+    if (UIWorld().active) {
+        UIWorld().rectOf = [cs](GameObject* go, Vec2& o, Vec2& sz) {
+            return GetUIScreenRect(go, cs.x, cs.y, o, sz);
+        };
+    }
+}
+
+// Shift every descendant UI widget's pixel offset by (dx, dy) design px, so moving
+// a container (e.g. a Button) carries its children (e.g. its label Text) along and
+// the layout stays intact. Recurses the whole subtree.
+static void MoveUIChildrenBy(GameObject* go, float dx, float dy) {
+    if (!go || !go->transform || (dx == 0.0f && dy == 0.0f)) return;
+    for (Transform* c : go->transform->Children()) {
+        if (!c || !c->gameObject) continue;
+        UIRect r = GetUIRect(c->gameObject);
+        if (r.valid && r.position) { r.position->x += dx; r.position->y += dy; }
+        MoveUIChildrenBy(c->gameObject, dx, dy);
+    }
 }
 
 // Click-to-select and drag-to-reposition for screen-space UI in the Scene view.
@@ -8817,6 +9733,14 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 float s = UIScaleFor(g_uiDragTarget, canvasSize.x, canvasSize.y);
                 if (s < 1e-3f) s = 1.0f;
                 float dx = io.MouseDelta.x / s, dy = io.MouseDelta.y / s;
+                // World-space canvases project at a distance-dependent scale; when the
+                // panel is small/far `s` is tiny and `mouseDelta/s` would fling the
+                // widget (it "drops off"). Clamp the per-frame move to keep it sane.
+                if (Canvas* dcv = OwningCanvas(g_uiDragTarget); dcv && dcv->worldSpace) {
+                    const float maxStep = 60.0f;   // design px / frame
+                    dx = Mathf::Clamp(dx, -maxStep, maxStep);
+                    dy = Mathf::Clamp(dy, -maxStep, maxStep);
+                }
                 float grid = g_uiGrid > 0 ? (float)g_uiGrid : 1.0f;
                 auto snap = [&](float v) { return g_snap ? Mathf::Round(v / grid) * grid : v; };
                 if (g_uiResizeHandle >= 0 && r.sizePtr) {
@@ -8870,6 +9794,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     r.position->x = gsnap((l - term.x) / s, gxHit);
                     r.position->y = gsnap((t - term.y) / s, gyHit);
                 } else {
+                    float beforeX = r.position->x, beforeY = r.position->y;
                     r.position->x = snap(r.position->x + dx);
                     r.position->y = snap(r.position->y + dy);
                     // Unity-style smart guides: snap our edges/center to the canvas
@@ -8904,6 +9829,9 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         if (adjX != 0.0f) { r.position->x += adjX / s; g_uiGuideX = gx; }
                         if (adjY != 0.0f) { r.position->y += adjY / s; g_uiGuideY = gy; }
                     }
+                    // Carry child widgets (e.g. a button's label) by the same amount
+                    // so a parent and its children move together.
+                    MoveUIChildrenBy(g_uiDragTarget, r.position->x - beforeX, r.position->y - beforeY);
                 }
                 ed.dirty = true;
             }
@@ -8942,6 +9870,14 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
         if (!g_uiHandled) {
             GameObject* hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
             if (hit) {
+                // Clicking a button's label text selects the BUTTON, so you grab and
+                // move the button (and its text) as one — unless the button is already
+                // selected, in which case a second click drills into the text.
+                if (Transform* pt = hit->transform ? hit->transform->Parent() : nullptr)
+                    if (GameObject* par = pt->gameObject)
+                        if (par->GetComponent<UIButton>() && UIButtonTextChild(par) == hit &&
+                            ed.selected() != par)
+                            hit = par;
                 ed.Select(hit);
                 ed.PushUndo();                             // checkpoint before a move
                 g_uiDragTarget = hit;
@@ -9100,6 +10036,11 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
         }
     }
+
+    // In-world UI projector for this (2D ortho) view, so world-space canvases sit on
+    // their objects while editing. (Same helper EditUIWidgets used, so pick/drag and
+    // rendering agree.)
+    SetEditorWorldUIProjector(ed, canvasSize, /*view3D=*/false, gameView);
 
     // Screen-space UI (text, images, panels, bars, sliders, toggles, buttons).
     DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
@@ -9579,6 +10520,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         IM_COL32(120, 230, 150, 255), lines[i]);
     }
 
+    // In-world UI projector for this (perspective) view, matching the view*projection
+    // the scene is rendered with (same helper EditUIWidgets used, so pick/drag and
+    // rendering agree). This is what lets you see and grab in-world UI while editing.
+    SetEditorWorldUIProjector(ed, canvasSize, /*view3D=*/true, gameView);
+
     // Screen-space UI draws on top of the 3D view too, so UI added to a 3D
     // project (HUD, menus, buttons) is visible here and in the Game view.
     DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
@@ -9604,6 +10550,58 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             dl->AddRect(pmin, pmax, IM_COL32(255, 255, 255, 180));
             dl->AddText(ImVec2(pmin.x + 4, pmin.y - 16), IM_COL32(220, 220, 230, 255),
                         "Camera Preview");
+        }
+    }
+
+    // Raycast visual feedback: for the selected object, draw any Action List
+    // raycast (condition or instruction) as a line in the chosen direction, doing a
+    // live edit-time cast so you SEE where it points and what it hits. Green to the
+    // hit point (with a marker), faded red beyond; solid yellow when it hits nothing.
+    if (!gameView && g_showGizmos && ed.selected() && ed.selected()->transform) {
+        GameObject* sel = ed.selected();
+        auto resolveDir = [&](const std::string& tok) -> Vec3 {
+            Transform* t = sel->transform;
+            if (tok == "forward") return t->Forward();
+            if (tok == "back")    return t->Forward() * -1.0f;
+            if (tok == "up")      return t->Up();
+            if (tok == "down")    return t->Up() * -1.0f;
+            if (tok == "right")   return t->Right();
+            if (tok == "left")    return t->Right() * -1.0f;
+            if (tok.rfind("toward:", 0) == 0) {
+                if (GameObject* tg = ed.scene().Find(tok.substr(7)))
+                    if (tg->transform) {
+                        Vec3 d = tg->transform->Position() - t->Position();
+                        if (d.SqrMagnitude() > 1e-8f) return d.Normalized();
+                    }
+            }
+            return t->Forward();
+        };
+        auto C = [&](const Vec3& p) { return vp * Vec4{p.x, p.y, p.z, 1.0f}; };
+        auto drawRay = [&](const ActionList::Item& it) {
+            if (it.op.rfind("raycast", 0) != 0) return;
+            std::size_t dirIdx = (it.op == "raycast_tag" || it.op == "raycast_name") ? 1 : 0;
+            std::string tok = dirIdx < it.args.size() ? it.args[dirIdx] : std::string("forward");
+            float dist = (dirIdx + 1 < it.args.size()) ? (float)std::atof(it.args[dirIdx + 1].c_str()) : 100.0f;
+            if (dist <= 0.0f) dist = 100.0f;
+            Vec3 o = sel->transform->Position();
+            Vec3 d = resolveDir(tok).Normalized();
+            Vec3 end = o + d * dist;
+            RaycastHit3D h = ed.scene().physics3D().Raycast(ed.scene(), o, d, dist, sel);
+            if (h.hit) {
+                clipLine(C(o), C(h.point), IM_COL32(80, 230, 120, 255), 2.5f);
+                clipLine(C(h.point), C(end), IM_COL32(230, 90, 90, 110), 1.0f);
+                ImVec2 sp; if (toScreen(C(h.point), sp)) {
+                    dl->AddCircleFilled(sp, 4.0f, IM_COL32(80, 230, 120, 255));
+                    dl->AddCircle(sp, 6.5f, IM_COL32(255, 255, 255, 220), 0, 1.5f);
+                }
+            } else {
+                clipLine(C(o), C(end), IM_COL32(255, 210, 80, 255), 2.0f);
+                ImVec2 sp; if (toScreen(C(end), sp)) dl->AddCircle(sp, 4.0f, IM_COL32(255, 210, 80, 200));
+            }
+        };
+        for (ActionList* al : sel->GetComponents<ActionList>()) {
+            for (auto& c : al->conditions)   drawRay(c);
+            for (auto& i : al->instructions) drawRay(i);
         }
     }
 
@@ -10087,9 +11085,10 @@ void DrawViewport(EditorState& ed) {
             hovered = true;
     }
 
-    // UI editing (pick/drag screen-space widgets) runs first and may consume the
-    // click so the world pickers below leave the selection alone.
-    EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
+    // Project world-space-canvas widgets through the active view BEFORE editing, so
+    // they can be picked, dragged and resized in the viewport (the pick/drag helpers
+    // go through GetUIScreenRect, which needs this context). Screen-space UI ignores it.
+    SetEditorWorldUIProjector(ed, canvasSize, ed.view3D, /*gameView=*/false);
 
     // UI editing (pick/drag screen-space widgets) runs first and may consume the
     // click so the world pickers below leave the selection alone.
@@ -10150,6 +11149,8 @@ void DrawGameView(EditorState& ed) {
     // The Game view is the surface the running game is shown on, so feed mouse
     // input relative to it (see the main loop).
     g_playCanvasPos = canvasPos;
+    g_playCanvasSize = canvasSize;
+    g_playPersp = persp;
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     // Dark letterbox bars over the whole region, then the camera background.
@@ -10432,6 +11433,13 @@ int main(int argc, char** argv) {
                     float ch = ScrollViewContentHeight(up.get());
                     sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
                 }
+
+        // Install the world-space UI projector to match the Game view BEFORE the
+        // scene ticks, so an in-world button's Contains() hit-tests where the Game
+        // view actually draws it (the draw pass re-installs the same projector).
+        // The draws afterwards clear it again, so it's only live for this tick.
+        if (ed.isPlaying() && SceneCamera(ed.scene()))
+            SetEditorWorldUIProjector(ed, g_playCanvasSize, g_playPersp, /*gameView=*/true);
 
         if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
         ed.TickServices(dt); // Steam callbacks + networking every frame

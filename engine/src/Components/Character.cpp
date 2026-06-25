@@ -230,14 +230,15 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_RUPARM] = {0, 0, -150};
         r[B_RFORE]  = {0, 0, -15 + 28 * std::sin(t * 8.0f)};
         r[B_LUPARM] = {0, 0, 6};
-    } else if (anim == 5) {                // jump (arms swing up & out — never crossing)
-        // Raise the arms up-and-OUT to the sides with bent elbows. The old pose
-        // rotated each upper arm 140° about Z, which swings the hands up and over
-        // the centerline so they cross in front of the face; ~58° keeps each arm
-        // on its own side. (+Z spreads the left arm out, −Z the right — same sense
-        // as the idle/walk spread, just larger.)
-        r[B_LUPARM] = {-18, 0, 58};   r[B_RUPARM] = {-18, 0, -58};
-        r[B_LFORE]  = {32, 0, 0};     r[B_RFORE]  = {32, 0, 0};   // elbows bent up
+    } else if (anim == 5) {                // jump (arms swing straight up — never crossing)
+        // Raise both arms overhead by rotating ONLY about X (the forward/up swing).
+        // Any Z rotation is what swung the hands across the centerline and made them
+        // cross in front of the face — so the jump pose keeps Z = 0 on both arms,
+        // which makes crossing geometrically impossible (each arm stays in its own
+        // side plane). A bent elbow keeps it looking like a natural leap, not a
+        // stiff "hands up". -110° on the upper arm reaches up-and-slightly-back.
+        r[B_LUPARM] = {-110, 0, 0};   r[B_RUPARM] = {-110, 0, 0};
+        r[B_LFORE]  = {28, 0, 0};     r[B_RFORE]  = {28, 0, 0};   // elbows bent up
         r[B_LTHIGH] = {-22, 0, 0};    r[B_RTHIGH] = {-22, 0, 0};
         r[B_LSHIN]  = {35, 0, 0};     r[B_RSHIN]  = {35, 0, 0};
     } else if (anim == 6) {                // crouch (Minecraft-style sneak: hunch forward, feet planted)
@@ -449,10 +450,8 @@ void Character::Update(float dt) {
             float bodyYaw = Mathf::Atan2(fwd.x, -fwd.z) * Mathf::Rad2Deg;
             float aimYaw  = Mathf::Atan2(dir.x, -dir.z) * Mathf::Rad2Deg;
             float relY = bodyYaw - aimYaw;
-            while (relY > 180.0f) relY -= 360.0f;
-            while (relY < -180.0f) relY += 360.0f;
             float horiz = std::sqrt(dir.x * dir.x + dir.z * dir.z);
-            lookYaw   = relY;
+            lookYaw   = NeckYaw(relY);   // ease back near ±180 instead of cranking sideways
             lookPitch = Mathf::Atan2(dir.y, horiz) * Mathf::Rad2Deg;
         }
     }

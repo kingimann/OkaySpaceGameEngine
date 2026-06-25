@@ -382,5 +382,49 @@ int main() {
         CHECK_NEAR(pn->size.y, 40.0f, 1e-3f);        // literal px
     }
 
+    // --- HTML / CSS authoring mode -------------------------------------
+    {
+        UICanvas::Set(1280, 720);
+        Scene s("html"); s.physicsEnabled = false;
+        GameObject* docGo = s.CreateGameObject("Doc");
+        auto* doc = docGo->AddComponent<UIDocument>();
+        doc->markup =
+            "<style>\n"
+            "  .card { background: #1e2433; border-radius: 8px; }\n"
+            "  button { background: rgb(60,90,150); color: #ffffff; }\n"
+            "  #title { color: yellow; font-size: 5; }\n"
+            "</style>\n"
+            "<div class=\"card\" style=\"left:40; top:40; width:360; height:240;\">\n"
+            "  <h1 id=\"title\" style=\"left:30; top:30;\">MY GAME</h1>\n"
+            "  <button style=\"left:30; top:150; width:300; height:60;\" "
+            "onclick=\"prefs_set(&quot;clicked&quot;, 1)\">Play</button>\n"
+            "  <progress id=\"HealthBar\" value=\"0.5\"></progress>\n"
+            "</div>\n";
+        doc->Rebuild();
+        UIPanel* panel = nullptr; UIButton* btn = nullptr;
+        TextRenderer* title = nullptr; UIProgressBar* bar = nullptr;
+        for (GameObject* g : doc->Generated()) {
+            if (auto* p = g->GetComponent<UIPanel>()) panel = p;
+            if (auto* b = g->GetComponent<UIButton>()) btn = b;
+            if (auto* pb = g->GetComponent<UIProgressBar>()) bar = pb;
+            if (g->name == "title") if (auto* t = g->GetComponent<TextRenderer>()) title = t;
+        }
+        CHECK(panel != nullptr);                       // <div> -> panel
+        CHECK_NEAR(panel->cornerRadius, 8.0f, 1e-3f);  // CSS border-radius
+        CHECK_NEAR(panel->position.x, 40.0f, 1e-3f);   // inline left
+        CHECK(btn != nullptr);
+        CHECK(btn->label == "Play");                   // element text -> label
+        CHECK(title != nullptr);
+        CHECK((int)(title->color.r * 255) == 240);     // #id rule: yellow
+        CHECK_NEAR(title->pixelSize, 5.0f, 1e-3f);     // font-size
+        CHECK(bar != nullptr);
+        CHECK_NEAR(bar->value, 0.5f, 1e-3f);           // value attr
+        // onclick wired a script handler onto the button object.
+        bool hasScript = false;
+        for (GameObject* g : doc->Generated())
+            if (g->GetComponent<UIButton>() && g->GetComponent<ScriptComponent>()) hasScript = true;
+        CHECK(hasScript);
+    }
+
     TEST_MAIN_RESULT();
 }

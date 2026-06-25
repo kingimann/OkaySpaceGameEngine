@@ -229,9 +229,11 @@ public:
                     Vec3 f = transform->localRotation * Vec3{0, 0, -1};
                     float bodyYaw = Mathf::Atan2(f.x, -f.z) * Mathf::Rad2Deg;
                     float rel = yaw + bodyYaw;
-                    while (rel > 180.0f) rel -= 360.0f;
-                    while (rel < -180.0f) rel += 360.0f;
-                    ch->lookYaw   = rel;
+                    // Fold into the neck's reach: instead of cranking to a hard
+                    // sideways clamp when the camera swings to the front (where the
+                    // head would need to turn ~180°), ease back toward neutral — so
+                    // the head faces the camera when the body already faces it.
+                    ch->lookYaw   = Character::NeckYaw(rel);
                     ch->lookPitch = 18.0f - pitch;
                 }
                 ch->bodyLean  = m_lean * leanAngle;   // body leans (camera stays put)

@@ -46,6 +46,7 @@
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/WorldUI.hpp"
+#include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UITextBind.hpp"
@@ -457,7 +458,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << tr->backgroundColor.r << " " << tr->backgroundColor.g << " "
             << tr->backgroundColor.b << " " << tr->backgroundColor.a
             << " " << tr->letterSpacing << " " << tr->lineSpacing
-            << " " << (tr->uppercase ? 1 : 0) << " " << (tr->wrap ? 1 : 0) << "\n";
+            << " " << (tr->uppercase ? 1 : 0) << " " << (tr->wrap ? 1 : 0)
+            // Newer options (optional, back-compat): italic, gradient + bottom color,
+            // typewriter (visibleChars + typeSpeed), bottom-align.
+            << " " << (tr->italic ? 1 : 0) << " " << (tr->gradient ? 1 : 0) << " "
+            << tr->colorBottom.r << " " << tr->colorBottom.g << " " << tr->colorBottom.b << " " << tr->colorBottom.a
+            << " " << tr->visibleChars << " " << tr->typeSpeed << " " << (tr->alignBottom ? 1 : 0) << "\n";
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -636,10 +642,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  canvas " << (int)cv->scaleMode << " "
             << cv->referenceResolution.x << " " << cv->referenceResolution.y << " "
             << cv->matchWidthOrHeight << " " << cv->scaleFactor << " " << cv->sortOrder
-            << " " << (cv->visible ? 1 : 0) << " " << cv->opacity << "\n";   // optional, back-compat
+            << " " << (cv->visible ? 1 : 0) << " " << cv->opacity            // optional, back-compat
+            << " " << (cv->worldSpace ? 1 : 0) << " " << cv->designResolution.x
+            << " " << cv->designResolution.y << " " << cv->worldPixelsPerUnit
+            << " " << (cv->billboard ? 1 : 0) << "\n";   // world-space canvas (optional)
     }
     if (go->GetComponent<EventSystem>()) {
         out << "  eventsystem\n";
+    }
+    if (auto* w3 = go->GetComponent<WorldSpaceUI>()) {
+        out << "  worldui3d " << w3->pixelsPerUnit << " " << (w3->billboard ? 1 : 0)
+            << " " << (w3->constantSize ? 1 : 0) << " " << w3->constantScale << "\n";
     }
     if (auto* pb = go->GetComponent<UIProgressBar>()) {
         out << "  uiprogress " << pb->position.x << " " << pb->position.y << " "
@@ -1395,6 +1408,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> tr->letterSpacing >> tr->lineSpacing >> uc >> wr;
                         tr->uppercase = (uc != 0); tr->wrap = (wr != 0);
                     }
+                    in >> std::ws; // optional italic/gradient/typewriter/bottom-align (newer)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int it = 0, gr = 0, ab = 0; Color cb;
+                        in >> it >> gr >> cb.r >> cb.g >> cb.b >> cb.a
+                           >> tr->visibleChars >> tr->typeSpeed >> ab;
+                        tr->italic = (it != 0); tr->gradient = (gr != 0);
+                        tr->colorBottom = cb; tr->alignBottom = (ab != 0);
+                    }
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;
@@ -1711,7 +1732,28 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     cv->scaleMode = (Canvas::ScaleMode)sm;
                     in >> std::ws;                       // optional visible + opacity
                     int p = in.peek();
-                    if (std::isdigit(p) || p == '-') { int vis = 1; in >> vis >> cv->opacity; cv->visible = (vis != 0); }
+                    if (std::isdigit(p) || p == '-') {
+                        int vis = 1; in >> vis >> cv->opacity; cv->visible = (vis != 0);
+                        in >> std::ws;                   // optional world-space canvas fields
+                        int p2 = in.peek();
+                        if (std::isdigit(p2) || p2 == '-') {
+                            int ws = 0;
+                            in >> ws >> cv->designResolution.x >> cv->designResolution.y >> cv->worldPixelsPerUnit;
+                            cv->worldSpace = (ws != 0);
+                            in >> std::ws;
+                            int p3 = in.peek();
+                            if (std::isdigit(p3) || p3 == '-') { int bb = 1; in >> bb; cv->billboard = (bb != 0); }
+                        }
+                    }
+                } else if (field == "worldui3d") {
+                    auto* w3 = go->AddComponent<WorldSpaceUI>();
+                    in >> w3->pixelsPerUnit;
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int bb = 1; in >> bb; w3->billboard = (bb != 0); }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int cs = 0; in >> cs; w3->constantSize = (cs != 0); }
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') in >> w3->constantScale;
                 } else if (field == "eventsystem") {
                     go->AddComponent<EventSystem>();
                 } else if (field == "uiprogress") {

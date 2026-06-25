@@ -188,6 +188,17 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "SteamSetStat")     { if (!need(1)) return nullptr; return std::make_unique<SteamSetStatNode>(args[0]); }
     if (type == "SteamStore")       return std::make_unique<SteamStoreNode>();
     if (type == "SteamLeaderboard") { if (!need(1)) return nullptr; return std::make_unique<SteamLeaderboardNode>(args[0]); }
+    // Audio / physics / tween.
+    if (type == "PlaySound")   return std::make_unique<PlaySoundNode>();
+    if (type == "AddForce")    return std::make_unique<AddForceNode>();
+    if (type == "AddImpulse")  return std::make_unique<AddImpulseNode>();
+    if (type == "SetVelocity") return std::make_unique<SetVelocityNode>();
+    if (type == "VelX")        return std::make_unique<VelAxisNode>(0);
+    if (type == "VelY")        return std::make_unique<VelAxisNode>(1);
+    if (type == "Raycast")     return std::make_unique<RaycastNode>();
+    if (type == "EaseIn")      return std::make_unique<EaseNode>(EaseNode::Mode::In);
+    if (type == "EaseOut")     return std::make_unique<EaseNode>(EaseNode::Mode::Out);
+    if (type == "EaseInOut")   return std::make_unique<EaseNode>(EaseNode::Mode::InOut);
     if (err) *err = "unknown node type '" + type + "'";
     return nullptr;
 }

@@ -8,6 +8,10 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Components/UIWorldContext.hpp"
+#include "okay/Components/WorldSpaceUI.hpp"
+#include "okay/Components/Canvas.hpp"
+#include "okay/Scene/Transform.hpp"
 #include <string>
 
 namespace okay {
@@ -114,7 +118,29 @@ public:
     /// Downward push for the label/icon while pressed (or toggled on), in px.
     float PressShift() const { return (m_pressed || (toggleMode && isOn)) ? pressOffset : 0.0f; }
 
+    /// True when this button is part of in-world (3D) UI — its own object or an
+    /// ancestor carries WorldSpaceUI, or it lives under a world-space Canvas. Only
+    /// then do we hit-test through the camera projector; ordinary screen-space
+    /// buttons keep their exact silhouette test.
+    bool IsWorldSpaceUI() const {
+        for (Transform* t = gameObject ? gameObject->transform : nullptr; t; t = t->Parent()) {
+            if (!t->gameObject) continue;
+            if (t->gameObject->GetComponent<WorldSpaceUI>()) return true;
+            if (auto* cv = t->gameObject->GetComponent<Canvas>()) if (cv->worldSpace) return true;
+        }
+        return false;
+    }
+
     bool Contains(const Vec2& p) const {
+        // World-space button (own 3D object / world canvas): hit-test where it
+        // actually projects on screen. The renderer supplies rectOf() so this
+        // header needn't pull in GetUIScreenRect. The projected silhouette is a
+        // quad, so an axis-aligned rect test is the right approximation here.
+        if (UIWorld().active && UIWorld().rectOf && gameObject && IsWorldSpaceUI()) {
+            Vec2 o, sz;
+            if (!UIWorld().rectOf(gameObject, o, sz)) return false;  // behind camera
+            return p.x >= o.x && p.x <= o.x + sz.x && p.y >= o.y && p.y <= o.y + sz.y;
+        }
         Vec2 o = ResolveAnchor(anchor, position, size);
         // Hit-test the actual silhouette so corners of a rounded/circle/pill button
         // aren't clickable where there's no pixel.

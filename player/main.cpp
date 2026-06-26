@@ -9,6 +9,10 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#ifdef OKAY_HAVE_OKAYUI
+#include "okay/UI/OkayUI.hpp"
+#include "OkayTestPanel.hpp"
+#endif
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -305,13 +309,27 @@ int main(int argc, char** argv) {
         if (SDL_IsGameController(i)) { pad = SDL_GameControllerOpen(i); break; }
 
     bool running = true;
+#ifdef OKAY_HAVE_OKAYUI
+    bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
+    char g_uiText[32] = {0}; bool g_uiBack = false;
+#endif
     Uint64 last = SDL_GetPerformanceCounter();
     auto frame = [&]() {
         Uint64 fStart = SDL_GetPerformanceCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
+#ifdef OKAY_HAVE_OKAYUI
+        g_uiText[0] = '\0'; g_uiBack = false;
+#endif
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
+#ifdef OKAY_HAVE_OKAYUI
+            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F1) g_testUI = !g_testUI;
+            if (g_testUI) {
+                if (e.type == SDL_TEXTINPUT) SDL_strlcat(g_uiText, e.text.text, sizeof(g_uiText));
+                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) g_uiBack = true;
+            }
+#endif
             if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
                 pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
@@ -1392,6 +1410,22 @@ int main(int argc, char** argv) {
             DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
         }
         UIWorld().active = false;   // end of the frame's world-space UI projection
+#ifdef OKAY_HAVE_OKAYUI
+        // OkayUI "Test UI" overlay (press F1): proves the toolkit is functional in the
+        // running game, drawn through the same SDL_Renderer as everything else.
+        if (g_testUI) {
+            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            OkayUI::Input ui;
+            ui.mouseX = (float)mx; ui.mouseY = (float)my;
+            ui.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            ui.text = g_uiText[0] ? g_uiText : nullptr;
+            ui.backspace = g_uiBack;
+            OkayUI::BeginFrame(ui);
+            okay_testui::Panel(24.0f, 24.0f);
+            OkayUI::EndFrame(renderer);
+            SDL_StartTextInput();
+        }
+#endif
         SDL_RenderPresent(renderer);
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.

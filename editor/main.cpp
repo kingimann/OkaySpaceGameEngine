@@ -153,7 +153,7 @@ bool          g_d3dReady  = false;       // D3D11 device created OK (Windows)
 #if defined(_WIN32)
 okay::D3D11Renderer* g_d3dRenderer = nullptr;
 #endif
-bool          g_okayUIDemo = false;      // draw the OkayUI sample panel over the UI
+bool          g_showTestUI = false;      // draw the OkayUI sample panel over the UI
 char          g_okayUITyped[32] = {0};   // text typed this frame, routed to OkayUI
 bool          g_okayUIBack = false;      // Backspace pressed this frame (for OkayUI)
 
@@ -1435,7 +1435,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
         }
 #ifdef OKAY_HAVE_OKAYUI
-        ImGui::MenuItem("OkayUI demo (button)", nullptr, &g_okayUIDemo);
+        ImGui::MenuItem("Test UI", nullptr, &g_showTestUI);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
 #endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
@@ -12417,7 +12417,7 @@ int main(int argc, char** argv) {
             if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
                 Input::FeedMouseWheel((float)e.wheel.y);
             // Feed the OkayUI demo's text field when ImGui isn't capturing the keyboard.
-            if (g_okayUIDemo && !ImGui::GetIO().WantTextInput) {
+            if (g_showTestUI && !ImGui::GetIO().WantTextInput) {
                 if (e.type == SDL_TEXTINPUT)
                     SDL_strlcat(g_okayUITyped, e.text.text, sizeof(g_okayUITyped));
                 if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE)
@@ -12621,7 +12621,7 @@ int main(int argc, char** argv) {
         // Demo: OkayUI renders here, AFTER ImGui, through the SAME SDL_Renderer — so
         // it composites on top with no GL/D3D conflict. Input is gated on ImGui's
         // mouse capture so clicks over editor panels aren't double-handled.
-        if (g_okayUIDemo) {
+        if (g_showTestUI) {
             int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
             OkayUI::Input uin;
             uin.mouseX = (float)mx; uin.mouseY = (float)my;
@@ -12640,7 +12640,7 @@ int main(int argc, char** argv) {
             // window is draggable by its title bar.
             OkayUI::SetFont(s_bold ? OkayUI::FontBold() : OkayUI::FontDefault());
             OkayUI::BeginFrame(uin);
-            OkayUI::Begin("OkayUI Demo", 24.0f, wy, 320.0f, 380.0f);
+            OkayUI::Begin("Test UI", 24.0f, wy, 320.0f, 380.0f);
             OkayUI::BeginMenuBar();
             if (OkayUI::BeginMenu("File")) {
                 if (OkayUI::MenuItem("New"))  ConsoleLog("OkayUI menu: New");

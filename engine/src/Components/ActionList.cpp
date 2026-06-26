@@ -421,6 +421,9 @@ void ActionList::Update(float dt) {
         else if (op == "rand_var") { Vars()[Str(it, 0)] = Random::Shared().Range(Num(it, 1), Num(it, 2)); }
         else if (op == "set_prefs") { Prefs::SetFloat(Str(it, 0), Num(it, 1)); }
         else if (op == "add_prefs") { Prefs::SetFloat(Str(it, 0), Prefs::GetFloat(Str(it, 0), 0.0f) + Num(it, 1)); }
+        // Read a saved value (e.g. the Health component's "health") into a variable,
+        // so a visual script can grab a stat published by another component.
+        else if (op == "get_prefs") { Vars()[Str(it, 0)] = Prefs::GetFloat(Str(it, 1), Num(it, 2)); }
         else if (op == "save_prefs") { Prefs::Save(Str(it, 0).empty() ? "game.okayprefs" : Str(it, 0)); }
         else if (op == "set_tag") { if (gameObject) gameObject->tag = Str(it, 0); }
         else if (op == "set_timescale_var") { Vars()[Str(it, 0)] = Time::TimeScale(); }

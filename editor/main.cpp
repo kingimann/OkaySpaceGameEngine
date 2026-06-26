@@ -146,7 +146,9 @@ SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
-int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
+int g_ssaa = 2;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
+                  // On by default for crisp, Unity-like edges; auto-perf drops it to 1
+                  // on heavy scenes / very large viewports so it never tanks FPS.
                   // OFF by default for speed: 2x supersample renders 4x the pixels,
                   // which tanked FPS (badly on HiDPI displays). Cheap FXAA still
                   // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
@@ -480,7 +482,8 @@ bool g_sceneSkybox = true;       // draw the sky gradient in the Scene view (Gam
 bool g_wireframeAll = false;     // debug: draw every mesh as wireframe (Scene view)
 bool g_showWorldAxes = false;    // debug: draw the world X/Y/Z axes at the origin
 bool g_showCamHud = true;        // debug: on-screen readout of Scene camera zoom/angle/position
-float g_editorFov = 50.0f;       // Scene-view camera vertical FOV (degrees)
+float g_editorFov = 60.0f;       // Scene-view camera vertical FOV (degrees) — matches
+                                 // Unity's default 60deg so models aren't magnified.
 float g_editorNear = 0.3f;       // Scene-view camera near clip (Unity-like). Adjustable
                                  // in Stats > Rendering > Debug view.
 // Debug capture: stash the last Scene-view camera so a button can re-render the
@@ -527,11 +530,14 @@ void AddRecent(const std::string& path) {
 }
 
 // Persisted editor preferences (a tiny key/value file beside the working dir).
+void SaveSettings();   // defined below; LoadSettings calls it for the one-time migration
 void LoadSettings() {
     std::ifstream f("okay_settings.txt");
     std::string k; int v;
+    int ver = 0;
     while (f >> k >> v) {
-        if (k == "autoupdate") g_autoUpdate = (v != 0);
+        if (k == "settingsver") ver = v;
+        else if (k == "autoupdate") g_autoUpdate = (v != 0);
         else if (k == "autoperf") g_autoPerf = (v != 0);
         else if (k == "vsync") g_vsync = (v != 0);
         else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
@@ -545,10 +551,15 @@ void LoadSettings() {
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
         else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
     }
+    // One-time migration to the Unity-like 3D view defaults (crisp 2x AA + 60deg
+    // FOV so models aren't magnified). Forces the new values over a previously-saved
+    // 50deg / no-AA config, then bumps the version so the user's choices stick after.
+    if (ver < 2) { g_ssaa = 2; g_editorFov = 60.0f; SaveSettings(); }
 }
 void SaveSettings() {
     std::ofstream f("okay_settings.txt");
-    f << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
+    f << "settingsver 2\n"
+      << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
       << "vsync "      << (g_vsync ? 1 : 0) << "\n"
       << "ssaa "       << g_ssaa << "\n"
@@ -5153,6 +5164,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"load_next_scene","Load Next Scene", "",                     "Load the next scene in the build order.",                 "Scenes"},
     {"set_prefs",   "Save A Value",       "key value",            "Store a value that persists between play sessions.",      "Save"},
     {"add_prefs",   "Add To Saved Value", "key amount",           "Add to a stored (saved) value.",                          "Save"},
+    {"get_prefs",   "Grab A Value",       "intoVar  savedName",   "Read a saved value (e.g. a stat like health) into a variable.", "Variables"},
     {"save_prefs",  "Write Save File",    "[file]",               "Write the saved values to disk.",                         "Save"},
     {"net_host",    "Host Game",          "port",                 "Start hosting a multiplayer session.",                    "Multiplayer"},
     {"net_join",    "Join Game",          "ip port",              "Connect to a host.",                                      "Multiplayer"},
@@ -5308,8 +5320,35 @@ static void DrawFlowGraph(EditorState& ed) {
     ImGui::End();
 }
 
+// A dropdown that picks a scene object by name into arg `idx`, optionally filtered
+// to objects that carry a given component kind. "(this object)" stores "".
+static void ActionObjectPicker(ActionList::Item& it, std::size_t idx, const char* label,
+                               Scene* scene, bool& dirty, int kind /*0 any,1 text,2 bar*/) {
+    std::string cur = idx < it.args.size() ? it.args[idx] : std::string{};
+    const char* preview = cur.empty() ? "(this object)" : cur.c_str();
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::BeginCombo(label, preview)) {
+        if (ImGui::Selectable("(this object)", cur.empty())) {
+            while (it.args.size() <= idx) it.args.push_back("");
+            it.args[idx] = ""; dirty = true;
+        }
+        if (scene) for (const auto& up : scene->Objects()) {
+            GameObject* g = up.get(); if (!g) continue;
+            bool ok = kind == 0
+                || (kind == 1 && g->GetComponent<TextRenderer>())
+                || (kind == 2 && (g->GetComponent<UIProgressBar>() || g->GetComponent<UIRadialProgress>()));
+            if (!ok) continue;
+            if (ImGui::Selectable(g->name.c_str(), g->name == cur)) {
+                while (it.args.size() <= idx) it.args.push_back("");
+                it.args[idx] = g->name; dirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+}
+
 static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
-                          int id, bool& dirty) {
+                          int id, bool& dirty, Scene* scene = nullptr) {
     int action = 0;
     ImGui::PushID(id);
     if (it.op.empty()) it.op = ops[0].op;
@@ -5386,6 +5425,53 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             ImGui::SetNextItemWidth(70);
             if (ImGui::InputTextWithHint("##rpre", "prefix", pb, sizeof(pb))) setArg(dirIdx+2, pb);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stores <prefix>_hit, _dist, _x, _y, _z variables.");
+        }
+    } else if (it.op == "set_text" || it.op == "set_text_on" || it.op == "set_bar" ||
+               it.op == "get_prefs") {
+        // Friendly, Unity-style fields so it's clear WHAT you're setting and WHAT
+        // you're reading — instead of one cryptic space-separated box.
+        auto getArg = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string{}; };
+        auto setArg = [&](std::size_t i, const std::string& v) {
+            while (it.args.size() <= i) it.args.push_back(""); it.args[i] = v; dirty = true;
+        };
+        auto setRest = [&](std::size_t start, const std::string& v) {  // text may contain spaces
+            it.args.resize(start);
+            std::stringstream ss(v); std::string t; while (ss >> t) it.args.push_back(t);
+            dirty = true;
+        };
+        auto restOf = [&](std::size_t start) {
+            std::string s; for (std::size_t k = start; k < it.args.size(); ++k) { if (!s.empty()) s += ' '; s += it.args[k]; } return s;
+        };
+        auto textField = [&](const char* lbl, std::size_t start, const char* hint) {
+            char tb[256]; std::strncpy(tb, restOf(start).c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';
+            ImGui::SetNextItemWidth(150);
+            if (ImGui::InputTextWithHint(lbl, hint, tb, sizeof(tb))) setRest(start, tb);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Type words. {name} inserts a variable's live value, e.g. Health: {health}");
+        };
+        auto varField = [&](const char* lbl, std::size_t i, const char* hint) {
+            char vb[96]; std::strncpy(vb, getArg(i).c_str(), sizeof(vb) - 1); vb[sizeof(vb) - 1] = '\0';
+            ImGui::SetNextItemWidth(96);
+            if (ImGui::InputTextWithHint(lbl, hint, vb, sizeof(vb))) setArg(i, vb);
+        };
+        if (it.op == "set_text") {
+            textField("Text", 0, "Health: {health}");
+        } else if (it.op == "set_text_on") {
+            ActionObjectPicker(it, 0, "On", scene, dirty, /*text*/1);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which Text object to set.");
+            ImGui::SameLine(); textField("=", 1, "Health: {health}");
+        } else if (it.op == "set_bar") {
+            ActionObjectPicker(it, 0, "Bar", scene, dirty, /*bar*/2);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which Progress Bar / Radial to fill.");
+            ImGui::SameLine(); varField("from", 1, "variable");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The variable to read (its value / Max = the fill).");
+            float mx = getArg(2).empty() ? 100.0f : (float)std::atof(getArg(2).c_str());
+            ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+            if (ImGui::DragFloat("max", &mx, 1.0f, 0.0f, 1e9f, "%.0f")) setArg(2, std::to_string(mx));
+        } else { // get_prefs: read a saved value into a variable
+            varField("Into Var", 0, "hp");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The variable to store the value in.");
+            ImGui::SameLine(); varField("= Saved", 1, "health");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The saved-value/stat name to read (e.g. health, published by the Health component).");
         }
     } else {
     std::string joined;
@@ -7830,7 +7916,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SeparatorText("Conditions (all must pass)");
             if (al->conditions.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
             for (std::size_t i = 0; i < al->conditions.size();) {
-                int act = DrawActionItem(al->conditions[i], kCondOps, IM_ARRAYSIZE(kCondOps), (int)i, ed.dirty);
+                int act = DrawActionItem(al->conditions[i], kCondOps, IM_ARRAYSIZE(kCondOps), (int)i, ed.dirty, &ed.scene());
                 i = ApplyItemAction(al->conditions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({"always", {}}); ed.dirty = true; }
@@ -7838,7 +7924,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SeparatorText("Instructions (run top to bottom)");
             if (al->instructions.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
             for (std::size_t i = 0; i < al->instructions.size();) {
-                int act = DrawActionItem(al->instructions[i], kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000 + (int)i, ed.dirty);
+                int act = DrawActionItem(al->instructions[i], kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000 + (int)i, ed.dirty, &ed.scene());
                 i = ApplyItemAction(al->instructions, i, act, ed.dirty);
             }
             if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({"move", {}}); ed.dirty = true; }
@@ -11425,7 +11511,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     float amt = along * (L / slen);             // screen px -> world units
                     Vec3 localDelta = Minv.MultiplyVector(axisW[i] * amt);
                     mesh.MoveVertices(affected, localDelta);
-                    mesh.ComputeSmoothNormals();
+                    mesh.normals.clear();        // keep flat (faceted) shading while editing
                     ed.dirty = true;
                 }
                 g_uiHandled = true;

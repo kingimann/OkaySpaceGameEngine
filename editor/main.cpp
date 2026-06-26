@@ -4114,7 +4114,10 @@ void DrawScriptEditor(EditorState& ed) {
         float mmScrollY = 0.0f, mmVisibleH = av.y;     // captured from inside the child
         ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(30, 30, 30, 255));   // VS Code editor bg
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(30, 30, 30, 255));
-        ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(212, 212, 212, 255));
+        // When syntax highlighting is on, hide the InputText's own (flat gray) text so
+        // ONLY the crisp colored overlay shows — otherwise the two render on top of each
+        // other and the colors look washed out / doubled. We draw our own caret below.
+        ImGui::PushStyleColor(ImGuiCol_Text, s_highlight ? IM_COL32(0, 0, 0, 0) : IM_COL32(212, 212, 212, 255));
         ImGui::BeginChild("editorscroll", ImVec2(editW, av.y), true,
                           ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -4152,6 +4155,7 @@ void DrawScriptEditor(EditorState& ed) {
             ImVec2(contentW, contentH),
             ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackCompletion,
             ScriptCaretCallback, &caret);
+        bool editorActive = ImGui::IsItemActive();   // for the custom caret (text is hidden when highlighting)
         // A snippet chosen from the toolbar menu steals focus from the editor, so
         // the callback won't run — splice it into the buffer at the caret here.
         if (!caret.insert.empty() && !ImGui::IsItemActive()) {
@@ -4234,8 +4238,23 @@ void DrawScriptEditor(EditorState& ed) {
                 ++i; ++col;
             }
         }
-        if (s_highlight)
+        if (s_highlight) {
             DrawCodeHighlight(edl, buf.data(), origin, charW, lineH);
+            // The InputText's own caret is hidden (transparent text), so draw ours.
+            // Visual column counts a tab as 4 cells to match the overlay's advance.
+            if (editorActive) {
+                const char* tb = buf.data();
+                int ls = caret.pos; while (ls > 0 && tb[ls - 1] != '\n') --ls;
+                float vis = 0.0f;
+                for (int k = ls; k < caret.pos && tb[k]; ++k) vis += (tb[k] == '\t') ? 4.0f : 1.0f;
+                float cxp = origin.x + vis * charW;
+                float cyp = origin.y + (caret.line - 1) * lineH;
+                static float s_blink = 0.0f; s_blink += ImGui::GetIO().DeltaTime;
+                if (std::fmod(s_blink, 1.06f) < 0.6f)   // ~VS Code blink cadence
+                    edl->AddLine(ImVec2(cxp, cyp + 1.0f), ImVec2(cxp, cyp + lineH - 1.0f),
+                                 IM_COL32(224, 224, 224, 255), 1.0f);
+            }
+        }
 
         // Inline diagnostic: a red wavy underline under the error line (the
         // compiler now prefixes "line N:" to parse/compile errors).

@@ -665,7 +665,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // typewriter (visibleChars + typeSpeed), bottom-align.
             << " " << (tr->italic ? 1 : 0) << " " << (tr->gradient ? 1 : 0) << " "
             << tr->colorBottom.r << " " << tr->colorBottom.g << " " << tr->colorBottom.b << " " << tr->colorBottom.a
-            << " " << tr->visibleChars << " " << tr->typeSpeed << " " << (tr->alignBottom ? 1 : 0) << "\n";
+            << " " << tr->visibleChars << " " << tr->typeSpeed << " " << (tr->alignBottom ? 1 : 0)
+            << " " << Quote(tr->fontPath) << "\n";   // optional TTF font path (newest)
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -1878,6 +1879,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tr->italic = (it != 0); tr->gradient = (gr != 0);
                         tr->colorBottom = cb; tr->alignBottom = (ab != 0);
                     }
+                    in >> std::ws; // optional TTF font path (newest)
+                    if (in.peek() == '"') tr->fontPath = ReadQuoted(in);
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;

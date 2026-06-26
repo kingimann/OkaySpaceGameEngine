@@ -112,12 +112,57 @@ static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, flo
     SDL_RenderFillRect(r, &rect);
 }
 
+// Upload a TTF glyph atlas as an SDL texture (once, cached) for the player.
+static SDL_Texture* TtfAtlasTexture(SDL_Renderer* r, okay::TtfFont* f) {
+    if (!f || !f->Valid()) return nullptr;
+    static std::unordered_map<okay::TtfFont*, SDL_Texture*> cache;
+    auto it = cache.find(f);
+    if (it != cache.end()) return it->second;
+    const okay::Image& a = f->Atlas();
+    SDL_Texture* tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+                                         SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        SDL_UpdateTexture(tex, nullptr, a.Data(), a.Width() * 4);
+    }
+    cache[f] = tex;
+    return tex;
+}
+
+// Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
+static void DrawTtfText(SDL_Renderer* r, okay::TtfFont* f, const std::string& text,
+                        float ox, float oy, float px, SDL_Color col, float letterSp, float lineSp) {
+    SDL_Texture* tex = TtfAtlasTexture(r, f);
+    if (!tex) return;
+    SDL_SetTextureColorMod(tex, col.r, col.g, col.b);
+    SDL_SetTextureAlphaMod(tex, col.a);
+    const float s = px * (float)okay::Font8x8::Height / f->BakeHeight();
+    const float baseline = f->Ascent((float)okay::Font8x8::Height) * px;
+    float penX = ox, penY = oy;
+    for (char ch : text) {
+        if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
+        const okay::TtfFont::Glyph* g = f->Get(ch);
+        if (!g) { penX += px * 4.0f; continue; }
+        int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
+        if (gw > 0 && gh > 0) {
+            SDL_Rect src{g->x0, g->y0, gw, gh};
+            SDL_FRect dst{penX + g->xoff * s, penY + baseline + g->yoff * s, gw * s, gh * s};
+            SDL_RenderCopyF(r, tex, &src, &dst);
+        }
+        penX += g->xadvance * s + letterSp * px;
+    }
+}
+
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
-// in screen pixels, each font pixel `px` screen pixels wide.
+// in screen pixels, each font pixel `px` screen pixels wide. When `ttf` is loaded,
+// the TTF atlas is used instead (same sizing space).
 static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float oy,
                      float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f,
-                     bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0}) {
+                     bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0},
+                     okay::TtfFont* ttf = nullptr) {
     if (px < 1.0f) px = 1.0f;
+    if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
     if (!gradient) SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
     float cx = ox;
@@ -663,17 +708,18 @@ int main(int argc, char** argv) {
                              (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
                 SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
                 float px = tr->pixelSize * scale;
+                okay::TtfFont* fnt = tr->Font();
                 if (tr->shadow)
                     DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
-                             o.y + tr->shadowOffset.y * px, px, sh);
+                             o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
                 if (tr->outline) {
-                    DrawText(renderer, tr->text, o.x - px, o.y, px, ol);
-                    DrawText(renderer, tr->text, o.x + px, o.y, px, ol);
-                    DrawText(renderer, tr->text, o.x, o.y - px, px, ol);
-                    DrawText(renderer, tr->text, o.x, o.y + px, px, ol);
+                    DrawText(renderer, tr->text, o.x - px, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x + px, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x, o.y - px, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x, o.y + px, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
                 }
-                DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col);
-                if (tr->bold) DrawText(renderer, tr->text, (float)o.x + px, (float)o.y, px, col);
+                DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                if (tr->bold) DrawText(renderer, tr->text, (float)o.x + px, (float)o.y, px, col, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
             }
         }
 
@@ -1270,17 +1316,18 @@ int main(int argc, char** argv) {
             bool it = tr->italic;
             SDL_Color c2{(Uint8)(tr->colorBottom.r * 255), (Uint8)(tr->colorBottom.g * 255),
                          (Uint8)(tr->colorBottom.b * 255), (Uint8)(tr->colorBottom.a * 255 * op)};
+            okay::TtfFont* fnt = tr->Font();
             if (tr->shadow)
                 DrawText(renderer, disp, o.x + tr->shadowOffset.x * p,
-                         o.y + tr->shadowOffset.y * p, p, sh, ls, lp, it);
+                         o.y + tr->shadowOffset.y * p, p, sh, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
             if (tr->outline) {
-                DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp, it);
-                DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp, it);
-                DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp, it);
-                DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp, it);
+                DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
             }
-            DrawText(renderer, disp, o.x, o.y, p, col, ls, lp, it, tr->gradient, c2);
-            if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp, it, tr->gradient, c2);
+            DrawText(renderer, disp, o.x, o.y, p, col, ls, lp, it, tr->gradient, c2, fnt);
+            if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp, it, tr->gradient, c2, fnt);
         }
             else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
             auto* wu = up->GetComponent<WorldUI>();

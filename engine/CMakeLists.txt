@@ -46,6 +46,7 @@ add_library(okay_engine
     src/AI/Pathfinding.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
+    src/Graphics/TtfFont.cpp
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
@@ -60,7 +61,7 @@ target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/font8x8
 )
 # Silence warnings from the third-party single-header libraries.
-set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp
+set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Graphics/TtfFont.cpp
     PROPERTIES COMPILE_OPTIONS "-w")
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)

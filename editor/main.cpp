@@ -8445,7 +8445,31 @@ void DrawInspector(EditorState& ed) {
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
-            ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
+            // Font: empty = built-in 8x8 bitmap. Point at an imported .ttf/.otf in Assets.
+            {
+                char fb[512];
+                std::strncpy(fb, tr->fontPath.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
+                if (ImGui::InputTextWithHint("Font##txt", "Assets/MyFont.ttf (empty = bitmap)", fb, sizeof(fb)))
+                    { tr->fontPath = fb; ed.dirty = true; }
+                // Accept a drag-drop of a font asset from the Project panel.
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                        std::string ap((const char*)p->Data);
+                        std::string al = Lower(ap);
+                        if (al.size() > 4 && (al.substr(al.size()-4)==".ttf" || al.substr(al.size()-4)==".otf"))
+                            { tr->fontPath = ap; ed.dirty = true; }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                if (tr->fontPath.empty())
+                    ImGui::TextDisabled("Built-in 8x8 bitmap font.");
+                else if (okay::GetFont(tr->fontPath))
+                    ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
+                else
+                    ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Bitmap##txtfont")) { tr->fontPath.clear(); ed.dirty = true; }
+            }
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
     }
@@ -9791,12 +9815,68 @@ void DrawInspector(EditorState& ed) {
     ImGui::End();
 }
 
+// Upload a TTF font's glyph atlas as an SDL texture (once) for the editor's ImGui
+// draw lists. Cached per font; returns nullptr if it can't be created.
+static SDL_Texture* TtfAtlasTexture(okay::TtfFont* f) {
+    if (!f || !f->Valid() || !g_sdlRenderer) return nullptr;
+    static std::unordered_map<okay::TtfFont*, SDL_Texture*> cache;
+    auto it = cache.find(f);
+    if (it != cache.end()) return it->second;
+    const okay::Image& a = f->Atlas();
+    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                         SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        SDL_UpdateTexture(tex, nullptr, a.Data(), a.Width() * 4);
+    }
+    cache[f] = tex;
+    return tex;
+}
+
+// Draw a string with a TTF font into an ImGui draw list (a textured quad per glyph,
+// tinted by `col`). Shares the font-pixel space of the bitmap path so callers don't
+// special-case sizing. Gradient is approximated as the flat top color.
+static void DrawTtfText(ImDrawList* dl, okay::TtfFont* f, SDL_Texture* tex,
+                        const std::string& text, float ox, float oy, float px,
+                        ImU32 col, float letterSp, float lineSp, bool italic) {
+    const float s = px * (float)okay::Font8x8::Height / f->BakeHeight(); // screen px per atlas px
+    const float aw = (float)f->Atlas().Width(), ah = (float)f->Atlas().Height();
+    const float baseline = f->Ascent((float)okay::Font8x8::Height) * px; // top -> baseline, screen px
+    const float slant = italic ? 0.30f : 0.0f;
+    float penX = ox, penY = oy;
+    for (char ch : text) {
+        if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
+        const okay::TtfFont::Glyph* g = f->Get(ch);
+        if (!g) { penX += px * 4.0f; continue; }
+        int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
+        if (gw > 0 && gh > 0) {
+            float x0 = penX + g->xoff * s, y0 = penY + baseline + g->yoff * s;
+            float x1 = x0 + gw * s, y1 = y0 + gh * s;
+            ImVec2 uv0(g->x0 / aw, g->y0 / ah), uv1(g->x1 / aw, g->y1 / ah);
+            float sh0 = (penY + baseline - y0) * slant, sh1 = (penY + baseline - y1) * slant; // shear by height above baseline
+            dl->AddImageQuad((ImTextureID)tex,
+                ImVec2(x0 + sh0, y0), ImVec2(x1 + sh0, y0), ImVec2(x1 + sh1, y1), ImVec2(x0 + sh1, y1),
+                uv0, ImVec2(uv1.x, uv0.y), uv1, ImVec2(uv0.x, uv1.y), col);
+        }
+        penX += g->xadvance * s + letterSp * px;
+    }
+}
+
 // Draw a string with the engine's 8x8 bitmap font into an ImGui draw list, so
 // the editor viewport shows the same text the built game will (HUDs, labels).
+// When `ttf` is a loaded font, the TTF atlas is used instead (same sizing).
 void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
                     float px, ImU32 col, float letterSp = 0.0f, float lineSp = 0.0f,
-                    bool italic = false, bool gradient = false, ImU32 col2 = 0) {
+                    bool italic = false, bool gradient = false, ImU32 col2 = 0,
+                    okay::TtfFont* ttf = nullptr) {
     if (px < 1.0f) px = 1.0f;
+    if (ttf && ttf->Valid()) {
+        if (SDL_Texture* tex = TtfAtlasTexture(ttf)) {
+            DrawTtfText(dl, ttf, tex, text, ox, oy, px, col, letterSp, lineSp, italic);
+            return;
+        }
+    }
     const float slant = italic ? 0.30f : 0.0f;
     int ca = (col >> IM_COL32_A_SHIFT) & 0xFF, cr = (col >> IM_COL32_R_SHIFT) & 0xFF;
     int cg = (col >> IM_COL32_G_SHIFT) & 0xFF, cb = (col >> IM_COL32_B_SHIFT) & 0xFF;
@@ -10397,18 +10477,19 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         std::string disp = tr->DisplayText();
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
         bool it = tr->italic; ImU32 c2 = ToColor(tr->colorBottom);
+        okay::TtfFont* fnt = tr->Font();   // null = built-in bitmap font
         if (tr->shadow)
             DrawBitmapText(dl, disp, bx + tr->shadowOffset.x * px,
-                           by + tr->shadowOffset.y * px, px, sh, ls, lp, it);
+                           by + tr->shadowOffset.y * px, px, sh, ls, lp, it, false, 0, fnt);
         if (tr->outline) {                            // 4-direction outline
             ImU32 oc = ToColor(tr->outlineColor);
-            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp, it);
-            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp, it);
-            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp, it);
-            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp, it);
+            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp, it, false, 0, fnt);
         }
-        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp, it, tr->gradient, c2);
-        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp, it, tr->gradient, c2);  // faux-bold
+        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp, it, tr->gradient, c2, fnt);
+        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp, it, tr->gradient, c2, fnt);  // faux-bold
     }
 
     // UI dropdowns: header (shows the selection + a caret); when open, the option
@@ -10965,11 +11046,12 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImU32 sh = ToColor(tr->shadowColor);
         ImVec2 o = worldToScreen(up->transform->Position());
         float px = tr->pixelSize * scale;
+        okay::TtfFont* fnt = tr->Font();
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
-                           o.y + tr->shadowOffset.y * px, px, sh);
-        DrawBitmapText(dl, tr->text, o.x, o.y, px, col);
-        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + px, o.y, px, col);  // faux-bold
+                           o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, 0, fnt);
+        DrawBitmapText(dl, tr->text, o.x, o.y, px, col, 0, 0, false, false, 0, fnt);
+        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + px, o.y, px, col, 0, 0, false, false, 0, fnt);  // faux-bold
     }
 
     // 2D collider wireframes (Unity-style green outlines), Scene view only.

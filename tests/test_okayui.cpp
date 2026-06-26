@@ -187,36 +187,74 @@ int main(int argc, char** argv) {
         CHECK(go);
     }
 
+    // --- CollapsingHeader: starts closed, a click opens it. ---
+    {
+        OkayUI::BeginFrame(OkayUI::Input{});
+        OkayUI::Begin("CHW", 10, 10, 200, 300);
+        bool o0 = OkayUI::CollapsingHeader("Sec");
+        OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(!o0);
+        // Header is the first item: (20,48) full content width, 28 tall -> click (110,62).
+        OkayUI::Input ci; ci.mouseX = 110; ci.mouseY = 62; ci.mouseDown = true;
+        OkayUI::BeginFrame(ci); OkayUI::Begin("CHW", 10, 10, 200, 300); OkayUI::CollapsingHeader("Sec"); OkayUI::End(); OkayUI::EndFrame(r);
+        ci.mouseDown = false;
+        OkayUI::BeginFrame(ci); OkayUI::Begin("CHW", 10, 10, 200, 300); bool o1 = OkayUI::CollapsingHeader("Sec"); OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(o1);
+    }
+
+    // --- Combo: open by clicking the box, then pick item index 2. ---
+    {
+        const char* items[] = {"A", "B", "C"};
+        int cur = 0;
+        OkayUI::Input ci; ci.mouseX = 40; ci.mouseY = 62; ci.mouseDown = true;  // box at (20,48), click inside
+        OkayUI::BeginFrame(ci); OkayUI::Begin("CmbW", 10, 10, 220, 300); OkayUI::Combo("Pick", items, 3, &cur); OkayUI::End(); OkayUI::EndFrame(r);
+        ci.mouseDown = false;
+        OkayUI::BeginFrame(ci); OkayUI::Begin("CmbW", 10, 10, 220, 300); OkayUI::Combo("Pick", items, 3, &cur); OkayUI::End(); OkayUI::EndFrame(r);
+        // Now open: list starts at y=76, item 2 ("C") spans y in [132,160) -> click (40,146).
+        ci.mouseX = 40; ci.mouseY = 146; ci.mouseDown = true;
+        OkayUI::BeginFrame(ci); OkayUI::Begin("CmbW", 10, 10, 220, 300); OkayUI::Combo("Pick", items, 3, &cur); OkayUI::End(); OkayUI::EndFrame(r);
+        ci.mouseDown = false;
+        OkayUI::BeginFrame(ci); OkayUI::Begin("CmbW", 10, 10, 220, 300); bool ch = OkayUI::Combo("Pick", items, 3, &cur); OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(ch); CHECK(cur == 2);
+    }
+
     // --- Optional visual preview: an auto-layout window showing the widgets. ---
     if (argc > 2 && std::strcmp(argv[1], "--png") == 0) {
-        const int PW = 360, PH = 470;
+        const int PW = 360, PH = 500;
         SDL_Surface* big = SDL_CreateRGBSurfaceWithFormat(0, PW, PH, 32, SDL_PIXELFORMAT_ARGB8888);
         SDL_Renderer* br = SDL_CreateSoftwareRenderer(big);
-        SDL_SetRenderDrawColor(br, 24, 26, 32, 255); SDL_RenderClear(br);
-        char demoName[16] = "Player1"; int demoMode = 0;
+        char demoName[16] = "Player1"; int demoMode = 0, demoSel = 1;
         bool demoCheck = true; float demoSlider = 65.0f;
-        OkayUI::Input pv; pv.mouseX = -1; pv.mouseY = -1;   // nothing hovered
-        // The whole panel is written as a sequence of calls — no manual coordinates.
-        OkayUI::BeginFrame(pv);
-        OkayUI::Begin("Settings", 12, 12, PW - 24, PH - 24);
-        OkayUI::Text("Auto-layout window");
-        OkayUI::Separator();
-        OkayUI::InputText("Name", demoName, 16);
-        OkayUI::RadioButton("Easy", &demoMode, 0);
-        OkayUI::SameLine();
-        OkayUI::RadioButton("Hard", &demoMode, 1);
-        OkayUI::SliderFloat("Volume", &demoSlider, 0.0f, 100.0f);
-        OkayUI::Checkbox("Sound", &demoCheck);
-        OkayUI::Separator();
-        OkayUI::Text("Health");
-        OkayUI::ProgressBar(0.8f);
-        OkayUI::Text("Hunger");
-        OkayUI::ProgressBar(0.35f);
-        OkayUI::Spacing();
-        OkayUI::Button("Play");
-        OkayUI::SameLine();
-        OkayUI::Button("Quit");
-        OkayUI::End();
+        const char* opts[] = {"Low", "Medium", "High"};
+        auto panel = [&](OkayUI::Input pv) {
+            OkayUI::BeginFrame(pv);
+            OkayUI::Begin("Settings", 12, 12, PW - 24, PH - 24);
+            OkayUI::Combo("Quality", opts, 3, &demoSel);   // first item -> box at content origin
+            OkayUI::Text("Auto-layout + overlay");
+            OkayUI::Separator();
+            OkayUI::InputText("Name", demoName, 16);
+            OkayUI::RadioButton("Easy", &demoMode, 0);
+            OkayUI::SameLine();
+            OkayUI::RadioButton("Hard", &demoMode, 1);
+            OkayUI::SliderFloat("Volume", &demoSlider, 0.0f, 100.0f);
+            OkayUI::Checkbox("Sound", &demoCheck);
+            OkayUI::Separator();
+            OkayUI::Text("Health");   OkayUI::ProgressBar(0.8f);
+            OkayUI::Text("Hunger");  OkayUI::ProgressBar(0.35f);
+            OkayUI::CollapsingHeader("Advanced");
+            OkayUI::Spacing();
+            OkayUI::Button("Play");  OkayUI::SameLine();  OkayUI::Button("Quit");
+            OkayUI::End();
+        };
+        // Prime the Combo open (press+release inside its box at the content origin),
+        // so the final still shows the dropdown overlaying the widgets below it.
+        OkayUI::Input pr; pr.mouseX = 60; pr.mouseY = 64;
+        pr.mouseDown = true;  panel(pr); OkayUI::EndFrame(nullptr);
+        pr.mouseDown = false; panel(pr); OkayUI::EndFrame(nullptr);
+        // Final frame, drawn.
+        SDL_SetRenderDrawColor(br, 24, 26, 32, 255); SDL_RenderClear(br);
+        OkayUI::Input pv; pv.mouseX = -1; pv.mouseY = -1;
+        panel(pv);
         OkayUI::EndFrame(br);
         savePng(big, argv[2]);
         SDL_DestroyRenderer(br); SDL_FreeSurface(big);

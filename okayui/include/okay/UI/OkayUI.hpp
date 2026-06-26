@@ -146,6 +146,19 @@ bool SliderFloat(const char* label, float* value, float minV, float maxV);
 void ProgressBar(float fraction, const char* overlay = nullptr);
 bool InputText(const char* label, char* buf, int cap);
 
+/// A collapsing section header. Returns true while expanded — put the section's
+/// widgets in the if-body. The open/closed state is remembered per label.
+bool CollapsingHeader(const char* label);
+
+/// A dropdown selecting one of items[0..count) into *current. The open list draws
+/// on top of later widgets (overlay pass). Returns true the frame the selection
+/// changed. `items` and `current` required.
+bool Combo(const char* label, const char* const* items, int count, int* current);
+
+/// If the most recently issued widget is hovered, show a tooltip box at the cursor.
+/// Call right after the widget you want to annotate.
+void Tooltip(const char* text);
+
 /// The active theme (mutable — tweak colors/sizes in place).
 Theme& Style();
 

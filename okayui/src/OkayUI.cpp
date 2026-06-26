@@ -20,6 +20,14 @@ int        g_nv = 0;
 int        g_idx[kMaxIdx];
 int        g_ni = 0;
 
+// Overlay batch: popups (Combo lists) and tooltips draw here, then it's appended
+// AFTER the main batch each frame so it composites on top of later widgets.
+SDL_Vertex g_ovVerts[kMaxVerts];
+int        g_onv = 0;
+int        g_ovIdx[kMaxIdx];
+int        g_oni = 0;
+bool       g_toOverlay = false;   // route quad()/drawText() to the overlay batch
+
 Input g_in;                      // this frame's input
 bool  g_prevDown = false;        // last frame's mouse-down (for edge detection)
 bool  g_pressed  = false;        // mouse went down this frame
@@ -50,6 +58,15 @@ LayoutState g_lay;
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; };
 WinSlot g_wins[16];
+
+// Per-widget open/closed state (CollapsingHeader, Combo), persisted by id.
+struct OpenSlot { int id = 0; bool open = false; bool used = false; };
+OpenSlot g_opens[64];
+bool* openState(int id, bool dflt) {
+    for (OpenSlot& s : g_opens) if (s.used && s.id == id) return &s.open;
+    for (OpenSlot& s : g_opens) if (!s.used) { s.used = true; s.id = id; s.open = dflt; return &s.open; }
+    static bool sink = false; return &sink;   // table full: harmless fallback
+}
 float g_prevMouseX = 0.0f, g_prevMouseY = 0.0f;   // last frame's cursor
 float g_mouseDX = 0.0f, g_mouseDY = 0.0f;         // cursor delta this frame
 
@@ -97,20 +114,25 @@ inline SDL_Color toColor(const unsigned char c[4]) {
     SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3]; return sc;
 }
 
-// Append an axis-aligned rectangle (two triangles) in a flat color.
+// Append an axis-aligned rectangle (two triangles) in a flat color, to whichever
+// batch is active (main, or overlay when g_toOverlay is set).
 void quad(float x, float y, float w, float h, const unsigned char c[4]) {
-    if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) return;   // overflow: drop silently
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;   // overflow: drop silently
     const SDL_Color sc = toColor(c);
-    const int base = g_nv;
+    const int base = nv;
     SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
     SDL_Vertex v;
     v.color = sc; v.tex_coord = uv;
-    v.position.x = x;     v.position.y = y;     g_verts[g_nv++] = v;
-    v.position.x = x + w; v.position.y = y;     g_verts[g_nv++] = v;
-    v.position.x = x + w; v.position.y = y + h; g_verts[g_nv++] = v;
-    v.position.x = x;     v.position.y = y + h; g_verts[g_nv++] = v;
-    g_idx[g_ni++] = base + 0; g_idx[g_ni++] = base + 1; g_idx[g_ni++] = base + 2;
-    g_idx[g_ni++] = base + 0; g_idx[g_ni++] = base + 2; g_idx[g_ni++] = base + 3;
+    v.position.x = x;     v.position.y = y;     V[nv++] = v;
+    v.position.x = x + w; v.position.y = y;     V[nv++] = v;
+    v.position.x = x + w; v.position.y = y + h; V[nv++] = v;
+    v.position.x = x;     v.position.y = y + h; V[nv++] = v;
+    I[ni++] = base + 0; I[ni++] = base + 1; I[ni++] = base + 2;
+    I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
 }
 
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
@@ -149,6 +171,7 @@ void BeginFrame(const Input& in) {
     g_lay.pendingSameLine = false;
     ++g_frame;
     g_nv = 0; g_ni = 0;
+    g_onv = 0; g_oni = 0; g_toOverlay = false;
 }
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
@@ -382,10 +405,18 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
 }
 
 namespace {
+// Append the overlay batch after the main batch so popups/tooltips draw on top.
+void mergeOverlay() {
+    const int base = g_nv;
+    for (int i = 0; i < g_onv && g_nv < kMaxVerts; ++i) g_verts[g_nv++] = g_ovVerts[i];
+    for (int j = 0; j < g_oni && g_ni < kMaxIdx; ++j)   g_idx[g_ni++] = base + g_ovIdx[j];
+    g_onv = 0; g_oni = 0;
+}
 // End-of-frame interaction bookkeeping, shared by every backend.
 void finalizeFrame() {
     if (g_released) g_active = 0;                    // clear if the active item wasn't drawn
     if (g_pressed && !g_focusClaimed) g_focus = 0;   // click on empty space drops keyboard focus
+    mergeOverlay();
 }
 } // namespace
 
@@ -538,6 +569,82 @@ bool InputText(const char* label, char* buf, int cap) {
     const bool ch = TextField(hashLabel(label), x, y, ctrlW, h, buf, cap);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
     return ch;
+}
+
+bool CollapsingHeader(const char* label) {
+    if (!g_lay.active) return false;
+    const int id = hashLabel(label);
+    bool* open = openState(id, false);
+    const float h = rowH(), w = g_lay.contentW;
+    float x, y; place(w, h, x, y);
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+    if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
+    else if (inside && g_pressed) g_active = id;
+    const unsigned char* bg = (g_active == id && inside) ? g_theme.bgDown : (inside ? g_theme.bgHover : g_theme.track);
+    quad(x, y, w, h, bg);
+    const float s = g_theme.textScale;
+    drawText(x + 8.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);   // expander glyph
+    drawText(x + 8.0f + okay::Font8x8::Width * s * 2.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    return *open;
+}
+
+void Tooltip(const char* text) {
+    if (!g_lay.active || !text || !*text || g_in.blocked) return;
+    // Only when the most recent item is hovered.
+    if (!pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) return;
+    const float s = g_theme.textScale, pad = 6.0f;
+    const float tw = labelW(text), th = textH();
+    const float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
+    g_toOverlay = true;
+    quad(bx, by, tw + pad * 2.0f, th + pad * 2.0f, g_theme.border);
+    quad(bx + 1.0f, by + 1.0f, tw + pad * 2.0f - 2.0f, th + pad * 2.0f - 2.0f, g_theme.panel);
+    drawText(bx + pad, by + pad, text, s, g_theme.text);
+    g_toOverlay = false;
+}
+
+bool Combo(const char* label, const char* const* items, int count, int* current) {
+    if (!g_lay.active || !items || !current || count <= 0) return false;
+    const int id = hashLabel(label);
+    bool* open = openState(id, false);
+    const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
+
+    const bool insideBox = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, boxW, h);
+    if (insideBox) g_hot = id;
+    if (g_active == id) { if (g_released) { if (insideBox) *open = !*open; g_active = 0; } }
+    else if (insideBox && g_pressed) g_active = id;
+
+    quad(x, y, boxW, h, g_theme.border);
+    if (boxW > 2*b && h > 2*b) quad(x + b, y + b, boxW - 2*b, h - 2*b, insideBox ? g_theme.bgHover : g_theme.bg);
+    const char* cur = (*current >= 0 && *current < count) ? items[*current] : "";
+    drawText(x + 6.0f, y + (h - textH()) * 0.5f, cur, s, g_theme.text);
+    drawText(x + boxW - okay::Font8x8::Width * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
+    if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+
+    bool changed = false;
+    if (*open) {
+        const float listY = y + h;
+        g_toOverlay = true;   // the dropdown list draws on top of later widgets
+        for (int k = 0; k < count; ++k) {
+            const float ry = listY + (float)k * h;
+            const int iid = id ^ (int)(0x9e3779b9u * (unsigned)(k + 1));
+            const bool ih = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, ry, boxW, h);
+            if (ih) g_hot = iid;
+            if (g_active == iid) { if (g_released) { if (ih) { *current = k; changed = true; *open = false; } g_active = 0; } }
+            else if (ih && g_pressed) g_active = iid;
+            quad(x, ry, boxW, h, ih ? g_theme.bgHover : g_theme.panel);
+            drawText(x + 6.0f, ry + (h - textH()) * 0.5f, items[k], s, g_theme.text);
+        }
+        g_toOverlay = false;
+        // A press outside both the box and the list closes the dropdown.
+        const bool inList = pointIn(g_in.mouseX, g_in.mouseY, x, listY, boxW, (float)count * h);
+        if (g_pressed && !insideBox && !inList) *open = false;
+    }
+    return changed;
 }
 
 } // namespace OkayUI

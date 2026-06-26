@@ -12631,24 +12631,27 @@ int main(int argc, char** argv) {
             uin.backspace = g_okayUIBack;
             static bool  s_sound  = true;
             static float s_volume = 60.0f;
-            static int   s_mode   = 0;
+            static int   s_mode   = 0, s_quality = 1;
             static char  s_name[16] = "Player1";
-            float wy = io.DisplaySize.y - 400.0f; if (wy < 40.0f) wy = 40.0f;
+            static const char* s_qualOpts[] = {"Low", "Medium", "High"};
+            float wy = io.DisplaySize.y - 420.0f; if (wy < 40.0f) wy = 40.0f;
             // Written as a sequence of auto-layout calls — no manual coordinates. The
             // window is draggable by its title bar.
             OkayUI::BeginFrame(uin);
-            OkayUI::Begin("OkayUI Demo", 24.0f, wy, 320.0f, 360.0f);
+            OkayUI::Begin("OkayUI Demo", 24.0f, wy, 320.0f, 380.0f);
             OkayUI::Text("Drag me by the title bar");
             OkayUI::Separator();
             OkayUI::InputText("Name", s_name, (int)sizeof(s_name));
+            OkayUI::Combo("Quality", s_qualOpts, 3, &s_quality);
             OkayUI::RadioButton("Easy", &s_mode, 0);
             OkayUI::SameLine();
             OkayUI::RadioButton("Hard", &s_mode, 1);
             OkayUI::SliderFloat("Volume", &s_volume, 0.0f, 100.0f);
             OkayUI::Checkbox("Sound", &s_sound);
-            OkayUI::Separator();
-            OkayUI::Text("Health"); OkayUI::ProgressBar(0.8f);
-            OkayUI::Text("Hunger"); OkayUI::ProgressBar(0.35f);
+            if (OkayUI::CollapsingHeader("Stats")) {
+                OkayUI::Text("Health"); OkayUI::ProgressBar(0.8f);
+                OkayUI::Text("Hunger"); OkayUI::ProgressBar(0.35f);
+            }
             OkayUI::Spacing();
             if (OkayUI::Button("Play"))
                 ConsoleLog("OkayUI: Play clicked (drawn on top of ImGui via SDL_Renderer).");

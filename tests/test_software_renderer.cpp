@@ -95,5 +95,29 @@ int main() {
         CHECK(bFog > bNo);
     }
 
+    // --- Watertight: a quad split into two triangles sharing a diagonal must have
+    //     NO crack (every interior pixel covered) and the top-left fill rule means no
+    //     pixel is owned by both triangles (no overlap z-fight shimmer). ---
+    {
+        Raster r; r.Resize(32, 32);
+        r.Clear(0xFF000000u);                       // black background
+        std::uint32_t white = 0xFFFFFFFFu;
+        // Quad corners (4..28). Two triangles share the diagonal (4,4)-(28,28).
+        r.Triangle(4, 4, 1.0f,  28, 4, 1.0f,  28, 28, 1.0f, white);  // upper-right
+        r.Triangle(4, 4, 1.0f,  28, 28, 1.0f, 4, 28, 1.0f, white);   // lower-left
+        // Every pixel well inside the quad must be filled — no dashed crack on the
+        // shared diagonal.
+        int gaps = 0;
+        for (int y = 6; y <= 26; ++y)
+            for (int x = 6; x <= 26; ++x)
+                if (r.Get(x, y) != white) ++gaps;
+        CHECK(gaps == 0);
+
+        // The diagonal pixels themselves are covered (the shared edge isn't dropped).
+        CHECK(r.Get(16, 16) == white);
+        CHECK(r.Get(10, 10) == white);
+        CHECK(r.Get(22, 22) == white);
+    }
+
     TEST_MAIN_RESULT();
 }

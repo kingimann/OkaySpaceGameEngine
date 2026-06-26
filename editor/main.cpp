@@ -6673,26 +6673,31 @@ void DrawInspector(EditorState& ed) {
                 "Pick a value just above the layer of whatever you want to cover.");
         int defLayer = UIDefaultLayer(go);
         if (defLayer >= 0) { ImGui::SameLine(); ImGui::TextDisabled("(default %d)", defLayer); }
+        // Anchor/fill reference rect: a UI child anchors WITHIN its parent (Unity-
+        // style, matching the renderer), so use the parent's size when there is one;
+        // otherwise the whole canvas.
+        GameObject* uiParent = OwningUIParent(go);
+        float refW, refH; bool hasParent = false;
+        if (uiParent) { UIRect pr = GetUIRect(uiParent); if (pr.valid) { refW = pr.size.x; refH = pr.size.y; hasParent = true; } }
+        if (!hasParent) { refW = UICanvas::Width(); refH = UICanvas::Height(); }
         ImGui::SameLine();
-        if (ImGui::Button("Center in Canvas")) {
+        if (ImGui::Button(hasParent ? "Center in Parent" : "Center in Canvas")) {
             UIRect r = GetUIRect(go);
             if (r.position) {
-                // Center the resolved rect on the canvas for the widget's anchor.
-                float cw = UICanvas::Width(), ch = UICanvas::Height();
-                Vec2 term = ResolveAnchor(r.anchor, Vec2{0, 0}, r.size, cw, ch);
-                r.position->x = (cw - r.size.x) * 0.5f - term.x;
-                r.position->y = (ch - r.size.y) * 0.5f - term.y;
+                // Center the resolved rect within the reference (parent or canvas).
+                Vec2 term = ResolveAnchor(r.anchor, Vec2{0, 0}, r.size, refW, refH);
+                r.position->x = (refW - r.size.x) * 0.5f - term.x;
+                r.position->y = (refH - r.size.y) * 0.5f - term.y;
                 ed.dirty = true;
             }
         }
         // Anchor presets (Unity's 3x3): pick a corner/edge/center; the widget
         // keeps its on-screen position (its offset is recomputed for the new
-        // anchor) so re-anchoring never makes it jump.
+        // anchor) so re-anchoring never makes it jump. Resolved against the parent.
         UIRect ar = GetUIRect(go);
         if (ar.anchorPtr && ar.position) {
-            ImGui::TextDisabled("Anchor preset:");
-            float cw = UICanvas::Width(), ch = UICanvas::Height();
-            Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, cw, ch);
+            ImGui::TextDisabled(hasParent ? "Anchor preset (within parent):" : "Anchor preset:");
+            Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, refW, refH);
             for (int row = 0; row < 3; ++row) {
                 for (int col = 0; col < 3; ++col) {
                     if (col) ImGui::SameLine();
@@ -6702,7 +6707,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PushID(row * 3 + col);
                     if (ImGui::Button("##anc", ImVec2(20, 18))) {
                         *ar.anchorPtr = cand;       // preserve on-screen position
-                        Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, cw, ch);
+                        Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, refW, refH);
                         ar.position->x = resolved.x - term.x;
                         ar.position->y = resolved.y - term.y;
                         ed.dirty = true;
@@ -6712,13 +6717,12 @@ void DrawInspector(EditorState& ed) {
                 }
             }
         }
-        // Stretch helpers for resizable widgets: fill the canvas on an axis.
+        // Stretch helpers for resizable widgets: fill the parent (or canvas) on an axis.
         if (ar.sizePtr && ar.position) {
-            float cw = UICanvas::Width(), ch = UICanvas::Height();
             auto fill = [&](bool x, bool y) {
-                if (x) ar.sizePtr->x = cw;
-                if (y) ar.sizePtr->y = ch;
-                Vec2 term = ResolveAnchor(*ar.anchorPtr, Vec2{0, 0}, *ar.sizePtr, cw, ch);
+                if (x) ar.sizePtr->x = refW;
+                if (y) ar.sizePtr->y = refH;
+                Vec2 term = ResolveAnchor(*ar.anchorPtr, Vec2{0, 0}, *ar.sizePtr, refW, refH);
                 if (x) ar.position->x = -term.x;   // resolved left -> 0
                 if (y) ar.position->y = -term.y;   // resolved top  -> 0
                 ed.dirty = true;
@@ -6727,7 +6731,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Fill Height")) fill(false, true);
             ImGui::SameLine();
-            if (ImGui::Button("Fill Canvas")) fill(true, true);
+            if (ImGui::Button(hasParent ? "Fill Parent" : "Fill Canvas")) fill(true, true);
         }
         ImGui::Spacing();
     }

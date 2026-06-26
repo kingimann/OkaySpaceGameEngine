@@ -315,6 +315,28 @@ void EditorState::NewTopDown() {
     dirty = false;
 }
 
+void EditorState::NewVehicle3D() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Vehicle3D(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 1, 0};
+    camDist = 12.0f;
+    m_selected = m_scene.Find("Car");
+    dirty = false;
+}
+
+void EditorState::NewVehicle2D() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::Vehicle2D(m_scene);
+    m_suppressUndo = false;
+    view3D = false;
+    m_selected = m_scene.Find("Car");
+    dirty = false;
+}
+
 void EditorState::NewCoinCollector() {
     NewScene();
     m_suppressUndo = true;

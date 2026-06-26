@@ -11,6 +11,8 @@
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
+#include "okay/Components/Minimap.hpp"
+#include "okay/Components/Crosshair.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITabs.hpp"
@@ -78,6 +80,7 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* tg = go->GetComponent<UIToggle>())     { r.valid = true; r.anchor = tg->anchor; r.anchorPtr = &tg->anchor; r.position = &tg->position; r.sizePtr = &tg->size; r.size = tg->size; }
     else if (auto* pb = go->GetComponent<UIProgressBar>()){ r.valid = true; r.anchor = pb->anchor; r.anchorPtr = &pb->anchor; r.position = &pb->position; r.sizePtr = &pb->size; r.size = pb->size; }
     else if (auto* rp = go->GetComponent<UIRadialProgress>()){ r.valid = true; r.anchor = rp->anchor; r.anchorPtr = &rp->anchor; r.position = &rp->position; r.sizePtr = &rp->size; r.size = rp->size; }
+    else if (auto* mm = go->GetComponent<Minimap>())     { r.valid = true; r.anchor = mm->anchor; r.anchorPtr = &mm->anchor; r.position = &mm->position; r.sizePtr = &mm->size; r.size = mm->size; }
     else if (auto* in = go->GetComponent<UIInputField>()) { r.valid = true; r.anchor = in->anchor; r.anchorPtr = &in->anchor; r.position = &in->position; r.sizePtr = &in->size; r.size = in->size; }
     else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.anchorPtr = &dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
     else if (auto* tb = go->GetComponent<UITabs>())       { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
@@ -87,6 +90,7 @@ inline UIRect GetUIRect(GameObject* go) {
         float ext = lg->ContentSize() > 24.0f ? lg->ContentSize() : 24.0f;
         r.size = (lg->direction == UILayoutGroup::Direction::Vertical) ? Vec2{160.0f, ext} : Vec2{ext, 40.0f};
     }
+    else if (auto* ch = go->GetComponent<Crosshair>())   { r.valid = true; r.anchor = ch->anchor; r.anchorPtr = &ch->anchor; r.position = &ch->position; r.sizePtr = &ch->size; r.size = ch->size; }
     else if (auto* tr = go->GetComponent<TextRenderer>()) {
         if (tr->screenSpace) {
             r.valid = true; r.anchor = tr->anchor; r.anchorPtr = &tr->anchor; r.position = &tr->screenPos;
@@ -352,6 +356,7 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UIDropTarget>())     return 0;   // slot background
     if (go->GetComponent<UIImage>())          return 1;
     if (go->GetComponent<UIPanel>())          return 2;
+    if (go->GetComponent<Minimap>())          return 3;
     if (go->GetComponent<UIScrollView>())     return 4;
     if (go->GetComponent<UIProgressBar>())    return 5;
     if (go->GetComponent<UIRadialProgress>()) return 6;
@@ -364,6 +369,7 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<WorldUI>())          return 14;
     if (go->GetComponent<UIDropdown>())       return 15;
     if (go->GetComponent<UIInputField>())     return 16;
+    if (go->GetComponent<Crosshair>())        return 17;
     if (go->GetComponent<UITooltip>())        return 18;
     if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? 13 : -1;
     return -1;

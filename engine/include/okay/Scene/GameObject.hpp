@@ -51,6 +51,15 @@ public:
     template <typename T>
     void CollectComponents(std::vector<T*>& out) const;
 
+    /// Iterate the attached components in their stored order.
+    const std::vector<std::unique_ptr<Component>>& Components() const { return m_components; }
+
+    /// Move `component` by `delta` positions within the stored order. Transform
+    /// is pinned to index 0: the valid target range is [1, size-1], so neither the
+    /// Transform itself nor any other component can be moved to index 0. Out-of-range
+    /// moves or an unknown component are no-ops.
+    void MoveComponent(Component* component, int delta);
+
     /// Remove a specific component (Transform cannot be removed). Returns true
     /// if it was found and removed.
     bool RemoveComponent(Component* component);

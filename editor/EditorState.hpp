@@ -44,6 +44,8 @@ public:
     void NewPointAndClick();
     void NewMultiplayer();
     void NewTopDown();
+    void NewVehicle3D();
+    void NewVehicle2D();
     void NewCoinCollector();
     void NewMainMenu();
     void NewSnake();

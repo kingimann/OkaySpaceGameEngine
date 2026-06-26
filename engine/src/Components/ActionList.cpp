@@ -8,6 +8,8 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/NativeUIActions.hpp"   // InvokeNativeUIAction (survival verbs)
+#include "okay/Components/Consumables.hpp"       // UseIndex
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Render/Lighting.hpp"
@@ -170,10 +172,13 @@ bool ActionList::EvalConditions() {
         else if (op == "var_neq")  ok = !Mathf::Approximately(Vars()[Str(c, 0)], Num(c, 1));
         else if (op == "var_gt")   ok = Vars()[Str(c, 0)] > Num(c, 1);
         else if (op == "var_lt")   ok = Vars()[Str(c, 0)] < Num(c, 1);
+        else if (op == "var_ge")   ok = Vars()[Str(c, 0)] >= Num(c, 1);
+        else if (op == "var_le")   ok = Vars()[Str(c, 0)] <= Num(c, 1);
         else if (op == "key_up")   ok = !Str(c, 0).empty() && Input::GetKeyUp(Str(c, 0)[0]);
         else if (op == "mouse_down") ok = Input::GetMouseButtonDown((int)Num(c, 0));
         else if (op == "prefs_eq") ok = Mathf::Approximately(Prefs::GetFloat(Str(c, 0), 0.0f), Num(c, 1));
         else if (op == "prefs_gt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) > Num(c, 1);
+        else if (op == "prefs_lt") ok = Prefs::GetFloat(Str(c, 0), 0.0f) < Num(c, 1);
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "dist_lt")  { float d; ok = distTo(Str(c, 0), d) && d < Num(c, 1); }
@@ -279,7 +284,11 @@ void ActionList::Update(float dt) {
         else if (op == "set_var") { Vars()[Str(it, 0)] = Num(it, 1); }
         else if (op == "add_var") { Vars()[Str(it, 0)] += Num(it, 1); }
         else if (op == "set_active") {
-            if (gameObject) gameObject->active = Num(it, 0) != 0.0f;
+            // set_active <1|0> [object] — no name => this object; a name => that one.
+            bool on = Num(it, 0) != 0.0f;
+            const std::string& name = Str(it, 1);
+            if (!name.empty()) { if (scene) if (GameObject* g = scene->Find(name)) g->active = on; }
+            else if (gameObject) gameObject->active = on;
         }
         else if (op == "set_color") {
             Color col{Num(it, 0), Num(it, 1), Num(it, 2), it.args.size() > 3 ? Num(it, 3) : 1.0f};
@@ -453,6 +462,43 @@ void ActionList::Update(float dt) {
                       : (cmp == "ge")  ? (lhs >= rhs)
                       : (cmp == "le")  ? (lhs <= rhs) : false;
             if (pass && line >= 0 && line < (int)instructions.size()) m_ip = (std::size_t)line;
+        }
+        // ---- More general instructions ----
+        else if (op == "toggle_active") { if (gameObject) gameObject->active = !gameObject->active; }
+        else if (op == "clamp_var") { float& v = Vars()[Str(it, 0)]; v = Mathf::Clamp(v, Num(it, 1), Num(it, 2)); }
+        else if (op == "lerp_var") {                  // step a variable toward a target each run
+            float& v = Vars()[Str(it, 0)]; float tg = Num(it, 1), st = Num(it, 2);
+            v = (v < tg) ? Mathf::Min(tg, v + st) : Mathf::Max(tg, v - st);
+        }
+        else if (op == "add_var_var") { Vars()[Str(it, 0)] += Vars()[Str(it, 1)]; }
+        else if (op == "spawn_at") {                   // spawn a prefab at a named object's position
+            if (scene) {
+                GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
+                if (g && g->transform) if (GameObject* at = scene->Find(Str(it, 1)))
+                    if (at->transform) g->transform->SetPosition(at->transform->Position());
+            }
+        }
+        else if (op == "set_parent") {                 // parent this object under a named object
+            if (t && scene) if (GameObject* g = scene->Find(Str(it, 0)))
+                if (g->transform) t->SetParent(g->transform);
+        }
+        else if (op == "unparent") { if (t) t->SetParent(nullptr); }
+        else if (op == "pause")  { Time::SetTimeScale(0.0f); }
+        else if (op == "resume") { Time::SetTimeScale(1.0f); }
+        // ---- Survival kit: drive the native survival components ----
+        else if (op == "heal")   { InvokeNativeUIAction(gameObject, "Heal",   Num(it, 0)); }
+        else if (op == "hurt")   { InvokeNativeUIAction(gameObject, "Damage", Num(it, 0)); }
+        else if (op == "eat")    { InvokeNativeUIAction(gameObject, "Eat",    Num(it, 0)); }
+        else if (op == "drink")  { InvokeNativeUIAction(gameObject, "Drink",  Num(it, 0)); }
+        else if (op == "craft")  { InvokeNativeUIAction(gameObject, "Craft",  Num(it, 0)); }
+        else if (op == "survival") { InvokeNativeUIAction(gameObject, Str(it, 0), Num(it, 1)); }
+        else if (op == "survival_on") {
+            if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
+                InvokeNativeUIAction(g, Str(it, 1), Num(it, 2));
+        }
+        else if (op == "use_item") {
+            if (gameObject) if (auto* cons = gameObject->GetComponent<Consumables>())
+                cons->UseIndex((int)Num(it, 0));
         }
         // unknown ops are ignored, so files stay forward-compatible
     }

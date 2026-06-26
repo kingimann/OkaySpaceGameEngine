@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.196.0
+    VERSION 2.200.0
     DESCRIPTION "A Unity-inspired C++ game engine"
     LANGUAGES CXX)
 
@@ -109,10 +109,6 @@ endif()
 # ---- Reference relay (NAT traversal) ---------------------------------
 # A tiny console UDP forwarder; no graphics deps, always built.
 add_subdirectory(relay)
-
-# ---- OkaySurvival sample game generator ------------------------------
-# Builds game.okayscene + game.okayconfig for the standalone survival game.
-add_subdirectory(game)
 
 # ---- Tests ------------------------------------------------------------
 if(OKAY_BUILD_TESTS)

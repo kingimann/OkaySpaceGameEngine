@@ -74,6 +74,8 @@
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
+#include "okay/Components/Minimap.hpp"
+#include "okay/Components/Crosshair.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIRating.hpp"
@@ -179,10 +181,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     // geometry for it — the component below rebuilds it on load.
     if (auto* mr = go->GetComponent<MeshRenderer>();
         mr && !go->GetComponent<Terrain>() && !go->GetComponent<Character>()) {
-        out << "  mesh " << Quote(mr->mesh.name.empty() ? "Cube" : mr->mesh.name) << " "
+        out << "  mesh " << Quote(mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
             << Quote(mr->meshPath) << " " << (mr->doubleSided ? 1 : 0) << "\n";
+        // Persist edited/custom geometry: a mesh with no primitive name and no
+        // .OBJ path is hand-edited, so its vertices/triangles can't be regenerated
+        // from a name — write them verbatim. This record follows the `mesh` line
+        // and overwrites the placeholder geometry on load.
+        if (mr->mesh.name.empty() && mr->meshPath.empty() && !mr->mesh.vertices.empty()) {
+            out << "  meshgeo " << mr->mesh.vertices.size();
+            for (const Vec3& v : mr->mesh.vertices)
+                out << " " << v.x << " " << v.y << " " << v.z;
+            out << " " << mr->mesh.triangles.size();
+            for (int t : mr->mesh.triangles) out << " " << t;
+            out << "\n";
+        }
         // Material (emissive rgb, specular, shininess, unlit) — separate record
         // so older scenes without it still load.
         out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
@@ -287,7 +301,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* vsc = go->GetComponent<VisualScriptComponent>()) {
         out << "  visualscript " << Quote(vsc->Source()) << "\n";
     }
-    if (auto* al = go->GetComponent<ActionList>()) {
+    for (auto* al : go->GetComponents<ActionList>()) {
         out << "  actions " << Quote(al->ToText()) << "\n";
     }
     if (auto* mv = go->GetComponent<Mover>()) {
@@ -333,43 +347,72 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sv->oxygenDrain << " " << sv->oxygenRefill << " " << sv->drownDamage << " "
             << sv->maxWarmth << " " << sv->coldDrain << " " << sv->warmRegen << " "
             << sv->freezeDamage << " " << (sv->publishPrefs ? 1 : 0) << " "
-            << (sv->publishBars ? 1 : 0) << " " << (sv->sendMessages ? 1 : 0) << "\n";
+            << (sv->publishBars ? 1 : 0) << " " << (sv->sendMessages ? 1 : 0)
+            << " " << sv->resistance << " " << (sv->godMode ? 1 : 0) << " " << sv->invincibleTime << "\n";
     }
     auto statTail = [](std::ostream& o, StatComponent* c) {
         o << " " << (c->publishPrefs ? 1 : 0) << " " << (c->publishBar ? 1 : 0)
           << " " << (c->sendMessages ? 1 : 0) << "\n";
     };
+    // The 3 shared toggles without the trailing newline, so extra fields can follow.
+    auto statToggles = [](std::ostream& o, StatComponent* c) {
+        o << " " << (c->publishPrefs ? 1 : 0) << " " << (c->publishBar ? 1 : 0)
+          << " " << (c->sendMessages ? 1 : 0);
+    };
     if (auto* c = go->GetComponent<HealthStat>()) {
         out << "  stat_health " << c->maxHealth << " " << c->armor << " " << c->regenPerSecond
-            << " " << c->regenDelay << " " << c->lowThreshold; statTail(out, c);
+            << " " << c->regenDelay << " " << c->lowThreshold;
+        statToggles(out, c);
+        out << " " << c->resistance << " " << c->minDamage << " " << (c->godMode ? 1 : 0)
+            << " " << c->invincibleTime << " " << c->overhealMax << " " << c->overhealDecay
+            << " " << (c->destroyOnDeath ? 1 : 0) << " " << (c->respawn ? 1 : 0)
+            << " " << c->respawnDelay << " " << c->lives << "\n";
     }
     if (auto* c = go->GetComponent<HungerStat>()) {
         out << "  stat_hunger " << c->maxHunger << " " << c->drainPerSecond << " "
-            << c->sprintMultiplier << " " << c->lowThreshold; statTail(out, c);
+            << c->sprintMultiplier << " " << c->lowThreshold;
+        statToggles(out, c);
+        out << " " << c->starveDamage << " " << c->overeatMax << " " << (c->slowWhenStarving ? 1 : 0)
+            << " " << c->minSpeedFactor << "\n";
     }
     if (auto* c = go->GetComponent<ThirstStat>()) {
         out << "  stat_thirst " << c->maxThirst << " " << c->drainPerSecond << " "
-            << c->sprintMultiplier << " " << c->lowThreshold; statTail(out, c);
+            << c->sprintMultiplier << " " << c->lowThreshold;
+        statToggles(out, c);
+        out << " " << c->dehydrateDamage << " " << c->overdrinkMax << " "
+            << (c->slowWhenDehydrated ? 1 : 0) << " " << c->minSpeedFactor << "\n";
     }
     if (auto* c = go->GetComponent<StaminaStat>()) {
         out << "  stat_stamina " << c->maxStamina << " " << c->regenPerSecond << " " << c->regenDelay
-            << " " << c->sprintCost << " " << c->jumpCost << " " << c->exhaustedUntil; statTail(out, c);
+            << " " << c->sprintCost << " " << c->jumpCost << " " << c->exhaustedUntil;
+        statToggles(out, c);
+        out << " " << c->lowThreshold << " " << (c->slowWhenExhausted ? 1 : 0) << " "
+            << c->minSpeedFactor << " " << c->regenScale << "\n";
     }
     if (auto* c = go->GetComponent<OxygenStat>()) {
         out << "  stat_oxygen " << c->maxOxygen << " " << c->drainPerSecond << " "
-            << c->refillPerSecond; statTail(out, c);
+            << c->refillPerSecond;
+        statToggles(out, c);
+        out << " " << c->lowThreshold << " " << c->drownDamage << "\n";
     }
     if (auto* c = go->GetComponent<TemperatureStat>()) {
         out << "  stat_temp " << c->maxWarmth << " " << c->coldDrain << " "
-            << c->warmRegen; statTail(out, c);
+            << c->warmRegen;
+        statToggles(out, c);
+        out << " " << c->lowThreshold << " " << c->freezeDamage << "\n";
     }
     if (auto* c = go->GetComponent<SleepStat>()) {
         out << "  stat_sleep " << c->maxEnergy << " " << c->drainPerSecond << " "
-            << c->restPerSecond << " " << c->tiredThreshold; statTail(out, c);
+            << c->restPerSecond << " " << c->tiredThreshold;
+        statToggles(out, c);
+        out << " " << c->exhaustDamage << " " << (c->slowWhenTired ? 1 : 0) << " "
+            << c->minSpeedFactor << "\n";
     }
     if (auto* c = go->GetComponent<SanityStat>()) {
         out << "  stat_sanity " << c->maxSanity << " " << c->drainInDark << " "
-            << c->regenInLight << " " << c->lowThreshold; statTail(out, c);
+            << c->regenInLight << " " << c->lowThreshold;
+        statToggles(out, c);
+        out << " " << c->insaneDamage << "\n";
     }
     if (auto* c = go->GetComponent<RadiationStat>()) {
         out << "  stat_radiation " << c->maxRadiation << " " << c->gainPerSecond << " "
@@ -735,6 +778,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (int)tb->shape << " " << tb->cornerRadius << " " << (tb->interactable ? 1 : 0) << " "
             << tb->tabs.size();
         for (const auto& t : tb->tabs) out << " " << Quote(t);
+        // Extended (back-compatible trailing): content page name per tab.
+        out << " " << tb->pages.size();
+        for (const auto& p : tb->pages) out << " " << Quote(p);
         out << "\n";
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
@@ -835,6 +881,31 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)rp->anchor << " " << (rp->showPercent ? 1 : 0) << " "
             << rp->textColor.r << " " << rp->textColor.g << " " << rp->textColor.b << " " << rp->textColor.a
             << " " << (rp->spin ? 1 : 0) << " " << rp->spinSpeed << "\n";   // extended (back-compatible)
+    }
+    if (auto* mm = go->GetComponent<Minimap>()) {
+        out << "  minimap " << mm->position.x << " " << mm->position.y << " "
+            << mm->size.x << " " << mm->size.y << " "
+            << mm->background.r << " " << mm->background.g << " " << mm->background.b << " " << mm->background.a << " "
+            << mm->border.r << " " << mm->border.g << " " << mm->border.b << " " << mm->border.a << " "
+            << mm->borderWidth << " " << Quote(mm->target) << " "
+            << mm->targetColor.r << " " << mm->targetColor.g << " " << mm->targetColor.b << " " << mm->targetColor.a << " "
+            << mm->worldPerPixel << " " << (mm->useXZ ? 1 : 0) << " " << mm->blipSize
+            << " " << (int)mm->anchor << "\n";
+    }
+    if (auto* bl = go->GetComponent<MinimapBlip>()) {
+        out << "  minimapblip " << bl->color.r << " " << bl->color.g << " " << bl->color.b << " " << bl->color.a << " "
+            << bl->size << " " << (bl->square ? 1 : 0) << "\n";
+    }
+    if (auto* cr = go->GetComponent<Crosshair>()) {
+        out << "  crosshair " << cr->position.x << " " << cr->position.y << " "
+            << cr->size.x << " " << cr->size.y << " "
+            << cr->color.r << " " << cr->color.g << " " << cr->color.b << " " << cr->color.a << " "
+            << cr->thickness << " " << cr->gap << " " << cr->length << " "
+            << (cr->showLines ? 1 : 0) << " " << (cr->dot ? 1 : 0) << " " << cr->dotSize << " "
+            << cr->dotColor.r << " " << cr->dotColor.g << " " << cr->dotColor.b << " " << cr->dotColor.a << " "
+            << (cr->outline ? 1 : 0) << " "
+            << cr->outlineColor.r << " " << cr->outlineColor.g << " " << cr->outlineColor.b << " " << cr->outlineColor.a
+            << " " << (int)cr->anchor << "\n";
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -1076,6 +1147,27 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     in >> std::ws; // optional double-sided flag
                     if (std::isdigit(in.peek())) { int ds = 0; in >> ds; mr->doubleSided = (ds != 0); }
+                } else if (field == "meshgeo") {
+                    // Custom/edited geometry written by the `meshgeo` record. It
+                    // overrides the placeholder geometry the preceding `mesh` line
+                    // built from a (now-empty) name. Operate on the existing
+                    // MeshRenderer (add one if somehow absent).
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int vcount = 0; in >> vcount;
+                    mr->mesh.vertices.clear();
+                    mr->mesh.vertices.reserve(vcount > 0 ? vcount : 0);
+                    for (int i = 0; i < vcount; ++i) {
+                        Vec3 v; in >> v.x >> v.y >> v.z; mr->mesh.vertices.push_back(v);
+                    }
+                    int icount = 0; in >> icount;
+                    mr->mesh.triangles.clear();
+                    mr->mesh.triangles.reserve(icount > 0 ? icount : 0);
+                    for (int i = 0; i < icount; ++i) { int idx = 0; in >> idx; mr->mesh.triangles.push_back(idx); }
+                    mr->mesh.name = "";
+                    mr->mesh.uvs.clear();
+                    mr->mesh.triColors.clear();
+                    mr->mesh.ComputeSmoothNormals();
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         Color e; float spec = 0, shin = 16; int unlit = 0;
@@ -1337,39 +1429,79 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> sv->maxWarmth >> sv->coldDrain >> sv->warmRegen >> sv->freezeDamage;
                     int pp = 1, pb = 1, sm = 1; in >> pp >> pb >> sm;
                     sv->publishPrefs = (pp != 0); sv->publishBars = (pb != 0); sv->sendMessages = (sm != 0);
+                    in >> std::ws;   // optional mitigation fields (added later)
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
+                        int gd = 0; in >> sv->resistance >> gd >> sv->invincibleTime; sv->godMode = (gd != 0);
+                    }
                 } else if (field == "stat_health") {
                     auto* c = go->AddComponent<HealthStat>();
                     in >> c->maxHealth >> c->armor >> c->regenPerSecond >> c->regenDelay >> c->lowThreshold;
                     ReadStatTail(in, c);
+                    in >> std::ws;   // optional mitigation / overheal / respawn fields (added later)
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
+                        int gd = 0, dod = 0, rs = 0;
+                        in >> c->resistance >> c->minDamage >> gd >> c->invincibleTime
+                           >> c->overhealMax >> c->overhealDecay >> dod >> rs >> c->respawnDelay >> c->lives;
+                        c->godMode = (gd != 0); c->destroyOnDeath = (dod != 0); c->respawn = (rs != 0);
+                    }
                 } else if (field == "stat_hunger") {
                     auto* c = go->AddComponent<HungerStat>();
                     in >> c->maxHunger >> c->drainPerSecond >> c->sprintMultiplier >> c->lowThreshold;
                     ReadStatTail(in, c);
+                    in >> std::ws;   // optional starve/overeat/slow fields (added later)
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
+                        int sl = 0; in >> c->starveDamage >> c->overeatMax >> sl >> c->minSpeedFactor;
+                        c->slowWhenStarving = (sl != 0);
+                    }
                 } else if (field == "stat_thirst") {
                     auto* c = go->AddComponent<ThirstStat>();
                     in >> c->maxThirst >> c->drainPerSecond >> c->sprintMultiplier >> c->lowThreshold;
                     ReadStatTail(in, c);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
+                        int sl = 0; in >> c->dehydrateDamage >> c->overdrinkMax >> sl >> c->minSpeedFactor;
+                        c->slowWhenDehydrated = (sl != 0);
+                    }
                 } else if (field == "stat_stamina") {
                     auto* c = go->AddComponent<StaminaStat>();
                     in >> c->maxStamina >> c->regenPerSecond >> c->regenDelay >> c->sprintCost
                        >> c->jumpCost >> c->exhaustedUntil;
                     ReadStatTail(in, c);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
+                        int sl = 0; in >> c->lowThreshold >> sl >> c->minSpeedFactor >> c->regenScale;
+                        c->slowWhenExhausted = (sl != 0);
+                    }
                 } else if (field == "stat_oxygen") {
                     auto* c = go->AddComponent<OxygenStat>();
                     in >> c->maxOxygen >> c->drainPerSecond >> c->refillPerSecond;
                     ReadStatTail(in, c);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-')
+                        in >> c->lowThreshold >> c->drownDamage;
                 } else if (field == "stat_temp") {
                     auto* c = go->AddComponent<TemperatureStat>();
                     in >> c->maxWarmth >> c->coldDrain >> c->warmRegen;
                     ReadStatTail(in, c);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-')
+                        in >> c->lowThreshold >> c->freezeDamage;
                 } else if (field == "stat_sleep") {
                     auto* c = go->AddComponent<SleepStat>();
                     in >> c->maxEnergy >> c->drainPerSecond >> c->restPerSecond >> c->tiredThreshold;
                     ReadStatTail(in, c);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
+                        int sl = 0; in >> c->exhaustDamage >> sl >> c->minSpeedFactor;
+                        c->slowWhenTired = (sl != 0);
+                    }
                 } else if (field == "stat_sanity") {
                     auto* c = go->AddComponent<SanityStat>();
                     in >> c->maxSanity >> c->drainInDark >> c->regenInLight >> c->lowThreshold;
                     ReadStatTail(in, c);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-')
+                        in >> c->insaneDamage;
                 } else if (field == "stat_radiation") {
                     auto* c = go->AddComponent<RadiationStat>();
                     in >> c->maxRadiation >> c->gainPerSecond >> c->decayPerSecond
@@ -1962,6 +2094,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tb->shape = (UIShape)sp; tb->interactable = (it != 0);
                     tb->tabs.clear();
                     for (std::size_t k = 0; k < count; ++k) tb->tabs.push_back(ReadQuoted(in));
+                    in >> std::ws;   // optional per-tab content pages (added later)
+                    if (std::isdigit(in.peek())) {
+                        std::size_t pc = 0; in >> pc;
+                        tb->pages.clear();
+                        for (std::size_t k = 0; k < pc; ++k) tb->pages.push_back(ReadQuoted(in));
+                    }
                 } else if (field == "uidropdown") {
                     auto* dd = go->AddComponent<UIDropdown>();
                     int an = 0; std::size_t count = 0;
@@ -2115,6 +2253,34 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rp->anchor = (UIAnchor)an; rp->showPercent = (sp != 0); rp->textColor = tc;
                     in >> std::ws; // optional spinner (added later)
                     if (std::isdigit(in.peek())) { int sn = 0; in >> sn >> rp->spinSpeed; rp->spin = (sn != 0); }
+                } else if (field == "minimap") {
+                    auto* mm = go->AddComponent<Minimap>();
+                    Color bg, bd, tc; int xz = 1, an = 0;
+                    in >> mm->position.x >> mm->position.y >> mm->size.x >> mm->size.y
+                       >> bg.r >> bg.g >> bg.b >> bg.a >> bd.r >> bd.g >> bd.b >> bd.a
+                       >> mm->borderWidth;
+                    mm->target = ReadQuoted(in);
+                    in >> tc.r >> tc.g >> tc.b >> tc.a
+                       >> mm->worldPerPixel >> xz >> mm->blipSize >> an;
+                    mm->background = bg; mm->border = bd; mm->targetColor = tc;
+                    mm->useXZ = (xz != 0); mm->anchor = (UIAnchor)an;
+                } else if (field == "minimapblip") {
+                    auto* bl = go->AddComponent<MinimapBlip>();
+                    Color c; int sq = 1;
+                    in >> c.r >> c.g >> c.b >> c.a >> bl->size >> sq;
+                    bl->color = c; bl->square = (sq != 0);
+                } else if (field == "crosshair") {
+                    auto* cr = go->AddComponent<Crosshair>();
+                    Color c, dc, oc; int sl = 1, dt = 0, ol = 1, an = 0;
+                    in >> cr->position.x >> cr->position.y >> cr->size.x >> cr->size.y
+                       >> c.r >> c.g >> c.b >> c.a
+                       >> cr->thickness >> cr->gap >> cr->length
+                       >> sl >> dt >> cr->dotSize
+                       >> dc.r >> dc.g >> dc.b >> dc.a
+                       >> ol >> oc.r >> oc.g >> oc.b >> oc.a >> an;
+                    cr->color = c; cr->dotColor = dc; cr->outlineColor = oc;
+                    cr->showLines = (sl != 0); cr->dot = (dt != 0); cr->outline = (ol != 0);
+                    cr->anchor = (UIAnchor)an;
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
                     Color c;

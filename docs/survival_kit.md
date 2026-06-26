@@ -47,6 +47,29 @@ Unlike the all-in-one, standalone stats **don't cross-talk** — an empty `Stat:
 Hunger` won't drain `Stat: Health`. Use **Survival Stats** when you want hunger/
 thirst to damage health.
 
+### Health & Hunger — deeper options
+
+**Stat: Health** is highly tunable beyond max/armor/regen:
+- *Mitigation*: `resistance` (0–1 of post-armor damage ignored), `minDamage` (a hit
+  always stings at least this much), `invincibleTime` (i-frames after a hit), and a
+  `godMode` toggle. `Damage()` runs armor → resistance → min-damage floor.
+- *Overheal*: `Heal` can stack up to `overhealMax` above max, bleeding off at
+  `overhealDecay`/s (shields/buffs).
+- *Death / respawn*: `destroyOnDeath`, or `respawn` after `respawnDelay` (back at the
+  spawn point) with a `lives` cap (0 = unlimited). Broadcasts `respawned`.
+
+**Stat: Hunger** can do more than drain:
+- `starveDamage` — while empty, drains a sibling **Stat: Health** directly (so even
+  standalone hunger can kill).
+- `overeatMax` — `Eat` may stack past full into a saturation buffer that bleeds off.
+- `slowWhenStarving` + `minSpeedFactor` — exposes `SpeedFactor()` (1 fed → min when
+  empty) for a movement controller to multiply in.
+- `SetDrainScale(x)` — runtime multiplier so the world can speed hunger up (cold,
+  exertion).
+
+The all-in-one **Survival Stats** mirrors `resistance`, `godMode`, and
+`invincibleTime` on its health.
+
 ## Afflictions (damage-over-time effects)
 
 *Add Component ▸ Gameplay ▸ Stat: Radiation / Bleeding / Poison / Wetness*. These are
@@ -123,6 +146,22 @@ Two ways it fires:
   Dropped Item*) the world item is removed. So dragging a berry onto the player eats
   it, a water bottle drinks it, a medkit heals — straight out of the existing
   Draggable/DropZone system.
+
+## Visual scripting (Action Lists)
+
+The kit is driveable from the node/visual-scripting **Action List** with no code — a
+**Survival** category of instructions:
+
+- **Heal / Damage / Eat / Drink** `amount` — act on this object's survival stats.
+- **Survival Action** `verb amount` — call any native verb (`Heal`, `Wound`, `Poison`,
+  `Breathe`, `Warm`, `TakeAntiRad`, `SetSprinting`, …) on this object.
+- **Survival On Object** `target verb amount` — same, on a named object (a trap that
+  damages the `Player`, a shrine that heals).
+- **Use Item** / **Craft** `index` — use a Consumables / craft a Crafting recipe.
+
+To branch on a stat, stats publish their value to a saved value (`health`, `hunger`,
+…), so the **Saved Value Is Below / Above** conditions (`prefs_lt` / `prefs_gt`) read
+them directly — e.g. *if `health` < 20 → show a warning*.
 
 ## Making it show up (it's wired for you)
 

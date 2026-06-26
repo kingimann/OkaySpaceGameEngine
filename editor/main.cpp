@@ -974,6 +974,33 @@ const char* StarterScript(const std::string& lang) {
            "}\n";
 }
 
+// A filename stem -> a valid class identifier (letters/digits/_, no leading digit).
+inline std::string ClassIdent(const std::string& stem) {
+    std::string id;
+    for (char c : stem) id += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+    if (id.empty()) return "NewScript";
+    if (std::isdigit((unsigned char)id[0])) id = "_" + id;
+    return id;
+}
+
+// Rewrite the first `class <X>` in OkayScript/C# source to `newName` (Unity-style:
+// the class follows the file name). Returns the source unchanged if it has no class.
+inline std::string RenameScriptClass(const std::string& src, const std::string& newName) {
+    auto p = src.find("class ");
+    if (p == std::string::npos) return src;
+    std::size_t s = p + 6;
+    while (s < src.size() && std::isspace((unsigned char)src[s])) ++s;
+    std::size_t e = s;
+    while (e < src.size() && (std::isalnum((unsigned char)src[e]) || src[e] == '_')) ++e;
+    if (e == s) return src;
+    return src.substr(0, s) + newName + src.substr(e);
+}
+
+// A starter script whose class name matches the given file stem.
+inline std::string StarterScriptNamed(const std::string& lang, const std::string& stem) {
+    return RenameScriptClass(StarterScript(lang), ClassIdent(stem));
+}
+
 } // namespace extide
 
 // ---- Build Game: export the current scene as a standalone runnable game ----
@@ -2439,6 +2466,18 @@ void DrawProject(EditorState& ed) {
             fs::path src(renameTarget), dst = fs::path(renameTarget).parent_path() / renameBuf;
             std::error_code re; fs::rename(src, dst, re);
             ConsoleLog((re ? "Rename failed: " : "Renamed to ") + dst.string());
+            // Unity-style: when a script asset is renamed, rename its class to match.
+            if (!re) {
+                std::string ext = Lower(dst.extension().string());
+                if (ext == ".okay" || ext == ".cs") {
+                    std::ifstream in(dst, std::ios::binary);
+                    if (in) {
+                        std::string srcTxt((std::istreambuf_iterator<char>(in)), {}); in.close();
+                        std::string out = extide::RenameScriptClass(srcTxt, extide::ClassIdent(dst.stem().string()));
+                        if (out != srcTxt) { std::ofstream(dst, std::ios::binary) << out; ConsoleLog("Renamed class to " + extide::ClassIdent(dst.stem().string())); }
+                    }
+                }
+            }
             if (selected == renameTarget) selected = dst.string();
             renameTarget.clear(); ImGui::CloseCurrentPopup();
         } else if (cancel) { renameTarget.clear(); ImGui::CloseCurrentPopup(); }
@@ -3703,14 +3742,22 @@ void DrawScriptEditor(EditorState& ed) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Compile and run now (executes the script immediately).\nUse Save to just write the file without running.");
         ImGui::SameLine();
-        if (ImGui::SmallButton("Save")) {
+        // Save the current script to disk (button + Ctrl+S). One place so both agree.
+        auto doSave = [&]() {
             std::string p = filePath();
             if (extide::WriteFile(p, buf.data())) {
                 sc->SetPath(p); ConsoleLog("Saved " + p);
                 g_scriptSaved[sc] = buf.data();    // clears the modified marker
             } else ConsoleLog("Save failed");
             ed.dirty = true;
-        }
+        };
+        if (ImGui::SmallButton("Save")) doSave();
+        // Ctrl+S saves the script even while the text box has focus (the global
+        // shortcut handler skips text fields, so it never reached here before).
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift &&
+            ImGui::IsKeyPressed(ImGuiKey_S, false))
+            doSave();
         ImGui::SameLine();
         if (ImGui::SmallButton("Reload")) {
             if (!sc->Path().empty()) {
@@ -5915,6 +5962,44 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                         }
                     }
                 }
+            } else {
+                // Declaration-only public field with no initializer, e.g.
+                // `public GameObject target;`. Show it with an empty default so it
+                // appears in the inspector (this is why object refs didn't show).
+                std::string c2 = code;
+                if (auto sp = c2.find(';'); sp != std::string::npos) c2 = c2.substr(0, sp);
+                bool blockish = c2.find('(') != std::string::npos || c2.find('{') != std::string::npos ||
+                                c2.find('}') != std::string::npos || c2.find(':') != std::string::npos ||
+                                c2.find("class") != std::string::npos || c2.find("struct") != std::string::npos ||
+                                c2.find("enum") != std::string::npos;
+                if (!blockish) {
+                    bool hasSerialize = c2.find("[Serialize") != std::string::npos;
+                    std::string l2; bool inb = false;
+                    for (char c : c2) { if (c == '[') inb = true; else if (c == ']') inb = false; else if (!inb) l2 += c; }
+                    std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
+                    bool hasPublic = false, hasPrivate = false;
+                    for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private") hasPrivate = true; }
+                    if (toks.size() >= 2 && (hasPublic || hasSerialize) && !hasPrivate) {
+                        std::string name = toks.back();
+                        bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');
+                        for (char c : name) if (!(std::isalnum((unsigned char)c) || c == '_')) valid = false;
+                        std::string type;
+                        for (auto& t : toks) {
+                            if (t == name) break;
+                            if (t == "public" || t == "private" || t == "static" ||
+                                t == "const" || t == "readonly" || t == "var") continue;
+                            type = t;
+                        }
+                        if (valid && !type.empty() && !kw.count(name) && !kw.count(type) && !seen.count(name)) {
+                            ScriptField f;
+                            f.name = name; f.type = type; f.def = "";
+                            f.header = pendH; f.tooltip = pendT;
+                            f.hasRange = pendR; f.rmin = pendRmin; f.rmax = pendRmax;
+                            out.push_back(f); seen.insert(name);
+                            pendH.clear(); pendT.clear(); pendR = false;
+                        }
+                    }
+                }
             }
         }
         for (char c : code) { if (c == '{') ++depth; else if (c == '}') --depth; }
@@ -7219,6 +7304,24 @@ void DrawInspector(EditorState& ed) {
                         if (ImGui::DragFloat3("##v", v, 0.05f)) {
                             char nb[96]; std::snprintf(nb, sizeof(nb), "new Vector3(%g, %g, %g)", v[0], v[1], v[2]);
                             cur = nb; changed = true;
+                        }
+                    } else if (f.type.find("GameObject") != std::string::npos ||
+                               f.type.find("Transform") != std::string::npos) {
+                        // Object reference: an assignable slot holding the target's
+                        // name. Drag an object from the Hierarchy onto it (Unity-style),
+                        // or type a name. Scripts resolve it by name (find/dist_to/...).
+                        std::string sv = cur;
+                        if (sv.size() >= 2 && (sv.front()=='"'||sv.front()=='\'') && sv.back()==sv.front())
+                            sv = sv.substr(1, sv.size()-2);
+                        char tb[128]; std::strncpy(tb, sv.c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
+                        ImGui::SetNextItemWidth(-28);
+                        if (ImGui::InputTextWithHint("##v", "drag an object here", tb, sizeof(tb)))
+                            { cur = std::string("\"") + tb + "\""; changed = true; }
+                        if (ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
+                                if (GameObject* g = *(GameObject**)p->Data) { cur = std::string("\"") + g->name + "\""; changed = true; }
+                            }
+                            ImGui::EndDragDropTarget();
                         }
                     } else {
                         // Numeric? (allow an f/d suffix). Else edit as text.
@@ -9848,7 +9951,8 @@ void DrawInspector(EditorState& ed) {
             if (fs::exists(p, se)) {
                 ConsoleLog("Script already exists: " + p.string());
             } else {
-                std::ofstream(p) << extide::StarterScript("okayscript");
+                // Class name follows the file name (Unity-style).
+                std::ofstream(p) << extide::StarterScriptNamed("okayscript", p.stem().string());
             }
             auto* nsc = g_newScriptGO->AddComponent<ScriptComponent>("okayscript");
             std::string err; nsc->LoadFile(p.string(), &err); nsc->SetPath(p.string());

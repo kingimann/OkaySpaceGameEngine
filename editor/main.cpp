@@ -10456,6 +10456,12 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
     UIWorld().active = true;
     UIWorld().screenW = canvasSize.x; UIWorld().screenH = canvasSize.y;
     ImVec2 cs = canvasSize;
+    // A hidden/minimized/just-switched-away Game view leaves the canvas size stale or
+    // zero. A zero (or non-finite) dimension divides to NaN in the projection below and
+    // bakes NaN into the hit-test lambdas, which then crashes the next in-world UI
+    // Contains() during Play (the "crashes when I switch tabs / click off" bug). Skip
+    // the projector cleanly in that case rather than installing a poisoned one.
+    if (!(cs.x >= 1.0f) || !(cs.y >= 1.0f)) { UIWorld().active = false; return; }
     if (view3D) {
         Mat4 view, proj; Vec3 right{1.0f, 0.0f, 0.0f};
         if (gameView) {
@@ -10486,8 +10492,10 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
         Vec2 camPos = ed.cameraPos; float zoom = ed.cameraZoom;
         if (gameView) {
             if (Camera* mc = SceneCamera(ed.scene())) {
-                Vec3 cp = mc->gameObject->transform->Position();
-                camPos = {cp.x, cp.y}; zoom = mc->orthographicSize * 2.0f;
+                if (mc->gameObject && mc->gameObject->transform) {
+                    Vec3 cp = mc->gameObject->transform->Position();
+                    camPos = {cp.x, cp.y}; zoom = mc->orthographicSize * 2.0f;
+                }
             }
         }
         float scale = cs.y / (zoom > 0.001f ? zoom : 1.0f);
@@ -12522,7 +12530,15 @@ int main(int argc, char** argv) {
             // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
             // against the same coordinates the preview draws with.
             ImVec2 mp = ImGui::GetMousePos();
-            float rx = mp.x - g_playCanvasPos.x, ry = mp.y - g_playCanvasPos.y;
+            // ImGui reports (-FLT_MAX, -FLT_MAX) when the cursor leaves the window / the
+            // app loses focus. Feeding that into the game (and any UI hit-test math) is
+            // how clicking off during Play could blow up; treat it as "off-canvas".
+            float rx, ry;
+            if (mp.x <= -1.0e6f || mp.y <= -1.0e6f || mp.x >= 1.0e6f || mp.y >= 1.0e6f) {
+                rx = -1.0f; ry = -1.0f;
+            } else {
+                rx = mp.x - g_playCanvasPos.x; ry = mp.y - g_playCanvasPos.y;
+            }
             unsigned mask = 0;
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left))   mask |= 1u << 0;
             if (ImGui::IsMouseDown(ImGuiMouseButton_Right))  mask |= 1u << 1;

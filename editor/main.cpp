@@ -14,6 +14,7 @@
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #endif
+#include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
 
 #include <algorithm>
 #include <array>
@@ -2243,26 +2244,26 @@ void DrawProject(EditorState& ed) {
         if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
     }
     ImGui::SameLine();
-    // Import an external file (texture / font / audio / model / ...) into this folder.
-    static char s_importPath[512] = "";
-    if (ImGui::SmallButton("Import...")) ImGui::OpenPopup("Import Asset");
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy a texture, font, audio clip, model, etc. into this folder.\nTip: you can also drag files from your file explorer onto the window.");
-    if (ImGui::BeginPopupModal("Import Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Path to a file on disk to copy into:");
-        ImGui::TextDisabled("%s", dir.string().c_str());
-        ImGui::SetNextItemWidth(420);
-        bool enter = ImGui::InputText("##importpath", s_importPath, sizeof(s_importPath),
-                                      ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::TextDisabled("Textures (.png/.jpg/.bmp/.tga), fonts (.ttf/.otf), audio (.wav/.ogg/.mp3), models (.obj/.gltf), ...");
-        if ((ImGui::Button("Import", ImVec2(120, 0)) || enter) && s_importPath[0]) {
-            std::string out = ImportAssetFile(s_importPath, dir);
-            if (!out.empty()) { selected = out; s_importPath[0] = '\0'; ImGui::CloseCurrentPopup(); }
+    // Import external files: opens the OS file picker (multi-select), copies the
+    // chosen files into this folder. Any file type is accepted ("All files").
+    if (ImGui::SmallButton("Import...")) {
+        const char* picks = tinyfd_openFileDialog(
+            "Import asset(s)", "", 0, nullptr, "All files", /*multiSelect=*/1);
+        if (picks && picks[0]) {
+            // tinyfd returns multiple selections separated by '|'.
+            std::string all(picks), one; int n = 0;
+            auto importOne = [&](const std::string& path) {
+                if (path.empty()) return;
+                std::string out = ImportAssetFile(path, dir);
+                if (!out.empty()) { selected = out; ++n; }
+            };
+            for (char ch : all) { if (ch == '|') { importOne(one); one.clear(); } else one += ch; }
+            importOne(one);
+            ConsoleLog("Imported " + std::to_string(n) + " file(s) into " + dir.filename().string());
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) { s_importPath[0] = '\0'; ImGui::CloseCurrentPopup(); }
-        ImGui::EndPopup();
     }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the file picker to copy textures, fonts, audio, models, etc. into this folder.\nTip: you can also drag files from your file explorer onto the window.");
     ImGui::SameLine();
     ImGui::TextDisabled("(F2 or right-click to Rename)");
 

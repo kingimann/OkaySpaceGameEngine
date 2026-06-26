@@ -1942,6 +1942,36 @@ static std::string Lower(std::string s) {
     return s;
 }
 
+// A Unity-style asset reference slot for the inspector: NOT editable. Shows the
+// assigned file's name (or "None (<kind>)") and only accepts a matching asset
+// dragged from the Project panel; an "x" clears it. Returns true (and updates
+// `field`) when the value changes. `exts` are accepted lowercase extensions.
+static bool AssetSlot(const char* id, std::string& field, const char* kind,
+                      std::initializer_list<const char*> exts) {
+    bool changed = false;
+    std::string name = field;
+    if (auto sl = name.find_last_of("/\\"); sl != std::string::npos) name = name.substr(sl + 1);
+    std::string label = (field.empty() ? (std::string("None (") + kind + ")") : name) + "##" + id;
+    ImGui::Button(label.c_str(), ImVec2(-28, 0));
+    bool hovered = ImGui::IsItemHovered();
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::string ap((const char*)p->Data), al = Lower(ap);
+            for (const char* e : exts) {
+                std::string es = e;
+                if (al.size() >= es.size() && al.compare(al.size() - es.size(), es.size(), es) == 0) { field = ap; changed = true; break; }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    ImGui::SameLine();
+    ImGui::PushID(id);
+    if (ImGui::SmallButton("x") && !field.empty()) { field.clear(); changed = true; }
+    ImGui::PopID();
+    if (hovered) ImGui::SetTooltip("Drag a %s from the Project panel here", kind);
+    return changed;
+}
+
 // Visual kind (icon color + short letter) for an asset, by extension.
 // An asset's icon: a category (for the drawn glyph), a tint, and a short label.
 enum class AssetIcon { Folder, Script, Material, Scene, Prefab, Image, Audio, Mesh, Data, Visual, Generic };
@@ -2831,20 +2861,11 @@ void DrawStats(EditorState& ed) {
     // from the Project panel onto the field, Unity-style.
     if (ImGui::CollapsingHeader("UI")) {
         std::string& uf = ed.scene().uiFont;
-        char fb[512]; std::strncpy(fb, uf.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
-        if (ImGui::InputTextWithHint("Default UI Font", "Assets/MyFont.ttf (empty = bitmap)", fb, sizeof(fb)))
-            { uf = fb; ed.dirty = true; }
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-                std::string ap((const char*)p->Data), al = Lower(ap);
-                if (al.size() > 4 && (al.substr(al.size()-4)==".ttf" || al.substr(al.size()-4)==".otf"))
-                    { uf = ap; ed.dirty = true; }
-            }
-            ImGui::EndDragDropTarget();
-        }
-        if (uf.empty())                  ImGui::TextDisabled("Built-in 8x8 bitmap font.");
-        else if (okay::GetFont(uf))      ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
-        else                             ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Default UI Font"); ImGui::SameLine();
+        if (AssetSlot("scenefont", uf, "Font", {".ttf", ".otf"})) ed.dirty = true;
+        if (uf.empty())             ImGui::TextDisabled("Built-in 8x8 bitmap font.");
+        else if (okay::GetFont(uf)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
+        else                        ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
     }
 
     // Environment: the scene's skybox + ambient, saved with the scene so the
@@ -8764,31 +8785,13 @@ void DrawInspector(EditorState& ed) {
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
-            // Font: empty = built-in 8x8 bitmap. Point at an imported .ttf/.otf in Assets.
-            {
-                char fb[512];
-                std::strncpy(fb, tr->fontPath.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
-                if (ImGui::InputTextWithHint("Font##txt", "Assets/MyFont.ttf (empty = bitmap)", fb, sizeof(fb)))
-                    { tr->fontPath = fb; ed.dirty = true; }
-                // Accept a drag-drop of a font asset from the Project panel.
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-                        std::string ap((const char*)p->Data);
-                        std::string al = Lower(ap);
-                        if (al.size() > 4 && (al.substr(al.size()-4)==".ttf" || al.substr(al.size()-4)==".otf"))
-                            { tr->fontPath = ap; ed.dirty = true; }
-                    }
-                    ImGui::EndDragDropTarget();
-                }
-                if (tr->fontPath.empty())
-                    ImGui::TextDisabled("Built-in 8x8 bitmap font.");
-                else if (okay::GetFont(tr->fontPath))
-                    ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
-                else
-                    ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Bitmap##txtfont")) { tr->fontPath.clear(); ed.dirty = true; }
-            }
+            // Font: a drag-only slot — empty = built-in 8x8 bitmap; drop a .ttf/.otf
+            // from the Project panel to use it. (No typing, Unity-style.)
+            ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Font"); ImGui::SameLine();
+            if (AssetSlot("txtfont", tr->fontPath, "Font", {".ttf", ".otf"})) ed.dirty = true;
+            if (tr->fontPath.empty())            ImGui::TextDisabled("Built-in 8x8 bitmap font.");
+            else if (okay::GetFont(tr->fontPath)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
+            else                                 ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
     }
@@ -9103,19 +9106,9 @@ void DrawInspector(EditorState& ed) {
             // Font Scale only styles the built-in label; with a child Text it's edited there.
             if (!childTr) {
                 if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
-                // Optional TTF label font (empty = built-in bitmap).
-                char fb[512];
-                std::strncpy(fb, btn->fontPath.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
-                if (ImGui::InputTextWithHint("Font##uib", "Assets/MyFont.ttf (empty = bitmap)", fb, sizeof(fb)))
-                    { btn->fontPath = fb; ed.dirty = true; }
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-                        std::string ap((const char*)p->Data), al = Lower(ap);
-                        if (al.size() > 4 && (al.substr(al.size()-4)==".ttf" || al.substr(al.size()-4)==".otf"))
-                            { btn->fontPath = ap; ed.dirty = true; }
-                    }
-                    ImGui::EndDragDropTarget();
-                }
+                // Optional TTF label font — drag-only slot (empty = built-in bitmap).
+                ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Font"); ImGui::SameLine();
+                if (AssetSlot("uibfont", btn->fontPath, "Font", {".ttf", ".otf"})) ed.dirty = true;
                 if (!btn->fontPath.empty() && !okay::GetFont(btn->fontPath))
                     ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
             }
@@ -11149,6 +11142,26 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         if (right)  rr = edge(rr, cx, g_uiGuideX, gxHit);
                         if (top)    t  = edge(t,  cy, g_uiGuideY, gyHit);
                         if (bottom) bb = edge(bb, cy, g_uiGuideY, gyHit);
+                        // Stickier snap to the OWNING PARENT's edges so you can drag a
+                        // child flush to its parent (and so dragging both corners makes
+                        // it exactly the parent's size) — Unity-style. Parent wins over
+                        // the generic guides above, with a slightly larger threshold.
+                        if (GameObject* par = OwningUIParent(g_uiDragTarget)) {
+                            Vec2 po, ps;
+                            if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) {
+                                const float pthr = g_uiSnapDist * 1.6f;
+                                auto psnap = [&](float v, float lo, float hi, float& guide, bool& hit) {
+                                    float dl = v > lo ? v - lo : lo - v, dh = v > hi ? v - hi : hi - v;
+                                    if (dl < pthr && dl <= dh) { guide = lo; hit = true; return lo; }
+                                    if (dh < pthr)             { guide = hi; hit = true; return hi; }
+                                    return v;
+                                };
+                                if (left)   l  = psnap(l,  po.x, po.x + ps.x, g_uiGuideX, gxHit);
+                                if (right)  rr = psnap(rr, po.x, po.x + ps.x, g_uiGuideX, gxHit);
+                                if (top)    t  = psnap(t,  po.y, po.y + ps.y, g_uiGuideY, gyHit);
+                                if (bottom) bb = psnap(bb, po.y, po.y + ps.y, g_uiGuideY, gyHit);
+                            }
+                        }
                     }
                     Vec2 newScreen{rr - l, bb - t};
                     // Reconstruct the stored offset by inverting the anchor WITHIN the

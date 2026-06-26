@@ -3295,6 +3295,10 @@ struct ScriptCaret {
     bool autoPairs = true;             // auto-close brackets + auto-indent on Enter
     int  prevLen = -1;                 // buffer length last frame (to detect typing)
 };
+// The completion that pressing Tab will accept (the suffix after the typed prefix),
+// recomputed each frame where the autocomplete popup is shown; empty = none.
+static std::string g_acComplete;
+
 static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
     auto* c = (ScriptCaret*)d->UserData;
     ImGuiIO& io = ImGui::GetIO();
@@ -3303,6 +3307,26 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         ls = p; while (ls > 0 && d->Buf[ls - 1] != '\n') --ls;
         le = p; while (le < d->BufTextLen && d->Buf[le] != '\n') ++le;
     };
+    // Tab handling (via CallbackCompletion so Tab stays in the editor instead of
+    // moving focus): accept the pending autocomplete suggestion, else indent 4
+    // spaces. Shift+Tab dedents the line by up to 4 spaces.
+    if (d->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
+        if (io.KeyShift) {
+            int ls, le; lineBounds(d->CursorPos, ls, le);
+            int rem = 0; while (rem < 4 && ls + rem < d->BufTextLen && d->Buf[ls + rem] == ' ') ++rem;
+            if (rem > 0) {
+                int off = d->CursorPos - ls;
+                d->DeleteChars(ls, rem);
+                d->CursorPos = d->SelectionStart = d->SelectionEnd = ls + (off > rem ? off - rem : 0);
+            }
+        } else if (!g_acComplete.empty()) {
+            d->InsertChars(d->CursorPos, g_acComplete.c_str());
+            g_acComplete.clear();
+        } else {
+            d->InsertChars(d->CursorPos, "    ");
+        }
+        return 0;
+    }
     // Go to line: move the caret to the start of the requested line.
     if (c->gotoLine > 0) {
         int target = c->gotoLine; c->gotoLine = 0;
@@ -4031,9 +4055,11 @@ void DrawScriptEditor(EditorState& ed) {
         // scrolling and the colored overlay (drawn after) stays aligned.
         float contentW = (maxLen + 2) * charW + padX * 2;
         float contentH = lines * lineH + padY * 2 + 2;
+        // CallbackCompletion (Tab) drives autocomplete-accept / indent — see the
+        // callback. We don't use AllowTabInput so Tab routes through completion.
         ImGui::InputTextMultiline("##code", buf.data(), buf.size(),
             ImVec2(contentW, contentH),
-            ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackAlways,
+            ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackCompletion,
             ScriptCaretCallback, &caret);
         // A snippet chosen from the toolbar menu steals focus from the editor, so
         // the callback won't run — splice it into the buffer at the caret here.
@@ -4249,20 +4275,28 @@ void DrawScriptEditor(EditorState& ed) {
             }
             const std::vector<std::string>& members = ScriptMembers(receiver);
             bool memberMode = !receiver.empty() && !members.empty();
+            g_acComplete.clear();   // nothing to Tab-complete unless we show the popup
             // Members list from the first keystroke (or right after the dot); plain
             // words still need 2+ chars so the popup doesn't fire constantly.
             if (memberMode || prefix.size() >= 2) {
                 std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
-                std::vector<const std::string*> hits;
+                // Rank prefix matches (case-sensitive first, then case-insensitive)
+                // ahead of looser ones so the top item is the best Tab target.
+                std::vector<const std::string*> exact, ci;
                 const std::vector<std::string>& pool = memberMode ? members : ScriptCompletions();
                 for (const auto& w : pool) {
                     if (w.size() < prefix.size()) continue;
                     if (!memberMode && w.size() == prefix.size()) continue;  // exact word: nothing to add
+                    if (w.compare(0, prefix.size(), prefix) == 0) { exact.push_back(&w); continue; }
                     std::string lw = w; for (auto& ch : lw) ch = (char)std::tolower((unsigned char)ch);
-                    if (lw.compare(0, lp.size(), lp) == 0) hits.push_back(&w);
-                    if (hits.size() >= 12) break;
+                    if (lw.compare(0, lp.size(), lp) == 0) ci.push_back(&w);
                 }
+                std::vector<const std::string*> hits = exact;
+                for (auto* w : ci) { if (hits.size() >= 12) break; hits.push_back(w); }
+                if (hits.size() > 12) hits.resize(12);
                 if (!hits.empty()) {
+                    // The top match is what Tab accepts (insert just the missing suffix).
+                    g_acComplete = hits[0]->substr(prefix.size());
                     ImGui::SetNextWindowPos(ImVec2(caretScreen.x, caretScreen.y + 2));
                     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 46, 245));
                     if (ImGui::Begin("##autocomplete", nullptr,
@@ -4270,10 +4304,13 @@ void DrawScriptEditor(EditorState& ed) {
                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
                             ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                             ImGuiWindowFlags_NoSavedSettings)) {
-                        for (const std::string* w : hits) {
-                            if (ImGui::Selectable(w->c_str()))
-                                caret.insert = w->substr(prefix.size());   // spliced when editor inactive
+                        for (std::size_t i = 0; i < hits.size(); ++i) {
+                            // Highlight the top match (the one Tab will accept).
+                            if (ImGui::Selectable(hits[i]->c_str(), i == 0))
+                                caret.insert = hits[i]->substr(prefix.size());  // spliced when editor inactive
                         }
+                        ImGui::Separator();
+                        ImGui::TextDisabled("Tab to accept");
                     }
                     ImGui::End();
                     ImGui::PopStyleColor();

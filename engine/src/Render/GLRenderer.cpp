@@ -1,5 +1,6 @@
 #include "okay/Render/GLRenderer.hpp"
 #include "okay/Render/Lighting.hpp"
+#include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shares the texture cache
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
 
@@ -38,6 +39,15 @@
 #endif
 #ifndef GL_MULTISAMPLE
 #define GL_MULTISAMPLE         0x809D
+#endif
+#ifndef GL_TEXTURE0
+#define GL_TEXTURE0            0x84C0
+#endif
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE       0x812F
+#endif
+#ifndef GL_LINEAR_MIPMAP_LINEAR
+#define GL_LINEAR_MIPMAP_LINEAR 0x2703
 #endif
 
 typedef std::ptrdiff_t GLsizeiptrOK;
@@ -99,6 +109,10 @@ typedef void   (*PFNDepthFunc)(GLenum);
 typedef void   (*PFNDrawArrays)(GLenum, GLint, GLsizei);
 typedef void   (*PFNReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*);
 typedef GLenum (*PFNGetError)(void);
+typedef void   (*PFNUniform1i)(GLint, GLint);
+typedef void   (*PFNUniform2f)(GLint, GLfloat, GLfloat);
+typedef void   (*PFNActiveTexture)(GLenum);
+typedef void   (*PFNGenerateMipmap)(GLenum);
 // VAOs: core in GL 3.0+ and REQUIRED for draws in a core profile; on a 2.1 /
 // compatibility context the default VAO (0) works, so these are loaded optionally.
 typedef void   (*PFNGenVertexArrays)(GLsizei, GLuint*);
@@ -124,6 +138,8 @@ struct GL {
     PFNTexParameteri TexParameteri; PFNDeleteTextures DeleteTextures; PFNViewport Viewport;
     PFNClearColor ClearColor; PFNClear Clear; PFNEnable Enable; PFNDepthFunc DepthFunc;
     PFNDrawArrays DrawArrays; PFNReadPixels ReadPixels; PFNGetError GetError;
+    PFNUniform1i Uniform1i; PFNUniform2f Uniform2f;
+    PFNActiveTexture ActiveTexture; PFNGenerateMipmap GenerateMipmap;
     PFNGenVertexArrays GenVertexArrays; PFNBindVertexArray BindVertexArray;
     PFNDeleteVertexArrays DeleteVertexArrays;
     bool ok = false;
@@ -137,13 +153,14 @@ template <class F> bool load(F& fn, GLRenderer::GLGetProc gp, const char* name) 
 
 const char* kVert =
     "#version 120\n"
-    "uniform mat4 uMVP; uniform mat4 uModel;\n"
-    "attribute vec3 aPos; attribute vec3 aNormal;\n"
-    "varying vec3 vN; varying vec3 vWorld;\n"
+    "uniform mat4 uMVP; uniform mat4 uModel; uniform vec2 uTiling;\n"
+    "attribute vec3 aPos; attribute vec3 aNormal; attribute vec2 aUV;\n"
+    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV;\n"
     "void main(){\n"
     "  gl_Position = uMVP * vec4(aPos,1.0);\n"
     "  vN = mat3(uModel) * aNormal;\n"
     "  vWorld = (uModel * vec4(aPos,1.0)).xyz;\n"
+    "  vUV = aUV * uTiling;\n"
     "}\n";
 
 const char* kFrag =
@@ -151,12 +168,15 @@ const char* kFrag =
     "uniform vec3 uColor; uniform vec3 uLightDir; uniform vec3 uLightColor;\n"
     "uniform vec3 uAmbient; uniform vec3 uEmissive; uniform vec3 uEye;\n"
     "uniform float uSpecular; uniform float uShininess; uniform float uUnlit;\n"
-    "varying vec3 vN; varying vec3 vWorld;\n"
+    "uniform sampler2D uTex; uniform float uUseTex;\n"
+    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV;\n"
     "void main(){\n"
-    "  if (uUnlit > 0.5) { gl_FragColor = vec4(uColor + uEmissive, 1.0); return; }\n"
+    "  vec3 base = uColor;\n"
+    "  if (uUseTex > 0.5) base *= texture2D(uTex, vUV).rgb;\n"
+    "  if (uUnlit > 0.5) { gl_FragColor = vec4(base + uEmissive, 1.0); return; }\n"
     "  vec3 N = normalize(vN);\n"
     "  float ndl = max(dot(N, uLightDir), 0.0);\n"
-    "  vec3 diff = uColor * (uAmbient + uLightColor * ndl);\n"
+    "  vec3 diff = base * (uAmbient + uLightColor * ndl);\n"
     "  float spec = 0.0;\n"
     "  if (uSpecular > 0.0) {\n"
     "    vec3 V = normalize(uEye - vWorld);\n"
@@ -230,6 +250,10 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     r &= load(g.DrawArrays, gp, "glDrawArrays");
     r &= load(g.ReadPixels, gp, "glReadPixels");
     r &= load(g.GetError, gp, "glGetError");
+    r &= load(g.Uniform1i, gp, "glUniform1i");
+    r &= load(g.Uniform2f, gp, "glUniform2f");
+    r &= load(g.ActiveTexture, gp, "glActiveTexture");
+    load(g.GenerateMipmap, gp, "glGenerateMipmap");   // optional (GL 3.0+); mips skipped if absent
     // Optional (present on core 3.0+; absent on 2.1 compatibility where VAO 0 works):
     load(g.GenVertexArrays, gp, "glGenVertexArrays");
     load(g.BindVertexArray, gp, "glBindVertexArray");
@@ -251,6 +275,7 @@ bool GLRenderer::EnsureProgram() {
     g.AttachShader(m_prog, vs); g.AttachShader(m_prog, fs);
     g.BindAttribLocation(m_prog, 0, "aPos");
     g.BindAttribLocation(m_prog, 1, "aNormal");
+    g.BindAttribLocation(m_prog, 2, "aUV");
     g.LinkProgram(m_prog);
     GLint ok = 0; g.GetProgramiv(m_prog, GL_LINK_STATUS, &ok);
     g.DeleteShader(vs); g.DeleteShader(fs);
@@ -266,6 +291,9 @@ bool GLRenderer::EnsureProgram() {
     m_uSpecular = g.GetUniformLocation(m_prog, "uSpecular");
     m_uShininess = g.GetUniformLocation(m_prog, "uShininess");
     m_uUnlit = g.GetUniformLocation(m_prog, "uUnlit");
+    m_uTex = g.GetUniformLocation(m_prog, "uTex");
+    m_uUseTex = g.GetUniformLocation(m_prog, "uUseTex");
+    m_uTiling = g.GetUniformLocation(m_prog, "uTiling");
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
     // crash on the attempt). Create one when available; on a compatibility context
@@ -304,6 +332,34 @@ bool GLRenderer::EnsureTargets(int w, int h, int samples) {
     return true;
 }
 
+// Upload (once) a material texture by name and cache its GL object. Shares the
+// software renderer's image cache via GetCachedTexture, so the same files/registered
+// images appear. Returns 0 (cached) when the texture is missing, so we don't retry.
+unsigned int GLRenderer::TextureFor(const std::string& name) {
+    if (name.empty()) return 0;
+    auto it = m_texCache.find(name);
+    if (it != m_texCache.end()) return it->second;
+    unsigned int tex = 0;
+    Image* img = GetCachedTexture(name);
+    if (img && img->Width() > 0) {
+        g.GenTextures(1, &tex);
+        g.BindTexture(GL_TEXTURE_2D, tex);
+        g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        if (g.GenerateMipmap) {
+            g.GenerateMipmap(GL_TEXTURE_2D);
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        } else {
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        }
+    }
+    m_texCache[name] = tex;
+    return tex;
+}
+
 const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& vp, const Vec3& eye,
                                                 int w, int h, int samples,
                                                 float clearR, float clearG, float clearB, float clearA,
@@ -337,10 +393,14 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
         const bool hasN = mesh.HasNormals();
+        // A material texture is used only when the mesh carries per-vertex UVs (the
+        // software renderer's planar/box auto-projection isn't replicated here yet).
+        const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
+        unsigned int tex = hasUV ? TextureFor(mr->texture) : 0;
 
-        // Expand triangles (non-indexed): flat shading via per-face normal when the
-        // mesh has none, smooth via per-vertex normals when it does.
-        m_verts.clear(); m_verts.reserve(T.size() * 6);
+        // Expand triangles (non-indexed) into pos(3)+normal(3)+uv(2): flat shading via
+        // per-face normal when the mesh has none, smooth via per-vertex normals when it does.
+        m_verts.clear(); m_verts.reserve(T.size() * 8);
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             int a = T[i], b = T[i + 1], c = T[i + 2];
             Vec3 fn;
@@ -349,8 +409,11 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             for (int k = 0; k < 3; ++k) {
                 const Vec3& p = V[idx[k]];
                 Vec3 n = hasN ? mesh.normals[idx[k]] : fn;
+                float u = hasUV ? mesh.uvs[idx[k]].x : 0.0f;
+                float v = hasUV ? mesh.uvs[idx[k]].y : 0.0f;
                 m_verts.push_back(p.x); m_verts.push_back(p.y); m_verts.push_back(p.z);
                 m_verts.push_back(n.x); m_verts.push_back(n.y); m_verts.push_back(n.z);
+                m_verts.push_back(u);   m_verts.push_back(v);
             }
         }
         if (m_verts.empty()) continue;
@@ -365,14 +428,26 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform1f(m_uSpecular, unlit ? 0.0f : mr->specular);
         g.Uniform1f(m_uShininess, mr->shininess);
         g.Uniform1f(m_uUnlit, unlit ? 1.0f : 0.0f);
+        if (tex) {
+            g.ActiveTexture(GL_TEXTURE0);
+            g.BindTexture(GL_TEXTURE_2D, tex);
+            g.Uniform1i(m_uTex, 0);
+            g.Uniform1f(m_uUseTex, 1.0f);
+            g.Uniform2f(m_uTiling, mr->tiling.x, mr->tiling.y);
+        } else {
+            g.Uniform1f(m_uUseTex, 0.0f);
+            g.Uniform2f(m_uTiling, 1.0f, 1.0f);
+        }
 
         g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
         g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
         g.EnableVertexAttribArray(0);
-        g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (const void*)0);
+        g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void*)0);
         g.EnableVertexAttribArray(1);
-        g.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (const void*)(3 * sizeof(float)));
-        g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 6));
+        g.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void*)(3 * sizeof(float)));
+        g.EnableVertexAttribArray(2);
+        g.VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void*)(6 * sizeof(float)));
+        g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 8));
     }
 
     // Resolve MSAA into the single-sample texture, then read it back.
@@ -412,6 +487,8 @@ void GLRenderer::DestroyTargets() {
 
 void GLRenderer::Destroy() {
     DestroyTargets();
+    for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
+    m_texCache.clear();
     if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }
     if (m_vao && g.DeleteVertexArrays) { g.DeleteVertexArrays(1, &m_vao); m_vao = 0; }
     if (m_prog) { g.DeleteProgram(m_prog); m_prog = 0; }

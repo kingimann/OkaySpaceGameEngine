@@ -27,6 +27,8 @@
 
 #include <cstdint>
 #include <vector>
+#include <string>
+#include <unordered_map>
 
 namespace okay {
 
@@ -70,10 +72,16 @@ private:
     int m_w = 0, m_h = 0, m_samples = 0;
     int m_uMVP = -1, m_uModel = -1, m_uColor = -1, m_uLightDir = -1,
         m_uLightColor = -1, m_uAmbient = -1, m_uEmissive = -1, m_uEye = -1,
-        m_uSpecular = -1, m_uShininess = -1, m_uUnlit = -1;
-    std::vector<float> m_verts;             // interleaved pos(3)+normal(3) scratch
+        m_uSpecular = -1, m_uShininess = -1, m_uUnlit = -1,
+        m_uTex = -1, m_uUseTex = -1, m_uTiling = -1;
+    std::vector<float> m_verts;             // interleaved pos(3)+normal(3)+uv(2) scratch
     std::vector<unsigned int> m_indices;    // scratch index buffer
     std::vector<std::uint32_t> m_pixels;    // read-back result
+
+    // GPU texture cache (texture name/path -> GL texture object), shared shape with
+    // the software renderer's cache so the same material textures appear.
+    std::unordered_map<std::string, unsigned int> m_texCache;
+    unsigned int TextureFor(const std::string& name);   // upload-on-first-use
 };
 
 } // namespace okay

@@ -3504,6 +3504,55 @@ static void AddBufferIdentifiers(const char* src, std::vector<std::string>& pool
     flush();
 }
 
+// Signature (parameter list) for a builtin, shown as a hint while typing a call —
+// e.g. inside `move_toward(` the editor floats "move_toward(x, y, step)". Empty for
+// unknown names. A curated subset of the most-used OkayScript API (see docs).
+static const std::string* ScriptSignature(const std::string& name) {
+    static const std::unordered_map<std::string, std::string> sig = {
+        // transform / movement
+        {"move","move(dx, dy)"}, {"set_pos","set_pos(x, y)"}, {"set_x","set_x(v)"}, {"set_y","set_y(v)"},
+        {"rotate","rotate(deg)"}, {"move_toward","move_toward(x, y, step)"}, {"look_at","look_at(\"name\")"},
+        {"move3","move3(dx, dy, dz)"}, {"set_pos3","set_pos3(x, y, z)"}, {"set_z","set_z(v)"},
+        {"rotate3","rotate3(x, y, z)"}, {"set_scale","set_scale(s)"}, {"set_scale3","set_scale3(x, y, z)"},
+        {"move_forward","move_forward(d)"}, {"move_right","move_right(d)"}, {"look_at3","look_at3(\"name\")"},
+        // physics
+        {"set_velocity","set_velocity(x, y)"}, {"set_velocity3","set_velocity3(x, y, z)"},
+        {"add_force","add_force(x, y)"}, {"add_force3","add_force3(x, y, z)"},
+        {"add_impulse","add_impulse(x, y)"}, {"jump","jump(v)"}, {"set_gravity","set_gravity(x, y)"},
+        // input
+        {"key","key(\"x\")"}, {"key_down","key_down(\"x\")"}, {"key_up","key_up(\"x\")"},
+        {"gamepad","gamepad(btn)"},
+        // object / scene
+        {"find","find(\"name\")"}, {"spawn","spawn(\"prefab\", x, y)"}, {"spawn3","spawn3(\"prefab\", x, y, z)"},
+        {"destroy","destroy(\"name\")"}, {"destroy_obj","destroy_obj(\"name\")"}, {"dist_to","dist_to(\"name\")"},
+        {"count_tag","count_tag(\"tag\")"}, {"nearest_tag","nearest_tag(\"tag\")"}, {"load_scene","load_scene(\"file\")"},
+        {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
+        {"set_bg","set_bg(r, g, b)"}, {"set_light","set_light(x, y, z)"}, {"set_ambient","set_ambient(v)"},
+        // variables / prefs
+        {"set_var","set_var(\"name\", value)"}, {"get_var","get_var(\"name\")"}, {"add_var","add_var(\"name\", amount)"},
+        {"save_prefs","save_prefs(\"key\", value)"}, {"load_prefs","load_prefs(\"key\", default)"},
+        // math
+        {"abs","abs(x)"}, {"sqrt","sqrt(x)"}, {"pow","pow(base, exp)"}, {"min","min(a, b)"}, {"max","max(a, b)"},
+        {"clamp","clamp(v, lo, hi)"}, {"lerp","lerp(a, b, t)"}, {"distance","distance(x1, y1, x2, y2)"},
+        {"random","random()"}, {"random_range","random_range(lo, hi)"}, {"sin","sin(x)"}, {"cos","cos(x)"},
+        {"floor","floor(x)"}, {"ceil","ceil(x)"}, {"round","round(x)"}, {"print","print(value)"},
+        // tweens
+        {"tween_move","tween_move(x, y, dur)"}, {"tween_move3","tween_move3(x, y, z, dur)"},
+        {"tween_scale","tween_scale(s, dur)"}, {"tween_rotate","tween_rotate(deg, dur)"},
+        {"tween_fade","tween_fade(a, dur)"},
+        // ui (immediate-mode + named)
+        {"ui_begin","ui_begin(\"Title\", x, y, w, h)"}, {"ui_text","ui_text(\"s\")"}, {"ui_button","ui_button(\"Label\")"},
+        {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
+        {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
+        {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
+        // networking / raycast
+        {"net_send","net_send(\"msg\")"}, {"raycast","raycast(x, y, dx, dy)"}, {"raycast3","raycast3(x, y, z, dx, dy, dz)"},
+        {"overlap_circle","overlap_circle(x, y, r)"},
+    };
+    auto it = sig.find(name);
+    return it == sig.end() ? nullptr : &it->second;
+}
+
 // Members offered after "<receiver>." in the editor (Unity-style API surface, so
 // e.g. typing `transform.` lists position/rotation/Translate/…). Returns an empty
 // list for unknown receivers.
@@ -4339,6 +4388,41 @@ void DrawScriptEditor(EditorState& ed) {
                     }
                     ImGui::End();
                     ImGui::PopStyleColor();
+                }
+            }
+        }
+
+        // --- Signature hint: while inside a call, float the builtin's parameters --
+        {
+            const char* tx = buf.data();
+            auto isW = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
+            int p = caret.pos, depth = 0, op = -1;
+            for (int i = p - 1; i >= 0; --i) {     // find the innermost unmatched '('
+                char ch = tx[i];
+                if (ch == ')') ++depth;
+                else if (ch == '(') { if (depth == 0) { op = i; break; } --depth; }
+                else if (ch == '\n' && depth == 0) break;
+            }
+            if (op > 0) {
+                int e = op; while (e > 0 && (tx[e-1]==' '||tx[e-1]=='\t')) --e;
+                int s = e; while (s > 0 && isW(tx[s-1])) --s;
+                if (e > s) {
+                    std::string name(tx + s, tx + e);
+                    if (const std::string* sgn = ScriptSignature(name)) {
+                        float y = caretScreen.y - lineH - 4.0f;
+                        if (y < 0) y = caretScreen.y + lineH + 2.0f;   // flip below if off-screen
+                        ImGui::SetNextWindowPos(ImVec2(caretScreen.x, y));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(48, 44, 60, 245));
+                        if (ImGui::Begin("##sighint", nullptr,
+                                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs)) {
+                            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sgn->c_str());
+                        }
+                        ImGui::End();
+                        ImGui::PopStyleColor();
+                    }
                 }
             }
         }
@@ -7369,16 +7453,18 @@ void DrawInspector(EditorState& ed) {
                         }
                     } else if (f.type.find("GameObject") != std::string::npos ||
                                f.type.find("Transform") != std::string::npos) {
-                        // Object reference: an assignable slot holding the target's
-                        // name. Drag an object from the Hierarchy onto it (Unity-style),
-                        // or type a name. Scripts resolve it by name (find/dist_to/...).
+                        // Object reference: a Unity-style slot you can't type into —
+                        // drag a GameObject from the Hierarchy onto it to assign. Stores
+                        // the target's name; scripts resolve it by name (find/dist_to/...).
                         std::string sv = cur;
                         if (sv.size() >= 2 && (sv.front()=='"'||sv.front()=='\'') && sv.back()==sv.front())
                             sv = sv.substr(1, sv.size()-2);
-                        char tb[128]; std::strncpy(tb, sv.c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
-                        ImGui::SetNextItemWidth(-28);
-                        if (ImGui::InputTextWithHint("##v", "drag an object here", tb, sizeof(tb)))
-                            { cur = std::string("\"") + tb + "\""; changed = true; }
+                        std::string label = sv.empty()
+                            ? (std::string("None (") + (f.type.empty() ? "Object" : f.type) + ")")
+                            : sv;
+                        ImGui::Button((label + "##objslot").c_str(), ImVec2(-28, 0));
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Drag a GameObject from the Hierarchy here to assign");
                         if (ImGui::BeginDragDropTarget()) {
                             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
                                 if (GameObject* g = *(GameObject**)p->Data) { cur = std::string("\"") + g->name + "\""; changed = true; }

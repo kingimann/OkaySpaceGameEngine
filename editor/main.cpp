@@ -148,7 +148,9 @@ SDL_Window*   g_glWindow  = nullptr;     // hidden window owning the GL context
 SDL_GLContext g_glCtx     = nullptr;
 okay::GLRenderer* g_glRenderer = nullptr;
 bool          g_glReady   = false;       // GL context + entry points loaded OK
-bool          g_okayUIDemo = false;      // draw the OkayUI sample button over the UI
+bool          g_okayUIDemo = false;      // draw the OkayUI sample panel over the UI
+char          g_okayUITyped[32] = {0};   // text typed this frame, routed to OkayUI
+bool          g_okayUIBack = false;      // Backspace pressed this frame (for OkayUI)
 
 // One render target per 3D view "slot" (0 = Scene viewport, 1 = Game view).
 // ImGui defers rendering, so the SDL texture is only sampled at SDL_RenderCopy
@@ -12359,6 +12361,7 @@ int main(int argc, char** argv) {
             }
         }
         Input::ClearTypedText();   // collect this frame's typed characters
+        g_okayUITyped[0] = '\0'; g_okayUIBack = false;   // OkayUI demo's per-frame keys
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
@@ -12372,6 +12375,13 @@ int main(int argc, char** argv) {
                 Input::FeedText(e.text.text);
             if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
                 Input::FeedMouseWheel((float)e.wheel.y);
+            // Feed the OkayUI demo's text field when ImGui isn't capturing the keyboard.
+            if (g_okayUIDemo && !ImGui::GetIO().WantTextInput) {
+                if (e.type == SDL_TEXTINPUT)
+                    SDL_strlcat(g_okayUITyped, e.text.text, sizeof(g_okayUITyped));
+                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE)
+                    g_okayUIBack = true;
+            }
         }
 
         Uint64 now = SDL_GetPerformanceCounter();
@@ -12576,23 +12586,38 @@ int main(int argc, char** argv) {
             uin.mouseX = (float)mx; uin.mouseY = (float)my;
             uin.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
             uin.blocked = io.WantCaptureMouse;
+            uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
+            uin.backspace = g_okayUIBack;
             static bool  s_sound  = true;
             static float s_volume = 60.0f;
-            float px = 24.0f, py = io.DisplaySize.y - 250.0f;
+            static int   s_tab    = 0;
+            static int   s_mode   = 0;
+            static char  s_name[16] = "Player1";
+            float px = 24.0f, py = io.DisplaySize.y - 364.0f;
             if (py < 40.0f) py = 40.0f;
             OkayUI::BeginFrame(uin);
-            OkayUI::Panel(px, py, 340.0f, 226.0f);
-            OkayUI::Label(px + 16.0f, py + 14.0f, "OkayUI Demo");
-            if (OkayUI::Button(0x0C01, px + 16.0f, py + 44.0f, 130.0f, 40.0f, "Play"))
+            OkayUI::Panel(px, py, 344.0f, 348.0f);
+            OkayUI::Tab(0x0C10, px + 8.0f,   py + 8.0f, 104.0f, 30.0f, "General", &s_tab, 0);
+            OkayUI::Tab(0x0C11, px + 116.0f, py + 8.0f, 104.0f, 30.0f, "Audio",   &s_tab, 1);
+            OkayUI::Tab(0x0C12, px + 224.0f, py + 8.0f, 104.0f, 30.0f, "About",   &s_tab, 2);
+            OkayUI::Label(px + 12.0f, py + 56.0f, "Name");
+            OkayUI::TextField(0x0C13, px + 96.0f, py + 52.0f, 232.0f, 30.0f, s_name, (int)sizeof(s_name));
+            OkayUI::Label(px + 12.0f, py + 98.0f, "Mode");
+            OkayUI::RadioButton(0x0C14, px + 96.0f,  py + 96.0f, 22.0f, "Easy", &s_mode, 0);
+            OkayUI::RadioButton(0x0C15, px + 196.0f, py + 96.0f, 22.0f, "Hard", &s_mode, 1);
+            OkayUI::Label(px + 12.0f, py + 138.0f, "Volume");
+            OkayUI::Slider(0x0C03, px + 96.0f, py + 134.0f, 232.0f, 24.0f, &s_volume, 0.0f, 100.0f);
+            OkayUI::Checkbox(0x0C02, px + 96.0f, py + 174.0f, 26.0f, "Sound", &s_sound);
+            OkayUI::Label(px + 12.0f, py + 218.0f, "Health");
+            OkayUI::ProgressBar(px + 96.0f, py + 214.0f, 232.0f, 22.0f, 0.8f);
+            OkayUI::Label(px + 12.0f, py + 254.0f, "Hunger");
+            OkayUI::ProgressBar(px + 96.0f, py + 250.0f, 232.0f, 22.0f, 0.35f);
+            if (OkayUI::Button(0x0C01, px + 96.0f, py + 294.0f, 130.0f, 40.0f, "Play"))
                 ConsoleLog("OkayUI: Play clicked (drawn on top of ImGui via SDL_Renderer).");
-            OkayUI::Checkbox(0x0C02, px + 164.0f, py + 52.0f, 26.0f, "Sound", &s_sound);
-            OkayUI::Label(px + 16.0f, py + 100.0f, "Volume");
-            OkayUI::Slider(0x0C03, px + 150.0f, py + 96.0f, 174.0f, 24.0f, &s_volume, 0.0f, 100.0f);
-            OkayUI::Label(px + 16.0f, py + 140.0f, "Health");
-            OkayUI::ProgressBar(px + 150.0f, py + 136.0f, 174.0f, 22.0f, 0.8f);
-            OkayUI::Label(px + 16.0f, py + 178.0f, "Hunger");
-            OkayUI::ProgressBar(px + 150.0f, py + 174.0f, 174.0f, 22.0f, 0.35f);
             OkayUI::EndFrame(renderer);
+            // Keep SDL text input alive for the OkayUI field when ImGui isn't using it,
+            // so the text field receives SDL_TEXTINPUT events.
+            if (!io.WantTextInput) SDL_StartTextInput();
         }
 #endif
         SDL_RenderPresent(renderer);

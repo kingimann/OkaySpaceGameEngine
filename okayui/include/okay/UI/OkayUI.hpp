@@ -20,12 +20,16 @@ struct SDL_Renderer;
 
 namespace OkayUI {
 
-/// This frame's pointer state, supplied by the host (OkayUI polls no input itself).
+/// This frame's input, supplied by the host (OkayUI polls nothing itself).
 struct Input {
-    float mouseX    = 0.0f;
-    float mouseY    = 0.0f;
-    bool  mouseDown = false;   // left mouse button held this frame
-    bool  blocked   = false;   // another layer (e.g. ImGui) owns the mouse -> ignore clicks
+    float       mouseX    = 0.0f;
+    float       mouseY    = 0.0f;
+    bool        mouseDown = false;     // left mouse button held this frame
+    bool        blocked   = false;     // another layer (e.g. ImGui) owns the mouse -> ignore clicks
+    // Keyboard (for TextField). The host forwards SDL_TEXTINPUT text and key edges
+    // only when OkayUI should receive them (e.g. ImGui isn't capturing the keyboard).
+    const char* text      = nullptr;   // UTF-8 characters typed this frame, or null
+    bool        backspace = false;     // Backspace pressed this frame (delete last char)
 };
 
 /// Visual style (colors are RGBA, 0..255). Mutable via Style().
@@ -68,6 +72,22 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
 /// A non-interactive progress/stat bar: fills `t` (clamped to [0,1]) of the groove
 /// with the accent color. Perfect for health/hunger/XP bars.
 void ProgressBar(float x, float y, float w, float h, float t);
+
+/// One option of a mutually-exclusive group: sets *value to `option` when clicked.
+/// Drawn filled when *value == option, with `label` to the right. Returns true on
+/// the frame the selection changed. `value` required.
+bool RadioButton(int id, float x, float y, float size, const char* label, int* value, int option);
+
+/// A tab in a tab bar: clicking sets *current to `index`. Returns true while THIS
+/// tab is the selected one (so: `if (Tab(...)) { draw this tab's contents }`).
+/// `current` required.
+bool Tab(int id, float x, float y, float w, float h, const char* label, int* current, int index);
+
+/// A single-line text field editing the caller-owned buffer `buf` (capacity `cap`,
+/// always kept NUL-terminated). Click to focus; typed text appends and Backspace
+/// deletes, fed via Input::text / Input::backspace. Returns true on any frame the
+/// text changed. The buffer is owned by the caller — no allocation here.
+bool TextField(int id, float x, float y, float w, float h, char* buf, int cap);
 
 /// Flush the batched geometry to the renderer. Call AFTER ImGui has rendered so
 /// OkayUI draws on top; the renderer's blend mode is saved and restored so nothing

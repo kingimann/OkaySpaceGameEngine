@@ -25,7 +25,13 @@ bool  g_prevDown = false;        // last frame's mouse-down (for edge detection)
 bool  g_pressed  = false;        // mouse went down this frame
 bool  g_released = false;        // mouse went up this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
+int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
+bool  g_focusClaimed = false;    // a widget took the click this frame (keep focus)
+unsigned g_frame = 0;            // frame counter (drives the text caret blink)
 Theme g_theme;
+
+// Length of a C string without pulling in <cstring> (keeps the toolkit STL/libc-light).
+inline int cstrlen(const char* s) { int n = 0; if (s) while (s[n]) ++n; return n; }
 
 inline SDL_Color toColor(const unsigned char c[4]) {
     SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3]; return sc;
@@ -74,6 +80,8 @@ void BeginFrame(const Input& in) {
     g_released = !in.mouseDown &&  g_prevDown;
     g_prevDown = in.mouseDown;
     g_hot = 0;
+    g_focusClaimed = false;
+    ++g_frame;
     g_nv = 0; g_ni = 0;
 }
 
@@ -197,8 +205,119 @@ void ProgressBar(float x, float y, float w, float h, float t) {
     }
 }
 
+bool RadioButton(int id, float x, float y, float size, const char* label, int* value, int option) {
+    if (!value) return false;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, size, size);
+    if (inside) g_hot = id;
+
+    bool changed = false;
+    if (g_active == id) {
+        if (g_released) { if (inside && *value != option) { *value = option; changed = true; } g_active = 0; }
+    } else if (inside && g_pressed) {
+        g_active = id;
+    }
+
+    const unsigned char* bg = g_theme.bg;
+    if (g_active == id && inside) bg = g_theme.bgDown;
+    else if (inside)             bg = g_theme.bgHover;
+
+    quad(x, y, size, size, g_theme.border);
+    const float b = g_theme.borderPx;
+    if (size > 2.0f * b) quad(x + b, y + b, size - 2.0f * b, size - 2.0f * b, bg);
+    // Selected indicator: a smaller centered accent dot (distinct from the checkbox).
+    if (*value == option) {
+        const float pad = size * 0.32f;
+        quad(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, g_theme.accent);
+    }
+    if (label && *label) {
+        const float s  = g_theme.textScale;
+        const float th = okay::Font8x8::Height * s;
+        drawText(x + size + 8.0f, y + (size - th) * 0.5f, label, s, g_theme.text);
+    }
+    return changed;
+}
+
+bool Tab(int id, float x, float y, float w, float h, const char* label, int* current, int index) {
+    if (!current) return false;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+
+    if (g_active == id) {
+        if (g_released) { if (inside) *current = index; g_active = 0; }
+    } else if (inside && g_pressed) {
+        g_active = id;
+    }
+
+    const bool selected = (*current == index);
+    const unsigned char* bg = selected ? g_theme.bg : g_theme.track;
+    if (!selected && inside) bg = g_theme.bgHover;
+
+    quad(x, y, w, h, g_theme.border);
+    const float b = g_theme.borderPx;
+    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, bg);
+    if (selected) quad(x, y, w, 3.0f, g_theme.accent);   // accent strip on the active tab
+    if (label && *label) {
+        const float s  = g_theme.textScale;
+        const float tw = okay::Font8x8::MeasureWidth(label) * s;
+        const float th = okay::Font8x8::Height * s;
+        drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, label, s, g_theme.text);
+    }
+    return *current == index;
+}
+
+bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
+    if (!buf || cap < 1) return false;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+    if (inside && g_pressed) { g_focus = id; g_focusClaimed = true; }
+    const bool focused = (g_focus == id);
+
+    // Apply keystrokes when focused (the host only forwards text/backspace it wants
+    // OkayUI to consume, e.g. when ImGui isn't capturing the keyboard).
+    bool changed = false;
+    if (focused) {
+        if (g_in.text && g_in.text[0]) {
+            int len = cstrlen(buf);
+            for (const char* p = g_in.text; *p && len < cap - 1; ++p) buf[len++] = *p;
+            buf[len] = '\0';
+            changed = true;
+        }
+        if (g_in.backspace) {
+            int len = cstrlen(buf);
+            if (len > 0) { buf[len - 1] = '\0'; changed = true; }
+        }
+    }
+
+    // Box (focused gets a subtly lighter fill + accent border hint).
+    quad(x, y, w, h, focused ? g_theme.accent : g_theme.border);
+    const float b = g_theme.borderPx;
+    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, g_theme.track);
+
+    // Show the trailing characters that fit (so the caret stays visible) — this
+    // avoids needing a scissor rect across the batched geometry.
+    const float s     = g_theme.textScale;
+    const float charW = okay::Font8x8::Width * s;
+    const float th    = okay::Font8x8::Height * s;
+    const float pad   = 6.0f;
+    const float innerW = w - 2.0f * pad;
+    const int   maxCh  = charW > 0.0f ? (int)(innerW / charW) : 0;
+    const int   len    = cstrlen(buf);
+    const char* shown  = (maxCh > 0 && len > maxCh) ? buf + (len - maxCh) : buf;
+    const float tx = x + pad, ty = y + (h - th) * 0.5f;
+    drawText(tx, ty, shown, s, g_theme.text);
+
+    // Blinking caret at the end of the shown text when focused.
+    if (focused && (g_frame / 30u) % 2u == 0u) {
+        const int shownLen = cstrlen(shown);
+        const float cx = tx + shownLen * charW;
+        if (cx < x + w - 2.0f) quad(cx, ty, 2.0f, th, g_theme.text);
+    }
+    return changed;
+}
+
 void EndFrame(SDL_Renderer* r) {
     if (g_released) g_active = 0;   // safety: clear if the active button wasn't drawn
+    if (g_pressed && !g_focusClaimed) g_focus = 0;   // click on empty space drops keyboard focus
     if (!r || g_nv == 0 || g_ni == 0) return;
     // Save/restore the renderer's blend mode so we never disturb ImGui or anything
     // else that draws through the same SDL_Renderer.

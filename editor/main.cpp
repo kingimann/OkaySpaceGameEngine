@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 
 #include <algorithm>
 #include <array>
@@ -135,6 +136,15 @@ ImU32 ToColor(const Color& c) {
 //      so overlapping faces occlude correctly (the ImGui draw list has no depth
 //      buffer). Set by main(); the texture is reused/resized across frames.
 SDL_Renderer* g_sdlRenderer = nullptr;
+// GPU (OpenGL) 3D rendering — "what Unity uses". The scene is rasterized by the GPU
+// (hardware MSAA + depth) on an isolated hidden GL context, read back, and shown via
+// the same texture path as the software renderer. Isolated context = the editor's
+// SDL_Renderer UI is never disturbed. Experimental + off by default.
+bool          g_gpuRender = false;       // use the GL renderer for the 3D view
+SDL_Window*   g_glWindow  = nullptr;     // hidden window owning the GL context
+SDL_GLContext g_glCtx     = nullptr;
+okay::GLRenderer* g_glRenderer = nullptr;
+bool          g_glReady   = false;       // GL context + entry points loaded OK
 
 // One render target per 3D view "slot" (0 = Scene viewport, 1 = Game view).
 // ImGui defers rendering, so the SDL texture is only sampled at SDL_RenderCopy
@@ -191,8 +201,24 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     if (g_autoPerf && ss > 1 &&
         ((long)rw * rh * ss * ss > 5'000'000L || SceneTriangleLoad(scene) > 11000))
         ss = 1;
-    const std::uint32_t* px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
-                                             scene, vp, eye, rw, rh, ss, ignore);
+    // GPU path (experimental): render the scene on the isolated GL context and read
+    // back RGBA8 — a drop-in for RenderMeshesSS. We save/restore the current GL
+    // context so the editor's SDL_Renderer is never disturbed. On any failure we
+    // fall straight back to the software rasterizer below.
+    const std::uint32_t* px = nullptr;
+    if (g_gpuRender && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
+        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+        SDL_Window*   prevWin = SDL_GL_GetCurrentWindow();
+        if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0) {
+            int samples = 4;   // GPU MSAA is cheap; 4x gives crisp, hardware-AA edges
+            px = g_glRenderer->RenderToPixels(scene, vp, eye, rw, rh, samples,
+                                              0.0f, 0.0f, 0.0f, 0.0f, ignore);
+        }
+        SDL_GL_MakeCurrent(prevWin, prevCtx);
+    }
+    if (!px)
+        px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
+                            scene, vp, eye, rw, rh, ss, ignore);
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh) {
         if (g_view3DTex[slot]) SDL_DestroyTexture(g_view3DTex[slot]);
         g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
@@ -550,6 +576,7 @@ void LoadSettings() {
         else if (k == "showcamhud") g_showCamHud = (v != 0);
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
         else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
+        else if (k == "gpurender") g_gpuRender = (v != 0);
     }
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
     // aren't magnified) and AA OFF (the top-left fill rule killed the shimmer at the
@@ -560,7 +587,7 @@ void LoadSettings() {
 }
 void SaveSettings() {
     std::ofstream f("okay_settings.txt");
-    f << "settingsver 2\n"
+    f << "settingsver 3\n"
       << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
       << "vsync "      << (g_vsync ? 1 : 0) << "\n"
@@ -573,7 +600,8 @@ void SaveSettings() {
       << "showworldaxes " << (g_showWorldAxes ? 1 : 0) << "\n"
       << "showcamhud " << (g_showCamHud ? 1 : 0) << "\n"
       << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n"
-      << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n";
+      << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n"
+      << "gpurender " << (g_gpuRender ? 1 : 0) << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -1350,6 +1378,16 @@ void DrawMenuAndToolbar(EditorState& ed) {
         bool aa = g_ssaa > 1;
         if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
+        if (g_glReady) {
+            if (ImGui::MenuItem("GPU renderer (OpenGL)", nullptr, &g_gpuRender)) SaveSettings();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU (hardware rasterizer + 4x MSAA),\nlike Unity. Crisp, perspective-correct edges.\nOFF = the built-in software renderer.");
+        } else {
+            ImGui::BeginDisabled();
+            bool off = false;
+            ImGui::MenuItem("GPU renderer (OpenGL)", nullptr, &off);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("OpenGL is unavailable on this system;\nusing the software renderer.");
+        }
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
         if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
@@ -12221,6 +12259,33 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
+    // Optional GPU (OpenGL) 3D renderer on an ISOLATED hidden context, so the GPU
+    // can rasterize the Scene view (hardware MSAA + depth) without touching the
+    // editor's SDL_Renderer. If any step fails we silently keep the software path.
+    {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
+        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+        g_glWindow = SDL_CreateWindow("okay-gl", 0, 0, 16, 16,
+                                      SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        if (g_glWindow) {
+            g_glCtx = SDL_GL_CreateContext(g_glWindow);
+            if (g_glCtx) {
+                SDL_GL_MakeCurrent(g_glWindow, g_glCtx);
+                if (okay::GLRenderer::LoadGL((okay::GLRenderer::GLGetProc)SDL_GL_GetProcAddress)) {
+                    g_glRenderer = new okay::GLRenderer();
+                    g_glReady = true;
+                    ConsoleLog("GPU renderer available (View > GPU Renderer).");
+                }
+            }
+        }
+        // Restore whatever context SDL_Renderer had current (its own on the GL backend,
+        // or none on the D3D backend) so the editor UI keeps drawing normally.
+        SDL_GL_MakeCurrent(prevWin, prevCtx);
+        if (!g_glReady) ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
+    }
+
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     LoadRecent();
@@ -12481,6 +12546,18 @@ int main(int argc, char** argv) {
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
+    // Tear down the optional GPU renderer: free its GL objects with its own context
+    // current, then drop the context + hidden window.
+    if (g_glRenderer || g_glCtx) {
+        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
+        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+        if (g_glWindow && g_glCtx) SDL_GL_MakeCurrent(g_glWindow, g_glCtx);
+        if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
+        SDL_GL_MakeCurrent(prevWin, prevCtx);
+        if (g_glCtx) { SDL_GL_DeleteContext(g_glCtx); g_glCtx = nullptr; }
+        if (g_glWindow) { SDL_DestroyWindow(g_glWindow); g_glWindow = nullptr; }
+        g_glReady = false;
+    }
     if (g_pad) SDL_GameControllerClose(g_pad);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
     SDL_DestroyRenderer(renderer);

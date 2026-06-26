@@ -3319,6 +3319,11 @@ struct ScriptCaret {
 // The completion that pressing Tab will accept (the suffix after the typed prefix),
 // recomputed each frame where the autocomplete popup is shown; empty = none.
 static std::string g_acComplete;
+// Autocomplete popup state: number of items shown this frame (0 = no popup) and the
+// keyboard-highlighted item. Up/Down move the highlight (handled in the callback so
+// the editor's caret doesn't move lines while the popup is open).
+static int g_acCount = 0;
+static int g_acIndex = 0;
 
 static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
     auto* c = (ScriptCaret*)d->UserData;
@@ -3347,6 +3352,18 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             d->InsertChars(d->CursorPos, "    ");
         }
         return 0;
+    }
+    // While the autocomplete popup is open, Up/Down move the highlight instead of the
+    // text caret. ImGui already moved the caret a line (multiline), so restore it to
+    // where it was (c->pos holds last frame's position) and adjust the selection.
+    if (g_acCount > 0) {
+        bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+        bool dn = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+        if (up || dn) {
+            d->CursorPos = d->SelectionStart = d->SelectionEnd = c->pos;
+            g_acIndex = up ? (g_acIndex - 1 + g_acCount) % g_acCount
+                           : (g_acIndex + 1) % g_acCount;
+        }
     }
     // Go to line: move the caret to the start of the requested line.
     if (c->gotoLine > 0) {
@@ -4385,7 +4402,11 @@ void DrawScriptEditor(EditorState& ed) {
             }
             const std::vector<std::string>& members = ScriptMembers(receiver);
             bool memberMode = !receiver.empty() && !members.empty();
-            g_acComplete.clear();   // nothing to Tab-complete unless we show the popup
+            g_acComplete.clear(); g_acCount = 0;   // no popup unless we show one below
+            // Reset the highlight to the best match whenever the typed word changes.
+            static std::string s_acKey;
+            std::string acKey = receiver + "|" + prefix;
+            if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; }
             // Members list from the first keystroke (or right after the dot); plain
             // words still need 2+ chars so the popup doesn't fire constantly.
             if (memberMode || prefix.size() >= 2) {
@@ -4409,8 +4430,10 @@ void DrawScriptEditor(EditorState& ed) {
                 for (auto* w : ci) { if (hits.size() >= 12) break; hits.push_back(w); }
                 if (hits.size() > 12) hits.resize(12);
                 if (!hits.empty()) {
-                    // The top match is what Tab accepts (insert just the missing suffix).
-                    g_acComplete = hits[0]->substr(prefix.size());
+                    g_acCount = (int)hits.size();
+                    if (g_acIndex >= g_acCount) g_acIndex = 0;   // keep selection in range
+                    // The highlighted item is what Tab accepts (insert the missing suffix).
+                    g_acComplete = hits[g_acIndex]->substr(prefix.size());
                     ImGui::SetNextWindowPos(ImVec2(caretScreen.x, caretScreen.y + 2));
                     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 46, 245));
                     if (ImGui::Begin("##autocomplete", nullptr,
@@ -4419,12 +4442,13 @@ void DrawScriptEditor(EditorState& ed) {
                             ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                             ImGuiWindowFlags_NoSavedSettings)) {
                         for (std::size_t i = 0; i < hits.size(); ++i) {
-                            // Highlight the top match (the one Tab will accept).
-                            if (ImGui::Selectable(hits[i]->c_str(), i == 0))
+                            if (ImGui::Selectable(hits[i]->c_str(), (int)i == g_acIndex)) {
+                                g_acIndex = (int)i;
                                 caret.insert = hits[i]->substr(prefix.size());  // spliced when editor inactive
+                            }
                         }
                         ImGui::Separator();
-                        ImGui::TextDisabled("Tab to accept");
+                        ImGui::TextDisabled("\xe2\x86\x91\xe2\x86\x93 select   Tab accept");
                     }
                     ImGui::End();
                     ImGui::PopStyleColor();

@@ -2032,12 +2032,30 @@ static void MoveAssetInto(const std::string& src, const std::filesystem::path& d
                   : ("Moved " + s.filename().string() + " -> " + destDir.filename().string()));
 }
 
-// A drop target on the last-drawn item that accepts an asset path and moves it
-// into `destDir`.
+// Save a GameObject as a .okayprefab in `destDir` (Unity-style: drag from the
+// Hierarchy into the Project panel). Picks a non-clashing "<name>.okayprefab".
+static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir) {
+    namespace fs = std::filesystem;
+    if (!go) return;
+    std::error_code ec;
+    if (destDir.empty() || !fs::is_directory(destDir, ec)) { ConsoleLog("Can't save prefab: no Assets folder.", 2); return; }
+    std::string base = go->name.empty() ? std::string("Prefab") : go->name;
+    fs::path out = destDir / (base + ".okayprefab");
+    for (int n = 2; fs::exists(out, ec); ++n) out = destDir / (base + " " + std::to_string(n) + ".okayprefab");
+    if (SceneSerializer::SaveObjectToFile(*go, out.string()))
+        ConsoleLog("Saved prefab " + out.filename().string() + " -> " + destDir.filename().string());
+    else
+        ConsoleLog("Prefab save failed: " + out.string(), 2);
+}
+
+// A drop target on the last-drawn item: an asset path is MOVED into `destDir`; a
+// GameObject dragged from the Hierarchy is SAVED there as a prefab (Unity-style).
 static void AssetDropTarget(const std::filesystem::path& destDir) {
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH"))
             MoveAssetInto(std::string((const char*)p->Data), destDir);
+        if (const ImGuiPayload* g = ImGui::AcceptDragDropPayload("GO_PTR"))
+            SavePrefabInto(*(GameObject**)g->Data, destDir);
         ImGui::EndDragDropTarget();
     }
 }
@@ -2425,6 +2443,16 @@ void DrawProject(EditorState& ed) {
             renameTarget.clear(); ImGui::CloseCurrentPopup();
         } else if (cancel) { renameTarget.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
+    }
+
+    // Whole-grid drop: drag a GameObject from the Hierarchy anywhere onto the asset
+    // area to save it here as a prefab (Unity-style "drag to Project to make a prefab").
+    if (ImGuiWindow* gw = ImGui::GetCurrentWindow()) {
+        if (ImGui::BeginDragDropTargetCustom(gw->InnerClipRect, gw->ID)) {
+            if (const ImGuiPayload* g = ImGui::AcceptDragDropPayload("GO_PTR"))
+                SavePrefabInto(*(GameObject**)g->Data, dir);
+            ImGui::EndDragDropTarget();
+        }
     }
 
     ImGui::EndChild();

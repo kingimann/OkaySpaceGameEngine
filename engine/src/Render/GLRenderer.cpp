@@ -154,13 +154,14 @@ template <class F> bool load(F& fn, GLRenderer::GLGetProc gp, const char* name) 
 const char* kVert =
     "#version 120\n"
     "uniform mat4 uMVP; uniform mat4 uModel; uniform vec2 uTiling;\n"
-    "attribute vec3 aPos; attribute vec3 aNormal; attribute vec2 aUV;\n"
-    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV;\n"
+    "attribute vec3 aPos; attribute vec3 aNormal; attribute vec2 aUV; attribute vec3 aColor;\n"
+    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol;\n"
     "void main(){\n"
     "  gl_Position = uMVP * vec4(aPos,1.0);\n"
     "  vN = mat3(uModel) * aNormal;\n"
     "  vWorld = (uModel * vec4(aPos,1.0)).xyz;\n"
     "  vUV = aUV * uTiling;\n"
+    "  vCol = aColor;\n"
     "}\n";
 
 const char* kFrag =
@@ -169,9 +170,9 @@ const char* kFrag =
     "uniform vec3 uAmbient; uniform vec3 uEmissive; uniform vec3 uEye;\n"
     "uniform float uSpecular; uniform float uShininess; uniform float uUnlit;\n"
     "uniform sampler2D uTex; uniform float uUseTex;\n"
-    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV;\n"
+    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol;\n"
     "void main(){\n"
-    "  vec3 base = uColor;\n"
+    "  vec3 base = uColor * vCol;\n"
     "  if (uUseTex > 0.5) base *= texture2D(uTex, vUV).rgb;\n"
     "  if (uUnlit > 0.5) { gl_FragColor = vec4(base + uEmissive, 1.0); return; }\n"
     "  vec3 N = normalize(vN);\n"
@@ -276,6 +277,7 @@ bool GLRenderer::EnsureProgram() {
     g.BindAttribLocation(m_prog, 0, "aPos");
     g.BindAttribLocation(m_prog, 1, "aNormal");
     g.BindAttribLocation(m_prog, 2, "aUV");
+    g.BindAttribLocation(m_prog, 3, "aColor");
     g.LinkProgram(m_prog);
     GLint ok = 0; g.GetProgramiv(m_prog, GL_LINK_STATUS, &ok);
     g.DeleteShader(vs); g.DeleteShader(fs);
@@ -397,17 +399,25 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // has none we box-project (dominant face axis), matching the software renderer
         // so e.g. an untextured-UV player model still shows its texture on the GPU path.
         const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
+        // Per-triangle face colors color UV-less meshes in the software renderer (the
+        // Character's skin/clothing, foliage tints, ...). Honor them here so those models
+        // don't collapse to one flat uColor on the GPU path.
+        const bool faceCols = mesh.HasFaceColors();
         unsigned int tex = TextureFor(mr->texture);
 
-        // Expand triangles (non-indexed) into pos(3)+normal(3)+uv(2): flat shading via
+        // Expand triangles (non-indexed) into pos(3)+normal(3)+uv(2)+color(3): flat shading via
         // per-face normal when the mesh has none, smooth via per-vertex normals when it does.
-        m_verts.clear(); m_verts.reserve(T.size() * 8);
+        const int nv = (int)V.size();
+        m_verts.clear(); m_verts.reserve(T.size() * 11);
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             int a = T[i], b = T[i + 1], c = T[i + 2];
+            if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue; // skip bad tris
             // Face normal: used for flat shading AND for box-projecting UVs.
             Vec3 fn = Vec3::Cross(V[b] - V[a], V[c] - V[a]);
             { float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
             const float ax = std::fabs(fn.x), ay = std::fabs(fn.y), az = std::fabs(fn.z);
+            float cr = 1.0f, cg = 1.0f, cb = 1.0f;  // white = no-op when there are no face colors
+            if (faceCols) { const Color& fc = mesh.triColors[i / 3]; cr = fc.r; cg = fc.g; cb = fc.b; }
             const int idx[3] = {a, b, c};
             for (int k = 0; k < 3; ++k) {
                 const Vec3& p = V[idx[k]];
@@ -420,6 +430,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                 m_verts.push_back(p.x); m_verts.push_back(p.y); m_verts.push_back(p.z);
                 m_verts.push_back(n.x); m_verts.push_back(n.y); m_verts.push_back(n.z);
                 m_verts.push_back(u);   m_verts.push_back(v);
+                m_verts.push_back(cr);  m_verts.push_back(cg);  m_verts.push_back(cb);
             }
         }
         if (m_verts.empty()) continue;
@@ -447,13 +458,16 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
 
         g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
         g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
+        const GLsizei stride = 11 * sizeof(float);
         g.EnableVertexAttribArray(0);
-        g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void*)0);
+        g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (const void*)0);
         g.EnableVertexAttribArray(1);
-        g.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void*)(3 * sizeof(float)));
+        g.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(3 * sizeof(float)));
         g.EnableVertexAttribArray(2);
-        g.VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void*)(6 * sizeof(float)));
-        g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 8));
+        g.VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (const void*)(6 * sizeof(float)));
+        g.EnableVertexAttribArray(3);
+        g.VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(8 * sizeof(float)));
+        g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 11));
     }
 
     // Resolve MSAA into the single-sample texture, then read it back.

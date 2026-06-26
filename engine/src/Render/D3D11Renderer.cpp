@@ -38,8 +38,8 @@ const char* kHLSL =
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "SamplerState uSamp : register(s0);\n"
-    "struct VSIn { float3 pos:POSITION; float3 nrm:NORMAL; float2 uv:TEXCOORD; };\n"
-    "struct PSIn { float4 pos:SV_POSITION; float3 nrm:NORMAL; float3 world:TEXCOORD1; float2 uv:TEXCOORD0; };\n"
+    "struct VSIn { float3 pos:POSITION; float3 nrm:NORMAL; float2 uv:TEXCOORD; float3 col:COLOR; };\n"
+    "struct PSIn { float4 pos:SV_POSITION; float3 nrm:NORMAL; float3 world:TEXCOORD1; float2 uv:TEXCOORD0; float3 col:COLOR; };\n"
     "PSIn VSMain(VSIn i){\n"
     "  PSIn o;\n"
     "  float4 cp = mul(uMVP, float4(i.pos,1.0));\n"
@@ -48,10 +48,11 @@ const char* kHLSL =
     "  o.nrm = mul((float3x3)uModel, i.nrm);\n"
     "  o.world = mul(uModel, float4(i.pos,1.0)).xyz;\n"
     "  o.uv = i.uv * uTiling;\n"
+    "  o.col = i.col;\n"
     "  return o;\n"
     "}\n"
     "float4 PSMain(PSIn i):SV_TARGET {\n"
-    "  float3 base = uColor;\n"
+    "  float3 base = uColor * i.col;\n"      // per-vertex/face color (white when unused)
     "  if (uUseTex > 0.5) base *= uTex.Sample(uSamp, i.uv).rgb;\n"
     "  if (uUnlit > 0.5) return float4(base + uEmissive, 1.0);\n"
     "  float3 N = normalize(i.nrm);\n"
@@ -133,8 +134,9 @@ bool D3D11Renderer::Init() {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
-    p->dev->CreateInputLayout(il, 3, vsb->GetBufferPointer(), vsb->GetBufferSize(), &p->layout);
+    p->dev->CreateInputLayout(il, 4, vsb->GetBufferPointer(), vsb->GetBufferSize(), &p->layout);
     vsb->Release(); psb->Release();
 
     D3D11_BUFFER_DESC cbd; std::memset(&cbd, 0, sizeof(cbd));
@@ -176,7 +178,20 @@ void D3D11Renderer::Impl::DestroyTargets() {
 bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     if (colorTex && w == W && h == H && samples == S) return true;
     DestroyTargets();
-    w = W; h = H; samples = S < 1 ? 1 : S;
+    w = W; h = H;
+    // Clamp the requested MSAA to what the device actually supports for BOTH the color
+    // and depth formats. Creating a multisampled texture with an unsupported count is a
+    // common hard-failure (and on some drivers a crash) on integrated GPUs / RDP / VMs,
+    // so drop to the next lower supported count, down to 1 (no MSAA).
+    int want = S < 1 ? 1 : S;
+    samples = 1;
+    for (int s = want; s >= 1; --s) {
+        UINT qC = 0, qD = 0;
+        if (SUCCEEDED(dev->CheckMultisampleQualityLevels(DXGI_FORMAT_R8G8B8A8_UNORM, (UINT)s, &qC)) && qC > 0 &&
+            SUCCEEDED(dev->CheckMultisampleQualityLevels(DXGI_FORMAT_D24_UNORM_S8_UINT, (UINT)s, &qD)) && qD > 0) {
+            samples = s; break;
+        }
+    }
 
     D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
     td.Width = W; td.Height = H; td.MipLevels = 1; td.ArraySize = 1;
@@ -264,14 +279,22 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         // Texture whenever the material has one; box-project UVs when the mesh has none
         // (matches the software renderer, so UV-less textured models still texture here).
         const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
+        // Per-triangle face colors (skin/shirt/etc. on the Character, foliage tints, ...)
+        // are how UV-less meshes are colored in the software renderer; honor them here so
+        // those models don't render as one flat uColor under the GPU path.
+        const bool faceCols = mesh.HasFaceColors();
         ID3D11ShaderResourceView* srv = p->TextureFor(mr->texture);
 
-        p->verts.clear(); p->verts.reserve(T.size() * 8);
+        const int nv = (int)V.size();
+        p->verts.clear(); p->verts.reserve(T.size() * 11);
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             int a = T[i], b = T[i + 1], cc = T[i + 2];
+            if (a < 0 || b < 0 || cc < 0 || a >= nv || b >= nv || cc >= nv) continue; // skip bad tris
             Vec3 fn = Vec3::Cross(V[b] - V[a], V[cc] - V[a]);
             { float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
             const float ax = std::fabs(fn.x), ay = std::fabs(fn.y), az = std::fabs(fn.z);
+            float cr = 1.0f, cg = 1.0f, cb = 1.0f;  // white = no-op when there are no face colors
+            if (faceCols) { const Color& fc = mesh.triColors[i / 3]; cr = fc.r; cg = fc.g; cb = fc.b; }
             const int idx[3] = {a, b, cc};
             for (int k = 0; k < 3; ++k) {
                 const Vec3& pos = V[idx[k]];
@@ -284,21 +307,23 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
                 p->verts.push_back(pos.x); p->verts.push_back(pos.y); p->verts.push_back(pos.z);
                 p->verts.push_back(nrm.x); p->verts.push_back(nrm.y); p->verts.push_back(nrm.z);
                 p->verts.push_back(u);     p->verts.push_back(v);
+                p->verts.push_back(cr);    p->verts.push_back(cg);    p->verts.push_back(cb);
             }
         }
-        const int vcount = (int)(p->verts.size() / 8);
+        const int vcount = (int)(p->verts.size() / 11);
         if (vcount == 0) continue;
 
         // Grow / upload the dynamic vertex buffer.
         if (vcount > p->vbCap) {
-            if (p->vb) { p->vb->Release(); p->vb = nullptr; }
+            if (p->vb) { p->vb->Release(); p->vb = nullptr; p->vbCap = 0; }
             const int cap = vcount + 1024;
             D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
-            bd.ByteWidth = (UINT)(cap * 8 * sizeof(float)); bd.Usage = D3D11_USAGE_DYNAMIC;
+            bd.ByteWidth = (UINT)(cap * 11 * sizeof(float)); bd.Usage = D3D11_USAGE_DYNAMIC;
             bd.BindFlags = D3D11_BIND_VERTEX_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
             if (FAILED(p->dev->CreateBuffer(&bd, nullptr, &p->vb))) continue;
             p->vbCap = cap;
         }
+        if (!p->vb) continue;  // never Map a null buffer (a prior CreateBuffer may have failed)
         D3D11_MAPPED_SUBRESOURCE ms;
         if (SUCCEEDED(c->Map(p->vb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
             std::memcpy(ms.pData, p->verts.data(), p->verts.size() * sizeof(float));
@@ -327,7 +352,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
         if (srv) c->PSSetShaderResources(0, 1, &srv);
 
-        UINT stride = 8 * sizeof(float), offset = 0;
+        UINT stride = 11 * sizeof(float), offset = 0;
         c->IASetVertexBuffers(0, 1, &p->vb, &stride, &offset);
         c->Draw((UINT)vcount, 0);
     }

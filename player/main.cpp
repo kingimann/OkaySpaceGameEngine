@@ -1269,14 +1269,16 @@ int main(int argc, char** argv) {
             // (Unity-style Button→Text) — that child draws itself in the text pass.
             if (!UIButtonTextChild(up.get())) {
                 float px = btn->fontScale * bk;
-                float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+                okay::TtfFont* fnt = okay::GetFont(btn->fontPath);
+                float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
+                               : btn->label.size() * (Font8x8::Width + 1) * px;
                 float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f * bk : 0.0f);
                 float right = o.x + bsz.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f * bk : 0.0f);
                 float tx = left + ((right - left) - tw) * 0.5f;
                 float ty = o.y + (bsz.y - Font8x8::Height * px) * 0.5f + shift;
                 Color tcc = btn->CurrentTextColor();
                 SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255 * op)};
-                DrawText(renderer, btn->label, tx, ty, px, tc);
+                DrawText(renderer, btn->label, tx, ty, px, tc, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
             }
         }
             else if (_it.kind == K_Text) {   // screen-space text — on top of panels/controls

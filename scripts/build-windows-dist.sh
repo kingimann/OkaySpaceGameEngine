@@ -106,6 +106,11 @@ if [ -d assets/textures ]; then
     mkdir -p "$OUT_DIR/Assets/Textures"
     cp assets/textures/*.png "$OUT_DIR/Assets/Textures/" 2>/dev/null || true
 fi
+# Starter font (DejaVu Sans, permissive license). Set a Text/Button Font to this path.
+if [ -d assets/fonts ]; then
+    mkdir -p "$OUT_DIR/Assets/Fonts"
+    cp assets/fonts/* "$OUT_DIR/Assets/Fonts/" 2>/dev/null || true
+fi
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).

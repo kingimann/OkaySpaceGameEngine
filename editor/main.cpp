@@ -8782,8 +8782,24 @@ void DrawInspector(EditorState& ed) {
             if (UIShapeUsesRadius(btn->shape))
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             // Font Scale only styles the built-in label; with a child Text it's edited there.
-            if (!childTr)
+            if (!childTr) {
                 if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
+                // Optional TTF label font (empty = built-in bitmap).
+                char fb[512];
+                std::strncpy(fb, btn->fontPath.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
+                if (ImGui::InputTextWithHint("Font##uib", "Assets/MyFont.ttf (empty = bitmap)", fb, sizeof(fb)))
+                    { btn->fontPath = fb; ed.dirty = true; }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                        std::string ap((const char*)p->Data), al = Lower(ap);
+                        if (al.size() > 4 && (al.substr(al.size()-4)==".ttf" || al.substr(al.size()-4)==".otf"))
+                            { btn->fontPath = ap; ed.dirty = true; }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                if (!btn->fontPath.empty() && !okay::GetFont(btn->fontPath))
+                    ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+            }
             if (ImGui::Checkbox("Drop Shadow##uib", &btn->shadow)) ed.dirty = true;
             if (btn->shadow) {
                 float sc[4] = {btn->shadowColor.r, btn->shadowColor.g, btn->shadowColor.b, btn->shadowColor.a};
@@ -10401,12 +10417,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         // Button→Text) — that child renders itself in the text pass.
         if (!UIButtonTextChild(up.get())) {
             float px = btn->fontScale * s;
-            float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+            okay::TtfFont* fnt = okay::GetFont(btn->fontPath);
+            float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
+                           : btn->label.size() * (Font8x8::Width + 1) * px;
             float left  = a.x + (isz > 0.0f && !btn->iconRight ? isz + 12 * s : 0.0f);
             float right = b.x - (isz > 0.0f &&  btn->iconRight ? isz + 12 * s : 0.0f);
             DrawBitmapText(dl, btn->label, left + ((right - left) - tw) * 0.5f,
                            a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f + shift, px,
-                           ToColor(btn->CurrentTextColor()));
+                           ToColor(btn->CurrentTextColor()), 0.0f, 0.0f, false, false, 0, fnt);
         }
     }
 

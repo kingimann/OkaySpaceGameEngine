@@ -723,7 +723,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << btn->shadowSoftness
             // extended: assigned OnClick action (target object + public function)
             << " " << Quote(btn->clickTarget) << " " << Quote(btn->clickFunction)
-            << " " << btn->clickArg << "\n";
+            << " " << btn->clickArg
+            << " " << Quote(btn->fontPath) << "\n";   // optional TTF label font (newest)
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -1982,6 +1983,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     btn->clickTarget = ReadQuoted(in); btn->clickFunction = ReadQuoted(in);
                                     in >> std::ws; // optional OnClick argument (added later)
                                     if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') in >> btn->clickArg;
+                                    in >> std::ws; // optional TTF label font (newest)
+                                    if (in.peek() == '"') btn->fontPath = ReadQuoted(in);
                                 }
                             }
                         }

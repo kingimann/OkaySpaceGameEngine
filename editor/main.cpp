@@ -3483,6 +3483,27 @@ static const std::vector<std::string>& ScriptCompletions() {
     return w;
 }
 
+// Append identifiers found in the current document to a completion pool (deduped),
+// so the editor also suggests the script's own variables and function names — the
+// "current document symbols" source real IDEs include alongside the API list.
+static void AddBufferIdentifiers(const char* src, std::vector<std::string>& pool) {
+    if (!src) return;
+    std::unordered_set<std::string> have(pool.begin(), pool.end());
+    std::string id;
+    auto flush = [&]() {
+        if (id.size() >= 3 && !std::isdigit((unsigned char)id[0]) && !have.count(id)) {
+            have.insert(id); pool.push_back(id);
+        }
+        id.clear();
+    };
+    for (const char* p = src; *p; ++p) {
+        char ch = *p;
+        if (std::isalnum((unsigned char)ch) || ch == '_') id += ch;
+        else flush();
+    }
+    flush();
+}
+
 // Members offered after "<receiver>." in the editor (Unity-style API surface, so
 // e.g. typing `transform.` lists position/rotation/Translate/…). Returns an empty
 // list for unknown receivers.
@@ -4283,7 +4304,11 @@ void DrawScriptEditor(EditorState& ed) {
                 // Rank prefix matches (case-sensitive first, then case-insensitive)
                 // ahead of looser ones so the top item is the best Tab target.
                 std::vector<const std::string*> exact, ci;
-                const std::vector<std::string>& pool = memberMode ? members : ScriptCompletions();
+                // Non-member pool = curated API + identifiers from THIS document, so
+                // your own vars/functions complete too (rebuilt per frame; buffers are small).
+                std::vector<std::string> combined;
+                if (!memberMode) { combined = ScriptCompletions(); AddBufferIdentifiers(buf.data(), combined); }
+                const std::vector<std::string>& pool = memberMode ? members : combined;
                 for (const auto& w : pool) {
                     if (w.size() < prefix.size()) continue;
                     if (!memberMode && w.size() == prefix.size()) continue;  // exact word: nothing to add

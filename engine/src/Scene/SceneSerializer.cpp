@@ -1171,7 +1171,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     mr->mesh.name = "";
                     mr->mesh.uvs.clear();
                     mr->mesh.triColors.clear();
-                    mr->mesh.ComputeSmoothNormals();
+                    // Flat (faceted) shading, like the built-in primitives — do NOT
+                    // force smooth normals, or an edited box/ground reloads looking like
+                    // a soft rounded blob instead of clean flat faces.
+                    mr->mesh.normals.clear();
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         Color e; float spec = 0, shin = 16; int unlit = 0;

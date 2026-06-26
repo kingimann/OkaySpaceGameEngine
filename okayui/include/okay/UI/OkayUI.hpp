@@ -176,6 +176,41 @@ bool TreeNode(const char* label);
 /// TreeNode() that returned true.
 void TreePop();
 
+// ---- Menus ---------------------------------------------------------------------
+// Place a menu bar right after Begin(): a row of menus across the top of the window.
+//     if (OkayUI::BeginMenuBar()) { ... } style isn't used; call Begin/End in pairs:
+//     OkayUI::BeginMenuBar();
+//       if (OkayUI::BeginMenu("File")) { if (OkayUI::MenuItem("Open")) ...; OkayUI::EndMenu(); }
+//     OkayUI::EndMenuBar();
+void BeginMenuBar();
+void EndMenuBar();
+/// A menu on the bar; returns true while its dropdown is open (then add MenuItems).
+bool BeginMenu(const char* label);
+/// Close a BeginMenu() block (handles click-outside dismissal).
+void EndMenu();
+/// An item in the currently-open menu; returns true the frame it is clicked.
+bool MenuItem(const char* label);
+
+/// A full-width selectable row (list entries). Drawn highlighted when `selected`;
+/// returns true the frame it is clicked.
+bool Selectable(const char* label, bool selected);
+
+// ---- Fonts ---------------------------------------------------------------------
+// A bitmap font is a glyph cell size plus a pixel test. OkayUI defaults to the
+// engine's built-in 8x8 font; supply another (e.g. a bold or larger bitmap, or your
+// own glyph set) to change the typeface. `Style().textScale` still scales it.
+struct Font {
+    int width  = 8;
+    int height = 8;
+    bool (*pixel)(char c, int x, int y) = nullptr;   // is pixel (x,y) of glyph `c` lit?
+};
+/// Set the active font (null restores the built-in 8x8).
+void SetFont(const Font* font);
+const Font* GetFont();
+/// Built-in fonts: the default 8x8, and a synthesized bold variant.
+const Font* FontDefault();
+const Font* FontBold();
+
 /// The active theme (mutable — tweak colors/sizes in place).
 Theme& Style();
 

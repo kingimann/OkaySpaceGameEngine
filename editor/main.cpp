@@ -12633,12 +12633,25 @@ int main(int argc, char** argv) {
             static float s_volume = 60.0f;
             static int   s_mode   = 0, s_quality = 1;
             static char  s_name[16] = "Player1";
+            static bool  s_bold   = false;
             static const char* s_qualOpts[] = {"Low", "Medium", "High"};
             float wy = io.DisplaySize.y - 420.0f; if (wy < 40.0f) wy = 40.0f;
             // Written as a sequence of auto-layout calls — no manual coordinates. The
             // window is draggable by its title bar.
+            OkayUI::SetFont(s_bold ? OkayUI::FontBold() : OkayUI::FontDefault());
             OkayUI::BeginFrame(uin);
             OkayUI::Begin("OkayUI Demo", 24.0f, wy, 320.0f, 380.0f);
+            OkayUI::BeginMenuBar();
+            if (OkayUI::BeginMenu("File")) {
+                if (OkayUI::MenuItem("New"))  ConsoleLog("OkayUI menu: New");
+                if (OkayUI::MenuItem("Open")) ConsoleLog("OkayUI menu: Open");
+                OkayUI::EndMenu();
+            }
+            if (OkayUI::BeginMenu("Help")) {
+                if (OkayUI::MenuItem("About")) ConsoleLog("OkayUI: a tiny immediate-mode toolkit.");
+                OkayUI::EndMenu();
+            }
+            OkayUI::EndMenuBar();
             OkayUI::Text("Drag me by the title bar");
             OkayUI::Separator();
             OkayUI::InputText("Name", s_name, (int)sizeof(s_name));
@@ -12648,6 +12661,7 @@ int main(int argc, char** argv) {
             OkayUI::RadioButton("Hard", &s_mode, 1);
             OkayUI::SliderFloat("Volume", &s_volume, 0.0f, 100.0f);
             OkayUI::Checkbox("Sound", &s_sound);
+            OkayUI::Checkbox("Bold font", &s_bold);
             if (OkayUI::CollapsingHeader("Stats")) {
                 OkayUI::Text("Health"); OkayUI::ProgressBar(0.8f);
                 OkayUI::Text("Hunger"); OkayUI::ProgressBar(0.35f);

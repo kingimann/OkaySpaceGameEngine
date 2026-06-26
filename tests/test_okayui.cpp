@@ -265,9 +265,62 @@ int main(int argc, char** argv) {
         CHECK(o1);
     }
 
+    // --- Menu: open "File", then click "Open". ---
+    {
+        release();
+        bool opened = false;
+        auto mframe = [&](OkayUI::Input mi) {
+            OkayUI::BeginFrame(mi);
+            OkayUI::Begin("MW", 10, 10, 260, 200);
+            OkayUI::BeginMenuBar();
+            if (OkayUI::BeginMenu("File")) { if (OkayUI::MenuItem("Open")) opened = true; OkayUI::EndMenu(); }
+            OkayUI::EndMenuBar();
+            OkayUI::End(); OkayUI::EndFrame(r);
+        };
+        OkayUI::Input mi;
+        mi.mouseX = 40; mi.mouseY = 62; mi.mouseDown = true;  mframe(mi);  // press File button
+        mi.mouseDown = false;                                 mframe(mi);  // release -> menu opens
+        mi.mouseX = 40; mi.mouseY = 90; mi.mouseDown = true;  mframe(mi);  // press "Open" item
+        mi.mouseDown = false;                                 mframe(mi);  // release -> click
+        CHECK(opened);
+    }
+
+    // --- Selectable: a full-width row reports a click. ---
+    {
+        release();
+        OkayUI::Input si; si.mouseX = 40; si.mouseY = 62; si.mouseDown = true;
+        OkayUI::BeginFrame(si); OkayUI::Begin("SW", 10, 10, 200, 200); OkayUI::Selectable("Item", false); OkayUI::End(); OkayUI::EndFrame(r);
+        si.mouseDown = false;
+        OkayUI::BeginFrame(si); OkayUI::Begin("SW", 10, 10, 200, 200); bool c = OkayUI::Selectable("Item", false); OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(c);
+    }
+
+    // --- Fonts: the bold font lights more pixels than the default for the same text. ---
+    {
+        auto countLit = [&](const OkayUI::Font* f) {
+            OkayUI::SetFont(f);
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 255); SDL_RenderClear(r);
+            OkayUI::BeginFrame(OkayUI::Input{});
+            OkayUI::Begin("FW", 2, 2, 220, 80);
+            OkayUI::Text("WWWW");
+            OkayUI::End(); OkayUI::EndFrame(r);
+            SDL_LockSurface(surf);
+            int n = 0;   // count bright (text-colored) pixels; the panel/bg are dark
+            for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x)
+                if (((pixelAt(surf, x, y) >> 16) & 0xFFu) > 150u) ++n;
+            SDL_UnlockSurface(surf);
+            return n;
+        };
+        int dn = countLit(OkayUI::FontDefault());
+        int bn = countLit(OkayUI::FontBold());
+        OkayUI::SetFont(OkayUI::FontDefault());
+        CHECK(bn > dn);
+        CHECK(OkayUI::GetFont() == OkayUI::FontDefault());
+    }
+
     // --- Optional visual preview: an auto-layout window showing the widgets. ---
     if (argc > 2 && std::strcmp(argv[1], "--png") == 0) {
-        const int PW = 360, PH = 560;
+        const int PW = 360, PH = 600;
         SDL_Surface* big = SDL_CreateRGBSurfaceWithFormat(0, PW, PH, 32, SDL_PIXELFORMAT_ARGB8888);
         SDL_Renderer* br = SDL_CreateSoftwareRenderer(big);
         char demoName[16] = "Player1"; int demoMode = 0, demoSel = 1, demoLives = 3;
@@ -276,8 +329,14 @@ int main(int argc, char** argv) {
         const char* opts[] = {"Low", "Medium", "High"};
         auto panel = [&](OkayUI::Input pv) {
             OkayUI::BeginFrame(pv);
+            OkayUI::SetFont(OkayUI::FontBold());            // bold window title...
             OkayUI::Begin("Settings", 12, 12, PW - 24, PH - 24);
-            OkayUI::Combo("Quality", opts, 3, &demoSel);   // first item -> box at content origin
+            OkayUI::SetFont(OkayUI::FontDefault());         // ...regular body
+            OkayUI::BeginMenuBar();
+            if (OkayUI::BeginMenu("File")) { OkayUI::MenuItem("Open"); OkayUI::MenuItem("Save"); OkayUI::EndMenu(); }
+            if (OkayUI::BeginMenu("Help")) { OkayUI::MenuItem("About"); OkayUI::EndMenu(); }
+            OkayUI::EndMenuBar();
+            OkayUI::Combo("Quality", opts, 3, &demoSel);   // first item under the bar
             OkayUI::Text("Auto-layout + overlay");
             OkayUI::Separator();
             OkayUI::InputText("Name", demoName, 16);

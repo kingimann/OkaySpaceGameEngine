@@ -38,6 +38,18 @@ int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = 
 bool  g_focusClaimed = false;    // a widget took the click this frame (keep focus)
 unsigned g_frame = 0;            // frame counter (drives the text caret blink)
 float    g_dragAccum = 0.0f;     // sub-unit accumulator for DragInt while dragging
+
+// Menu bar / open-menu state.
+bool  g_inMenuBar = false;
+float g_barX = 0.0f, g_barY = 0.0f, g_barH = 0.0f;
+struct CurMenu {
+    bool  active = false;
+    int   menuId = 0;
+    float x = 0, w = 0;                          // dropdown left + width
+    float bx = 0, by = 0, bw = 0, bh = 0;        // the menu's button on the bar
+    float itemStartY = 0, itemY = 0;             // dropdown item cursor
+};
+CurMenu g_curMenu;
 Theme g_theme;
 
 // Length of a C string without pulling in <cstring> (keeps the toolkit STL/libc-light).
@@ -80,9 +92,21 @@ inline int hashLabel(const char* s) {
     int id = (int)(h & 0x7fffffffu);
     return id ? id : 1;
 }
-inline float rowH() { return okay::Font8x8::Height * g_theme.textScale + 12.0f; }
-inline float textH() { return okay::Font8x8::Height * g_theme.textScale; }
-inline float labelW(const char* s) { return s && *s ? okay::Font8x8::MeasureWidth(s) * g_theme.textScale : 0.0f; }
+// ---- Active font ---------------------------------------------------------------
+bool defGlyph(char c, int x, int y) { return okay::Font8x8::Pixel(c, x, y); }
+// Bold = the glyph OR-ed with itself shifted one pixel right (thickens strokes).
+bool boldGlyph(char c, int x, int y) { return okay::Font8x8::Pixel(c, x, y) || (x > 0 && okay::Font8x8::Pixel(c, x - 1, y)); }
+const Font kFontDefault{8, 8, defGlyph};
+const Font kFontBold{8, 8, boldGlyph};
+const Font* g_font = &kFontDefault;
+inline int  fW() { return g_font->width; }
+inline int  fH() { return g_font->height; }
+inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c, x, y); }
+inline int  fMeasure(const char* s) { return fW() * cstrlen(s); }
+
+inline float rowH() { return fH() * g_theme.textScale + 12.0f; }
+inline float textH() { return fH() * g_theme.textScale; }
+inline float labelW(const char* s) { return s && *s ? fMeasure(s) * g_theme.textScale : 0.0f; }
 
 // The indented content left edge and full indented content width.
 inline float leftEdge() { return g_lay.ox + g_lay.indent; }
@@ -146,11 +170,11 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
     if (!str) return;
     float penX = x;
     for (const char* p = str; *p; ++p) {
-        for (int gy = 0; gy < okay::Font8x8::Height; ++gy)
-            for (int gx = 0; gx < okay::Font8x8::Width; ++gx)
-                if (okay::Font8x8::Pixel(*p, gx, gy))
+        for (int gy = 0; gy < fH(); ++gy)
+            for (int gx = 0; gx < fW(); ++gx)
+                if (fPix(*p, gx, gy))
                     quad(penX + gx * s, y + gy * s, s, s, c);
-        penX += okay::Font8x8::Width * s;
+        penX += fW() * s;
     }
 }
 
@@ -178,6 +202,7 @@ void BeginFrame(const Input& in) {
     ++g_frame;
     g_nv = 0; g_ni = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false;
+    g_inMenuBar = false; g_curMenu.active = false;
 }
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
@@ -205,8 +230,8 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
     // Centered label.
     if (label && *label) {
         const float s  = g_theme.textScale;
-        const float tw = okay::Font8x8::MeasureWidth(label) * s;
-        const float th = okay::Font8x8::Height * s;
+        const float tw = fMeasure(label) * s;
+        const float th = fH() * s;
         drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, label, s, g_theme.text);
     }
     return clicked;
@@ -250,7 +275,7 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
     // Label to the right, vertically centered against the box.
     if (label && *label) {
         const float s  = g_theme.textScale;
-        const float th = okay::Font8x8::Height * s;
+        const float th = fH() * s;
         drawText(x + size + 8.0f, y + (size - th) * 0.5f, label, s, g_theme.text);
     }
     return changed;
@@ -326,7 +351,7 @@ bool RadioButton(int id, float x, float y, float size, const char* label, int* v
     }
     if (label && *label) {
         const float s  = g_theme.textScale;
-        const float th = okay::Font8x8::Height * s;
+        const float th = fH() * s;
         drawText(x + size + 8.0f, y + (size - th) * 0.5f, label, s, g_theme.text);
     }
     return changed;
@@ -353,8 +378,8 @@ bool Tab(int id, float x, float y, float w, float h, const char* label, int* cur
     if (selected) quad(x, y, w, 3.0f, g_theme.accent);   // accent strip on the active tab
     if (label && *label) {
         const float s  = g_theme.textScale;
-        const float tw = okay::Font8x8::MeasureWidth(label) * s;
-        const float th = okay::Font8x8::Height * s;
+        const float tw = fMeasure(label) * s;
+        const float th = fH() * s;
         drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, label, s, g_theme.text);
     }
     return *current == index;
@@ -391,8 +416,8 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
     // Show the trailing characters that fit (so the caret stays visible) — this
     // avoids needing a scissor rect across the batched geometry.
     const float s     = g_theme.textScale;
-    const float charW = okay::Font8x8::Width * s;
-    const float th    = okay::Font8x8::Height * s;
+    const float charW = fW() * s;
+    const float th    = fH() * s;
     const float pad   = 6.0f;
     const float innerW = w - 2.0f * pad;
     const int   maxCh  = charW > 0.0f ? (int)(innerW / charW) : 0;
@@ -449,6 +474,11 @@ void EndFrame(SDL_Renderer* r) {
 }
 
 Theme& Style() { return g_theme; }
+
+void SetFont(const Font* f) { g_font = f ? f : &kFontDefault; }
+const Font* GetFont()       { return g_font; }
+const Font* FontDefault()   { return &kFontDefault; }
+const Font* FontBold()      { return &kFontBold; }
 
 // ---- Auto-layout window + ImGui-style overloads --------------------------------
 
@@ -592,7 +622,7 @@ bool CollapsingHeader(const char* label) {
     quad(x, y, w, h, bg);
     const float s = g_theme.textScale;
     drawText(x + 8.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);   // expander glyph
-    drawText(x + 8.0f + okay::Font8x8::Width * s * 2.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    drawText(x + 8.0f + fW() * s * 2.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return *open;
 }
 
@@ -629,7 +659,7 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
     if (boxW > 2*b && h > 2*b) quad(x + b, y + b, boxW - 2*b, h - 2*b, insideBox ? g_theme.bgHover : g_theme.bg);
     const char* cur = (*current >= 0 && *current < count) ? items[*current] : "";
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, cur, s, g_theme.text);
-    drawText(x + boxW - okay::Font8x8::Width * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
+    drawText(x + boxW - fW() * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
 
     bool changed = false;
@@ -763,7 +793,7 @@ bool TreeNode(const char* label) {
     else if (inside && g_pressed) g_active = id;
     if (inside) quad(x, y, w, h, g_theme.bgHover);
     drawText(x + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
-    drawText(x + 4.0f + okay::Font8x8::Width * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    drawText(x + 4.0f + fW() * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     if (*open) g_lay.indent += 16.0f;   // children indent until TreePop()
     return *open;
 }
@@ -772,6 +802,86 @@ void TreePop() {
     if (!g_lay.active) return;
     g_lay.indent -= 16.0f;
     if (g_lay.indent < 0.0f) g_lay.indent = 0.0f;
+}
+
+void BeginMenuBar() {
+    if (!g_lay.active) return;
+    const float h = rowH();
+    float x, y; place(fullW(), h, x, y);
+    quad(x, y, fullW(), h, g_theme.bgDown);
+    g_inMenuBar = true; g_barX = x; g_barY = y; g_barH = h;
+}
+
+void EndMenuBar() { g_inMenuBar = false; }
+
+bool BeginMenu(const char* label) {
+    if (!g_lay.active || !g_inMenuBar) return false;
+    const int id = hashLabel(label);
+    bool* open = openState(id, false);
+    const float h = g_barH, s = g_theme.textScale;
+    const float bw = labelW(label) + 16.0f;
+    const float x = g_barX, y = g_barY;
+    g_barX += bw;   // advance the bar cursor for the next menu
+
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, bw, h);
+    if (inside) g_hot = id;
+    if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
+    else if (inside && g_pressed) g_active = id;
+    if (*open || inside) quad(x, y, bw, h, g_theme.bgHover);
+    drawText(x + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+
+    if (*open) {
+        g_curMenu.active = true; g_curMenu.menuId = id;
+        g_curMenu.x = x; g_curMenu.w = 180.0f;
+        g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = bw; g_curMenu.bh = h;
+        g_curMenu.itemStartY = y + h; g_curMenu.itemY = y + h;
+    }
+    return *open;
+}
+
+bool MenuItem(const char* label) {
+    if (!g_lay.active || !g_curMenu.active) return false;
+    const float h = rowH(), s = g_theme.textScale;
+    const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
+    g_curMenu.itemY += h;
+    const int iid = hashLabel(label) ^ g_curMenu.menuId;
+    const bool ih = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (ih) g_hot = iid;
+    bool clicked = false;
+    if (g_active == iid) {
+        if (g_released) { if (ih) { clicked = true; *openState(g_curMenu.menuId, false) = false; } g_active = 0; }
+    } else if (ih && g_pressed) g_active = iid;
+    g_toOverlay = true;
+    quad(x, y, w, h, ih ? g_theme.bgHover : g_theme.panel);
+    drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    g_toOverlay = false;
+    return clicked;
+}
+
+void EndMenu() {
+    if (!g_curMenu.active) return;
+    // A press outside both the menu button and its item list closes the menu.
+    const bool inBtn  = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.bx, g_curMenu.by, g_curMenu.bw, g_curMenu.bh);
+    const bool inList = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.x, g_curMenu.itemStartY,
+                               g_curMenu.w, g_curMenu.itemY - g_curMenu.itemStartY);
+    if (g_pressed && !inBtn && !inList) *openState(g_curMenu.menuId, false) = false;
+    g_curMenu.active = false;
+}
+
+bool Selectable(const char* label, bool selected) {
+    if (!g_lay.active) return false;
+    const int id = hashLabel(label);
+    const float h = rowH(), w = fullW(), s = g_theme.textScale;
+    float x, y; place(w, h, x, y);
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+    bool clicked = false;
+    if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
+    else if (inside && g_pressed) g_active = id;
+    if (selected)      quad(x, y, w, h, g_theme.accent);
+    else if (inside)   quad(x, y, w, h, g_theme.bgHover);
+    drawText(x + 6.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    return clicked;
 }
 
 } // namespace OkayUI

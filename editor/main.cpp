@@ -179,6 +179,11 @@ static long SceneTriangleLoad(const Scene& scene) {
     return n;
 }
 
+// Forward decls: Render3DTexture (below) uses these for the GPU-renderer self-heal,
+// but their definitions live further down the file.
+void SaveSettings();
+void ConsoleLog(const std::string& msg, int level);
+
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
 SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye,
@@ -215,6 +220,15 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                                               0.0f, 0.0f, 0.0f, 0.0f, ignore);
         }
         SDL_GL_MakeCurrent(prevWin, prevCtx);
+        // Self-heal: if the GPU path keeps failing, stop trying and drop to software
+        // so the user is never stuck staring at a dead viewport.
+        static int s_glFails = 0;
+        if (!px) {
+            if (++s_glFails >= 3) {
+                g_gpuRender = false; SaveSettings();
+                ConsoleLog("GPU renderer failed repeatedly; switched back to the software renderer.", 1);
+            }
+        } else s_glFails = 0;
     }
     if (!px)
         px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
@@ -12263,6 +12277,12 @@ int main(int argc, char** argv) {
     // can rasterize the Scene view (hardware MSAA + depth) without touching the
     // editor's SDL_Renderer. If any step fails we silently keep the software path.
     {
+        // Ask for a 3.2 *compatibility* context: it guarantees core framebuffer
+        // objects, multisample renderbuffers + blit, and VAOs, while still accepting
+        // our legacy #version 120 shaders. If the driver can't provide it,
+        // SDL_GL_CreateContext fails and we fall back to software (no crash).
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
         SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
         SDL_Window* prevWin = SDL_GL_GetCurrentWindow();

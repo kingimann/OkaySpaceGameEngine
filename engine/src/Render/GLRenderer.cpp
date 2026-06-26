@@ -98,6 +98,12 @@ typedef void   (*PFNEnable)(GLenum);
 typedef void   (*PFNDepthFunc)(GLenum);
 typedef void   (*PFNDrawArrays)(GLenum, GLint, GLsizei);
 typedef void   (*PFNReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*);
+typedef GLenum (*PFNGetError)(void);
+// VAOs: core in GL 3.0+ and REQUIRED for draws in a core profile; on a 2.1 /
+// compatibility context the default VAO (0) works, so these are loaded optionally.
+typedef void   (*PFNGenVertexArrays)(GLsizei, GLuint*);
+typedef void   (*PFNBindVertexArray)(GLuint);
+typedef void   (*PFNDeleteVertexArrays)(GLsizei, const GLuint*);
 
 struct GL {
     PFNCreateShader CreateShader; PFNShaderSource ShaderSource; PFNCompileShader CompileShader;
@@ -117,7 +123,9 @@ struct GL {
     PFNGenTextures GenTextures; PFNBindTexture BindTexture; PFNTexImage2D TexImage2D;
     PFNTexParameteri TexParameteri; PFNDeleteTextures DeleteTextures; PFNViewport Viewport;
     PFNClearColor ClearColor; PFNClear Clear; PFNEnable Enable; PFNDepthFunc DepthFunc;
-    PFNDrawArrays DrawArrays; PFNReadPixels ReadPixels;
+    PFNDrawArrays DrawArrays; PFNReadPixels ReadPixels; PFNGetError GetError;
+    PFNGenVertexArrays GenVertexArrays; PFNBindVertexArray BindVertexArray;
+    PFNDeleteVertexArrays DeleteVertexArrays;
     bool ok = false;
 };
 GL g;   // resolved entry points
@@ -221,6 +229,11 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     r &= load(g.DepthFunc, gp, "glDepthFunc");
     r &= load(g.DrawArrays, gp, "glDrawArrays");
     r &= load(g.ReadPixels, gp, "glReadPixels");
+    r &= load(g.GetError, gp, "glGetError");
+    // Optional (present on core 3.0+; absent on 2.1 compatibility where VAO 0 works):
+    load(g.GenVertexArrays, gp, "glGenVertexArrays");
+    load(g.BindVertexArray, gp, "glBindVertexArray");
+    load(g.DeleteVertexArrays, gp, "glDeleteVertexArrays");
     g.ok = r;
     if (!r) Log::Error("[gl] required OpenGL entry points missing — using software renderer");
     return r;
@@ -254,12 +267,16 @@ bool GLRenderer::EnsureProgram() {
     m_uShininess = g.GetUniformLocation(m_prog, "uShininess");
     m_uUnlit = g.GetUniformLocation(m_prog, "uUnlit");
     g.GenBuffers(1, &m_vbo);
+    // A core-profile context refuses to draw without a bound VAO (and some drivers
+    // crash on the attempt). Create one when available; on a compatibility context
+    // the default VAO is used instead. This persists across viewport resizes.
+    if (g.GenVertexArrays && !m_vao) g.GenVertexArrays(1, &m_vao);
     return true;
 }
 
 bool GLRenderer::EnsureTargets(int w, int h, int samples) {
     if (m_fbo && m_w == w && m_h == h && m_samples == samples) return true;
-    Destroy();   // size/sample change -> rebuild
+    DestroyTargets();   // size/sample change -> rebuild ONLY the render targets
     m_w = w; m_h = h; m_samples = samples < 1 ? 1 : samples;
 
     g.GenFramebuffers(1, &m_fbo);
@@ -293,6 +310,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                                                 const GameObject* ignore) {
     if (!g.ok || w < 1 || h < 1) return nullptr;
     if (!EnsureProgram() || !EnsureTargets(w, h, samples)) return nullptr;
+    while (g.GetError() != 0) {}   // drain any stale GL error state before we render
 
     g.BindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     g.Viewport(0, 0, w, h);
@@ -303,6 +321,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     g.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     g.UseProgram(m_prog);
+    if (g.BindVertexArray && m_vao) g.BindVertexArray(m_vao);
     Vec3 toLight = (SceneLight::Direction() * -1.0f).Normalized();
     g.Uniform3f(m_uLightDir, toLight.x, toLight.y, toLight.z);
     g.Uniform3f(m_uLightColor, 0.85f, 0.85f, 0.85f);
@@ -313,7 +332,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         GameObject* go = up.get();
         if (!go || !go->active || go == ignore) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || mr->wireframe) continue;
+        if (!mr || mr->wireframe || !mr->enabled) continue;
         const Mesh& mesh = mr->mesh;
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
@@ -365,6 +384,10 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     g.ReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, m_pixels.data());
     g.BindFramebuffer(GL_FRAMEBUFFER, 0);
 
+    // If anything in the pipeline errored (unsupported feature, bad state), bail to
+    // the caller so it can fall back to the software renderer instead of showing junk.
+    if (g.GetError() != 0) { Log::Error("[gl] render produced a GL error; falling back to software"); return nullptr; }
+
     // GL's origin is bottom-left; the editor/SDL texture is top-left — flip rows.
     for (int y = 0; y < h / 2; ++y) {
         std::uint32_t* a = m_pixels.data() + (std::size_t)y * w;
@@ -374,14 +397,24 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     return m_pixels.data();
 }
 
-void GLRenderer::Destroy() {
-    if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }
+// Free only the size-dependent render targets (rebuilt on viewport/sample change).
+// Crucially this does NOT touch the VBO/VAO/program — those persist for the life of
+// the renderer; deleting the VBO here (the old Destroy() did) left the draw calls
+// bound to buffer 0, i.e. a client array at address 0, segfaulting on the next draw.
+void GLRenderer::DestroyTargets() {
     if (m_colorRb) { g.DeleteRenderbuffers(1, &m_colorRb); m_colorRb = 0; }
     if (m_depthRb) { g.DeleteRenderbuffers(1, &m_depthRb); m_depthRb = 0; }
     if (m_fbo) { g.DeleteFramebuffers(1, &m_fbo); m_fbo = 0; }
     if (m_resolveTex) { g.DeleteTextures(1, &m_resolveTex); m_resolveTex = 0; }
     if (m_resolveFbo) { g.DeleteFramebuffers(1, &m_resolveFbo); m_resolveFbo = 0; }
     m_w = m_h = m_samples = 0;
+}
+
+void GLRenderer::Destroy() {
+    DestroyTargets();
+    if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }
+    if (m_vao && g.DeleteVertexArrays) { g.DeleteVertexArrays(1, &m_vao); m_vao = 0; }
+    if (m_prog) { g.DeleteProgram(m_prog); m_prog = 0; }
 }
 
 } // namespace okay

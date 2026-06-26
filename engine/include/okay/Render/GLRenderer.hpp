@@ -61,6 +61,7 @@ public:
 private:
     bool EnsureProgram();
     bool EnsureTargets(int w, int h, int samples);
+    void DestroyTargets();   // free ONLY the size-dependent FBO/renderbuffers/resolve
 
     unsigned int m_prog = 0;
     unsigned int m_vao = 0, m_vbo = 0, m_ibo = 0;

@@ -11,6 +11,7 @@
 #include <Okay.hpp>
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
+#include "OkayScriptUIBridge.hpp"
 #include "OkayTestPanel.hpp"
 #endif
 
@@ -312,6 +313,9 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
     bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
     char g_uiText[32] = {0}; bool g_uiBack = false;
+    // Let game scripts draw OkayUI via the ui_* builtins.
+    static okay::OkayUIScriptBridge g_uiBridge;
+    okay::SetScriptUI(&g_uiBridge);
 #endif
     Uint64 last = SDL_GetPerformanceCounter();
     auto frame = [&]() {
@@ -448,6 +452,20 @@ int main(int argc, char** argv) {
                     sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
                 }
 
+#ifdef OKAY_HAVE_OKAYUI
+        // Start the OkayUI frame BEFORE the scene updates, so scripts' ui_* builtins
+        // (via the installed ScriptUIBridge) draw into this frame. Flushed after the
+        // game is rendered (see EndFrame near the present), so UI sits on top.
+        {
+            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            OkayUI::Input ui;
+            ui.mouseX = (float)mx; ui.mouseY = (float)my;
+            ui.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            ui.text = g_uiText[0] ? g_uiText : nullptr;
+            ui.backspace = g_uiBack;
+            OkayUI::BeginFrame(ui);
+        }
+#endif
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
         Time::Step(dt);
@@ -1411,20 +1429,12 @@ int main(int argc, char** argv) {
         }
         UIWorld().active = false;   // end of the frame's world-space UI projection
 #ifdef OKAY_HAVE_OKAYUI
-        // OkayUI "Test UI" overlay (press F1): proves the toolkit is functional in the
-        // running game, drawn through the same SDL_Renderer as everything else.
-        if (g_testUI) {
-            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
-            OkayUI::Input ui;
-            ui.mouseX = (float)mx; ui.mouseY = (float)my;
-            ui.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-            ui.text = g_uiText[0] ? g_uiText : nullptr;
-            ui.backspace = g_uiBack;
-            OkayUI::BeginFrame(ui);
-            okay_testui::Panel(24.0f, 24.0f);
-            OkayUI::EndFrame(renderer);
-            SDL_StartTextInput();
-        }
+        // Scripts drew their UI during scene.Update (via the bridge); add the optional
+        // F1 "Test UI" panel on top, then flush the whole OkayUI frame here so it
+        // composites above the game.
+        if (g_testUI) okay_testui::Panel(24.0f, 24.0f);
+        OkayUI::EndFrame(renderer);
+        SDL_StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
         SDL_RenderPresent(renderer);
 

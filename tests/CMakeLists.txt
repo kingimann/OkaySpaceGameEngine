@@ -418,6 +418,10 @@ add_executable(test_npc_crafting test_npc_crafting.cpp)
 target_link_libraries(test_npc_crafting PRIVATE okay::engine)
 add_test(NAME npc_crafting COMMAND test_npc_crafting)
 
+add_executable(test_script_ui test_script_ui.cpp)
+target_link_libraries(test_script_ui PRIVATE okay::engine)
+add_test(NAME script_ui COMMAND test_script_ui)
+
 # OkayUI renders through SDL_Renderer, so this test drives a headless SOFTWARE
 # renderer and reads pixels back. Only built when SDL2 (hence okay_ui) is present.
 if(TARGET okay_ui)

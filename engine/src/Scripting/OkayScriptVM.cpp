@@ -1,4 +1,5 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -1288,6 +1289,35 @@ struct OkayScriptVM::Impl {
             return Value{out};
         };
         b["concat"] = [joinArgs](std::vector<Value>& a) { return Value{joinArgs(a, "")}; };
+
+        // ---- Immediate-mode UI (forwarded to the host's ScriptUIBridge) ----
+        // A game draws its UI each frame; the host brackets the frame and renders it.
+        //   ui_begin("Title", x, y, w, h) ... widgets ... ui_end()
+        //   hp = ui_slider("HP", hp, 0, 100);  if (ui_button("Reset")) hp = 100
+        b["ui_begin"] = [](std::vector<Value>& a) {
+            if (auto* u = GetScriptUI())
+                u->Begin(a.size() > 0 ? a[0].AsString().c_str() : "",
+                         a.size() > 1 ? a[1].AsFloat() : 20.0f, a.size() > 2 ? a[2].AsFloat() : 20.0f,
+                         a.size() > 3 ? a[3].AsFloat() : 260.0f, a.size() > 4 ? a[4].AsFloat() : 320.0f);
+            return Value{};
+        };
+        b["ui_end"]       = [](std::vector<Value>&)    { if (auto* u = GetScriptUI()) u->End(); return Value{}; };
+        b["ui_text"]      = [](std::vector<Value>& a)  { if (auto* u = GetScriptUI()) u->Text(a.empty() ? "" : a[0].AsString().c_str()); return Value{}; };
+        b["ui_sameline"]  = [](std::vector<Value>&)    { if (auto* u = GetScriptUI()) u->SameLine(); return Value{}; };
+        b["ui_separator"] = [](std::vector<Value>&)    { if (auto* u = GetScriptUI()) u->Separator(); return Value{}; };
+        b["ui_progress"]  = [](std::vector<Value>& a)  { if (auto* u = GetScriptUI()) u->ProgressBar(a.empty() ? 0.0f : a[0].AsFloat()); return Value{}; };
+        b["ui_button"]    = [](std::vector<Value>& a)  { auto* u = GetScriptUI(); return Value{u && u->Button(a.empty() ? "" : a[0].AsString().c_str()) ? 1.0f : 0.0f}; };
+        b["ui_checkbox"]  = [](std::vector<Value>& a)  {
+            auto* u = GetScriptUI(); bool cur = a.size() > 1 && a[1].AsFloat() != 0.0f;
+            bool nv = u ? u->Checkbox(a.empty() ? "" : a[0].AsString().c_str(), cur) : cur;
+            return Value{nv ? 1.0f : 0.0f};
+        };
+        b["ui_slider"]    = [](std::vector<Value>& a)  {
+            auto* u = GetScriptUI();
+            float v = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+            float lo = a.size() > 2 ? a[2].AsFloat() : 0.0f, hi = a.size() > 3 ? a[3].AsFloat() : 1.0f;
+            return Value{u ? u->Slider(a.empty() ? "" : a[0].AsString().c_str(), v, lo, hi) : v};
+        };
         b["move"] = [tf](std::vector<Value>& a) {
             if (Transform* t = tf())
                 t->Translate({a.size() > 0 ? a[0].AsFloat() : 0.0f,

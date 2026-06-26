@@ -9,6 +9,9 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
+#ifdef OKAY_HAVE_OKAYUI
+#include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
+#endif
 
 #include <algorithm>
 #include <array>
@@ -145,6 +148,7 @@ SDL_Window*   g_glWindow  = nullptr;     // hidden window owning the GL context
 SDL_GLContext g_glCtx     = nullptr;
 okay::GLRenderer* g_glRenderer = nullptr;
 bool          g_glReady   = false;       // GL context + entry points loaded OK
+bool          g_okayUIDemo = false;      // draw the OkayUI sample button over the UI
 
 // One render target per 3D view "slot" (0 = Scene viewport, 1 = Game view).
 // ImGui defers rendering, so the SDL texture is only sampled at SDL_RenderCopy
@@ -1402,6 +1406,10 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("OpenGL is unavailable on this system;\nusing the software renderer.");
         }
+#ifdef OKAY_HAVE_OKAYUI
+        ImGui::MenuItem("OkayUI demo (button)", nullptr, &g_okayUIDemo);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
+#endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
         if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
@@ -12558,6 +12566,24 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+#ifdef OKAY_HAVE_OKAYUI
+        // Demo: OkayUI renders here, AFTER ImGui, through the SAME SDL_Renderer — so
+        // it composites on top with no GL/D3D conflict. Input is gated on ImGui's
+        // mouse capture so clicks over editor panels aren't double-handled.
+        if (g_okayUIDemo) {
+            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            OkayUI::Input uin;
+            uin.mouseX = (float)mx; uin.mouseY = (float)my;
+            uin.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            uin.blocked = io.WantCaptureMouse;
+            float bw = 200.0f, bh = 44.0f;
+            float bx = 24.0f, by = io.DisplaySize.y - bh - 24.0f;
+            OkayUI::BeginFrame(uin);
+            if (OkayUI::Button(0x0CAE, bx, by, bw, bh, "OkayUI Button"))
+                ConsoleLog("OkayUI button clicked (drawn on top of ImGui via SDL_Renderer).");
+            OkayUI::EndFrame(renderer);
+        }
+#endif
         SDL_RenderPresent(renderer);
 
         if (updater::pendingQuit) running = false; // auto-update relaunched

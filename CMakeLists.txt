@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.208.0
+    VERSION 2.209.0
     DESCRIPTION "A Unity-inspired C++ game engine"
     LANGUAGES CXX)
 
@@ -55,6 +55,13 @@ endif()
 
 # ---- The engine library ----------------------------------------------
 add_subdirectory(engine)
+
+# ---- OkayUI (SDL_Renderer immediate-mode UI toolkit) -----------------
+# Self-gates on SDL2 (skips quietly if absent). Added before the editor and tests
+# so both can link okay::ui. Only needed by SDL-based hosts and its own test.
+if(OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_TESTS)
+    add_subdirectory(okayui)
+endif()
 
 # ---- Sample game ------------------------------------------------------
 if(OKAY_BUILD_SANDBOX)

@@ -10247,6 +10247,31 @@ static void UIHandlePositions(ImVec2 a, ImVec2 b, ImVec2 out[8]) {
     out[6] = ImVec2(a.x, b.y); out[7] = ImVec2(a.x, my);
 }
 
+// The 9 anchor-pip positions on a rect, row-major (TL,T,TR, L,C,R, BL,B,BR) —
+// matching UIAnchor's index order — for the Scene-view anchor handles.
+static void UIAnchorPips(ImVec2 a, ImVec2 b, ImVec2 out[9]) {
+    float xs[3] = {a.x, (a.x + b.x) * 0.5f, b.x};
+    float ys[3] = {a.y, (a.y + b.y) * 0.5f, b.y};
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col) out[row * 3 + col] = ImVec2(xs[col], ys[row]);
+}
+
+// The screen rect (canvas-local + canvasPos applied) a widget anchors WITHIN: its
+// owning UI parent if any, else the whole canvas. Used to place the anchor pips.
+static void UIAnchorRefRect(GameObject* go, ImVec2 canvasPos, ImVec2 canvasSize,
+                            ImVec2& a, ImVec2& b) {
+    if (GameObject* par = OwningUIParent(go)) {
+        Vec2 po, ps;
+        if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) {
+            a = ImVec2(canvasPos.x + po.x, canvasPos.y + po.y);
+            b = ImVec2(a.x + ps.x, a.y + ps.y);
+            return;
+        }
+    }
+    a = canvasPos;
+    b = ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+}
+
 // The camera to frame the Game view through: the scene's main camera if one is
 // active (set on Play), else the first Camera component found (edit mode).
 static Camera* SceneCamera(Scene& s) {
@@ -10899,15 +10924,20 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (GetUIScreenRect(ed.selected(), canvasSize.x, canvasSize.y, o, sz)) {
             ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
             ImVec2 b(a.x + sz.x, a.y + sz.y);
-            // Anchor marker: a diamond at the canvas point this widget anchors to,
-            // with a thin line to the widget — so anchoring is visible at a glance.
+            // Anchor handles: 9 pips on the rect this widget anchors WITHIN (its UI
+            // parent, else the canvas). The current anchor is the big filled diamond;
+            // click any pip to re-anchor there (handled in the press logic). A thin
+            // line links the active anchor to the widget so it's clear at a glance.
             int ai = (int)r.anchor;
-            float ax = (ai % 3 == 0) ? 0.0f : (ai % 3 == 1) ? canvasSize.x * 0.5f : canvasSize.x;
-            float ay = (ai / 3 == 0) ? 0.0f : (ai / 3 == 1) ? canvasSize.y * 0.5f : canvasSize.y;
-            ImVec2 ap(canvasPos.x + ax, canvasPos.y + ay);
+            ImVec2 ra, rb; UIAnchorRefRect(ed.selected(), canvasPos, canvasSize, ra, rb);
+            ImVec2 pips[9]; UIAnchorPips(ra, rb, pips);
             ImVec2 wc((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-            dl->AddLine(ap, wc, IM_COL32(90, 170, 240, 150), 1.0f);
-            dl->AddNgonFilled(ap, 5.0f, IM_COL32(90, 170, 240, 230), 4);  // diamond
+            dl->AddLine(pips[ai], wc, IM_COL32(90, 170, 240, 150), 1.0f);
+            for (int pi = 0; pi < 9; ++pi) {
+                bool cur = (pi == ai);
+                dl->AddNgonFilled(pips[pi], cur ? 5.0f : 3.0f,
+                                  cur ? IM_COL32(90, 170, 240, 235) : IM_COL32(90, 170, 240, 110), 4);
+            }
             // Selection box.
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
                         IM_COL32(255, 200, 0, 255), 2.0f, 0, 2.0f);
@@ -11264,6 +11294,33 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         g_uiResizeHandle = i;
                         g_uiDragRawValid = false;          // fresh drag: reseed accumulator
                         g_uiHandled = true;
+                        break;
+                    }
+                }
+            }
+        }
+        // Anchor pips of the selected widget: click one to re-anchor (keeping its
+        // on-screen position). Checked after resize handles, before move-pick.
+        if (!g_uiHandled && ed.selected()) {
+            UIRect ar = GetUIRect(ed.selected());
+            if (ar.anchorPtr && ar.position) {
+                ImVec2 ra, rb; UIAnchorRefRect(ed.selected(), canvasPos, canvasSize, ra, rb);
+                ImVec2 pips[9]; UIAnchorPips(ra, rb, pips);
+                // Design-space reference size for preserving the on-screen position.
+                float refW, refH;
+                if (GameObject* par = OwningUIParent(ed.selected())) { UIRect pr = GetUIRect(par); refW = pr.size.x; refH = pr.size.y; }
+                else { refW = UICanvas::Width(); refH = UICanvas::Height(); }
+                for (int i = 0; i < 9; ++i) {
+                    float dx = io.MousePos.x - pips[i].x, dy = io.MousePos.y - pips[i].y;
+                    if (dx * dx + dy * dy <= 7.0f * 7.0f) {
+                        ed.PushUndo();
+                        UIAnchor cand = (UIAnchor)i;
+                        Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, refW, refH);
+                        *ar.anchorPtr = cand;
+                        Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, refW, refH);
+                        ar.position->x = resolved.x - term.x;
+                        ar.position->y = resolved.y - term.y;
+                        ed.dirty = true; g_uiHandled = true;
                         break;
                     }
                 }

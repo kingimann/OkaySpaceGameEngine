@@ -150,6 +150,10 @@ add_executable(test_mesh3d test_mesh3d.cpp)
 target_link_libraries(test_mesh3d PRIVATE okay::engine)
 add_test(NAME mesh3d COMMAND test_mesh3d)
 
+add_executable(test_meshedit test_meshedit.cpp)
+target_link_libraries(test_meshedit PRIVATE okay::engine)
+add_test(NAME meshedit COMMAND test_meshedit)
+
 add_executable(test_player test_player.cpp)
 target_link_libraries(test_player PRIVATE okay::engine)
 add_test(NAME player COMMAND test_player)
@@ -401,6 +405,10 @@ add_test(NAME vehicle COMMAND test_vehicle)
 add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
 add_test(NAME survival COMMAND test_survival)
+
+add_executable(test_minimap test_minimap.cpp)
+target_link_libraries(test_minimap PRIVATE okay::engine)
+add_test(NAME minimap COMMAND test_minimap)
 
 add_executable(test_daynight test_daynight.cpp)
 target_link_libraries(test_daynight PRIVATE okay::engine)

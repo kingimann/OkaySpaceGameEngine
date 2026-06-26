@@ -30,6 +30,9 @@ public:
     // ---- Health ----
     float maxHealth = 100.0f, health = 100.0f;
     float armor = 0.0f;
+    float resistance = 0.0f;       // 0..1 fraction of post-armor damage ignored
+    bool  godMode = false;         // ignore all damage
+    float invincibleTime = 0.0f;   // i-frames after a hit (seconds, 0 = off)
     float regenWhenFed = 1.0f;     // HP/s regained while fed + hydrated
     float regenDelay   = 5.0f;     // pause regen this long after a hit
     bool  dead = false;
@@ -83,13 +86,14 @@ public:
     void Start() override {
         health = maxHealth; hunger = maxHunger; thirst = maxThirst;
         stamina = maxStamina; oxygen = maxOxygen; warmth = maxWarmth;
-        dead = false; m_regenTimer = 0.0f;
+        dead = false; m_regenTimer = 0.0f; m_iframes = 0.0f;
         m_starv = m_dehy = m_drown = m_freeze = false;
         Publish();
     }
 
     void Update(float dt) override {
         if (dead || dt <= 0.0f) return;
+        if (m_iframes > 0.0f) m_iframes -= dt;
         float drainMult = (sprinting && stamina > 0.0f) ? sprintDrainMult : 1.0f;
 
         hunger = Mathf::Clamp(hunger - hungerDrain * drainMult * dt, 0.0f, maxHunger);
@@ -122,12 +126,15 @@ public:
 
     // ---- Actions (callable from On Click / Action List / code) ----
     void Damage(float amount) {
-        if (dead) return;
-        float dmg = Mathf::Max(0.0f, amount - armor);
+        if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
+        float dmg = Mathf::Max(0.0f, amount - armor) * (1.0f - Mathf::Clamp01(resistance));
         health -= dmg;
         m_regenTimer = regenDelay;
+        m_iframes = invincibleTime;
         if (health <= 0.0f) { health = 0.0f; dead = true; OnDeath(); }
     }
+    void SetGodMode(bool on) { godMode = on; }
+    bool IsInvincible() const { return godMode || m_iframes > 0.0f; }
     void Heal(float a)    { if (!dead) health = Mathf::Min(maxHealth, health + a); }
     void Eat(float a)     { hunger = Mathf::Min(maxHunger, hunger + a); if (a > 0) m_starv = false; }
     void Drink(float a)   { thirst = Mathf::Min(maxThirst, thirst + a); if (a > 0) m_dehy = false; }
@@ -186,6 +193,7 @@ private:
     }
 
     float m_regenTimer = 0.0f;
+    float m_iframes = 0.0f;
     bool  m_starv = false, m_dehy = false, m_drown = false, m_freeze = false;
 };
 

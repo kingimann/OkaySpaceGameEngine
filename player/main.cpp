@@ -654,8 +654,8 @@ int main(int argc, char** argv) {
         // widget layer against widgets of any other type. A drop target queues two
         // items (background behind, highlight above panels).
         enum UIK { K_DropBg = 0, K_Image, K_Panel, K_DropHi, K_Scroll, K_Progress,
-                   K_Radial, K_Slider, K_Stepper, K_Rating, K_Toggle, K_Tabs, K_Button,
-                   K_Text, K_WorldUI, K_Dropdown, K_Input, K_FocusRing, K_Tooltip };
+                   K_Radial, K_Minimap, K_Slider, K_Stepper, K_Rating, K_Toggle, K_Tabs, K_Button,
+                   K_Text, K_WorldUI, K_Dropdown, K_Input, K_Crosshair, K_FocusRing, K_Tooltip };
         std::vector<UIDrawItem> uiItems;
         for (std::size_t _qi = 0; _qi < scene.Objects().size(); ++_qi) {
             GameObject* g = scene.Objects()[_qi].get();
@@ -667,6 +667,7 @@ int main(int argc, char** argv) {
             if (g->GetComponent<UIScrollView>())     add(K_Scroll);
             if (g->GetComponent<UIProgressBar>())    add(K_Progress);
             if (g->GetComponent<UIRadialProgress>()) add(K_Radial);
+            if (g->GetComponent<Minimap>())          add(K_Minimap);
             if (g->GetComponent<UISlider>())         add(K_Slider);
             if (g->GetComponent<UIStepper>())        add(K_Stepper);
             if (g->GetComponent<UIRating>())         add(K_Rating);
@@ -677,6 +678,7 @@ int main(int argc, char** argv) {
             if (g->GetComponent<WorldUI>())          add(K_WorldUI);
             if (g->GetComponent<UIDropdown>())       add(K_Dropdown);
             if (g->GetComponent<UIInputField>())     add(K_Input);
+            if (g->GetComponent<Crosshair>())        add(K_Crosshair);
             if (IsUIFocused(g))                      add(K_FocusRing);
             if (g->GetComponent<UITooltip>())        add(K_Tooltip);
         }
@@ -878,6 +880,95 @@ int main(int argc, char** argv) {
                              (Uint8)(rp->textColor.b * 255), (Uint8)(rp->textColor.a * 255 * op)};
                 DrawText(renderer, pct, o.x + (rp->size.x - tw) * 0.5f,
                          o.y + (rp->size.y - Font8x8::Height * ps) * 0.5f, ps, tc);
+            }
+        }
+            else if (_it.kind == K_Minimap) {   // top-down minimap panel
+            auto* mm = up->GetComponent<Minimap>();
+            if (!mm || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o, sz; if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
+            SDL_Rect box{(int)o.x, (int)o.y, (int)sz.x, (int)sz.y};
+            // Background fill.
+            SDL_SetRenderDrawColor(renderer, (Uint8)(mm->background.r*255), (Uint8)(mm->background.g*255),
+                                   (Uint8)(mm->background.b*255), (Uint8)(mm->background.a*255*op));
+            SDL_RenderFillRect(renderer, &box);
+            // Border (nested 1px rects for borderWidth).
+            SDL_SetRenderDrawColor(renderer, (Uint8)(mm->border.r*255), (Uint8)(mm->border.g*255),
+                                   (Uint8)(mm->border.b*255), (Uint8)(mm->border.a*255*op));
+            int bw = (int)mm->borderWidth; if (bw < 1) bw = 1;
+            for (int i = 0; i < bw; ++i) {
+                SDL_Rect e{box.x + i, box.y + i, box.w - 2*i, box.h - 2*i};
+                if (e.w <= 0 || e.h <= 0) break;
+                SDL_RenderDrawRect(renderer, &e);
+            }
+            // Center world position: the target object if named/found, else origin.
+            Vec3 center{0,0,0};
+            if (!mm->target.empty()) {
+                if (GameObject* tg = scene.Find(mm->target); tg && tg->transform)
+                    center = tg->transform->Position();
+            }
+            // Plot every MinimapBlip.
+            for (const auto& bp : scene.Objects()) {
+                if (!bp || !bp->active) continue;
+                auto* bl = bp->GetComponent<MinimapBlip>();
+                if (!bl || !bp->transform) continue;
+                float mx, my;
+                if (!Minimap::WorldToMap(*mm, center, bp->transform->Position(), sz.x, sz.y, mx, my))
+                    continue;   // outside the map rect
+                int half = (int)(bl->size > 0 ? bl->size : mm->blipSize);
+                SDL_SetRenderDrawColor(renderer, (Uint8)(bl->color.r*255), (Uint8)(bl->color.g*255),
+                                       (Uint8)(bl->color.b*255), (Uint8)(bl->color.a*255*op));
+                SDL_Rect br{(int)(o.x + mx) - half, (int)(o.y + my) - half, half*2, half*2};
+                SDL_RenderFillRect(renderer, &br);
+            }
+            // The target marker at the map center.
+            {
+                int half = (int)(mm->blipSize);
+                SDL_SetRenderDrawColor(renderer, (Uint8)(mm->targetColor.r*255), (Uint8)(mm->targetColor.g*255),
+                                       (Uint8)(mm->targetColor.b*255), (Uint8)(mm->targetColor.a*255*op));
+                SDL_Rect tr{(int)(o.x + sz.x*0.5f) - half, (int)(o.y + sz.y*0.5f) - half, half*2, half*2};
+                SDL_RenderFillRect(renderer, &tr);
+            }
+        }
+            else if (_it.kind == K_Crosshair) {   // aim reticle at screen center
+            auto* cr = up->GetComponent<Crosshair>();
+            if (!cr || !up->active || UIHidden(up.get())) continue;
+            float op = UIOpacity(up.get());
+            Vec2 o, sz; if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
+            float cx = o.x + sz.x * 0.5f, cy = o.y + sz.y * 0.5f;
+            int th = (int)(cr->thickness > 1 ? cr->thickness : 1);
+            // A line drawn as a filled rect, with an optional 1px dark outline under it.
+            auto drawLine = [&](int rx, int ry, int rw, int rh) {
+                if (cr->outline) {
+                    SDL_SetRenderDrawColor(renderer, (Uint8)(cr->outlineColor.r*255), (Uint8)(cr->outlineColor.g*255),
+                                           (Uint8)(cr->outlineColor.b*255), (Uint8)(cr->outlineColor.a*255*op));
+                    SDL_Rect ol{rx-1, ry-1, rw+2, rh+2};
+                    SDL_RenderFillRect(renderer, &ol);
+                }
+                SDL_SetRenderDrawColor(renderer, (Uint8)(cr->color.r*255), (Uint8)(cr->color.g*255),
+                                       (Uint8)(cr->color.b*255), (Uint8)(cr->color.a*255*op));
+                SDL_Rect ln{rx, ry, rw, rh};
+                SDL_RenderFillRect(renderer, &ln);
+            };
+            if (cr->showLines) {
+                int g0 = (int)cr->gap, g1 = (int)(cr->gap + cr->length);
+                drawLine((int)cx - th/2, (int)cy - g1, th, g1 - g0);          // up
+                drawLine((int)cx - th/2, (int)cy + g0, th, g1 - g0);          // down
+                drawLine((int)cx - g1, (int)cy - th/2, g1 - g0, th);          // left
+                drawLine((int)cx + g0, (int)cy - th/2, g1 - g0, th);          // right
+            }
+            if (cr->dot) {
+                int half = (int)(cr->dotSize * 0.5f); if (half < 1) half = 1;
+                if (cr->outline) {
+                    SDL_SetRenderDrawColor(renderer, (Uint8)(cr->outlineColor.r*255), (Uint8)(cr->outlineColor.g*255),
+                                           (Uint8)(cr->outlineColor.b*255), (Uint8)(cr->outlineColor.a*255*op));
+                    SDL_Rect od{(int)cx - half - 1, (int)cy - half - 1, half*2 + 2, half*2 + 2};
+                    SDL_RenderFillRect(renderer, &od);
+                }
+                SDL_SetRenderDrawColor(renderer, (Uint8)(cr->dotColor.r*255), (Uint8)(cr->dotColor.g*255),
+                                       (Uint8)(cr->dotColor.b*255), (Uint8)(cr->dotColor.a*255*op));
+                SDL_Rect dr{(int)cx - half, (int)cy - half, half*2, half*2};
+                SDL_RenderFillRect(renderer, &dr);
             }
         }
             else if (_it.kind == K_Slider) {   // sliders

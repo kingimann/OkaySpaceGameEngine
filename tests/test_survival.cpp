@@ -548,5 +548,181 @@ int main() {
         CHECK_NEAR(k2->recipes[1].amount, 60.0f, 1e-3f);
     }
 
+    // --- HealthStat: armor + resistance + minDamage + god + i-frames -----
+    {
+        Scene s("mitigate");
+        GameObject* p = s.CreateGameObject("P");
+        auto* h = p->AddComponent<HealthStat>();
+        h->regenPerSecond = 0.0f; h->armor = 5.0f; h->resistance = 0.5f;
+        s.Start();
+        h->Damage(25.0f);                                   // (25-5)*0.5 = 10
+        CHECK_NEAR(h->health, 90.0f, 1e-3f);
+        h->minDamage = 8.0f;
+        h->Damage(2.0f);                                    // tiny hit floored to minDamage(8) but <= raw? raw 2 -> min(8,2)=2
+        CHECK_NEAR(h->health, 88.0f, 1e-3f);
+        h->minDamage = 0.0f;
+        h->godMode = true; h->Damage(50.0f);
+        CHECK_NEAR(h->health, 88.0f, 1e-3f);                // god ignores it
+        h->godMode = false;
+        h->invincibleTime = 0.5f;
+        h->Damage(10.0f);                                   // (10-5)*0.5 = 2.5 -> 85.5, sets i-frames
+        CHECK_NEAR(h->health, 85.5f, 1e-3f);
+        h->Damage(10.0f);                                   // blocked by i-frames
+        CHECK_NEAR(h->health, 85.5f, 1e-3f);
+        CHECK(h->IsInvincible());
+        for (int i = 0; i < 40; ++i) s.Update(1.0f / 60.0f);// i-frames expire (>0.5s)
+        CHECK(!h->IsInvincible());
+    }
+
+    // --- HealthStat: overheal stacks past max, then decays ---------------
+    {
+        Scene s("overheal");
+        GameObject* p = s.CreateGameObject("P");
+        auto* h = p->AddComponent<HealthStat>();
+        h->regenPerSecond = 0.0f; h->overhealMax = 50.0f; h->overhealDecay = 10.0f;
+        s.Start();
+        h->Heal(40.0f);                                     // 100 -> 140 (capped at 150)
+        CHECK_NEAR(h->health, 140.0f, 1e-3f);
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);// ~ -10 over 1s
+        CHECK(h->health < 135.0f);
+        CHECK(h->health >= 100.0f);                         // never decays below max
+    }
+
+    // --- HealthStat: respawn after death --------------------------------
+    {
+        Scene s("respawn");
+        GameObject* p = s.CreateGameObject("P");
+        p->transform->SetPosition({5, 0, 5});
+        auto* h = p->AddComponent<HealthStat>();
+        h->respawn = true; h->respawnDelay = 0.5f; h->lives = 1;
+        s.Start();
+        h->Damage(1000.0f);
+        CHECK(h->IsDead());
+        CHECK(p->active);                                   // stays active (inert) to tick respawn
+        for (int i = 0; i < 40; ++i) s.Update(1.0f / 60.0f);// past 0.5s
+        CHECK(!h->IsDead());
+        CHECK(p->active);
+        CHECK_NEAR(h->health, 100.0f, 1e-3f);
+        CHECK_NEAR(p->transform->Position().x, 5.0f, 1e-3f);// back at spawn
+        h->Damage(1000.0f);                                 // out of lives now -> stays dead
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(h->IsDead());
+    }
+
+    // --- HungerStat: starve damages sibling health; overeat; slow -------
+    {
+        Scene s("hunger2");
+        GameObject* p = s.CreateGameObject("P");
+        auto* hp = p->AddComponent<HealthStat>(); hp->regenPerSecond = 0.0f;
+        auto* hu = p->AddComponent<HungerStat>();
+        hu->drainPerSecond = 200.0f; hu->starveDamage = 20.0f;
+        hu->overeatMax = 50.0f; hu->slowWhenStarving = true; hu->minSpeedFactor = 0.4f;
+        s.Start();
+        hu->Eat(40.0f);                                     // 100 -> 140 (overeat)
+        CHECK(hu->hunger > 100.0f);
+        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);
+        CHECK_NEAR(hu->hunger, 0.0f, 1e-3f);
+        CHECK(hp->health < 100.0f);                         // starving bit the sibling health
+        CHECK_NEAR(hu->SpeedFactor(), 0.4f, 0.02f);         // fully starving -> min speed
+    }
+
+    // --- Expanded fields serialize --------------------------------------
+    {
+        Scene s("expser");
+        GameObject* p = s.CreateGameObject("P");
+        auto* h = p->AddComponent<HealthStat>();
+        h->resistance = 0.3f; h->minDamage = 4.0f; h->invincibleTime = 0.25f;
+        h->overhealMax = 25.0f; h->respawn = true; h->lives = 3; h->godMode = true;
+        auto* hu = p->AddComponent<HungerStat>();
+        hu->starveDamage = 6.0f; hu->overeatMax = 20.0f; hu->slowWhenStarving = true; hu->minSpeedFactor = 0.3f;
+        std::string txt = SceneSerializer::SerializeObject(*p);
+        Scene s2("expser2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        auto* h2 = c2 ? c2->GetComponent<HealthStat>() : nullptr;
+        auto* hu2 = c2 ? c2->GetComponent<HungerStat>() : nullptr;
+        CHECK(h2 && hu2);
+        CHECK_NEAR(h2->resistance, 0.3f, 1e-3f);
+        CHECK_NEAR(h2->minDamage, 4.0f, 1e-3f);
+        CHECK_NEAR(h2->invincibleTime, 0.25f, 1e-3f);
+        CHECK_NEAR(h2->overhealMax, 25.0f, 1e-3f);
+        CHECK(h2->respawn);
+        CHECK(h2->lives == 3);
+        CHECK(h2->godMode);
+        CHECK_NEAR(hu2->starveDamage, 6.0f, 1e-3f);
+        CHECK_NEAR(hu2->overeatMax, 20.0f, 1e-3f);
+        CHECK(hu2->slowWhenStarving);
+        CHECK_NEAR(hu2->minSpeedFactor, 0.3f, 1e-3f);
+    }
+
+    // --- Individual stats: empty drains a sibling HealthStat -------------
+    {
+        Scene s("statdmg");
+        GameObject* p = s.CreateGameObject("P");
+        auto* hp = p->AddComponent<HealthStat>(); hp->regenPerSecond = 0.0f;
+        auto* th = p->AddComponent<ThirstStat>();
+        th->drainPerSecond = 200.0f; th->dehydrateDamage = 15.0f;
+        auto* ox = p->AddComponent<OxygenStat>();
+        ox->drainPerSecond = 200.0f; ox->drownDamage = 15.0f; ox->submerged = true;
+        s.Start();
+        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);
+        CHECK(th->dehydrated);
+        CHECK(ox->outOfAir);
+        CHECK(hp->health < 100.0f);                          // thirst + oxygen bit health
+    }
+
+    // --- Thirst overdrink + speed factor; drain scale -------------------
+    {
+        Scene s("thirst2");
+        GameObject* p = s.CreateGameObject("P");
+        auto* th = p->AddComponent<ThirstStat>();
+        th->overdrinkMax = 40.0f; th->slowWhenDehydrated = true; th->minSpeedFactor = 0.3f;
+        s.Start();
+        th->Drink(30.0f);
+        CHECK(th->thirst > 100.0f);                          // overdrink buffer
+        CHECK_NEAR(th->SpeedFactor(), 1.0f, 1e-3f);          // full -> no slow
+        th->thirst = 0.0f; s.Update(1.0f / 60.0f);
+        CHECK_NEAR(th->SpeedFactor(), 0.3f, 0.02f);          // empty -> min speed
+        th->drainPerSecond = 10.0f; th->thirst = 100.0f; th->SetDrainScale(5.0f);
+        float before = th->thirst;
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f); // ~50 drained at 5x
+        CHECK(th->thirst < before - 40.0f);
+    }
+
+    // --- Stamina: low flag + slow-when-exhausted ------------------------
+    {
+        Scene s("stam2");
+        GameObject* p = s.CreateGameObject("P");
+        auto* st = p->AddComponent<StaminaStat>();
+        st->slowWhenExhausted = true; st->minSpeedFactor = 0.25f; st->lowThreshold = 30.0f;
+        s.Start();
+        CHECK_NEAR(st->SpeedFactor(), 1.0f, 1e-3f);
+        st->stamina = 0.0f; s.Update(1.0f / 60.0f);
+        CHECK(st->low);
+        CHECK(st->SpeedFactor() < 0.5f);
+    }
+
+    // --- Expanded stats serialize ---------------------------------------
+    {
+        Scene s("statser");
+        GameObject* p = s.CreateGameObject("P");
+        p->AddComponent<ThirstStat>()->dehydrateDamage = 4.0f;
+        p->AddComponent<OxygenStat>()->drownDamage = 9.0f;
+        p->AddComponent<TemperatureStat>()->freezeDamage = 3.0f;
+        p->AddComponent<SleepStat>()->exhaustDamage = 2.0f;
+        p->AddComponent<SanityStat>()->insaneDamage = 5.0f;
+        auto* st = p->AddComponent<StaminaStat>(); st->slowWhenExhausted = true; st->regenScale = 2.0f;
+        std::string txt = SceneSerializer::SerializeObject(*p);
+        Scene s2("statser2");
+        GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
+        CHECK(c2 != nullptr);
+        CHECK_NEAR(c2->GetComponent<ThirstStat>()->dehydrateDamage, 4.0f, 1e-3f);
+        CHECK_NEAR(c2->GetComponent<OxygenStat>()->drownDamage, 9.0f, 1e-3f);
+        CHECK_NEAR(c2->GetComponent<TemperatureStat>()->freezeDamage, 3.0f, 1e-3f);
+        CHECK_NEAR(c2->GetComponent<SleepStat>()->exhaustDamage, 2.0f, 1e-3f);
+        CHECK_NEAR(c2->GetComponent<SanityStat>()->insaneDamage, 5.0f, 1e-3f);
+        CHECK(c2->GetComponent<StaminaStat>()->slowWhenExhausted);
+        CHECK_NEAR(c2->GetComponent<StaminaStat>()->regenScale, 2.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -163,5 +163,101 @@ int main() {
         CHECK_NEAR(ActionList::Vars()["done"], 1.0f, 1e-4f);
     }
 
+    // Survival kit driven from visual scripting (ActionList instructions).
+    {
+        ActionList::ResetVars();
+        Scene s("surv"); s.physicsEnabled = false;
+        GameObject* p = s.CreateGameObject("Player");
+        auto* sv = p->AddComponent<SurvivalStats>(); sv->regenWhenFed = 0.0f;
+        auto* al = p->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        al->instructions = { I("hurt", {"30"}), I("heal", {"10"}),
+                             I("eat", {"5"}), I("survival", {"Drink", "7"}) };
+        s.Start(); s.Update(0.016f);
+        CHECK_NEAR(sv->health, 80.0f, 1e-3f);          // -30 +10
+        CHECK_NEAR(sv->hunger, 100.0f, 1e-3f);         // eat clamps at max (started full)
+        CHECK(sv->thirst <= 100.0f);
+    }
+
+    // survival_on targets a named object; prefs_lt branches on a published stat.
+    {
+        ActionList::ResetVars();
+        Scene s("surv2"); s.physicsEnabled = false;
+        GameObject* player = s.CreateGameObject("Player");
+        auto* hp = player->AddComponent<HealthStat>(); hp->regenPerSecond = 0.0f;
+        GameObject* trap = s.CreateGameObject("Trap");
+        auto* al = trap->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        al->instructions = { I("survival_on", {"Player", "Damage", "40"}) };
+        s.Start(); s.Update(0.016f);
+        CHECK_NEAR(hp->health, 60.0f, 1e-3f);          // trap damaged the player
+        // HealthStat publishes "health" to prefs; a prefs_lt condition can branch on it.
+        GameObject* g = s.CreateGameObject("Gate");
+        auto* ga = g->AddComponent<ActionList>();
+        ga->trigger = ActionList::Trigger::OnStart;
+        ga->conditions = { I("prefs_lt", {"health", "70"}) };   // 60 < 70 -> passes
+        ga->instructions = { I("set_var", {"lowhp", "1"}) };
+        s.Update(0.016f);
+        CHECK_NEAR(ActionList::Vars()["lowhp"], 1.0f, 1e-3f);
+    }
+
+    // New variable instructions: clamp, ease (lerp), add-var-to-var; ge/le conditions.
+    {
+        ActionList::ResetVars();
+        Scene s("vars"); s.physicsEnabled = false;
+        GameObject* o = s.CreateGameObject("V");
+        auto* al = o->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        ActionList::Vars()["a"] = 50.0f; ActionList::Vars()["b"] = 5.0f;
+        al->instructions = { I("clamp_var", {"a", "0", "20"}),       // 50 -> 20
+                             I("add_var_var", {"a", "b"}),           // 20 + 5 -> 25
+                             I("lerp_var", {"c", "10", "4"}) };      // 0 -> 4 toward 10
+        s.Start(); s.Update(0.016f);
+        CHECK_NEAR(ActionList::Vars()["a"], 25.0f, 1e-3f);
+        CHECK_NEAR(ActionList::Vars()["c"], 4.0f, 1e-3f);
+
+        // var_ge / var_le conditions
+        GameObject* g = s.CreateGameObject("G");
+        auto* ga = g->AddComponent<ActionList>();
+        ga->trigger = ActionList::Trigger::OnStart;
+        ga->conditions = { I("var_ge", {"a", "25"}), I("var_le", {"a", "25"}) };  // 25>=25 && 25<=25
+        ga->instructions = { I("set_var", {"hit", "1"}) };
+        s.Update(0.016f);
+        CHECK_NEAR(ActionList::Vars()["hit"], 1.0f, 1e-3f);
+    }
+
+    // set_parent attaches under a named object; toggle_active flips active.
+    {
+        ActionList::ResetVars();
+        Scene s("obj"); s.physicsEnabled = false;
+        GameObject* parent = s.CreateGameObject("Parent");
+        parent->transform->localPosition = {10, 0, 0};
+        GameObject* child = s.CreateGameObject("Child");
+        auto* al = child->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        al->instructions = { I("set_parent", {"Parent"}) };
+        GameObject* mover = s.CreateGameObject("Mover");
+        auto* ma = mover->AddComponent<ActionList>();
+        ma->trigger = ActionList::Trigger::OnStart;
+        ma->instructions = { I("toggle_active", {}) };
+        s.Start(); s.Update(0.016f);
+        CHECK(child->transform->Parent() == parent->transform);     // parented
+        CHECK(!mover->active);                                       // toggled off
+    }
+
+    // set_active with a target name shows/hides a chosen object (not just self).
+    {
+        ActionList::ResetVars();
+        Scene s("showhide"); s.physicsEnabled = false;
+        GameObject* door = s.CreateGameObject("Door");
+        GameObject* lever = s.CreateGameObject("Lever");
+        auto* al = lever->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        al->instructions = { I("set_active", {"0", "Door"}) };       // hide the Door, not the Lever
+        s.Start(); s.Update(0.016f);
+        CHECK(!door->active);
+        CHECK(lever->active);                                        // the lever stays visible
+    }
+
     TEST_MAIN_RESULT();
 }

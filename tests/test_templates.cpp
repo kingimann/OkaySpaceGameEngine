@@ -88,6 +88,60 @@ int main() {
         CHECK(player->transform->localPosition.x > before.x);
     }
 
+    // --- Vehicle 3D: a drivable car (controller + physics) chasing camera ---
+    {
+        Scene scene("x");
+        Templates::Vehicle3D(scene);
+
+        GameObject* car = scene.Find("Car");
+        CHECK(car != nullptr);
+        CHECK(car->GetComponent<VehicleController>() != nullptr);
+        CHECK(car->GetComponent<VehicleController>()->followCamera == true);
+        CHECK(car->GetComponent<Rigidbody3D>() != nullptr);
+        CHECK(car->GetComponent<BoxCollider3D>() != nullptr);
+
+        GameObject* ground = scene.Find("Ground");
+        CHECK(ground != nullptr);
+        CHECK(ground->GetComponent<Rigidbody3D>()->bodyType == Rigidbody3D::BodyType::Static);
+
+        GameObject* cam = scene.Find("Main Camera");
+        CHECK(cam != nullptr);
+        CHECK(cam->GetComponent<Camera>()->projection == Camera::Projection::Perspective);
+        CHECK(scene.Find("Directional Light")->GetComponent<Light>() != nullptr);
+
+        // Survives a serialization round-trip (so Build Game works).
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("y"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        CHECK(loaded.Find("Car")->GetComponent<VehicleController>() != nullptr);
+    }
+
+    // --- Vehicle 2D: a top-down car (controller + physics) + follow camera ---
+    {
+        Scene scene("x");
+        Templates::Vehicle2D(scene);
+
+        GameObject* car = scene.Find("Car");
+        CHECK(car != nullptr);
+        CHECK(car->GetComponent<VehicleController2D>() != nullptr);
+        CHECK(car->GetComponent<Rigidbody2D>() != nullptr);
+        CHECK(car->GetComponent<Rigidbody2D>()->gravityScale == 0.0f);
+        CHECK(car->GetComponent<BoxCollider2D>() != nullptr);
+
+        GameObject* cam = scene.Find("Main Camera");
+        CHECK(cam != nullptr);
+        CHECK(cam->GetComponent<Camera>()->projection == Camera::Projection::Orthographic);
+        auto* follow = cam->GetComponent<CameraFollow>();
+        CHECK(follow != nullptr);
+        CHECK(follow->targetName == "Car");
+
+        // Survives a serialization round-trip (so Build Game works).
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("y"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        CHECK(loaded.Find("Car")->GetComponent<VehicleController2D>() != nullptr);
+    }
+
     // --- Coin Collector: a full playable loop (move onto coin -> score++) ---
     {
         Scene scene("x");

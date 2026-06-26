@@ -806,6 +806,247 @@ struct Mesh {
             Smooth(-(amount * 1.05f + 0.02f));    // inflate back (Taubin) — keeps volume
         }
     }
+
+    // ---- Interactive editing (Blender-like mesh ops) -------------------
+    // These operate on the triangle-indexed mesh, mark it custom (clear `name`)
+    // so edited geometry is serialized verbatim rather than regenerated from a
+    // primitive name, and recompute normals where it matters.
+
+    /// Normalized geometric normal of triangle `f` (cross of its two edges).
+    /// Returns the zero vector for a degenerate (collinear) triangle.
+    Vec3 FaceNormal(int f) const {
+        int i = f * 3;
+        if (i < 0 || i + 2 >= (int)triangles.size()) return Vec3{0, 0, 0};
+        int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+        Vec3 n = Vec3::Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]);
+        float m = n.Magnitude();
+        return m > 1e-8f ? n * (1.0f / m) : Vec3{0, 0, 0};
+    }
+
+    /// Centroid (average of the three corners) of triangle `f`.
+    Vec3 FaceCenter(int f) const {
+        int i = f * 3;
+        if (i < 0 || i + 2 >= (int)triangles.size()) return Vec3{0, 0, 0};
+        return (vertices[triangles[i]] + vertices[triangles[i + 1]] + vertices[triangles[i + 2]])
+               * (1.0f / 3.0f);
+    }
+
+    /// Add `delta` to each listed vertex position (the move/translate gizmo).
+    /// The caller resolves welded selections into the index list it passes.
+    void MoveVertices(const std::vector<int>& verts, const Vec3& delta) {
+        for (int v : verts)
+            if (v >= 0 && v < (int)vertices.size()) vertices[v] += delta;
+        name = "";
+    }
+
+    /// Region-extrude the selected set of triangles along their averaged normal:
+    /// the selected faces are detached and pushed out by `dist`, and the boundary
+    /// of the region is bridged with side walls so the cap stays connected. The
+    /// passed `faces` indices stay valid (those slots are re-pointed, not removed),
+    /// so the caller's selection still refers to the extruded cap.
+    void ExtrudeFaces(const std::vector<int>& faces, float dist) {
+        if (faces.empty()) return;
+        // Averaged (area-weighted) normal of the selected faces.
+        Vec3 N{0, 0, 0};
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            N += Vec3::Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]); // area-weighted
+        }
+        float nm = N.Magnitude();
+        N = nm > 1e-8f ? N * (1.0f / nm) : Vec3{0, 0, 0};
+        // Boundary edges: undirected edges used by exactly ONE selected triangle.
+        std::map<std::pair<int, int>, int> edgeCount;
+        auto ekey = [](int a, int b) { return std::make_pair(std::min(a, b), std::max(a, b)); };
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            auto k1 = ekey(a, b); ++edgeCount[{k1.first, k1.second}];
+            auto k2 = ekey(b, c); ++edgeCount[{k2.first, k2.second}];
+            auto k3 = ekey(c, a); ++edgeCount[{k3.first, k3.second}];
+        }
+        // Duplicate every vertex used by the selected region, pushed out by N*dist.
+        std::map<int, int> newIndex;
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            for (int k = 0; k < 3; ++k) {
+                int v = triangles[i + k];
+                if (newIndex.find(v) == newIndex.end()) {
+                    newIndex[v] = (int)vertices.size();
+                    vertices.push_back(vertices[v] + N * dist);
+                }
+            }
+        }
+        // Re-point the selected triangles to the duplicated (moved-out) vertices,
+        // and bridge each boundary edge — oriented as it appears in its triangle so
+        // the side-wall winding stays outward-consistent.
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            int v0 = triangles[i], v1 = triangles[i + 1], v2 = triangles[i + 2];
+            int e[3][2] = {{v0, v1}, {v1, v2}, {v2, v0}};
+            for (auto& pr : e) {
+                auto k = ekey(pr[0], pr[1]);
+                if (edgeCount[{k.first, k.second}] == 1) {       // boundary edge a->b
+                    int a = pr[0], b = pr[1];
+                    int na = newIndex[a], nb = newIndex[b];
+                    triangles.insert(triangles.end(), {a, b, nb}); // side wall (two tris)
+                    triangles.insert(triangles.end(), {a, nb, na});
+                }
+            }
+            triangles[i] = newIndex[v0]; triangles[i + 1] = newIndex[v1]; triangles[i + 2] = newIndex[v2];
+        }
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Inset the selected region: duplicate its vertices, pulled toward the region
+    /// centroid by `amount` (a [0,1] fraction of each vertex's distance to centre),
+    /// re-point the selected faces to the inner ring, and bridge the boundary so a
+    /// smaller inner cap sits inside the original outline.
+    void InsetFaces(const std::vector<int>& faces, float amount) {
+        if (faces.empty()) return;
+        float t = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
+        // Boundary edges (used by exactly one selected triangle).
+        std::map<std::pair<int, int>, int> edgeCount;
+        auto ekey = [](int a, int b) { return std::make_pair(std::min(a, b), std::max(a, b)); };
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            auto k1 = ekey(a, b); ++edgeCount[{k1.first, k1.second}];
+            auto k2 = ekey(b, c); ++edgeCount[{k2.first, k2.second}];
+            auto k3 = ekey(c, a); ++edgeCount[{k3.first, k3.second}];
+        }
+        // Centroid of all vertices used by the selected faces.
+        std::map<int, int> newIndex;
+        Vec3 C{0, 0, 0}; int count = 0;
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            for (int k = 0; k < 3; ++k) {
+                int v = triangles[i + k];
+                if (newIndex.find(v) == newIndex.end()) { newIndex[v] = -1; C += vertices[v]; ++count; }
+            }
+        }
+        if (count > 0) C = C * (1.0f / count);
+        // Duplicate each region vertex, lerped toward the centroid by `t`.
+        for (auto& kv : newIndex) {
+            int v = kv.first;
+            kv.second = (int)vertices.size();
+            vertices.push_back(vertices[v] + (C - vertices[v]) * t);
+        }
+        // Re-point selected faces to the inner ring and bridge boundary edges.
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            int v0 = triangles[i], v1 = triangles[i + 1], v2 = triangles[i + 2];
+            int e[3][2] = {{v0, v1}, {v1, v2}, {v2, v0}};
+            for (auto& pr : e) {
+                auto k = ekey(pr[0], pr[1]);
+                if (edgeCount[{k.first, k.second}] == 1) {
+                    int a = pr[0], b = pr[1];
+                    int na = newIndex[a], nb = newIndex[b];
+                    triangles.insert(triangles.end(), {a, b, nb});
+                    triangles.insert(triangles.end(), {a, nb, na});
+                }
+            }
+            triangles[i] = newIndex[v0]; triangles[i + 1] = newIndex[v1]; triangles[i + 2] = newIndex[v2];
+        }
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// 1->4 midpoint subdivision of ONLY the listed triangles. Midpoints are
+    /// shared between the selected faces (via an edge->midpoint map) so the region
+    /// stays welded; unselected triangles are left untouched.
+    void SubdivideFaces(const std::vector<int>& faces) {
+        if (faces.empty()) return;
+        std::map<int, bool> sel;
+        for (int f : faces) sel[f] = true;
+        std::map<std::pair<int, int>, int> mids;       // edge -> new midpoint index
+        auto midpoint = [&](int a, int b) {
+            auto key = std::minmax(a, b);
+            auto it = mids.find({key.first, key.second});
+            if (it != mids.end()) return it->second;
+            int idx = (int)vertices.size();
+            vertices.push_back((vertices[a] + vertices[b]) * 0.5f);
+            mids[{key.first, key.second}] = idx;
+            return idx;
+        };
+        std::vector<int> out;
+        for (int face = 0, n = TriangleCount(); face < n; ++face) {
+            int i = face * 3;
+            int a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+            if (sel.find(face) == sel.end()) {          // untouched
+                out.insert(out.end(), {a, b, c});
+            } else {                                    // split into 4
+                int ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a);
+                out.insert(out.end(), {a, ab, ca,  ab, b, bc,  ca, bc, c,  ab, bc, ca});
+            }
+        }
+        triangles = std::move(out);
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Delete the listed triangles (erasing their 3 indices each). Sorted
+    /// descending so earlier erases don't shift later indices. Orphan vertices are
+    /// left in place (harmless).
+    void DeleteFaces(std::vector<int> faces) {
+        std::sort(faces.begin(), faces.end(), std::greater<int>());
+        for (int f : faces) {
+            int i = f * 3;
+            if (i < 0 || i + 2 >= (int)triangles.size()) continue;
+            triangles.erase(triangles.begin() + i, triangles.begin() + i + 3);
+        }
+        name = "";
+    }
+
+    /// Reverse the winding of every triangle (swap the 2nd and 3rd index) so all
+    /// faces point the other way, then recompute normals.
+    void FlipNormals() {
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3)
+            std::swap(triangles[i + 1], triangles[i + 2]);
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// A sculpting brush in LOCAL mesh space. Vertices within `radius` of `center`
+    /// are displaced with a smoothstep falloff `w`. mode: 0 = GRAB (push along
+    /// `dir`), 1 = INFLATE (push along each vertex's own normal), 2 = SMOOTH (pull
+    /// toward the local average of nearby vertices). SMOOTH reads a snapshot so the
+    /// relaxation doesn't feed back within one call.
+    void SculptBrush(const Vec3& center, const Vec3& dir, float radius, float strength, int mode) {
+        if (radius <= 1e-6f || vertices.empty()) return;
+        std::vector<Vec3> vn;
+        if (mode == 1) vn = Normals();                 // per-vertex normals for INFLATE
+        std::vector<Vec3> snapshot = vertices;         // SMOOTH reads positions pre-edit
+        float inv = 1.0f / radius;
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            float d = (snapshot[i] - center).Magnitude();
+            if (d >= radius) continue;
+            float w = 1.0f - d * inv;                   // linear falloff in [0,1]
+            if (w < 0.0f) w = 0.0f;
+            w = w * w * (3.0f - 2.0f * w);              // smoothstep for a nicer curve
+            if (mode == 1) {                            // INFLATE: along vertex normal
+                vertices[i] += vn[i] * (strength * w);
+            } else if (mode == 2) {                     // SMOOTH: toward local average
+                Vec3 avg{0, 0, 0}; int cnt = 0;
+                for (std::size_t j = 0; j < snapshot.size(); ++j)
+                    if ((snapshot[j] - center).Magnitude() < radius) { avg += snapshot[j]; ++cnt; }
+                if (cnt > 0) { avg = avg * (1.0f / cnt);
+                    vertices[i] += (avg - snapshot[i]) * (strength * w); }
+            } else {                                    // GRAB: along `dir`
+                vertices[i] += dir * (strength * w);
+            }
+        }
+        name = "";
+        ComputeSmoothNormals();
+    }
 };
 
 } // namespace okay

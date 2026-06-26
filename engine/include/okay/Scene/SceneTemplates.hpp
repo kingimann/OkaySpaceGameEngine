@@ -21,6 +21,8 @@
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
+#include "okay/Components/VehicleController.hpp"
+#include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
@@ -462,6 +464,88 @@ inline void TopDown(Scene& scene) {
         wsr->color = Color::FromBytes(110, 110, 130);
         wsr->size = {1, 4};
     }
+}
+
+/// A 3D arcade driving starter: a car you steer with WASD/arrows on a wide ground,
+/// the camera chasing from behind (VehicleController.followCamera), with a few blocks
+/// to weave around. Space is the handbrake.
+inline void Vehicle3D(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Vehicle 3D");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {120, 1, 120};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube(); gmr->color = Color::FromBytes(80, 84, 92);
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    const Vec3 blocks[] = {{8, 0.5f, -10}, {-9, 0.5f, -14}, {12, 0.5f, 6}, {-12, 0.5f, 10}, {0, 0.5f, -22}};
+    for (const auto& b : blocks) {
+        GameObject* o = scene.CreateGameObject("Block");
+        o->transform->localPosition = b;
+        o->transform->localScale = {2, 1, 2};
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = Color::FromBytes(150, 120, 80);
+        o->AddComponent<BoxCollider3D>();
+        o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+
+    GameObject* car = scene.CreateGameObject("Car");
+    car->transform->localPosition = {0, 0.6f, 0};
+    car->transform->localScale = {1.6f, 0.6f, 3.0f};   // a car-shaped block
+    auto* cmr = car->AddComponent<MeshRenderer>();
+    cmr->mesh = Mesh::Cube(); cmr->color = Color::FromBytes(205, 60, 55);
+    car->AddComponent<Rigidbody3D>();
+    car->AddComponent<BoxCollider3D>()->size = {1, 1, 1};   // sized by the Transform scale
+    auto* vc = car->AddComponent<VehicleController>();
+    vc->followCamera = true;
+
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {0, 4, -8};         // the controller keeps it behind the car
+}
+
+/// A 2D top-down driving starter: a car you steer with WASD/arrows (throttle + turn,
+/// with grip so it corners and drifts), an orthographic camera following it, and a
+/// few cones to weave around. Space is the handbrake.
+inline void Vehicle2D(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Vehicle 2D");
+
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->orthographicSize = 8.0f;
+    cam->main = true;
+    auto* follow = camObj->AddComponent<CameraFollow>();
+    follow->targetName = "Car";
+    follow->smoothing = 6.0f;
+
+    const Vec2 cones[] = {{-6, 4}, {6, 4}, {-6, -4}, {6, -4}, {0, 7}, {0, -7}};
+    for (const auto& c : cones) {
+        GameObject* o = scene.CreateGameObject("Cone");
+        o->transform->localPosition = {c.x, c.y, 0};
+        auto* sr = o->AddComponent<SpriteRenderer>();
+        sr->color = Color::FromBytes(230, 150, 60);
+        sr->size = {0.6f, 0.6f};
+    }
+
+    GameObject* car = scene.CreateGameObject("Car");
+    auto* sr = car->AddComponent<SpriteRenderer>();
+    sr->color = Color::FromBytes(70, 140, 210);
+    sr->size = {1.0f, 1.8f};                                // longer than wide = nose up (+Y)
+    auto* rb = car->AddComponent<Rigidbody2D>();
+    rb->gravityScale = 0.0f;                                // top-down: no gravity
+    car->AddComponent<BoxCollider2D>()->size = {1.0f, 1.8f};
+    car->AddComponent<VehicleController2D>();               // top-down (drives along +Y)
 }
 
 /// The simplest possible multiplayer: one player object whose script hosts (or

@@ -555,5 +555,38 @@ int main() {
         CHECK_NEAR(r->position.x, 10.0f, 0.001f);
     }
 
+    // --- UITabs content pages: selecting a tab shows its page, hides the rest ---
+    {
+        Scene s("tabs"); s.physicsEnabled = false;
+        GameObject* bar = s.CreateGameObject("Tabs");
+        auto* tb = bar->AddComponent<UITabs>();
+        tb->tabs = {"A", "B", "C"};
+        GameObject* pa = s.CreateGameObject("PageA");
+        GameObject* pb = s.CreateGameObject("PageB");
+        GameObject* pc = s.CreateGameObject("PageC");
+        tb->pages = {"PageA", "PageB", "PageC"};
+
+        s.Start();
+        s.Update(0.016f);              // first Update applies the initial selection (0)
+        CHECK(pa->active == true);
+        CHECK(pb->active == false);
+        CHECK(pc->active == false);
+
+        tb->Select(2);                 // switch to tab C
+        CHECK(pc->active == true);
+        CHECK(pa->active == false);
+        CHECK(pb->active == false);
+
+        // Round-trips through serialization with pages intact.
+        std::string text = SceneSerializer::Serialize(s);
+        Scene loaded("L"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* lt = loaded.Find("Tabs")->GetComponent<UITabs>();
+        CHECK(lt != nullptr);
+        CHECK(lt->tabs.size() == 3);
+        CHECK(lt->pages.size() == 3);
+        CHECK(lt->pages[1] == "PageB");
+    }
+
     TEST_MAIN_RESULT();
 }

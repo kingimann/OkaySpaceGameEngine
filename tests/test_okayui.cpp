@@ -86,24 +86,56 @@ int main(int argc, char** argv) {
     OkayUI::BeginFrame(in); bool blockedClick = OkayUI::Button(1, bx, by, bw, bh, "Play"); OkayUI::EndFrame(r);
     CHECK(!blockedClick);
 
-    // --- Optional visual preview: three states side by side is overkill for one
-    //     surface, so render idle + hover + pressed stacked and dump a PNG. ---
+    // --- Checkbox: press+release inside toggles the bound bool. ---
+    bool checkState = false;
+    in.mouseX = 30; in.mouseY = 30; in.mouseDown = true; in.blocked = false;
+    OkayUI::BeginFrame(in); OkayUI::Checkbox(2, 20, 20, 24, "On", &checkState); OkayUI::EndFrame(r);
+    in.mouseDown = false;
+    OkayUI::BeginFrame(in); bool cbChanged = OkayUI::Checkbox(2, 20, 20, 24, "On", &checkState); OkayUI::EndFrame(r);
+    CHECK(cbChanged);
+    CHECK(checkState == true);
+
+    // --- Slider: click at 75% of the groove sets value to ~75% of the range. ---
+    float sval = 0.0f;
+    const float sx = 20, sy = 20, sw = 200, sh = 24;
+    in.mouseX = sx + sw * 0.75f; in.mouseY = sy + sh / 2; in.mouseDown = true;
+    OkayUI::BeginFrame(in); bool slChanged = OkayUI::Slider(3, sx, sy, sw, sh, &sval, 0.0f, 100.0f); OkayUI::EndFrame(r);
+    CHECK(slChanged);
+    CHECK(sval > 70.0f && sval < 80.0f);
+    in.mouseDown = false;   // release
+    OkayUI::BeginFrame(in); OkayUI::Slider(3, sx, sy, sw, sh, &sval, 0.0f, 100.0f); OkayUI::EndFrame(r);
+
+    // --- ProgressBar: at t=0.5 the left of the groove is accent, the right is track. ---
+    clearBlack();
+    OkayUI::BeginFrame(OkayUI::Input{});
+    OkayUI::ProgressBar(20, 30, 200, 24, 0.5f);
+    OkayUI::EndFrame(r);
+    SDL_LockSurface(surf);
+    Uint32 leftFill  = pixelAt(surf, 40, 42);    // ~10% across -> filled (accent)
+    Uint32 rightTrk  = pixelAt(surf, 200, 42);   // ~90% across -> empty (track)
+    SDL_UnlockSurface(surf);
+    CHECK((leftFill & 0x00FFFFFFu) != (rightTrk & 0x00FFFFFFu));   // fill differs from groove
+
+    // --- Optional visual preview: a small HUD panel showing every widget. ---
     if (argc > 2 && std::strcmp(argv[1], "--png") == 0) {
-        SDL_Surface* big = SDL_CreateRGBSurfaceWithFormat(0, 240, 170, 32, SDL_PIXELFORMAT_ARGB8888);
+        const int PW = 340, PH = 230;
+        SDL_Surface* big = SDL_CreateRGBSurfaceWithFormat(0, PW, PH, 32, SDL_PIXELFORMAT_ARGB8888);
         SDL_Renderer* br = SDL_CreateSoftwareRenderer(big);
-        SDL_SetRenderDrawColor(br, 28, 30, 36, 255); SDL_RenderClear(br);   // dark canvas
-        OkayUI::Input pv;
-        // idle
-        pv.mouseX = -1; pv.mouseY = -1; pv.mouseDown = false;
-        OkayUI::BeginFrame(pv); OkayUI::Button(10, 40, 20, 160, 40, "Play"); OkayUI::EndFrame(br);
-        // hover
-        pv.mouseX = 120; pv.mouseY = 85; pv.mouseDown = false;
-        OkayUI::BeginFrame(pv); OkayUI::Button(11, 40, 70, 160, 40, "Hover"); OkayUI::EndFrame(br);
-        // pressed (arm then hold)
-        pv.mouseX = 120; pv.mouseY = 135; pv.mouseDown = true;
-        OkayUI::BeginFrame(pv); OkayUI::Button(12, 40, 120, 160, 40, "Press"); OkayUI::EndFrame(br);
-        pv.mouseDown = true;
-        OkayUI::BeginFrame(pv); OkayUI::Button(12, 40, 120, 160, 40, "Press"); OkayUI::EndFrame(br);
+        SDL_SetRenderDrawColor(br, 24, 26, 32, 255); SDL_RenderClear(br);
+        bool demoCheck = true; float demoSlider = 65.0f;
+        OkayUI::Input pv; pv.mouseX = -1; pv.mouseY = -1;   // nothing hovered
+        OkayUI::BeginFrame(pv);
+        OkayUI::Panel(16, 16, PW - 32, PH - 32);
+        OkayUI::Label(32, 30, "OkayUI Widgets");
+        OkayUI::Button(20, 20, 60, 120, 40, "Play");
+        OkayUI::Checkbox(21, 160, 68, 26, "Sound", &demoCheck);
+        OkayUI::Label(32, 116, "Volume");
+        OkayUI::Slider(22, 150, 112, 158, 24, &demoSlider, 0.0f, 100.0f);
+        OkayUI::Label(32, 160, "Health");
+        OkayUI::ProgressBar(150, 156, 158, 22, 0.8f);
+        OkayUI::Label(32, 196, "Hunger");
+        OkayUI::ProgressBar(150, 192, 158, 22, 0.35f);
+        OkayUI::EndFrame(br);
         savePng(big, argv[2]);
         SDL_DestroyRenderer(br); SDL_FreeSurface(big);
     }

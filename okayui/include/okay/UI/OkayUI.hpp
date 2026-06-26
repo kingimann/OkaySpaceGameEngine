@@ -35,6 +35,9 @@ struct Theme {
     unsigned char bgDown[4]  = { 36,  40,  48, 255};
     unsigned char border[4]  = { 18,  20,  24, 255};
     unsigned char text[4]    = {236, 239, 245, 255};
+    unsigned char panel[4]   = { 40,  43,  50, 235};   // Panel() background
+    unsigned char track[4]   = { 26,  28,  34, 255};   // Slider/ProgressBar groove
+    unsigned char accent[4]  = { 84, 150, 240, 255};   // fill / handle / checkmark
     float borderPx  = 1.0f;
     float textScale = 2.0f;    // 8x8 font cell * scale (2 -> 16px-tall glyphs)
 };
@@ -42,10 +45,29 @@ struct Theme {
 /// Latch this frame's input and reset the geometry batch.
 void BeginFrame(const Input& in);
 
+/// Static text at (x, y), top-left aligned, in the theme's text color.
+void Label(float x, float y, const char* text);
+
+/// A filled background container (panel) with a border. Purely decorative —
+/// lay widgets on top of it. Good for grouping a HUD or a settings box.
+void Panel(float x, float y, float w, float h);
+
 /// An immediate-mode button. `id` must be unique and stable across frames.
 /// Returns true on the frame the press is RELEASED while still inside the rect
 /// (a click), matching how desktop buttons behave.
 bool Button(int id, float x, float y, float w, float h, const char* label);
+
+/// A checkbox of side `size` at (x, y) with `label` drawn to its right. Toggles
+/// *value on click; returns true on the frame the value changed. `value` required.
+bool Checkbox(int id, float x, float y, float size, const char* label, bool* value);
+
+/// A horizontal slider over [minV, maxV]. Click or drag the groove to set *value;
+/// returns true on any frame the value changed. `value` required.
+bool Slider(int id, float x, float y, float w, float h, float* value, float minV, float maxV);
+
+/// A non-interactive progress/stat bar: fills `t` (clamped to [0,1]) of the groove
+/// with the accent color. Perfect for health/hunger/XP bars.
+void ProgressBar(float x, float y, float w, float h, float t);
 
 /// Flush the batched geometry to the renderer. Call AFTER ImGui has rendered so
 /// OkayUI draws on top; the renderer's blend mode is saved and restored so nothing

@@ -12576,11 +12576,22 @@ int main(int argc, char** argv) {
             uin.mouseX = (float)mx; uin.mouseY = (float)my;
             uin.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
             uin.blocked = io.WantCaptureMouse;
-            float bw = 200.0f, bh = 44.0f;
-            float bx = 24.0f, by = io.DisplaySize.y - bh - 24.0f;
+            static bool  s_sound  = true;
+            static float s_volume = 60.0f;
+            float px = 24.0f, py = io.DisplaySize.y - 250.0f;
+            if (py < 40.0f) py = 40.0f;
             OkayUI::BeginFrame(uin);
-            if (OkayUI::Button(0x0CAE, bx, by, bw, bh, "OkayUI Button"))
-                ConsoleLog("OkayUI button clicked (drawn on top of ImGui via SDL_Renderer).");
+            OkayUI::Panel(px, py, 340.0f, 226.0f);
+            OkayUI::Label(px + 16.0f, py + 14.0f, "OkayUI Demo");
+            if (OkayUI::Button(0x0C01, px + 16.0f, py + 44.0f, 130.0f, 40.0f, "Play"))
+                ConsoleLog("OkayUI: Play clicked (drawn on top of ImGui via SDL_Renderer).");
+            OkayUI::Checkbox(0x0C02, px + 164.0f, py + 52.0f, 26.0f, "Sound", &s_sound);
+            OkayUI::Label(px + 16.0f, py + 100.0f, "Volume");
+            OkayUI::Slider(0x0C03, px + 150.0f, py + 96.0f, 174.0f, 24.0f, &s_volume, 0.0f, 100.0f);
+            OkayUI::Label(px + 16.0f, py + 140.0f, "Health");
+            OkayUI::ProgressBar(px + 150.0f, py + 136.0f, 174.0f, 22.0f, 0.8f);
+            OkayUI::Label(px + 16.0f, py + 178.0f, "Hunger");
+            OkayUI::ProgressBar(px + 150.0f, py + 174.0f, 174.0f, 22.0f, 0.35f);
             OkayUI::EndFrame(renderer);
         }
 #endif

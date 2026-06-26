@@ -64,6 +64,8 @@ inline bool pointIn(float px, float py, float x, float y, float w, float h) {
     return px >= x && px < x + w && py >= y && py < y + h;
 }
 
+inline float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
 } // namespace
 
 void BeginFrame(const Input& in) {
@@ -105,6 +107,94 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
         drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, label, s, g_theme.text);
     }
     return clicked;
+}
+
+void Label(float x, float y, const char* text) {
+    if (text && *text) drawText(x, y, text, g_theme.textScale, g_theme.text);
+}
+
+void Panel(float x, float y, float w, float h) {
+    quad(x, y, w, h, g_theme.border);
+    const float b = g_theme.borderPx;
+    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, g_theme.panel);
+}
+
+bool Checkbox(int id, float x, float y, float size, const char* label, bool* value) {
+    if (!value) return false;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, size, size);
+    if (inside) g_hot = id;
+
+    bool changed = false;
+    if (g_active == id) {
+        if (g_released) { if (inside) { *value = !*value; changed = true; } g_active = 0; }
+    } else if (inside && g_pressed) {
+        g_active = id;
+    }
+
+    const unsigned char* bg = g_theme.bg;
+    if (g_active == id && inside) bg = g_theme.bgDown;
+    else if (inside)             bg = g_theme.bgHover;
+
+    // Box frame + fill.
+    quad(x, y, size, size, g_theme.border);
+    const float b = g_theme.borderPx;
+    if (size > 2.0f * b) quad(x + b, y + b, size - 2.0f * b, size - 2.0f * b, bg);
+    // Check mark: a centered accent square when ticked.
+    if (*value) {
+        const float pad = size * 0.28f;
+        quad(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, g_theme.accent);
+    }
+    // Label to the right, vertically centered against the box.
+    if (label && *label) {
+        const float s  = g_theme.textScale;
+        const float th = okay::Font8x8::Height * s;
+        drawText(x + size + 8.0f, y + (size - th) * 0.5f, label, s, g_theme.text);
+    }
+    return changed;
+}
+
+bool Slider(int id, float x, float y, float w, float h, float* value, float minV, float maxV) {
+    if (!value || w <= 0.0f || maxV <= minV) return false;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+
+    bool changed = false;
+    auto setFromMouse = [&]() {
+        const float t  = clamp01((g_in.mouseX - x) / w);
+        const float nv = minV + t * (maxV - minV);
+        if (nv != *value) { *value = nv; changed = true; }
+    };
+    if (g_active == id) {
+        if (!g_in.mouseDown) g_active = 0;   // released -> stop dragging
+        else setFromMouse();                 // drag tracks the cursor
+    } else if (inside && g_pressed) {
+        g_active = id;
+        setFromMouse();                      // jump to the click position
+    }
+
+    // Groove, then the filled portion, then the handle.
+    const float t = clamp01((*value - minV) / (maxV - minV));
+    const float gy = y + h * 0.5f - 3.0f;     // 6px groove, vertically centered
+    quad(x, gy, w, 6.0f, g_theme.track);
+    quad(x, gy, w * t, 6.0f, g_theme.accent);
+    const float hw = 10.0f;                    // handle width
+    float hx = x + w * t - hw * 0.5f;
+    if (hx < x) hx = x; if (hx > x + w - hw) hx = x + w - hw;
+    const unsigned char* hc = (g_active == id || inside) ? g_theme.text : g_theme.accent;
+    quad(hx, y, hw, h, g_theme.border);
+    quad(hx + 1.0f, y + 1.0f, hw - 2.0f, h - 2.0f, hc);
+    return changed;
+}
+
+void ProgressBar(float x, float y, float w, float h, float t) {
+    t = clamp01(t);
+    quad(x, y, w, h, g_theme.border);
+    const float b = g_theme.borderPx;
+    if (w > 2.0f * b && h > 2.0f * b) {
+        quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, g_theme.track);
+        const float iw = (w - 2.0f * b) * t;
+        if (iw > 0.0f) quad(x + b, y + b, iw, h - 2.0f * b, g_theme.accent);
+    }
 }
 
 void EndFrame(SDL_Renderer* r) {

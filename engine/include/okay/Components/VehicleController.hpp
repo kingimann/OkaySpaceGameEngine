@@ -218,16 +218,23 @@ private:
         if (!s || !s->mainCamera || !s->mainCamera->gameObject) return;
         Transform* ct = s->mainCamera->gameObject->transform;
         if (!ct || ct == transform) return;
-        Vec3 fp = Planar(transform->Forward());
-        Vec3 want = transform->Position() - fp * camDistance + Vec3{0, camHeight, 0};
+        Vec3 fp = Planar(transform->Forward());           // flat heading (stable when stopped)
+        Vec3 carPos = transform->Position();
+        // Sit behind and above the car.
+        Vec3 want = carPos - fp * camDistance + Vec3{0, camHeight, 0};
         float t = camLerp > 0.0f ? (1.0f - std::exp(-camLerp * dt)) : 1.0f;
-        Vec3 cp = ct->Position();
-        Vec3 np = cp + (want - cp) * t;
+        if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+        Vec3 np = ct->Position();
+        np = np + (want - np) * t;
         ct->SetPosition(np);
-        // Orient +Z toward the car (the engine's forward axis).
-        Vec3 look = transform->Position() - np;
+        // Aim at a point a little ABOVE the car and slightly AHEAD of it, not at the
+        // car's base — otherwise a camera mounted up high just stares down at the roof.
+        // This frames the road ahead like a real arcade racer. The look target follows
+        // the heading so cornering reveals where you're going.
+        Vec3 lookAt = carPos + Vec3{0, camHeight * 0.45f, 0} + fp * (camDistance * 0.35f);
+        Vec3 look = lookAt - np;
         if (look.x * look.x + look.y * look.y + look.z * look.z > 1e-6f)
-            ct->localRotation = Quat::LookRotation(look);
+            ct->localRotation = Quat::LookRotation(look);   // orient +Z (engine forward) at the target
     }
 
     float m_speed = 0.0f;

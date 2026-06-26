@@ -59,5 +59,24 @@ int main() {
     CHECK(none == nullptr);
     CHECK(CountBlocks(scene, "Block") == 1);
 
+    // Preview + crosshair: Update() (with a main camera) spawns a non-removable
+    // ghost outline and adds an aim reticle, without creating a real block.
+    GameObject* camGO = scene.CreateGameObject("Camera");
+    auto* cam = camGO->AddComponent<Camera>();
+    camGO->transform->localPosition = {0.0f, 6.0f, 0.0f};
+    scene.mainCamera = cam;
+    int before = CountBlocks(scene, "Block");
+    scene.Update(0.0f);
+    CHECK(CountBlocks(scene, "Block") == before);           // preview is not a block
+    CHECK(CountBlocks(scene, "BlockPreview") == 1);          // exactly one ghost
+    CHECK(builderGO->GetComponent<Crosshair>() != nullptr); // reticle added
+    // Toggling the preview off hides (deactivates) the ghost on the next tick.
+    bb->showPreview = false;
+    scene.Update(0.0f);
+    int hidden = 0;
+    for (const auto& up : scene.Objects())
+        if (up && up->tag == "BlockPreview" && !up->active) ++hidden;
+    CHECK(hidden == 1);
+
     TEST_MAIN_RESULT();
 }

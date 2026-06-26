@@ -7704,6 +7704,11 @@ void DrawInspector(EditorState& ed) {
             const char* btns[] = {"Left", "Right", "Middle"};
             if (ImGui::Combo("Place Button##bb", &bb->placeButton, btns, 3)) ed.dirty = true;
             if (ImGui::Combo("Remove Button##bb", &bb->removeButton, btns, 3)) ed.dirty = true;
+            if (ImGui::Checkbox("Placement preview##bb", &bb->showPreview)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show a ghost outline of the cell the next block lands in (green = free, red = blocked).");
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Crosshair##bb", &bb->showCrosshair)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an aim reticle at screen center on Play (if the scene has none).");
             if (ImGui::SmallButton("Remove##bb")) toRemove = bb;
         }
     }

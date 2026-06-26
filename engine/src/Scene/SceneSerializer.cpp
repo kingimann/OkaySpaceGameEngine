@@ -338,7 +338,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  blockbuilder " << bb->blockSize << " " << bb->reach << " "
             << bb->blockColor.r << " " << bb->blockColor.g << " " << bb->blockColor.b << " " << bb->blockColor.a
             << " " << bb->placeButton << " " << bb->removeButton
-            << " " << Quote(bb->blockTag) << " " << Quote(bb->blockTexture) << "\n";
+            << " " << Quote(bb->blockTag) << " " << Quote(bb->blockTexture)
+            << " " << (bb->showPreview ? 1 : 0) << " " << (bb->showCrosshair ? 1 : 0) << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -1439,6 +1440,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> bb->placeButton >> bb->removeButton;
                     bb->blockTag = ReadQuoted(in);
                     bb->blockTexture = ReadQuoted(in);
+                    in >> std::ws;   // optional preview/crosshair toggles (added later)
+                    if (std::isdigit(in.peek())) {
+                        int sp = 1, sc = 1; in >> sp >> sc;
+                        bb->showPreview = (sp != 0); bb->showCrosshair = (sc != 0);
+                    }
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

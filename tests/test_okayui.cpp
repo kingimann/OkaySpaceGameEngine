@@ -166,33 +166,57 @@ int main(int argc, char** argv) {
     OkayUI::BeginFrame(in); OkayUI::TextField(6, fx, fy, fw, fh, field, 32); OkayUI::EndFrame(r);
     CHECK(std::strcmp(field, "H") == 0);   // unfocused -> unchanged
 
-    // --- Optional visual preview: a small HUD panel showing every widget. ---
+    // --- Auto-layout: a window's first auto Button is placed at a known spot and
+    //     clicking it works (verifies the cursor + label->id hashing). ---
+    {
+        // Window at (10,10) 200x200: titleH = 8*2+12 = 28, pad = 10, so content origin
+        // is (20, 48). The first Button("Go") is at (20,48), at least 24 wide x 28 tall,
+        // so (30, 58) is robustly inside it.
+        in = OkayUI::Input{}; in.mouseX = 30; in.mouseY = 58; in.mouseDown = true;
+        OkayUI::BeginFrame(in);
+        OkayUI::Begin("LayoutW", 10, 10, 200, 200);
+        OkayUI::Button("Go");
+        OkayUI::End();
+        OkayUI::EndFrame(r);
+        in.mouseDown = false;
+        OkayUI::BeginFrame(in);
+        OkayUI::Begin("LayoutW", 10, 10, 200, 200);
+        bool go = OkayUI::Button("Go");
+        OkayUI::End();
+        OkayUI::EndFrame(r);
+        CHECK(go);
+    }
+
+    // --- Optional visual preview: an auto-layout window showing the widgets. ---
     if (argc > 2 && std::strcmp(argv[1], "--png") == 0) {
-        const int PW = 360, PH = 380;
+        const int PW = 360, PH = 470;
         SDL_Surface* big = SDL_CreateRGBSurfaceWithFormat(0, PW, PH, 32, SDL_PIXELFORMAT_ARGB8888);
         SDL_Renderer* br = SDL_CreateSoftwareRenderer(big);
         SDL_SetRenderDrawColor(br, 24, 26, 32, 255); SDL_RenderClear(br);
-        char demoName[16] = "Player1"; int demoTab = 0, demoMode = 0;
+        char demoName[16] = "Player1"; int demoMode = 0;
         bool demoCheck = true; float demoSlider = 65.0f;
         OkayUI::Input pv; pv.mouseX = -1; pv.mouseY = -1;   // nothing hovered
+        // The whole panel is written as a sequence of calls — no manual coordinates.
         OkayUI::BeginFrame(pv);
-        OkayUI::Panel(16, 16, PW - 32, PH - 32);
-        OkayUI::Tab(60, 24, 28, 100, 30, "General", &demoTab, 0);
-        OkayUI::Tab(61, 128, 28, 100, 30, "Audio",   &demoTab, 1);
-        OkayUI::Tab(62, 232, 28, 100, 30, "About",   &demoTab, 2);
-        OkayUI::Label(24, 74, "Name");
-        OkayUI::TextField(63, 110, 70, 226, 30, demoName, 16);
-        OkayUI::Label(24, 116, "Mode");
-        OkayUI::RadioButton(64, 110, 114, 22, "Easy", &demoMode, 0);
-        OkayUI::RadioButton(65, 206, 114, 22, "Hard", &demoMode, 1);
-        OkayUI::Label(24, 152, "Volume");
-        OkayUI::Slider(66, 110, 148, 226, 24, &demoSlider, 0.0f, 100.0f);
-        OkayUI::Checkbox(67, 110, 186, 26, "Sound", &demoCheck);
-        OkayUI::Label(24, 230, "Health");
-        OkayUI::ProgressBar(110, 226, 226, 22, 0.8f);
-        OkayUI::Label(24, 266, "Hunger");
-        OkayUI::ProgressBar(110, 262, 226, 22, 0.35f);
-        OkayUI::Button(68, 110, 302, 130, 40, "Play");
+        OkayUI::Begin("Settings", 12, 12, PW - 24, PH - 24);
+        OkayUI::Text("Auto-layout window");
+        OkayUI::Separator();
+        OkayUI::InputText("Name", demoName, 16);
+        OkayUI::RadioButton("Easy", &demoMode, 0);
+        OkayUI::SameLine();
+        OkayUI::RadioButton("Hard", &demoMode, 1);
+        OkayUI::SliderFloat("Volume", &demoSlider, 0.0f, 100.0f);
+        OkayUI::Checkbox("Sound", &demoCheck);
+        OkayUI::Separator();
+        OkayUI::Text("Health");
+        OkayUI::ProgressBar(0.8f);
+        OkayUI::Text("Hunger");
+        OkayUI::ProgressBar(0.35f);
+        OkayUI::Spacing();
+        OkayUI::Button("Play");
+        OkayUI::SameLine();
+        OkayUI::Button("Quit");
+        OkayUI::End();
         OkayUI::EndFrame(br);
         savePng(big, argv[2]);
         SDL_DestroyRenderer(br); SDL_FreeSurface(big);

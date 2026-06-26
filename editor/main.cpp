@@ -12590,30 +12590,30 @@ int main(int argc, char** argv) {
             uin.backspace = g_okayUIBack;
             static bool  s_sound  = true;
             static float s_volume = 60.0f;
-            static int   s_tab    = 0;
             static int   s_mode   = 0;
             static char  s_name[16] = "Player1";
-            float px = 24.0f, py = io.DisplaySize.y - 364.0f;
-            if (py < 40.0f) py = 40.0f;
+            float wy = io.DisplaySize.y - 400.0f; if (wy < 40.0f) wy = 40.0f;
+            // Written as a sequence of auto-layout calls — no manual coordinates. The
+            // window is draggable by its title bar.
             OkayUI::BeginFrame(uin);
-            OkayUI::Panel(px, py, 344.0f, 348.0f);
-            OkayUI::Tab(0x0C10, px + 8.0f,   py + 8.0f, 104.0f, 30.0f, "General", &s_tab, 0);
-            OkayUI::Tab(0x0C11, px + 116.0f, py + 8.0f, 104.0f, 30.0f, "Audio",   &s_tab, 1);
-            OkayUI::Tab(0x0C12, px + 224.0f, py + 8.0f, 104.0f, 30.0f, "About",   &s_tab, 2);
-            OkayUI::Label(px + 12.0f, py + 56.0f, "Name");
-            OkayUI::TextField(0x0C13, px + 96.0f, py + 52.0f, 232.0f, 30.0f, s_name, (int)sizeof(s_name));
-            OkayUI::Label(px + 12.0f, py + 98.0f, "Mode");
-            OkayUI::RadioButton(0x0C14, px + 96.0f,  py + 96.0f, 22.0f, "Easy", &s_mode, 0);
-            OkayUI::RadioButton(0x0C15, px + 196.0f, py + 96.0f, 22.0f, "Hard", &s_mode, 1);
-            OkayUI::Label(px + 12.0f, py + 138.0f, "Volume");
-            OkayUI::Slider(0x0C03, px + 96.0f, py + 134.0f, 232.0f, 24.0f, &s_volume, 0.0f, 100.0f);
-            OkayUI::Checkbox(0x0C02, px + 96.0f, py + 174.0f, 26.0f, "Sound", &s_sound);
-            OkayUI::Label(px + 12.0f, py + 218.0f, "Health");
-            OkayUI::ProgressBar(px + 96.0f, py + 214.0f, 232.0f, 22.0f, 0.8f);
-            OkayUI::Label(px + 12.0f, py + 254.0f, "Hunger");
-            OkayUI::ProgressBar(px + 96.0f, py + 250.0f, 232.0f, 22.0f, 0.35f);
-            if (OkayUI::Button(0x0C01, px + 96.0f, py + 294.0f, 130.0f, 40.0f, "Play"))
+            OkayUI::Begin("OkayUI Demo", 24.0f, wy, 320.0f, 360.0f);
+            OkayUI::Text("Drag me by the title bar");
+            OkayUI::Separator();
+            OkayUI::InputText("Name", s_name, (int)sizeof(s_name));
+            OkayUI::RadioButton("Easy", &s_mode, 0);
+            OkayUI::SameLine();
+            OkayUI::RadioButton("Hard", &s_mode, 1);
+            OkayUI::SliderFloat("Volume", &s_volume, 0.0f, 100.0f);
+            OkayUI::Checkbox("Sound", &s_sound);
+            OkayUI::Separator();
+            OkayUI::Text("Health"); OkayUI::ProgressBar(0.8f);
+            OkayUI::Text("Hunger"); OkayUI::ProgressBar(0.35f);
+            OkayUI::Spacing();
+            if (OkayUI::Button("Play"))
                 ConsoleLog("OkayUI: Play clicked (drawn on top of ImGui via SDL_Renderer).");
+            OkayUI::SameLine();
+            OkayUI::Button("Quit");
+            OkayUI::End();
             OkayUI::EndFrame(renderer);
             // Keep SDL text input alive for the OkayUI field when ImGui isn't using it,
             // so the text field receives SDL_TEXTINPUT events.

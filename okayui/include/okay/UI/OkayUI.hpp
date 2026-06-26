@@ -94,6 +94,40 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap);
 /// else is disturbed.
 void EndFrame(SDL_Renderer* renderer);
 
+// ---------------------------------------------------------------------------
+// Auto-layout (ImGui-style). Everything above takes explicit coordinates; the API
+// below stacks widgets automatically inside a window, so you write a UI as a
+// sequence of calls instead of placing every rect by hand. Widget IDs are derived
+// from their label text (like ImGui), so most calls take no id.
+// ---------------------------------------------------------------------------
+
+/// Begin an auto-layout window at (x, y) sized w*h. The position is the INITIAL
+/// placement; the window is draggable by its title bar thereafter (state keyed by
+/// the title). Widgets called until End() stack inside it. Returns true (reserved
+/// for a future collapsed state) — pair every Begin() with End().
+bool Begin(const char* title, float x, float y, float w, float h);
+void End();
+
+/// Keep the next widget on the current line instead of starting a new one
+/// (`spacing` < 0 uses the theme default gap).
+void SameLine(float spacing = -1.0f);
+/// A full-width horizontal divider.
+void Separator();
+/// Vertical empty space of height `h`.
+void Spacing(float h = 8.0f);
+/// A line of text at the layout cursor.
+void Text(const char* s);
+
+// ImGui-style widget overloads that auto-place inside the current window (id is
+// hashed from the label). The explicit-coordinate versions above still work for
+// free-form placement.
+bool Button(const char* label);
+bool Checkbox(const char* label, bool* value);
+bool RadioButton(const char* label, int* value, int option);
+bool SliderFloat(const char* label, float* value, float minV, float maxV);
+void ProgressBar(float fraction, const char* overlay = nullptr);
+bool InputText(const char* label, char* buf, int cap);
+
 /// The active theme (mutable — tweak colors/sizes in place).
 Theme& Style();
 

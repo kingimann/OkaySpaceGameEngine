@@ -33,6 +33,66 @@ Theme g_theme;
 // Length of a C string without pulling in <cstring> (keeps the toolkit STL/libc-light).
 inline int cstrlen(const char* s) { int n = 0; if (s) while (s[n]) ++n; return n; }
 
+// ---- Auto-layout state (ImGui-style window + cursor) ---------------------------
+struct LayoutState {
+    bool  active   = false;
+    float ox = 0, oy = 0;            // content origin (top-left of the content area)
+    float cx = 0, cy = 0;            // cursor: top-left where the next item goes
+    float contentW = 0;             // usable content width
+    float spacingX = 8.0f, spacingY = 6.0f;
+    float prevX = 0, prevY = 0, prevW = 0, prevH = 0;   // last placed item
+    bool  pendingSameLine = false;
+    float sameLineSpacing = -1.0f;
+    int   seed = 0;                 // window id, mixed into label->id hashing
+};
+LayoutState g_lay;
+
+// Draggable-window position store (no STL): position persists across frames per id.
+struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; };
+WinSlot g_wins[16];
+float g_prevMouseX = 0.0f, g_prevMouseY = 0.0f;   // last frame's cursor
+float g_mouseDX = 0.0f, g_mouseDY = 0.0f;         // cursor delta this frame
+
+// FNV-1a hash of a label -> stable nonzero widget id (so callers needn't pass ids).
+inline int hashLabel(const char* s) {
+    unsigned h = 2166136261u ^ (unsigned)g_lay.seed;
+    if (s) for (; *s; ++s) h = (h ^ (unsigned char)*s) * 16777619u;
+    int id = (int)(h & 0x7fffffffu);
+    return id ? id : 1;
+}
+inline float rowH() { return okay::Font8x8::Height * g_theme.textScale + 12.0f; }
+inline float textH() { return okay::Font8x8::Height * g_theme.textScale; }
+inline float labelW(const char* s) { return s && *s ? okay::Font8x8::MeasureWidth(s) * g_theme.textScale : 0.0f; }
+
+// Where the next item's left edge will land (honors a pending SameLine).
+inline float cursorX() {
+    if (g_lay.pendingSameLine) {
+        float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
+        return g_lay.prevX + g_lay.prevW + sp;
+    }
+    return g_lay.ox;
+}
+// Remaining width from the next item's left edge to the content's right edge.
+inline float availW() { return g_lay.ox + g_lay.contentW - cursorX(); }
+
+// Reserve a w*h slot for the next item; returns its top-left and advances the cursor
+// to the next line (SameLine() keeps it on the current line instead).
+void place(float w, float h, float& x, float& y) {
+    if (g_lay.pendingSameLine) {
+        float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
+        x = g_lay.prevX + g_lay.prevW + sp;
+        y = g_lay.prevY;
+        g_lay.pendingSameLine = false;
+        g_lay.sameLineSpacing = -1.0f;
+    } else {
+        x = g_lay.ox;
+        y = g_lay.cy;
+    }
+    g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
+    g_lay.cx = g_lay.ox;
+    g_lay.cy = y + h + g_lay.spacingY;
+}
+
 inline SDL_Color toColor(const unsigned char c[4]) {
     SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3]; return sc;
 }
@@ -79,8 +139,14 @@ void BeginFrame(const Input& in) {
     g_pressed  =  in.mouseDown && !g_prevDown;
     g_released = !in.mouseDown &&  g_prevDown;
     g_prevDown = in.mouseDown;
+    g_mouseDX = in.mouseX - g_prevMouseX;
+    g_mouseDY = in.mouseY - g_prevMouseY;
+    g_prevMouseX = in.mouseX;
+    g_prevMouseY = in.mouseY;
     g_hot = 0;
     g_focusClaimed = false;
+    g_lay.active = false;            // widgets called outside Begin/End no-op
+    g_lay.pendingSameLine = false;
     ++g_frame;
     g_nv = 0; g_ni = 0;
 }
@@ -329,5 +395,132 @@ void EndFrame(SDL_Renderer* r) {
 }
 
 Theme& Style() { return g_theme; }
+
+// ---- Auto-layout window + ImGui-style overloads --------------------------------
+
+bool Begin(const char* title, float x, float y, float w, float h) {
+    g_lay.seed = 0;                    // hash the window id from a FIXED seed so it (and
+    const int id = hashLabel(title);   // every widget id under it) is stable across frames
+    WinSlot* slot = nullptr;
+    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
+    if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { ws.used = true; ws.id = id; ws.x = x; ws.y = y; slot = &ws; break; }
+    float wx = slot ? slot->x : x, wy = slot ? slot->y : y;
+    const float titleH = rowH();
+
+    // Drag the window by its title bar (reuses the active-item mechanism).
+    const bool overTitle = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, titleH);
+    if (overTitle) g_hot = id;
+    if (g_active == id) {
+        if (!g_in.mouseDown) g_active = 0;
+        else if (slot) { slot->x += g_mouseDX; slot->y += g_mouseDY; wx = slot->x; wy = slot->y; }
+    } else if (overTitle && g_pressed) {
+        g_active = id; g_focusClaimed = true;
+    }
+
+    // Frame: panel body + title bar + accent underline + title text.
+    Panel(wx, wy, w, h);
+    quad(wx, wy, w, titleH, g_theme.bgDown);
+    quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
+    if (title && *title) drawText(wx + 10.0f, wy + (titleH - textH()) * 0.5f, title, g_theme.textScale, g_theme.text);
+
+    // Establish the content layout region.
+    const float pad = 10.0f;
+    g_lay.active = true;
+    g_lay.seed = id;
+    g_lay.ox = wx + pad;
+    g_lay.oy = wy + titleH + pad;
+    g_lay.cx = g_lay.ox;
+    g_lay.cy = g_lay.oy;
+    g_lay.contentW = w - 2.0f * pad;
+    g_lay.spacingX = 8.0f; g_lay.spacingY = 6.0f;
+    g_lay.pendingSameLine = false;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    return true;
+}
+
+void End() { g_lay.active = false; }
+
+void SameLine(float spacing) {
+    if (!g_lay.active) return;
+    g_lay.pendingSameLine = true;
+    g_lay.sameLineSpacing = spacing;
+}
+
+void Spacing(float h) {
+    if (!g_lay.active) return;
+    float x, y; place(0.0f, h, x, y);
+}
+
+void Separator() {
+    if (!g_lay.active) return;
+    const float gap = g_lay.spacingY;
+    float x, y; place(g_lay.contentW, gap, x, y);
+    quad(g_lay.ox, y + gap * 0.5f, g_lay.contentW, 1.0f, g_theme.border);
+}
+
+void Text(const char* s) {
+    if (!g_lay.active) return;
+    const float h = rowH();
+    float x, y; place(s && *s ? labelW(s) : 1.0f, h, x, y);
+    if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, g_theme.text);
+}
+
+bool Button(const char* label) {
+    if (!g_lay.active) return false;
+    const float w = labelW(label) + 24.0f, h = rowH();
+    float x, y; place(w, h, x, y);
+    return Button(hashLabel(label), x, y, w, h, label);
+}
+
+bool Checkbox(const char* label, bool* value) {
+    if (!g_lay.active || !value) return false;
+    const float h = rowH(), sz = textH() + 6.0f;
+    const float w = sz + 8.0f + labelW(label);
+    float x, y; place(w, h, x, y);
+    return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value);
+}
+
+bool RadioButton(const char* label, int* value, int option) {
+    if (!g_lay.active || !value) return false;
+    const float h = rowH(), sz = textH() + 6.0f;
+    const float w = sz + 8.0f + labelW(label);
+    float x, y; place(w, h, x, y);
+    return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value, option);
+}
+
+bool SliderFloat(const char* label, float* value, float minV, float maxV) {
+    if (!g_lay.active || !value) return false;
+    const float h = rowH();
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
+    const bool ch = Slider(hashLabel(label), x, y, ctrlW, h, value, minV, maxV);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    return ch;
+}
+
+void ProgressBar(float fraction, const char* overlay) {
+    if (!g_lay.active) return;
+    const float h = rowH(), w = availW();
+    float x, y; place(w, h, x, y);
+    ProgressBar(x, y, w, h, fraction);
+    if (overlay && *overlay) {
+        const float tw = labelW(overlay);
+        drawText(x + (w - tw) * 0.5f, y + (h - textH()) * 0.5f, overlay, g_theme.textScale, g_theme.text);
+    }
+}
+
+bool InputText(const char* label, char* buf, int cap) {
+    if (!g_lay.active || !buf) return false;
+    const float h = rowH();
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
+    const bool ch = TextField(hashLabel(label), x, y, ctrlW, h, buf, cap);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    return ch;
+}
 
 } // namespace OkayUI

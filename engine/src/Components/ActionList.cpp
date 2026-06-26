@@ -7,6 +7,9 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIRadialProgress.hpp"
+#include "okay/Components/UITextBind.hpp"        // Resolve {var}/{pref} tokens in text
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/NativeUIActions.hpp"   // InvokeNativeUIAction (survival verbs)
 #include "okay/Components/Consumables.hpp"       // UseIndex
@@ -328,7 +331,26 @@ void ActionList::Update(float dt) {
         }
         else if (op == "set_ambient") { SceneLight::SetAmbient(Num(it, 0)); }
         else if (op == "set_text") {
-            if (gameObject) if (auto* tr = gameObject->GetComponent<TextRenderer>()) tr->text = Rest(it, 0);
+            // Interpolate {var}/{pref} tokens so you can show a variable's live value:
+            //   Set Text  "Score: {score}"   ->  "Score: 42"
+            if (gameObject) if (auto* tr = gameObject->GetComponent<TextRenderer>())
+                tr->text = UITextBind::Resolve(Rest(it, 0));
+        }
+        else if (op == "set_text_on") {
+            // Set a named object's text label, with {var}/{pref} interpolation.
+            if (scene) if (GameObject* g = scene->Find(Str(it, 0)))
+                if (auto* tr = g->GetComponent<TextRenderer>())
+                    tr->text = UITextBind::Resolve(Rest(it, 1));
+        }
+        else if (op == "set_bar") {
+            // Fill a named progress bar from a variable: set_bar <object> <var> [max].
+            // value = var / max (clamped 0..1); max defaults to 1.
+            if (scene) if (GameObject* g = scene->Find(Str(it, 0))) {
+                float mx = Num(it, 2); if (mx == 0.0f) mx = 1.0f;
+                float frac = Mathf::Clamp01(Vars()[Str(it, 1)] / mx);
+                if (auto* pb = g->GetComponent<UIProgressBar>())    pb->SetValue(frac);
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetValue(frac);
+            }
         }
         else if (op == "play_sound") {
             if (gameObject) if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play();

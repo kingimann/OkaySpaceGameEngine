@@ -1221,8 +1221,7 @@ int main(int argc, char** argv) {
                 p *= tk;
             }
             if (tr->background) {                       // label background box
-                Vec2 b = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
-                                : tr->BoxTopLeft((float)w, (float)h);
+                Vec2 b = UIResolveOrigin(up.get(), (float)w, (float)h);   // parent-relative box
                 SDL_Rect br{(int)b.x, (int)b.y, (int)(tr->size.x * tk), (int)(tr->size.y * tk)};
                 SDL_SetRenderDrawColor(renderer, (Uint8)(tr->backgroundColor.r * 255),
                                        (Uint8)(tr->backgroundColor.g * 255), (Uint8)(tr->backgroundColor.b * 255),
@@ -1230,7 +1229,7 @@ int main(int argc, char** argv) {
                 SDL_RenderFillRect(renderer, &br);
             }
             Vec2 o = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
-                            : tr->ResolvedScreenPos((float)w, (float)h);   // align handled inside
+                            : UITextDrawOrigin(up.get(), tr, (float)w, (float)h);   // parent-relative + align
             std::string disp = tr->DisplayText();
             bool it = tr->italic;
             SDL_Color c2{(Uint8)(tr->colorBottom.r * 255), (Uint8)(tr->colorBottom.g * 255),

@@ -27,6 +27,7 @@ add_library(okay_engine
     src/Components/UILayoutGroup.cpp
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
+    src/Components/UIBarBind.cpp
     src/Components/UIDraggable.cpp
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp

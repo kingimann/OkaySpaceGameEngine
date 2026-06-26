@@ -5,17 +5,21 @@
 namespace okay {
 
 /// Data binding for UI text: a `format` string with `{key}` placeholders that
-/// are replaced each frame with the matching Prefs values, and the result is
-/// written into the sibling TextRenderer. So a label authored as
-/// `text bind="Score: {score}"` shows the live value of the `score` pref —
-/// update it from script with prefs_set("score", v) and the HUD follows.
-/// Unknown keys resolve to an empty string; `{{` / `}}` emit literal braces.
+/// are replaced each frame with the live value of a matching visual-scripting
+/// variable (ActionList var) or Prefs value, and the result is written into the
+/// sibling TextRenderer/Button/InputField. So a label authored as
+/// `Score: {score}` shows the live `score` variable — set it from a visual script
+/// (Set Variable "score") or with prefs_set("score", v) and the HUD follows.
+/// Numbers are prettified (5.0 -> "5"). Unknown keys resolve to an empty string;
+/// `{{` / `}}` emit literal braces.
 class UITextBind : public Behaviour {
 public:
     std::string format = "{value}";
 
-    /// Resolve `format` against the current Prefs values (also usable standalone).
+    /// Resolve `format` against visual-scripting vars + Prefs (also usable standalone).
     static std::string Resolve(const std::string& format);
+    /// Resolve a single `{key}`: a visual-scripting variable first, then a Prefs value.
+    static std::string ResolveKey(const std::string& key);
 
     void Start() override { Apply(); }
     void Update(float) override { Apply(); }

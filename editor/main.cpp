@@ -487,6 +487,10 @@ float g_editorNear = 0.3f;       // Scene-view camera near clip (Unity-like). Ad
 // exact frame straight to a PNG (the true engine output, bypassing the display).
 Mat4 g_lastSceneVP; Vec3 g_lastSceneEye{0,0,0};
 int  g_lastSceneW = 0, g_lastSceneH = 0;
+// The pixel size of the canvas the UI overlay last laid out against, so tools that
+// run outside the scene view (e.g. Hierarchy reparenting) can resolve UI rects and
+// keep a widget visually put when its parent changes.
+Vec2 g_lastUICanvas{0, 0};
 bool g_captureScene = false;
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 bool g_paused = false;           // pause the simulation while staying in Play
@@ -4677,7 +4681,26 @@ void DrawHierarchy(EditorState& ed) {
                         ed.PushUndo();
                         if (ty < 0.30f)      ed.scene().ReorderSibling(dragged, node, /*after=*/false);
                         else if (ty > 0.70f) ed.scene().ReorderSibling(dragged, node, /*after=*/true);
-                        else                 dragged->transform->SetParent(node->transform, true);
+                        else {
+                            // Re-parent. For a UI widget, its pixel offset is resolved
+                            // WITHIN its parent, so a plain re-parent makes it jump on
+                            // screen. Capture its screen rect, re-parent, then nudge its
+                            // offset so it stays exactly where it was (Unity-style).
+                            float cw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
+                            float ch = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
+                            Vec2 oldO, oldSz;
+                            bool wasUI = cw > 1.0f && GetUIScreenRect(dragged, cw, ch, oldO, oldSz);
+                            dragged->transform->SetParent(node->transform, true);
+                            if (wasUI) {
+                                UIRect rr = GetUIRect(dragged);
+                                Vec2 newO, newSz;
+                                if (rr.valid && rr.position && GetUIScreenRect(dragged, cw, ch, newO, newSz)) {
+                                    float sc = UIScaleFor(dragged, cw, ch); if (sc < 1e-3f) sc = 1.0f;
+                                    rr.position->x += (oldO.x - newO.x) / sc;
+                                    rr.position->y += (oldO.y - newO.y) / sc;
+                                }
+                            }
+                        }
                         ed.dirty = true;
                     }
                 }
@@ -5101,7 +5124,9 @@ static const ActionOpInfo kInstrOps[] = {
     {"spawn3",      "Spawn Prefab (3D)",  "prefab x y z",         "Create a prefab at a 3D position.",                       "Object"},
     {"destroy",     "Destroy Self",       "",                     "Remove THIS object from the scene.",                      "Object"},
     {"destroy_obj", "Destroy Named",      "name",                 "Remove a named object from the scene.",                   "Object"},
-    {"set_text",    "Set Text",           "the words to show",    "Set this object's Text to the given words.",              "Look"},
+    {"set_text",    "Set Text",           "words, {var} allowed", "Set this object's Text. Use {var} to show a variable's value.", "Look"},
+    {"set_text_on", "Set Text On Object", "object  words {var}",  "Set a named object's Text (shows {var} values).",          "Look"},
+    {"set_bar",     "Set Progress Bar",   "object  var  [max]",   "Fill a named Progress Bar/Radial from a variable (var/max).", "Look"},
     {"set_sprite",  "Set Sprite Image",   "path",                 "Change this object's sprite image.",                      "Look"},
     {"set_color",   "Set Color",          "r g b [a] (0..1)",     "Tint this object (each channel 0..1).",                   "Look"},
     {"emit",        "Burst Particles",    "count",                "Emit a burst from this object's particle system.",        "Look"},
@@ -8809,6 +8834,27 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##urp")) toRemove = rp;
         }
     }
+    if (auto* tb = dynamic_cast<UITextBind*>(curComp)) {
+        if (CompHeader("UI Text Bind", tb, &toRemove)) {
+            char fmt[256]; std::strncpy(fmt, tb->format.c_str(), sizeof(fmt) - 1); fmt[sizeof(fmt) - 1] = '\0';
+            if (ImGui::InputText("Format##utbind", fmt, sizeof(fmt))) { tb->format = fmt; ed.dirty = true; }
+            ImGui::TextDisabled("Shows live values each frame on the sibling Text/Button.");
+            ImGui::TextDisabled("Use {name} for a visual-script variable or a saved value,");
+            ImGui::TextDisabled("e.g.  Health: {hp}   or   Score: {score}");
+            if (ImGui::SmallButton("Remove##utbind")) toRemove = tb;
+        }
+    }
+    if (auto* bb = dynamic_cast<UIBarBind*>(curComp)) {
+        if (CompHeader("UI Bar Bind", bb, &toRemove)) {
+            char vr[128]; std::strncpy(vr, bb->var.c_str(), sizeof(vr) - 1); vr[sizeof(vr) - 1] = '\0';
+            if (ImGui::InputText("Variable##ubbind", vr, sizeof(vr))) { bb->var = vr; ed.dirty = true; }
+            if (ImGui::DragFloat("Min (empty)##ubbind", &bb->min, 0.5f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max (full)##ubbind", &bb->max, 0.5f)) ed.dirty = true;
+            ImGui::TextDisabled("Fills the sibling Progress Bar / Radial from the named");
+            ImGui::TextDisabled("visual-script variable (or saved value) each frame.");
+            if (ImGui::SmallButton("Remove##ubbind")) toRemove = bb;
+        }
+    }
     if (auto* mm = dynamic_cast<Minimap*>(curComp)) {
         if (CompHeader("Minimap", mm, &toRemove)) {
             float pos[2] = {mm->position.x, mm->position.y};
@@ -9390,6 +9436,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
           } EndCat(o); }
 
         ImGui::EndPopup();
@@ -10046,18 +10094,27 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (tWorld && s <= 0.0f) continue;   // behind the camera
         ImU32 col = ToColor(tr->color);
         ImU32 sh = ToColor(tr->shadowColor);
-        // World-space canvas text projects with the canvas; screen text anchors to the screen.
-        Vec2 box = tWorld ? UIResolveOrigin(up.get(), canvasSize.x, canvasSize.y)
-                          : tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);
-        Vec2 boxSz{tr->size.x * s, tr->size.y * s};
-        if (UIScrollView* sv = OwningScrollView(up.get())) box.y -= sv->scroll * s;
+        // World-space canvas text projects with the canvas; screen-space text anchors
+        // WITHIN its UI parent (so a label under a panel/button follows it), then
+        // applies its own align offset. GetUIScreenRect gives the scaled, parent-
+        // relative box (and already includes any Scroll View offset).
+        Vec2 box, boxSz{tr->size.x * s, tr->size.y * s};
+        Vec2 alignOff{0.0f, 0.0f};
+        if (tWorld) {
+            box = UIResolveOrigin(up.get(), canvasSize.x, canvasSize.y);
+            if (UIScrollView* sv = OwningScrollView(up.get())) box.y -= sv->scroll * s;
+        } else {
+            Vec2 o2, sz2;
+            if (GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o2, sz2)) { box = o2; boxSz = sz2; }
+            else box = tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);
+            alignOff = tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s) - tr->BoxTopLeft(canvasSize.x, canvasSize.y, s);
+        }
         if (svCull(up.get(), box, boxSz)) continue;
         if (tr->background)
             dl->AddRectFilled(ImVec2(canvasPos.x + box.x, canvasPos.y + box.y),
                               ImVec2(canvasPos.x + box.x + boxSz.x, canvasPos.y + box.y + boxSz.y),
                               ToColor(tr->backgroundColor), 4.0f);
-        Vec2 o = tWorld ? box : tr->ResolvedScreenPos(canvasSize.x, canvasSize.y, s);   // text inside box
-        if (UIScrollView* sv = OwningScrollView(up.get())) o.y -= sv->scroll * s;
+        Vec2 o = box + alignOff;   // text inside the (parent-relative) box
         float px = tr->pixelSize * s, ls = tr->letterSpacing, lp = tr->lineSpacing;
         std::string disp = tr->DisplayText();
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
@@ -10273,6 +10330,7 @@ static void MoveUIChildrenBy(GameObject* dragged, GameObject* go, float dx, floa
 void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                    bool hovered, ImGuiIO& io) {
     g_uiHandled = false;
+    g_lastUICanvas = {canvasSize.x, canvasSize.y};   // remembered for Hierarchy reparenting
 
     // UI authoring zoom/pan (Scene view): Ctrl+Wheel zooms toward the cursor, and
     // a middle-mouse drag pans. Done before the canvas transform so hit-testing
@@ -10342,7 +10400,9 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     // for ANY anchor, then invert the anchor to recover position.
                     Vec2 o, sz;
                     GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o, sz);
-                    if (UIScrollView* sv = OwningScrollView(g_uiDragTarget)) o.y += sv->scroll * s; // undo scroll
+                    // Work in true (scroll-applied) screen space so the dragged edges and
+                    // the guide candidates below (and the canvas edges) share one frame;
+                    // the scroll offset is undone only at the reconstruction step.
                     float l = o.x, t = o.y, rr = o.x + sz.x, bb = o.y + sz.y;
                     float minPx = 8.0f * s;
                     if (left)   l  = Mathf::Min(l + io.MouseDelta.x, rr - minPx);
@@ -10375,13 +10435,26 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         if (bottom) bb = edge(bb, cy, g_uiGuideY, gyHit);
                     }
                     Vec2 newScreen{rr - l, bb - t};
-                    Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, canvasSize.x, canvasSize.y);
+                    // Reconstruct the stored offset by inverting the anchor WITHIN the
+                    // frame the widget anchors to: its UI parent's screen rect if it has
+                    // one (so a parented widget's offset stays local — otherwise it would
+                    // be rebuilt as a screen coordinate and fly to the corner), else the
+                    // whole canvas.
+                    Vec2 frameOrigin{0.0f, 0.0f}, frameSize{canvasSize.x, canvasSize.y};
+                    if (GameObject* par = OwningUIParent(g_uiDragTarget)) {
+                        Vec2 po, ps;
+                        if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) { frameOrigin = po; frameSize = ps; }
+                    }
+                    Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, frameSize.x, frameSize.y);
                     // Grid-snap only on axes that didn't lock onto a guide.
                     auto gsnap = [&](float v, bool guided) { return (g_snap && !guided) ? Mathf::Round(v / grid) * grid : v; };
                     r.sizePtr->x  = gsnap(newScreen.x / s, gxHit);
                     r.sizePtr->y  = gsnap(newScreen.y / s, gyHit);
-                    r.position->x = gsnap((l - term.x) / s, gxHit);
-                    r.position->y = gsnap((t - term.y) / s, gyHit);
+                    // Undo the scroll offset here (the stored position is scroll-free).
+                    float scrollY = 0.0f;
+                    if (UIScrollView* sv = OwningScrollView(g_uiDragTarget)) scrollY = sv->scroll * s;
+                    r.position->x = gsnap(((l - frameOrigin.x) - term.x) / s, gxHit);
+                    r.position->y = gsnap(((t + scrollY - frameOrigin.y) - term.y) / s, gyHit);
                 } else {
                     float beforeX = r.position->x, beforeY = r.position->y;
                     // Accumulate the true (unsnapped) position so grid snapping
@@ -10421,8 +10494,12 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         float gx = -1.0f, gy = -1.0f;
                         float adjX = bestSnap(o.x, o.x + sz.x * 0.5f, o.x + sz.x, cx, gx);
                         float adjY = bestSnap(o.y, o.y + sz.y * 0.5f, o.y + sz.y, cy, gy);
-                        if (adjX != 0.0f) { r.position->x += adjX / s; g_uiGuideX = gx; }
-                        if (adjY != 0.0f) { r.position->y += adjY / s; g_uiGuideY = gy; }
+                        // Fold the guide pull into the raw accumulator and recompute, so
+                        // snap(g_uiDragRaw) == r.position stays true. Otherwise the next
+                        // frame rebuilds r.position from the un-pulled accumulator and the
+                        // widget jumps back — the stutter you feel near guide lines.
+                        if (adjX != 0.0f) { g_uiDragRaw.x += adjX / s; r.position->x = snap(g_uiDragRaw.x); g_uiGuideX = gx; }
+                        if (adjY != 0.0f) { g_uiDragRaw.y += adjY / s; r.position->y = snap(g_uiDragRaw.y); g_uiGuideY = gy; }
                     }
                     // Carry child widgets (e.g. a button's label) by the same amount
                     // so a parent and its children move together.
@@ -10456,6 +10533,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         ed.PushUndo();                     // checkpoint before a resize
                         g_uiDragTarget = ed.selected();
                         g_uiResizeHandle = i;
+                        g_uiDragRawValid = false;          // fresh drag: reseed accumulator
                         g_uiHandled = true;
                         break;
                     }
@@ -10478,6 +10556,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 ed.PushUndo();                             // checkpoint before a move
                 g_uiDragTarget = hit;
                 g_uiResizeHandle = -1;
+                g_uiDragRawValid = false;                  // fresh drag: reseed accumulator
                 g_uiHandled = true;
             }
         }

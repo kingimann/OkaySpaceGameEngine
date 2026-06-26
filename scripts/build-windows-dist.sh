@@ -100,6 +100,13 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f dist/VERSION.txt ] && cp dist/VERSION.txt "$OUT_DIR/Tools/"
 [ -f docs/accounts.md ] && cp docs/accounts.md "$OUT_DIR/Tools/"
 
+# Starter texture pack (grass/dirt/stone/grid). Drop these into a project's Assets/
+# folder, or point a MeshRenderer's Texture at them directly.
+if [ -d assets/textures ]; then
+    mkdir -p "$OUT_DIR/Assets/Textures"
+    cp assets/textures/*.png "$OUT_DIR/Assets/Textures/" 2>/dev/null || true
+fi
+
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).
 if [ -n "${STEAMWORKS_SDK_PATH:-}" ] && [ -f "$STEAMWORKS_SDK_PATH/redistributable_bin/win64/steam_api64.dll" ]; then

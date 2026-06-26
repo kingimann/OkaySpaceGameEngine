@@ -22,6 +22,7 @@ option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
+option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
 if(MSVC)
     add_compile_options(/W4 /permissive-)
@@ -111,6 +112,11 @@ if(WIN32 AND NOT OKAY_STATIC_SDL AND DEFINED SDL2_DIR)
     else()
         message(WARNING "SDL2.dll not found at ${_okay_sdl_dll}; ship it manually or use -DOKAY_STATIC_SDL=ON.")
     endif()
+endif()
+
+# ---- Developer tools (opt-in) ----------------------------------------
+if(OKAY_BUILD_TOOLS)
+    add_subdirectory(tools)
 endif()
 
 # ---- Reference relay (NAT traversal) ---------------------------------

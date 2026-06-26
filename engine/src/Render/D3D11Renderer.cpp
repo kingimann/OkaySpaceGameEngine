@@ -12,6 +12,7 @@
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <cstring>
+#include <cmath>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -260,20 +261,26 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
         const bool hasN = mesh.HasNormals();
+        // Texture whenever the material has one; box-project UVs when the mesh has none
+        // (matches the software renderer, so UV-less textured models still texture here).
         const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
-        ID3D11ShaderResourceView* srv = hasUV ? p->TextureFor(mr->texture) : nullptr;
+        ID3D11ShaderResourceView* srv = p->TextureFor(mr->texture);
 
         p->verts.clear(); p->verts.reserve(T.size() * 8);
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             int a = T[i], b = T[i + 1], cc = T[i + 2];
-            Vec3 fn;
-            if (!hasN) { fn = Vec3::Cross(V[b] - V[a], V[cc] - V[a]); float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
+            Vec3 fn = Vec3::Cross(V[b] - V[a], V[cc] - V[a]);
+            { float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
+            const float ax = std::fabs(fn.x), ay = std::fabs(fn.y), az = std::fabs(fn.z);
             const int idx[3] = {a, b, cc};
             for (int k = 0; k < 3; ++k) {
                 const Vec3& pos = V[idx[k]];
                 Vec3 nrm = hasN ? mesh.normals[idx[k]] : fn;
-                float u = hasUV ? mesh.uvs[idx[k]].x : 0.0f;
-                float v = hasUV ? mesh.uvs[idx[k]].y : 0.0f;
+                float u, v;
+                if (hasUV) { u = mesh.uvs[idx[k]].x; v = mesh.uvs[idx[k]].y; }
+                else if (ax >= ay && ax >= az) { u = pos.z + 0.5f; v = pos.y + 0.5f; }
+                else if (ay >= ax && ay >= az) { u = pos.x + 0.5f; v = pos.z + 0.5f; }
+                else                           { u = pos.x + 0.5f; v = pos.y + 0.5f; }
                 p->verts.push_back(pos.x); p->verts.push_back(pos.y); p->verts.push_back(pos.z);
                 p->verts.push_back(nrm.x); p->verts.push_back(nrm.y); p->verts.push_back(nrm.z);
                 p->verts.push_back(u);     p->verts.push_back(v);

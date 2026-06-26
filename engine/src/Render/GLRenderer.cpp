@@ -393,24 +393,30 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
         const bool hasN = mesh.HasNormals();
-        // A material texture is used only when the mesh carries per-vertex UVs (the
-        // software renderer's planar/box auto-projection isn't replicated here yet).
+        // Texture the mesh whenever the material has one. UVs come from the mesh; if it
+        // has none we box-project (dominant face axis), matching the software renderer
+        // so e.g. an untextured-UV player model still shows its texture on the GPU path.
         const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
-        unsigned int tex = hasUV ? TextureFor(mr->texture) : 0;
+        unsigned int tex = TextureFor(mr->texture);
 
         // Expand triangles (non-indexed) into pos(3)+normal(3)+uv(2): flat shading via
         // per-face normal when the mesh has none, smooth via per-vertex normals when it does.
         m_verts.clear(); m_verts.reserve(T.size() * 8);
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             int a = T[i], b = T[i + 1], c = T[i + 2];
-            Vec3 fn;
-            if (!hasN) { fn = Vec3::Cross(V[b] - V[a], V[c] - V[a]); float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
+            // Face normal: used for flat shading AND for box-projecting UVs.
+            Vec3 fn = Vec3::Cross(V[b] - V[a], V[c] - V[a]);
+            { float m = fn.Magnitude(); fn = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 1, 0}; }
+            const float ax = std::fabs(fn.x), ay = std::fabs(fn.y), az = std::fabs(fn.z);
             const int idx[3] = {a, b, c};
             for (int k = 0; k < 3; ++k) {
                 const Vec3& p = V[idx[k]];
                 Vec3 n = hasN ? mesh.normals[idx[k]] : fn;
-                float u = hasUV ? mesh.uvs[idx[k]].x : 0.0f;
-                float v = hasUV ? mesh.uvs[idx[k]].y : 0.0f;
+                float u, v;
+                if (hasUV) { u = mesh.uvs[idx[k]].x; v = mesh.uvs[idx[k]].y; }
+                else if (ax >= ay && ax >= az) { u = p.z + 0.5f; v = p.y + 0.5f; }
+                else if (ay >= ax && ay >= az) { u = p.x + 0.5f; v = p.z + 0.5f; }
+                else                           { u = p.x + 0.5f; v = p.y + 0.5f; }
                 m_verts.push_back(p.x); m_verts.push_back(p.y); m_verts.push_back(p.z);
                 m_verts.push_back(n.x); m_verts.push_back(n.y); m_verts.push_back(n.z);
                 m_verts.push_back(u);   m_verts.push_back(v);

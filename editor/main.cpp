@@ -146,9 +146,9 @@ SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
 std::vector<std::uint32_t> g_view3DDown[kView3DSlots];   // AA downsample buffers
-int g_ssaa = 2;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
-                  // On by default for crisp, Unity-like edges; auto-perf drops it to 1
-                  // on heavy scenes / very large viewports so it never tanks FPS.
+int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersample.
+                  // Off by default for FPS — the top-left fill rule removes the edge
+                  // shimmer at the source, so supersampling isn't needed for clean edges.
                   // OFF by default for speed: 2x supersample renders 4x the pixels,
                   // which tanked FPS (badly on HiDPI displays). Cheap FXAA still
                   // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
@@ -551,10 +551,12 @@ void LoadSettings() {
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
         else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
     }
-    // One-time migration to the Unity-like 3D view defaults (crisp 2x AA + 60deg
-    // FOV so models aren't magnified). Forces the new values over a previously-saved
-    // 50deg / no-AA config, then bumps the version so the user's choices stick after.
-    if (ver < 2) { g_ssaa = 2; g_editorFov = 60.0f; SaveSettings(); }
+    // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
+    // aren't magnified) and AA OFF (the top-left fill rule killed the shimmer at the
+    // source, so the FPS-costly supersample isn't needed). ver 3 also undoes the
+    // earlier ver-2 migration that had forced 2x AA on. Bumps the version so the
+    // user's own choices stick afterward.
+    if (ver < 3) { g_ssaa = 1; g_editorFov = 60.0f; SaveSettings(); }
 }
 void SaveSettings() {
     std::ofstream f("okay_settings.txt");

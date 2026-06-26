@@ -135,6 +135,29 @@ public:
     std::uint32_t Get(int x, int y) const { return color[(std::size_t)y * width + x]; }
     float Depth(int x, int y) const { return depth[(std::size_t)y * width + x]; }
 
+    /// Top-left fill rule (what a GPU rasterizer does): per-edge acceptance bias so a
+    /// pixel exactly on a shared edge is claimed by EXACTLY ONE of the two triangles
+    /// — the one for which that edge is a top or left edge. The two triangles of a
+    /// quad traverse the shared edge in opposite directions, so they always make
+    /// opposite choices: no crack, and no overlapping z-fight shimmer. b0/b1/b2 apply
+    /// to the barycentrics w0/w1/w2 (edges opposite v0/v1/v2). This replaces the old
+    /// fat `-1e-3` overlap bias, whose ~1px band z-fought on big triangles (the
+    /// shimmer). Cost: a few ops per triangle, nothing per pixel.
+    static void EdgeBias(float x0, float y0, float x1, float y1, float x2, float y2,
+                         double area, double& b0, double& b1, double& b2) {
+        const double s = area < 0.0 ? -1.0 : 1.0;       // orient by winding
+        auto tl = [s](double ax, double ay, double bx, double by) -> double {
+            const double dx = (bx - ax) * s, dy = (by - ay) * s;   // edge a->b in winding order
+            // y-down screen: a LEFT edge goes up (dy<0); a TOP edge is horizontal,
+            // going left (dy==0 && dx<0). Boundary belongs to top-left edges.
+            const bool topLeft = (dy < 0.0) || (dy == 0.0 && dx < 0.0);
+            return topLeft ? -1e-9 : 1e-7;   // include boundary (>=0) vs exclude (>0)
+        };
+        b0 = tl(x1, y1, x2, y2);   // edge opposite v0
+        b1 = tl(x2, y2, x0, y0);   // edge opposite v1
+        b2 = tl(x0, y0, x1, y1);   // edge opposite v2
+    }
+
     /// Rasterize a triangle given screen-space points (pixels) + per-vertex depth
     /// (camera distance; smaller = nearer), depth-tested per pixel.
     void Triangle(float x0, float y0, float d0,
@@ -159,6 +182,7 @@ public:
         const double dInv = (double)inv;
         const double dw0 = (double)(y1 - y2) * dInv;
         const double dw1 = (double)(y2 - y0) * dInv;
+        double b0, b1, b2; EdgeBias(x0, y0, x1, y1, x2, y2, (double)area, b0, b1, b2);
         for (int y = minY; y <= maxY; ++y) {
             const double py = y + 0.5, pxs = minX + 0.5;
             double w0 = ((x1 - pxs) * (y2 - py) - (x2 - pxs) * (y1 - py)) * dInv;
@@ -166,9 +190,9 @@ public:
             const std::size_t rowBase = (std::size_t)y * width;
             for (int x = minX; x <= maxX; ++x, w0 += dw0, w1 += dw1) {
                 double w2 = 1.0 - w0 - w1;
-                // Edge bias: accept pixels a hair past an edge so adjacent triangles
-                // overlap by ~1px instead of leaving a crack (dashed seams).
-                if (w0 < -1e-3 || w1 < -1e-3 || w2 < -1e-3) continue;
+                // Top-left fill rule: a shared edge belongs to exactly one triangle,
+                // so no crack and no overlapping z-fight shimmer (GPU-style).
+                if (w0 < b0 || w1 < b1 || w2 < b2) continue;
                 float d = (float)(w0 * d0 + w1 * d1 + w2 * d2);
                 std::size_t i = rowBase + x;
                 if (d > depth[i] + 1e-6f) { depth[i] = d; color[i] = abgr; }   // W-buffer: larger 1/w = nearer
@@ -204,6 +228,7 @@ public:
         const double dInv = (double)inv;
         const double dw0 = (double)(Y[1] - Y[2]) * dInv;   // d(w0)/dx
         const double dw1 = (double)(Y[2] - Y[0]) * dInv;   // d(w1)/dx
+        double b0, b1, b2; EdgeBias(X[0], Y[0], X[1], Y[1], X[2], Y[2], (double)area, b0, b1, b2);
         const bool anySpec = SP[0] != 0.0f || SP[1] != 0.0f || SP[2] != 0.0f;
         const bool anyFog  = FOG[0] != 0.0f || FOG[1] != 0.0f || FOG[2] != 0.0f;
         for (int y = minY; y <= maxY; ++y) {
@@ -213,7 +238,7 @@ public:
             const std::size_t row = (std::size_t)y * width;
             for (int x = minX; x <= maxX; ++x, w0 += dw0, w1 += dw1) {
                 double w2 = 1.0 - w0 - w1;
-                if (w0 < -1e-3 || w1 < -1e-3 || w2 < -1e-3) continue;
+                if (w0 < b0 || w1 < b1 || w2 < b2) continue;   // top-left fill rule
                 float d = (float)(w0 * D[0] + w1 * D[1] + w2 * D[2]);
                 std::size_t i = row + x;
                 if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer; bias = first-drawn wins ties
@@ -318,6 +343,7 @@ public:
         const double dInv = (double)inv;
         const double dw0 = (double)(Y[1] - Y[2]) * dInv;   // incremental barycentric steps
         const double dw1 = (double)(Y[2] - Y[0]) * dInv;
+        double b0, b1, b2; EdgeBias(X[0], Y[0], X[1], Y[1], X[2], Y[2], (double)area, b0, b1, b2);
         const bool anySpec = SP[0] != 0.0f || SP[1] != 0.0f || SP[2] != 0.0f;
         const bool anyFog  = FOG[0] != 0.0f || FOG[1] != 0.0f || FOG[2] != 0.0f;
         for (int y = minY; y <= maxY; ++y) {
@@ -327,7 +353,7 @@ public:
             const std::size_t rowBase = (std::size_t)y * width;
             for (int x = minX; x <= maxX; ++x, w0 += dw0, w1 += dw1) {
                 double w2 = 1.0 - w0 - w1;
-                if (w0 < -1e-3 || w1 < -1e-3 || w2 < -1e-3) continue;
+                if (w0 < b0 || w1 < b1 || w2 < b2) continue;   // top-left fill rule
                 float d = (float)(w0 * D[0] + w1 * D[1] + w2 * D[2]);
                 std::size_t i = rowBase + x;
                 if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer
@@ -412,6 +438,7 @@ public:
         const double dInv = (double)inv;
         const double dw0 = (double)(Y[1] - Y[2]) * dInv;
         const double dw1 = (double)(Y[2] - Y[0]) * dInv;
+        double b0, b1, b2; EdgeBias(X[0], Y[0], X[1], Y[1], X[2], Y[2], (double)area, b0, b1, b2);
         for (int y = minY; y <= maxY; ++y) {
             const double py = y + 0.5, pxs = minX + 0.5;
             double w0 = ((X[1] - pxs) * (Y[2] - py) - (X[2] - pxs) * (Y[1] - py)) * dInv;
@@ -419,7 +446,7 @@ public:
             const std::size_t rowBase = (std::size_t)y * width;
             for (int x = minX; x <= maxX; ++x, w0 += dw0, w1 += dw1) {
                 double w2 = 1.0 - w0 - w1;
-                if (w0 < -1e-3 || w1 < -1e-3 || w2 < -1e-3) continue;
+                if (w0 < b0 || w1 < b1 || w2 < b2) continue;   // top-left fill rule
                 float d = (float)(w0 * D[0] + w1 * D[1] + w2 * D[2]);
                 std::size_t i = rowBase + x;
                 if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer

@@ -94,6 +94,24 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap);
 /// else is disturbed.
 void EndFrame(SDL_Renderer* renderer);
 
+// ---- Custom backends (e.g. Direct3D 11) ----------------------------------------
+// Raw batched geometry for a renderer other than SDL. Valid after the frame's widget
+// calls until the next BeginFrame. Vertex layout matches SDL_Vertex exactly:
+//   offset 0: float position[2]   offset 8: uint8 color[4] (RGBA)   offset 12: float uv[2]
+// stride = 20 bytes. Indices are 32-bit, two triangles per quad.
+struct DrawData {
+    const void* vertices     = nullptr;
+    int         vertexCount  = 0;
+    const int*  indices      = nullptr;
+    int         indexCount   = 0;
+    int         vertexStride = 0;   // bytes per vertex
+};
+DrawData GetDrawData();
+
+/// Finalize the frame's interaction state WITHOUT drawing — for custom backends that
+/// submit GetDrawData() themselves instead of calling EndFrame(SDL_Renderer*).
+void EndFrameData();
+
 // ---------------------------------------------------------------------------
 // Auto-layout (ImGui-style). Everything above takes explicit coordinates; the API
 // below stacks widgets automatically inside a window, so you write a UI as a

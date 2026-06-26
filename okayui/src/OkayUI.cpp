@@ -381,9 +381,26 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
     return changed;
 }
 
-void EndFrame(SDL_Renderer* r) {
-    if (g_released) g_active = 0;   // safety: clear if the active button wasn't drawn
+namespace {
+// End-of-frame interaction bookkeeping, shared by every backend.
+void finalizeFrame() {
+    if (g_released) g_active = 0;                    // clear if the active item wasn't drawn
     if (g_pressed && !g_focusClaimed) g_focus = 0;   // click on empty space drops keyboard focus
+}
+} // namespace
+
+DrawData GetDrawData() {
+    DrawData d;
+    d.vertices = g_verts; d.vertexCount = g_nv;
+    d.indices = g_idx;    d.indexCount = g_ni;
+    d.vertexStride = (int)sizeof(SDL_Vertex);
+    return d;
+}
+
+void EndFrameData() { finalizeFrame(); }
+
+void EndFrame(SDL_Renderer* r) {
+    finalizeFrame();
     if (!r || g_nv == 0 || g_ni == 0) return;
     // Save/restore the renderer's blend mode so we never disturb ImGui or anything
     // else that draws through the same SDL_Renderer.

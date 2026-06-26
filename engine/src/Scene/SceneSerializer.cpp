@@ -15,6 +15,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -332,6 +333,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
                 << v->trackWidth << " " << v->bodyLean << " " << v->maxTilt << " " << v->tiltSmooth << "\n";
+    }
+    if (auto* bb = go->GetComponent<BlockBuilder>()) {
+        out << "  blockbuilder " << bb->blockSize << " " << bb->reach << " "
+            << bb->blockColor.r << " " << bb->blockColor.g << " " << bb->blockColor.b << " " << bb->blockColor.a
+            << " " << bb->placeButton << " " << bb->removeButton
+            << " " << Quote(bb->blockTag) << " " << Quote(bb->blockTexture) << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -1425,6 +1432,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         v->suspensionTravel = st; v->wheelBase = wb; v->trackWidth = tw;
                         v->bodyLean = bl; v->maxTilt = mt; v->tiltSmooth = ts;
                     }
+                } else if (field == "blockbuilder") {
+                    auto* bb = go->AddComponent<BlockBuilder>();
+                    in >> bb->blockSize >> bb->reach
+                       >> bb->blockColor.r >> bb->blockColor.g >> bb->blockColor.b >> bb->blockColor.a
+                       >> bb->placeButton >> bb->removeButton;
+                    bb->blockTag = ReadQuoted(in);
+                    bb->blockTexture = ReadQuoted(in);
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

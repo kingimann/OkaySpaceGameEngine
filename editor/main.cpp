@@ -7684,6 +7684,23 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##veh2")) toRemove = v2;
         }
     }
+    if (auto* bb = dynamic_cast<BlockBuilder*>(curComp)) {
+        if (CompHeader("Block Builder (voxel)", bb, &toRemove)) {
+            ImGui::TextDisabled("Look + click to place a cube on a grid; right-click removes it.");
+            if (ImGui::DragFloat("Block Size##bb", &bb->blockSize, 0.05f, 0.05f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Reach##bb", &bb->reach, 0.25f, 0.5f, 200.0f)) ed.dirty = true;
+            float bc[4] = {bb->blockColor.r, bb->blockColor.g, bb->blockColor.b, bb->blockColor.a};
+            if (ImGui::ColorEdit4("Block Color##bb", bc)) { bb->blockColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            ImGui::Text("Texture"); ImGui::SameLine(120);
+            if (AssetSlot("bbtex", bb->blockTexture, "Texture", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
+            char tagbuf[64]; std::snprintf(tagbuf, sizeof(tagbuf), "%s", bb->blockTag.c_str());
+            if (ImGui::InputText("Block Tag##bb", tagbuf, sizeof(tagbuf))) { bb->blockTag = tagbuf; ed.dirty = true; }
+            const char* btns[] = {"Left", "Right", "Middle"};
+            if (ImGui::Combo("Place Button##bb", &bb->placeButton, btns, 3)) ed.dirty = true;
+            if (ImGui::Combo("Remove Button##bb", &bb->removeButton, btns, 3)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##bb")) toRemove = bb;
+        }
+    }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
         if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
             ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
@@ -10051,6 +10068,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BlockBuilder>(), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }

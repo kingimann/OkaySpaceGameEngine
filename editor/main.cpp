@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #endif
@@ -148,6 +149,10 @@ SDL_Window*   g_glWindow  = nullptr;     // hidden window owning the GL context
 SDL_GLContext g_glCtx     = nullptr;
 okay::GLRenderer* g_glRenderer = nullptr;
 bool          g_glReady   = false;       // GL context + entry points loaded OK
+bool          g_d3dReady  = false;       // D3D11 device created OK (Windows)
+#if defined(_WIN32)
+okay::D3D11Renderer* g_d3dRenderer = nullptr;
+#endif
 bool          g_okayUIDemo = false;      // draw the OkayUI sample panel over the UI
 char          g_okayUITyped[32] = {0};   // text typed this frame, routed to OkayUI
 bool          g_okayUIBack = false;      // Backspace pressed this frame (for OkayUI)
@@ -212,29 +217,34 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     if (g_autoPerf && ss > 1 &&
         ((long)rw * rh * ss * ss > 5'000'000L || SceneTriangleLoad(scene) > 11000))
         ss = 1;
-    // GPU path (experimental): render the scene on the isolated GL context and read
-    // back RGBA8 — a drop-in for RenderMeshesSS. We save/restore the current GL
-    // context so the editor's SDL_Renderer is never disturbed. On any failure we
-    // fall straight back to the software rasterizer below.
+    // GPU path: when enabled, automatically pick the best backend for this system —
+    // Direct3D 11 on Windows, OpenGL elsewhere — each rendering the scene to an
+    // offscreen target and reading back RGBA8 (a drop-in for RenderMeshesSS). If the
+    // preferred backend isn't available or fails, fall through to the next, then to
+    // the software rasterizer. A self-heal counter disables the GPU path after
+    // repeated failures so the viewport is never stuck.
     const std::uint32_t* px = nullptr;
-    if (g_gpuRender && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
-        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
-        SDL_Window*   prevWin = SDL_GL_GetCurrentWindow();
-        if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0) {
-            int samples = 4;   // GPU MSAA is cheap; 4x gives crisp, hardware-AA edges
-            px = g_glRenderer->RenderToPixels(scene, vp, eye, rw, rh, samples,
-                                              0.0f, 0.0f, 0.0f, 0.0f, ignore);
+    if (g_gpuRender) {
+#if defined(_WIN32)
+        if (!px && g_d3dReady && g_d3dRenderer)
+            px = g_d3dRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
+                                               0.0f, 0.0f, 0.0f, 0.0f, ignore);
+#endif
+        if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
+            SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+            SDL_Window*   prevWin = SDL_GL_GetCurrentWindow();
+            if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
+                px = g_glRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
+                                                  0.0f, 0.0f, 0.0f, 0.0f, ignore);
+            SDL_GL_MakeCurrent(prevWin, prevCtx);
         }
-        SDL_GL_MakeCurrent(prevWin, prevCtx);
-        // Self-heal: if the GPU path keeps failing, stop trying and drop to software
-        // so the user is never stuck staring at a dead viewport.
-        static int s_glFails = 0;
+        static int s_gpuFails = 0;
         if (!px) {
-            if (++s_glFails >= 3) {
+            if (++s_gpuFails >= 3) {
                 g_gpuRender = false; SaveSettings();
                 ConsoleLog("GPU renderer failed repeatedly; switched back to the software renderer.", 1);
             }
-        } else s_glFails = 0;
+        } else s_gpuFails = 0;
     }
     if (!px)
         px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
@@ -1398,15 +1408,31 @@ void DrawMenuAndToolbar(EditorState& ed) {
         bool aa = g_ssaa > 1;
         if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
-        if (g_glReady) {
-            if (ImGui::MenuItem("GPU renderer (OpenGL)", nullptr, &g_gpuRender)) SaveSettings();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU (hardware rasterizer + 4x MSAA),\nlike Unity. Crisp, perspective-correct edges.\nOFF = the built-in software renderer.");
-        } else {
-            ImGui::BeginDisabled();
-            bool off = false;
-            ImGui::MenuItem("GPU renderer (OpenGL)", nullptr, &off);
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("OpenGL is unavailable on this system;\nusing the software renderer.");
+        {
+            // One toggle; the backend is auto-selected for this system: Direct3D 11 on
+            // Windows, OpenGL elsewhere (whichever initialized), then software.
+            const char* backend = "software";
+#if defined(_WIN32)
+            if (g_d3dReady)      backend = "Direct3D 11";
+            else if (g_glReady)  backend = "OpenGL";
+#else
+            if (g_glReady)       backend = "OpenGL";
+#endif
+            bool gpuAvail = g_glReady;
+#if defined(_WIN32)
+            gpuAvail = gpuAvail || g_d3dReady;
+#endif
+            char label[64];
+            std::snprintf(label, sizeof(label), "GPU renderer (%s)", backend);
+            if (gpuAvail) {
+                if (ImGui::MenuItem(label, nullptr, &g_gpuRender)) SaveSettings();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU (hardware rasterizer + 4x MSAA), like Unity.\nThe API is auto-selected for your system: Direct3D 11 on Windows,\nOpenGL elsewhere. OFF = the built-in software renderer.");
+            } else {
+                ImGui::BeginDisabled();
+                bool off = false; ImGui::MenuItem("GPU renderer (unavailable)", nullptr, &off);
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("No GPU backend initialized on this system;\nusing the software renderer.");
+            }
         }
 #ifdef OKAY_HAVE_OKAYUI
         ImGui::MenuItem("OkayUI demo (button)", nullptr, &g_okayUIDemo);
@@ -12316,6 +12342,21 @@ int main(int argc, char** argv) {
         if (!g_glReady) ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
     }
 
+#if defined(_WIN32)
+    // Optional Direct3D 11 3D renderer on its own isolated device (offscreen → readback),
+    // selectable alongside the OpenGL path. Falls back to software if unavailable.
+    {
+        g_d3dRenderer = new okay::D3D11Renderer();
+        if (g_d3dRenderer->Init()) {
+            g_d3dReady = true;
+            ConsoleLog("Direct3D 11 renderer available (View > GPU renderer (Direct3D 11)).");
+        } else {
+            delete g_d3dRenderer; g_d3dRenderer = nullptr;
+            ConsoleLog("Direct3D 11 renderer unavailable; using the software/OpenGL path.", 1);
+        }
+    }
+#endif
+
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     LoadRecent();
@@ -12640,6 +12681,9 @@ int main(int argc, char** argv) {
         if (g_glWindow) { SDL_DestroyWindow(g_glWindow); g_glWindow = nullptr; }
         g_glReady = false;
     }
+#if defined(_WIN32)
+    if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
+#endif
     if (g_pad) SDL_GameControllerClose(g_pad);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
     SDL_DestroyRenderer(renderer);

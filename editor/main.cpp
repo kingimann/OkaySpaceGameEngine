@@ -732,6 +732,7 @@ struct BuildSettings {
     bool  ssao = false;                    // ambient occlusion
     bool  fxaa = true;                     // cheap edge anti-aliasing
     int   antialias = 1;                   // 1 = off, 2 = 2x supersample
+    bool  gpuRenderer = true;              // use the GPU (D3D11/OpenGL) 3D renderer; falls back to software
 };
 BuildSettings g_build;
 
@@ -1080,6 +1081,7 @@ struct Options {
     bool lockCursor = false, perPixelLighting = false, shadows = false,
          bloom = false, ssao = false, fxaa = true;
     int  antialias = 1;
+    bool gpuRenderer = true;
 };
 
 // Build the game into outDir. Returns a human-readable status string.
@@ -1135,6 +1137,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "ssao=" << (opt.ssao ? 1 : 0) << "\n";
         cf << "fxaa=" << (opt.fxaa ? 1 : 0) << "\n";
         cf << "antialias=" << opt.antialias << "\n";
+        cf << "gpu=" << (opt.gpuRenderer ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
     }
@@ -4699,6 +4702,8 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
 
         ImGui::SeparatorText("Graphics / Quality");
+        ImGui::Checkbox("GPU renderer (Direct3D 11 / OpenGL)", &g_build.gpuRenderer);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU in the shipped game (hardware speed).\nFalls back to the software renderer if no GPU is available.");
         ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
         ImGui::Checkbox("Shadows", &g_build.shadows);
         ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
@@ -4731,6 +4736,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.lockCursor = g_build.lockCursor; o.perPixelLighting = g_build.perPixelLighting;
             o.shadows = g_build.shadows; o.bloom = g_build.bloom; o.ssao = g_build.ssao;
             o.fxaa = g_build.fxaa; o.antialias = g_build.antialias;
+            o.gpuRenderer = g_build.gpuRenderer;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);

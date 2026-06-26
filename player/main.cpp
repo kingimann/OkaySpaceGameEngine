@@ -9,6 +9,8 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
 #include "OkayScriptUIBridge.hpp"
@@ -242,6 +244,7 @@ int main(int argc, char** argv) {
         float volume = 1.0f;
         bool lockCursor = false, perPixel = false, shadows = false, bloom = false, ssao = false, fxaa = true;
         int  antialias = 1;
+        bool gpu = true;   // try the GPU (D3D11/OpenGL) 3D renderer; fall back to software
         std::string startup;
         std::vector<std::string> scenes;
     } cfg;
@@ -272,6 +275,7 @@ int main(int argc, char** argv) {
             else if (k == "ssao")       cfg.ssao = std::atoi(v.c_str()) != 0;
             else if (k == "fxaa")       cfg.fxaa = std::atoi(v.c_str()) != 0;
             else if (k == "antialias")  cfg.antialias = std::atoi(v.c_str());
+            else if (k == "gpu")        cfg.gpu = std::atoi(v.c_str()) != 0;
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
         }
@@ -319,6 +323,49 @@ int main(int argc, char** argv) {
     FXAAEnabled()      = cfg.fxaa;
     if (cfg.lockCursor) Cursor::Capture(true);
     SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
+
+    // Optional GPU 3D renderer — the same hardware path the editor's Scene view uses,
+    // now shipped with the game. Picks the best backend for this machine (Direct3D 11
+    // on Windows, OpenGL elsewhere); each renders the scene to an offscreen target and
+    // reads back RGBA8, a drop-in for the software rasterizer. If a GPU backend can't
+    // be created (or a frame fails repeatedly), the player silently uses software, so
+    // a build never fails to display 3D. Toggle in Build Game > GPU renderer.
+    okay::GLRenderer*    glRenderer = nullptr;   // OpenGL backend (any platform)
+#if defined(_WIN32)
+    okay::D3D11Renderer* d3dRenderer = nullptr;  // Direct3D 11 backend (Windows)
+#endif
+    SDL_Window*          glWindow = nullptr;      // hidden context window for the GL path
+    SDL_GLContext        glCtx = nullptr;
+    bool                 glReady = false, d3dReady = false;
+#ifndef __EMSCRIPTEN__
+    if (cfg.gpu) {
+#if defined(_WIN32)
+        d3dRenderer = new okay::D3D11Renderer();
+        if (d3dRenderer->Init()) d3dReady = true;
+        else { delete d3dRenderer; d3dRenderer = nullptr; }
+#endif
+        // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders.
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        glWindow = SDL_CreateWindow("okay-gl", 0, 0, 16, 16, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        if (glWindow) {
+            glCtx = SDL_GL_CreateContext(glWindow);
+            if (glCtx) {
+                SDL_GL_MakeCurrent(glWindow, glCtx);
+                if (okay::GLRenderer::LoadGL((okay::GLRenderer::GLGetProc)SDL_GL_GetProcAddress)) {
+                    glRenderer = new okay::GLRenderer();
+                    glReady = true;
+                }
+                SDL_GL_MakeCurrent(nullptr, nullptr);
+            }
+        }
+    }
+#endif
+    // Reused scratch buffer for GPU downscale/readback (mirrors the editor's path).
+    std::vector<std::uint32_t> mesh3DGpu;
+    int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
 
     SDL_AudioSpec want{}, have{};
     want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
@@ -598,22 +645,44 @@ int main(int argc, char** argv) {
             Mat4 vp = cam->ProjectionMatrix(h > 0 ? (float)w / h : 1.0f) * cam->ViewMatrix();
             if (w > 0 && h > 0) {
                 ApplySceneLight(scene);                 // a Light object aims the shading
-                // Native-resolution software render (FXAA handles edge AA). 2x
-                // supersampling is 4x the pixels — far too slow with the full
-                // shadow/SSAO/bloom pipeline — so it's off by default.
-                static std::vector<std::uint32_t> mesh3DDown;
-                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h,
-                                                         cfg.antialias < 1 ? 1 : cfg.antialias,
-                                                         cam ? cam->ignoreObject : nullptr);
-                if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
-                    if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
-                    mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
-                                                  SDL_TEXTUREACCESS_STREAMING, w, h);
-                    SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
-                    mesh3DW = w; mesh3DH = h;
+                const GameObject* ignore = cam ? cam->ignoreObject : nullptr;
+                const std::uint32_t* px = nullptr;
+                // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
+                // offscreen target and reading back RGBA8. A self-heal counter disables
+                // the GPU path after repeated failures so the game is never stuck.
+                if (cfg.gpu && (d3dReady || glReady) && gpuFails < 3) {
+#if defined(_WIN32)
+                    if (!px && d3dReady && d3dRenderer)
+                        px = d3dRenderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                                                         0.0f, 0.0f, 0.0f, 0.0f, ignore);
+#endif
+                    if (!px && glReady && glRenderer && glWindow && glCtx) {
+                        if (SDL_GL_MakeCurrent(glWindow, glCtx) == 0) {
+                            px = glRenderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                                                            0.0f, 0.0f, 0.0f, 0.0f, ignore);
+                            SDL_GL_MakeCurrent(nullptr, nullptr);
+                        }
+                    }
+                    if (!px) ++gpuFails; else gpuFails = 0;
+                    (void)mesh3DGpu;
                 }
-                SDL_UpdateTexture(mesh3DTex, nullptr, px, w * 4);
-                SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
+                // Software fallback: native-resolution z-buffered raster (FXAA handles
+                // edge AA). 2x supersampling is 4x the pixels — off by default.
+                static std::vector<std::uint32_t> mesh3DDown;
+                if (!px)
+                    px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h,
+                                        cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
+                if (px) {
+                    if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
+                        if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
+                        mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+                                                      SDL_TEXTUREACCESS_STREAMING, w, h);
+                        SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
+                        mesh3DW = w; mesh3DH = h;
+                    }
+                    SDL_UpdateTexture(mesh3DTex, nullptr, px, w * 4);
+                    SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
+                }
             }
         } else {
             float ortho = cam ? cam->orthographicSize : 5.0f;
@@ -1521,6 +1590,16 @@ int main(int argc, char** argv) {
         if (kv.second) SDL_DestroyTexture(kv.second);
     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
+#if defined(_WIN32)
+    if (d3dRenderer) { d3dRenderer->Destroy(); delete d3dRenderer; }
+#endif
+    if (glRenderer) {
+        if (glWindow && glCtx) SDL_GL_MakeCurrent(glWindow, glCtx);
+        glRenderer->Destroy(); delete glRenderer;
+        SDL_GL_MakeCurrent(nullptr, nullptr);
+    }
+    if (glCtx) SDL_GL_DeleteContext(glCtx);
+    if (glWindow) SDL_DestroyWindow(glWindow);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

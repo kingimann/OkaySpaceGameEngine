@@ -548,6 +548,19 @@ inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
     return ResolveAnchor(r.anchor, *r.position, r.size, screenW, screenH);
 }
 
+/// The draw origin for a screen-space TextRenderer that RESPECTS its UI parent:
+/// the label's box is anchored within its owning widget (so a text child of a
+/// panel/button follows it — Unity-style), then the text's own align/vcenter
+/// offset is applied. For unparented text (or a Canvas child) this equals the
+/// plain ResolvedScreenPos, so existing layouts are unchanged. Renderers use this
+/// for screen-space text instead of TextRenderer::ResolvedScreenPos so parented
+/// labels track their container.
+inline Vec2 UITextDrawOrigin(GameObject* go, const TextRenderer* tr, float screenW, float screenH) {
+    Vec2 box = UIResolveOrigin(go, screenW, screenH);          // parent-relative box top-left
+    Vec2 alignOff = tr->ResolvedScreenPos(screenW, screenH) - tr->BoxTopLeft(screenW, screenH);
+    return box + alignOff;
+}
+
 /// Whether a point (screen pixels) falls inside a widget's scaled rect.
 inline bool UIScreenContains(GameObject* go, const Vec2& p, float screenW, float screenH) {
     Vec2 o, sz;

@@ -64,6 +64,7 @@
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UITextBind.hpp"
+#include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UIDraggable.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/EventSystem.hpp"
@@ -799,6 +800,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* tb = go->GetComponent<UITextBind>()) {
         out << "  uibind " << Quote(tb->format) << "\n";
+    }
+    if (auto* bb = go->GetComponent<UIBarBind>()) {
+        out << "  uibarbind " << Quote(bb->var) << " " << bb->min << " " << bb->max << "\n";
     }
     if (auto* dg = go->GetComponent<UIDraggable>()) {
         out << "  uidraggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
@@ -2123,6 +2127,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "uibind") {
                     auto* tb = go->AddComponent<UITextBind>();
                     tb->format = ReadQuoted(in);
+                } else if (field == "uibarbind") {
+                    auto* bb = go->AddComponent<UIBarBind>();
+                    bb->var = ReadQuoted(in);
+                    in >> bb->min >> bb->max;
                 } else if (field == "uidraggable") {
                     auto* dg = go->AddComponent<UIDraggable>();
                     int rs = 0, at = 0; in >> rs >> at;

@@ -588,5 +588,39 @@ int main() {
         CHECK(lt->pages[1] == "PageB");
     }
 
+    // --- Visual-scripting vars surface on UI text + progress bars ---------------
+    {
+        ActionList::ResetVars();
+        ActionList::Vars()["hp"] = 75.0f;     // a visual-script variable
+
+        // Text bind interpolates the var (and prettifies the number).
+        CHECK(UITextBind::Resolve("HP: {hp}") == "HP: 75");
+        CHECK(UITextBind::Resolve("{missing}") == "");
+
+        Scene s("bind"); s.physicsEnabled = false;
+        GameObject* bar = s.CreateGameObject("HealthBar");
+        auto* pb = bar->AddComponent<UIProgressBar>();
+        auto* bb = bar->AddComponent<UIBarBind>();
+        bb->var = "hp"; bb->min = 0.0f; bb->max = 100.0f;
+        s.Start();
+        s.Update(0.016f);
+        CHECK_NEAR(pb->value, 0.75f, 0.001f);   // 75 / 100
+
+        // Lower the var and the bar follows.
+        ActionList::Vars()["hp"] = 20.0f;
+        s.Update(0.016f);
+        CHECK_NEAR(pb->value, 0.20f, 0.001f);
+
+        // Round-trips through serialization.
+        std::string text = SceneSerializer::Serialize(s);
+        Scene loaded("L"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* lb = loaded.Find("HealthBar")->GetComponent<UIBarBind>();
+        CHECK(lb != nullptr);
+        CHECK(lb->var == "hp");
+        CHECK_NEAR(lb->max, 100.0f, 0.001f);
+        ActionList::ResetVars();
+    }
+
     TEST_MAIN_RESULT();
 }

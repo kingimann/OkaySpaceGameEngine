@@ -96,6 +96,7 @@
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UITextBind.hpp"
+#include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UIDraggable.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/UIElement.hpp"

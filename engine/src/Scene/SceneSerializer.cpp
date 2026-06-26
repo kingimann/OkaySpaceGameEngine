@@ -985,6 +985,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     std::ostringstream out;
     out << "okayscene 1\n";
     out << "name " << Quote(scene.Name()) << "\n";
+    if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
     {
         const auto& rs = scene.renderSettings;
@@ -1043,6 +1044,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     while (in >> token) {
         if (token == "name") {
             scene.SetName(ReadQuoted(in));
+        } else if (token == "uifont") {
+            scene.uiFont = ReadQuoted(in);
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
             scene.physics().gravity = g;

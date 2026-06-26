@@ -154,6 +154,11 @@ static void DrawTtfText(SDL_Renderer* r, okay::TtfFont* f, const std::string& te
     }
 }
 
+// Scene-wide default UI font (from Scene::uiFont): DrawText falls back to it when no
+// explicit font is given. Set around the screen-UI pass and cleared after, so world
+// text without its own font keeps the bitmap font (matching the editor preview).
+static okay::TtfFont* g_uiDefaultFont = nullptr;
+
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
 // in screen pixels, each font pixel `px` screen pixels wide. When `ttf` is loaded,
 // the TTF atlas is used instead (same sizing space).
@@ -162,6 +167,7 @@ static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float o
                      bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0},
                      okay::TtfFont* ttf = nullptr) {
     if (px < 1.0f) px = 1.0f;
+    if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
     if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
     if (!gradient) SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
@@ -782,6 +788,7 @@ int main(int argc, char** argv) {
                 return GetUIScreenRect(go, (float)ww, (float)hh, o, sz);
             };
         }
+        g_uiDefaultFont = okay::GetFont(scene.uiFont);   // scene-wide default for this pass
         for (const UIDrawItem& _it : uiItems) {
             const auto& up = scene.Objects()[_it.index];
             if (_it.kind == K_DropBg) {   // drop-target slot backgrounds (behind items)
@@ -1461,6 +1468,7 @@ int main(int argc, char** argv) {
             DrawText(renderer, tt->text, m.x + 20, m.y + 19, px, tc);
             }
         }   // end single UI draw pass
+        g_uiDefaultFont = nullptr;   // world text / FPS overlay keep the bitmap font
         SDL_RenderSetClipRect(renderer, nullptr);   // end any scroll clipping
 
         // Optional FPS overlay (top-left) when enabled in build settings.

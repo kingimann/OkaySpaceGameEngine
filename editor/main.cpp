@@ -2721,6 +2721,10 @@ void DrawMaterialEditor(EditorState& ed) {
     ImGui::Checkbox("Double-sided", &mat.doubleSided);
     char tex[256]; std::strncpy(tex, mat.texture.c_str(), sizeof(tex) - 1); tex[sizeof(tex) - 1] = '\0';
     if (ImGui::InputText("Texture", tex, sizeof(tex))) mat.texture = tex;
+    if (ImGui::BeginDragDropTarget()) {   // drop an image from the Project panel
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) mat.texture = (const char*)p->Data;
+        ImGui::EndDragDropTarget();
+    }
     float til[2] = {mat.tiling.x, mat.tiling.y};
     if (ImGui::DragFloat2("Tiling", til, 0.05f, 0.01f, 64.0f)) mat.tiling = {til[0], til[1]};
     ImGui::Separator();
@@ -2754,6 +2758,27 @@ void DrawStats(EditorState& ed) {
     ImGui::Text("Sprites: %d", (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size());
     ImGui::Text("Meshes: %d", (int)ed.scene().FindObjectsOfType<MeshRenderer>().size());
     ImGui::Text("Colliders: %d", (int)ed.scene().FindObjectsOfType<Collider2D>().size());
+
+    // Default UI font for this scene: every button/label/widget without its own
+    // font uses it (saved with the scene, so the built game matches). Drag a .ttf
+    // from the Project panel onto the field, Unity-style.
+    if (ImGui::CollapsingHeader("UI")) {
+        std::string& uf = ed.scene().uiFont;
+        char fb[512]; std::strncpy(fb, uf.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
+        if (ImGui::InputTextWithHint("Default UI Font", "Assets/MyFont.ttf (empty = bitmap)", fb, sizeof(fb)))
+            { uf = fb; ed.dirty = true; }
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                std::string ap((const char*)p->Data), al = Lower(ap);
+                if (al.size() > 4 && (al.substr(al.size()-4)==".ttf" || al.substr(al.size()-4)==".otf"))
+                    { uf = ap; ed.dirty = true; }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        if (uf.empty())                  ImGui::TextDisabled("Built-in 8x8 bitmap font.");
+        else if (okay::GetFont(uf))      ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
+        else                             ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+    }
 
     // Environment: the scene's skybox + ambient, saved with the scene so the
     // built game renders the same sky and base light.
@@ -4922,11 +4947,22 @@ void DrawHierarchy(EditorState& ed) {
                                 ConsoleLog("Applied material to " + node->name);
                             }
                         } else ConsoleLog(node->name + " has no Mesh Renderer for the material");
-                    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
                         ed.PushUndo();
-                        if (auto* mr = node->GetComponent<MeshRenderer>())      mr->texture = path;
+                        if (auto* im = node->GetComponent<UIImage>())             im->texture = path;
+                        else if (auto* mr = node->GetComponent<MeshRenderer>())   mr->texture = path;
                         else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
                         ed.dirty = true; ConsoleLog("Set texture on " + node->name);
+                    } else if (ext == ".okay") {           // attach a script (Unity-style)
+                        ed.PushUndo();
+                        auto* nsc = node->AddComponent<ScriptComponent>("okayscript");
+                        std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                        ed.dirty = true; ConsoleLog("Attached script to " + node->name);
+                    } else if (ext == ".ttf" || ext == ".otf") {   // set font on a Text/Button
+                        ed.PushUndo();
+                        if (auto* tr = node->GetComponent<TextRenderer>())   tr->fontPath = path;
+                        else if (auto* bt = node->GetComponent<UIButton>())  bt->fontPath = path;
+                        ed.dirty = true; ConsoleLog("Set font on " + node->name);
                     }
                 }
                 ImGui::EndDragDropTarget();
@@ -9247,6 +9283,7 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(tx, im->texture.c_str(), sizeof(tx) - 1);
             tx[sizeof(tx) - 1] = '\0';
             if (ImGui::InputText("Texture##uim", tx, sizeof(tx))) { im->texture = tx; ed.dirty = true; }
+            if (AcceptAssetPathField(im->texture)) ed.dirty = true;   // drop an image from Project
             float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
             if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             ImGui::TextDisabled("image path (PNG/JPG); empty = colored rect");
@@ -9879,6 +9916,11 @@ static void DrawTtfText(ImDrawList* dl, okay::TtfFont* f, SDL_Texture* tex,
     }
 }
 
+// Scene-wide default UI font: when a text/widget draw passes no explicit font,
+// DrawBitmapText falls back to this. Set for the duration of the UI pass (from
+// Scene::uiFont) and cleared after, so it only affects game UI, not editor chrome.
+okay::TtfFont* g_uiDefaultFont = nullptr;
+
 // Draw a string with the engine's 8x8 bitmap font into an ImGui draw list, so
 // the editor viewport shows the same text the built game will (HUDs, labels).
 // When `ttf` is a loaded font, the TTF atlas is used instead (same sizing).
@@ -9887,6 +9929,7 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
                     bool italic = false, bool gradient = false, ImU32 col2 = 0,
                     okay::TtfFont* ttf = nullptr) {
     if (px < 1.0f) px = 1.0f;
+    if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
     if (ttf && ttf->Valid()) {
         if (SDL_Texture* tex = TtfAtlasTexture(ttf)) {
             DrawTtfText(dl, ttf, tex, text, ox, oy, px, col, letterSp, lineSp, italic);
@@ -9953,6 +9996,10 @@ static Camera* SceneCamera(Scene& s) {
 void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
+    // The scene's default UI font applies to every widget in this pass unless the
+    // widget overrides it; cleared at the end so editor chrome stays unaffected.
+    g_uiDefaultFont = okay::GetFont(ed.scene().uiFont);
+    struct ClearUIFont { ~ClearUIFont() { g_uiDefaultFont = nullptr; } } _clearUIFont;
 
     // Mirror the player's draw order: Canvas sortOrder first, then hierarchy
     // pre-order (parent before children, sibling order honored) so the editor

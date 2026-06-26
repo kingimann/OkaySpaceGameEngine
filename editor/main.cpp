@@ -746,6 +746,7 @@ struct ProjectSettings {
     float gravity3D[3]  = {0.0f, -9.81f, 0.0f};
     float ambient       = 0.30f;
     bool  skybox        = true;
+    std::vector<std::string> customTags;   // project-wide user tags (Unity-style), persisted
 };
 ProjectSettings g_project;
 bool g_showProjectSettings = false;
@@ -761,6 +762,8 @@ void SaveProjectSettings() {
     f << "gravity3d=" << g_project.gravity3D[0] << " " << g_project.gravity3D[1] << " " << g_project.gravity3D[2] << "\n";
     f << "ambient=" << g_project.ambient << "\n";
     f << "skybox=" << (g_project.skybox ? 1 : 0) << "\n";
+    for (const std::string& t : g_project.customTags)
+        if (!t.empty()) f << "tag=" << t << "\n";
 }
 
 void LoadProjectSettings() {
@@ -779,6 +782,7 @@ void LoadProjectSettings() {
         else if (k == "gravity3d") std::sscanf(v.c_str(), "%f %f %f", &g_project.gravity3D[0], &g_project.gravity3D[1], &g_project.gravity3D[2]);
         else if (k == "ambient") g_project.ambient = (float)std::atof(v.c_str());
         else if (k == "skybox")  g_project.skybox = std::atoi(v.c_str()) != 0;
+        else if (k == "tag") { if (!v.empty()) g_project.customTags.push_back(v); }
     }
 }
 bool  g_snap = false;
@@ -6635,7 +6639,9 @@ void DrawInspector(EditorState& ed) {
     if (ImGui::Checkbox("Static", &go->isStatic)) ed.dirty = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Marks the object as non-moving (saved with the scene)");
 
-    // Row 2: Tag dropdown (Unity-style presets + custom) + Save-as-Prefab.
+    // Row 2: Tag dropdown (Unity-style presets + your own custom tags) + Save-as-Prefab.
+    // Built-in presets, then any project-wide custom tags (persisted in project.okayproj),
+    // then an "Add Tag" field that creates a new tag AND applies it in one step.
     static const char* kTagPresets[] = {"Untagged", "Player", "MainCamera", "Enemy",
                                         "Respawn", "Finish", "GameController", "UI"};
     std::string curTag = go->tag.empty() ? "Untagged" : go->tag;
@@ -6647,12 +6653,41 @@ void DrawInspector(EditorState& ed) {
                 go->tag = (std::strcmp(t, "Untagged") == 0) ? "" : t; ed.dirty = true;
             }
         }
+        // Project-wide custom tags (click to apply; right-click to remove from the list).
+        if (!g_project.customTags.empty()) {
+            ImGui::Separator();
+            for (std::size_t i = 0; i < g_project.customTags.size(); ++i) {
+                const std::string& t = g_project.customTags[i];
+                if (t.empty()) continue;
+                bool sel = (curTag == t);
+                if (ImGui::Selectable(t.c_str(), sel)) { go->tag = t; ed.dirty = true; }
+                if (ImGui::BeginPopupContextItem((std::string("tagctx") + std::to_string(i)).c_str())) {
+                    if (ImGui::MenuItem("Remove tag from list")) {
+                        g_project.customTags.erase(g_project.customTags.begin() + i);
+                        SaveProjectSettings();
+                        ImGui::EndPopup();
+                        break;
+                    }
+                    ImGui::EndPopup();
+                }
+            }
+        }
         ImGui::Separator();
-        static char customTag[64] = "";
-        ImGui::SetNextItemWidth(130);
-        if (ImGui::InputTextWithHint("##customtag", "custom tag...", customTag, sizeof(customTag),
-                                     ImGuiInputTextFlags_EnterReturnsTrue) && customTag[0]) {
-            go->tag = customTag; ed.dirty = true; customTag[0] = '\0';
+        // Add a brand-new tag: type a name, press Enter or click Add → it's saved to
+        // the project tag list and applied to this object immediately.
+        static char newTag[64] = "";
+        ImGui::SetNextItemWidth(120);
+        bool entered = ImGui::InputTextWithHint("##newtag", "new tag...", newTag, sizeof(newTag),
+                                                ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        bool clicked = ImGui::Button("Add");
+        if ((entered || clicked) && newTag[0]) {
+            std::string nt = newTag;
+            bool known = false;
+            for (const char* p : kTagPresets) if (nt == p) known = true;
+            for (const std::string& e : g_project.customTags) if (e == nt) known = true;
+            if (!known) { g_project.customTags.push_back(nt); SaveProjectSettings(); }
+            go->tag = nt; ed.dirty = true; newTag[0] = '\0';
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndCombo();

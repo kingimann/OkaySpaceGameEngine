@@ -41,6 +41,12 @@ public:
         if (!s || !s->mainCamera || !s->mainCamera->gameObject || !s->mainCamera->gameObject->transform) return;
         Transform* cam = s->mainCamera->gameObject->transform;
         const Vec3 origin = cam->Position(), dir = cam->Forward();
+        // Reach is measured FROM THE PLAYER, but we cast from the camera (so the
+        // aim always matches the screen-center crosshair). In third person the
+        // camera orbits behind you, so add that camera→player gap back to reach —
+        // otherwise the orbit distance eats your whole building range. In first
+        // person the camera sits at the eye, so the gap is just eye height.
+        const float r = reach + CameraGap(origin);
 
         // A center reticle so you can see what you're aiming at (added once).
         if (showCrosshair && !crosshairChecked_) {
@@ -48,26 +54,30 @@ public:
             EnsureCrosshair(*s);
         }
         // A live ghost outline of the cell the next block would occupy.
-        if (showPreview) UpdatePreview(*s, origin, dir);
+        if (showPreview) UpdatePreview(*s, origin, dir, r);
         else if (preview_) preview_->active = false;
 
         const bool place  = Input::GetMouseButtonDown(placeButton);
         const bool remove = Input::GetMouseButtonDown(removeButton);
         if (!place && !remove) return;
 
-        Build(*s, origin, dir, place, remove);
+        Build(*s, origin, dir, place, remove, r);
     }
 
     /// Place or remove a block along a ray (camera-independent, so it's unit-testable).
     /// Returns the block placed/removed, or nullptr. `place` wins over `remove`.
-    GameObject* Build(Scene& s, const Vec3& origin, const Vec3& dir, bool place, bool remove) {
-        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, reach, gameObject);
+    /// `reachArg < 0` uses the component's `reach`; Update passes a camera-compensated
+    /// value so third-person aim reaches as far in front of the player as first-person.
+    GameObject* Build(Scene& s, const Vec3& origin, const Vec3& dir, bool place, bool remove,
+                      float reachArg = -1.0f) {
+        const float r = reachArg >= 0.0f ? reachArg : reach;
+        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, r, gameObject);
         if (place) {
             // Must be aiming at a surface (ground or another block) to build against it,
             // like Minecraft — unless placeInAir lets you drop one at arm's length.
             if (!hit.hit && !placeInAir) return nullptr;
             Vec3 target = hit.hit ? hit.point + hit.normal * (blockSize * 0.5f)
-                                  : origin + dir * reach;
+                                  : origin + dir * r;
             Vec3 cell = Snap(target);
             return Occupied(s, cell) ? nullptr : PlaceBlock(s, cell);
         }
@@ -89,15 +99,24 @@ private:
     GameObject* preview_ = nullptr;     ///< runtime-only ghost cube (not saved/removable)
     bool        crosshairChecked_ = false;
 
+    /// Distance from the camera to the player carrying this builder — the orbit gap
+    /// in third person (≈ eye height in first person). Added to reach so building
+    /// range is measured from the player regardless of camera placement.
+    float CameraGap(const Vec3& camPos) const {
+        if (!gameObject || !gameObject->transform) return 0.0f;
+        Vec3 d = camPos - gameObject->transform->Position();
+        return std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    }
+
     /// Move the ghost outline to the cell the next block would occupy, tinted by
     /// whether that cell is free. Re-uses one runtime GameObject (a wireframe cube
     /// with no collider, so it never blocks the ray or counts as a placed block).
-    void UpdatePreview(Scene& s, const Vec3& origin, const Vec3& dir) {
-        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, reach, gameObject);
+    void UpdatePreview(Scene& s, const Vec3& origin, const Vec3& dir, float r) {
+        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, r, gameObject);
         // Not aiming at anything we can build on → no ghost (no floating outline).
         if (!hit.hit && !placeInAir) { if (preview_) preview_->active = false; return; }
         Vec3 target = hit.hit ? hit.point + hit.normal * (blockSize * 0.5f)
-                              : origin + dir * reach;
+                              : origin + dir * r;
         Vec3 cell = Snap(target);
         bool busy = Occupied(s, cell);
 

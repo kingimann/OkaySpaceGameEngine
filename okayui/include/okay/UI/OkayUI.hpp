@@ -159,6 +159,23 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
 /// Call right after the widget you want to annotate.
 void Tooltip(const char* text);
 
+/// Drag-to-scrub a float: hold and move the cursor left/right to change *v by
+/// `speed` per pixel. If minV < maxV the value is clamped. Returns true on change.
+bool DragFloat(const char* label, float* v, float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
+/// Drag-to-scrub an int (same idea). minV < maxV clamps. Returns true on change.
+bool DragInt(const char* label, int* v, float speed = 0.25f, int minV = 0, int maxV = 0);
+
+/// An RGB color editor: a swatch plus three 0..1 channel sliders on one row.
+/// Edits rgb[0..2] in place; returns true on any frame a channel changed.
+bool ColorEdit3(const char* label, float rgb[3]);
+
+/// A collapsing tree node. Returns true while expanded; when it does, the widgets
+/// that follow are INDENTED until you call TreePop(). Nestable. State kept per label.
+bool TreeNode(const char* label);
+/// Close the most recent open TreeNode (removes one indent level). Pair with each
+/// TreeNode() that returned true.
+void TreePop();
+
 /// The active theme (mutable — tweak colors/sizes in place).
 Theme& Style();
 

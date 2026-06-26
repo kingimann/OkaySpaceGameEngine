@@ -1,6 +1,7 @@
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include <SDL.h>
+#include <cstdio>   // snprintf for numeric widgets (C library, not STL)
 
 // All rendering goes through SDL_RenderGeometry (SDL >= 2.0.18), which is exactly
 // the call Dear ImGui's SDL_Renderer backend uses — so OkayUI shares ImGui's GPU
@@ -36,6 +37,7 @@ int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = non
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
 bool  g_focusClaimed = false;    // a widget took the click this frame (keep focus)
 unsigned g_frame = 0;            // frame counter (drives the text caret blink)
+float    g_dragAccum = 0.0f;     // sub-unit accumulator for DragInt while dragging
 Theme g_theme;
 
 // Length of a C string without pulling in <cstring> (keeps the toolkit STL/libc-light).
@@ -51,6 +53,7 @@ struct LayoutState {
     float prevX = 0, prevY = 0, prevW = 0, prevH = 0;   // last placed item
     bool  pendingSameLine = false;
     float sameLineSpacing = -1.0f;
+    float indent = 0.0f;            // TreeNode indentation of the content's left edge
     int   seed = 0;                 // window id, mixed into label->id hashing
 };
 LayoutState g_lay;
@@ -81,13 +84,16 @@ inline float rowH() { return okay::Font8x8::Height * g_theme.textScale + 12.0f; 
 inline float textH() { return okay::Font8x8::Height * g_theme.textScale; }
 inline float labelW(const char* s) { return s && *s ? okay::Font8x8::MeasureWidth(s) * g_theme.textScale : 0.0f; }
 
+// The indented content left edge and full indented content width.
+inline float leftEdge() { return g_lay.ox + g_lay.indent; }
+inline float fullW()    { return g_lay.contentW - g_lay.indent; }
 // Where the next item's left edge will land (honors a pending SameLine).
 inline float cursorX() {
     if (g_lay.pendingSameLine) {
         float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
         return g_lay.prevX + g_lay.prevW + sp;
     }
-    return g_lay.ox;
+    return leftEdge();
 }
 // Remaining width from the next item's left edge to the content's right edge.
 inline float availW() { return g_lay.ox + g_lay.contentW - cursorX(); }
@@ -102,11 +108,11 @@ void place(float w, float h, float& x, float& y) {
         g_lay.pendingSameLine = false;
         g_lay.sameLineSpacing = -1.0f;
     } else {
-        x = g_lay.ox;
+        x = leftEdge();
         y = g_lay.cy;
     }
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
-    g_lay.cx = g_lay.ox;
+    g_lay.cx = leftEdge();
     g_lay.cy = y + h + g_lay.spacingY;
 }
 
@@ -481,6 +487,7 @@ bool Begin(const char* title, float x, float y, float w, float h) {
     g_lay.cy = g_lay.oy;
     g_lay.contentW = w - 2.0f * pad;
     g_lay.spacingX = 8.0f; g_lay.spacingY = 6.0f;
+    g_lay.indent = 0.0f;
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
     return true;
@@ -502,8 +509,8 @@ void Spacing(float h) {
 void Separator() {
     if (!g_lay.active) return;
     const float gap = g_lay.spacingY;
-    float x, y; place(g_lay.contentW, gap, x, y);
-    quad(g_lay.ox, y + gap * 0.5f, g_lay.contentW, 1.0f, g_theme.border);
+    float x, y; place(fullW(), gap, x, y);
+    quad(leftEdge(), y + gap * 0.5f, fullW(), 1.0f, g_theme.border);
 }
 
 void Text(const char* s) {
@@ -575,7 +582,7 @@ bool CollapsingHeader(const char* label) {
     if (!g_lay.active) return false;
     const int id = hashLabel(label);
     bool* open = openState(id, false);
-    const float h = rowH(), w = g_lay.contentW;
+    const float h = rowH(), w = fullW();
     float x, y; place(w, h, x, y);
     const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
     if (inside) g_hot = id;
@@ -645,6 +652,126 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
         if (g_pressed && !insideBox && !inList) *open = false;
     }
     return changed;
+}
+
+// Shared body for the drag widgets: returns the pixels dragged this frame (0 unless
+// this id is the active drag). Draws the box; the caller formats/places the value.
+namespace {
+bool dragBox(int id, float x, float y, float w, float h, bool inside, float& outDelta) {
+    outDelta = 0.0f;
+    if (inside) g_hot = id;
+    bool dragging = false;
+    if (g_active == id) {
+        if (!g_in.mouseDown) g_active = 0;
+        else { outDelta = g_mouseDX; dragging = true; }
+    } else if (inside && g_pressed) {
+        g_active = id; g_dragAccum = 0.0f;
+    }
+    const float b = g_theme.borderPx;
+    quad(x, y, w, h, g_theme.border);
+    if (w > 2*b && h > 2*b) quad(x + b, y + b, w - 2*b, h - 2*b, (g_active == id || inside) ? g_theme.bgHover : g_theme.track);
+    return dragging;
+}
+} // namespace
+
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) {
+    if (!g_lay.active || !v) return false;
+    const int id = hashLabel(label);
+    const float h = rowH(), s = g_theme.textScale;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, ctrlW, h);
+    float delta; dragBox(id, x, y, ctrlW, h, inside, delta);
+    bool changed = false;
+    if (delta != 0.0f) {
+        float nv = *v + delta * speed;
+        if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+        if (nv != *v) { *v = nv; changed = true; }
+    }
+    char buf[32]; std::snprintf(buf, sizeof(buf), "%.3f", *v);
+    drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    return changed;
+}
+
+bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
+    if (!g_lay.active || !v) return false;
+    const int id = hashLabel(label);
+    const float h = rowH(), s = g_theme.textScale;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, ctrlW, h);
+    float delta; dragBox(id, x, y, ctrlW, h, inside, delta);
+    bool changed = false;
+    if (delta != 0.0f) {
+        g_dragAccum += delta * speed;          // accumulate sub-unit motion
+        int step = (int)g_dragAccum;
+        if (step != 0) {
+            g_dragAccum -= (float)step;
+            int nv = *v + step;
+            if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+            if (nv != *v) { *v = nv; changed = true; }
+        }
+    }
+    char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *v);
+    drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    return changed;
+}
+
+bool ColorEdit3(const char* label, float rgb[3]) {
+    if (!g_lay.active || !rgb) return false;
+    const int id = hashLabel(label);
+    const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    const float row = w - lw;
+    const float swatch = h;
+    // Swatch preview.
+    unsigned char col[4] = {
+        (unsigned char)(clamp01(rgb[0]) * 255.0f), (unsigned char)(clamp01(rgb[1]) * 255.0f),
+        (unsigned char)(clamp01(rgb[2]) * 255.0f), 255};
+    quad(x, y, swatch, h, g_theme.border);
+    if (swatch > 2*b && h > 2*b) quad(x + b, y + b, swatch - 2*b, h - 2*b, col);
+    // Three channel sliders.
+    float slidersW = row - swatch - 6.0f; if (slidersW < 30.0f) slidersW = 30.0f;
+    float each = (slidersW - 8.0f) / 3.0f;
+    bool changed = false;
+    for (int ch = 0; ch < 3; ++ch) {
+        int cid = id ^ (int)(0x9e3779b9u * (unsigned)(ch + 1));
+        float cxp = x + swatch + 6.0f + (float)ch * (each + 4.0f);
+        if (Slider(cid, cxp, y, each, h, &rgb[ch], 0.0f, 1.0f)) changed = true;
+    }
+    if (lw > 0.0f) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    return changed;
+}
+
+bool TreeNode(const char* label) {
+    if (!g_lay.active) return false;
+    const int id = hashLabel(label);
+    bool* open = openState(id, false);
+    const float h = rowH(), w = fullW(), s = g_theme.textScale;
+    float x, y; place(w, h, x, y);
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+    if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
+    else if (inside && g_pressed) g_active = id;
+    if (inside) quad(x, y, w, h, g_theme.bgHover);
+    drawText(x + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
+    drawText(x + 4.0f + okay::Font8x8::Width * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (*open) g_lay.indent += 16.0f;   // children indent until TreePop()
+    return *open;
+}
+
+void TreePop() {
+    if (!g_lay.active) return;
+    g_lay.indent -= 16.0f;
+    if (g_lay.indent < 0.0f) g_lay.indent = 0.0f;
 }
 
 } // namespace OkayUI

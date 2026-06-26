@@ -218,13 +218,61 @@ int main(int argc, char** argv) {
         CHECK(ch); CHECK(cur == 2);
     }
 
+    // Ensure the mouse is "up" so the next press is a clean rising edge (prior blocks
+    // may have ended mid-drag). A frame with empty input clears the press latch.
+    auto release = [&]{ OkayUI::BeginFrame(OkayUI::Input{}); OkayUI::EndFrame(r); };
+
+    // --- DragFloat: press the box, then move the cursor right to scrub the value. ---
+    {
+        release();
+        float fv = 0.0f;
+        OkayUI::Input di; di.mouseX = 40; di.mouseY = 62; di.mouseDown = true;   // press inside box
+        OkayUI::BeginFrame(di); OkayUI::Begin("DFW", 10, 10, 220, 200); OkayUI::DragFloat("X", &fv, 0.1f); OkayUI::End(); OkayUI::EndFrame(r);
+        di.mouseX = 60;   // moved +20 px while held -> +20*0.1 = +2.0
+        OkayUI::BeginFrame(di); OkayUI::Begin("DFW", 10, 10, 220, 200); OkayUI::DragFloat("X", &fv, 0.1f); OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(fv > 1.9f && fv < 2.1f);
+    }
+
+    // --- DragInt: +10 px at speed 1.0 -> +10. ---
+    {
+        release();
+        int iv = 0;
+        OkayUI::Input di; di.mouseX = 40; di.mouseY = 62; di.mouseDown = true;
+        OkayUI::BeginFrame(di); OkayUI::Begin("DIW", 10, 10, 220, 200); OkayUI::DragInt("Y", &iv, 1.0f); OkayUI::End(); OkayUI::EndFrame(r);
+        di.mouseX = 50;
+        OkayUI::BeginFrame(di); OkayUI::Begin("DIW", 10, 10, 220, 200); OkayUI::DragInt("Y", &iv, 1.0f); OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(iv == 10);
+    }
+
+    // --- ColorEdit3: clicking the first channel slider raises R from 0. ---
+    {
+        release();
+        float rgb[3] = {0.0f, 0.0f, 0.0f};
+        OkayUI::Input ce; ce.mouseX = 76; ce.mouseY = 62; ce.mouseDown = true;   // over channel-0 slider
+        OkayUI::BeginFrame(ce); OkayUI::Begin("CEW", 10, 10, 220, 200); OkayUI::ColorEdit3("C", rgb); OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(rgb[0] > 0.2f);
+    }
+
+    // --- TreeNode: starts closed; a click opens it. ---
+    {
+        OkayUI::BeginFrame(OkayUI::Input{});
+        OkayUI::Begin("TNW", 10, 10, 200, 200); bool o0 = OkayUI::TreeNode("N"); if (o0) OkayUI::TreePop(); OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(!o0);
+        OkayUI::Input ti; ti.mouseX = 110; ti.mouseY = 62; ti.mouseDown = true;
+        OkayUI::BeginFrame(ti); OkayUI::Begin("TNW", 10, 10, 200, 200); bool a = OkayUI::TreeNode("N"); if (a) OkayUI::TreePop(); OkayUI::End(); OkayUI::EndFrame(r);
+        ti.mouseDown = false;
+        OkayUI::BeginFrame(ti); OkayUI::Begin("TNW", 10, 10, 200, 200); bool o1 = OkayUI::TreeNode("N"); if (o1) OkayUI::TreePop(); OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(o1);
+    }
+
     // --- Optional visual preview: an auto-layout window showing the widgets. ---
     if (argc > 2 && std::strcmp(argv[1], "--png") == 0) {
-        const int PW = 360, PH = 500;
+        const int PW = 360, PH = 560;
         SDL_Surface* big = SDL_CreateRGBSurfaceWithFormat(0, PW, PH, 32, SDL_PIXELFORMAT_ARGB8888);
         SDL_Renderer* br = SDL_CreateSoftwareRenderer(big);
-        char demoName[16] = "Player1"; int demoMode = 0, demoSel = 1;
-        bool demoCheck = true; float demoSlider = 65.0f;
+        char demoName[16] = "Player1"; int demoMode = 0, demoSel = 1, demoLives = 3;
+        bool demoCheck = true; float demoSlider = 65.0f, demoSpeed = 1.5f;
+        float demoCol[3] = {0.30f, 0.65f, 0.95f};
         const char* opts[] = {"Low", "Medium", "High"};
         auto panel = [&](OkayUI::Input pv) {
             OkayUI::BeginFrame(pv);
@@ -237,21 +285,21 @@ int main(int argc, char** argv) {
             OkayUI::SameLine();
             OkayUI::RadioButton("Hard", &demoMode, 1);
             OkayUI::SliderFloat("Volume", &demoSlider, 0.0f, 100.0f);
+            OkayUI::DragFloat("Speed", &demoSpeed, 0.1f, 0.0f, 10.0f);
+            OkayUI::DragInt("Lives", &demoLives, 0.25f, 0, 9);
+            OkayUI::ColorEdit3("Tint", demoCol);
             OkayUI::Checkbox("Sound", &demoCheck);
             OkayUI::Separator();
-            OkayUI::Text("Health");   OkayUI::ProgressBar(0.8f);
-            OkayUI::Text("Hunger");  OkayUI::ProgressBar(0.35f);
-            OkayUI::CollapsingHeader("Advanced");
+            if (OkayUI::TreeNode("Stats")) {
+                OkayUI::Text("Health"); OkayUI::ProgressBar(0.8f);
+                OkayUI::Text("Hunger"); OkayUI::ProgressBar(0.35f);
+                OkayUI::TreePop();
+            }
             OkayUI::Spacing();
             OkayUI::Button("Play");  OkayUI::SameLine();  OkayUI::Button("Quit");
             OkayUI::End();
         };
-        // Prime the Combo open (press+release inside its box at the content origin),
-        // so the final still shows the dropdown overlaying the widgets below it.
-        OkayUI::Input pr; pr.mouseX = 60; pr.mouseY = 64;
-        pr.mouseDown = true;  panel(pr); OkayUI::EndFrame(nullptr);
-        pr.mouseDown = false; panel(pr); OkayUI::EndFrame(nullptr);
-        // Final frame, drawn.
+        // Render the widgets in their default state so all of them are visible.
         SDL_SetRenderDrawColor(br, 24, 26, 32, 255); SDL_RenderClear(br);
         OkayUI::Input pv; pv.mouseX = -1; pv.mouseY = -1;
         panel(pv);

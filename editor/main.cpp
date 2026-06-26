@@ -7709,6 +7709,8 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Crosshair##bb", &bb->showCrosshair)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an aim reticle at screen center on Play (if the scene has none).");
+            if (ImGui::Checkbox("Place in mid-air##bb", &bb->placeInAir)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off (Minecraft-style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
             if (ImGui::SmallButton("Remove##bb")) toRemove = bb;
         }
     }

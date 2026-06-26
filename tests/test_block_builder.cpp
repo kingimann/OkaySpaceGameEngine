@@ -32,7 +32,13 @@ int main() {
     CHECK_NEAR(sn.y, 0.0f, 1e-4f);
     CHECK_NEAR(sn.z, 3.0f, 1e-4f);
 
-    // Place into empty space (aim up, nothing to hit): lands at arm's length, snapped.
+    // Default (Minecraft-style): aiming at empty sky places nothing.
+    GameObject* refused = bb->Build(scene, Vec3{0.0f, 6.0f, 0.0f}, Vec3{0, 1, 0}, /*place=*/true, false);
+    CHECK(refused == nullptr);
+    CHECK(CountBlocks(scene, "Block") == 0);
+
+    // With placeInAir on, the same shot lands a block at arm's length, snapped.
+    bb->placeInAir = true;
     GameObject* sky = bb->Build(scene, Vec3{0.0f, 6.0f, 0.0f}, Vec3{0, 1, 0}, /*place=*/true, false);
     CHECK(sky != nullptr);
     CHECK(sky && sky->tag == "Block");
@@ -41,6 +47,7 @@ int main() {
         CHECK(sky->GetComponent<MeshRenderer>() != nullptr);
         CHECK(sky->GetComponent<BoxCollider3D>() != nullptr);
     }
+    bb->placeInAir = false;
 
     // Aim down at the ground → a block lands on top of it (positive Y).
     GameObject* onGround = bb->Build(scene, Vec3{0.0f, 6.0f, 0.0f}, Vec3{0, -1, 0}, true, false);
@@ -65,6 +72,7 @@ int main() {
     auto* cam = camGO->AddComponent<Camera>();
     camGO->transform->localPosition = {0.0f, 6.0f, 0.0f};
     scene.mainCamera = cam;
+    bb->placeInAir = true;   // so the ghost shows regardless of the camera's aim in this test
     int before = CountBlocks(scene, "Block");
     scene.Update(0.0f);
     CHECK(CountBlocks(scene, "Block") == before);           // preview is not a block

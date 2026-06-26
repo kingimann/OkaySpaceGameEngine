@@ -31,6 +31,7 @@ public:
     int         removeButton = 1;                         ///< mouse button to remove (1 = right)
     bool        showPreview  = true;                       ///< ghost outline of where the next block lands
     bool        showCrosshair = true;                      ///< auto-add an aim reticle at screen center
+    bool        placeInAir   = false;                      ///< allow placing in empty space (off = must aim at a surface, Minecraft-style)
     Color       previewFree  = Color::FromBytes(80, 255, 120, 230);  ///< outline color where placement is free
     Color       previewBusy  = Color::FromBytes(255, 80, 80, 230);   ///< outline color when the cell is blocked
 
@@ -62,7 +63,9 @@ public:
     GameObject* Build(Scene& s, const Vec3& origin, const Vec3& dir, bool place, bool remove) {
         RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, reach, gameObject);
         if (place) {
-            // Place against the hit face (or at arm's length into empty space), snapped.
+            // Must be aiming at a surface (ground or another block) to build against it,
+            // like Minecraft — unless placeInAir lets you drop one at arm's length.
+            if (!hit.hit && !placeInAir) return nullptr;
             Vec3 target = hit.hit ? hit.point + hit.normal * (blockSize * 0.5f)
                                   : origin + dir * reach;
             Vec3 cell = Snap(target);
@@ -91,6 +94,8 @@ private:
     /// with no collider, so it never blocks the ray or counts as a placed block).
     void UpdatePreview(Scene& s, const Vec3& origin, const Vec3& dir) {
         RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, reach, gameObject);
+        // Not aiming at anything we can build on → no ghost (no floating outline).
+        if (!hit.hit && !placeInAir) { if (preview_) preview_->active = false; return; }
         Vec3 target = hit.hit ? hit.point + hit.normal * (blockSize * 0.5f)
                               : origin + dir * reach;
         Vec3 cell = Snap(target);

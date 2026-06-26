@@ -156,6 +156,37 @@ function update(dt) {
 | `ui_set_progress("n", v)` | Set a progress bar's fill (0..1) |
 | `ui_set_fill("n", v)` | Set a filled UI Image's amount (cooldowns/health) |
 
+### OkayUI (build a HUD from script — no Canvas objects)
+These are **immediate-mode** OkayUI widgets: call them every frame from a script and
+the toolkit draws them on top of the game, in both the standalone player **and** the
+editor's Play mode. Nothing to place in the scene — the script *is* the UI. A widget
+returns the live value, so you read and write game state in one line.
+
+| Function | Description |
+|---|---|
+| `ui_begin("Title", x, y, w, h)` … `ui_end()` | Open/close a draggable window (coords optional) |
+| `ui_text("s")` | A line of text |
+| `ui_button("Label")` | Returns 1 the frame it's clicked, else 0 |
+| `ui_checkbox("Label", on)` | Returns the new on/off (pass the current value back in) |
+| `ui_slider("Label", v, lo, hi)` | Returns the new value (pass the current value back in) |
+| `ui_progress(t)` | A progress/health bar, `t` in 0..1 |
+| `ui_sameline()` / `ui_separator()` | Lay the next widget beside / draw a divider |
+
+```okay
+// A tiny HUD built entirely from script. Attach to any object and press Play.
+// hp / paused persist across frames (script variables keep their value).
+ui_begin("HUD", 24, 24, 240, 150)
+ui_text("Health")
+ui_progress(hp / 100)
+if (ui_button("Heal")) { hp = 100 }
+ui_sameline()
+if (ui_button("Hurt")) { hp = hp - 10 }
+ui_separator()
+paused = ui_checkbox("Paused", paused)
+speed  = ui_slider("Speed", speed, 0, 10)
+ui_end()
+```
+
 ### Tweening (DOTween-style) & saves
 Every tween accepts an optional easing and an optional **on-complete** function
 name as its trailing argument(s).

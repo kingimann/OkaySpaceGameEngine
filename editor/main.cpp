@@ -12,6 +12,7 @@
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
+#include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #endif
 
 #include <algorithm>
@@ -1472,11 +1473,6 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
         if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
         if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
-        if (ImGui::MenuItem("Create Virtual Camera")) {
-            GameObject* g = ed.CreateEmpty("Virtual Camera");
-            g->AddComponent<VirtualCamera>();
-            ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
-        }
         ImGui::Separator();
         if (ImGui::BeginMenu("Player")) {           // ready-to-play premade players
             if (ImGui::MenuItem("Third Person")) {
@@ -1543,24 +1539,63 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Create Directional Light")) {
-            GameObject* go = ed.CreateEmpty("Directional Light");
-            go->AddComponent<Light>();
-            go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
-            ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
+        if (ImGui::BeginMenu("Light")) {           // every light type in one place
+            if (ImGui::MenuItem("Directional Light")) {
+                GameObject* go = ed.CreateEmpty("Directional Light");
+                go->AddComponent<Light>();
+                go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
+                ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
+            }
+            if (ImGui::MenuItem("Point Light")) {
+                GameObject* go = ed.CreateEmpty("Point Light");
+                auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
+                go->transform->localPosition = {0, 3, 0};
+                ed.Select(go); ConsoleLog("Created Point Light"); created = true;
+            }
+            if (ImGui::MenuItem("Spot Light")) {
+                GameObject* go = ed.CreateEmpty("Spot Light");
+                auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
+                go->transform->localPosition = {0, 5, 0};
+                go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
+                ed.Select(go); ConsoleLog("Created Spot Light"); created = true;
+            }
+            ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Create Point Light")) {
-            GameObject* go = ed.CreateEmpty("Point Light");
-            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
-            go->transform->localPosition = {0, 3, 0};
-            ed.Select(go); ConsoleLog("Created Point Light"); created = true;
-        }
-        if (ImGui::MenuItem("Create Spot Light")) {
-            GameObject* go = ed.CreateEmpty("Spot Light");
-            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
-            go->transform->localPosition = {0, 5, 0};
-            go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
-            ed.Select(go); ConsoleLog("Created Spot Light"); created = true;
+        if (ImGui::BeginMenu("Cinemachine")) {     // virtual cameras, brain & dolly rails
+            if (ImGui::MenuItem("Virtual Camera")) {
+                GameObject* g = ed.CreateEmpty("Virtual Camera");
+                g->AddComponent<VirtualCamera>();
+                ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A Cinemachine shot: where to stand, what to aim at, the lens and damping.");
+            if (ImGui::MenuItem("Cinemachine Brain")) {
+                // The brain drives the real camera from virtual cameras, so put it on
+                // the existing main camera if there is one; otherwise make a Camera for it.
+                GameObject* camGO = nullptr;
+                for (const auto& up : ed.scene().Objects())
+                    if (up->GetComponent<Camera>()) { camGO = up.get(); break; }
+                if (!camGO) { ed.CreateCamera(); camGO = ed.selected(); }
+                if (camGO && !camGO->GetComponent<CinemachineBrain>())
+                    camGO->AddComponent<CinemachineBrain>();
+                if (camGO) ed.Select(camGO);
+                ConsoleLog("Added Cinemachine Brain to the camera"); created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lives on the main camera and blends it between virtual cameras.");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Dolly Path")) {
+                GameObject* go = ed.CreateEmpty("Dolly Path");
+                auto* dp = go->AddComponent<DollyPath>();
+                dp->waypoints = { {-8, 2, 0}, {0, 2, 6}, {8, 2, 0} }; // a gentle arc
+                ed.Select(go); ConsoleLog("Created Dolly Path"); created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A smooth camera rail (Catmull-Rom spline through waypoints).");
+            if (ImGui::MenuItem("Dolly Cart")) {
+                GameObject* go = ed.CreateEmpty("Dolly Cart");
+                go->AddComponent<DollyCart>();
+                ed.Select(go); ConsoleLog("Created Dolly Cart (set its Path to a Dolly Path)"); created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Glides along a Dolly Path; set its Path to the path's name.");
+            ImGui::EndMenu();
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Create Particle System")) {
@@ -12309,6 +12344,15 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
+#ifdef OKAY_HAVE_OKAYUI
+    // Install an OkayUI-backed script UI bridge so a playing game's ui_* script
+    // builtins (ui_begin/ui_button/ui_slider/...) draw real OkayUI widgets right
+    // here in the editor during Play — the same code path the shipped player uses.
+    // The editor brackets each frame with OkayUI::BeginFrame()/EndFrame() below.
+    static okay::OkayUIScriptBridge g_editorUIBridge;
+    okay::SetScriptUI(&g_editorUIBridge);
+#endif
+
     // Optional GPU (OpenGL) 3D renderer on an ISOLATED hidden context, so the GPU
     // can rasterize the Scene view (hardware MSAA + depth) without touching the
     // editor's SDL_Renderer. If any step fails we silently keep the software path.
@@ -12416,8 +12460,9 @@ int main(int argc, char** argv) {
                 Input::FeedText(e.text.text);
             if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
                 Input::FeedMouseWheel((float)e.wheel.y);
-            // Feed the OkayUI demo's text field when ImGui isn't capturing the keyboard.
-            if (g_showTestUI && !ImGui::GetIO().WantTextInput) {
+            // Feed OkayUI text fields (Test UI demo or a playing game's ui_inputtext)
+            // when ImGui isn't capturing the keyboard.
+            if ((g_showTestUI || ed.isPlaying()) && !ImGui::GetIO().WantTextInput) {
                 if (e.type == SDL_TEXTINPUT)
                     SDL_strlcat(g_okayUITyped, e.text.text, sizeof(g_okayUITyped));
                 if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE)
@@ -12501,6 +12546,24 @@ int main(int argc, char** argv) {
         // The draws afterwards clear it again, so it's only live for this tick.
         if (ed.isPlaying() && SceneCamera(ed.scene()))
             SetEditorWorldUIProjector(ed, g_playCanvasSize, g_playPersp, /*gameView=*/true);
+
+#ifdef OKAY_HAVE_OKAYUI
+        // Open the OkayUI frame BEFORE the scene ticks, so a playing game's ui_*
+        // script calls record their widgets into this frame. The widgets (plus the
+        // optional Test UI demo panel) are flushed to the screen at render end via
+        // OkayUI::EndFrame(). One BeginFrame/EndFrame brackets the whole editor frame.
+        {
+            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            OkayUI::Input uin;
+            uin.mouseX = (float)mx; uin.mouseY = (float)my;
+            uin.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            uin.blocked = io.WantCaptureMouse;
+            uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
+            uin.backspace = g_okayUIBack;
+            OkayUI::SetFont(OkayUI::FontDefault());
+            OkayUI::BeginFrame(uin);
+        }
+#endif
 
         if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
         ed.TickServices(dt); // Steam callbacks + networking every frame
@@ -12618,17 +12681,11 @@ int main(int argc, char** argv) {
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
 #ifdef OKAY_HAVE_OKAYUI
-        // Demo: OkayUI renders here, AFTER ImGui, through the SAME SDL_Renderer — so
-        // it composites on top with no GL/D3D conflict. Input is gated on ImGui's
-        // mouse capture so clicks over editor panels aren't double-handled.
+        // Flush OkayUI here, AFTER ImGui, through the SAME SDL_Renderer — so it
+        // composites on top with no GL/D3D conflict. The frame was opened with
+        // BeginFrame() before ed.Tick(), so a playing game's ui_* script widgets are
+        // already recorded; the optional Test UI demo panel is appended below.
         if (g_showTestUI) {
-            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
-            OkayUI::Input uin;
-            uin.mouseX = (float)mx; uin.mouseY = (float)my;
-            uin.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-            uin.blocked = io.WantCaptureMouse;
-            uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
-            uin.backspace = g_okayUIBack;
             static bool  s_sound  = true;
             static float s_volume = 60.0f;
             static int   s_mode   = 0, s_quality = 1;
@@ -12639,7 +12696,6 @@ int main(int argc, char** argv) {
             // Written as a sequence of auto-layout calls — no manual coordinates. The
             // window is draggable by its title bar.
             OkayUI::SetFont(s_bold ? OkayUI::FontBold() : OkayUI::FontDefault());
-            OkayUI::BeginFrame(uin);
             OkayUI::Begin("Test UI", 24.0f, wy, 320.0f, 380.0f);
             OkayUI::BeginMenuBar();
             if (OkayUI::BeginMenu("File")) {
@@ -12672,11 +12728,13 @@ int main(int argc, char** argv) {
             OkayUI::SameLine();
             OkayUI::Button("Quit");
             OkayUI::End();
-            OkayUI::EndFrame(renderer);
-            // Keep SDL text input alive for the OkayUI field when ImGui isn't using it,
-            // so the text field receives SDL_TEXTINPUT events.
-            if (!io.WantTextInput) SDL_StartTextInput();
+            OkayUI::SetFont(OkayUI::FontDefault());
         }
+        // Flush the whole OkayUI frame (game-script widgets + demo) every frame.
+        OkayUI::EndFrame(renderer);
+        // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
+        // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
+        if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
 #endif
         SDL_RenderPresent(renderer);
 

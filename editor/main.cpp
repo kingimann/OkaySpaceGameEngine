@@ -1978,6 +1978,50 @@ static void DrawAssetIcon(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const AssetKind&
 }
 
 // Move an asset (file or folder) into a destination folder (drag-and-drop).
+// The Assets folder the Project panel is currently browsing — updated each frame by
+// DrawProject(). OS file drops (SDL_DROPFILE) and the Import button copy here, so an
+// imported file lands in the folder you're looking at. Empty until a project opens.
+std::string g_assetImportDir;
+
+// A friendly category for a file extension, for import logging / quick validation.
+// "etc" types (anything not recognized) still import — this is just for the message.
+static const char* ImportKindLabel(const std::string& extLower) {
+    if (extLower==".png"||extLower==".jpg"||extLower==".jpeg"||extLower==".bmp"||extLower==".tga"||extLower==".gif") return "texture";
+    if (extLower==".ttf"||extLower==".otf"||extLower==".fnt") return "font";
+    if (extLower==".wav"||extLower==".ogg"||extLower==".mp3"||extLower==".flac") return "audio";
+    if (extLower==".obj"||extLower==".gltf"||extLower==".glb"||extLower==".fbx") return "model";
+    if (extLower==".okay"||extLower==".lua"||extLower==".cs"||extLower==".okayvs") return "script";
+    return nullptr;
+}
+
+// Copy an external file into the project's Assets (into destDir, or its current import
+// dir). Picks a non-clashing name and returns the destination path (empty on failure).
+static std::string ImportAssetFile(const std::string& srcPath, std::filesystem::path destDir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path src(srcPath);
+    if (srcPath.empty() || !fs::exists(src, ec) || fs::is_directory(src, ec)) {
+        ConsoleLog("Import failed: not a file — " + srcPath, 2);
+        return {};
+    }
+    if (destDir.empty() || !fs::is_directory(destDir, ec)) {
+        // Fall back to the tracked Assets dir, then the current directory's Assets.
+        destDir = g_assetImportDir.empty() ? fs::path("Assets") : fs::path(g_assetImportDir);
+        fs::create_directories(destDir, ec);
+        if (!fs::is_directory(destDir, ec)) { ConsoleLog("Import failed: no Assets folder to import into.", 2); return {}; }
+    }
+    // Choose a unique destination name: "<stem>.ext", then "<stem> 2.ext", ...
+    std::string stem = src.stem().string(), ext = src.extension().string();
+    fs::path dst = destDir / (stem + ext);
+    for (int n = 2; fs::exists(dst, ec); ++n) dst = destDir / (stem + " " + std::to_string(n) + ext);
+    fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+    if (ec) { ConsoleLog("Import failed: " + ec.message(), 2); return {}; }
+    const char* kind = ImportKindLabel(Lower(ext));
+    ConsoleLog("Imported " + (kind ? std::string(kind) + " " : std::string()) + dst.filename().string()
+               + " -> " + destDir.filename().string());
+    return dst.string();
+}
+
 static void MoveAssetInto(const std::string& src, const std::filesystem::path& destDir) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -2042,6 +2086,8 @@ void DrawProject(EditorState& ed) {
         std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
     }
     fs::path dir(dirBuf);
+    // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
+    g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
     // ---- Top bar: breadcrumb + search --------------------------------
     if (ImGui::SmallButton("Assets")) std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
@@ -2121,7 +2167,27 @@ void DrawProject(EditorState& ed) {
         okay::Scene empty("New Scene");
         if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
     }
+    ImGui::SameLine();
+    // Import an external file (texture / font / audio / model / ...) into this folder.
+    static char s_importPath[512] = "";
+    if (ImGui::SmallButton("Import...")) ImGui::OpenPopup("Import Asset");
     ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy a texture, font, audio clip, model, etc. into this folder.\nTip: you can also drag files from your file explorer onto the window.");
+    if (ImGui::BeginPopupModal("Import Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Path to a file on disk to copy into:");
+        ImGui::TextDisabled("%s", dir.string().c_str());
+        ImGui::SetNextItemWidth(420);
+        bool enter = ImGui::InputText("##importpath", s_importPath, sizeof(s_importPath),
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::TextDisabled("Textures (.png/.jpg/.bmp/.tga), fonts (.ttf/.otf), audio (.wav/.ogg/.mp3), models (.obj/.gltf), ...");
+        if ((ImGui::Button("Import", ImVec2(120, 0)) || enter) && s_importPath[0]) {
+            std::string out = ImportAssetFile(s_importPath, dir);
+            if (!out.empty()) { selected = out; s_importPath[0] = '\0'; ImGui::CloseCurrentPopup(); }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) { s_importPath[0] = '\0'; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("(F2 or right-click to Rename)");
 
@@ -12338,6 +12404,7 @@ int main(int argc, char** argv) {
     SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
+    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);  // accept OS file drops (asset import)
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -12476,6 +12543,12 @@ int main(int argc, char** argv) {
                     SDL_strlcat(g_okayUITyped, e.text.text, sizeof(g_okayUITyped));
                 if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE)
                     g_okayUIBack = true;
+            }
+            // Import by dragging files from the OS file explorer onto the window: copy
+            // each dropped file into the Assets folder the Project panel is browsing.
+            if (e.type == SDL_DROPFILE && e.drop.file) {
+                ImportAssetFile(e.drop.file, std::filesystem::path(g_assetImportDir));
+                SDL_free(e.drop.file);
             }
         }
 

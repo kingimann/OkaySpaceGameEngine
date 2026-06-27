@@ -1040,13 +1040,28 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (mm->playerArrow ? 1 : 0) << " " << (mm->clampBlips ? 1 : 0) << " "
             << (mm->showGrid ? 1 : 0) << " "
             << mm->gridColor.r << " " << mm->gridColor.g << " " << mm->gridColor.b << " " << mm->gridColor.a << " "
-            << mm->gridSpacing << "\n";
+            << mm->gridSpacing
+            // --- appended (v3): GTA-style custom map ---
+            << " " << Quote(mm->mapTexture) << " " << mm->mapWorldSize
+            << " " << mm->mapWorldCenter.x << " " << mm->mapWorldCenter.y
+            << " " << (int)(unsigned char)mm->fullscreenKey << " " << mm->fullscreenZoom
+            << " " << mm->fullscreenFrac
+            // --- appended (v4): zoom keys + waypoint markers ---
+            << " " << (int)(unsigned char)mm->zoomInKey << " " << (int)(unsigned char)mm->zoomOutKey
+            << " " << mm->minZoom << " " << mm->maxZoom << " " << mm->zoomStep
+            << " " << mm->markers.size();
+        for (const auto& mk : mm->markers)
+            out << " " << mk.world.x << " " << mk.world.y << " "
+                << mk.color.r << " " << mk.color.g << " " << mk.color.b << " " << mk.color.a << " " << mk.size;
+        out << "\n";
     }
     if (auto* bl = go->GetComponent<MinimapBlip>()) {
         out << "  minimapblip " << bl->color.r << " " << bl->color.g << " " << bl->color.b << " " << bl->color.a << " "
             << bl->size << " " << (bl->square ? 1 : 0) << " "
             // --- appended (v2): shape enum + heading rotation ---
-            << (int)bl->shape << " " << (bl->rotateWithObject ? 1 : 0) << "\n";
+            << (int)bl->shape << " " << (bl->rotateWithObject ? 1 : 0)
+            // --- appended (v3): icon texture ---
+            << " " << Quote(bl->icon) << "\n";
     }
     if (auto* cr = go->GetComponent<Crosshair>()) {
         out << "  crosshair " << cr->position.x << " " << cr->position.y << " "
@@ -2670,6 +2685,30 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         mm->circular = (ci != 0); mm->rotateWithTarget = (rt != 0);
                         mm->playerArrow = (pa != 0); mm->clampBlips = (cb != 0);
                         mm->showGrid = (sg != 0); mm->gridColor = gc;
+                        // v3: GTA-style custom map (starts with a quoted texture path).
+                        in >> std::ws;
+                        if (in.peek() == '"') {
+                            mm->mapTexture = ReadQuoted(in);
+                            int fk = 'm';
+                            in >> mm->mapWorldSize >> mm->mapWorldCenter.x >> mm->mapWorldCenter.y
+                               >> fk >> mm->fullscreenZoom >> mm->fullscreenFrac;
+                            mm->fullscreenKey = (char)fk;
+                            // v4: zoom keys + waypoint markers.
+                            in >> std::ws;
+                            int pk7 = in.peek();
+                            if (std::isdigit(pk7) || pk7 == '-' || pk7 == '+' || pk7 == '.') {
+                                int zi = 0, zo = 0; std::size_t mn = 0;
+                                in >> zi >> zo >> mm->minZoom >> mm->maxZoom >> mm->zoomStep >> mn;
+                                mm->zoomInKey = (char)zi; mm->zoomOutKey = (char)zo;
+                                mm->markers.clear();
+                                for (std::size_t mi = 0; mi < mn; ++mi) {
+                                    Minimap::Marker mk;
+                                    in >> mk.world.x >> mk.world.y
+                                       >> mk.color.r >> mk.color.g >> mk.color.b >> mk.color.a >> mk.size;
+                                    mm->markers.push_back(mk);
+                                }
+                            }
+                        }
                     }
                 } else if (field == "minimapblip") {
                     auto* bl = go->AddComponent<MinimapBlip>();
@@ -2685,6 +2724,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> sh >> rot;
                         bl->shape = (MinimapBlip::Shape)sh;
                         bl->rotateWithObject = (rot != 0);
+                        in >> std::ws;
+                        if (in.peek() == '"') bl->icon = ReadQuoted(in);   // v3: icon texture
                     }
                 } else if (field == "crosshair") {
                     auto* cr = go->AddComponent<Crosshair>();

@@ -66,6 +66,28 @@ int main() {
         // Corner-ish: dx=45,dy=45 -> dist ~63.6 > radius 50.
         CHECK(Minimap::WorldToMapR(rect, center, Vec3{45.0f, 0, -45.0f}, W, H, 0.0f, x, y));
         CHECK(!Minimap::WorldToMapR(circ, center, Vec3{45.0f, 0, -45.0f}, W, H, 0.0f, x, y));
+
+        // wpp override (used by the fullscreen pause map) doubles the visible range.
+        Minimap z; z.worldPerPixel = 1.0f;
+        float x2, y2;
+        CHECK(Minimap::WorldToMapR(z, center, Vec3{20.0f, 0, 0}, W, H, 0.0f, x2, y2, 2.0f));
+        CHECK_NEAR(x2, W * 0.5f + 10.0f, 1e-2f);   // 20 world / 2 wpp = 10 px
+    }
+
+    // --- GTA-style custom map: UV window pans with the centre -----------
+    {
+        Minimap m; m.mapTexture = "world.png"; m.mapWorldSize = 100.0f;
+        m.mapWorldCenter = {0.0f, 0.0f}; m.useXZ = true;
+        CHECK(m.HasMap());
+        float u0, v0, u1, v1;
+        // Centre at world origin, 100x100 px panel, wpp 1 -> visible window is the
+        // central 100 world units = the full texture (u:0..1).
+        Minimap::MapSrcUV(m, Vec3{0, 0, 0}, 100.0f, 100.0f, 1.0f, u0, v0, u1, v1);
+        CHECK_NEAR(u0, 0.0f, 1e-3f); CHECK_NEAR(u1, 1.0f, 1e-3f);
+        CHECK_NEAR(v0, 0.0f, 1e-3f); CHECK_NEAR(v1, 1.0f, 1e-3f);
+        // Pan east by 25 world: the UV window shifts right by 0.25.
+        Minimap::MapSrcUV(m, Vec3{25.0f, 0, 0}, 100.0f, 100.0f, 1.0f, u0, v0, u1, v1);
+        CHECK_NEAR(u0, 0.25f, 1e-3f); CHECK_NEAR(u1, 1.25f, 1e-3f);
     }
 
     // --- Minimap + MinimapBlip round-trip through serialization ----------
@@ -91,6 +113,16 @@ int main() {
         mm->showGrid = true;
         mm->gridColor = Color::FromBytes(60, 70, 80, 100);
         mm->gridSpacing = 32.0f;
+        mm->mapTexture = "maps/city.png";
+        mm->mapWorldSize = 250.0f;
+        mm->mapWorldCenter = {12.5f, -7.5f};
+        mm->fullscreenKey = 'n';
+        mm->fullscreenZoom = 4.0f;
+        mm->fullscreenFrac = 0.9f;
+        mm->zoomInKey = '+'; mm->zoomOutKey = '-';
+        mm->minZoom = 0.1f; mm->maxZoom = 20.0f; mm->zoomStep = 1.25f;
+        mm->markers.push_back({{10.0f, 20.0f}, Color::FromBytes(0, 255, 0), 7.0f});
+        mm->markers.push_back({{-30.0f, 5.0f}, Color::FromBytes(255, 0, 0), 5.0f});
 
         GameObject* enemy = s.CreateGameObject("Enemy");
         auto* bl = enemy->AddComponent<MinimapBlip>();
@@ -99,6 +131,7 @@ int main() {
         bl->square = false;
         bl->shape = MinimapBlip::Shape::Arrow;
         bl->rotateWithObject = true;
+        bl->icon = "icons/enemy.png";
 
         std::string text = SceneSerializer::Serialize(s);
         Scene loaded("loaded");
@@ -125,6 +158,23 @@ int main() {
             CHECK(lm->clampBlips);
             CHECK(lm->showGrid);
             CHECK_NEAR(lm->gridSpacing, 32.0f, 1e-3f);
+            CHECK(lm->mapTexture == "maps/city.png");
+            CHECK_NEAR(lm->mapWorldSize, 250.0f, 1e-3f);
+            CHECK_NEAR(lm->mapWorldCenter.x, 12.5f, 1e-3f);
+            CHECK_NEAR(lm->mapWorldCenter.y, -7.5f, 1e-3f);
+            CHECK(lm->fullscreenKey == 'n');
+            CHECK_NEAR(lm->fullscreenZoom, 4.0f, 1e-3f);
+            CHECK_NEAR(lm->fullscreenFrac, 0.9f, 1e-3f);
+            CHECK(lm->zoomInKey == '+'); CHECK(lm->zoomOutKey == '-');
+            CHECK_NEAR(lm->maxZoom, 20.0f, 1e-3f);
+            CHECK_NEAR(lm->zoomStep, 1.25f, 1e-3f);
+            CHECK(lm->markers.size() == 2);
+            if (lm->markers.size() == 2) {
+                CHECK_NEAR(lm->markers[0].world.x, 10.0f, 1e-3f);
+                CHECK_NEAR(lm->markers[0].world.y, 20.0f, 1e-3f);
+                CHECK_NEAR(lm->markers[0].size, 7.0f, 1e-3f);
+                CHECK_NEAR(lm->markers[1].world.x, -30.0f, 1e-3f);
+            }
         }
 
         GameObject* le = loaded.Find("Enemy");
@@ -134,7 +184,26 @@ int main() {
         if (lb) {
             CHECK_NEAR(lb->size, 5.0f, 1e-3f);
             CHECK(lb->square == false);
+            CHECK(lb->shape == MinimapBlip::Shape::Arrow);
+            CHECK(lb->rotateWithObject);
+            CHECK(lb->icon == "icons/enemy.png");
         }
+    }
+
+    // --- Runtime zoom keys nudge worldPerPixel within [min,max] ----------
+    {
+        Scene s("zoom");
+        auto* mm = s.CreateGameObject("HUD")->AddComponent<Minimap>();
+        mm->worldPerPixel = 1.0f; mm->minZoom = 0.5f; mm->maxZoom = 4.0f;
+        mm->zoomStep = 2.0f; mm->zoomInKey = 'q'; mm->zoomOutKey = 'e';
+        Input::FeedKeys({'q'}); mm->Update(0.016f);          // zoom in: /2 -> 0.5
+        CHECK_NEAR(mm->worldPerPixel, 0.5f, 1e-3f);
+        Input::FeedKeys({'q'}); mm->Update(0.016f);          // clamp at minZoom 0.5
+        CHECK_NEAR(mm->worldPerPixel, 0.5f, 1e-3f);
+        Input::FeedKeys({}); // release
+        Input::FeedKeys({'e'}); mm->Update(0.016f);          // zoom out: *2 -> 1.0
+        CHECK_NEAR(mm->worldPerPixel, 1.0f, 1e-3f);
+        Input::FeedKeys({});
     }
 
     // --- Crosshair round-trip --------------------------------------------

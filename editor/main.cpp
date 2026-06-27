@@ -10215,6 +10215,54 @@ void DrawInspector(EditorState& ed) {
                 float gc[4] = {mm->gridColor.r, mm->gridColor.g, mm->gridColor.b, mm->gridColor.a};
                 if (ImGui::ColorEdit4("Grid Color##umm", gc)) { mm->gridColor = {gc[0], gc[1], gc[2], gc[3]}; ed.dirty = true; }
             }
+            ImGui::SeparatorText("Custom Map (GTA-style)");
+            char mt[256];
+            std::strncpy(mt, mm->mapTexture.c_str(), sizeof(mt) - 1);
+            mt[sizeof(mt) - 1] = '\0';
+            if (ImGui::InputText("Map Image##umm", mt, sizeof(mt))) { mm->mapTexture = mt; ed.dirty = true; }
+            if (AcceptAssetPathField(mm->mapTexture)) ed.dirty = true;   // drop from Project
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A world-map image drawn under the blips. Renders north-up; the player arrow shows facing.");
+            if (mm->HasMap()) {
+                if (ImGui::DragFloat("World Size##umm", &mm->mapWorldSize, 1.0f, 1.0f, 1000000.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units the full image spans (square).");
+                float mc[2] = {mm->mapWorldCenter.x, mm->mapWorldCenter.y};
+                if (ImGui::DragFloat2("World Center##umm", mc, 0.5f)) { mm->mapWorldCenter = {mc[0], mc[1]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("World (east, north) at the image's centre.");
+            }
+            char fk[2] = {mm->fullscreenKey, 0};
+            if (ImGui::InputText("Fullscreen Key##umm", fk, sizeof(fk))) { mm->fullscreenKey = fk[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to toggle the big pause-map (blank = off).");
+            if (ImGui::DragFloat("Fullscreen Zoom##umm", &mm->fullscreenZoom, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Fullscreen Fill##umm", &mm->fullscreenFrac, 0.01f, 0.2f, 1.0f)) ed.dirty = true;
+            ImGui::SeparatorText("Zoom Keys");
+            char zi[2] = {mm->zoomInKey, 0};
+            if (ImGui::InputText("Zoom In##umm", zi, sizeof(zi))) { mm->zoomInKey = zi[0]; ed.dirty = true; }
+            ImGui::SameLine();
+            char zo[2] = {mm->zoomOutKey, 0};
+            if (ImGui::InputText("Zoom Out##umm", zo, sizeof(zo))) { mm->zoomOutKey = zo[0]; ed.dirty = true; }
+            if (ImGui::DragFloat("Min Zoom##umm", &mm->minZoom, 0.01f, 0.01f, 1000.0f)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::DragFloat("Max Zoom##umm", &mm->maxZoom, 0.05f, 0.01f, 100000.0f)) ed.dirty = true;
+            ImGui::SeparatorText("Waypoints");
+            if (ImGui::TreeNode("Markers##umm")) {
+                int del = -1;
+                for (std::size_t i = 0; i < mm->markers.size(); ++i) {
+                    ImGui::PushID((int)i);
+                    auto& mk = mm->markers[i];
+                    float wp[2] = {mk.world.x, mk.world.y};
+                    if (ImGui::DragFloat2("World##mk", wp, 0.5f)) { mk.world = {wp[0], wp[1]}; ed.dirty = true; }
+                    ImGui::SameLine();
+                    float mc[4] = {mk.color.r, mk.color.g, mk.color.b, mk.color.a};
+                    if (ImGui::ColorEdit4("##mkc", mc, ImGuiColorEditFlags_NoInputs)) { mk.color = {mc[0],mc[1],mc[2],mc[3]}; ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X##mkdel")) del = (int)i;
+                    if (ImGui::DragFloat("Size##mk", &mk.size, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
+                    ImGui::PopID();
+                }
+                if (del >= 0) { mm->markers.erase(mm->markers.begin() + del); ed.dirty = true; }
+                if (ImGui::SmallButton("+ Add Marker##umm")) { mm->markers.push_back({}); ed.dirty = true; }
+                ImGui::TreePop();
+            }
             ImGui::TextDisabled("add a Minimap Blip to objects to plot them");
             if (ImGui::SmallButton("Remove##umm")) toRemove = mm;
         }
@@ -10233,6 +10281,12 @@ void DrawInspector(EditorState& ed) {
             }
             if (bl->shape == MinimapBlip::Shape::Triangle || bl->shape == MinimapBlip::Shape::Arrow)
                 if (ImGui::Checkbox("Face Heading##umb", &bl->rotateWithObject)) ed.dirty = true;
+            char ic[256];
+            std::strncpy(ic, bl->icon.c_str(), sizeof(ic) - 1);
+            ic[sizeof(ic) - 1] = '\0';
+            if (ImGui::InputText("Icon##umb", ic, sizeof(ic))) { bl->icon = ic; ed.dirty = true; }
+            if (AcceptAssetPathField(bl->icon)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional icon image; overrides the shape.");
             ImGui::TextDisabled("appears on every Minimap");
             if (ImGui::SmallButton("Remove##umb")) toRemove = bl;
         }
@@ -11368,6 +11422,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!mm || !up->active || UIHidden(up.get())) continue;
         Vec2 o, sz; GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz);
         if (svCull(up.get(), o, sz)) continue;
+        // GTA-style fullscreen pause map: re-centre + enlarge over the canvas.
+        float mmWpp = mm->worldPerPixel;
+        if (mm->fullscreen) {
+            float frac = mm->fullscreenFrac > 0.1f ? mm->fullscreenFrac : 0.82f;
+            float fw = canvasSize.x * frac, fh = canvasSize.y * frac;
+            o = Vec2{(canvasSize.x - fw) * 0.5f, (canvasSize.y - fh) * 0.5f}; sz = Vec2{fw, fh};
+            mmWpp = mm->worldPerPixel * (mm->fullscreenZoom > 0.01f ? mm->fullscreenZoom : 1.0f);
+        }
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
         float cxp = a.x + sz.x * 0.5f, cyp = a.y + sz.y * 0.5f;
@@ -11380,6 +11442,25 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(a, b, ToColor(mm->background));
             dl->AddRect(a, b, ToColor(mm->border), 0.0f, 0, bw);
         }
+        // Center world position + heading of the target.
+        Vec3 center{0,0,0};
+        float targetHeading = 0.0f;
+        if (!mm->target.empty()) {
+            if (GameObject* tg = ed.scene().Find(mm->target); tg && tg->transform) {
+                center = tg->transform->Position();
+                targetHeading = Minimap::HeadingOf(tg->transform->Forward(), mm->useXZ);
+            }
+        }
+        // A custom map renders north-up (GTA pause-map style).
+        float mapHeading = (!mm->HasMap() && mm->rotateWithTarget) ? targetHeading : 0.0f;
+        // GTA-style world-map image: pan/zoom a sub-rectangle under the blips.
+        if (mm->HasMap()) {
+            if (SDL_Texture* mtex = GetThumb(mm->mapTexture)) {
+                float u0, v0, u1, v1;
+                Minimap::MapSrcUV(*mm, center, sz.x, sz.y, mmWpp, u0, v0, u1, v1);
+                dl->AddImage((ImTextureID)mtex, a, b, ImVec2(u0, v0), ImVec2(u1, v1));
+            }
+        }
         // Reference grid (rectangular maps only).
         if (mm->showGrid && !mm->circular && mm->gridSpacing > 1.0f) {
             ImU32 gc = ToColor(mm->gridColor);
@@ -11390,15 +11471,6 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             for (float gy = sz.y * 0.5f; gy < sz.y; gy += mm->gridSpacing) {
                 dl->AddLine(ImVec2(a.x, a.y + gy), ImVec2(b.x, a.y + gy), gc);
                 dl->AddLine(ImVec2(a.x, a.y + sz.y - gy), ImVec2(b.x, a.y + sz.y - gy), gc);
-            }
-        }
-        // Center world position + heading of the target (for heading-up rotation).
-        Vec3 center{0,0,0};
-        float mapHeading = 0.0f;
-        if (!mm->target.empty()) {
-            if (GameObject* tg = ed.scene().Find(mm->target); tg && tg->transform) {
-                center = tg->transform->Position();
-                if (mm->rotateWithTarget) mapHeading = Minimap::HeadingOf(tg->transform->Forward(), mm->useXZ);
             }
         }
         // Draw a marker (square/dot/triangle/arrow), optionally rotated, at (px,py).
@@ -11432,7 +11504,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             auto* bl = bp->GetComponent<MinimapBlip>();
             if (!bl || !bp->transform) continue;
             float mx, my;
-            bool inside = Minimap::WorldToMapR(*mm, center, bp->transform->Position(), sz.x, sz.y, mapHeading, mx, my);
+            bool inside = Minimap::WorldToMapR(*mm, center, bp->transform->Position(), sz.x, sz.y, mapHeading, mx, my, mmWpp);
             if (!inside) {
                 if (!mm->clampBlips) continue;
                 float dx = mx - sz.x * 0.5f, dy = my - sz.y * 0.5f;
@@ -11441,14 +11513,36 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 mx = sz.x * 0.5f + dx / len * rr; my = sz.y * 0.5f + dy / len * rr;
             }
             float half = bl->size > 0 ? bl->size : mm->blipSize;
-            float ang = bl->rotateWithObject ? (Minimap::HeadingOf(bp->transform->Forward(), mm->useXZ) - mapHeading) : 0.0f;
-            drawBlip(a.x + mx, a.y + my, half, ToColor(bl->color), bl->shape, ang);
+            SDL_Texture* bicon = bl->icon.empty() ? nullptr : GetThumb(bl->icon);
+            if (bicon) {
+                dl->AddImage((ImTextureID)bicon, ImVec2(a.x+mx-half, a.y+my-half), ImVec2(a.x+mx+half, a.y+my+half));
+            } else {
+                float ang = bl->rotateWithObject ? (Minimap::HeadingOf(bp->transform->Forward(), mm->useXZ) - mapHeading) : 0.0f;
+                drawBlip(a.x + mx, a.y + my, half, ToColor(bl->color), bl->shape, ang);
+            }
         }
-        // The target marker at the map center (arrow points up when heading-up).
+        // Waypoint markers (GTA POIs): fixed world points drawn as diamonds.
+        for (const auto& mk : mm->markers) {
+            float mx, my;
+            bool inside = Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mk.world), sz.x, sz.y, mapHeading, mx, my, mmWpp);
+            if (!inside) {
+                if (!mm->clampBlips) continue;
+                float dx = mx - sz.x*0.5f, dy = my - sz.y*0.5f;
+                float len = std::sqrt(dx*dx + dy*dy); if (len < 1e-3f) continue;
+                float rr = (mm->circular ? radius : (sz.x < sz.y ? sz.x : sz.y) * 0.5f) - mk.size;
+                mx = sz.x*0.5f + dx/len*rr; my = sz.y*0.5f + dy/len*rr;
+            }
+            float px = a.x + mx, py = a.y + my, h = mk.size; ImU32 c = ToColor(mk.color);
+            dl->AddTriangleFilled(ImVec2(px, py-h), ImVec2(px+h, py), ImVec2(px, py+h), c);
+            dl->AddTriangleFilled(ImVec2(px, py-h), ImVec2(px-h, py), ImVec2(px, py+h), c);
+        }
+        // The target marker at the map center (arrow shows facing; GTA north-up maps
+        // spin the arrow instead of the map).
         {
             float half = mm->blipSize;
+            float selfAng = targetHeading - mapHeading;
             if (mm->playerArrow)
-                drawBlip(cxp, cyp, half * 1.4f, ToColor(mm->targetColor), MinimapBlip::Shape::Arrow, 0.0f);
+                drawBlip(cxp, cyp, half * 1.4f, ToColor(mm->targetColor), MinimapBlip::Shape::Arrow, selfAng);
             else
                 dl->AddRectFilled(ImVec2(cxp - half, cyp - half), ImVec2(cxp + half, cyp + half), ToColor(mm->targetColor));
         }
@@ -14280,6 +14374,17 @@ int main(int argc, char** argv) {
         Uint64 now = SDL_GetPerformanceCounter();
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
+
+        // Edit-mode particle preview (Unity-style scene-view preview): simulate
+        // emitters so the effect is visible without pressing Play. During Play the
+        // normal scene tick drives them, so only do this while stopped.
+        if (!ed.isPlaying()) {
+            float pdt = dt > 0.05f ? 0.05f : dt;   // clamp so a hitch doesn't burst-spawn
+            for (const auto& up : ed.scene().Objects())
+                if (up)
+                    if (auto* ps = up->GetComponent<okay::ParticleSystem>())
+                        if (ps->playing) ps->Update(pdt);
+        }
 
         // While Play is active, feed real keyboard/mouse/gamepad into the engine
         // Input so scripts and the playable templates respond exactly like they do

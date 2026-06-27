@@ -1645,6 +1645,14 @@ int main(int argc, char** argv) {
             if (!mm || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());
             Vec2 o, sz; if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
+            // GTA-style fullscreen pause map: re-centre + enlarge, and zoom out.
+            float wpp = mm->worldPerPixel;
+            if (mm->fullscreen) {
+                float frac = mm->fullscreenFrac > 0.1f ? mm->fullscreenFrac : 0.82f;
+                float fw = w * frac, fh = h * frac;
+                o = Vec2{(w - fw) * 0.5f, (h - fh) * 0.5f}; sz = Vec2{fw, fh};
+                wpp = mm->worldPerPixel * (mm->fullscreenZoom > 0.01f ? mm->fullscreenZoom : 1.0f);
+            }
             SDL_Rect box{(int)o.x, (int)o.y, (int)sz.x, (int)sz.y};
             int cx = (int)(o.x + sz.x * 0.5f), cy = (int)(o.y + sz.y * 0.5f);
             int radius = (int)((sz.x < sz.y ? sz.x : sz.y) * 0.5f);
@@ -1663,6 +1671,29 @@ int main(int argc, char** argv) {
                 SDL_RenderFillRect(renderer, &box);
             }
             SDL_RenderSetClipRect(renderer, &box);
+            // Center world position + heading of the target.
+            Vec3 center{0,0,0};
+            float targetHeading = 0.0f;
+            if (!mm->target.empty()) {
+                if (GameObject* tg = scene.Find(mm->target); tg && tg->transform) {
+                    center = tg->transform->Position();
+                    targetHeading = Minimap::HeadingOf(tg->transform->Forward(), mm->useXZ);
+                }
+            }
+            // A custom map renders north-up (GTA pause-map style); a plain radar can
+            // spin with the target when rotateWithTarget is on.
+            float mapHeading = (!mm->HasMap() && mm->rotateWithTarget) ? targetHeading : 0.0f;
+            // GTA-style world-map image: pan/zoom a sub-rectangle under the blips.
+            if (mm->HasMap()) {
+                if (SDL_Texture* mtex = GetTexture(renderer, mm->mapTexture, baseDir, textureCache)) {
+                    int tw = 0, th = 0; SDL_QueryTexture(mtex, nullptr, nullptr, &tw, &th);
+                    float u0, v0, u1, v1;
+                    Minimap::MapSrcUV(*mm, center, sz.x, sz.y, wpp, u0, v0, u1, v1);
+                    SDL_Rect src{(int)(u0*tw), (int)(v0*th), (int)((u1-u0)*tw), (int)((v1-v0)*th)};
+                    SDL_SetTextureAlphaMod(mtex, (Uint8)(255*op));
+                    SDL_RenderCopy(renderer, mtex, &src, &box);
+                }
+            }
             // Reference grid (rectangular maps only).
             if (mm->showGrid && !mm->circular && mm->gridSpacing > 1.0f) {
                 SDL_SetRenderDrawColor(renderer, (Uint8)(mm->gridColor.r*255), (Uint8)(mm->gridColor.g*255),
@@ -1674,15 +1705,6 @@ int main(int argc, char** argv) {
                 for (float gy = sz.y*0.5f; gy < sz.y; gy += mm->gridSpacing) {
                     SDL_RenderDrawLine(renderer, box.x, (int)(o.y+gy), box.x+box.w, (int)(o.y+gy));
                     SDL_RenderDrawLine(renderer, box.x, (int)(o.y+sz.y-gy), box.x+box.w, (int)(o.y+sz.y-gy));
-                }
-            }
-            // Center world position + heading of the target (for heading-up rotation).
-            Vec3 center{0,0,0};
-            float mapHeading = 0.0f;
-            if (!mm->target.empty()) {
-                if (GameObject* tg = scene.Find(mm->target); tg && tg->transform) {
-                    center = tg->transform->Position();
-                    if (mm->rotateWithTarget) mapHeading = Minimap::HeadingOf(tg->transform->Forward(), mm->useXZ);
                 }
             }
             // Draw a marker (square/dot/triangle/arrow) at (px,py).
@@ -1718,7 +1740,7 @@ int main(int argc, char** argv) {
                 auto* bl = bp->GetComponent<MinimapBlip>();
                 if (!bl || !bp->transform) continue;
                 float mx, my;
-                bool inside = Minimap::WorldToMapR(*mm, center, bp->transform->Position(), sz.x, sz.y, mapHeading, mx, my);
+                bool inside = Minimap::WorldToMapR(*mm, center, bp->transform->Position(), sz.x, sz.y, mapHeading, mx, my, wpp);
                 if (!inside) {
                     if (!mm->clampBlips) continue;
                     float dx = mx - sz.x*0.5f, dy = my - sz.y*0.5f;
@@ -1729,16 +1751,45 @@ int main(int argc, char** argv) {
                 int half = (int)(bl->size > 0 ? bl->size : mm->blipSize);
                 SDL_Color col{(Uint8)(bl->color.r*255), (Uint8)(bl->color.g*255),
                               (Uint8)(bl->color.b*255), (Uint8)(bl->color.a*255*op)};
-                float ang = bl->rotateWithObject ? (Minimap::HeadingOf(bp->transform->Forward(), mm->useXZ) - mapHeading) : 0.0f;
-                drawBlip(o.x + mx, o.y + my, half, col, bl->shape, ang);
+                SDL_Texture* bicon = bl->icon.empty() ? nullptr : GetTexture(renderer, bl->icon, baseDir, textureCache);
+                if (bicon) {
+                    SDL_SetTextureAlphaMod(bicon, (Uint8)(255*op));
+                    SDL_Rect dr{(int)(o.x+mx)-half, (int)(o.y+my)-half, half*2, half*2};
+                    SDL_RenderCopy(renderer, bicon, nullptr, &dr);
+                } else {
+                    float ang = bl->rotateWithObject ? (Minimap::HeadingOf(bp->transform->Forward(), mm->useXZ) - mapHeading) : 0.0f;
+                    drawBlip(o.x + mx, o.y + my, half, col, bl->shape, ang);
+                }
+            }
+            // Waypoint markers (GTA POIs): fixed world points drawn as diamonds.
+            for (const auto& mk : mm->markers) {
+                float mx, my;
+                bool inside = Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mk.world), sz.x, sz.y, mapHeading, mx, my, wpp);
+                if (!inside) {
+                    if (!mm->clampBlips) continue;
+                    float dx = mx - sz.x*0.5f, dy = my - sz.y*0.5f;
+                    float len = std::sqrt(dx*dx + dy*dy); if (len < 1e-3f) continue;
+                    float rr = (mm->circular ? radius : (sz.x < sz.y ? sz.x : sz.y) * 0.5f) - mk.size;
+                    mx = sz.x*0.5f + dx/len*rr; my = sz.y*0.5f + dy/len*rr;
+                }
+                SDL_Color col{(Uint8)(mk.color.r*255), (Uint8)(mk.color.g*255),
+                              (Uint8)(mk.color.b*255), (Uint8)(mk.color.a*255*op)};
+                float px = o.x + mx, py = o.y + my; int h = (int)mk.size;
+                SDL_Point top{(int)px,(int)(py-h)}, rgt{(int)(px+h),(int)py},
+                          bot{(int)px,(int)(py+h)}, lft{(int)(px-h),(int)py};
+                MMFillTriangle(renderer, top, rgt, bot, col);
+                MMFillTriangle(renderer, top, lft, bot, col);
             }
             // The target marker at the map center.
             {
                 int half = (int)(mm->blipSize);
                 SDL_Color col{(Uint8)(mm->targetColor.r*255), (Uint8)(mm->targetColor.g*255),
                               (Uint8)(mm->targetColor.b*255), (Uint8)(mm->targetColor.a*255*op)};
+                // The arrow shows the target's facing relative to the map's rotation
+                // (north-up map => the arrow itself spins, GTA-style).
+                float selfAng = targetHeading - mapHeading;
                 if (mm->playerArrow)
-                    drawBlip((float)cx, (float)cy, (int)(half*1.4f), col, MinimapBlip::Shape::Arrow, 0.0f);
+                    drawBlip((float)cx, (float)cy, (int)(half*1.4f), col, MinimapBlip::Shape::Arrow, selfAng);
                 else
                     drawBlip((float)cx, (float)cy, half, col, MinimapBlip::Shape::Square, 0.0f);
             }

@@ -85,29 +85,32 @@ public:
         // Mouse-right orbits right, mouse-up looks up — same convention as the
         // first/third-person controllers (yaw decreases as the mouse moves right).
         Vec2 mp = Input::MousePosition();
-        if (m_haveMouse) {
+        bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
+        if (m_haveMouse && !uiBlocked) {
             yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;
             pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
-        m_lastMouse = mp; m_haveMouse = true;
+        // Drop the baseline while a bag is open (locked/free mouse space switch) so the
+        // camera doesn't snap on the first frame after the panel closes.
+        m_lastMouse = mp; m_haveMouse = !uiBlocked;
 
         // ---- Aim blend (right mouse) ----
-        m_aiming = Input::GetMouseButton(aimButton);
+        m_aiming = !uiBlocked && Input::GetMouseButton(aimButton);
         float aimT = 1.0f - std::exp(-aimSpeed * dt);
         m_aim += ((m_aiming ? 1.0f : 0.0f) - m_aim) * aimT;
 
-        // ---- Fire (left mouse) ----
+        // ---- Fire (left mouse) ----  (a click on an open bag shouldn't shoot)
         m_fireCooldown = Mathf::Max(0.0f, m_fireCooldown - dt);
-        bool wantFire = autoFire ? Input::GetMouseButton(fireButton) : Input::GetMouseButtonDown(fireButton);
+        bool wantFire = !uiBlocked && (autoFire ? Input::GetMouseButton(fireButton) : Input::GetMouseButtonDown(fireButton));
         if (wantFire && m_fireCooldown <= 0.0f) {
             m_fireCooldown = autoFire ? (1.0f / Mathf::Max(0.1f, fireRate)) : 0.0f;
             Fire();
         }
 
         // ---- Movement relative to the camera yaw (strafe shooter) ----
-        Vec2 axis = Input::AxisWASD();
-        Vec2 pad  = Input::GamepadAxis();
+        Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
+        Vec2 pad  = uiBlocked ? Vec2{0, 0} : Input::GamepadAxis();
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) axis = pad;
         Quat flat = Quat::Euler(0, yaw, 0);
         Vec3 fwd = flat * Vec3{0, 0, -1}, right = flat * Vec3::Right;

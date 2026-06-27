@@ -104,12 +104,16 @@ public:
         // Mouse-right turns right and mouse-up looks up. The camera looks down its
         // local -Z, so yaw decreases with rightward mouse movement.
         Vec2 mp = Input::MousePosition();
-        if (m_haveMouse && !Input::UICaptured()) {   // a modal UI (open inventory) pauses look
+        bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
+        if (m_haveMouse && !uiBlocked) {
             yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;
             pitch += (invertY ? 1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
-        m_lastMouse = mp; m_haveMouse = true;
+        // Drop the baseline while a bag is open: the fed mouse switches between locked
+        // (accumulated relative) and free (absolute) space, so without this the first
+        // frame after closing computes one huge delta and snaps the camera.
+        m_lastMouse = mp; m_haveMouse = !uiBlocked;
 
         // Lean: hold Q/E to peek; the camera rolls and shifts sideways.
         UpdateLean(dt);

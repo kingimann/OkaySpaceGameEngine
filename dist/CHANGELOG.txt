@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.271.0  (Camera freeze fix, GTA maps, particle preview)
+  - FIXED: opening the inventory or a chest no longer moves the camera. The
+    third-person-shooter and free-roam controllers were ignoring the modal-UI
+    pause; now all four controllers freeze look + movement while a bag is open,
+    and the camera no longer snaps when the panel closes.
+  - Particle System now PREVIEWS live in the editor scene view without pressing
+    Play (Unity-style), so a new emitter is visible immediately.
+  - Minimap, massively expanded: a GTA-style custom world-map image (pan + zoom,
+    north-up), a fullscreen pause-map toggle, waypoint markers (POIs), runtime
+    zoom-in/out keys, and per-blip icon images. Plus the earlier circular mask,
+    heading-up rotation, player arrow, edge-clamped blips, grid, and blip shapes.
+  - All new fields serialize and round-trip; tests cover the controller freeze,
+    the map UV projection, zoom keys, and markers.
+
 v2.270.0  (Expanded minimap + inventory sorting)
   - Minimap: big upgrade — a circular mask, heading-up rotation (the map spins so
     the target always faces up), a directional player arrow at the centre, off-map

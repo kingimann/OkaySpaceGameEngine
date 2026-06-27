@@ -399,6 +399,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << (ui->splitRightClick ? 1 : 0) << " " << (ui->shiftQuickMove ? 1 : 0)
             << " " << ui->rarities.size();
         for (const auto& rr : ui->rarities) { out << " " << Quote(rr.item); wc(rr.color); }
+        // Scaling / split / icon (appended; numeric-peek guarded).
+        out << " " << (ui->scaleToScreen ? 1 : 0) << " " << ui->referenceHeight
+            << " " << (ui->splitHalf ? 1 : 0) << " " << ui->iconInset;
         out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
@@ -1629,6 +1632,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     for (std::size_t ri = 0; ri < rn; ++ri) {
                                         InventoryUI::RarityRule rr; rr.item = ReadQuoted(in); rc(rr.color);
                                         ui->rarities.push_back(rr);
+                                    }
+                                    in >> std::ws;   // optional scaling / split / icon block
+                                    int pk5 = in.peek();
+                                    if (std::isdigit(pk5) || pk5 == '-' || pk5 == '.') {
+                                        int sts = 1, sh = 1;
+                                        in >> sts >> ui->referenceHeight >> sh >> ui->iconInset;
+                                        ui->scaleToScreen = (sts != 0); ui->splitHalf = (sh != 0);
                                     }
                                 }
                             }

@@ -272,7 +272,12 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
     const int n = ui.hotbarSlots < 1 ? 1 : ui.hotbarSlots;
-    const float sz = ui.slotSize, gap = ui.slotGap;
+    // Resolution-independent UI: scale by the window height vs the authored reference,
+    // so the inventory keeps the same on-screen proportion in a small built-game window
+    // as it does in the (usually larger) editor Game view. Unity's "Scale With Screen Size".
+    const float uiScale = (ui.scaleToScreen && ui.referenceHeight > 1.0f) ? (float)H / ui.referenceHeight : 1.0f;
+    const float sz = ui.slotSize * uiScale, gap = ui.slotGap * uiScale;
+    const float marginX = ui.marginX * uiScale, marginY = ui.marginY * uiScale, panelPad = ui.panelPad * uiScale;
     auto setc = [&](const Color& c, int a = -1) {
         SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
                                (Uint8)(a < 0 ? c.a * 255 : a));
@@ -291,11 +296,15 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
         float ir = cr > 0.5f ? (cr - b < 0 ? 0 : cr - b) : 0.0f;
         FillUIShape(r, inner, ir > 0.5f ? UIShape::Rounded : UIShape::Rectangle, ir, ui.slotColor, ui.slotColor, false, false, 1.0f);
-        if (idx != ui.dragIndex && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
+        // Count shown in the slot: the source of a split-drag still shows its remainder
+        // (a whole-stack drag lifts everything, so the source draws empty).
+        int shown = (inv && idx >= 0 && idx < (int)inv->slots.size()) ? inv->slots[idx].count : 0;
+        if (idx == ui.dragIndex) shown -= (ui.dragAmount > 0 ? ui.dragAmount : shown);
+        if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
             const auto& it = inv->slots[idx];
             SDL_Texture* icon = ui.iconFolder.empty() ? nullptr
                               : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
-            if (icon) { SDL_Rect d{inner.x + 2, inner.y + 2, inner.w - 4, inner.h - 4}; SDL_RenderCopy(r, icon, nullptr, &d); }
+            if (icon) { int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{inner.x + ins, inner.y + ins, inner.w - 2 * ins, inner.h - 2 * ins}; SDL_RenderCopy(r, icon, nullptr, &d); }
             else if (ui.showNames) {
                 std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
                 float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
@@ -303,8 +312,8 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
                 DrawText(r, nm, x + 4, y + 5, px,
                          SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
             }
-            if (ui.showCounts && it.count > 1) {
-                std::string cs = std::to_string(it.count);
+            if (ui.showCounts && shown > 1) {
+                std::string cs = std::to_string(shown);
                 float px = sz * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
                 float tw = cs.size() * (Font8x8::Width + 1) * px;
                 DrawText(r, cs, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 3, px,
@@ -315,8 +324,8 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     // Layout: hotbar docked to the bottom (or top), nudged by margins; the backpack
     // grows away from the docked edge.
     const float rowW = n * sz + (n - 1) * gap;
-    const float hx = (W - rowW) * 0.5f + ui.marginX;
-    const float hy = ui.anchorTop ? ui.marginY : H - sz - ui.marginY;
+    const float hx = (W - rowW) * 0.5f + marginX;
+    const float hy = ui.anchorTop ? marginY : H - sz - marginY;
     auto bpY = [&](int row) {
         return ui.anchorTop ? hy + sz + 14.0f + row * (sz + gap)
                             : hy - 14.0f - (ui.backpackRows - row) * (sz + gap);
@@ -331,14 +340,14 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
         if (ui.showPanel) {
             float t = bpY(0), b = bpY(ui.backpackRows - 1);
-            float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = ui.panelPad;
+            float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = panelPad;
             panel(hx - pad, top - pad, rowW + 2 * pad, (bot - top) + 2 * pad);
         }
         for (int row = 0; row < ui.backpackRows; ++row)
             for (int c = 0; c < n; ++c)
                 slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
     }
-    if (ui.showPanel) panel(hx - ui.panelPad, hy - ui.panelPad, rowW + 2 * ui.panelPad, sz + 2 * ui.panelPad);
+    if (ui.showPanel) panel(hx - panelPad, hy - panelPad, rowW + 2 * panelPad, sz + 2 * panelPad);
     for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
     // Hotbar slot numbers (1–9) in the top-left corner.
     if (ui.slotNumbers) {
@@ -372,9 +381,9 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     if (ui.showSelectedName) {
         std::string nm = ui.SelectedItem();
         if (!nm.empty()) {
-            float px = 2.0f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+            float px = 2.0f * ui.labelScale * uiScale; if (px < 1.0f) px = 1.0f;
             float tw = nm.size() * (Font8x8::Width + 1) * px;
-            float ty = ui.anchorTop ? hy + sz + ui.panelPad + 4.0f : hy - (Font8x8::Height + 1) * px - ui.panelPad - 4.0f;
+            float ty = ui.anchorTop ? hy + sz + panelPad + 4.0f : hy - (Font8x8::Height + 1) * px - panelPad - 4.0f;
             DrawText(r, nm, hx + rowW * 0.5f - tw * 0.5f, ty, px,
                      SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
         }
@@ -382,7 +391,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
 
     // Drag-and-drop (only while the backpack is open). Pick a slot under the cursor,
     // drop it on the NEAREST slot (forgiving — gaps/imperfect aim still land cleanly).
-    if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; return; }
+    if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; ui.dragAmount = 0; return; }
     auto slotXY = [&](int idx, float& sx, float& sy) {
         if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
         else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
@@ -428,14 +437,15 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         bool onItem = idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty();
         if (onItem && okay::Input::GetMouseButtonDown(0)) {
             if (ui.shiftQuickMove && okay::Input::GetKey(okay::Input::KeyShift)) ui.QuickMove(idx);
-            else ui.dragIndex = idx;                                  // start a drag
-        } else if (onItem && ui.splitRightClick && okay::Input::GetMouseButtonDown(1)) {
-            ui.SplitSlot(idx);                                        // right-click: split half
+            else { ui.dragIndex = idx; ui.dragAmount = 0; }           // drag the whole stack
+        } else if (onItem && ui.splitRightClick && okay::Input::GetMouseButtonDown(1) && inv->slots[idx].count > 1) {
+            ui.dragIndex = idx; ui.dragAmount = ui.splitHalf ? inv->slots[idx].count / 2 : 1;   // pick up half (or one)
         }
     }
-    if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
-        ui.MoveSlot(ui.dragIndex, nearest(mp.x, mp.y));
-        ui.dragIndex = -1;
+    // Drop when the held button is released (either button — you held one to drag).
+    if (ui.dragIndex >= 0 && (okay::Input::GetMouseButtonUp(0) || okay::Input::GetMouseButtonUp(1))) {
+        ui.ApplyDrag(ui.dragIndex, nearest(mp.x, mp.y));
+        ui.dragIndex = -1; ui.dragAmount = 0;
     }
     if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->slots.size()) {
         const auto& it = inv->slots[ui.dragIndex];
@@ -449,6 +459,15 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
             DrawText(r, nm, x + 4, y + 5, px,
                      SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+        }
+        // The carried count (the split amount, or the whole stack).
+        int carried = ui.dragAmount > 0 ? ui.dragAmount : it.count;
+        if (ui.showCounts && carried > 1) {
+            std::string ccs = std::to_string(carried);
+            float px = sz * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+            float tw = ccs.size() * (Font8x8::Width + 1) * px;
+            DrawText(r, ccs, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 3, px,
+                     SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
         }
     }
 }

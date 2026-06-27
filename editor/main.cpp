@@ -4722,69 +4722,102 @@ void DrawFileDialogs(EditorState& ed) {
 
     if (g_showBuildGame) { ImGui::OpenPopup("Build Game"); g_showBuildGame = false; }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Build Game", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Build Settings — export a standalone game.");
-        ImGui::TextDisabled("Creates <Name>.exe + game.okayscene + game.okayconfig.");
-        ImGui::Separator();
-
-        ImGui::SeparatorText("Player");
-        ImGui::InputText("Product name", g_buildNameBuf, sizeof(g_buildNameBuf));
-        ImGui::InputText("Company", g_build.company, sizeof(g_build.company));
-        ImGui::SetNextItemWidth(140);
-        ImGui::InputText("Version", g_build.version, sizeof(g_build.version));
-        ImGui::InputText("Output folder", g_buildDirBuf, sizeof(g_buildDirBuf));
-
-        ImGui::SeparatorText("Window / Display");
-        ImGui::SetNextItemWidth(90); ImGui::InputInt("Width", &g_build.width); ImGui::SameLine();
-        ImGui::SetNextItemWidth(90); ImGui::InputInt("Height", &g_build.height);
-        const char* presets[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "960 x 600", "800 x 600"};
-        static int presetSel = 0;
-        ImGui::SetNextItemWidth(150);
-        if (ImGui::Combo("Resolution", &presetSel, presets, IM_ARRAYSIZE(presets))) {
-            const int dims[][2] = {{1280,720},{1920,1080},{2560,1440},{960,600},{800,600}};
-            g_build.width = dims[presetSel][0]; g_build.height = dims[presetSel][1];
-        }
-        ImGui::Checkbox("Fullscreen", &g_build.fullscreen); ImGui::SameLine();
-        ImGui::Checkbox("Borderless", &g_build.borderless); ImGui::SameLine();
-        ImGui::Checkbox("Resizable", &g_build.resizable);
-        ImGui::Checkbox("VSync", &g_build.vsync);           ImGui::SameLine();
-        ImGui::Checkbox("Hide cursor", &g_build.hideCursor);
-        const char* fpsOpts[] = {"Uncapped", "30", "60", "120", "144"};
-        const int   fpsVals[] = {0, 30, 60, 120, 144};
-        int fpsSel = 0; for (int i = 0; i < 5; ++i) if (fpsVals[i] == g_build.fpsCap) fpsSel = i;
-        ImGui::SetNextItemWidth(150);
-        if (ImGui::Combo("Frame rate cap", &fpsSel, fpsOpts, 5)) g_build.fpsCap = fpsVals[fpsSel];
-
-        ImGui::SeparatorText("Gameplay");
-        ImGui::Checkbox("Quit on Escape", &g_build.quitOnEscape); ImGui::SameLine();
-        ImGui::Checkbox("Show FPS overlay", &g_build.showFps); ImGui::SameLine();
-        ImGui::Checkbox("Lock cursor", &g_build.lockCursor);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor on launch (FPS/TPS games)");
-        ImGui::SetNextItemWidth(200);
-        ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
-
-        ImGui::SeparatorText("Graphics / Quality");
-        ImGui::Checkbox("GPU renderer (Direct3D 11 / OpenGL)", &g_build.gpuRenderer);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU in the shipped game (hardware speed).\nFalls back to the software renderer if no GPU is available.");
-        ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
-        ImGui::Checkbox("Shadows", &g_build.shadows);
-        ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
-        ImGui::Checkbox("Ambient occlusion", &g_build.ssao); ImGui::SameLine();
-        ImGui::Checkbox("FXAA", &g_build.fxaa);
-        bool aa2 = g_build.antialias > 1;
-        if (ImGui::Checkbox("Anti-aliasing 2x", &aa2)) g_build.antialias = aa2 ? 2 : 1;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Supersample: smoother but ~4x the pixels");
-
-        ImGui::SeparatorText("Scenes & Options");
-        ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene_index works");
-        ImGui::Checkbox("Development build", &g_build.developmentBuild);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra logging; marks the build as non-final");
+    ImGui::SetNextWindowSize(ImVec2(640, 560), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(540, 460), ImVec2(1200, 1000));
+    if (ImGui::BeginPopupModal("Build Game")) {
+        ImGui::TextDisabled("Export a standalone game:  <Name>.exe + game.okayscene + game.okayconfig");
+        ImGui::Spacing();
         if (g_build.width  < 320) g_build.width  = 320;
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
-        ImGui::Separator();
+        if (ImGui::BeginTabBar("##buildtabs")) {
+            if (ImGui::BeginTabItem("Player")) {
+                ImGui::Spacing();
+                ImGui::SetNextItemWidth(300); ImGui::InputText("Product name", g_buildNameBuf, sizeof(g_buildNameBuf));
+                ImGui::SetNextItemWidth(300); ImGui::InputText("Company", g_build.company, sizeof(g_build.company));
+                ImGui::SetNextItemWidth(160); ImGui::InputText("Version", g_build.version, sizeof(g_build.version));
+                ImGui::SetNextItemWidth(420); ImGui::InputText("Output folder", g_buildDirBuf, sizeof(g_buildDirBuf));
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                ImGui::Checkbox("Development build", &g_build.developmentBuild);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra logging; marks the build as non-final");
+                ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Display")) {
+                ImGui::Spacing();
+                ImGui::SetNextItemWidth(90); ImGui::InputInt("Width",  &g_build.width, 0); ImGui::SameLine();
+                ImGui::SetNextItemWidth(90); ImGui::InputInt("Height", &g_build.height, 0);
+                const char* presets[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "960 x 600", "800 x 600"};
+                static int presetSel = 0; ImGui::SetNextItemWidth(180);
+                if (ImGui::Combo("Resolution preset", &presetSel, presets, IM_ARRAYSIZE(presets))) {
+                    const int dims[][2] = {{1280,720},{1920,1080},{2560,1440},{960,600},{800,600}};
+                    g_build.width = dims[presetSel][0]; g_build.height = dims[presetSel][1];
+                }
+                ImGui::Spacing();
+                int wm = g_build.fullscreen ? 2 : (g_build.borderless ? 1 : 0);
+                const char* wmodes[] = {"Windowed", "Borderless window", "Fullscreen"};
+                ImGui::SetNextItemWidth(180);
+                if (ImGui::Combo("Window mode", &wm, wmodes, 3)) { g_build.fullscreen = (wm == 2); g_build.borderless = (wm == 1); }
+                ImGui::Checkbox("Resizable", &g_build.resizable); ImGui::SameLine();
+                ImGui::Checkbox("VSync", &g_build.vsync);
+                const char* fpsOpts[] = {"Uncapped", "30", "60", "120", "144"};
+                const int   fpsVals[] = {0, 30, 60, 120, 144};
+                int fpsSel = 0; for (int i = 0; i < 5; ++i) if (fpsVals[i] == g_build.fpsCap) fpsSel = i;
+                ImGui::SetNextItemWidth(180);
+                if (ImGui::Combo("Frame rate cap", &fpsSel, fpsOpts, 5)) g_build.fpsCap = fpsVals[fpsSel];
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Graphics")) {
+                ImGui::Spacing();
+                const char* qnames[] = {"Custom", "Low", "Medium", "High", "Ultra"};
+                static int q = 0; ImGui::SetNextItemWidth(180);
+                if (ImGui::Combo("Quality preset", &q, qnames, 5) && q > 0) {
+                    auto set = [&](bool ppl, bool sh, bool bl, bool ao, bool fx, int aa) {
+                        g_build.perPixelLighting = ppl; g_build.shadows = sh; g_build.bloom = bl;
+                        g_build.ssao = ao; g_build.fxaa = fx; g_build.antialias = aa; g_build.gpuRenderer = true;
+                    };
+                    if (q == 1) set(false, false, false, false, false, 1);   // Low
+                    else if (q == 2) set(true,  false, false, false, true,  1);   // Medium
+                    else if (q == 3) set(true,  true,  true,  false, true,  1);   // High
+                    else if (q == 4) set(true,  true,  true,  true,  true,  2);   // Ultra
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets the toggles below in one go. Tweak them after for a custom mix.");
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                ImGui::Checkbox("GPU renderer (Direct3D 11 / OpenGL)", &g_build.gpuRenderer);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU in the shipped game.\nFalls back to the software renderer if no GPU is available.");
+                ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
+                ImGui::Checkbox("Shadows", &g_build.shadows);
+                ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
+                ImGui::Checkbox("Ambient occlusion", &g_build.ssao); ImGui::SameLine();
+                ImGui::Checkbox("FXAA", &g_build.fxaa);
+                bool aa2 = g_build.antialias > 1;
+                if (ImGui::Checkbox("Anti-aliasing 2x", &aa2)) g_build.antialias = aa2 ? 2 : 1;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Supersample: smoother but ~4x the pixels");
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Audio & Input")) {
+                ImGui::Spacing();
+                ImGui::SetNextItemWidth(240); ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                ImGui::Checkbox("Quit on Escape", &g_build.quitOnEscape);
+                ImGui::Checkbox("Lock cursor on launch", &g_build.lockCursor);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor on launch (FPS/TPS games)");
+                ImGui::Checkbox("Hide cursor", &g_build.hideCursor);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Scenes")) {
+                ImGui::Spacing();
+                ImGui::TextDisabled("The current scene is always the startup scene.");
+                ImGui::Spacing();
+                ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene / load_scene_index work at runtime");
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+
+        ImGui::Spacing(); ImGui::Separator();
         if (ImGui::Button("Build", ImVec2(120, 0))) {
             builder::Options o;
             o.company = g_build.company; o.version = g_build.version;
@@ -7929,11 +7962,15 @@ void DrawInspector(EditorState& ed) {
             cc("Selected", ui->selectedColor, "iuc3"); cc("Text", ui->textColor, "iuc4");
             cc("Count", ui->countColor, "iuc5");
             if (ImGui::TreeNodeEx("Layout / Style##iu", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Checkbox("Scale with screen##iu", &ui->scaleToScreen)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the same on-screen size at any resolution (fixes 'too big in the build'). Sizes below are authored for the Reference Height.");
+                if (ui->scaleToScreen && ImGui::DragFloat("Reference Height##iu", &ui->referenceHeight, 1.0f, 120.0f, 4320.0f)) ed.dirty = true;
                 if (ImGui::Checkbox("Anchor to top##iu", &ui->anchorTop)) ed.dirty = true;
                 if (ImGui::DragFloat("Margin X##iu", &ui->marginX, 0.5f, -2000.0f, 2000.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Edge Margin##iu", &ui->marginY, 0.5f, 0.0f, 2000.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Corner Radius##iu", &ui->cornerRadius, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Border Width##iu", &ui->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Icon Inset##iu", &ui->iconInset, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Label Scale##iu", &ui->labelScale, 0.02f, 0.2f, 4.0f)) ed.dirty = true;
                 if (ImGui::SliderInt("Name Chars##iu", &ui->nameChars, 1, 12)) ed.dirty = true;
                 if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
@@ -7958,7 +7995,10 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::InputText("Sort Key##iu", sk, sizeof(sk))) { ui->sortKey = sk[0]; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to compact + merge stacks (blank = off).");
                 if (ImGui::Checkbox("Right-click split##iu", &ui->splitRightClick)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click a stack to split half into an empty slot.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click a stack to pick up part of it, then drop it where you want.");
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Split half##iu", &ui->splitHalf)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click lifts half the stack (off = just one item).");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Shift quick-move##iu", &ui->shiftQuickMove)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shift+click moves a stack between the hotbar and backpack.");
@@ -11464,7 +11504,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!ui) continue;
         okay::Inventory* inv = ui->Inv();
         int n = ui->hotbarSlots < 1 ? 1 : ui->hotbarSlots;
-        float sz = ui->slotSize, gap = ui->slotGap;
+        // Resolution-independent scaling (matches the built player): scale by the Game
+        // canvas height vs the authored reference, so the editor preview and the build agree.
+        float uiScale = (ui->scaleToScreen && ui->referenceHeight > 1.0f) ? canvasSize.y / ui->referenceHeight : 1.0f;
+        float sz = ui->slotSize * uiScale, gap = ui->slotGap * uiScale;
+        float marginX = ui->marginX * uiScale, marginY = ui->marginY * uiScale;
         float cr = ui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         auto slot = [&](float x, float y, int idx, bool sel) {
@@ -11475,21 +11519,23 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(p0, p1, col(bcol), cr);
             float b = (ui->borderWidth < 0 ? 0 : ui->borderWidth) + (sel ? 1.0f : 0.0f);
             dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(ui->slotColor), cr > b ? cr - b : 0.0f);
-            if (idx != ui->dragIndex && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
+            int shown = (inv && idx >= 0 && idx < (int)inv->slots.size()) ? inv->slots[idx].count : 0;
+            if (idx == ui->dragIndex) shown -= (ui->dragAmount > 0 ? ui->dragAmount : shown);
+            if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
                 SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
                 else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
-                if (ui->showCounts && it.count > 1) {
-                    std::string cs = std::to_string(it.count);
+                if (ui->showCounts && shown > 1) {
+                    std::string cs = std::to_string(shown);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
                     dl->AddText(ImVec2(p1.x - ts.x - 4, p1.y - ts.y - 3), col(ui->countColor), cs.c_str());
                 }
             }
         };
         float rowW = n * sz + (n - 1) * gap;
-        float hx = (canvasSize.x - rowW) * 0.5f + ui->marginX;
-        float hy = ui->anchorTop ? ui->marginY : canvasSize.y - sz - ui->marginY;
+        float hx = (canvasSize.x - rowW) * 0.5f + marginX;
+        float hy = ui->anchorTop ? marginY : canvasSize.y - sz - marginY;
         auto bpY = [&](int row) {
             return ui->anchorTop ? hy + sz + 14.0f + row * (sz + gap)
                                  : hy - 14.0f - (ui->backpackRows - row) * (sz + gap);
@@ -11567,14 +11613,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 bool onItem = idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty();
                 if (onItem && okay::Input::GetMouseButtonDown(0)) {
                     if (ui->shiftQuickMove && okay::Input::GetKey(okay::Input::KeyShift)) ui->QuickMove(idx);
-                    else ui->dragIndex = idx;
-                } else if (onItem && ui->splitRightClick && okay::Input::GetMouseButtonDown(1)) {
-                    ui->SplitSlot(idx);
+                    else { ui->dragIndex = idx; ui->dragAmount = 0; }
+                } else if (onItem && ui->splitRightClick && okay::Input::GetMouseButtonDown(1) && inv->slots[idx].count > 1) {
+                    ui->dragIndex = idx; ui->dragAmount = inv->slots[idx].count / 2;   // pick up half
                 }
             }
-            if (ui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
-                ui->MoveSlot(ui->dragIndex, nearest(m.x, m.y));
-                ui->dragIndex = -1;
+            if (ui->dragIndex >= 0 && (okay::Input::GetMouseButtonUp(0) || okay::Input::GetMouseButtonUp(1))) {
+                ui->ApplyDrag(ui->dragIndex, nearest(m.x, m.y));
+                ui->dragIndex = -1; ui->dragAmount = 0;
             }
             if (ui->dragIndex >= 0 && ui->dragIndex < (int)inv->slots.size()) {
                 const auto& it = inv->slots[ui->dragIndex];
@@ -11585,8 +11631,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
                 else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                int carried = ui->dragAmount > 0 ? ui->dragAmount : it.count;
+                if (ui->showCounts && carried > 1) {
+                    std::string ccs = std::to_string(carried);
+                    ImVec2 ts = ImGui::CalcTextSize(ccs.c_str());
+                    dl->AddText(ImVec2(p1.x - ts.x - 4, p1.y - ts.y - 3), col(ui->countColor), ccs.c_str());
+                }
             }
-        } else if (gameView) ui->dragIndex = -1;   // only the Game pass clears the drag
+        } else if (gameView) { ui->dragIndex = -1; ui->dragAmount = 0; }   // only the Game pass clears the drag
         break;
     }
     // DayZ/Unturned grid inventory preview (drawn when its inventory is open).

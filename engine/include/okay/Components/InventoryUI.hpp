@@ -27,9 +27,12 @@ public:
     bool  scrollSelect  = true;   ///< mouse wheel cycles the selection
     bool  dragItems     = true;   ///< drag items between slots while the backpack is open
     int   dragIndex     = -1;     ///< slot being dragged (runtime), or -1
+    int   dragAmount    = 0;      ///< how many are lifted off the source (0 = whole stack)
 
-    float slotSize = 50.0f;       ///< slot square, pixels
+    float slotSize = 50.0f;       ///< slot square, pixels (at the reference height)
     float slotGap  = 6.0f;
+    bool  scaleToScreen  = true;  ///< scale the whole UI by screenHeight / referenceHeight
+    float referenceHeight = 720.0f; ///< the height the sizes above are authored for (Unity-style)
     std::string iconFolder = "textures/items/";   ///< <folder><item>.png icons (optional; falls back to the name)
     Color slotColor     = Color::FromBytes(28, 30, 38, 210);
     Color slotBorder    = Color::FromBytes(70, 72, 84, 255);
@@ -61,8 +64,10 @@ public:
     bool  slotNumbers    = false;   ///< draw 1–9 in the corner of each hotbar slot
     Color numberColor    = Color::FromBytes(180, 184, 200, 255); ///< hotbar slot-number tint
     char  sortKey        = 0;       ///< press to compact + merge stacks (0 = disabled)
-    bool  splitRightClick = true;   ///< right-click a stack to split half into an empty slot
+    bool  splitRightClick = true;   ///< right-click a stack to pick up part of it
+    bool  splitHalf       = true;   ///< right-click lifts half the stack (else just one)
     bool  shiftQuickMove  = true;   ///< shift+click moves a stack hotbar↔backpack
+    float iconInset       = 2.0f;   ///< padding between a slot's border and its icon (px)
 
     /// A rarity/tier tint: stacks of `item` get their slot border drawn in `color`
     /// (Minecraft net-style quality colours). Add as many as you like.
@@ -167,6 +172,28 @@ public:
         } else {
             std::swap(a, b);                                      // swap (target may be empty)
         }
+        while (!inv->slots.empty() && Inventory::Empty(inv->slots.back())) inv->slots.pop_back();
+    }
+
+    /// Drop the lifted `dragAmount` from slot `from` onto `to`. dragAmount >= the
+    /// source count (or 0) means the whole stack (swap/merge via MoveSlot); a smaller
+    /// amount is a partial split — Minecraft-style: placed into an empty/identical
+    /// slot, or cancelled (left on the source) if a different item sits there.
+    void ApplyDrag(int from, int to) {
+        Inventory* inv = Inv();
+        if (!inv || from < 0 || from >= (int)inv->slots.size() || to < 0 || from == to) return;
+        if (Inventory::Empty(inv->slots[from])) return;
+        int amount = dragAmount > 0 ? dragAmount : inv->slots[from].count;
+        if (amount >= inv->slots[from].count) { MoveSlot(from, to); return; }   // whole stack
+        while ((int)inv->slots.size() <= to) inv->slots.push_back(Inventory::Slot{});
+        Inventory::Slot& a = inv->slots[from];
+        Inventory::Slot& b = inv->slots[to];
+        if (Inventory::Empty(b)) { b.item = a.item; b.count = amount; a.count -= amount; }
+        else if (b.item == a.item) {
+            int cap = inv->maxStack; int room = cap > 0 ? cap - b.count : amount; if (room < 0) room = 0;
+            int mv = amount < room ? amount : room; b.count += mv; a.count -= mv;
+        }   // different item under the cursor: cancel (leave the split on the source)
+        if (a.count <= 0) { a.item.clear(); a.count = 0; }
         while (!inv->slots.empty() && Inventory::Empty(inv->slots.back())) inv->slots.pop_back();
     }
 

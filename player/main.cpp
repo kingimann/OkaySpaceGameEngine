@@ -232,6 +232,18 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
     SDL_Rect full{0, 0, W, H};
     SDL_Texture* bgTex = ls.backgroundImage.empty() ? nullptr : GetTexture(r, ls.backgroundImage, baseDir, cache);
     if (bgTex) { SDL_SetTextureAlphaMod(bgTex, A); SDL_RenderCopy(r, bgTex, nullptr, &full); }
+    else if (ls.gradientBackground) {
+        const Color& b0 = ls.backgroundColor; const Color& b1 = ls.backgroundColor2;
+        const int bands = 64;
+        for (int i = 0; i < bands; ++i) {
+            float t = (float)i / (bands - 1);
+            SDL_SetRenderDrawColor(r, (Uint8)((b0.r + (b1.r - b0.r) * t) * 255),
+                                   (Uint8)((b0.g + (b1.g - b0.g) * t) * 255),
+                                   (Uint8)((b0.b + (b1.b - b0.b) * t) * 255), A);
+            SDL_Rect band{0, (int)(H * i / (float)bands), W, H / bands + 1};
+            SDL_RenderFillRect(r, &band);
+        }
+    }
     else {
         const Color& b = ls.backgroundColor;
         SDL_SetRenderDrawColor(r, (Uint8)(b.r * 255), (Uint8)(b.g * 255), (Uint8)(b.b * 255), A);
@@ -242,26 +254,48 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
     };
     const float adv = (float)(Font8x8::Width + 1);
     if (ls.showTitle && !ls.title.empty()) {
-        float px = H * 0.006f; if (px < 2.0f) px = 2.0f;
+        float px = H * 0.006f * ls.titleScale; if (px < 2.0f) px = 2.0f;
         float tw = ls.title.size() * adv * px;
-        DrawText(r, ls.title, (W - tw) * 0.5f, H * 0.40f, px, sc(ls.textColor, A));
+        DrawText(r, ls.title, (W - tw) * 0.5f, H * ls.titleY, px, sc(ls.titleColor, A));
     }
     if (!ls.CurrentTip().empty()) {
-        float px = H * 0.0032f; if (px < 1.0f) px = 1.0f;
+        float px = H * 0.0032f * ls.tipScale; if (px < 1.0f) px = 1.0f;
         float tw = ls.CurrentTip().size() * adv * px;
-        DrawText(r, ls.CurrentTip(), (W - tw) * 0.5f, H * 0.78f, px, sc(ls.textColor, A));
+        DrawText(r, ls.CurrentTip(), (W - tw) * 0.5f, H * ls.tipY, px, sc(ls.tipColor, A));
     }
     if (ls.showBar) {
-        int bw = (int)(W * 0.5f), bh = (int)(H * 0.022f); if (bh < 6) bh = 6;
-        int bx = (W - bw) / 2, by = (int)(H * 0.86f);
+        int bw = (int)(W * ls.barWidth), bh = (int)(H * ls.barHeight); if (bh < 4) bh = 4;
+        int bx = (W - bw) / 2, by = (int)(H * ls.barY);
         SDL_Rect bgr{bx, by, bw, bh};
-        const Color& bb = ls.barBackground;
-        SDL_SetRenderDrawColor(r, (Uint8)(bb.r * 255), (Uint8)(bb.g * 255), (Uint8)(bb.b * 255), A);
-        SDL_RenderFillRect(r, &bgr);
+        UIShape shp = ls.barRadius > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
+        FillUIShape(r, bgr, shp, ls.barRadius, ls.barBackground, ls.barBackground, false, false, a);
         SDL_Rect fr{bx, by, (int)(bw * ls.Progress()), bh};
-        const Color& bf = ls.barFill;
-        SDL_SetRenderDrawColor(r, (Uint8)(bf.r * 255), (Uint8)(bf.g * 255), (Uint8)(bf.b * 255), A);
-        SDL_RenderFillRect(r, &fr);
+        if (fr.w > 0) FillUIShape(r, fr, shp, ls.barRadius, ls.barFill, ls.barFill, false, false, a);
+        if (ls.barBorder) {
+            SDL_SetRenderDrawColor(r, (Uint8)(ls.barBorderColor.r*255), (Uint8)(ls.barBorderColor.g*255),
+                                   (Uint8)(ls.barBorderColor.b*255), A);
+            SDL_RenderDrawRect(r, &bgr);
+        }
+        if (ls.showPercent) {
+            char pc[8]; std::snprintf(pc, sizeof(pc), "%d%%", (int)(ls.Progress() * 100.0f + 0.5f));
+            float px = H * 0.0030f; if (px < 1.0f) px = 1.0f;
+            DrawText(r, pc, bx + bw + 8, by + (bh - (Font8x8::Height) * px) * 0.5f, px, sc(ls.textColor, A));
+        }
+    }
+    if (ls.showSpinner) {
+        float ccx = W * 0.5f, ccy = H * ls.spinnerY, rad = H * ls.spinnerRadius;
+        float ds = ls.spinnerDotSize * (H / 720.0f); if (ds < 2.0f) ds = 2.0f;
+        const int dots = 8;
+        float phase = ls.Elapsed() * ls.spinnerSpeed;
+        for (int i = 0; i < dots; ++i) {
+            float ang = (float)i / dots * 6.2831853f;
+            float dx = ccx + std::cos(ang) * rad, dy = ccy + std::sin(ang) * rad;
+            float bright = 0.25f + 0.75f * (0.5f + 0.5f * std::cos(ang - phase));   // chase
+            SDL_SetRenderDrawColor(r, (Uint8)(ls.spinnerColor.r*255), (Uint8)(ls.spinnerColor.g*255),
+                                   (Uint8)(ls.spinnerColor.b*255), (Uint8)(A * bright));
+            SDL_Rect d{(int)(dx - ds*0.5f), (int)(dy - ds*0.5f), (int)ds, (int)ds};
+            SDL_RenderFillRect(r, &d);
+        }
     }
 }
 
@@ -1531,11 +1565,23 @@ int main(int argc, char** argv) {
                 SDL_RenderFillRect(renderer, &ln);
             };
             if (cr->showLines) {
-                int g0 = (int)cr->gap, g1 = (int)(cr->gap + cr->length);
-                drawLine((int)cx - th/2, (int)cy - g1, th, g1 - g0);          // up
-                drawLine((int)cx - th/2, (int)cy + g0, th, g1 - g0);          // down
-                drawLine((int)cx - g1, (int)cy - th/2, g1 - g0, th);          // left
-                drawLine((int)cx + g0, (int)cy - th/2, g1 - g0, th);          // right
+                int g0 = (int)(cr->gap + cr->spread), g1 = (int)(cr->gap + cr->spread + cr->length);
+                if (cr->lineUp)    drawLine((int)cx - th/2, (int)cy - g1, th, g1 - g0);   // up
+                if (cr->lineDown)  drawLine((int)cx - th/2, (int)cy + g0, th, g1 - g0);   // down
+                if (cr->lineLeft)  drawLine((int)cx - g1, (int)cy - th/2, g1 - g0, th);   // left
+                if (cr->lineRight) drawLine((int)cx + g0, (int)cy - th/2, g1 - g0, th);   // right
+            }
+            if (cr->circle) {
+                int segs = 48; float rr = cr->circleRadius, ct = cr->circleThickness < 1 ? 1 : cr->circleThickness;
+                SDL_SetRenderDrawColor(renderer, (Uint8)(cr->circleColor.r*255), (Uint8)(cr->circleColor.g*255),
+                                       (Uint8)(cr->circleColor.b*255), (Uint8)(cr->circleColor.a*255*op));
+                for (float t = 0; t < ct; t += 1.0f) {
+                    float ring = rr + t;
+                    for (int i = 0; i < segs; ++i) {
+                        float a0 = (float)i / segs * 6.2831853f;
+                        SDL_RenderDrawPoint(renderer, (int)(cx + std::cos(a0) * ring), (int)(cy + std::sin(a0) * ring));
+                    }
+                }
             }
             if (cr->dot) {
                 int half = (int)(cr->dotSize * 0.5f); if (half < 1) half = 1;

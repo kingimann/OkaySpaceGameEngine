@@ -7932,6 +7932,46 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("+ Add tip##ls")) { ls->tips.push_back("New tip"); ed.dirty = true; }
                 ImGui::TreePop();
             }
+            auto lc = [&](const char* lbl, Color& c, const char* id) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+            };
+            if (ImGui::TreeNode("Background##ls")) {
+                if (ImGui::Checkbox("Gradient##ls", &ls->gradientBackground)) ed.dirty = true;
+                if (ls->gradientBackground) lc("Background 2", ls->backgroundColor2, "lsbg2");
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNode("Title##lst")) {
+                lc("Title color", ls->titleColor, "lstc");
+                if (ImGui::DragFloat("Title scale##ls", &ls->titleScale, 0.02f, 0.2f, 6.0f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Title Y##ls", &ls->titleY, 0.0f, 1.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNode("Tip##lstip")) {
+                lc("Tip color", ls->tipColor, "lstipc");
+                if (ImGui::DragFloat("Tip scale##ls", &ls->tipScale, 0.02f, 0.2f, 6.0f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Tip Y##ls", &ls->tipY, 0.0f, 1.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNode("Progress bar##lsbar")) {
+                if (ImGui::SliderFloat("Width##lsbar", &ls->barWidth, 0.05f, 1.0f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Height##lsbar", &ls->barHeight, 0.005f, 0.1f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Y##lsbar", &ls->barY, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Corner radius##lsbar", &ls->barRadius, 0.25f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Border##lsbar", &ls->barBorder)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Show percent##lsbar", &ls->showPercent)) ed.dirty = true;
+                if (ls->barBorder) lc("Border color", ls->barBorderColor, "lsbarbc");
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNode("Spinner##lsspin")) {
+                if (ImGui::Checkbox("Show spinner##ls", &ls->showSpinner)) ed.dirty = true;
+                lc("Spinner color", ls->spinnerColor, "lsspc");
+                if (ImGui::SliderFloat("Radius##lsspin", &ls->spinnerRadius, 0.01f, 0.2f)) ed.dirty = true;
+                if (ImGui::DragFloat("Dot size##lsspin", &ls->spinnerDotSize, 0.1f, 1.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Speed##lsspin", &ls->spinnerSpeed, 0.1f, -30.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Y##lsspin", &ls->spinnerY, 0.0f, 1.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
             if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
         }
     }
@@ -10056,12 +10096,28 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Thickness##uch", &cr->thickness, 0.5f, 1.0f, 32.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Gap##uch", &cr->gap, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Length##uch", &cr->length, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Spread##uch", &cr->spread, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra gap added to every tick (aim spread).");
             if (ImGui::Checkbox("Show Lines##uch", &cr->showLines)) ed.dirty = true;
+            if (cr->showLines) {
+                if (ImGui::Checkbox("Up##uchl", &cr->lineUp)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Down##uchl", &cr->lineDown)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Left##uchl", &cr->lineLeft)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Right##uchl", &cr->lineRight)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle individual ticks (e.g. turn Up off for a T-style reticle).");
+            }
             if (ImGui::Checkbox("Dot##uch", &cr->dot)) ed.dirty = true;
             if (cr->dot) {
                 if (ImGui::DragFloat("Dot Size##uch", &cr->dotSize, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
                 float dc[4] = {cr->dotColor.r, cr->dotColor.g, cr->dotColor.b, cr->dotColor.a};
                 if (ImGui::ColorEdit4("Dot Color##uch", dc)) { cr->dotColor = {dc[0], dc[1], dc[2], dc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Circle##uch", &cr->circle)) ed.dirty = true;
+            if (cr->circle) {
+                if (ImGui::DragFloat("Circle Radius##uch", &cr->circleRadius, 0.5f, 1.0f, 512.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Circle Thickness##uch", &cr->circleThickness, 0.25f, 1.0f, 16.0f)) ed.dirty = true;
+                float qc[4] = {cr->circleColor.r, cr->circleColor.g, cr->circleColor.b, cr->circleColor.a};
+                if (ImGui::ColorEdit4("Circle Color##uch", qc)) { cr->circleColor = {qc[0], qc[1], qc[2], qc[3]}; ed.dirty = true; }
             }
             if (ImGui::Checkbox("Outline##uch", &cr->outline)) ed.dirty = true;
             if (cr->outline) {
@@ -11199,12 +11255,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ImVec2(rx, ry), ImVec2(rx+rw, ry+rh), ToColor(cr->color));
         };
         if (cr->showLines) {
-            float g0 = cr->gap, g1 = cr->gap + cr->length;
-            drawLine(cx - th*0.5f, cy - g1, th, g1 - g0);          // up
-            drawLine(cx - th*0.5f, cy + g0, th, g1 - g0);          // down
-            drawLine(cx - g1, cy - th*0.5f, g1 - g0, th);          // left
-            drawLine(cx + g0, cy - th*0.5f, g1 - g0, th);          // right
+            float g0 = cr->gap + cr->spread, g1 = cr->gap + cr->spread + cr->length;
+            if (cr->lineUp)    drawLine(cx - th*0.5f, cy - g1, th, g1 - g0);   // up
+            if (cr->lineDown)  drawLine(cx - th*0.5f, cy + g0, th, g1 - g0);   // down
+            if (cr->lineLeft)  drawLine(cx - g1, cy - th*0.5f, g1 - g0, th);   // left
+            if (cr->lineRight) drawLine(cx + g0, cy - th*0.5f, g1 - g0, th);   // right
         }
+        if (cr->circle)
+            dl->AddCircle(ImVec2(cx, cy), cr->circleRadius, ToColor(cr->circleColor), 48, cr->circleThickness < 1 ? 1 : cr->circleThickness);
         if (cr->dot) {
             float half = cr->dotSize * 0.5f; if (half < 1) half = 1;
             if (cr->outline)
@@ -11793,21 +11851,41 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         ImVec2 p0 = canvasPos, p1 = ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
         SDL_Texture* bgtex = ls->backgroundImage.empty() ? nullptr : GetThumb(ls->backgroundImage);
         if (bgtex) dl->AddImage((ImTextureID)bgtex, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, (int)(a * 255)));
-        else       dl->AddRectFilled(p0, p1, col(ls->backgroundColor));
+        else if (ls->gradientBackground)
+            dl->AddRectFilledMultiColor(p0, p1, col(ls->backgroundColor), col(ls->backgroundColor),
+                                        col(ls->backgroundColor2), col(ls->backgroundColor2));
+        else dl->AddRectFilled(p0, p1, col(ls->backgroundColor));
         float cx = canvasPos.x + canvasSize.x * 0.5f;
         if (ls->showTitle && !ls->title.empty()) {
             ImVec2 ts = ImGui::CalcTextSize(ls->title.c_str());
-            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * 0.40f), col(ls->textColor), ls->title.c_str());
+            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * ls->titleY), col(ls->titleColor), ls->title.c_str());
         }
         if (!ls->CurrentTip().empty()) {
             ImVec2 ts = ImGui::CalcTextSize(ls->CurrentTip().c_str());
-            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * 0.78f), col(ls->textColor), ls->CurrentTip().c_str());
+            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * ls->tipY), col(ls->tipColor), ls->CurrentTip().c_str());
         }
         if (ls->showBar) {
-            float bw = canvasSize.x * 0.5f, bh = canvasSize.y * 0.022f; if (bh < 6.0f) bh = 6.0f;
-            float bx = cx - bw * 0.5f, by = canvasPos.y + canvasSize.y * 0.86f;
-            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), col(ls->barBackground), 3.0f);
-            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * ls->Progress(), by + bh), col(ls->barFill), 3.0f);
+            float bw = canvasSize.x * ls->barWidth, bh = canvasSize.y * ls->barHeight; if (bh < 4.0f) bh = 4.0f;
+            float bx = cx - bw * 0.5f, by = canvasPos.y + canvasSize.y * ls->barY;
+            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), col(ls->barBackground), ls->barRadius);
+            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * ls->Progress(), by + bh), col(ls->barFill), ls->barRadius);
+            if (ls->barBorder) dl->AddRect(ImVec2(bx, by), ImVec2(bx + bw, by + bh), col(ls->barBorderColor), ls->barRadius);
+            if (ls->showPercent) {
+                char pc[8]; std::snprintf(pc, sizeof(pc), "%d%%", (int)(ls->Progress() * 100.0f + 0.5f));
+                dl->AddText(ImVec2(bx + bw + 8, by - 2), col(ls->textColor), pc);
+            }
+        }
+        if (ls->showSpinner) {
+            float scx = cx, scy = canvasPos.y + canvasSize.y * ls->spinnerY, rad = canvasSize.y * ls->spinnerRadius;
+            float ds = ls->spinnerDotSize * (canvasSize.y / 720.0f); if (ds < 2.0f) ds = 2.0f;
+            float phase = ls->Elapsed() * ls->spinnerSpeed;
+            for (int i = 0; i < 8; ++i) {
+                float ang = (float)i / 8 * 6.2831853f;
+                float bright = 0.25f + 0.75f * (0.5f + 0.5f * std::cos(ang - phase));
+                ImU32 dc = IM_COL32((int)(ls->spinnerColor.r*255), (int)(ls->spinnerColor.g*255), (int)(ls->spinnerColor.b*255), (int)(a * 255 * bright));
+                ImVec2 dp(scx + std::cos(ang) * rad, scy + std::sin(ang) * rad);
+                dl->AddRectFilled(ImVec2(dp.x - ds*0.5f, dp.y - ds*0.5f), ImVec2(dp.x + ds*0.5f, dp.y + ds*0.5f), dc);
+            }
         }
         break;
     }

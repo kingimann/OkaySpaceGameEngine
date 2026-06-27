@@ -374,6 +374,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << Quote(ls->title) << " " << Quote(ls->targetScene) << " " << Quote(ls->backgroundImage)
             << " " << ls->tips.size();
         for (const auto& t : ls->tips) out << " " << Quote(t);
+        // Style block (appended; numeric-peek guarded on read).
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << " " << (ls->gradientBackground ? 1 : 0); wc(ls->backgroundColor2);
+        wc(ls->titleColor); out << " " << ls->titleScale << " " << ls->titleY;
+        wc(ls->tipColor);   out << " " << ls->tipScale << " " << ls->tipY;
+        out << " " << ls->barWidth << " " << ls->barHeight << " " << ls->barY << " " << ls->barRadius
+            << " " << (ls->barBorder ? 1 : 0); wc(ls->barBorderColor);
+        out << " " << (ls->showPercent ? 1 : 0) << " " << (ls->showSpinner ? 1 : 0); wc(ls->spinnerColor);
+        out << " " << ls->spinnerRadius << " " << ls->spinnerDotSize << " " << ls->spinnerSpeed << " " << ls->spinnerY;
         out << "\n";
     }
     if (auto* ui = go->GetComponent<InventoryUI>()) {
@@ -1024,7 +1033,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cr->dotColor.r << " " << cr->dotColor.g << " " << cr->dotColor.b << " " << cr->dotColor.a << " "
             << (cr->outline ? 1 : 0) << " "
             << cr->outlineColor.r << " " << cr->outlineColor.g << " " << cr->outlineColor.b << " " << cr->outlineColor.a
-            << " " << (int)cr->anchor << "\n";
+            << " " << (int)cr->anchor;
+        // Style block (appended; numeric-peek guarded on read).
+        out << " " << (cr->lineUp ? 1 : 0) << " " << (cr->lineDown ? 1 : 0)
+            << " " << (cr->lineLeft ? 1 : 0) << " " << (cr->lineRight ? 1 : 0) << " " << cr->spread
+            << " " << (cr->circle ? 1 : 0) << " " << cr->circleRadius << " " << cr->circleThickness
+            << " " << cr->circleColor.r << " " << cr->circleColor.g << " " << cr->circleColor.b << " " << cr->circleColor.a;
+        out << "\n";
     }
     if (auto* im = go->GetComponent<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
@@ -1587,6 +1602,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int n = 0; in >> n;
                     ls->tips.clear();
                     for (int i = 0; i < n; ++i) ls->tips.push_back(ReadQuoted(in));
+                    in >> std::ws;   // optional style block (appended later)
+                    int lpk = in.peek();
+                    if (std::isdigit(lpk) || lpk == '-' || lpk == '.') {
+                        auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                        int gb = 0, bb2 = 0, sp = 0, ss2 = 0;
+                        in >> gb; rc(ls->backgroundColor2);
+                        rc(ls->titleColor); in >> ls->titleScale >> ls->titleY;
+                        rc(ls->tipColor);   in >> ls->tipScale >> ls->tipY;
+                        in >> ls->barWidth >> ls->barHeight >> ls->barY >> ls->barRadius >> bb2; rc(ls->barBorderColor);
+                        in >> sp >> ss2; rc(ls->spinnerColor);
+                        in >> ls->spinnerRadius >> ls->spinnerDotSize >> ls->spinnerSpeed >> ls->spinnerY;
+                        ls->gradientBackground = (gb != 0); ls->barBorder = (bb2 != 0);
+                        ls->showPercent = (sp != 0); ls->showSpinner = (ss2 != 0);
+                    }
                 } else if (field == "inventoryui") {
                     auto* ui = go->AddComponent<InventoryUI>();
                     int tk = 'e', sh = 1, ss = 1, dk = 1;
@@ -2588,6 +2617,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     cr->color = c; cr->dotColor = dc; cr->outlineColor = oc;
                     cr->showLines = (sl != 0); cr->dot = (dt != 0); cr->outline = (ol != 0);
                     cr->anchor = (UIAnchor)an;
+                    in >> std::ws;   // optional style block (appended later)
+                    int cpk = in.peek();
+                    if (std::isdigit(cpk) || cpk == '-' || cpk == '.') {
+                        int lu = 1, ld = 1, ll = 1, lr = 1, ci = 0; Color qc;
+                        in >> lu >> ld >> ll >> lr >> cr->spread
+                           >> ci >> cr->circleRadius >> cr->circleThickness
+                           >> qc.r >> qc.g >> qc.b >> qc.a;
+                        cr->lineUp = (lu != 0); cr->lineDown = (ld != 0);
+                        cr->lineLeft = (ll != 0); cr->lineRight = (lr != 0);
+                        cr->circle = (ci != 0); cr->circleColor = qc;
+                    }
                 } else if (field == "uiimage") {
                     auto* im = go->AddComponent<UIImage>();
                     Color c;

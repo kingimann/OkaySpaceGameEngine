@@ -7806,6 +7806,44 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##bp")) toRemove = bp;
         }
     }
+    if (auto* ls = dynamic_cast<LoadingScreen*>(curComp)) {
+        if (CompHeader("Loading Screen", ls, &toRemove)) {
+            ImGui::TextDisabled("A full-screen overlay shown on Play (and in built games).");
+            char tb[128]; std::snprintf(tb, sizeof(tb), "%s", ls->title.c_str());
+            if (ImGui::InputText("Title##ls", tb, sizeof(tb))) { ls->title = tb; ed.dirty = true; }
+            if (ImGui::Checkbox("Show title##ls", &ls->showTitle)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Show bar##ls", &ls->showBar)) ed.dirty = true;
+            if (ImGui::Checkbox("Show on scene start##ls", &ls->showOnStart)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show automatically when the scene starts (level intro / transition scene).");
+            if (ImGui::DragFloat("Duration (s)##ls", &ls->duration, 0.05f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Fade (s)##ls", &ls->fadeTime, 0.02f, 0.0f, 5.0f)) ed.dirty = true;
+            char sn[96]; std::snprintf(sn, sizeof(sn), "%s", ls->targetScene.c_str());
+            if (ImGui::InputText("Load scene when done##ls", sn, sizeof(sn))) { ls->targetScene = sn; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scene name to load when the bar fills (empty = just reveal this scene).");
+            float bgc[4] = {ls->backgroundColor.r, ls->backgroundColor.g, ls->backgroundColor.b, ls->backgroundColor.a};
+            if (ImGui::ColorEdit4("Background##ls", bgc)) { ls->backgroundColor = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            ImGui::Text("Background image"); ImGui::SameLine(150);
+            if (AssetSlot("lsbg", ls->backgroundImage, "Image", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
+            float txc[4] = {ls->textColor.r, ls->textColor.g, ls->textColor.b, ls->textColor.a};
+            if (ImGui::ColorEdit4("Text##ls", txc)) { ls->textColor = {txc[0], txc[1], txc[2], txc[3]}; ed.dirty = true; }
+            float bbc[4] = {ls->barBackground.r, ls->barBackground.g, ls->barBackground.b, ls->barBackground.a};
+            if (ImGui::ColorEdit4("Bar BG##ls", bbc)) { ls->barBackground = {bbc[0], bbc[1], bbc[2], bbc[3]}; ed.dirty = true; }
+            float bfc[4] = {ls->barFill.r, ls->barFill.g, ls->barFill.b, ls->barFill.a};
+            if (ImGui::ColorEdit4("Bar Fill##ls", bfc)) { ls->barFill = {bfc[0], bfc[1], bfc[2], bfc[3]}; ed.dirty = true; }
+            if (ImGui::TreeNodeEx("Tips##ls", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (std::size_t i = 0; i < ls->tips.size(); ++i) {
+                    char tipb[160]; std::snprintf(tipb, sizeof(tipb), "%s", ls->tips[i].c_str());
+                    ImGui::SetNextItemWidth(-30);
+                    if (ImGui::InputText((std::string("##tip") + std::to_string(i)).c_str(), tipb, sizeof(tipb))) { ls->tips[i] = tipb; ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton((std::string("x##tipdel") + std::to_string(i)).c_str())) { ls->tips.erase(ls->tips.begin() + i); ed.dirty = true; break; }
+                }
+                if (ImGui::SmallButton("+ Add tip##ls")) { ls->tips.push_back("New tip"); ed.dirty = true; }
+                ImGui::TreePop();
+            }
+            if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
+        }
+    }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
         if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
             ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
@@ -10227,6 +10265,11 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Minimap>(), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
             if (item(!go->GetComponent<MinimapBlip>(), "Minimap Blip")) { go->AddComponent<MinimapBlip>(); ed.dirty = true; }
             if (item(!go->GetComponent<Crosshair>(), "Crosshair")) { go->AddComponent<Crosshair>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LoadingScreen>(), "Loading Screen")) {
+                auto* ls = go->AddComponent<LoadingScreen>();
+                ls->tips = {"Tip: hold Shift to sprint.", "Tip: build a foundation first.", "Loading the world..."};
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<WorldUI>(), "World UI (3D label)")) { go->AddComponent<WorldUI>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIStepper>(), "UI Stepper")) { go->AddComponent<UIStepper>(); ed.dirty = true; }
@@ -11129,6 +11172,36 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddLine(ImVec2(canvasPos.x, canvasPos.y + g_uiGuideY),
                         ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY),
                         IM_COL32(255, 80, 220, 200), 1.0f);
+    }
+    // Loading-screen overlay: covers the view while a LoadingScreen is active in Play
+    // (mirrors what the built player draws over the game).
+    for (const auto& up : objs) {
+        auto* ls = up ? up->GetComponent<okay::LoadingScreen>() : nullptr;
+        if (!ls || !ls->Active()) continue;
+        float a = ls->Alpha(); a = a < 0 ? 0 : (a > 1 ? 1 : a);
+        auto col = [&](const okay::Color& c) {
+            return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(a * 255));
+        };
+        ImVec2 p0 = canvasPos, p1 = ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+        SDL_Texture* bgtex = ls->backgroundImage.empty() ? nullptr : GetThumb(ls->backgroundImage);
+        if (bgtex) dl->AddImage((ImTextureID)bgtex, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, (int)(a * 255)));
+        else       dl->AddRectFilled(p0, p1, col(ls->backgroundColor));
+        float cx = canvasPos.x + canvasSize.x * 0.5f;
+        if (ls->showTitle && !ls->title.empty()) {
+            ImVec2 ts = ImGui::CalcTextSize(ls->title.c_str());
+            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * 0.40f), col(ls->textColor), ls->title.c_str());
+        }
+        if (!ls->CurrentTip().empty()) {
+            ImVec2 ts = ImGui::CalcTextSize(ls->CurrentTip().c_str());
+            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * 0.78f), col(ls->textColor), ls->CurrentTip().c_str());
+        }
+        if (ls->showBar) {
+            float bw = canvasSize.x * 0.5f, bh = canvasSize.y * 0.022f; if (bh < 6.0f) bh = 6.0f;
+            float bx = cx - bw * 0.5f, by = canvasPos.y + canvasSize.y * 0.86f;
+            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), col(ls->barBackground), 3.0f);
+            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * ls->Progress(), by + bh), col(ls->barFill), 3.0f);
+        }
+        break;
     }
     UIWorld().active = false;   // end world-space UI projection for this overlay
 }

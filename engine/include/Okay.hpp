@@ -135,6 +135,7 @@
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/BuildPiece.hpp"
 #include "okay/Components/StructureBuilder.hpp"
+#include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"

@@ -17,6 +17,7 @@
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/StructureBuilder.hpp"
+#include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -356,6 +357,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* bp = go->GetComponent<BuildPiece>()) {
         out << "  buildpiece " << bp->tier << " " << bp->health << " " << bp->maxHealth
             << " " << bp->cost << " " << Quote(bp->material) << "\n";
+    }
+    if (auto* ls = go->GetComponent<LoadingScreen>()) {
+        auto& bg = ls->backgroundColor; auto& tc = ls->textColor;
+        auto& bb = ls->barBackground; auto& bf = ls->barFill;
+        out << "  loadingscreen " << bg.r << " " << bg.g << " " << bg.b << " " << bg.a
+            << " " << tc.r << " " << tc.g << " " << tc.b << " " << tc.a
+            << " " << bb.r << " " << bb.g << " " << bb.b << " " << bb.a
+            << " " << bf.r << " " << bf.g << " " << bf.b << " " << bf.a
+            << " " << (ls->showBar ? 1 : 0) << " " << (ls->showTitle ? 1 : 0) << " " << ls->duration
+            << " " << (ls->showOnStart ? 1 : 0) << " " << ls->fadeTime
+            << " " << Quote(ls->title) << " " << Quote(ls->targetScene) << " " << Quote(ls->backgroundImage)
+            << " " << ls->tips.size();
+        for (const auto& t : ls->tips) out << " " << Quote(t);
+        out << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -1484,6 +1499,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* bp = go->AddComponent<BuildPiece>();
                     in >> bp->tier >> bp->health >> bp->maxHealth >> bp->cost;
                     bp->material = ReadQuoted(in);
+                } else if (field == "loadingscreen") {
+                    auto* ls = go->AddComponent<LoadingScreen>();
+                    auto& bg = ls->backgroundColor; auto& tc = ls->textColor;
+                    auto& bb = ls->barBackground; auto& bf = ls->barFill;
+                    in >> bg.r >> bg.g >> bg.b >> bg.a >> tc.r >> tc.g >> tc.b >> tc.a
+                       >> bb.r >> bb.g >> bb.b >> bb.a >> bf.r >> bf.g >> bf.b >> bf.a;
+                    int sb = 1, st = 1, so = 1; in >> sb >> st >> ls->duration >> so >> ls->fadeTime;
+                    ls->showBar = (sb != 0); ls->showTitle = (st != 0); ls->showOnStart = (so != 0);
+                    ls->title = ReadQuoted(in);
+                    ls->targetScene = ReadQuoted(in);
+                    ls->backgroundImage = ReadQuoted(in);
+                    int n = 0; in >> n;
+                    ls->tips.clear();
+                    for (int i = 0; i < n; ++i) ls->tips.push_back(ReadQuoted(in));
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

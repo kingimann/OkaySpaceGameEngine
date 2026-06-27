@@ -221,6 +221,50 @@ static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
     return tex;
 }
 
+// Full-screen loading-screen overlay (background + centred title + tip + progress bar).
+static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const std::string& baseDir,
+                              std::unordered_map<std::string, SDL_Texture*>& cache) {
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    if (W <= 0 || H <= 0) return;
+    float a = ls.Alpha(); a = a < 0 ? 0 : (a > 1 ? 1 : a);
+    const Uint8 A = (Uint8)(255.0f * a);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_Rect full{0, 0, W, H};
+    SDL_Texture* bgTex = ls.backgroundImage.empty() ? nullptr : GetTexture(r, ls.backgroundImage, baseDir, cache);
+    if (bgTex) { SDL_SetTextureAlphaMod(bgTex, A); SDL_RenderCopy(r, bgTex, nullptr, &full); }
+    else {
+        const Color& b = ls.backgroundColor;
+        SDL_SetRenderDrawColor(r, (Uint8)(b.r * 255), (Uint8)(b.g * 255), (Uint8)(b.b * 255), A);
+        SDL_RenderFillRect(r, &full);
+    }
+    auto sc = [](const Color& c, Uint8 al) {
+        return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), al};
+    };
+    const float adv = (float)(Font8x8::Width + 1);
+    if (ls.showTitle && !ls.title.empty()) {
+        float px = H * 0.006f; if (px < 2.0f) px = 2.0f;
+        float tw = ls.title.size() * adv * px;
+        DrawText(r, ls.title, (W - tw) * 0.5f, H * 0.40f, px, sc(ls.textColor, A));
+    }
+    if (!ls.CurrentTip().empty()) {
+        float px = H * 0.0032f; if (px < 1.0f) px = 1.0f;
+        float tw = ls.CurrentTip().size() * adv * px;
+        DrawText(r, ls.CurrentTip(), (W - tw) * 0.5f, H * 0.78f, px, sc(ls.textColor, A));
+    }
+    if (ls.showBar) {
+        int bw = (int)(W * 0.5f), bh = (int)(H * 0.022f); if (bh < 6) bh = 6;
+        int bx = (W - bw) / 2, by = (int)(H * 0.86f);
+        SDL_Rect bgr{bx, by, bw, bh};
+        const Color& bb = ls.barBackground;
+        SDL_SetRenderDrawColor(r, (Uint8)(bb.r * 255), (Uint8)(bb.g * 255), (Uint8)(bb.b * 255), A);
+        SDL_RenderFillRect(r, &bgr);
+        SDL_Rect fr{bx, by, (int)(bw * ls.Progress()), bh};
+        const Color& bf = ls.barFill;
+        SDL_SetRenderDrawColor(r, (Uint8)(bf.r * 255), (Uint8)(bf.g * 255), (Uint8)(bf.b * 255), A);
+        SDL_RenderFillRect(r, &fr);
+    }
+}
+
 int main(int argc, char** argv) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -1562,6 +1606,13 @@ int main(int argc, char** argv) {
         OkayUI::EndFrame(renderer);
         SDL_StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
+        // Loading-screen overlay: drawn on top of everything (and the UI) when active.
+        for (const auto& up : scene.Objects()) {
+            auto* ls = up ? up->GetComponent<LoadingScreen>() : nullptr;
+            if (!ls || !ls->Active()) continue;
+            DrawLoadingScreen(renderer, *ls, baseDir, textureCache);
+            break;
+        }
         SDL_RenderPresent(renderer);
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.

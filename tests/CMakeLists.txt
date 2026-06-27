@@ -94,6 +94,10 @@ add_executable(test_structure_builder test_structure_builder.cpp)
 target_link_libraries(test_structure_builder PRIVATE okay::engine)
 add_test(NAME structure_builder COMMAND test_structure_builder)
 
+add_executable(test_loading_screen test_loading_screen.cpp)
+target_link_libraries(test_loading_screen PRIVATE okay::engine)
+add_test(NAME loading_screen COMMAND test_loading_screen)
+
 add_executable(test_spriteanim test_spriteanim.cpp)
 target_link_libraries(test_spriteanim PRIVATE okay::engine)
 add_test(NAME spriteanim COMMAND test_spriteanim)

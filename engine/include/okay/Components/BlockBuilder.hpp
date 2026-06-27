@@ -89,10 +89,15 @@ public:
         return nullptr;
     }
 
-    /// Grid-snap a world point to the nearest cell centre (exposed for tests).
+    /// Grid-snap a world point to the centre of the voxel cell that contains it
+    /// (cells are [n·size, (n+1)·size), centres at half-steps) — so a block placed
+    /// on a surface at an integer height sits flush on it instead of floating half a
+    /// cell. Exposed for tests.
     Vec3 Snap(const Vec3& p) const {
         float g = blockSize > 1e-4f ? blockSize : 1.0f;
-        return Vec3{std::round(p.x / g) * g, std::round(p.y / g) * g, std::round(p.z / g) * g};
+        return Vec3{(std::floor(p.x / g) + 0.5f) * g,
+                    (std::floor(p.y / g) + 0.5f) * g,
+                    (std::floor(p.z / g) + 0.5f) * g};
     }
 
 private:
@@ -125,12 +130,17 @@ private:
     /// with no collider, so it never blocks the ray or counts as a placed block).
     void UpdatePreview(Scene& s, const Vec3& origin, const Vec3& dir, float r) {
         RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, r, Owner());
-        // Not aiming at anything we can build on → no ghost (no floating outline).
-        if (!hit.hit && !placeInAir) { if (preview_) preview_->active = false; return; }
-        Vec3 target = hit.hit ? hit.point + hit.normal * (blockSize * 0.5f)
-                              : origin + dir * r;
-        Vec3 cell = Snap(target);
-        bool busy = Occupied(s, cell);
+        // The ghost ALWAYS tracks your aim, so it never looks dead: green on a free
+        // surface cell (where a click lands a block), red when that cell is taken or
+        // when you're not pointing at anything to build on (so you can place there).
+        Vec3 cell; bool canPlace;
+        if (hit.hit) {
+            cell = Snap(hit.point + hit.normal * (blockSize * 0.5f));
+            canPlace = !Occupied(s, cell);
+        } else {
+            cell = Snap(origin + dir * r);          // arm's length, where you're pointing
+            canPlace = placeInAir;                  // only valid if mid-air placing is on
+        }
 
         GameObject* p = EnsurePreview(s);
         if (!p || !p->transform) return;
@@ -140,7 +150,7 @@ private:
         float e = (blockSize > 1e-4f ? blockSize : 1.0f) * 1.02f;
         p->transform->localScale = {e, e, e};
         if (auto* mr = p->GetComponent<MeshRenderer>())
-            mr->color = busy ? previewBusy : previewFree;
+            mr->color = canPlace ? previewFree : previewBusy;
     }
 
     GameObject* EnsurePreview(Scene& s) {

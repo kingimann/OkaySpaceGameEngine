@@ -26,11 +26,12 @@ int main() {
     bb->blockSize = 1.0f;
     bb->reach = 20.0f;
 
-    // Grid snap rounds to the nearest cell centre.
+    // Grid snap maps a point to the centre of the cell that contains it (cells are
+    // [n, n+1), centres at half-steps) so blocks sit flush on integer-height surfaces.
     Vec3 sn = bb->Snap(Vec3{1.4f, -0.2f, 2.6f});
-    CHECK_NEAR(sn.x, 1.0f, 1e-4f);
-    CHECK_NEAR(sn.y, 0.0f, 1e-4f);
-    CHECK_NEAR(sn.z, 3.0f, 1e-4f);
+    CHECK_NEAR(sn.x, 1.5f, 1e-4f);
+    CHECK_NEAR(sn.y, -0.5f, 1e-4f);
+    CHECK_NEAR(sn.z, 2.5f, 1e-4f);
 
     // Default (Minecraft-style): aiming at empty sky places nothing.
     GameObject* refused = bb->Build(scene, Vec3{0.0f, 6.0f, 0.0f}, Vec3{0, 1, 0}, /*place=*/true, false);

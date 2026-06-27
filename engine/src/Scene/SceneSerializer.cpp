@@ -1060,7 +1060,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << mm->rangeRings
             << " " << mm->ringColor.r << " " << mm->ringColor.g << " " << mm->ringColor.b << " " << mm->ringColor.a
             << " " << (mm->showNorth ? 1 : 0)
-            << " " << mm->northColor.r << " " << mm->northColor.g << " " << mm->northColor.b << " " << mm->northColor.a;
+            << " " << mm->northColor.r << " " << mm->northColor.g << " " << mm->northColor.b << " " << mm->northColor.a
+            // --- appended (v6): labels + route line + per-marker labels ---
+            << " " << (mm->showLabels ? 1 : 0)
+            << " " << mm->labelColor.r << " " << mm->labelColor.g << " " << mm->labelColor.b << " " << mm->labelColor.a
+            << " " << mm->labelSize
+            << " " << mm->routeMarker
+            << " " << mm->routeColor.r << " " << mm->routeColor.g << " " << mm->routeColor.b << " " << mm->routeColor.a
+            << " " << mm->routeWidth;
+        for (const auto& mk : mm->markers) out << " " << Quote(mk.label);
         out << "\n";
     }
     if (auto* bl = go->GetComponent<MinimapBlip>()) {
@@ -1068,8 +1076,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << bl->size << " " << (bl->square ? 1 : 0) << " "
             // --- appended (v2): shape enum + heading rotation ---
             << (int)bl->shape << " " << (bl->rotateWithObject ? 1 : 0)
-            // --- appended (v3): icon texture ---
-            << " " << Quote(bl->icon) << "\n";
+            // --- appended (v3): icon texture, (v4): label ---
+            << " " << Quote(bl->icon) << " " << Quote(bl->label) << "\n";
     }
     if (auto* cr = go->GetComponent<Crosshair>()) {
         out << "  crosshair " << cr->position.x << " " << cr->position.y << " "
@@ -2729,6 +2737,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     mm->showSelf = (ss != 0); mm->viewCone = (vc != 0);
                                     mm->viewConeColor = vcc; mm->ringColor = rc2;
                                     mm->showNorth = (sn != 0); mm->northColor = nc;
+                                    // v6: labels + route line + per-marker labels.
+                                    in >> std::ws;
+                                    int pk9 = in.peek();
+                                    if (std::isdigit(pk9) || pk9 == '-' || pk9 == '+' || pk9 == '.') {
+                                        int sl = 0; Color lc, rcl;
+                                        in >> sl >> lc.r >> lc.g >> lc.b >> lc.a >> mm->labelSize
+                                           >> mm->routeMarker
+                                           >> rcl.r >> rcl.g >> rcl.b >> rcl.a >> mm->routeWidth;
+                                        mm->showLabels = (sl != 0); mm->labelColor = lc; mm->routeColor = rcl;
+                                        for (auto& mk : mm->markers) mk.label = ReadQuoted(in);
+                                    }
                                 }
                             }
                         }
@@ -2748,7 +2767,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         bl->shape = (MinimapBlip::Shape)sh;
                         bl->rotateWithObject = (rot != 0);
                         in >> std::ws;
-                        if (in.peek() == '"') bl->icon = ReadQuoted(in);   // v3: icon texture
+                        if (in.peek() == '"') bl->icon = ReadQuoted(in);    // v3: icon texture
+                        in >> std::ws;
+                        if (in.peek() == '"') bl->label = ReadQuoted(in);   // v4: label
                     }
                 } else if (field == "crosshair") {
                     auto* cr = go->AddComponent<Crosshair>();

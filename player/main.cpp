@@ -1778,6 +1778,22 @@ int main(int argc, char** argv) {
                     float ang = bl->rotateWithObject ? (Minimap::HeadingOf(bp->transform->Forward(), mm->useXZ) - mapHeading) : 0.0f;
                     drawBlip(o.x + mx, o.y + my, half, col, bl->shape, ang);
                 }
+                if (mm->showLabels && !bl->label.empty()) {
+                    SDL_Color lc{(Uint8)(mm->labelColor.r*255), (Uint8)(mm->labelColor.g*255),
+                                 (Uint8)(mm->labelColor.b*255), (Uint8)(mm->labelColor.a*255*op)};
+                    DrawText(renderer, bl->label, o.x+mx+half+2, o.y+my-half, mm->labelSize, lc);
+                }
+            }
+            // Route line (GTA pink line from the player centre to a chosen waypoint).
+            if (mm->routeMarker >= 0 && mm->routeMarker < (int)mm->markers.size()) {
+                float rmx, rmy;
+                Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mm->markers[mm->routeMarker].world),
+                                     sz.x, sz.y, mapHeading, rmx, rmy, wpp);
+                SDL_SetRenderDrawColor(renderer, (Uint8)(mm->routeColor.r*255), (Uint8)(mm->routeColor.g*255),
+                                       (Uint8)(mm->routeColor.b*255), (Uint8)(mm->routeColor.a*255*op));
+                int rw = (int)mm->routeWidth; if (rw < 1) rw = 1;
+                for (int t = -(rw/2); t <= rw/2; ++t)
+                    SDL_RenderDrawLine(renderer, cx, cy+t, (int)(o.x+rmx), (int)(o.y+rmy)+t);
             }
             // Waypoint markers (GTA POIs): fixed world points drawn as diamonds.
             for (const auto& mk : mm->markers) {
@@ -1797,6 +1813,11 @@ int main(int argc, char** argv) {
                           bot{(int)px,(int)(py+h)}, lft{(int)(px-h),(int)py};
                 MMFillTriangle(renderer, top, rgt, bot, col);
                 MMFillTriangle(renderer, top, lft, bot, col);
+                if (mm->showLabels && !mk.label.empty()) {
+                    SDL_Color lc{(Uint8)(mm->labelColor.r*255), (Uint8)(mm->labelColor.g*255),
+                                 (Uint8)(mm->labelColor.b*255), (Uint8)(mm->labelColor.a*255*op)};
+                    DrawText(renderer, mk.label, px+h+2, py-h, mm->labelSize, lc);
+                }
             }
             // The target marker at the map center (the arrow shows facing; a north-up
             // map spins the arrow GTA-style).

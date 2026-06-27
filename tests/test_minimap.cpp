@@ -121,8 +121,12 @@ int main() {
         mm->fullscreenFrac = 0.9f;
         mm->zoomInKey = '+'; mm->zoomOutKey = '-';
         mm->minZoom = 0.1f; mm->maxZoom = 20.0f; mm->zoomStep = 1.25f;
-        mm->markers.push_back({{10.0f, 20.0f}, Color::FromBytes(0, 255, 0), 7.0f});
-        mm->markers.push_back({{-30.0f, 5.0f}, Color::FromBytes(255, 0, 0), 5.0f});
+        mm->markers.push_back({{10.0f, 20.0f}, Color::FromBytes(0, 255, 0), 7.0f, "Shop"});
+        mm->markers.push_back({{-30.0f, 5.0f}, Color::FromBytes(255, 0, 0), 5.0f, "Boss"});
+        mm->showLabels = true; mm->labelSize = 12.0f;
+        mm->labelColor = Color::FromBytes(200, 210, 220);
+        mm->routeMarker = 1; mm->routeWidth = 3.0f;
+        mm->routeColor = Color::FromBytes(235, 70, 200, 230);
         mm->showSelf = false;
         mm->viewCone = true; mm->viewConeAngle = 75.0f; mm->viewConeLength = 50.0f;
         mm->viewConeColor = Color::FromBytes(10, 20, 30, 80);
@@ -137,6 +141,7 @@ int main() {
         bl->shape = MinimapBlip::Shape::Arrow;
         bl->rotateWithObject = true;
         bl->icon = "icons/enemy.png";
+        bl->label = "Grunt";
 
         std::string text = SceneSerializer::Serialize(s);
         Scene loaded("loaded");
@@ -187,6 +192,14 @@ int main() {
             CHECK(lm->rangeRings == 3);
             CHECK(lm->showNorth);
             CHECK_NEAR(lm->northColor.r, 250.0f/255.0f, 0.01f);
+            CHECK(lm->showLabels);
+            CHECK_NEAR(lm->labelSize, 12.0f, 1e-3f);
+            CHECK(lm->routeMarker == 1);
+            CHECK_NEAR(lm->routeWidth, 3.0f, 1e-3f);
+            if (lm->markers.size() == 2) {
+                CHECK(lm->markers[0].label == "Shop");
+                CHECK(lm->markers[1].label == "Boss");
+            }
         }
 
         GameObject* le = loaded.Find("Enemy");
@@ -199,6 +212,7 @@ int main() {
             CHECK(lb->shape == MinimapBlip::Shape::Arrow);
             CHECK(lb->rotateWithObject);
             CHECK(lb->icon == "icons/enemy.png");
+            CHECK(lb->label == "Grunt");
         }
     }
 

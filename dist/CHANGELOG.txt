@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.273.0  (Minimap labels + route line)
+  - Minimap text labels: name your blips and waypoint markers and toggle
+    "Show Labels" to draw them on the map (size + colour configurable).
+  - GTA-style route line: pick a waypoint index ("Route To Marker") to draw a
+    coloured line from the player to that objective.
+  - Renders in the player + editor, serializes, with inspector fields per blip
+    and per marker; tests extended.
+
 v2.272.0  (More minimap options)
   - Minimap radar options: a view cone (FOV wedge showing where the player
     faces), concentric range rings, a north-indicator tick, and a "show self"

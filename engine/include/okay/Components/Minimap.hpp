@@ -62,6 +62,16 @@ public:
     bool  showNorth = false;
     Color northColor = Color::FromBytes(235, 90, 90, 255);
 
+    // ---- Text labels (blip + marker names) ----
+    bool  showLabels = false;                         // draw name labels by blips/markers
+    Color labelColor = Color::FromBytes(240, 240, 245, 255);
+    float labelSize  = 10.0f;                          // label text pixel height
+
+    // ---- Route line (GTA pink line from the player to a waypoint) ----
+    int   routeMarker = -1;                            // marker index to route to (-1 = none)
+    Color routeColor  = Color::FromBytes(235, 70, 200, 230);
+    float routeWidth  = 2.0f;
+
     // ---- GTA-style custom world map ----
     std::string mapTexture;                          // image drawn under the blips ("" = none)
     float mapWorldSize = 100.0f;                      // world units the texture spans (square)
@@ -76,7 +86,7 @@ public:
     // ---- Waypoints / markers (GTA POIs) ----
     /// A fixed world-space point of interest drawn on the map as a coloured diamond.
     /// `world` is (east, north) — matches the map plane (X/Z in 3D, X/Y in 2D).
-    struct Marker { Vec2 world{0.0f, 0.0f}; Color color = Color::FromBytes(255, 230, 90, 255); float size = 6.0f; };
+    struct Marker { Vec2 world{0.0f, 0.0f}; Color color = Color::FromBytes(255, 230, 90, 255); float size = 6.0f; std::string label; };
     std::vector<Marker> markers;
 
     // ---- Runtime zoom (GTA scroll-zoom) ----
@@ -175,6 +185,7 @@ public:
     Shape shape = Shape::Square;                      // preferred shape selector
     bool  rotateWithObject = false;                   // point triangle/arrow along heading
     std::string icon;                                 // optional icon texture (overrides the shape)
+    std::string label;                                // optional name shown when the map's labels are on
 };
 
 } // namespace okay

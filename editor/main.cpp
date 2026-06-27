@@ -10280,11 +10280,28 @@ void DrawInspector(EditorState& ed) {
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X##mkdel")) del = (int)i;
                     if (ImGui::DragFloat("Size##mk", &mk.size, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
+                    char ml[128]; std::strncpy(ml, mk.label.c_str(), sizeof(ml)-1); ml[sizeof(ml)-1] = '\0';
+                    if (ImGui::InputText("Label##mk", ml, sizeof(ml))) { mk.label = ml; ed.dirty = true; }
                     ImGui::PopID();
                 }
                 if (del >= 0) { mm->markers.erase(mm->markers.begin() + del); ed.dirty = true; }
                 if (ImGui::SmallButton("+ Add Marker##umm")) { mm->markers.push_back({}); ed.dirty = true; }
                 ImGui::TreePop();
+            }
+            ImGui::SeparatorText("Labels & Route");
+            if (ImGui::Checkbox("Show Labels##umm", &mm->showLabels)) ed.dirty = true;
+            if (mm->showLabels) {
+                if (ImGui::DragFloat("Label Size##umm", &mm->labelSize, 0.2f, 4.0f, 48.0f)) ed.dirty = true;
+                float lc[4] = {mm->labelColor.r, mm->labelColor.g, mm->labelColor.b, mm->labelColor.a};
+                if (ImGui::ColorEdit4("Label Color##umm", lc)) { mm->labelColor = {lc[0],lc[1],lc[2],lc[3]}; ed.dirty = true; }
+            }
+            int rmk = mm->routeMarker;
+            if (ImGui::DragInt("Route To Marker##umm", &rmk, 0.1f, -1, (int)mm->markers.size()-1)) { mm->routeMarker = rmk; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a GTA-style line from the player to this waypoint index (-1 = off).");
+            if (mm->routeMarker >= 0) {
+                if (ImGui::DragFloat("Route Width##umm", &mm->routeWidth, 0.2f, 1.0f, 16.0f)) ed.dirty = true;
+                float rc[4] = {mm->routeColor.r, mm->routeColor.g, mm->routeColor.b, mm->routeColor.a};
+                if (ImGui::ColorEdit4("Route Color##umm", rc)) { mm->routeColor = {rc[0],rc[1],rc[2],rc[3]}; ed.dirty = true; }
             }
             ImGui::TextDisabled("add a Minimap Blip to objects to plot them");
             if (ImGui::SmallButton("Remove##umm")) toRemove = mm;
@@ -10310,6 +10327,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Icon##umb", ic, sizeof(ic))) { bl->icon = ic; ed.dirty = true; }
             if (AcceptAssetPathField(bl->icon)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional icon image; overrides the shape.");
+            char lb[128]; std::strncpy(lb, bl->label.c_str(), sizeof(lb)-1); lb[sizeof(lb)-1] = '\0';
+            if (ImGui::InputText("Label##umb", lb, sizeof(lb))) { bl->label = lb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name shown next to the blip when the Minimap's labels are on.");
             ImGui::TextDisabled("appears on every Minimap");
             if (ImGui::SmallButton("Remove##umb")) toRemove = bl;
         }
@@ -11557,6 +11577,16 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 float ang = bl->rotateWithObject ? (Minimap::HeadingOf(bp->transform->Forward(), mm->useXZ) - mapHeading) : 0.0f;
                 drawBlip(a.x + mx, a.y + my, half, ToColor(bl->color), bl->shape, ang);
             }
+            if (mm->showLabels && !bl->label.empty())
+                DrawBitmapText(dl, bl->label, a.x+mx+half+2, a.y+my-half, mm->labelSize, ToColor(mm->labelColor));
+        }
+        // Route line (GTA pink line from the player centre to a chosen waypoint).
+        if (mm->routeMarker >= 0 && mm->routeMarker < (int)mm->markers.size()) {
+            float rmx, rmy;
+            Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mm->markers[mm->routeMarker].world),
+                                 sz.x, sz.y, mapHeading, rmx, rmy, mmWpp);
+            dl->AddLine(ImVec2(cxp, cyp), ImVec2(a.x+rmx, a.y+rmy), ToColor(mm->routeColor),
+                        mm->routeWidth > 0.5f ? mm->routeWidth : 1.0f);
         }
         // Waypoint markers (GTA POIs): fixed world points drawn as diamonds.
         for (const auto& mk : mm->markers) {
@@ -11572,6 +11602,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             float px = a.x + mx, py = a.y + my, h = mk.size; ImU32 c = ToColor(mk.color);
             dl->AddTriangleFilled(ImVec2(px, py-h), ImVec2(px+h, py), ImVec2(px, py+h), c);
             dl->AddTriangleFilled(ImVec2(px, py-h), ImVec2(px-h, py), ImVec2(px, py+h), c);
+            if (mm->showLabels && !mk.label.empty())
+                DrawBitmapText(dl, mk.label, px+h+2, py-h, mm->labelSize, ToColor(mm->labelColor));
         }
         // The target marker at the map center (arrow shows facing; GTA north-up maps
         // spin the arrow instead of the map).

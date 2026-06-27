@@ -146,7 +146,7 @@ SDL_Renderer* g_sdlRenderer = nullptr;
 // (hardware MSAA + depth) on an isolated hidden GL context, read back, and shown via
 // the same texture path as the software renderer. Isolated context = the editor's
 // SDL_Renderer UI is never disturbed. Experimental + off by default.
-bool          g_gpuRender = false;       // use the GL renderer for the 3D view
+bool          g_gpuRender = true;        // GPU 3D view, auto-on (D3D11/OpenGL by OS, software fallback)
 SDL_Window*   g_glWindow  = nullptr;     // hidden window owning the GL context
 SDL_GLContext g_glCtx     = nullptr;
 okay::GLRenderer* g_glRenderer = nullptr;
@@ -609,7 +609,7 @@ void LoadSettings() {
         else if (k == "showcamhud") g_showCamHud = (v != 0);
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
         else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
-        else if (k == "gpurender") g_gpuRender = (v != 0);
+        // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
     // aren't magnified) and AA OFF (the top-left fill rule killed the shimmer at the
@@ -633,8 +633,7 @@ void SaveSettings() {
       << "showworldaxes " << (g_showWorldAxes ? 1 : 0) << "\n"
       << "showcamhud " << (g_showCamHud ? 1 : 0) << "\n"
       << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n"
-      << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n"
-      << "gpurender " << (g_gpuRender ? 1 : 0) << "\n";
+      << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -1493,17 +1492,15 @@ void DrawMenuAndToolbar(EditorState& ed) {
 #if defined(_WIN32)
             gpuAvail = gpuAvail || g_d3dReady;
 #endif
-            char label[64];
-            std::snprintf(label, sizeof(label), "GPU renderer (%s)", backend);
-            if (gpuAvail) {
-                if (ImGui::MenuItem(label, nullptr, &g_gpuRender)) SaveSettings();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU (hardware rasterizer + 4x MSAA), like Unity.\nThe API is auto-selected for your system: Direct3D 11 on Windows,\nOpenGL elsewhere. OFF = the built-in software renderer.");
-            } else {
-                ImGui::BeginDisabled();
-                bool off = false; ImGui::MenuItem("GPU renderer (unavailable)", nullptr, &off);
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("No GPU backend initialized on this system;\nusing the software renderer.");
-            }
+            // The GPU renderer is automatic now (on by default, API auto-selected for
+            // the OS, self-healing to software on failure), so this is just a read-only
+            // status line — no manual switch needed.
+            char label[80];
+            std::snprintf(label, sizeof(label), "Renderer: %s", g_gpuRender && gpuAvail ? backend : "software");
+            ImGui::BeginDisabled();
+            ImGui::MenuItem(label, nullptr, false);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D is rendered on the GPU automatically — Direct3D 11 on Windows,\nOpenGL elsewhere — and falls back to software if no GPU is available.");
         }
 #ifdef OKAY_HAVE_OKAYUI
         ImGui::MenuItem("Test UI", nullptr, &g_showTestUI);

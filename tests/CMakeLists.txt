@@ -98,6 +98,10 @@ add_executable(test_loading_screen test_loading_screen.cpp)
 target_link_libraries(test_loading_screen PRIVATE okay::engine)
 add_test(NAME loading_screen COMMAND test_loading_screen)
 
+add_executable(test_inventory_ui test_inventory_ui.cpp)
+target_link_libraries(test_inventory_ui PRIVATE okay::engine)
+add_test(NAME inventory_ui COMMAND test_inventory_ui)
+
 add_executable(test_spriteanim test_spriteanim.cpp)
 target_link_libraries(test_spriteanim PRIVATE okay::engine)
 add_test(NAME spriteanim COMMAND test_spriteanim)

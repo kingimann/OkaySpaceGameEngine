@@ -265,6 +265,66 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
     }
 }
 
+// A Minecraft-style hotbar (+ openable backpack) drawn from an Inventory.
+static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::string& baseDir,
+                            std::unordered_map<std::string, SDL_Texture*>& cache) {
+    okay::Inventory* inv = ui.Inv();
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    if (W <= 0 || H <= 0) return;
+    const int n = ui.hotbarSlots < 1 ? 1 : ui.hotbarSlots;
+    const float sz = ui.slotSize, gap = ui.slotGap;
+    auto setc = [&](const Color& c, int a = -1) {
+        SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
+                               (Uint8)(a < 0 ? c.a * 255 : a));
+    };
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    // Draw one slot at (x,y) for inventory stack index `idx`, highlighted if selected.
+    auto slot = [&](float x, float y, int idx, bool sel) {
+        SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
+        setc(sel ? ui.selectedColor : ui.slotBorder); SDL_RenderFillRect(r, &outer);
+        float b = sel ? 3.0f : 2.0f;
+        SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
+        setc(ui.slotColor); SDL_RenderFillRect(r, &inner);
+        if (inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
+            const auto& it = inv->slots[idx];
+            SDL_Texture* icon = ui.iconFolder.empty() ? nullptr
+                              : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
+            if (icon) { SDL_Rect d{inner.x + 2, inner.y + 2, inner.w - 4, inner.h - 4}; SDL_RenderCopy(r, icon, nullptr, &d); }
+            else {
+                std::string nm = it.item.substr(0, 4);
+                float px = sz * 0.10f; if (px < 1) px = 1;
+                DrawText(r, nm, x + 5, y + 6, px,
+                         SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+            }
+            if (it.count > 1) {
+                std::string cs = std::to_string(it.count);
+                float px = sz * 0.085f; if (px < 1) px = 1;
+                float tw = cs.size() * (Font8x8::Width + 1) * px;
+                DrawText(r, cs, x + sz - tw - 4, y + sz - (Font8x8::Height + 1) * px - 3, px,
+                         SDL_Color{255, 255, 255, 255});
+            }
+        }
+    };
+    // Backpack (when open): darken, then a grid above the hotbar.
+    if (ui.open && ui.backpackRows > 0) {
+        if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+        float rowW = n * sz + (n - 1) * gap;
+        float gx = (W - rowW) * 0.5f;
+        float gyBottom = H - sz - 16.0f - 14.0f;   // sit just above the hotbar
+        for (int row = 0; row < ui.backpackRows; ++row)
+            for (int c = 0; c < n; ++c) {
+                int idx = n + row * n + c;
+                float x = gx + c * (sz + gap);
+                float y = gyBottom - (ui.backpackRows - row) * (sz + gap);
+                slot(x, y, idx, false);
+            }
+    }
+    // Hotbar (always): centered along the bottom.
+    float rowW = n * sz + (n - 1) * gap;
+    float hx = (W - rowW) * 0.5f, hy = H - sz - 16.0f;
+    for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+}
+
 int main(int argc, char** argv) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -1606,6 +1666,13 @@ int main(int argc, char** argv) {
         OkayUI::EndFrame(renderer);
         SDL_StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
+        // Minecraft-style inventory hotbar / backpack (under the loading screen).
+        for (const auto& up : scene.Objects()) {
+            auto* ui = up ? up->GetComponent<InventoryUI>() : nullptr;
+            if (!ui) continue;
+            DrawInventoryUI(renderer, *ui, baseDir, textureCache);
+            break;
+        }
         // Loading-screen overlay: drawn on top of everything (and the UI) when active.
         for (const auto& up : scene.Objects()) {
             auto* ls = up ? up->GetComponent<LoadingScreen>() : nullptr;

@@ -18,6 +18,7 @@
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/StructureBuilder.hpp"
 #include "okay/Components/LoadingScreen.hpp"
+#include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -371,6 +372,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ls->tips.size();
         for (const auto& t : ls->tips) out << " " << Quote(t);
         out << "\n";
+    }
+    if (auto* ui = go->GetComponent<InventoryUI>()) {
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  inventoryui " << ui->hotbarSlots << " " << ui->backpackRows << " " << ui->selected
+            << " " << (int)(unsigned char)ui->toggleKey << " " << (ui->selectHotkeys ? 1 : 0)
+            << " " << (ui->scrollSelect ? 1 : 0) << " " << ui->slotSize << " " << ui->slotGap
+            << " " << (ui->darkenWhenOpen ? 1 : 0);
+        wc(ui->slotColor); wc(ui->slotBorder); wc(ui->selectedColor); wc(ui->textColor); wc(ui->panelColor);
+        out << " " << Quote(ui->iconFolder) << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -1513,6 +1523,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int n = 0; in >> n;
                     ls->tips.clear();
                     for (int i = 0; i < n; ++i) ls->tips.push_back(ReadQuoted(in));
+                } else if (field == "inventoryui") {
+                    auto* ui = go->AddComponent<InventoryUI>();
+                    int tk = 'e', sh = 1, ss = 1, dk = 1;
+                    in >> ui->hotbarSlots >> ui->backpackRows >> ui->selected >> tk >> sh >> ss
+                       >> ui->slotSize >> ui->slotGap >> dk;
+                    ui->toggleKey = (char)tk; ui->selectHotkeys = (sh != 0);
+                    ui->scrollSelect = (ss != 0); ui->darkenWhenOpen = (dk != 0);
+                    auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    rc(ui->slotColor); rc(ui->slotBorder); rc(ui->selectedColor); rc(ui->textColor); rc(ui->panelColor);
+                    ui->iconFolder = ReadQuoted(in);
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

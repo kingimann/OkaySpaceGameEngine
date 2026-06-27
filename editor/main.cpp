@@ -1160,12 +1160,46 @@ std::string Build(EditorState& ed, const std::string& outDir,
                ", but couldn't find or download the player runtime. Check your "
                "internet connection, or place OkaySpacePlayer next to the editor.";
     }
-    fs::copy_file(player, dir / exeName, fs::copy_options::overwrite_existing, ec);
-    if (ec) return "Wrote scene but couldn't copy the player: " + ec.message();
+    // Copy that overwrites even a locked/existing target: remove first, then copy.
+    // copy_file(overwrite_existing) can still report "file exists" on some setups
+    // (and copying a file onto itself is an error), so guard both.
+    auto copyOver = [](const fs::path& src, const fs::path& dst, std::error_code& e) -> bool {
+        e.clear();
+        std::error_code e0;
+        if (fs::exists(dst, e0) && fs::equivalent(src, dst, e0)) return true;  // same file → nothing to do
+        std::error_code e1; fs::remove(dst, e1);                              // best-effort unlock/replace
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, e);
+        return !e;
+    };
+
+    if (!copyOver(player, dir / exeName, ec))
+        return "Wrote scene but couldn't copy the player: " + ec.message();
 #if !defined(_WIN32)
     fs::permissions(dir / exeName, fs::perms::owner_exec | fs::perms::group_exec |
                     fs::perms::others_exec, fs::perm_options::add, ec);
 #endif
+
+    // Bundle the runtime libraries the game needs beside it — most importantly
+    // SDL2.dll on Windows, without which the game won't launch. Look next to the
+    // player, then next to the editor (and common subfolders).
+    {
+        fs::path pdir = fs::path(player).parent_path();
+        fs::path edir = updater::SelfPath().empty() ? fs::path() : fs::path(updater::SelfPath()).parent_path();
+        std::vector<fs::path> roots = {pdir, edir, edir / "bin", edir.parent_path(), pdir.parent_path()};
+#if defined(_WIN32)
+        const char* libs[] = {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"};
+#else
+        const char* libs[] = {"libSDL2-2.0.so.0"};
+#endif
+        for (const char* lib : libs) {
+            for (const fs::path& root : roots) {
+                if (root.empty()) continue;
+                std::error_code fe;
+                fs::path src = root / lib;
+                if (fs::exists(src, fe)) { std::error_code ce; copyOver(src, dir / lib, ce); break; }
+            }
+        }
+    }
 
     // 3) Copy every asset the scene references (textures, WAVs, frames) so the
     // shipped game folder is self-contained, preserving relative subpaths.
@@ -1666,6 +1700,16 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
             if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
+            if (ImGui::MenuItem("Inventory (Minecraft-style)")) {
+                GameObject* g = ed.CreateEmpty("Inventory");
+                auto* inv = g->AddComponent<Inventory>();
+                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft
+                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
+                inv->Add("Torch", 16); inv->Add("Sword", 1);
+                g->AddComponent<InventoryUI>();
+                ed.Select(g); ed.dirty = true; created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. Drives off an Inventory you can fill from gameplay.");
             if (ImGui::MenuItem("UI Document"))  {
                 GameObject* root = EnsureUIRoot(ed);
                 GameObject* g = ed.CreateEmpty("UIDocument");
@@ -7844,6 +7888,32 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
         }
     }
+    if (auto* ui = dynamic_cast<InventoryUI*>(curComp)) {
+        if (CompHeader("Inventory UI (Minecraft-style)", ui, &toRemove)) {
+            ImGui::TextDisabled("Hotbar + backpack drawn from a sibling/owner Inventory.");
+            if (!ui->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to show items.");
+            if (ImGui::SliderInt("Hotbar Slots##iu", &ui->hotbarSlots, 1, 9)) ed.dirty = true;
+            if (ImGui::SliderInt("Backpack Rows##iu", &ui->backpackRows, 0, 6)) ed.dirty = true;
+            if (ImGui::DragFloat("Slot Size##iu", &ui->slotSize, 0.5f, 16.0f, 128.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Slot Gap##iu", &ui->slotGap, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
+            char tk[2] = {ui->toggleKey, 0};
+            if (ImGui::InputText("Open Key##iu", tk, sizeof(tk))) { if (tk[0]) ui->toggleKey = tk[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to open/close the backpack (default E).");
+            if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Darken when open##iu", &ui->darkenWhenOpen)) ed.dirty = true;
+            char icf[128]; std::snprintf(icf, sizeof(icf), "%s", ui->iconFolder.c_str());
+            if (ImGui::InputText("Icon Folder##iu", icf, sizeof(icf))) { ui->iconFolder = icf; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Looks for <folder><item-name>.png per slot; falls back to the item name.");
+            auto cc = [&](const char* lbl, Color& c, const char* id) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+            };
+            cc("Slot", ui->slotColor, "iuc1"); cc("Border", ui->slotBorder, "iuc2");
+            cc("Selected", ui->selectedColor, "iuc3"); cc("Text", ui->textColor, "iuc4");
+            if (ImGui::SmallButton("Remove##iu")) toRemove = ui;
+        }
+    }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
         if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
             ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
@@ -11172,6 +11242,43 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddLine(ImVec2(canvasPos.x, canvasPos.y + g_uiGuideY),
                         ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY),
                         IM_COL32(255, 80, 220, 200), 1.0f);
+    }
+    // Minecraft-style inventory hotbar / backpack preview (mirrors the player).
+    for (const auto& up : objs) {
+        auto* ui = up ? up->GetComponent<okay::InventoryUI>() : nullptr;
+        if (!ui) continue;
+        okay::Inventory* inv = ui->Inv();
+        int n = ui->hotbarSlots < 1 ? 1 : ui->hotbarSlots;
+        float sz = ui->slotSize, gap = ui->slotGap;
+        auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
+        auto slot = [&](float x, float y, int idx, bool sel) {
+            ImVec2 p0(canvasPos.x + x, canvasPos.y + y), p1(p0.x + sz, p0.y + sz);
+            dl->AddRectFilled(p0, p1, sel ? col(ui->selectedColor) : col(ui->slotBorder), 3.0f);
+            float b = sel ? 3.0f : 2.0f;
+            dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(ui->slotColor), 2.0f);
+            if (inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
+                const auto& it = inv->slots[idx];
+                SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
+                if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
+                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, 4).c_str());
+                if (it.count > 1) {
+                    std::string cs = std::to_string(it.count);
+                    ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
+                    dl->AddText(ImVec2(p1.x - ts.x - 4, p1.y - ts.y - 3), IM_COL32(255, 255, 255, 255), cs.c_str());
+                }
+            }
+        };
+        if (ui->open && ui->backpackRows > 0) {
+            if (ui->darkenWhenOpen)
+                dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
+            float rowW = n * sz + (n - 1) * gap, gx = (canvasSize.x - rowW) * 0.5f, gyB = canvasSize.y - sz - 30.0f;
+            for (int row = 0; row < ui->backpackRows; ++row)
+                for (int c = 0; c < n; ++c)
+                    slot(gx + c * (sz + gap), gyB - (ui->backpackRows - row) * (sz + gap), n + row * n + c, false);
+        }
+        float rowW = n * sz + (n - 1) * gap, hx = (canvasSize.x - rowW) * 0.5f, hy = canvasSize.y - sz - 16.0f;
+        for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
+        break;
     }
     // Loading-screen overlay: covers the view while a LoadingScreen is active in Play
     // (mirrors what the built player draws over the game).

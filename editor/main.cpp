@@ -7728,6 +7728,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* bb = dynamic_cast<BlockBuilder*>(curComp)) {
         if (CompHeader("Block Builder (voxel)", bb, &toRemove)) {
             ImGui::TextDisabled("Look + click to place a cube on a grid; right-click removes it.");
+            ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
             if (ImGui::DragFloat("Block Size##bb", &bb->blockSize, 0.05f, 0.05f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Reach##bb", &bb->reach, 0.25f, 0.5f, 200.0f)) ed.dirty = true;
             float bc[4] = {bb->blockColor.r, bb->blockColor.g, bb->blockColor.b, bb->blockColor.a};

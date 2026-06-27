@@ -86,5 +86,27 @@ int main() {
         if (up && up->tag == "BlockPreview" && !up->active) ++hidden;
     CHECK(hidden == 1);
 
+    // Builder on a CHILD camera must ignore the whole player body (its collider is
+    // on the root), so a forward shot lands on the wall ahead — never on yourself.
+    {
+        Scene hs("hier");
+        GameObject* player = hs.CreateGameObject("Player");
+        player->transform->localPosition = {0, 0, 0};
+        auto* pcol = player->AddComponent<BoxCollider3D>();
+        pcol->size = {1.0f, 2.0f, 1.0f};            // body wraps the origin
+        GameObject* camObj = hs.CreateGameObject("Cam");
+        camObj->transform->SetParent(player->transform, false);
+        auto* bb2 = camObj->AddComponent<BlockBuilder>();
+        bb2->blockSize = 1.0f; bb2->reach = 10.0f;
+        GameObject* wall = hs.CreateGameObject("Wall");
+        wall->transform->localPosition = {0, 0, -5};
+        wall->transform->localScale = {4, 4, 1};
+        wall->AddComponent<BoxCollider3D>();
+        // Cast from inside the player body, straight ahead (-Z) at the wall.
+        GameObject* placed = bb2->Build(hs, Vec3{0, 0, 0}, Vec3{0, 0, -1}, true, false);
+        CHECK(placed != nullptr);
+        CHECK(placed && placed->transform->localPosition.z < -1.0f);  // near the wall, not on the player
+    }
+
     TEST_MAIN_RESULT();
 }

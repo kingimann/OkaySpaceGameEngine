@@ -71,7 +71,7 @@ public:
     GameObject* Build(Scene& s, const Vec3& origin, const Vec3& dir, bool place, bool remove,
                       float reachArg = -1.0f) {
         const float r = reachArg >= 0.0f ? reachArg : reach;
-        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, r, gameObject);
+        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, r, Owner());
         if (place) {
             // Must be aiming at a surface (ground or another block) to build against it,
             // like Minecraft — unless placeInAir lets you drop one at arm's length.
@@ -99,12 +99,24 @@ private:
     GameObject* preview_ = nullptr;     ///< runtime-only ghost cube (not saved/removable)
     bool        crosshairChecked_ = false;
 
+    /// The player this builder belongs to: the root ancestor of the object it's
+    /// attached to. So whether you drop BlockBuilder on the Player or on its child
+    /// Camera, the aim ray skips the whole player body (no block placed on yourself)
+    /// and reach is measured from the player.
+    GameObject* Owner() const {
+        if (!gameObject || !gameObject->transform) return gameObject;
+        Transform* t = gameObject->transform;
+        while (t->Parent()) t = t->Parent();
+        return t->gameObject ? t->gameObject : gameObject;
+    }
+
     /// Distance from the camera to the player carrying this builder — the orbit gap
     /// in third person (≈ eye height in first person). Added to reach so building
     /// range is measured from the player regardless of camera placement.
     float CameraGap(const Vec3& camPos) const {
-        if (!gameObject || !gameObject->transform) return 0.0f;
-        Vec3 d = camPos - gameObject->transform->Position();
+        GameObject* o = Owner();
+        if (!o || !o->transform) return 0.0f;
+        Vec3 d = camPos - o->transform->Position();
         return std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
     }
 
@@ -112,7 +124,7 @@ private:
     /// whether that cell is free. Re-uses one runtime GameObject (a wireframe cube
     /// with no collider, so it never blocks the ray or counts as a placed block).
     void UpdatePreview(Scene& s, const Vec3& origin, const Vec3& dir, float r) {
-        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, r, gameObject);
+        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, r, Owner());
         // Not aiming at anything we can build on → no ghost (no floating outline).
         if (!hit.hit && !placeInAir) { if (preview_) preview_->active = false; return; }
         Vec3 target = hit.hit ? hit.point + hit.normal * (blockSize * 0.5f)

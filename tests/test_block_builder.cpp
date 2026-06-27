@@ -109,5 +109,26 @@ int main() {
         CHECK(placed && placed->transform->localPosition.z < -1.0f);  // near the wall, not on the player
     }
 
+    // Update() must aim where the camera LOOKS (down its local -Z), not behind it.
+    // Identity-rotation camera looks toward -Z; the ghost must land on the -Z wall.
+    {
+        Scene cs("cam");
+        GameObject* cg = cs.CreateGameObject("Cam");
+        cg->transform->localPosition = {0, 0, 0};   // identity rotation → looks -Z
+        auto* cam = cg->AddComponent<Camera>();
+        cs.mainCamera = cam;
+        auto* cbb = cg->AddComponent<BlockBuilder>();
+        cbb->blockSize = 1.0f; cbb->reach = 20.0f;
+        GameObject* wall = cs.CreateGameObject("Wall");
+        wall->transform->localPosition = {0, 0, -6};
+        wall->transform->localScale = {6, 6, 1};
+        wall->AddComponent<BoxCollider3D>();
+        cs.Update(0.0f);   // drives BlockBuilder::Update → builds the ghost from cam aim
+        GameObject* ghost = nullptr;
+        for (const auto& up : cs.Objects()) if (up && up->tag == "BlockPreview") ghost = up.get();
+        CHECK(ghost != nullptr);
+        CHECK(ghost && ghost->transform->localPosition.z < 0.0f);  // in front (-Z), not behind
+    }
+
     TEST_MAIN_RESULT();
 }

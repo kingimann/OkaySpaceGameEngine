@@ -40,7 +40,9 @@ public:
         Scene* s = GetScene();
         if (!s || !s->mainCamera || !s->mainCamera->gameObject || !s->mainCamera->gameObject->transform) return;
         Transform* cam = s->mainCamera->gameObject->transform;
-        const Vec3 origin = cam->Position(), dir = cam->Forward();
+        // Cameras look down their local -Z (Vec3::Forward is +Z, i.e. *behind* the
+        // camera), so the aim ray is -Forward(), matching the screen-center crosshair.
+        const Vec3 origin = cam->Position(), dir = cam->Forward() * -1.0f;
         // Reach is measured FROM THE PLAYER, but we cast from the camera (so the
         // aim always matches the screen-center crosshair). In third person the
         // camera orbits behind you, so add that camera→player gap back to reach —

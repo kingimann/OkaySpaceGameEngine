@@ -22,6 +22,7 @@
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
+#include "okay/Components/ChestInventory.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -452,6 +453,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& in : r.inputs) out << " " << Quote(in.item) << " " << in.count;
             out << " " << Quote(r.output) << " " << r.outputCount;
         }
+        out << "\n";
+    }
+    if (auto* ch = go->GetComponent<ChestInventory>()) {
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  chestinventory " << (ch->open ? 1 : 0) << " " << (int)(unsigned char)ch->openKey
+            << " " << ch->range << " " << Quote(ch->title) << " " << ch->cols
+            << " " << ch->slotSize << " " << ch->gap << " " << ch->cornerRadius
+            << " " << Quote(ch->iconFolder) << " " << (ch->darkenWhenOpen ? 1 : 0);
+        wc(ch->panelColor); wc(ch->titleBar); wc(ch->slotColor); wc(ch->slotBorder);
+        wc(ch->textColor); wc(ch->hoverColor);
         out << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
@@ -1738,6 +1749,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         r.output = ReadQuoted(in); in >> r.outputCount;
                         cs->recipes.push_back(r);
                     }
+                } else if (field == "chestinventory") {
+                    auto* ch = go->AddComponent<ChestInventory>();
+                    auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    int op = 0, ok = 'f', dk = 1;
+                    in >> op >> ok >> ch->range; ch->title = ReadQuoted(in);
+                    in >> ch->cols >> ch->slotSize >> ch->gap >> ch->cornerRadius;
+                    ch->iconFolder = ReadQuoted(in); in >> dk;
+                    ch->open = (op != 0); ch->openKey = (char)ok; ch->darkenWhenOpen = (dk != 0);
+                    rc(ch->panelColor); rc(ch->titleBar); rc(ch->slotColor); rc(ch->slotBorder);
+                    rc(ch->textColor); rc(ch->hoverColor);
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

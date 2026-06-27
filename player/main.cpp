@@ -649,6 +649,61 @@ static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
     }
 }
 
+// A lootable chest: chest contents on top, your inventory below. Click a stack to
+// move the whole thing to the other side (take loot / stash items).
+static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::string& baseDir,
+                      std::unordered_map<std::string, SDL_Texture*>& cache) {
+    if (!ch.open) return;
+    okay::Inventory* cinv = ch.Inv(); okay::Inventory* pinv = ch.PlayerInv();
+    if (!cinv) return;
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H); if (W <= 0 || H <= 0) return;
+    const float sz = ch.slotSize, gp = ch.gap, cr = ch.cornerRadius;
+    int cols = ch.cols < 1 ? 1 : ch.cols;
+    int chestN = cinv->capacity > 0 ? cinv->capacity : (int)cinv->slots.size();
+    int playN  = pinv ? (pinv->capacity > 0 ? pinv->capacity : (int)pinv->slots.size()) : 0;
+    int chestRows = (chestN + cols - 1) / cols, playRows = (playN + cols - 1) / cols;
+    float gridW = cols * sz + (cols - 1) * gp;
+    float totalH = chestRows * (sz + gp) + 30.0f + playRows * (sz + gp);
+    float ox = (W - gridW) * 0.5f, oy = (H - totalH) * 0.5f + 16.0f;
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    if (ch.darkenWhenOpen) { SDL_SetRenderDrawColor(r, 0, 0, 0, 150); SDL_Rect f{0, 0, W, H}; SDL_RenderFillRect(r, &f); }
+    auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
+    auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
+        SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
+        FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
+    };
+    okay::Vec2 mp = okay::Input::MousePosition();
+    fill(ox - 12, oy - 34, gridW + 24, totalH + 46, ch.panelColor, cr + 2);
+    fill(ox - 12, oy - 34, gridW + 24, 26, ch.titleBar, cr + 2);
+    DrawText(r, ch.title, ox, oy - 28, 1.6f, sc(ch.textColor));
+    auto grid = [&](okay::Inventory* inv, float gy, int count) -> int {
+        int clicked = -1;
+        for (int i = 0; i < count; ++i) {
+            float x = ox + (i % cols) * (sz + gp), y = gy + (i / cols) * (sz + gp);
+            fill(x, y, sz, sz, ch.slotBorder, cr);
+            fill(x + 2, y + 2, sz - 4, sz - 4, ch.slotColor, cr > 2 ? cr - 2 : 0);
+            bool hov = mp.x >= x && mp.x < x + sz && mp.y >= y && mp.y < y + sz;
+            if (hov) fill(x, y, sz, sz, ch.hoverColor, cr);
+            if (inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) {
+                const auto& it = inv->slots[i];
+                SDL_Texture* icon = ch.iconFolder.empty() ? nullptr : GetTexture(r, ch.iconFolder + it.item + ".png", baseDir, cache);
+                if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
+                else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
+                if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
+                    float tw = c.size() * (Font8x8::Width + 1) * px;
+                    DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
+            }
+            if (hov && okay::Input::GetMouseButtonDown(0)) clicked = i;
+        }
+        return clicked;
+    };
+    int cClick = grid(cinv, oy, chestN);
+    DrawText(r, "Your inventory", ox, oy + chestRows * (sz + gp) + 6, 1.2f, sc(ch.textColor));
+    int pClick = pinv ? grid(pinv, oy + chestRows * (sz + gp) + 24, playN) : -1;
+    if (cClick >= 0) ch.TakeToPlayer(cClick);
+    else if (pClick >= 0) ch.StashFromPlayer(pClick);
+}
+
 int main(int argc, char** argv) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -932,6 +987,7 @@ int main(int argc, char** argv) {
             if (auto* gi = up->GetComponent<GridInventory>()) { if (gi->open) invModal = true; }
             if (auto* gu = up->GetComponent<GridInventoryUI>()) { if (gu->dragIndex >= 0) itemDragging = true; }
             if (auto* cs = up->GetComponent<CraftingStation>()) { if (cs->open) invModal = true; }
+            if (auto* ce = up->GetComponent<ChestInventory>()) { if (ce->open) invModal = true; }
         }
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
@@ -2047,6 +2103,12 @@ int main(int argc, char** argv) {
             auto* cs = up ? up->GetComponent<CraftingStation>() : nullptr;
             if (!cs) continue;
             DrawCrafting(renderer, *cs);
+            break;
+        }
+        for (const auto& up : scene.Objects()) {
+            auto* ce = up ? up->GetComponent<ChestInventory>() : nullptr;
+            if (!ce || !ce->open) continue;
+            DrawChest(renderer, *ce, baseDir, textureCache);
             break;
         }
         // Loading-screen overlay: drawn on top of everything (and the UI) when active.

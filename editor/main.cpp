@@ -873,6 +873,10 @@ ImVec2 g_playCanvasPos = ImVec2(0, 0);
 // (so a 3D button hit-tests where the Game view draws it). 0 until first drawn.
 ImVec2 g_playCanvasSize = ImVec2(1280, 720);
 bool   g_playPersp = true;
+// Game-tab mouse capture: lock + hide the OS cursor so FPS/TPS mouselook works while
+// testing in the editor (Unity's "the Game view grabs the mouse"). Toggled in the Game
+// toolbar or auto-engaged when the game requests Cursor lock; Esc releases it.
+bool   g_gameMouseCapture = false;
 
 // Shortest distance (pixels) from point p to the segment a-b, for handle picking.
 static float SegDistPx(ImVec2 p, ImVec2 a, ImVec2 b) {
@@ -8201,6 +8205,34 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cs")) toRemove = cs;
         }
     }
+    if (auto* ch = dynamic_cast<ChestInventory*>(curComp)) {
+        if (CompHeader("Chest / Container", ch, &toRemove)) {
+            ImGui::TextDisabled("Loot container. Its items live in a sibling Inventory.");
+            if (!ch->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component for the chest's items.");
+            char tb[96]; std::snprintf(tb, sizeof(tb), "%s", ch->title.c_str());
+            if (ImGui::InputText("Title##ch", tb, sizeof(tb))) { ch->title = tb; ed.dirty = true; }
+            char ok[2] = {ch->openKey, 0};
+            if (ImGui::InputText("Open Key##ch", ok, sizeof(ok))) { if (ok[0]) ch->openKey = ok[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press near the chest to open (default F). Click items to move them.");
+            if (ImGui::DragFloat("Open Range##ch", &ch->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be (0 = open from anywhere).");
+            if (ImGui::SliderInt("Columns##ch", &ch->cols, 1, 12)) ed.dirty = true;
+            if (ImGui::DragFloat("Slot Size##ch", &ch->slotSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Gap##ch", &ch->gap, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Corner Radius##ch", &ch->cornerRadius, 0.25f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Darken when open##ch", &ch->darkenWhenOpen)) ed.dirty = true;
+            char icf[128]; std::snprintf(icf, sizeof(icf), "%s", ch->iconFolder.c_str());
+            if (ImGui::InputText("Icon Folder##ch", icf, sizeof(icf))) { ch->iconFolder = icf; ed.dirty = true; }
+            auto cc = [&](const char* lbl, Color& c, const char* id) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+            };
+            cc("Panel", ch->panelColor, "chc0"); cc("Title Bar", ch->titleBar, "chc1");
+            cc("Slot", ch->slotColor, "chc2"); cc("Border", ch->slotBorder, "chc3");
+            cc("Text", ch->textColor, "chc4");
+            if (ImGui::SmallButton("Remove##ch")) toRemove = ch;
+        }
+    }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
         if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
             ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
@@ -10629,6 +10661,14 @@ void DrawInspector(EditorState& ed) {
                 cs->recipes = {r};
                 ed.dirty = true;
             }
+            if (item(!go->GetComponent<ChestInventory>(), "Chest / Container")) {
+                go->AddComponent<ChestInventory>();
+                if (!go->GetComponent<Inventory>()) {        // chest needs an Inventory for its loot
+                    auto* in = go->AddComponent<Inventory>();
+                    in->Add("gold", 5); in->Add("apple", 3);   // sample loot
+                }
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<TurnManager>(), "Turn Manager")) { go->AddComponent<TurnManager>(); ed.dirty = true; }
           } EndCat(o); }
 
@@ -11837,6 +11877,56 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddText(ImVec2(px + pw - 10 - ts.x, ry + 6), col(cs->textColor), ins.c_str());
             if (hover && can && okay::Input::GetMouseButtonDown(0)) cs->Craft(i);
         }
+        break;
+    }
+    // Chest panel (mirrors the player): chest items on top, your inventory below; click to move.
+    for (const auto& up : objs) {
+        auto* ch = up ? up->GetComponent<okay::ChestInventory>() : nullptr;
+        if (!ch || !ch->open) continue;
+        okay::Inventory* cinv = ch->Inv(); okay::Inventory* pinv = ch->PlayerInv();
+        if (!cinv) break;
+        auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
+        float sz = ch->slotSize, gp = ch->gap, cr = ch->cornerRadius;
+        int cols = ch->cols < 1 ? 1 : ch->cols;
+        int chestN = cinv->capacity > 0 ? cinv->capacity : (int)cinv->slots.size();
+        int playN  = pinv ? (pinv->capacity > 0 ? pinv->capacity : (int)pinv->slots.size()) : 0;
+        int chestRows = (chestN + cols - 1) / cols, playRows = (playN + cols - 1) / cols;
+        float gridW = cols * sz + (cols - 1) * gp;
+        float totalH = chestRows * (sz + gp) + 30.0f + playRows * (sz + gp);
+        float lx = (canvasSize.x - gridW) * 0.5f, ly = (canvasSize.y - totalH) * 0.5f + 16.0f;
+        float ox = canvasPos.x + lx, oy = canvasPos.y + ly;
+        if (ch->darkenWhenOpen)
+            dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + gridW + 12, oy + totalH + 12), col(ch->panelColor), cr + 2);
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + gridW + 12, oy - 8), col(ch->titleBar), cr + 2);
+        dl->AddText(ImVec2(ox, oy - 28), col(ch->textColor), ch->title.c_str());
+        okay::Vec2 m = okay::Input::MousePosition();
+        auto grid = [&](okay::Inventory* inv, float lgy, int count) -> int {
+            int clicked = -1;
+            for (int i = 0; i < count; ++i) {
+                float lx2 = lx + (i % cols) * (sz + gp), ly2 = lgy + (i / cols) * (sz + gp);
+                ImVec2 p0(canvasPos.x + lx2, canvasPos.y + ly2), p1(p0.x + sz, p0.y + sz);
+                dl->AddRectFilled(p0, p1, col(ch->slotBorder), cr);
+                dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ch->slotColor), cr);
+                bool hov = gameView && m.x >= lx2 && m.x < lx2 + sz && m.y >= ly2 && m.y < ly2 + sz;
+                if (hov) dl->AddRectFilled(p0, p1, col(ch->hoverColor), cr);
+                if (inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) {
+                    const auto& it = inv->slots[i];
+                    SDL_Texture* icon = ch->iconFolder.empty() ? nullptr : GetThumb(ch->iconFolder + it.item + ".png");
+                    if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
+                    else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(ch->textColor), it.item.substr(0, 5).c_str());
+                    if (it.count > 1) { std::string c = std::to_string(it.count); ImVec2 ts = ImGui::CalcTextSize(c.c_str());
+                        dl->AddText(ImVec2(p1.x - ts.x - 3, p1.y - ts.y - 2), col(ch->textColor), c.c_str()); }
+                }
+                if (hov && okay::Input::GetMouseButtonDown(0)) clicked = i;
+            }
+            return clicked;
+        };
+        int cClick = grid(cinv, ly, chestN);
+        dl->AddText(ImVec2(ox, oy + chestRows * (sz + gp) + 6), col(ch->textColor), "Your inventory");
+        int pClick = pinv ? grid(pinv, ly + chestRows * (sz + gp) + 24, playN) : -1;
+        if (cClick >= 0) ch->TakeToPlayer(cClick);
+        else if (pClick >= 0) ch->StashFromPlayer(pClick);
         break;
     }
     // Loading-screen overlay: covers the view while a LoadingScreen is active in Play
@@ -13672,6 +13762,11 @@ void DrawGameView(EditorState& ed) {
     ImGui::Combo("Aspect", &s_aspect, kAspectNames, IM_ARRAYSIZE(kAspectNames));
     ImGui::SameLine();
     ImGui::TextDisabled(ed.isPlaying() ? "live" : "press Play to run");
+    // FPS testing: grab the mouse so look controls work in the Game tab.
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Capture mouse", &g_gameMouseCapture)) {}
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock + hide the cursor for FPS/TPS mouselook while testing.\nPress Esc to release. Auto-engages if the game locks the cursor.");
+    if (ed.isPlaying() && g_gameMouseCapture) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f,1,0.6f,1), "(Esc to release)"); }
 
     ImVec2 avail = ImGui::GetContentRegionAvail();
     if (avail.x < 50) avail.x = 50;
@@ -14028,25 +14123,51 @@ int main(int argc, char** argv) {
             Input::FeedKeys(down);
             Input::FeedGamepad(padAxis, padMask);
 
-            // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
-            // against the same coordinates the preview draws with.
-            ImVec2 mp = ImGui::GetMousePos();
-            // ImGui reports (-FLT_MAX, -FLT_MAX) when the cursor leaves the window / the
-            // app loses focus. Feeding that into the game (and any UI hit-test math) is
-            // how clicking off during Play could blow up; treat it as "off-canvas".
-            float rx, ry;
-            if (mp.x <= -1.0e6f || mp.y <= -1.0e6f || mp.x >= 1.0e6f || mp.y >= 1.0e6f) {
-                rx = -1.0f; ry = -1.0f;
-            } else {
-                rx = mp.x - g_playCanvasPos.x; ry = mp.y - g_playCanvasPos.y;
+            // A modal inventory/crafting/chest releases capture so you can click it.
+            bool gameModal = false;
+            for (const auto& up : ed.scene().Objects()) {
+                if (!up) continue;
+                if (auto* iu = up->GetComponent<InventoryUI>()) if (iu->open && iu->dragItems) gameModal = true;
+                if (auto* gi = up->GetComponent<GridInventory>()) if (gi->open) gameModal = true;
+                if (auto* cs = up->GetComponent<CraftingStation>()) if (cs->open) gameModal = true;
+                if (auto* ce = up->GetComponent<ChestInventory>()) if (ce->open) gameModal = true;
             }
-            unsigned mask = 0;
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Left))   mask |= 1u << 0;
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Right))  mask |= 1u << 1;
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) mask |= 1u << 2;
-            Input::FeedMouse(Vec2{rx, ry}, mask);
+            // Esc releases the manual capture.
+            const Uint8* ks2 = SDL_GetKeyboardState(nullptr);
+            if (ks2[SDL_SCANCODE_ESCAPE]) g_gameMouseCapture = false;
+            // Capture when the user asked OR the game requested a locked cursor, unless a
+            // modal panel is open (then we need a visible cursor to click it).
+            bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal;
+            static Vec2 s_gameVMouse{0, 0};
+            if (capture) {
+                SDL_SetRelativeMouseMode(SDL_TRUE);
+                int dxp, dyp; Uint32 rmb = SDL_GetRelativeMouseState(&dxp, &dyp);
+                s_gameVMouse.x += (float)dxp; s_gameVMouse.y += (float)dyp;   // accumulate look motion
+                unsigned mask = 0;
+                if (rmb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
+                if (rmb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
+                if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
+                Input::FeedMouse(s_gameVMouse, mask);
+            } else {
+                SDL_SetRelativeMouseMode(SDL_FALSE);
+                // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
+                // against the same coordinates the preview draws with.
+                ImVec2 mp = ImGui::GetMousePos();
+                float rx, ry;
+                if (mp.x <= -1.0e6f || mp.y <= -1.0e6f || mp.x >= 1.0e6f || mp.y >= 1.0e6f) {
+                    rx = -1.0f; ry = -1.0f;
+                } else {
+                    rx = mp.x - g_playCanvasPos.x; ry = mp.y - g_playCanvasPos.y;
+                }
+                unsigned mask = 0;
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Left))   mask |= 1u << 0;
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Right))  mask |= 1u << 1;
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) mask |= 1u << 2;
+                Input::FeedMouse(Vec2{rx, ry}, mask);
+            }
         } else if (!ed.isPlaying()) {
             Input::FeedKeys({}); // release everything in edit mode
+            if (g_gameMouseCapture || SDL_GetRelativeMouseMode()) { g_gameMouseCapture = false; SDL_SetRelativeMouseMode(SDL_FALSE); }
         }
 
         // Keep each scroll view's contentHeight matched to its children so the

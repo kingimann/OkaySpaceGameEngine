@@ -351,37 +351,42 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     }
 
     // Drag-and-drop (only while the backpack is open). Pick a slot under the cursor,
-    // drop it on another to swap/merge — works across the hotbar and backpack.
+    // drop it on the NEAREST slot (forgiving — gaps/imperfect aim still land cleanly).
     if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; return; }
-    auto hit = [&](float px, float py, float x, float y) {
-        return px >= x && px < x + sz && py >= y && py < y + sz;
-    };
-    auto slotAt = [&](float px, float py) -> int {
-        for (int i = 0; i < n; ++i) if (hit(px, py, hx + i * (sz + gap), hy)) return i;
-        for (int row = 0; row < ui.backpackRows; ++row)
-            for (int c = 0; c < n; ++c)
-                if (hit(px, py, hx + c * (sz + gap), bpY(row))) return n + row * n + c;
-        return -1;
-    };
-    okay::Vec2 mp = okay::Input::MousePosition();
     auto slotXY = [&](int idx, float& sx, float& sy) {
         if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
         else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
     };
-    // Hover highlight on the slot under the cursor (not while dragging).
-    if (ui.dragIndex < 0) {
-        int h = slotAt(mp.x, mp.y);
-        if (h >= 0) { float sx, sy; slotXY(h, sx, sy);
-            SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
-            FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, ui.hoverColor, ui.hoverColor, false, false, 1.0f);
+    const int slotCount = n + ui.backpackRows * n;
+    // Slot whose centre is closest to (px,py), within a slot's reach (else -1).
+    auto nearest = [&](float px, float py) -> int {
+        int best = -1; float bestD = (sz + gap) * (sz + gap) * 1.1f;
+        for (int idx = 0; idx < slotCount; ++idx) {
+            float sx, sy; slotXY(idx, sx, sy);
+            float dx = px - (sx + sz * 0.5f), dy = py - (sy + sz * 0.5f);
+            float d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; best = idx; }
         }
-    }
+        return best;
+    };
+    okay::Vec2 mp = okay::Input::MousePosition();
+    auto hilite = [&](int idx, const Color& c) {
+        if (idx < 0) return; float sx, sy; slotXY(idx, sx, sy);
+        SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
+        FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, c, c, false, false, 1.0f);
+    };
+    // Highlight the target slot: the one under the cursor while hovering, or the
+    // nearest slot the dragged item will drop into.
+    if (ui.dragIndex < 0) hilite(nearest(mp.x, mp.y), ui.hoverColor);
+    else { int t = nearest(mp.x, mp.y);
+        if (t >= 0 && t != ui.dragIndex)
+            hilite(t, Color{ui.selectedColor.r, ui.selectedColor.g, ui.selectedColor.b, 0.40f}); }
     if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
-        int idx = slotAt(mp.x, mp.y);
+        int idx = nearest(mp.x, mp.y);
         if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui.dragIndex = idx;
     }
     if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
-        ui.MoveSlot(ui.dragIndex, slotAt(mp.x, mp.y));
+        ui.MoveSlot(ui.dragIndex, nearest(mp.x, mp.y));
         ui.dragIndex = -1;
     }
     if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->slots.size()) {
@@ -758,11 +763,15 @@ int main(int argc, char** argv) {
 
         // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
         // can point at and drag items, and show it — just like Minecraft/DayZ.
-        bool invModal = false;
+        bool invModal = false, itemDragging = false;
         for (const auto& up : scene.Objects()) {
             if (!up) continue;
-            if (auto* iu = up->GetComponent<InventoryUI>()) if (iu->open && iu->dragItems) { invModal = true; break; }
-            if (auto* gi = up->GetComponent<GridInventory>()) if (gi->open) { invModal = true; break; }
+            if (auto* iu = up->GetComponent<InventoryUI>()) {
+                if (iu->open && iu->dragItems) invModal = true;
+                if (iu->dragIndex >= 0) itemDragging = true;
+            }
+            if (auto* gi = up->GetComponent<GridInventory>()) { if (gi->open) invModal = true; }
+            if (auto* gu = up->GetComponent<GridInventoryUI>()) { if (gu->dragIndex >= 0) itemDragging = true; }
         }
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
@@ -770,7 +779,13 @@ int main(int argc, char** argv) {
         static Vec2 s_virtualMouse{0, 0};
         bool locked = Cursor::IsLocked() && !invModal;
         SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
-        SDL_ShowCursor((Cursor::visible || invModal) ? SDL_ENABLE : SDL_DISABLE);
+        // While actively dragging a stack, hide the OS arrow: the dragged icon (drawn
+        // centred on the mouse) becomes the pointer. The arrow's hotspot sits at its
+        // tip — ~half a slot above where it looks like it's pointing — which biased the
+        // nearest-slot drop to the slot above. Hiding it makes the icon centre the only
+        // reference, so "drop where the item is" lines up with the slot under it.
+        bool showCursor = (Cursor::visible || invModal) && !itemDragging;
+        SDL_ShowCursor(showCursor ? SDL_ENABLE : SDL_DISABLE);
 
         // Feed the mouse (position in pixels + left/right/middle button state). When
         // locked we accumulate relative motion into a virtual position so the
@@ -781,7 +796,14 @@ int main(int argc, char** argv) {
             s_virtualMouse.x += (float)rx; s_virtualMouse.y += (float)ry;
         } else {
             int ax, ay; mb = SDL_GetMouseState(&ax, &ay);
-            s_virtualMouse = Vec2{(float)ax, (float)ay};
+            // SDL_GetMouseState is in window POINTS, but the UI is drawn in renderer
+            // PIXELS (the window is High-DPI). Scale so UI hit-testing — inventory
+            // slots, buttons — lines up with what's on screen.
+            int ww = 0, wh = 0, ow = 0, oh = 0;
+            SDL_GetWindowSize(window, &ww, &wh);
+            SDL_GetRendererOutputSize(renderer, &ow, &oh);
+            float sx = ww > 0 ? (float)ow / ww : 1.0f, sy = wh > 0 ? (float)oh / wh : 1.0f;
+            s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
         unsigned mask = 0;
         if (mb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;

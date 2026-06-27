@@ -25,3 +25,6 @@ compile_commands.json
 .idea/
 *.swp
 .DS_Store
+
+# Packaged distribution archives (release artifacts, not source)
+OkaySpace-*.zip

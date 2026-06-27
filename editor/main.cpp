@@ -11377,20 +11377,35 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         // Drag-and-drop in the editor Play view (Input is fed canvas-relative, matching
         // the slots' local coords). Mirrors the player.
         if (ui->open && ui->dragItems && inv) {
-            auto hitL = [&](float px, float py, float x, float y) { return px >= x && px < x + sz && py >= y && py < y + sz; };
-            auto slotAt = [&](float px, float py) -> int {
-                for (int i = 0; i < n; ++i) if (hitL(px, py, hx + i * (sz + gap), hy)) return i;
-                for (int row = 0; row < ui->backpackRows; ++row)
-                    for (int c = 0; c < n; ++c) if (hitL(px, py, hx + c * (sz + gap), bpY(row))) return n + row * n + c;
-                return -1;
+            auto slotXY = [&](int idx, float& sx, float& sy) {
+                if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
+                else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
+            };
+            const int slotCount = n + ui->backpackRows * n;
+            auto nearest = [&](float px, float py) -> int {
+                int best = -1; float bestD = (sz + gap) * (sz + gap) * 1.1f;
+                for (int idx = 0; idx < slotCount; ++idx) {
+                    float sx, sy; slotXY(idx, sx, sy);
+                    float dx = px - (sx + sz * 0.5f), dy = py - (sy + sz * 0.5f);
+                    float d = dx * dx + dy * dy;
+                    if (d < bestD) { bestD = d; best = idx; }
+                }
+                return best;
             };
             okay::Vec2 m = okay::Input::MousePosition();
+            int target = nearest(m.x, m.y);   // highlight the destination slot
+            if (target >= 0 && ui->dragIndex >= 0 && target != ui->dragIndex) {
+                float sx, sy; slotXY(target, sx, sy);
+                ImU32 hc = IM_COL32((int)(ui->selectedColor.r*255), (int)(ui->selectedColor.g*255), (int)(ui->selectedColor.b*255), 100);
+                dl->AddRectFilled(ImVec2(canvasPos.x + sx, canvasPos.y + sy),
+                                  ImVec2(canvasPos.x + sx + sz, canvasPos.y + sy + sz), hc, cr);
+            }
             if (ui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
-                int idx = slotAt(m.x, m.y);
+                int idx = nearest(m.x, m.y);
                 if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui->dragIndex = idx;
             }
             if (ui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
-                ui->MoveSlot(ui->dragIndex, slotAt(m.x, m.y));
+                ui->MoveSlot(ui->dragIndex, nearest(m.x, m.y));
                 ui->dragIndex = -1;
             }
             if (ui->dragIndex >= 0 && ui->dragIndex < (int)inv->slots.size()) {

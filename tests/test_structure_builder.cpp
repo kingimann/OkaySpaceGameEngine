@@ -26,6 +26,7 @@ int main() {
     auto* sb = go->AddComponent<StructureBuilder>();
     sb->cellSize = 3.0f; sb->wallHeight = 3.0f; sb->slabThickness = 0.3f;
     sb->reach = 50.0f;
+    sb->requireResources = false;   // creative mode for the geometry checks
 
     // --- Foundation: snaps to the world grid and sits on the ground ---
     sb->piece = StructureBuilder::Piece::Foundation;
@@ -74,6 +75,58 @@ int main() {
     sb->piece = StructureBuilder::Piece::Foundation;
     auto miss = sb->Resolve(scene, Vec3{0.0f, 10.0f, 0.0f}, Vec3{0, 1, 0});
     CHECK(!miss.show && !miss.valid);
+
+    // --- Inventory / tiers: building costs resources; upgrade + repair + refund ---
+    {
+        Scene rs("res");
+        GameObject* gnd = rs.CreateGameObject("Ground");
+        gnd->transform->localScale = {50, 1, 50};
+        gnd->AddComponent<BoxCollider3D>();
+        GameObject* player = rs.CreateGameObject("Player");
+        auto* inv = player->AddComponent<Inventory>();
+        auto* b = player->AddComponent<StructureBuilder>();
+        b->reach = 50.0f; b->requireResources = true;
+        b->costWood = 10; b->costStone = 15;
+
+        // No wood yet → can't afford → not valid.
+        b->piece = StructureBuilder::Piece::Foundation;
+        auto noWood = b->Resolve(rs, Vec3{0, 10, 0}, Vec3{0, -1, 0});
+        CHECK(noWood.show && !noWood.valid);
+
+        // Give 25 wood → now valid; placing spends 10.
+        inv->Add("Wood", 25);
+        auto ok = b->Resolve(rs, Vec3{0, 10, 0}, Vec3{0, -1, 0});
+        CHECK(ok.valid);
+        GameObject* f = b->PlacePiece(rs, ok);
+        CHECK(f != nullptr);
+        CHECK(inv->Count("Wood") == 15);
+        auto* bp = f->GetComponent<BuildPiece>();
+        CHECK(bp != nullptr);
+        CHECK(bp && bp->tier == 0);
+
+        // Upgrade wood→stone costs 15 stone: fails without stone, works with it.
+        CHECK(b->Upgrade(rs, Vec3{0, 10, 0}, Vec3{0, -1, 0}) == nullptr);
+        inv->Add("Stone", 20);
+        GameObject* up = b->Upgrade(rs, Vec3{0, 10, 0}, Vec3{0, -1, 0});
+        CHECK(up == f);
+        CHECK(bp && bp->tier == 1);
+        CHECK(inv->Count("Stone") == 5);
+
+        // Damage then repair (pays stone, restores to full).
+        inv->Add("Stone", 10);   // enough to cover the repair
+        bp->Damage(bp->maxHealth * 0.5f);
+        CHECK(bp->health < bp->maxHealth);
+        GameObject* rep = b->Repair(rs, Vec3{0, 10, 0}, Vec3{0, -1, 0});
+        CHECK(rep == f);
+        CHECK(bp->FullHealth());
+
+        // Demolish refunds part of the (stone-tier) cost.
+        int stoneBefore = inv->Count("Stone");
+        GameObject* dem = b->Demolish(rs, Vec3{0, 10, 0}, Vec3{0, -1, 0});
+        CHECK(dem != nullptr);
+        rs.Update(0.0f);
+        CHECK(inv->Count("Stone") > stoneBefore);   // got a refund
+    }
 
     TEST_MAIN_RESULT();
 }

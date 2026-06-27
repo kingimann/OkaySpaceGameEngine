@@ -7752,11 +7752,13 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* sb = dynamic_cast<StructureBuilder*>(curComp)) {
         if (CompHeader("Structure Builder (Rust-style)", sb, &toRemove)) {
-            ImGui::TextDisabled("Snap foundations/walls/floors/pillars/ramps. 1-5 pick, R rotates.");
+            ImGui::TextDisabled("Snap foundations/walls/doorways/windows/floors/pillars/ramps.");
+            ImGui::TextDisabled("1-8 pick, R rotate, G upgrade (wood->stone->metal), F repair.");
             ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
-            const char* pieces[] = {"Foundation", "Wall", "Floor", "Pillar", "Ramp"};
+            const char* pieces[] = {"Foundation", "Foundation (Triangle)", "Wall", "Doorway",
+                                    "Window", "Floor", "Pillar", "Ramp"};
             int pc = (int)sb->piece;
-            if (ImGui::Combo("Piece##sb", &pc, pieces, 5)) { sb->piece = (StructureBuilder::Piece)pc; ed.dirty = true; }
+            if (ImGui::Combo("Piece##sb", &pc, pieces, 8)) { sb->piece = (StructureBuilder::Piece)pc; ed.dirty = true; }
             if (ImGui::SliderInt("Rotation (90°)##sb", &sb->rotSteps, 0, 3)) ed.dirty = true;
             if (ImGui::DragFloat("Cell Size##sb", &sb->cellSize, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Wall Height##sb", &sb->wallHeight, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
@@ -7764,16 +7766,44 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Wall Thickness##sb", &sb->wallThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Pillar Thickness##sb", &sb->pillarThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Reach##sb", &sb->reach, 0.25f, 1.0f, 200.0f)) ed.dirty = true;
-            float sc[4] = {sb->color.r, sb->color.g, sb->color.b, sb->color.a};
-            if (ImGui::ColorEdit4("Color##sb", sc)) { sb->color = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
             ImGui::Text("Texture"); ImGui::SameLine(120);
             if (AssetSlot("sbtex", sb->structureTexture, "Texture", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
             char tagbuf[64]; std::snprintf(tagbuf, sizeof(tagbuf), "%s", sb->structureTag.c_str());
             if (ImGui::InputText("Structure Tag##sb", tagbuf, sizeof(tagbuf))) { sb->structureTag = tagbuf; ed.dirty = true; }
+            if (ImGui::TreeNodeEx("Resources / Inventory##sb", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Checkbox("Require resources (off = creative)##sb", &sb->requireResources)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Building/upgrading/repairing draws items from the player's Inventory component.");
+                if (ImGui::SliderFloat("Refund on demolish##sb", &sb->refundFraction, 0.0f, 1.0f)) ed.dirty = true;
+                auto matRow = [&](const char* lbl, std::string& item, int& cost, const char* id) {
+                    char b[64]; std::snprintf(b, sizeof(b), "%s", item.c_str());
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::InputText((std::string(lbl) + "##mi" + id).c_str(), b, sizeof(b))) { item = b; ed.dirty = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                    if (ImGui::DragInt((std::string("cost##mc") + id).c_str(), &cost, 0.2f, 0, 9999)) ed.dirty = true;
+                };
+                matRow("Wood",  sb->woodItem,  sb->costWood,  "w");
+                matRow("Stone", sb->stoneItem, sb->costStone, "s");
+                matRow("Metal", sb->metalItem, sb->costMetal, "m");
+                ImGui::TreePop();
+            }
             if (ImGui::Checkbox("Placement preview##sb", &sb->showPreview)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Crosshair##sb", &sb->showCrosshair)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##sb")) toRemove = sb;
+        }
+    }
+    if (auto* bp = dynamic_cast<BuildPiece*>(curComp)) {
+        if (CompHeader("Build Piece", bp, &toRemove)) {
+            const char* tiers[] = {"Wood", "Stone", "Metal"};
+            int t = bp->tier < 0 ? 0 : (bp->tier > 2 ? 2 : bp->tier);
+            if (ImGui::Combo("Tier##bp", &t, tiers, 3)) { bp->tier = t; ed.dirty = true; }
+            if (ImGui::DragFloat("Health##bp", &bp->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Health##bp", &bp->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            ImGui::ProgressBar(bp->maxHealth > 0 ? bp->health / bp->maxHealth : 0.0f, ImVec2(-1, 0));
+            char mb[64]; std::snprintf(mb, sizeof(mb), "%s", bp->material.c_str());
+            if (ImGui::InputText("Material##bp", mb, sizeof(mb))) { bp->material = mb; ed.dirty = true; }
+            if (ImGui::DragInt("Cost##bp", &bp->cost, 0.2f, 0, 9999)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##bp")) toRemove = bp;
         }
     }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {

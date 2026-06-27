@@ -346,10 +346,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* sb = go->GetComponent<StructureBuilder>()) {
         out << "  structurebuilder " << (int)sb->piece << " " << sb->cellSize << " " << sb->wallHeight
             << " " << sb->slabThickness << " " << sb->wallThickness << " " << sb->pillarThickness
-            << " " << sb->reach << " " << sb->color.r << " " << sb->color.g << " " << sb->color.b << " " << sb->color.a
-            << " " << sb->rotSteps << " " << sb->placeButton << " " << sb->removeButton
+            << " " << sb->reach << " " << sb->rotSteps << " " << sb->placeButton << " " << sb->removeButton
             << " " << (sb->showPreview ? 1 : 0) << " " << (sb->showCrosshair ? 1 : 0)
-            << " " << Quote(sb->structureTag) << " " << Quote(sb->structureTexture) << "\n";
+            << " " << (sb->requireResources ? 1 : 0) << " " << sb->refundFraction
+            << " " << sb->costWood << " " << sb->costStone << " " << sb->costMetal
+            << " " << Quote(sb->structureTag) << " " << Quote(sb->structureTexture)
+            << " " << Quote(sb->woodItem) << " " << Quote(sb->stoneItem) << " " << Quote(sb->metalItem) << "\n";
+    }
+    if (auto* bp = go->GetComponent<BuildPiece>()) {
+        out << "  buildpiece " << bp->tier << " " << bp->health << " " << bp->maxHealth
+            << " " << bp->cost << " " << Quote(bp->material) << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -1465,12 +1471,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int pc = 0; in >> pc; sb->piece = (StructureBuilder::Piece)pc;
                     in >> sb->cellSize >> sb->wallHeight >> sb->slabThickness
                        >> sb->wallThickness >> sb->pillarThickness >> sb->reach
-                       >> sb->color.r >> sb->color.g >> sb->color.b >> sb->color.a
                        >> sb->rotSteps >> sb->placeButton >> sb->removeButton;
-                    int sp = 1, sc = 1; in >> sp >> sc;
-                    sb->showPreview = (sp != 0); sb->showCrosshair = (sc != 0);
+                    int sp = 1, sc = 1, rr = 1; in >> sp >> sc >> rr;
+                    sb->showPreview = (sp != 0); sb->showCrosshair = (sc != 0); sb->requireResources = (rr != 0);
+                    in >> sb->refundFraction >> sb->costWood >> sb->costStone >> sb->costMetal;
                     sb->structureTag = ReadQuoted(in);
                     sb->structureTexture = ReadQuoted(in);
+                    sb->woodItem = ReadQuoted(in);
+                    sb->stoneItem = ReadQuoted(in);
+                    sb->metalItem = ReadQuoted(in);
+                } else if (field == "buildpiece") {
+                    auto* bp = go->AddComponent<BuildPiece>();
+                    in >> bp->tier >> bp->health >> bp->maxHealth >> bp->cost;
+                    bp->material = ReadQuoted(in);
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

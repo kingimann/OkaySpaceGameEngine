@@ -786,7 +786,14 @@ int main(int argc, char** argv) {
             s_virtualMouse.x += (float)rx; s_virtualMouse.y += (float)ry;
         } else {
             int ax, ay; mb = SDL_GetMouseState(&ax, &ay);
-            s_virtualMouse = Vec2{(float)ax, (float)ay};
+            // SDL_GetMouseState is in window POINTS, but the UI is drawn in renderer
+            // PIXELS (the window is High-DPI). Scale so UI hit-testing — inventory
+            // slots, buttons — lines up with what's on screen.
+            int ww = 0, wh = 0, ow = 0, oh = 0;
+            SDL_GetWindowSize(window, &ww, &wh);
+            SDL_GetRendererOutputSize(renderer, &ow, &oh);
+            float sx = ww > 0 ? (float)ow / ww : 1.0f, sy = wh > 0 ? (float)oh / wh : 1.0f;
+            s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
         unsigned mask = 0;
         if (mb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;

@@ -45,5 +45,22 @@ int main() {
     CHECK(inv->slots[0].count == 15);              // 10 + 5 merged
     CHECK(inv->Count("Stone") == 15);
 
+    // Drop onto an EMPTY slot: the item lands at that slot index, leaving a gap —
+    // this is the case that previously refused the drop.
+    {
+        Scene s3("iu3");
+        GameObject* p3 = s3.CreateGameObject("P");
+        auto* inv3 = p3->AddComponent<Inventory>(); inv3->capacity = 36;
+        inv3->Add("Dirt", 10);                      // slot 0
+        auto* u3 = p3->AddComponent<InventoryUI>();
+        u3->MoveSlot(0, 5);                          // drop onto empty slot 5
+        CHECK((int)inv3->slots.size() == 6);
+        CHECK(inv3->slots[5].item == "Dirt");
+        CHECK(Inventory::Empty(inv3->slots[0]));    // gap left behind
+        CHECK(inv3->Count("Dirt") == 10);
+        inv3->Add("Stone", 3);                      // new loot reuses the hole at slot 0
+        CHECK(inv3->slots[0].item == "Stone");
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -73,21 +73,19 @@ public:
     /// stack list, so hotbar (0..hotbar-1) and backpack slots reorder freely.
     void MoveSlot(int from, int to) {
         Inventory* inv = Inv();
-        if (!inv) return;
-        int n = (int)inv->slots.size();
-        if (from < 0 || from >= n || from == to) return;
-        if (to >= 0 && to < n) {
-            if (!inv->slots[from].item.empty() && inv->slots[to].item == inv->slots[from].item) {
-                inv->slots[to].count += inv->slots[from].count;   // merge same item
-                inv->slots.erase(inv->slots.begin() + from);
-            } else {
-                std::swap(inv->slots[from], inv->slots[to]);      // swap positions
-            }
-        } else {                                                  // dropped on an empty slot
-            Inventory::Slot s = inv->slots[from];
-            inv->slots.erase(inv->slots.begin() + from);
-            inv->slots.push_back(s);
+        if (!inv || from < 0 || to < 0 || from == to) return;
+        if (from >= (int)inv->slots.size()) return;
+        // Grow the list so the (possibly empty) target slot exists, so you can drop an
+        // item into any open slot and leave a gap behind.
+        while ((int)inv->slots.size() <= to) inv->slots.push_back(Inventory::Slot{});
+        Inventory::Slot& a = inv->slots[from];
+        Inventory::Slot& b = inv->slots[to];
+        if (!Inventory::Empty(a) && !Inventory::Empty(b) && a.item == b.item) {
+            b.count += a.count; a.item.clear(); a.count = 0;      // merge identical stacks
+        } else {
+            std::swap(a, b);                                      // swap (target may be empty)
         }
+        while (!inv->slots.empty() && Inventory::Empty(inv->slots.back())) inv->slots.pop_back();
     }
 
     void Update(float) override {

@@ -278,56 +278,57 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
                                (Uint8)(a < 0 ? c.a * 255 : a));
     };
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    const float cr = ui.cornerRadius;
+    const UIShape shp = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
     // Draw one slot at (x,y) for inventory stack index `idx`, highlighted if selected.
     auto slot = [&](float x, float y, int idx, bool sel) {
+        float b = (ui.borderWidth < 0 ? 0 : ui.borderWidth) + (sel ? 1.0f : 0.0f);
         SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
-        setc(sel ? ui.selectedColor : ui.slotBorder); SDL_RenderFillRect(r, &outer);
-        float b = sel ? 3.0f : 2.0f;
+        const Color& bc = sel ? ui.selectedColor : ui.slotBorder;
+        FillUIShape(r, outer, shp, cr, bc, bc, false, false, 1.0f);
         SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
-        setc(ui.slotColor); SDL_RenderFillRect(r, &inner);
+        float ir = cr > 0.5f ? (cr - b < 0 ? 0 : cr - b) : 0.0f;
+        FillUIShape(r, inner, ir > 0.5f ? UIShape::Rounded : UIShape::Rectangle, ir, ui.slotColor, ui.slotColor, false, false, 1.0f);
         if (idx != ui.dragIndex && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
             const auto& it = inv->slots[idx];
             SDL_Texture* icon = ui.iconFolder.empty() ? nullptr
                               : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
             if (icon) { SDL_Rect d{inner.x + 2, inner.y + 2, inner.w - 4, inner.h - 4}; SDL_RenderCopy(r, icon, nullptr, &d); }
-            else {
-                std::string nm = it.item.substr(0, 4);
-                float px = sz * 0.10f; if (px < 1) px = 1;
-                DrawText(r, nm, x + 5, y + 6, px,
+            else if (ui.showNames) {
+                float px = sz * 0.10f * ui.labelScale; if (px < 1) px = 1;
+                DrawText(r, it.item.substr(0, 4), x + 5, y + 6, px,
                          SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
             }
-            if (it.count > 1) {
+            if (ui.showCounts && it.count > 1) {
                 std::string cs = std::to_string(it.count);
-                float px = sz * 0.085f; if (px < 1) px = 1;
+                float px = sz * 0.085f * ui.labelScale; if (px < 1) px = 1;
                 float tw = cs.size() * (Font8x8::Width + 1) * px;
                 DrawText(r, cs, x + sz - tw - 4, y + sz - (Font8x8::Height + 1) * px - 3, px,
-                         SDL_Color{255, 255, 255, 255});
+                         SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
             }
         }
     };
-    // Backpack (when open): darken, then a grid above the hotbar.
+    // Layout: hotbar docked to the bottom (or top), nudged by margins; the backpack
+    // grows away from the docked edge.
+    const float rowW = n * sz + (n - 1) * gap;
+    const float hx = (W - rowW) * 0.5f + ui.marginX;
+    const float hy = ui.anchorTop ? ui.marginY : H - sz - ui.marginY;
+    auto bpY = [&](int row) {
+        return ui.anchorTop ? hy + sz + 14.0f + row * (sz + gap)
+                            : hy - 14.0f - (ui.backpackRows - row) * (sz + gap);
+    };
+    // Backpack (when open): darken, then the grid.
     if (ui.open && ui.backpackRows > 0) {
         if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
-        float rowW = n * sz + (n - 1) * gap;
-        float gx = (W - rowW) * 0.5f;
-        float gyBottom = H - sz - 16.0f - 14.0f;   // sit just above the hotbar
         for (int row = 0; row < ui.backpackRows; ++row)
-            for (int c = 0; c < n; ++c) {
-                int idx = n + row * n + c;
-                float x = gx + c * (sz + gap);
-                float y = gyBottom - (ui.backpackRows - row) * (sz + gap);
-                slot(x, y, idx, false);
-            }
+            for (int c = 0; c < n; ++c)
+                slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
     }
-    // Hotbar (always): centered along the bottom.
-    float rowW = n * sz + (n - 1) * gap;
-    float hx = (W - rowW) * 0.5f, hy = H - sz - 16.0f;
     for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
 
     // Drag-and-drop (only while the backpack is open). Pick a slot under the cursor,
     // drop it on another to swap/merge — works across the hotbar and backpack.
     if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; return; }
-    float gx = (W - rowW) * 0.5f, gyBottom = H - sz - 16.0f - 14.0f;
     auto hit = [&](float px, float py, float x, float y) {
         return px >= x && px < x + sz && py >= y && py < y + sz;
     };
@@ -335,8 +336,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         for (int i = 0; i < n; ++i) if (hit(px, py, hx + i * (sz + gap), hy)) return i;
         for (int row = 0; row < ui.backpackRows; ++row)
             for (int c = 0; c < n; ++c)
-                if (hit(px, py, gx + c * (sz + gap), gyBottom - (ui.backpackRows - row) * (sz + gap)))
-                    return n + row * n + c;
+                if (hit(px, py, hx + c * (sz + gap), bpY(row))) return n + row * n + c;
         return -1;
     };
     okay::Vec2 mp = okay::Input::MousePosition();
@@ -377,43 +377,62 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
     };
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255}; };
+    const float cr = ui.cornerRadius;
+    auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
+        SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
+        FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
+    };
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
-    SDL_Rect panel{(int)ox - 12, (int)oy - 34, (int)gridW + 24, (int)gridH + 46};
-    setc(ui.panelColor); SDL_RenderFillRect(r, &panel);
-    DrawText(r, inv->title, ox, oy - 26, 2.0f, sc(ui.textColor));
+    okay::Vec2 mp = okay::Input::MousePosition();
+    int cx = (int)std::floor((mp.x - ox) / (cs + gp));
+    int cy = (int)std::floor((mp.y - oy) / (cs + gp));
+    // Panel + a title bar strip.
+    fill(ox - 12, oy - 38, gridW + 24, gridH + 50, ui.panelColor, cr + 2);
+    fill(ox - 12, oy - 38, gridW + 24, 28, ui.titleBar, cr + 2);
+    DrawText(r, inv->title, ox, oy - 31, 2.0f, sc(ui.textColor));
     if (ui.showWeight) {
         char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f kg", inv->TotalWeight());
         float px = 2.0f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;
-        DrawText(r, wb, ox + gridW - tw, oy - 26, px, sc(ui.textColor));
+        DrawText(r, wb, ox + gridW - tw, oy - 31, px, sc(ui.textColor));
     }
     for (int y = 0; y < inv->rows; ++y)
-        for (int x = 0; x < inv->cols; ++x) {
-            SDL_Rect cell{(int)(ox + x * (cs + gp)), (int)(oy + y * (cs + gp)), (int)cs, (int)cs};
-            setc(ui.cellColor); SDL_RenderFillRect(r, &cell);
-        }
-    auto drawItem = [&](const okay::GridItem& it, float px0, float py0, bool ghost) {
-        SDL_Rect box{(int)px0, (int)py0, (int)(it.w * cs + (it.w - 1) * gp), (int)(it.h * cs + (it.h - 1) * gp)};
-        setc(ui.itemColor, ghost ? 150 : 255); SDL_RenderFillRect(r, &box);
+        for (int x = 0; x < inv->cols; ++x)
+            fill(ox + x * (cs + gp), oy + y * (cs + gp), cs, cs, ui.cellColor, cr);
+    // While dragging, tint the target footprint green (fits) / red (blocked).
+    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size()) {
+        const auto& it = inv->items[ui.dragIndex];
+        int tx = cx - ui.grabX, ty = cy - ui.grabY;
+        bool ok = inv->CanPlace(tx, ty, it.w, it.h, ui.dragIndex);
+        for (int yy = 0; yy < it.h; ++yy)
+            for (int xx = 0; xx < it.w; ++xx) {
+                int gxc = tx + xx, gyc = ty + yy;
+                if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
+                fill(ox + gxc * (cs + gp), oy + gyc * (cs + gp), cs, cs, ok ? ui.dropOk : ui.dropBad, cr);
+            }
+    }
+    auto drawItem = [&](const okay::GridItem& it, float px0, float py0, bool ghost, bool hover) {
+        float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
+        fill(px0, py0, w, h, ghost ? Color{ui.itemColor.r, ui.itemColor.g, ui.itemColor.b, 0.6f} : ui.itemColor, cr);
+        SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
         setc(ui.itemBorder, ghost ? 170 : 255); SDL_RenderDrawRect(r, &box);
+        if (hover) fill(px0, py0, w, h, ui.hoverColor, cr);
         SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.name + ".png", baseDir, cache);
-        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 3, box.y + 3, box.w - 6, box.h - 6}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else DrawText(r, it.name.substr(0, 8), box.x + 4, box.y + 4, 1.4f, sc(ui.textColor));
+        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 4, box.y + 4, box.w - 8, box.h - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
+        else DrawText(r, it.name.substr(0, 8), box.x + 4, box.y + 5, 1.4f, sc(ui.textColor));
         if (it.count > 1) {
             std::string cstr = std::to_string(it.count); float px = 1.4f;
             float tw = cstr.size() * (Font8x8::Width + 1) * px;
             DrawText(r, cstr, box.x + box.w - tw - 3, box.y + box.h - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255, 255, 255, 255});
         }
     };
+    int hovered = (ui.dragIndex < 0 && cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
     for (int i = 0; i < (int)inv->items.size(); ++i) {
         if (i == ui.dragIndex) continue;
         const auto& it = inv->items[i];
-        drawItem(it, ox + it.x * (cs + gp), oy + it.y * (cs + gp), false);
+        drawItem(it, ox + it.x * (cs + gp), oy + it.y * (cs + gp), false, i == hovered);
     }
     // Drag-and-drop: pick an item under the cursor, drop it where it fits.
-    okay::Vec2 mp = okay::Input::MousePosition();
-    int cx = (int)std::floor((mp.x - ox) / (cs + gp));
-    int cy = (int)std::floor((mp.y - oy) / (cs + gp));
     if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
         int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
         if (idx >= 0) { ui.dragIndex = idx; ui.grabX = cx - inv->items[idx].x; ui.grabY = cy - inv->items[idx].y; }
@@ -424,7 +443,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     }
     if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size()) {
         const auto& it = inv->items[ui.dragIndex];
-        drawItem(it, mp.x - ui.grabX * (cs + gp) - cs * 0.5f, mp.y - ui.grabY * (cs + gp) - cs * 0.5f, true);
+        drawItem(it, mp.x - ui.grabX * (cs + gp) - cs * 0.5f, mp.y - ui.grabY * (cs + gp) - cs * 0.5f, true, false);
     }
 }
 
@@ -699,11 +718,20 @@ int main(int argc, char** argv) {
         Input::FeedKeys(down);
         Input::FeedGamepad(padAxis, padMask);
 
+        // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
+        // can point at and drag items, and show it — just like Minecraft/DayZ.
+        bool invModal = false;
+        for (const auto& up : scene.Objects()) {
+            if (!up) continue;
+            if (auto* iu = up->GetComponent<InventoryUI>()) if (iu->open && iu->dragItems) { invModal = true; break; }
+            if (auto* gi = up->GetComponent<GridInventory>()) if (gi->open) { invModal = true; break; }
+        }
+
         // Apply the game's requested cursor state (Unity-style Cursor lock/visibility).
         static Vec2 s_virtualMouse{0, 0};
-        bool locked = Cursor::IsLocked();
+        bool locked = Cursor::IsLocked() && !invModal;
         SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
-        SDL_ShowCursor(Cursor::visible ? SDL_ENABLE : SDL_DISABLE);
+        SDL_ShowCursor((Cursor::visible || invModal) ? SDL_ENABLE : SDL_DISABLE);
 
         // Feed the mouse (position in pixels + left/right/middle button state). When
         // locked we accumulate relative motion into a virtual position so the

@@ -35,8 +35,19 @@ public:
     Color slotBorder    = Color::FromBytes(70, 72, 84, 255);
     Color selectedColor = Color::FromBytes(255, 255, 255, 255);
     Color textColor     = Color::FromBytes(240, 240, 245, 255);
+    Color countColor    = Color::FromBytes(255, 255, 255, 255);
     Color panelColor    = Color::FromBytes(18, 19, 26, 240);
     bool  darkenWhenOpen = true;
+
+    // ---- Layout / style customization ----
+    float marginX        = 0.0f;    ///< horizontal nudge from centre (px)
+    float marginY        = 16.0f;   ///< distance from the screen edge (px)
+    bool  anchorTop      = false;   ///< dock the hotbar to the top instead of the bottom
+    float cornerRadius   = 4.0f;    ///< rounded slot corners (0 = square)
+    float borderWidth    = 2.0f;    ///< slot border thickness (px); selected adds 1
+    float labelScale     = 1.0f;    ///< multiplier on item-name / count text size
+    bool  showCounts     = true;    ///< draw stack counts
+    bool  showNames      = true;    ///< draw the item name when there's no icon
 
     /// The Inventory this UI shows: on the same object, else on the player root.
     Inventory* Inv() const {

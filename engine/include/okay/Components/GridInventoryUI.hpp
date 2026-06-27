@@ -21,6 +21,11 @@ public:
     Color itemColor   = Color::FromBytes(70, 90, 120, 240);
     Color itemBorder  = Color::FromBytes(150, 170, 200, 255);
     Color textColor   = Color::FromBytes(240, 240, 245, 255);
+    Color titleBar    = Color::FromBytes(46, 50, 64, 255);   ///< header strip behind the title
+    Color hoverColor  = Color::FromBytes(255, 255, 255, 40); ///< tint over the hovered item
+    Color dropOk      = Color::FromBytes(90, 220, 120, 90);  ///< target highlight when it fits
+    Color dropBad     = Color::FromBytes(230, 80, 80, 90);   ///< target highlight when blocked
+    float cornerRadius = 4.0f;
     bool  darkenWhenOpen = true;
     bool  showWeight  = true;
 

@@ -7926,6 +7926,18 @@ void DrawInspector(EditorState& ed) {
             };
             cc("Slot", ui->slotColor, "iuc1"); cc("Border", ui->slotBorder, "iuc2");
             cc("Selected", ui->selectedColor, "iuc3"); cc("Text", ui->textColor, "iuc4");
+            cc("Count", ui->countColor, "iuc5");
+            if (ImGui::TreeNodeEx("Layout / Style##iu", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Checkbox("Anchor to top##iu", &ui->anchorTop)) ed.dirty = true;
+                if (ImGui::DragFloat("Margin X##iu", &ui->marginX, 0.5f, -2000.0f, 2000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Edge Margin##iu", &ui->marginY, 0.5f, 0.0f, 2000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Corner Radius##iu", &ui->cornerRadius, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Border Width##iu", &ui->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Label Scale##iu", &ui->labelScale, 0.02f, 0.2f, 4.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Show names##iu", &ui->showNames)) ed.dirty = true;
+                ImGui::TreePop();
+            }
             if (ImGui::SmallButton("Remove##iu")) toRemove = ui;
         }
     }
@@ -7966,6 +7978,7 @@ void DrawInspector(EditorState& ed) {
             if (!gu->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add a Grid Inventory component to show items.");
             if (ImGui::DragFloat("Cell Size##gu", &gu->cellSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Gap##gu", &gu->gap, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Corner Radius##gu", &gu->cornerRadius, 0.25f, 0.0f, 24.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
             if (ImGui::Checkbox("Show weight##gu", &gu->showWeight)) ed.dirty = true;
             char icf[128]; std::snprintf(icf, sizeof(icf), "%s", gu->iconFolder.c_str());
@@ -7976,6 +7989,8 @@ void DrawInspector(EditorState& ed) {
             };
             cc("Panel", gu->panelColor, "guc0"); cc("Cell", gu->cellColor, "guc1");
             cc("Item", gu->itemColor, "guc2"); cc("Border", gu->itemBorder, "guc3");
+            cc("Title Bar", gu->titleBar, "guc4");
+            cc("Drop OK", gu->dropOk, "guc5"); cc("Drop Blocked", gu->dropBad, "guc6");
             if (ImGui::SmallButton("Remove##gu")) toRemove = gu;
         }
     }
@@ -11315,33 +11330,39 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         okay::Inventory* inv = ui->Inv();
         int n = ui->hotbarSlots < 1 ? 1 : ui->hotbarSlots;
         float sz = ui->slotSize, gap = ui->slotGap;
+        float cr = ui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         auto slot = [&](float x, float y, int idx, bool sel) {
             ImVec2 p0(canvasPos.x + x, canvasPos.y + y), p1(p0.x + sz, p0.y + sz);
-            dl->AddRectFilled(p0, p1, sel ? col(ui->selectedColor) : col(ui->slotBorder), 3.0f);
-            float b = sel ? 3.0f : 2.0f;
-            dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(ui->slotColor), 2.0f);
+            dl->AddRectFilled(p0, p1, sel ? col(ui->selectedColor) : col(ui->slotBorder), cr);
+            float b = (ui->borderWidth < 0 ? 0 : ui->borderWidth) + (sel ? 1.0f : 0.0f);
+            dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(ui->slotColor), cr > b ? cr - b : 0.0f);
             if (inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
                 SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
-                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, 4).c_str());
-                if (it.count > 1) {
+                else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, 4).c_str());
+                if (ui->showCounts && it.count > 1) {
                     std::string cs = std::to_string(it.count);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
-                    dl->AddText(ImVec2(p1.x - ts.x - 4, p1.y - ts.y - 3), IM_COL32(255, 255, 255, 255), cs.c_str());
+                    dl->AddText(ImVec2(p1.x - ts.x - 4, p1.y - ts.y - 3), col(ui->countColor), cs.c_str());
                 }
             }
+        };
+        float rowW = n * sz + (n - 1) * gap;
+        float hx = (canvasSize.x - rowW) * 0.5f + ui->marginX;
+        float hy = ui->anchorTop ? ui->marginY : canvasSize.y - sz - ui->marginY;
+        auto bpY = [&](int row) {
+            return ui->anchorTop ? hy + sz + 14.0f + row * (sz + gap)
+                                 : hy - 14.0f - (ui->backpackRows - row) * (sz + gap);
         };
         if (ui->open && ui->backpackRows > 0) {
             if (ui->darkenWhenOpen)
                 dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
-            float rowW = n * sz + (n - 1) * gap, gx = (canvasSize.x - rowW) * 0.5f, gyB = canvasSize.y - sz - 30.0f;
             for (int row = 0; row < ui->backpackRows; ++row)
                 for (int c = 0; c < n; ++c)
-                    slot(gx + c * (sz + gap), gyB - (ui->backpackRows - row) * (sz + gap), n + row * n + c, false);
+                    slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
         }
-        float rowW = n * sz + (n - 1) * gap, hx = (canvasSize.x - rowW) * 0.5f, hy = canvasSize.y - sz - 16.0f;
         for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
         break;
     }
@@ -11354,21 +11375,23 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float cs = gui->cellSize, gp = gui->gap;
         float gridW = inv->cols * cs + (inv->cols - 1) * gp, gridH = inv->rows * cs + (inv->rows - 1) * gp;
         float ox = canvasPos.x + (canvasSize.x - gridW) * 0.5f, oy = canvasPos.y + (canvasSize.y - gridH) * 0.5f + 10.0f;
+        float cr = gui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         if (gui->darkenWhenOpen)
             dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
-        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + gridW + 12, oy + gridH + 12), col(gui->panelColor));
-        dl->AddText(ImVec2(ox, oy - 26), col(gui->textColor), inv->title.c_str());
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 38), ImVec2(ox + gridW + 12, oy + gridH + 12), col(gui->panelColor), cr + 2);
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 38), ImVec2(ox + gridW + 12, oy - 10), col(gui->titleBar), cr + 2);
+        dl->AddText(ImVec2(ox, oy - 31), col(gui->textColor), inv->title.c_str());
         for (int y = 0; y < inv->rows; ++y)
             for (int x = 0; x < inv->cols; ++x)
                 dl->AddRectFilled(ImVec2(ox + x * (cs + gp), oy + y * (cs + gp)),
-                                  ImVec2(ox + x * (cs + gp) + cs, oy + y * (cs + gp) + cs), col(gui->cellColor));
+                                  ImVec2(ox + x * (cs + gp) + cs, oy + y * (cs + gp) + cs), col(gui->cellColor), cr);
         for (const auto& it : inv->items) {
             ImVec2 p0(ox + it.x * (cs + gp), oy + it.y * (cs + gp));
             ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
             SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
-            dl->AddRectFilled(p0, p1, col(gui->itemColor), 2.0f);
-            dl->AddRect(p0, p1, col(gui->itemBorder), 2.0f);
+            dl->AddRectFilled(p0, p1, col(gui->itemColor), cr);
+            dl->AddRect(p0, p1, col(gui->itemBorder), cr);
             if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
             else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
         }

@@ -382,7 +382,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (ui->scrollSelect ? 1 : 0) << " " << ui->slotSize << " " << ui->slotGap
             << " " << (ui->darkenWhenOpen ? 1 : 0);
         wc(ui->slotColor); wc(ui->slotBorder); wc(ui->selectedColor); wc(ui->textColor); wc(ui->panelColor);
-        out << " " << Quote(ui->iconFolder) << " " << (ui->dragItems ? 1 : 0) << "\n";
+        out << " " << Quote(ui->iconFolder) << " " << (ui->dragItems ? 1 : 0)
+            << " " << ui->marginX << " " << ui->marginY << " " << (ui->anchorTop ? 1 : 0)
+            << " " << ui->cornerRadius << " " << ui->borderWidth << " " << ui->labelScale
+            << " " << (ui->showCounts ? 1 : 0) << " " << (ui->showNames ? 1 : 0);
+        wc(ui->countColor);
+        out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
         out << "  gridinventory " << gi->cols << " " << gi->rows
@@ -397,7 +402,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  gridinventoryui " << gu->cellSize << " " << gu->gap
             << " " << (gu->darkenWhenOpen ? 1 : 0) << " " << (gu->showWeight ? 1 : 0);
         wc(gu->panelColor); wc(gu->cellColor); wc(gu->itemColor); wc(gu->itemBorder); wc(gu->textColor);
-        out << " " << Quote(gu->iconFolder) << "\n";
+        out << " " << Quote(gu->iconFolder) << " " << gu->cornerRadius;
+        wc(gu->titleBar); wc(gu->hoverColor); wc(gu->dropOk); wc(gu->dropBad);
+        out << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -1552,6 +1559,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ui->iconFolder = ReadQuoted(in);
                     in >> std::ws;   // optional dragItems toggle (added later)
                     if (std::isdigit(in.peek())) { int d = 1; in >> d; ui->dragItems = (d != 0); }
+                    in >> std::ws;   // optional layout/style block (added later; numeric)
+                    int pk = in.peek();
+                    if (std::isdigit(pk) || pk == '-' || pk == '.') {
+                        int at = 0, scn = 1, snm = 1;
+                        in >> ui->marginX >> ui->marginY >> at >> ui->cornerRadius >> ui->borderWidth
+                           >> ui->labelScale >> scn >> snm
+                           >> ui->countColor.r >> ui->countColor.g >> ui->countColor.b >> ui->countColor.a;
+                        ui->anchorTop = (at != 0); ui->showCounts = (scn != 0); ui->showNames = (snm != 0);
+                    }
                 } else if (field == "gridinventory") {
                     auto* gi = go->AddComponent<GridInventory>();
                     int tk = 'i'; in >> gi->cols >> gi->rows >> tk; gi->toggleKey = (char)tk;
@@ -1569,6 +1585,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
                     rc(gu->panelColor); rc(gu->cellColor); rc(gu->itemColor); rc(gu->itemBorder); rc(gu->textColor);
                     gu->iconFolder = ReadQuoted(in);
+                    in >> std::ws;   // optional polish block (added later; numeric)
+                    int gpk = in.peek();
+                    if (std::isdigit(gpk) || gpk == '-' || gpk == '.') {
+                        in >> gu->cornerRadius;
+                        rc(gu->titleBar); rc(gu->hoverColor); rc(gu->dropOk); rc(gu->dropBad);
+                    }
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

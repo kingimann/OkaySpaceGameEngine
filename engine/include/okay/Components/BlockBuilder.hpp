@@ -1,0 +1,236 @@
+#pragma once
+#include "okay/Scene/Component.hpp"
+#include "okay/Scene/Scene.hpp"
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/Camera.hpp"
+#include "okay/Components/Crosshair.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Physics3D.hpp"
+#include "okay/Input/Input.hpp"
+#include "okay/Render/Mesh.hpp"
+#include <cmath>
+#include <string>
+
+namespace okay {
+
+/// Minecraft-style voxel building: look at a surface and click to place a cube on a
+/// grid; right-click removes the block you're aiming at. Attach it to the player (or
+/// any object) — it casts a ray from the scene's main camera (centre-screen, like a
+/// crosshair), snaps to a grid, and spawns/destroys block GameObjects at runtime, so
+/// you can build maps live in Play. Placed blocks are real objects (mesh + collider)
+/// tagged `blockTag`, so they save with the scene and only those are removable.
+class BlockBuilder : public Behaviour {
+public:
+    float       blockSize   = 1.0f;                       ///< grid cell / cube size (world units)
+    float       reach       = 6.0f;                       ///< max place/remove distance
+    Color       blockColor  = Color::FromBytes(170, 172, 182);
+    std::string blockTexture;                             ///< optional texture for placed blocks
+    std::string blockTag    = "Block";                   ///< tag placed blocks carry (only these are removable)
+    int         placeButton  = 0;                         ///< mouse button to place (0 = left)
+    int         removeButton = 1;                         ///< mouse button to remove (1 = right)
+    bool        showPreview  = true;                       ///< ghost outline of where the next block lands
+    bool        showCrosshair = true;                      ///< auto-add an aim reticle at screen center
+    bool        placeInAir   = false;                      ///< allow placing in empty space (off = must aim at a surface, Minecraft-style)
+    Color       previewFree  = Color::FromBytes(80, 255, 120, 230);  ///< outline color where placement is free
+    Color       previewBusy  = Color::FromBytes(255, 80, 80, 230);   ///< outline color when the cell is blocked
+
+    void Update(float) override {
+        if (!gameObject) return;
+        Scene* s = GetScene();
+        if (!s || !s->mainCamera || !s->mainCamera->gameObject || !s->mainCamera->gameObject->transform) return;
+        Transform* cam = s->mainCamera->gameObject->transform;
+        // Cameras look down their local -Z (Vec3::Forward is +Z, i.e. *behind* the
+        // camera), so the aim ray is -Forward(), matching the screen-center crosshair.
+        const Vec3 origin = cam->Position(), dir = cam->Forward() * -1.0f;
+        // Reach is measured FROM THE PLAYER, but we cast from the camera (so the
+        // aim always matches the screen-center crosshair). In third person the
+        // camera orbits behind you, so add that camera→player gap back to reach —
+        // otherwise the orbit distance eats your whole building range. In first
+        // person the camera sits at the eye, so the gap is just eye height.
+        const float r = reach + CameraGap(origin);
+
+        // A center reticle so you can see what you're aiming at (added once).
+        if (showCrosshair && !crosshairChecked_) {
+            crosshairChecked_ = true;
+            EnsureCrosshair(*s);
+        }
+        // A live ghost outline of the cell the next block would occupy.
+        if (showPreview) UpdatePreview(*s, origin, dir, r);
+        else if (preview_) preview_->active = false;
+
+        const bool place  = Input::GetMouseButtonDown(placeButton);
+        const bool remove = Input::GetMouseButtonDown(removeButton);
+        if (!place && !remove) return;
+
+        Build(*s, origin, dir, place, remove, r);
+    }
+
+    /// Place or remove a block along a ray (camera-independent, so it's unit-testable).
+    /// Returns the block placed/removed, or nullptr. `place` wins over `remove`.
+    /// `reachArg < 0` uses the component's `reach`; Update passes a camera-compensated
+    /// value so third-person aim reaches as far in front of the player as first-person.
+    GameObject* Build(Scene& s, const Vec3& origin, const Vec3& dir, bool place, bool remove,
+                      float reachArg = -1.0f) {
+        const float r = reachArg >= 0.0f ? reachArg : reach;
+        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, r, Owner());
+        if (place) {
+            // Must be aiming at a surface (ground or another block) to build against it,
+            // like Minecraft — unless placeInAir lets you drop one at arm's length.
+            if (!hit.hit && !placeInAir) return nullptr;
+            Vec3 target = hit.hit ? hit.point + hit.normal * (blockSize * 0.5f)
+                                  : origin + dir * r;
+            Vec3 cell = Snap(target);
+            if (Occupied(s, cell) || Blocked(s, cell, hit.gameObject)) return nullptr;
+            return PlaceBlock(s, cell);
+        }
+        if (remove && hit.hit && hit.gameObject && hit.gameObject->tag == blockTag) {
+            GameObject* g = hit.gameObject;
+            s.Destroy(g);   // only blocks we placed, never the world
+            return g;
+        }
+        return nullptr;
+    }
+
+    /// Grid-snap a world point to the centre of the voxel cell that contains it
+    /// (cells are [n·size, (n+1)·size), centres at half-steps) — so a block placed
+    /// on a surface at an integer height sits flush on it instead of floating half a
+    /// cell. Exposed for tests.
+    Vec3 Snap(const Vec3& p) const {
+        float g = blockSize > 1e-4f ? blockSize : 1.0f;
+        return Vec3{(std::floor(p.x / g) + 0.5f) * g,
+                    (std::floor(p.y / g) + 0.5f) * g,
+                    (std::floor(p.z / g) + 0.5f) * g};
+    }
+
+private:
+    GameObject* preview_ = nullptr;     ///< runtime-only ghost cube (not saved/removable)
+    bool        crosshairChecked_ = false;
+
+    /// The player this builder belongs to: the root ancestor of the object it's
+    /// attached to. So whether you drop BlockBuilder on the Player or on its child
+    /// Camera, the aim ray skips the whole player body (no block placed on yourself)
+    /// and reach is measured from the player.
+    GameObject* Owner() const {
+        if (!gameObject || !gameObject->transform) return gameObject;
+        Transform* t = gameObject->transform;
+        while (t->Parent()) t = t->Parent();
+        return t->gameObject ? t->gameObject : gameObject;
+    }
+
+    bool IsUnder(GameObject* go, GameObject* root) const {
+        for (Transform* t = (go && go->transform) ? go->transform : nullptr; t; t = t->Parent())
+            if (t->gameObject == root) return true;
+        return false;
+    }
+    /// True if a block cell would overlap a solid world object (something's in the
+    /// way). Skips your own body, the surface you're stacking on, other blocks (they
+    /// tile exactly) and triggers — so only real obstructions block placement.
+    bool Blocked(Scene& s, const Vec3& cell, GameObject* support) const {
+        GameObject* owner = Owner();
+        float h = (blockSize > 1e-4f ? blockSize : 1.0f) * 0.5f - 0.03f;
+        Vec3 amn{cell.x - h, cell.y - h, cell.z - h}, amx{cell.x + h, cell.y + h, cell.z + h};
+        for (Collider3D* c : s.FindObjectsOfType<Collider3D>()) {
+            if (!c || c->isTrigger || !c->gameObject) continue;
+            GameObject* go = c->gameObject;
+            if (go == support || go->tag == blockTag) continue;
+            if (owner && IsUnder(go, owner)) continue;
+            Vec3 mn, mx; c->WorldAABB(mn, mx);
+            if (amn.x < mx.x && amx.x > mn.x && amn.y < mx.y &&
+                amx.y > mn.y && amn.z < mx.z && amx.z > mn.z)
+                return true;
+        }
+        return false;
+    }
+
+    /// Distance from the camera to the player carrying this builder — the orbit gap
+    /// in third person (≈ eye height in first person). Added to reach so building
+    /// range is measured from the player regardless of camera placement.
+    float CameraGap(const Vec3& camPos) const {
+        GameObject* o = Owner();
+        if (!o || !o->transform) return 0.0f;
+        Vec3 d = camPos - o->transform->Position();
+        return std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    }
+
+    /// Move the ghost outline to the cell the next block would occupy, tinted by
+    /// whether that cell is free. Re-uses one runtime GameObject (a wireframe cube
+    /// with no collider, so it never blocks the ray or counts as a placed block).
+    void UpdatePreview(Scene& s, const Vec3& origin, const Vec3& dir, float r) {
+        RaycastHit3D hit = s.physics3D().Raycast(s, origin, dir, r, Owner());
+        // The ghost ALWAYS tracks your aim, so it never looks dead: green on a free
+        // surface cell (where a click lands a block), red when that cell is taken or
+        // when you're not pointing at anything to build on (so you can place there).
+        Vec3 cell; bool canPlace;
+        if (hit.hit) {
+            cell = Snap(hit.point + hit.normal * (blockSize * 0.5f));
+            canPlace = !Occupied(s, cell) && !Blocked(s, cell, hit.gameObject);
+        } else {
+            cell = Snap(origin + dir * r);          // arm's length, where you're pointing
+            canPlace = placeInAir && !Blocked(s, cell, nullptr);
+        }
+
+        GameObject* p = EnsurePreview(s);
+        if (!p || !p->transform) return;
+        p->active = true;
+        p->transform->localPosition = cell;
+        // Slightly larger than a block so the outline hugs the cell without z-fighting.
+        float e = (blockSize > 1e-4f ? blockSize : 1.0f) * 1.02f;
+        p->transform->localScale = {e, e, e};
+        if (auto* mr = p->GetComponent<MeshRenderer>())
+            mr->color = canPlace ? previewFree : previewBusy;
+    }
+
+    GameObject* EnsurePreview(Scene& s) {
+        if (preview_) return preview_;
+        GameObject* p = s.CreateGameObject("BlockPreview");
+        if (!p) return nullptr;
+        p->tag = "BlockPreview";        // NOT blockTag → never removable or counted
+        auto* mr = p->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->wireframe = true;           // hollow outline, like a Minecraft block highlight
+        mr->unlit = true;
+        mr->shader = MeshRenderer::Shader::Unlit;
+        mr->color = previewFree;
+        // No collider: the aim ray ignores it and Occupied() never sees it.
+        preview_ = p;
+        return p;
+    }
+
+    /// Give the player a center reticle if the scene doesn't already have one.
+    void EnsureCrosshair(Scene& s) {
+        for (const auto& up : s.Objects())
+            if (up && up->GetComponent<Crosshair>()) return;   // already aiming-aided
+        if (gameObject && !gameObject->GetComponent<Crosshair>()) {
+            auto* cr = gameObject->AddComponent<Crosshair>();
+            cr->dot = true;             // a small center dot reads well for block aiming
+        }
+    }
+
+    bool Occupied(Scene& s, const Vec3& cell) const {
+        float e = blockSize * 0.25f;
+        for (const auto& up : s.Objects()) {
+            GameObject* g = up.get();
+            if (!g || g->tag != blockTag || !g->transform) continue;
+            Vec3 p = g->transform->Position();
+            if (std::fabs(p.x - cell.x) < e && std::fabs(p.y - cell.y) < e && std::fabs(p.z - cell.z) < e)
+                return true;
+        }
+        return false;
+    }
+    GameObject* PlaceBlock(Scene& s, const Vec3& cell) {
+        GameObject* b = s.CreateGameObject("Block");
+        if (!b) return nullptr;
+        b->tag = blockTag;
+        b->transform->localPosition = cell;
+        b->transform->localScale = {blockSize, blockSize, blockSize};
+        auto* mr = b->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = blockColor;
+        if (!blockTexture.empty()) mr->texture = blockTexture;
+        b->AddComponent<BoxCollider3D>();
+        return b;
+    }
+};
+
+} // namespace okay

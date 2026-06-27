@@ -95,8 +95,22 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
    "$SDL2_MINGW_PREFIX/bin/SDL2.dll" \
    "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
+# OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
+[ -f "$BUILD_DIR/bin/okayui_d3d11_demo.exe" ] && cp "$BUILD_DIR/bin/okayui_d3d11_demo.exe" "$OUT_DIR/Tools/"
 [ -f dist/VERSION.txt ] && cp dist/VERSION.txt "$OUT_DIR/Tools/"
 [ -f docs/accounts.md ] && cp docs/accounts.md "$OUT_DIR/Tools/"
+
+# Starter texture pack (grass/dirt/stone/grid). Drop these into a project's Assets/
+# folder, or point a MeshRenderer's Texture at them directly.
+if [ -d assets/textures ]; then
+    mkdir -p "$OUT_DIR/Assets/Textures"
+    cp assets/textures/*.png "$OUT_DIR/Assets/Textures/" 2>/dev/null || true
+fi
+# Starter font (DejaVu Sans, permissive license). Set a Text/Button Font to this path.
+if [ -d assets/fonts ]; then
+    mkdir -p "$OUT_DIR/Assets/Fonts"
+    cp assets/fonts/* "$OUT_DIR/Assets/Fonts/" 2>/dev/null || true
+fi
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).

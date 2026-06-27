@@ -239,8 +239,10 @@ planet, `A` player ship.)*
   vsync, "include all project scenes", and a development-build flag. It writes
   your scene(s) + a `game.okayconfig` next to a tiny SDL2 **player runtime**,
   renamed `<Game>.exe` — a double-clickable game (2D sprites, shaded 3D meshes
-  with **skybox + lighting**, audio, input) you can ship.
-  See [`docs/editor.md`](docs/editor.md).
+  with **skybox + lighting**, audio, input) you can ship. The shipped player
+  uses the same **GPU 3D renderer** as the editor (Direct3D 11 on Windows,
+  OpenGL elsewhere; toggle in Build Game), and falls back to the software
+  rasterizer when no GPU is available. See [`docs/editor.md`](docs/editor.md).
 - **Core has no external dependencies** — just a C++17 compiler, CMake, threads.
   Optional backends (Lua, C#/Mono, Steam, PlayFab/libcurl) and the editor
   (SDL2/OpenGL) are opt-in.

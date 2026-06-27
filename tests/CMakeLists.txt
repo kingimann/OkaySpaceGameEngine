@@ -82,6 +82,30 @@ add_executable(test_text test_text.cpp)
 target_link_libraries(test_text PRIVATE okay::engine)
 add_test(NAME text COMMAND test_text)
 
+add_executable(test_ttf test_ttf.cpp)
+target_link_libraries(test_ttf PRIVATE okay::engine)
+add_test(NAME ttf COMMAND test_ttf)
+
+add_executable(test_block_builder test_block_builder.cpp)
+target_link_libraries(test_block_builder PRIVATE okay::engine)
+add_test(NAME block_builder COMMAND test_block_builder)
+
+add_executable(test_structure_builder test_structure_builder.cpp)
+target_link_libraries(test_structure_builder PRIVATE okay::engine)
+add_test(NAME structure_builder COMMAND test_structure_builder)
+
+add_executable(test_loading_screen test_loading_screen.cpp)
+target_link_libraries(test_loading_screen PRIVATE okay::engine)
+add_test(NAME loading_screen COMMAND test_loading_screen)
+
+add_executable(test_inventory_ui test_inventory_ui.cpp)
+target_link_libraries(test_inventory_ui PRIVATE okay::engine)
+add_test(NAME inventory_ui COMMAND test_inventory_ui)
+
+add_executable(test_grid_inventory test_grid_inventory.cpp)
+target_link_libraries(test_grid_inventory PRIVATE okay::engine)
+add_test(NAME grid_inventory COMMAND test_grid_inventory)
+
 add_executable(test_spriteanim test_spriteanim.cpp)
 target_link_libraries(test_spriteanim PRIVATE okay::engine)
 add_test(NAME spriteanim COMMAND test_spriteanim)
@@ -417,3 +441,15 @@ add_test(NAME daynight COMMAND test_daynight)
 add_executable(test_npc_crafting test_npc_crafting.cpp)
 target_link_libraries(test_npc_crafting PRIVATE okay::engine)
 add_test(NAME npc_crafting COMMAND test_npc_crafting)
+
+add_executable(test_script_ui test_script_ui.cpp)
+target_link_libraries(test_script_ui PRIVATE okay::engine)
+add_test(NAME script_ui COMMAND test_script_ui)
+
+# OkayUI renders through SDL_Renderer, so this test drives a headless SOFTWARE
+# renderer and reads pixels back. Only built when SDL2 (hence okay_ui) is present.
+if(TARGET okay_ui)
+    add_executable(test_okayui test_okayui.cpp)
+    target_link_libraries(test_okayui PRIVATE okay_ui)
+    add_test(NAME okayui COMMAND test_okayui)
+endif()

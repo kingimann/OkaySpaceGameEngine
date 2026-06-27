@@ -18,36 +18,41 @@ public:
     std::vector<Slot> slots;
     int capacity = 20;            // max distinct stacks
 
-    int SlotsUsed() const { return (int)slots.size(); }
+    /// Slots may be FIXED-POSITION: an empty stack (item == "" or count <= 0) is a
+    /// reusable hole, so the UI can drag an item to any slot and leave a gap behind.
+    static bool Empty(const Slot& s) { return s.item.empty() || s.count <= 0; }
+    int SlotsUsed() const { int n = 0; for (const auto& s : slots) if (!Empty(s)) ++n; return n; }
     bool IsFull() const { return SlotsUsed() >= capacity; }
 
     int Count(const std::string& item) const {
-        for (const auto& s : slots) if (s.item == item) return s.count;
+        for (const auto& s : slots) if (!Empty(s) && s.item == item) return s.count;
         return 0;
     }
     bool Has(const std::string& item, int n = 1) const { return Count(item) >= n; }
 
-    /// Add `n` of an item: stacks onto an existing slot, else takes a new slot (if any
-    /// remain). Returns false only when there's no room for a brand-new stack.
+    /// Add `n` of an item: stacks onto an existing stack, else fills the first empty
+    /// slot, else takes a new one. Returns false only when there's no room.
     bool Add(const std::string& item, int n = 1) {
         if (n <= 0 || item.empty()) return false;
         for (auto& s : slots)
-            if (s.item == item) { s.count += n; Changed(); return true; }
+            if (!Empty(s) && s.item == item) { s.count += n; Changed(); return true; }
+        for (auto& s : slots)
+            if (Empty(s)) { s.item = item; s.count = n; Changed(); return true; }   // reuse a hole
         if (IsFull()) return false;
         slots.push_back({item, n});
         Changed();
         return true;
     }
 
-    /// Remove up to `n` of an item; drops the slot when it empties. Returns true if
-    /// the full amount was removed.
+    /// Remove up to `n` of an item; the slot becomes an empty hole when it drains
+    /// (positions stay stable). Returns true if the full amount was removed.
     bool Remove(const std::string& item, int n = 1) {
         if (n <= 0) return false;
-        for (std::size_t i = 0; i < slots.size(); ++i) {
-            if (slots[i].item != item) continue;
-            bool enough = slots[i].count >= n;
-            slots[i].count -= n;
-            if (slots[i].count <= 0) slots.erase(slots.begin() + i);
+        for (auto& s : slots) {
+            if (Empty(s) || s.item != item) continue;
+            bool enough = s.count >= n;
+            s.count -= n;
+            if (s.count <= 0) { s.item.clear(); s.count = 0; }
             Changed();
             return enough;
         }

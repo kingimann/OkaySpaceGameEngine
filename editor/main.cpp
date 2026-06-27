@@ -8,6 +8,13 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
+#ifdef OKAY_HAVE_OKAYUI
+#include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
+#include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
+#endif
+#include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
 
 #include <algorithm>
 #include <array>
@@ -135,6 +142,22 @@ ImU32 ToColor(const Color& c) {
 //      so overlapping faces occlude correctly (the ImGui draw list has no depth
 //      buffer). Set by main(); the texture is reused/resized across frames.
 SDL_Renderer* g_sdlRenderer = nullptr;
+// GPU (OpenGL) 3D rendering — "what Unity uses". The scene is rasterized by the GPU
+// (hardware MSAA + depth) on an isolated hidden GL context, read back, and shown via
+// the same texture path as the software renderer. Isolated context = the editor's
+// SDL_Renderer UI is never disturbed. Experimental + off by default.
+bool          g_gpuRender = true;        // GPU 3D view, auto-on (D3D11/OpenGL by OS, software fallback)
+SDL_Window*   g_glWindow  = nullptr;     // hidden window owning the GL context
+SDL_GLContext g_glCtx     = nullptr;
+okay::GLRenderer* g_glRenderer = nullptr;
+bool          g_glReady   = false;       // GL context + entry points loaded OK
+bool          g_d3dReady  = false;       // D3D11 device created OK (Windows)
+#if defined(_WIN32)
+okay::D3D11Renderer* g_d3dRenderer = nullptr;
+#endif
+bool          g_showTestUI = false;      // draw the OkayUI sample panel over the UI
+char          g_okayUITyped[32] = {0};   // text typed this frame, routed to OkayUI
+bool          g_okayUIBack = false;      // Backspace pressed this frame (for OkayUI)
 
 // One render target per 3D view "slot" (0 = Scene viewport, 1 = Game view).
 // ImGui defers rendering, so the SDL texture is only sampled at SDL_RenderCopy
@@ -169,6 +192,11 @@ static long SceneTriangleLoad(const Scene& scene) {
     return n;
 }
 
+// Forward decls: Render3DTexture (below) uses these for the GPU-renderer self-heal,
+// but their definitions live further down the file.
+void SaveSettings();
+void ConsoleLog(const std::string& msg, int level);
+
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
 SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye,
@@ -191,8 +219,39 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     if (g_autoPerf && ss > 1 &&
         ((long)rw * rh * ss * ss > 5'000'000L || SceneTriangleLoad(scene) > 11000))
         ss = 1;
-    const std::uint32_t* px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
-                                             scene, vp, eye, rw, rh, ss, ignore);
+    // GPU path: when enabled, automatically pick the best backend for this system —
+    // Direct3D 11 on Windows, OpenGL elsewhere — each rendering the scene to an
+    // offscreen target and reading back RGBA8 (a drop-in for RenderMeshesSS). If the
+    // preferred backend isn't available or fails, fall through to the next, then to
+    // the software rasterizer. A self-heal counter disables the GPU path after
+    // repeated failures so the viewport is never stuck.
+    const std::uint32_t* px = nullptr;
+    if (g_gpuRender) {
+#if defined(_WIN32)
+        if (!px && g_d3dReady && g_d3dRenderer)
+            px = g_d3dRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
+                                               0.0f, 0.0f, 0.0f, 0.0f, ignore);
+#endif
+        if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
+            SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+            SDL_Window*   prevWin = SDL_GL_GetCurrentWindow();
+            if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
+                px = g_glRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
+                                                  0.0f, 0.0f, 0.0f, 0.0f, ignore);
+            SDL_GL_MakeCurrent(prevWin, prevCtx);
+        }
+        static int s_gpuFails = 0;
+        if (!px) {
+            if (++s_gpuFails >= 3) {
+                g_gpuRender = false; SaveSettings();
+                ConsoleLog("GPU renderer failed repeatedly; switched back to the software renderer.", 1);
+            }
+        } else s_gpuFails = 0;
+    }
+    if (!px)
+        px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
+                            scene, vp, eye, rw, rh, ss, ignore);
+    if (!px) return nullptr;   // every renderer failed — don't feed SDL a null buffer
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh) {
         if (g_view3DTex[slot]) SDL_DestroyTexture(g_view3DTex[slot]);
         g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
@@ -550,6 +609,7 @@ void LoadSettings() {
         else if (k == "showcamhud") g_showCamHud = (v != 0);
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
         else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
+        // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
     // aren't magnified) and AA OFF (the top-left fill rule killed the shimmer at the
@@ -560,7 +620,7 @@ void LoadSettings() {
 }
 void SaveSettings() {
     std::ofstream f("okay_settings.txt");
-    f << "settingsver 2\n"
+    f << "settingsver 3\n"
       << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
       << "vsync "      << (g_vsync ? 1 : 0) << "\n"
@@ -671,6 +731,7 @@ struct BuildSettings {
     bool  ssao = false;                    // ambient occlusion
     bool  fxaa = true;                     // cheap edge anti-aliasing
     int   antialias = 1;                   // 1 = off, 2 = 2x supersample
+    bool  gpuRenderer = true;              // use the GPU (D3D11/OpenGL) 3D renderer; falls back to software
 };
 BuildSettings g_build;
 
@@ -684,6 +745,7 @@ struct ProjectSettings {
     float gravity3D[3]  = {0.0f, -9.81f, 0.0f};
     float ambient       = 0.30f;
     bool  skybox        = true;
+    std::vector<std::string> customTags;   // project-wide user tags (Unity-style), persisted
 };
 ProjectSettings g_project;
 bool g_showProjectSettings = false;
@@ -699,6 +761,8 @@ void SaveProjectSettings() {
     f << "gravity3d=" << g_project.gravity3D[0] << " " << g_project.gravity3D[1] << " " << g_project.gravity3D[2] << "\n";
     f << "ambient=" << g_project.ambient << "\n";
     f << "skybox=" << (g_project.skybox ? 1 : 0) << "\n";
+    for (const std::string& t : g_project.customTags)
+        if (!t.empty()) f << "tag=" << t << "\n";
 }
 
 void LoadProjectSettings() {
@@ -717,6 +781,7 @@ void LoadProjectSettings() {
         else if (k == "gravity3d") std::sscanf(v.c_str(), "%f %f %f", &g_project.gravity3D[0], &g_project.gravity3D[1], &g_project.gravity3D[2]);
         else if (k == "ambient") g_project.ambient = (float)std::atof(v.c_str());
         else if (k == "skybox")  g_project.skybox = std::atoi(v.c_str()) != 0;
+        else if (k == "tag") { if (!v.empty()) g_project.customTags.push_back(v); }
     }
 }
 bool  g_snap = false;
@@ -914,6 +979,33 @@ const char* StarterScript(const std::string& lang) {
            "}\n";
 }
 
+// A filename stem -> a valid class identifier (letters/digits/_, no leading digit).
+inline std::string ClassIdent(const std::string& stem) {
+    std::string id;
+    for (char c : stem) id += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+    if (id.empty()) return "NewScript";
+    if (std::isdigit((unsigned char)id[0])) id = "_" + id;
+    return id;
+}
+
+// Rewrite the first `class <X>` in OkayScript/C# source to `newName` (Unity-style:
+// the class follows the file name). Returns the source unchanged if it has no class.
+inline std::string RenameScriptClass(const std::string& src, const std::string& newName) {
+    auto p = src.find("class ");
+    if (p == std::string::npos) return src;
+    std::size_t s = p + 6;
+    while (s < src.size() && std::isspace((unsigned char)src[s])) ++s;
+    std::size_t e = s;
+    while (e < src.size() && (std::isalnum((unsigned char)src[e]) || src[e] == '_')) ++e;
+    if (e == s) return src;
+    return src.substr(0, s) + newName + src.substr(e);
+}
+
+// A starter script whose class name matches the given file stem.
+inline std::string StarterScriptNamed(const std::string& lang, const std::string& stem) {
+    return RenameScriptClass(StarterScript(lang), ClassIdent(stem));
+}
+
 } // namespace extide
 
 // ---- Build Game: export the current scene as a standalone runnable game ----
@@ -992,6 +1084,7 @@ struct Options {
     bool lockCursor = false, perPixelLighting = false, shadows = false,
          bloom = false, ssao = false, fxaa = true;
     int  antialias = 1;
+    bool gpuRenderer = true;
 };
 
 // Build the game into outDir. Returns a human-readable status string.
@@ -1047,6 +1140,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "ssao=" << (opt.ssao ? 1 : 0) << "\n";
         cf << "fxaa=" << (opt.fxaa ? 1 : 0) << "\n";
         cf << "antialias=" << opt.antialias << "\n";
+        cf << "gpu=" << (opt.gpuRenderer ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
     }
@@ -1065,12 +1159,46 @@ std::string Build(EditorState& ed, const std::string& outDir,
                ", but couldn't find or download the player runtime. Check your "
                "internet connection, or place OkaySpacePlayer next to the editor.";
     }
-    fs::copy_file(player, dir / exeName, fs::copy_options::overwrite_existing, ec);
-    if (ec) return "Wrote scene but couldn't copy the player: " + ec.message();
+    // Copy that overwrites even a locked/existing target: remove first, then copy.
+    // copy_file(overwrite_existing) can still report "file exists" on some setups
+    // (and copying a file onto itself is an error), so guard both.
+    auto copyOver = [](const fs::path& src, const fs::path& dst, std::error_code& e) -> bool {
+        e.clear();
+        std::error_code e0;
+        if (fs::exists(dst, e0) && fs::equivalent(src, dst, e0)) return true;  // same file → nothing to do
+        std::error_code e1; fs::remove(dst, e1);                              // best-effort unlock/replace
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, e);
+        return !e;
+    };
+
+    if (!copyOver(player, dir / exeName, ec))
+        return "Wrote scene but couldn't copy the player: " + ec.message();
 #if !defined(_WIN32)
     fs::permissions(dir / exeName, fs::perms::owner_exec | fs::perms::group_exec |
                     fs::perms::others_exec, fs::perm_options::add, ec);
 #endif
+
+    // Bundle the runtime libraries the game needs beside it — most importantly
+    // SDL2.dll on Windows, without which the game won't launch. Look next to the
+    // player, then next to the editor (and common subfolders).
+    {
+        fs::path pdir = fs::path(player).parent_path();
+        fs::path edir = updater::SelfPath().empty() ? fs::path() : fs::path(updater::SelfPath()).parent_path();
+        std::vector<fs::path> roots = {pdir, edir, edir / "bin", edir.parent_path(), pdir.parent_path()};
+#if defined(_WIN32)
+        const char* libs[] = {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"};
+#else
+        const char* libs[] = {"libSDL2-2.0.so.0"};
+#endif
+        for (const char* lib : libs) {
+            for (const fs::path& root : roots) {
+                if (root.empty()) continue;
+                std::error_code fe;
+                fs::path src = root / lib;
+                if (fs::exists(src, fe)) { std::error_code ce; copyOver(src, dir / lib, ce); break; }
+            }
+        }
+    }
 
     // 3) Copy every asset the scene references (textures, WAVs, frames) so the
     // shipped game folder is self-contained, preserving relative subpaths.
@@ -1350,6 +1478,34 @@ void DrawMenuAndToolbar(EditorState& ed) {
         bool aa = g_ssaa > 1;
         if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
+        {
+            // One toggle; the backend is auto-selected for this system: Direct3D 11 on
+            // Windows, OpenGL elsewhere (whichever initialized), then software.
+            const char* backend = "software";
+#if defined(_WIN32)
+            if (g_d3dReady)      backend = "Direct3D 11";
+            else if (g_glReady)  backend = "OpenGL";
+#else
+            if (g_glReady)       backend = "OpenGL";
+#endif
+            bool gpuAvail = g_glReady;
+#if defined(_WIN32)
+            gpuAvail = gpuAvail || g_d3dReady;
+#endif
+            // The GPU renderer is automatic now (on by default, API auto-selected for
+            // the OS, self-healing to software on failure), so this is just a read-only
+            // status line — no manual switch needed.
+            char label[80];
+            std::snprintf(label, sizeof(label), "Renderer: %s", g_gpuRender && gpuAvail ? backend : "software");
+            ImGui::BeginDisabled();
+            ImGui::MenuItem(label, nullptr, false);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D is rendered on the GPU automatically — Direct3D 11 on Windows,\nOpenGL elsewhere — and falls back to software if no GPU is available.");
+        }
+#ifdef OKAY_HAVE_OKAYUI
+        ImGui::MenuItem("Test UI", nullptr, &g_showTestUI);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
+#endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
         if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
@@ -1384,11 +1540,6 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
         if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
         if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
-        if (ImGui::MenuItem("Create Virtual Camera")) {
-            GameObject* g = ed.CreateEmpty("Virtual Camera");
-            g->AddComponent<VirtualCamera>();
-            ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
-        }
         ImGui::Separator();
         if (ImGui::BeginMenu("Player")) {           // ready-to-play premade players
             if (ImGui::MenuItem("Third Person")) {
@@ -1455,24 +1606,63 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Create Directional Light")) {
-            GameObject* go = ed.CreateEmpty("Directional Light");
-            go->AddComponent<Light>();
-            go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
-            ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
+        if (ImGui::BeginMenu("Light")) {           // every light type in one place
+            if (ImGui::MenuItem("Directional Light")) {
+                GameObject* go = ed.CreateEmpty("Directional Light");
+                go->AddComponent<Light>();
+                go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
+                ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
+            }
+            if (ImGui::MenuItem("Point Light")) {
+                GameObject* go = ed.CreateEmpty("Point Light");
+                auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
+                go->transform->localPosition = {0, 3, 0};
+                ed.Select(go); ConsoleLog("Created Point Light"); created = true;
+            }
+            if (ImGui::MenuItem("Spot Light")) {
+                GameObject* go = ed.CreateEmpty("Spot Light");
+                auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
+                go->transform->localPosition = {0, 5, 0};
+                go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
+                ed.Select(go); ConsoleLog("Created Spot Light"); created = true;
+            }
+            ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Create Point Light")) {
-            GameObject* go = ed.CreateEmpty("Point Light");
-            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
-            go->transform->localPosition = {0, 3, 0};
-            ed.Select(go); ConsoleLog("Created Point Light"); created = true;
-        }
-        if (ImGui::MenuItem("Create Spot Light")) {
-            GameObject* go = ed.CreateEmpty("Spot Light");
-            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
-            go->transform->localPosition = {0, 5, 0};
-            go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
-            ed.Select(go); ConsoleLog("Created Spot Light"); created = true;
+        if (ImGui::BeginMenu("Cinemachine")) {     // virtual cameras, brain & dolly rails
+            if (ImGui::MenuItem("Virtual Camera")) {
+                GameObject* g = ed.CreateEmpty("Virtual Camera");
+                g->AddComponent<VirtualCamera>();
+                ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A Cinemachine shot: where to stand, what to aim at, the lens and damping.");
+            if (ImGui::MenuItem("Cinemachine Brain")) {
+                // The brain drives the real camera from virtual cameras, so put it on
+                // the existing main camera if there is one; otherwise make a Camera for it.
+                GameObject* camGO = nullptr;
+                for (const auto& up : ed.scene().Objects())
+                    if (up->GetComponent<Camera>()) { camGO = up.get(); break; }
+                if (!camGO) { ed.CreateCamera(); camGO = ed.selected(); }
+                if (camGO && !camGO->GetComponent<CinemachineBrain>())
+                    camGO->AddComponent<CinemachineBrain>();
+                if (camGO) ed.Select(camGO);
+                ConsoleLog("Added Cinemachine Brain to the camera"); created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lives on the main camera and blends it between virtual cameras.");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Dolly Path")) {
+                GameObject* go = ed.CreateEmpty("Dolly Path");
+                auto* dp = go->AddComponent<DollyPath>();
+                dp->waypoints = { {-8, 2, 0}, {0, 2, 6}, {8, 2, 0} }; // a gentle arc
+                ed.Select(go); ConsoleLog("Created Dolly Path"); created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A smooth camera rail (Catmull-Rom spline through waypoints).");
+            if (ImGui::MenuItem("Dolly Cart")) {
+                GameObject* go = ed.CreateEmpty("Dolly Cart");
+                go->AddComponent<DollyCart>();
+                ed.Select(go); ConsoleLog("Created Dolly Cart (set its Path to a Dolly Path)"); created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Glides along a Dolly Path; set its Path to the path's name.");
+            ImGui::EndMenu();
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Create Particle System")) {
@@ -1507,6 +1697,33 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
             if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
+            if (ImGui::MenuItem("Inventory (Minecraft-style)")) {
+                GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
+                GameObject* g = ed.CreateEmpty("Inventory");
+                auto* inv = g->AddComponent<Inventory>();
+                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft
+                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
+                inv->Add("Torch", 16); inv->Add("Sword", 1);
+                g->AddComponent<InventoryUI>();
+                if (root) g->transform->SetParent(root->transform, false);
+                ed.Select(g); ed.dirty = true; created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. Drives off an Inventory you can fill from gameplay.");
+            if (ImGui::MenuItem("Grid Inventory (DayZ/Unturned-style)")) {
+                GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
+                GameObject* g = ed.CreateEmpty("GridInventory");
+                auto* gi = g->AddComponent<GridInventory>();
+                gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
+                gi->AddItem("Rifle", 2, 6, 1, 4.0f);
+                gi->AddItem("Backpack", 3, 3, 1, 1.0f);
+                gi->AddItem("Beans", 1, 1, 2, 0.4f);
+                gi->AddItem("Bandage", 1, 1, 3, 0.1f);
+                gi->AddItem("Water", 1, 2, 1, 0.6f);
+                g->AddComponent<GridInventoryUI>();
+                if (root) g->transform->SetParent(root->transform, false);
+                ed.Select(g); ed.dirty = true; created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
             if (ImGui::MenuItem("UI Document"))  {
                 GameObject* root = EnsureUIRoot(ed);
                 GameObject* g = ed.CreateEmpty("UIDocument");
@@ -1791,6 +2008,36 @@ static std::string Lower(std::string s) {
     return s;
 }
 
+// A Unity-style asset reference slot for the inspector: NOT editable. Shows the
+// assigned file's name (or "None (<kind>)") and only accepts a matching asset
+// dragged from the Project panel; an "x" clears it. Returns true (and updates
+// `field`) when the value changes. `exts` are accepted lowercase extensions.
+static bool AssetSlot(const char* id, std::string& field, const char* kind,
+                      std::initializer_list<const char*> exts) {
+    bool changed = false;
+    std::string name = field;
+    if (auto sl = name.find_last_of("/\\"); sl != std::string::npos) name = name.substr(sl + 1);
+    std::string label = (field.empty() ? (std::string("None (") + kind + ")") : name) + "##" + id;
+    ImGui::Button(label.c_str(), ImVec2(-28, 0));
+    bool hovered = ImGui::IsItemHovered();
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::string ap((const char*)p->Data), al = Lower(ap);
+            for (const char* e : exts) {
+                std::string es = e;
+                if (al.size() >= es.size() && al.compare(al.size() - es.size(), es.size(), es) == 0) { field = ap; changed = true; break; }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    ImGui::SameLine();
+    ImGui::PushID(id);
+    if (ImGui::SmallButton("x") && !field.empty()) { field.clear(); changed = true; }
+    ImGui::PopID();
+    if (hovered) ImGui::SetTooltip("Drag a %s from the Project panel here", kind);
+    return changed;
+}
+
 // Visual kind (icon color + short letter) for an asset, by extension.
 // An asset's icon: a category (for the drawn glyph), a tint, and a short label.
 enum class AssetIcon { Folder, Script, Material, Scene, Prefab, Image, Audio, Mesh, Data, Visual, Generic };
@@ -1854,6 +2101,50 @@ static void DrawAssetIcon(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const AssetKind&
 }
 
 // Move an asset (file or folder) into a destination folder (drag-and-drop).
+// The Assets folder the Project panel is currently browsing — updated each frame by
+// DrawProject(). OS file drops (SDL_DROPFILE) and the Import button copy here, so an
+// imported file lands in the folder you're looking at. Empty until a project opens.
+std::string g_assetImportDir;
+
+// A friendly category for a file extension, for import logging / quick validation.
+// "etc" types (anything not recognized) still import — this is just for the message.
+static const char* ImportKindLabel(const std::string& extLower) {
+    if (extLower==".png"||extLower==".jpg"||extLower==".jpeg"||extLower==".bmp"||extLower==".tga"||extLower==".gif") return "texture";
+    if (extLower==".ttf"||extLower==".otf"||extLower==".fnt") return "font";
+    if (extLower==".wav"||extLower==".ogg"||extLower==".mp3"||extLower==".flac") return "audio";
+    if (extLower==".obj"||extLower==".gltf"||extLower==".glb"||extLower==".fbx") return "model";
+    if (extLower==".okay"||extLower==".lua"||extLower==".cs"||extLower==".okayvs") return "script";
+    return nullptr;
+}
+
+// Copy an external file into the project's Assets (into destDir, or its current import
+// dir). Picks a non-clashing name and returns the destination path (empty on failure).
+static std::string ImportAssetFile(const std::string& srcPath, std::filesystem::path destDir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path src(srcPath);
+    if (srcPath.empty() || !fs::exists(src, ec) || fs::is_directory(src, ec)) {
+        ConsoleLog("Import failed: not a file — " + srcPath, 2);
+        return {};
+    }
+    if (destDir.empty() || !fs::is_directory(destDir, ec)) {
+        // Fall back to the tracked Assets dir, then the current directory's Assets.
+        destDir = g_assetImportDir.empty() ? fs::path("Assets") : fs::path(g_assetImportDir);
+        fs::create_directories(destDir, ec);
+        if (!fs::is_directory(destDir, ec)) { ConsoleLog("Import failed: no Assets folder to import into.", 2); return {}; }
+    }
+    // Choose a unique destination name: "<stem>.ext", then "<stem> 2.ext", ...
+    std::string stem = src.stem().string(), ext = src.extension().string();
+    fs::path dst = destDir / (stem + ext);
+    for (int n = 2; fs::exists(dst, ec); ++n) dst = destDir / (stem + " " + std::to_string(n) + ext);
+    fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+    if (ec) { ConsoleLog("Import failed: " + ec.message(), 2); return {}; }
+    const char* kind = ImportKindLabel(Lower(ext));
+    ConsoleLog("Imported " + (kind ? std::string(kind) + " " : std::string()) + dst.filename().string()
+               + " -> " + destDir.filename().string());
+    return dst.string();
+}
+
 static void MoveAssetInto(const std::string& src, const std::filesystem::path& destDir) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -1864,12 +2155,30 @@ static void MoveAssetInto(const std::string& src, const std::filesystem::path& d
                   : ("Moved " + s.filename().string() + " -> " + destDir.filename().string()));
 }
 
-// A drop target on the last-drawn item that accepts an asset path and moves it
-// into `destDir`.
+// Save a GameObject as a .okayprefab in `destDir` (Unity-style: drag from the
+// Hierarchy into the Project panel). Picks a non-clashing "<name>.okayprefab".
+static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir) {
+    namespace fs = std::filesystem;
+    if (!go) return;
+    std::error_code ec;
+    if (destDir.empty() || !fs::is_directory(destDir, ec)) { ConsoleLog("Can't save prefab: no Assets folder.", 2); return; }
+    std::string base = go->name.empty() ? std::string("Prefab") : go->name;
+    fs::path out = destDir / (base + ".okayprefab");
+    for (int n = 2; fs::exists(out, ec); ++n) out = destDir / (base + " " + std::to_string(n) + ".okayprefab");
+    if (SceneSerializer::SaveObjectToFile(*go, out.string()))
+        ConsoleLog("Saved prefab " + out.filename().string() + " -> " + destDir.filename().string());
+    else
+        ConsoleLog("Prefab save failed: " + out.string(), 2);
+}
+
+// A drop target on the last-drawn item: an asset path is MOVED into `destDir`; a
+// GameObject dragged from the Hierarchy is SAVED there as a prefab (Unity-style).
 static void AssetDropTarget(const std::filesystem::path& destDir) {
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH"))
             MoveAssetInto(std::string((const char*)p->Data), destDir);
+        if (const ImGuiPayload* g = ImGui::AcceptDragDropPayload("GO_PTR"))
+            SavePrefabInto(*(GameObject**)g->Data, destDir);
         ImGui::EndDragDropTarget();
     }
 }
@@ -1918,6 +2227,8 @@ void DrawProject(EditorState& ed) {
         std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
     }
     fs::path dir(dirBuf);
+    // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
+    g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
     // ---- Top bar: breadcrumb + search --------------------------------
     if (ImGui::SmallButton("Assets")) std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
@@ -1997,7 +2308,27 @@ void DrawProject(EditorState& ed) {
         okay::Scene empty("New Scene");
         if (SceneSerializer::SaveToFile(empty, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
     }
+    ImGui::SameLine();
+    // Import external files: opens the OS file picker (multi-select), copies the
+    // chosen files into this folder. Any file type is accepted ("All files").
+    if (ImGui::SmallButton("Import...")) {
+        const char* picks = tinyfd_openFileDialog(
+            "Import asset(s)", "", 0, nullptr, "All files", /*multiSelect=*/1);
+        if (picks && picks[0]) {
+            // tinyfd returns multiple selections separated by '|'.
+            std::string all(picks), one; int n = 0;
+            auto importOne = [&](const std::string& path) {
+                if (path.empty()) return;
+                std::string out = ImportAssetFile(path, dir);
+                if (!out.empty()) { selected = out; ++n; }
+            };
+            for (char ch : all) { if (ch == '|') { importOne(one); one.clear(); } else one += ch; }
+            importOne(one);
+            ConsoleLog("Imported " + std::to_string(n) + " file(s) into " + dir.filename().string());
+        }
+    }
     ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the file picker to copy textures, fonts, audio, models, etc. into this folder.\nTip: you can also drag files from your file explorer onto the window.");
     ImGui::SameLine();
     ImGui::TextDisabled("(F2 or right-click to Rename)");
 
@@ -2231,10 +2562,32 @@ void DrawProject(EditorState& ed) {
             fs::path src(renameTarget), dst = fs::path(renameTarget).parent_path() / renameBuf;
             std::error_code re; fs::rename(src, dst, re);
             ConsoleLog((re ? "Rename failed: " : "Renamed to ") + dst.string());
+            // Unity-style: when a script asset is renamed, rename its class to match.
+            if (!re) {
+                std::string ext = Lower(dst.extension().string());
+                if (ext == ".okay" || ext == ".cs") {
+                    std::ifstream in(dst, std::ios::binary);
+                    if (in) {
+                        std::string srcTxt((std::istreambuf_iterator<char>(in)), {}); in.close();
+                        std::string out = extide::RenameScriptClass(srcTxt, extide::ClassIdent(dst.stem().string()));
+                        if (out != srcTxt) { std::ofstream(dst, std::ios::binary) << out; ConsoleLog("Renamed class to " + extide::ClassIdent(dst.stem().string())); }
+                    }
+                }
+            }
             if (selected == renameTarget) selected = dst.string();
             renameTarget.clear(); ImGui::CloseCurrentPopup();
         } else if (cancel) { renameTarget.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
+    }
+
+    // Whole-grid drop: drag a GameObject from the Hierarchy anywhere onto the asset
+    // area to save it here as a prefab (Unity-style "drag to Project to make a prefab").
+    if (ImGuiWindow* gw = ImGui::GetCurrentWindow()) {
+        if (ImGui::BeginDragDropTargetCustom(gw->InnerClipRect, gw->ID)) {
+            if (const ImGuiPayload* g = ImGui::AcceptDragDropPayload("GO_PTR"))
+                SavePrefabInto(*(GameObject**)g->Data, dir);
+            ImGui::EndDragDropTarget();
+        }
     }
 
     ImGui::EndChild();
@@ -2531,6 +2884,10 @@ void DrawMaterialEditor(EditorState& ed) {
     ImGui::Checkbox("Double-sided", &mat.doubleSided);
     char tex[256]; std::strncpy(tex, mat.texture.c_str(), sizeof(tex) - 1); tex[sizeof(tex) - 1] = '\0';
     if (ImGui::InputText("Texture", tex, sizeof(tex))) mat.texture = tex;
+    if (ImGui::BeginDragDropTarget()) {   // drop an image from the Project panel
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) mat.texture = (const char*)p->Data;
+        ImGui::EndDragDropTarget();
+    }
     float til[2] = {mat.tiling.x, mat.tiling.y};
     if (ImGui::DragFloat2("Tiling", til, 0.05f, 0.01f, 64.0f)) mat.tiling = {til[0], til[1]};
     ImGui::Separator();
@@ -2564,6 +2921,18 @@ void DrawStats(EditorState& ed) {
     ImGui::Text("Sprites: %d", (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size());
     ImGui::Text("Meshes: %d", (int)ed.scene().FindObjectsOfType<MeshRenderer>().size());
     ImGui::Text("Colliders: %d", (int)ed.scene().FindObjectsOfType<Collider2D>().size());
+
+    // Default UI font for this scene: every button/label/widget without its own
+    // font uses it (saved with the scene, so the built game matches). Drag a .ttf
+    // from the Project panel onto the field, Unity-style.
+    if (ImGui::CollapsingHeader("UI")) {
+        std::string& uf = ed.scene().uiFont;
+        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Default UI Font"); ImGui::SameLine();
+        if (AssetSlot("scenefont", uf, "Font", {".ttf", ".otf"})) ed.dirty = true;
+        if (uf.empty())             ImGui::TextDisabled("Built-in 8x8 bitmap font.");
+        else if (okay::GetFont(uf)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
+        else                        ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+    }
 
     // Environment: the scene's skybox + ambient, saved with the scene so the
     // built game renders the same sky and base light.
@@ -3013,6 +3382,15 @@ struct ScriptCaret {
     bool autoPairs = true;             // auto-close brackets + auto-indent on Enter
     int  prevLen = -1;                 // buffer length last frame (to detect typing)
 };
+// The completion that pressing Tab will accept (the suffix after the typed prefix),
+// recomputed each frame where the autocomplete popup is shown; empty = none.
+static std::string g_acComplete;
+// Autocomplete popup state: number of items shown this frame (0 = no popup) and the
+// keyboard-highlighted item. Up/Down move the highlight (handled in the callback so
+// the editor's caret doesn't move lines while the popup is open).
+static int g_acCount = 0;
+static int g_acIndex = 0;
+
 static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
     auto* c = (ScriptCaret*)d->UserData;
     ImGuiIO& io = ImGui::GetIO();
@@ -3021,6 +3399,38 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         ls = p; while (ls > 0 && d->Buf[ls - 1] != '\n') --ls;
         le = p; while (le < d->BufTextLen && d->Buf[le] != '\n') ++le;
     };
+    // Tab handling (via CallbackCompletion so Tab stays in the editor instead of
+    // moving focus): accept the pending autocomplete suggestion, else indent 4
+    // spaces. Shift+Tab dedents the line by up to 4 spaces.
+    if (d->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
+        if (io.KeyShift) {
+            int ls, le; lineBounds(d->CursorPos, ls, le);
+            int rem = 0; while (rem < 4 && ls + rem < d->BufTextLen && d->Buf[ls + rem] == ' ') ++rem;
+            if (rem > 0) {
+                int off = d->CursorPos - ls;
+                d->DeleteChars(ls, rem);
+                d->CursorPos = d->SelectionStart = d->SelectionEnd = ls + (off > rem ? off - rem : 0);
+            }
+        } else if (!g_acComplete.empty()) {
+            d->InsertChars(d->CursorPos, g_acComplete.c_str());
+            g_acComplete.clear();
+        } else {
+            d->InsertChars(d->CursorPos, "    ");
+        }
+        return 0;
+    }
+    // While the autocomplete popup is open, Up/Down move the highlight instead of the
+    // text caret. ImGui already moved the caret a line (multiline), so restore it to
+    // where it was (c->pos holds last frame's position) and adjust the selection.
+    if (g_acCount > 0) {
+        bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+        bool dn = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+        if (up || dn) {
+            d->CursorPos = d->SelectionStart = d->SelectionEnd = c->pos;
+            g_acIndex = up ? (g_acIndex - 1 + g_acCount) % g_acCount
+                           : (g_acIndex + 1) % g_acCount;
+        }
+    }
     // Go to line: move the caret to the start of the requested line.
     if (c->gotoLine > 0) {
         int target = c->gotoLine; c->gotoLine = 0;
@@ -3175,6 +3585,76 @@ static const std::vector<std::string>& ScriptCompletions() {
         "raycast","raycast3","overlap_circle",
     };
     return w;
+}
+
+// Append identifiers found in the current document to a completion pool (deduped),
+// so the editor also suggests the script's own variables and function names — the
+// "current document symbols" source real IDEs include alongside the API list.
+static void AddBufferIdentifiers(const char* src, std::vector<std::string>& pool) {
+    if (!src) return;
+    std::unordered_set<std::string> have(pool.begin(), pool.end());
+    std::string id;
+    auto flush = [&]() {
+        if (id.size() >= 3 && !std::isdigit((unsigned char)id[0]) && !have.count(id)) {
+            have.insert(id); pool.push_back(id);
+        }
+        id.clear();
+    };
+    for (const char* p = src; *p; ++p) {
+        char ch = *p;
+        if (std::isalnum((unsigned char)ch) || ch == '_') id += ch;
+        else flush();
+    }
+    flush();
+}
+
+// Signature (parameter list) for a builtin, shown as a hint while typing a call —
+// e.g. inside `move_toward(` the editor floats "move_toward(x, y, step)". Empty for
+// unknown names. A curated subset of the most-used OkayScript API (see docs).
+static const std::string* ScriptSignature(const std::string& name) {
+    static const std::unordered_map<std::string, std::string> sig = {
+        // transform / movement
+        {"move","move(dx, dy)"}, {"set_pos","set_pos(x, y)"}, {"set_x","set_x(v)"}, {"set_y","set_y(v)"},
+        {"rotate","rotate(deg)"}, {"move_toward","move_toward(x, y, step)"}, {"look_at","look_at(\"name\")"},
+        {"move3","move3(dx, dy, dz)"}, {"set_pos3","set_pos3(x, y, z)"}, {"set_z","set_z(v)"},
+        {"rotate3","rotate3(x, y, z)"}, {"set_scale","set_scale(s)"}, {"set_scale3","set_scale3(x, y, z)"},
+        {"move_forward","move_forward(d)"}, {"move_right","move_right(d)"}, {"look_at3","look_at3(\"name\")"},
+        // physics
+        {"set_velocity","set_velocity(x, y)"}, {"set_velocity3","set_velocity3(x, y, z)"},
+        {"add_force","add_force(x, y)"}, {"add_force3","add_force3(x, y, z)"},
+        {"add_impulse","add_impulse(x, y)"}, {"jump","jump(v)"}, {"set_gravity","set_gravity(x, y)"},
+        // input
+        {"key","key(\"x\")"}, {"key_down","key_down(\"x\")"}, {"key_up","key_up(\"x\")"},
+        {"gamepad","gamepad(btn)"},
+        // object / scene
+        {"find","find(\"name\")"}, {"spawn","spawn(\"prefab\", x, y)"}, {"spawn3","spawn3(\"prefab\", x, y, z)"},
+        {"destroy","destroy(\"name\")"}, {"destroy_obj","destroy_obj(\"name\")"}, {"dist_to","dist_to(\"name\")"},
+        {"count_tag","count_tag(\"tag\")"}, {"nearest_tag","nearest_tag(\"tag\")"}, {"load_scene","load_scene(\"file\")"},
+        {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
+        {"set_bg","set_bg(r, g, b)"}, {"set_light","set_light(x, y, z)"}, {"set_ambient","set_ambient(v)"},
+        // variables / prefs
+        {"set_var","set_var(\"name\", value)"}, {"get_var","get_var(\"name\")"}, {"add_var","add_var(\"name\", amount)"},
+        {"save_prefs","save_prefs(\"key\", value)"}, {"load_prefs","load_prefs(\"key\", default)"},
+        // math
+        {"abs","abs(x)"}, {"sqrt","sqrt(x)"}, {"pow","pow(base, exp)"}, {"min","min(a, b)"}, {"max","max(a, b)"},
+        {"clamp","clamp(v, lo, hi)"}, {"lerp","lerp(a, b, t)"}, {"distance","distance(x1, y1, x2, y2)"},
+        {"random","random()"}, {"random_range","random_range(lo, hi)"}, {"sin","sin(x)"}, {"cos","cos(x)"},
+        {"floor","floor(x)"}, {"ceil","ceil(x)"}, {"round","round(x)"}, {"print","print(value)"},
+        // tweens
+        {"tween_move","tween_move(x, y, dur)"}, {"tween_move3","tween_move3(x, y, z, dur)"},
+        {"tween_scale","tween_scale(s, dur)"}, {"tween_rotate","tween_rotate(deg, dur)"},
+        {"tween_fade","tween_fade(a, dur)"},
+        // ui (immediate-mode + named)
+        {"ui_begin","ui_begin(\"Title\", x, y, w, h)"}, {"ui_text","ui_text(\"s\")"}, {"ui_button","ui_button(\"Label\")"},
+        {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
+        {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
+        {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
+        // networking / raycast
+        {"net_send","net_send(\"msg\")"}, {"raycast","raycast(x, y, dx, dy)"}, {"raycast3","raycast3(x, y, z, dx, dy, dz)"},
+        {"overlap_circle","overlap_circle(x, y, r)"},
+    };
+    auto it = sig.find(name);
+    return it == sig.end() ? nullptr : &it->second;
 }
 
 // Members offered after "<receiver>." in the editor (Unity-style API surface, so
@@ -3460,14 +3940,22 @@ void DrawScriptEditor(EditorState& ed) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Compile and run now (executes the script immediately).\nUse Save to just write the file without running.");
         ImGui::SameLine();
-        if (ImGui::SmallButton("Save")) {
+        // Save the current script to disk (button + Ctrl+S). One place so both agree.
+        auto doSave = [&]() {
             std::string p = filePath();
             if (extide::WriteFile(p, buf.data())) {
                 sc->SetPath(p); ConsoleLog("Saved " + p);
                 g_scriptSaved[sc] = buf.data();    // clears the modified marker
             } else ConsoleLog("Save failed");
             ed.dirty = true;
-        }
+        };
+        if (ImGui::SmallButton("Save")) doSave();
+        // Ctrl+S saves the script even while the text box has focus (the global
+        // shortcut handler skips text fields, so it never reached here before).
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift &&
+            ImGui::IsKeyPressed(ImGuiKey_S, false))
+            doSave();
         ImGui::SameLine();
         if (ImGui::SmallButton("Reload")) {
             if (!sc->Path().empty()) {
@@ -3709,7 +4197,10 @@ void DrawScriptEditor(EditorState& ed) {
         float mmScrollY = 0.0f, mmVisibleH = av.y;     // captured from inside the child
         ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(30, 30, 30, 255));   // VS Code editor bg
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(30, 30, 30, 255));
-        ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(212, 212, 212, 255));
+        // When syntax highlighting is on, hide the InputText's own (flat gray) text so
+        // ONLY the crisp colored overlay shows — otherwise the two render on top of each
+        // other and the colors look washed out / doubled. We draw our own caret below.
+        ImGui::PushStyleColor(ImGuiCol_Text, s_highlight ? IM_COL32(0, 0, 0, 0) : IM_COL32(212, 212, 212, 255));
         ImGui::BeginChild("editorscroll", ImVec2(editW, av.y), true,
                           ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -3741,10 +4232,13 @@ void DrawScriptEditor(EditorState& ed) {
         // scrolling and the colored overlay (drawn after) stays aligned.
         float contentW = (maxLen + 2) * charW + padX * 2;
         float contentH = lines * lineH + padY * 2 + 2;
+        // CallbackCompletion (Tab) drives autocomplete-accept / indent — see the
+        // callback. We don't use AllowTabInput so Tab routes through completion.
         ImGui::InputTextMultiline("##code", buf.data(), buf.size(),
             ImVec2(contentW, contentH),
-            ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackAlways,
+            ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackCompletion,
             ScriptCaretCallback, &caret);
+        bool editorActive = ImGui::IsItemActive();   // for the custom caret (text is hidden when highlighting)
         // A snippet chosen from the toolbar menu steals focus from the editor, so
         // the callback won't run — splice it into the buffer at the caret here.
         if (!caret.insert.empty() && !ImGui::IsItemActive()) {
@@ -3827,8 +4321,23 @@ void DrawScriptEditor(EditorState& ed) {
                 ++i; ++col;
             }
         }
-        if (s_highlight)
+        if (s_highlight) {
             DrawCodeHighlight(edl, buf.data(), origin, charW, lineH);
+            // The InputText's own caret is hidden (transparent text), so draw ours.
+            // Visual column counts a tab as 4 cells to match the overlay's advance.
+            if (editorActive) {
+                const char* tb = buf.data();
+                int ls = caret.pos; while (ls > 0 && tb[ls - 1] != '\n') --ls;
+                float vis = 0.0f;
+                for (int k = ls; k < caret.pos && tb[k]; ++k) vis += (tb[k] == '\t') ? 4.0f : 1.0f;
+                float cxp = origin.x + vis * charW;
+                float cyp = origin.y + (caret.line - 1) * lineH;
+                static float s_blink = 0.0f; s_blink += ImGui::GetIO().DeltaTime;
+                if (std::fmod(s_blink, 1.06f) < 0.6f)   // ~VS Code blink cadence
+                    edl->AddLine(ImVec2(cxp, cyp + 1.0f), ImVec2(cxp, cyp + lineH - 1.0f),
+                                 IM_COL32(224, 224, 224, 255), 1.0f);
+            }
+        }
 
         // Inline diagnostic: a red wavy underline under the error line (the
         // compiler now prefixes "line N:" to parse/compile errors).
@@ -3959,20 +4468,38 @@ void DrawScriptEditor(EditorState& ed) {
             }
             const std::vector<std::string>& members = ScriptMembers(receiver);
             bool memberMode = !receiver.empty() && !members.empty();
+            g_acComplete.clear(); g_acCount = 0;   // no popup unless we show one below
+            // Reset the highlight to the best match whenever the typed word changes.
+            static std::string s_acKey;
+            std::string acKey = receiver + "|" + prefix;
+            if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; }
             // Members list from the first keystroke (or right after the dot); plain
             // words still need 2+ chars so the popup doesn't fire constantly.
             if (memberMode || prefix.size() >= 2) {
                 std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
-                std::vector<const std::string*> hits;
-                const std::vector<std::string>& pool = memberMode ? members : ScriptCompletions();
+                // Rank prefix matches (case-sensitive first, then case-insensitive)
+                // ahead of looser ones so the top item is the best Tab target.
+                std::vector<const std::string*> exact, ci;
+                // Non-member pool = curated API + identifiers from THIS document, so
+                // your own vars/functions complete too (rebuilt per frame; buffers are small).
+                std::vector<std::string> combined;
+                if (!memberMode) { combined = ScriptCompletions(); AddBufferIdentifiers(buf.data(), combined); }
+                const std::vector<std::string>& pool = memberMode ? members : combined;
                 for (const auto& w : pool) {
                     if (w.size() < prefix.size()) continue;
                     if (!memberMode && w.size() == prefix.size()) continue;  // exact word: nothing to add
+                    if (w.compare(0, prefix.size(), prefix) == 0) { exact.push_back(&w); continue; }
                     std::string lw = w; for (auto& ch : lw) ch = (char)std::tolower((unsigned char)ch);
-                    if (lw.compare(0, lp.size(), lp) == 0) hits.push_back(&w);
-                    if (hits.size() >= 12) break;
+                    if (lw.compare(0, lp.size(), lp) == 0) ci.push_back(&w);
                 }
+                std::vector<const std::string*> hits = exact;
+                for (auto* w : ci) { if (hits.size() >= 12) break; hits.push_back(w); }
+                if (hits.size() > 12) hits.resize(12);
                 if (!hits.empty()) {
+                    g_acCount = (int)hits.size();
+                    if (g_acIndex >= g_acCount) g_acIndex = 0;   // keep selection in range
+                    // The highlighted item is what Tab accepts (insert the missing suffix).
+                    g_acComplete = hits[g_acIndex]->substr(prefix.size());
                     ImGui::SetNextWindowPos(ImVec2(caretScreen.x, caretScreen.y + 2));
                     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 46, 245));
                     if (ImGui::Begin("##autocomplete", nullptr,
@@ -3980,13 +4507,52 @@ void DrawScriptEditor(EditorState& ed) {
                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
                             ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                             ImGuiWindowFlags_NoSavedSettings)) {
-                        for (const std::string* w : hits) {
-                            if (ImGui::Selectable(w->c_str()))
-                                caret.insert = w->substr(prefix.size());   // spliced when editor inactive
+                        for (std::size_t i = 0; i < hits.size(); ++i) {
+                            if (ImGui::Selectable(hits[i]->c_str(), (int)i == g_acIndex)) {
+                                g_acIndex = (int)i;
+                                caret.insert = hits[i]->substr(prefix.size());  // spliced when editor inactive
+                            }
                         }
+                        ImGui::Separator();
+                        ImGui::TextDisabled("\xe2\x86\x91\xe2\x86\x93 select   Tab accept");
                     }
                     ImGui::End();
                     ImGui::PopStyleColor();
+                }
+            }
+        }
+
+        // --- Signature hint: while inside a call, float the builtin's parameters --
+        {
+            const char* tx = buf.data();
+            auto isW = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
+            int p = caret.pos, depth = 0, op = -1;
+            for (int i = p - 1; i >= 0; --i) {     // find the innermost unmatched '('
+                char ch = tx[i];
+                if (ch == ')') ++depth;
+                else if (ch == '(') { if (depth == 0) { op = i; break; } --depth; }
+                else if (ch == '\n' && depth == 0) break;
+            }
+            if (op > 0) {
+                int e = op; while (e > 0 && (tx[e-1]==' '||tx[e-1]=='\t')) --e;
+                int s = e; while (s > 0 && isW(tx[s-1])) --s;
+                if (e > s) {
+                    std::string name(tx + s, tx + e);
+                    if (const std::string* sgn = ScriptSignature(name)) {
+                        float y = caretScreen.y - lineH - 4.0f;
+                        if (y < 0) y = caretScreen.y + lineH + 2.0f;   // flip below if off-screen
+                        ImGui::SetNextWindowPos(ImVec2(caretScreen.x, y));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(48, 44, 60, 245));
+                        if (ImGui::Begin("##sighint", nullptr,
+                                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs)) {
+                            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sgn->c_str());
+                        }
+                        ImGui::End();
+                        ImGui::PopStyleColor();
+                    }
                 }
             }
         }
@@ -4198,6 +4764,8 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
 
         ImGui::SeparatorText("Graphics / Quality");
+        ImGui::Checkbox("GPU renderer (Direct3D 11 / OpenGL)", &g_build.gpuRenderer);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU in the shipped game (hardware speed).\nFalls back to the software renderer if no GPU is available.");
         ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
         ImGui::Checkbox("Shadows", &g_build.shadows);
         ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
@@ -4230,6 +4798,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.lockCursor = g_build.lockCursor; o.perPixelLighting = g_build.perPixelLighting;
             o.shadows = g_build.shadows; o.bloom = g_build.bloom; o.ssao = g_build.ssao;
             o.fxaa = g_build.fxaa; o.antialias = g_build.antialias;
+            o.gpuRenderer = g_build.gpuRenderer;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);
@@ -4732,11 +5301,22 @@ void DrawHierarchy(EditorState& ed) {
                                 ConsoleLog("Applied material to " + node->name);
                             }
                         } else ConsoleLog(node->name + " has no Mesh Renderer for the material");
-                    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
                         ed.PushUndo();
-                        if (auto* mr = node->GetComponent<MeshRenderer>())      mr->texture = path;
+                        if (auto* im = node->GetComponent<UIImage>())             im->texture = path;
+                        else if (auto* mr = node->GetComponent<MeshRenderer>())   mr->texture = path;
                         else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
                         ed.dirty = true; ConsoleLog("Set texture on " + node->name);
+                    } else if (ext == ".okay") {           // attach a script (Unity-style)
+                        ed.PushUndo();
+                        auto* nsc = node->AddComponent<ScriptComponent>("okayscript");
+                        std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
+                        ed.dirty = true; ConsoleLog("Attached script to " + node->name);
+                    } else if (ext == ".ttf" || ext == ".otf") {   // set font on a Text/Button
+                        ed.PushUndo();
+                        if (auto* tr = node->GetComponent<TextRenderer>())   tr->fontPath = path;
+                        else if (auto* bt = node->GetComponent<UIButton>())  bt->fontPath = path;
+                        ed.dirty = true; ConsoleLog("Set font on " + node->name);
                     }
                 }
                 ImGui::EndDragDropTarget();
@@ -5661,6 +6241,44 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                         }
                     }
                 }
+            } else {
+                // Declaration-only public field with no initializer, e.g.
+                // `public GameObject target;`. Show it with an empty default so it
+                // appears in the inspector (this is why object refs didn't show).
+                std::string c2 = code;
+                if (auto sp = c2.find(';'); sp != std::string::npos) c2 = c2.substr(0, sp);
+                bool blockish = c2.find('(') != std::string::npos || c2.find('{') != std::string::npos ||
+                                c2.find('}') != std::string::npos || c2.find(':') != std::string::npos ||
+                                c2.find("class") != std::string::npos || c2.find("struct") != std::string::npos ||
+                                c2.find("enum") != std::string::npos;
+                if (!blockish) {
+                    bool hasSerialize = c2.find("[Serialize") != std::string::npos;
+                    std::string l2; bool inb = false;
+                    for (char c : c2) { if (c == '[') inb = true; else if (c == ']') inb = false; else if (!inb) l2 += c; }
+                    std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
+                    bool hasPublic = false, hasPrivate = false;
+                    for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private") hasPrivate = true; }
+                    if (toks.size() >= 2 && (hasPublic || hasSerialize) && !hasPrivate) {
+                        std::string name = toks.back();
+                        bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');
+                        for (char c : name) if (!(std::isalnum((unsigned char)c) || c == '_')) valid = false;
+                        std::string type;
+                        for (auto& t : toks) {
+                            if (t == name) break;
+                            if (t == "public" || t == "private" || t == "static" ||
+                                t == "const" || t == "readonly" || t == "var") continue;
+                            type = t;
+                        }
+                        if (valid && !type.empty() && !kw.count(name) && !kw.count(type) && !seen.count(name)) {
+                            ScriptField f;
+                            f.name = name; f.type = type; f.def = "";
+                            f.header = pendH; f.tooltip = pendT;
+                            f.hasRange = pendR; f.rmin = pendRmin; f.rmax = pendRmax;
+                            out.push_back(f); seen.insert(name);
+                            pendH.clear(); pendT.clear(); pendR = false;
+                        }
+                    }
+                }
             }
         }
         for (char c : code) { if (c == '{') ++depth; else if (c == '}') --depth; }
@@ -6079,7 +6697,9 @@ void DrawInspector(EditorState& ed) {
     if (ImGui::Checkbox("Static", &go->isStatic)) ed.dirty = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Marks the object as non-moving (saved with the scene)");
 
-    // Row 2: Tag dropdown (Unity-style presets + custom) + Save-as-Prefab.
+    // Row 2: Tag dropdown (Unity-style presets + your own custom tags) + Save-as-Prefab.
+    // Built-in presets, then any project-wide custom tags (persisted in project.okayproj),
+    // then an "Add Tag" field that creates a new tag AND applies it in one step.
     static const char* kTagPresets[] = {"Untagged", "Player", "MainCamera", "Enemy",
                                         "Respawn", "Finish", "GameController", "UI"};
     std::string curTag = go->tag.empty() ? "Untagged" : go->tag;
@@ -6091,12 +6711,41 @@ void DrawInspector(EditorState& ed) {
                 go->tag = (std::strcmp(t, "Untagged") == 0) ? "" : t; ed.dirty = true;
             }
         }
+        // Project-wide custom tags (click to apply; right-click to remove from the list).
+        if (!g_project.customTags.empty()) {
+            ImGui::Separator();
+            for (std::size_t i = 0; i < g_project.customTags.size(); ++i) {
+                const std::string& t = g_project.customTags[i];
+                if (t.empty()) continue;
+                bool sel = (curTag == t);
+                if (ImGui::Selectable(t.c_str(), sel)) { go->tag = t; ed.dirty = true; }
+                if (ImGui::BeginPopupContextItem((std::string("tagctx") + std::to_string(i)).c_str())) {
+                    if (ImGui::MenuItem("Remove tag from list")) {
+                        g_project.customTags.erase(g_project.customTags.begin() + i);
+                        SaveProjectSettings();
+                        ImGui::EndPopup();
+                        break;
+                    }
+                    ImGui::EndPopup();
+                }
+            }
+        }
         ImGui::Separator();
-        static char customTag[64] = "";
-        ImGui::SetNextItemWidth(130);
-        if (ImGui::InputTextWithHint("##customtag", "custom tag...", customTag, sizeof(customTag),
-                                     ImGuiInputTextFlags_EnterReturnsTrue) && customTag[0]) {
-            go->tag = customTag; ed.dirty = true; customTag[0] = '\0';
+        // Add a brand-new tag: type a name, press Enter or click Add → it's saved to
+        // the project tag list and applied to this object immediately.
+        static char newTag[64] = "";
+        ImGui::SetNextItemWidth(120);
+        bool entered = ImGui::InputTextWithHint("##newtag", "new tag...", newTag, sizeof(newTag),
+                                                ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        bool clicked = ImGui::Button("Add");
+        if ((entered || clicked) && newTag[0]) {
+            std::string nt = newTag;
+            bool known = false;
+            for (const char* p : kTagPresets) if (nt == p) known = true;
+            for (const std::string& e : g_project.customTags) if (e == nt) known = true;
+            if (!known) { g_project.customTags.push_back(nt); SaveProjectSettings(); }
+            go->tag = nt; ed.dirty = true; newTag[0] = '\0';
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndCombo();
@@ -6188,26 +6837,31 @@ void DrawInspector(EditorState& ed) {
                 "Pick a value just above the layer of whatever you want to cover.");
         int defLayer = UIDefaultLayer(go);
         if (defLayer >= 0) { ImGui::SameLine(); ImGui::TextDisabled("(default %d)", defLayer); }
+        // Anchor/fill reference rect: a UI child anchors WITHIN its parent (Unity-
+        // style, matching the renderer), so use the parent's size when there is one;
+        // otherwise the whole canvas.
+        GameObject* uiParent = OwningUIParent(go);
+        float refW, refH; bool hasParent = false;
+        if (uiParent) { UIRect pr = GetUIRect(uiParent); if (pr.valid) { refW = pr.size.x; refH = pr.size.y; hasParent = true; } }
+        if (!hasParent) { refW = UICanvas::Width(); refH = UICanvas::Height(); }
         ImGui::SameLine();
-        if (ImGui::Button("Center in Canvas")) {
+        if (ImGui::Button(hasParent ? "Center in Parent" : "Center in Canvas")) {
             UIRect r = GetUIRect(go);
             if (r.position) {
-                // Center the resolved rect on the canvas for the widget's anchor.
-                float cw = UICanvas::Width(), ch = UICanvas::Height();
-                Vec2 term = ResolveAnchor(r.anchor, Vec2{0, 0}, r.size, cw, ch);
-                r.position->x = (cw - r.size.x) * 0.5f - term.x;
-                r.position->y = (ch - r.size.y) * 0.5f - term.y;
+                // Center the resolved rect within the reference (parent or canvas).
+                Vec2 term = ResolveAnchor(r.anchor, Vec2{0, 0}, r.size, refW, refH);
+                r.position->x = (refW - r.size.x) * 0.5f - term.x;
+                r.position->y = (refH - r.size.y) * 0.5f - term.y;
                 ed.dirty = true;
             }
         }
         // Anchor presets (Unity's 3x3): pick a corner/edge/center; the widget
         // keeps its on-screen position (its offset is recomputed for the new
-        // anchor) so re-anchoring never makes it jump.
+        // anchor) so re-anchoring never makes it jump. Resolved against the parent.
         UIRect ar = GetUIRect(go);
         if (ar.anchorPtr && ar.position) {
-            ImGui::TextDisabled("Anchor preset:");
-            float cw = UICanvas::Width(), ch = UICanvas::Height();
-            Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, cw, ch);
+            ImGui::TextDisabled(hasParent ? "Anchor preset (within parent):" : "Anchor preset:");
+            Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, refW, refH);
             for (int row = 0; row < 3; ++row) {
                 for (int col = 0; col < 3; ++col) {
                     if (col) ImGui::SameLine();
@@ -6217,7 +6871,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PushID(row * 3 + col);
                     if (ImGui::Button("##anc", ImVec2(20, 18))) {
                         *ar.anchorPtr = cand;       // preserve on-screen position
-                        Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, cw, ch);
+                        Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, refW, refH);
                         ar.position->x = resolved.x - term.x;
                         ar.position->y = resolved.y - term.y;
                         ed.dirty = true;
@@ -6227,13 +6881,12 @@ void DrawInspector(EditorState& ed) {
                 }
             }
         }
-        // Stretch helpers for resizable widgets: fill the canvas on an axis.
+        // Stretch helpers for resizable widgets: fill the parent (or canvas) on an axis.
         if (ar.sizePtr && ar.position) {
-            float cw = UICanvas::Width(), ch = UICanvas::Height();
             auto fill = [&](bool x, bool y) {
-                if (x) ar.sizePtr->x = cw;
-                if (y) ar.sizePtr->y = ch;
-                Vec2 term = ResolveAnchor(*ar.anchorPtr, Vec2{0, 0}, *ar.sizePtr, cw, ch);
+                if (x) ar.sizePtr->x = refW;
+                if (y) ar.sizePtr->y = refH;
+                Vec2 term = ResolveAnchor(*ar.anchorPtr, Vec2{0, 0}, *ar.sizePtr, refW, refH);
                 if (x) ar.position->x = -term.x;   // resolved left -> 0
                 if (y) ar.position->y = -term.y;   // resolved top  -> 0
                 ed.dirty = true;
@@ -6242,7 +6895,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Fill Height")) fill(false, true);
             ImGui::SameLine();
-            if (ImGui::Button("Fill Canvas")) fill(true, true);
+            if (ImGui::Button(hasParent ? "Fill Parent" : "Fill Canvas")) fill(true, true);
         }
         ImGui::Spacing();
     }
@@ -6966,6 +7619,26 @@ void DrawInspector(EditorState& ed) {
                             char nb[96]; std::snprintf(nb, sizeof(nb), "new Vector3(%g, %g, %g)", v[0], v[1], v[2]);
                             cur = nb; changed = true;
                         }
+                    } else if (f.type.find("GameObject") != std::string::npos ||
+                               f.type.find("Transform") != std::string::npos) {
+                        // Object reference: a Unity-style slot you can't type into —
+                        // drag a GameObject from the Hierarchy onto it to assign. Stores
+                        // the target's name; scripts resolve it by name (find/dist_to/...).
+                        std::string sv = cur;
+                        if (sv.size() >= 2 && (sv.front()=='"'||sv.front()=='\'') && sv.back()==sv.front())
+                            sv = sv.substr(1, sv.size()-2);
+                        std::string label = sv.empty()
+                            ? (std::string("None (") + (f.type.empty() ? "Object" : f.type) + ")")
+                            : sv;
+                        ImGui::Button((label + "##objslot").c_str(), ImVec2(-28, 0));
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Drag a GameObject from the Hierarchy here to assign");
+                        if (ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
+                                if (GameObject* g = *(GameObject**)p->Data) { cur = std::string("\"") + g->name + "\""; changed = true; }
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
                     } else {
                         // Numeric? (allow an f/d suffix). Else edit as text.
                         char* endp = nullptr; std::string num = cur;
@@ -7108,6 +7781,227 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled(v2->sideView ? "A/D drive, Space brake. Needs Rigidbody2D + collider."
                                              : "W/S gas, A/D steer, Space handbrake (drift).");
             if (ImGui::SmallButton("Remove##veh2")) toRemove = v2;
+        }
+    }
+    if (auto* bb = dynamic_cast<BlockBuilder*>(curComp)) {
+        if (CompHeader("Block Builder (voxel)", bb, &toRemove)) {
+            ImGui::TextDisabled("Look + click to place a cube on a grid; right-click removes it.");
+            ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
+            if (ImGui::DragFloat("Block Size##bb", &bb->blockSize, 0.05f, 0.05f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Reach##bb", &bb->reach, 0.25f, 0.5f, 200.0f)) ed.dirty = true;
+            float bc[4] = {bb->blockColor.r, bb->blockColor.g, bb->blockColor.b, bb->blockColor.a};
+            if (ImGui::ColorEdit4("Block Color##bb", bc)) { bb->blockColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            ImGui::Text("Texture"); ImGui::SameLine(120);
+            if (AssetSlot("bbtex", bb->blockTexture, "Texture", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
+            char tagbuf[64]; std::snprintf(tagbuf, sizeof(tagbuf), "%s", bb->blockTag.c_str());
+            if (ImGui::InputText("Block Tag##bb", tagbuf, sizeof(tagbuf))) { bb->blockTag = tagbuf; ed.dirty = true; }
+            const char* btns[] = {"Left", "Right", "Middle"};
+            if (ImGui::Combo("Place Button##bb", &bb->placeButton, btns, 3)) ed.dirty = true;
+            if (ImGui::Combo("Remove Button##bb", &bb->removeButton, btns, 3)) ed.dirty = true;
+            if (ImGui::Checkbox("Placement preview##bb", &bb->showPreview)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show a ghost outline of the cell the next block lands in (green = free, red = blocked).");
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Crosshair##bb", &bb->showCrosshair)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an aim reticle at screen center on Play (if the scene has none).");
+            if (ImGui::Checkbox("Place in mid-air##bb", &bb->placeInAir)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off (Minecraft-style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
+            if (ImGui::SmallButton("Remove##bb")) toRemove = bb;
+        }
+    }
+    if (auto* sb = dynamic_cast<StructureBuilder*>(curComp)) {
+        if (CompHeader("Structure Builder (Rust-style)", sb, &toRemove)) {
+            ImGui::TextDisabled("Snap foundations/walls/doorways/windows/floors/pillars/ramps.");
+            ImGui::TextDisabled("1-8 pick, R rotate, G upgrade (wood->stone->metal), F repair.");
+            ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
+            const char* pieces[] = {"Foundation", "Foundation (Triangle)", "Wall", "Doorway",
+                                    "Window", "Floor", "Pillar", "Ramp"};
+            int pc = (int)sb->piece;
+            if (ImGui::Combo("Piece##sb", &pc, pieces, 8)) { sb->piece = (StructureBuilder::Piece)pc; ed.dirty = true; }
+            if (ImGui::SliderInt("Rotation (90°)##sb", &sb->rotSteps, 0, 3)) ed.dirty = true;
+            if (ImGui::DragFloat("Cell Size##sb", &sb->cellSize, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Wall Height##sb", &sb->wallHeight, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Slab Thickness##sb", &sb->slabThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Wall Thickness##sb", &sb->wallThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Pillar Thickness##sb", &sb->pillarThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Reach##sb", &sb->reach, 0.25f, 1.0f, 200.0f)) ed.dirty = true;
+            ImGui::Text("Texture"); ImGui::SameLine(120);
+            if (AssetSlot("sbtex", sb->structureTexture, "Texture", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
+            char tagbuf[64]; std::snprintf(tagbuf, sizeof(tagbuf), "%s", sb->structureTag.c_str());
+            if (ImGui::InputText("Structure Tag##sb", tagbuf, sizeof(tagbuf))) { sb->structureTag = tagbuf; ed.dirty = true; }
+            if (ImGui::TreeNodeEx("Resources / Inventory##sb", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Checkbox("Require resources (off = creative)##sb", &sb->requireResources)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Building/upgrading/repairing draws items from the player's Inventory component.");
+                if (ImGui::SliderFloat("Refund on demolish##sb", &sb->refundFraction, 0.0f, 1.0f)) ed.dirty = true;
+                auto matRow = [&](const char* lbl, std::string& item, int& cost, const char* id) {
+                    char b[64]; std::snprintf(b, sizeof(b), "%s", item.c_str());
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::InputText((std::string(lbl) + "##mi" + id).c_str(), b, sizeof(b))) { item = b; ed.dirty = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                    if (ImGui::DragInt((std::string("cost##mc") + id).c_str(), &cost, 0.2f, 0, 9999)) ed.dirty = true;
+                };
+                matRow("Wood",  sb->woodItem,  sb->costWood,  "w");
+                matRow("Stone", sb->stoneItem, sb->costStone, "s");
+                matRow("Metal", sb->metalItem, sb->costMetal, "m");
+                ImGui::TreePop();
+            }
+            if (ImGui::Checkbox("Placement preview##sb", &sb->showPreview)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Crosshair##sb", &sb->showCrosshair)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##sb")) toRemove = sb;
+        }
+    }
+    if (auto* bp = dynamic_cast<BuildPiece*>(curComp)) {
+        if (CompHeader("Build Piece", bp, &toRemove)) {
+            const char* tiers[] = {"Wood", "Stone", "Metal"};
+            int t = bp->tier < 0 ? 0 : (bp->tier > 2 ? 2 : bp->tier);
+            if (ImGui::Combo("Tier##bp", &t, tiers, 3)) { bp->tier = t; ed.dirty = true; }
+            if (ImGui::DragFloat("Health##bp", &bp->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Health##bp", &bp->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            ImGui::ProgressBar(bp->maxHealth > 0 ? bp->health / bp->maxHealth : 0.0f, ImVec2(-1, 0));
+            char mb[64]; std::snprintf(mb, sizeof(mb), "%s", bp->material.c_str());
+            if (ImGui::InputText("Material##bp", mb, sizeof(mb))) { bp->material = mb; ed.dirty = true; }
+            if (ImGui::DragInt("Cost##bp", &bp->cost, 0.2f, 0, 9999)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##bp")) toRemove = bp;
+        }
+    }
+    if (auto* ls = dynamic_cast<LoadingScreen*>(curComp)) {
+        if (CompHeader("Loading Screen", ls, &toRemove)) {
+            ImGui::TextDisabled("A full-screen overlay shown on Play (and in built games).");
+            char tb[128]; std::snprintf(tb, sizeof(tb), "%s", ls->title.c_str());
+            if (ImGui::InputText("Title##ls", tb, sizeof(tb))) { ls->title = tb; ed.dirty = true; }
+            if (ImGui::Checkbox("Show title##ls", &ls->showTitle)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Show bar##ls", &ls->showBar)) ed.dirty = true;
+            if (ImGui::Checkbox("Show on scene start##ls", &ls->showOnStart)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show automatically when the scene starts (level intro / transition scene).");
+            if (ImGui::DragFloat("Duration (s)##ls", &ls->duration, 0.05f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Fade (s)##ls", &ls->fadeTime, 0.02f, 0.0f, 5.0f)) ed.dirty = true;
+            char sn[96]; std::snprintf(sn, sizeof(sn), "%s", ls->targetScene.c_str());
+            if (ImGui::InputText("Load scene when done##ls", sn, sizeof(sn))) { ls->targetScene = sn; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scene name to load when the bar fills (empty = just reveal this scene).");
+            float bgc[4] = {ls->backgroundColor.r, ls->backgroundColor.g, ls->backgroundColor.b, ls->backgroundColor.a};
+            if (ImGui::ColorEdit4("Background##ls", bgc)) { ls->backgroundColor = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            ImGui::Text("Background image"); ImGui::SameLine(150);
+            if (AssetSlot("lsbg", ls->backgroundImage, "Image", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
+            float txc[4] = {ls->textColor.r, ls->textColor.g, ls->textColor.b, ls->textColor.a};
+            if (ImGui::ColorEdit4("Text##ls", txc)) { ls->textColor = {txc[0], txc[1], txc[2], txc[3]}; ed.dirty = true; }
+            float bbc[4] = {ls->barBackground.r, ls->barBackground.g, ls->barBackground.b, ls->barBackground.a};
+            if (ImGui::ColorEdit4("Bar BG##ls", bbc)) { ls->barBackground = {bbc[0], bbc[1], bbc[2], bbc[3]}; ed.dirty = true; }
+            float bfc[4] = {ls->barFill.r, ls->barFill.g, ls->barFill.b, ls->barFill.a};
+            if (ImGui::ColorEdit4("Bar Fill##ls", bfc)) { ls->barFill = {bfc[0], bfc[1], bfc[2], bfc[3]}; ed.dirty = true; }
+            if (ImGui::TreeNodeEx("Tips##ls", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (std::size_t i = 0; i < ls->tips.size(); ++i) {
+                    char tipb[160]; std::snprintf(tipb, sizeof(tipb), "%s", ls->tips[i].c_str());
+                    ImGui::SetNextItemWidth(-30);
+                    if (ImGui::InputText((std::string("##tip") + std::to_string(i)).c_str(), tipb, sizeof(tipb))) { ls->tips[i] = tipb; ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton((std::string("x##tipdel") + std::to_string(i)).c_str())) { ls->tips.erase(ls->tips.begin() + i); ed.dirty = true; break; }
+                }
+                if (ImGui::SmallButton("+ Add tip##ls")) { ls->tips.push_back("New tip"); ed.dirty = true; }
+                ImGui::TreePop();
+            }
+            if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
+        }
+    }
+    if (auto* ui = dynamic_cast<InventoryUI*>(curComp)) {
+        if (CompHeader("Inventory UI (Minecraft-style)", ui, &toRemove)) {
+            ImGui::TextDisabled("Hotbar + backpack drawn from a sibling/owner Inventory.");
+            if (!ui->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to show items.");
+            if (ImGui::SliderInt("Hotbar Slots##iu", &ui->hotbarSlots, 1, 9)) ed.dirty = true;
+            if (ImGui::SliderInt("Backpack Rows##iu", &ui->backpackRows, 0, 6)) ed.dirty = true;
+            if (ImGui::DragFloat("Slot Size##iu", &ui->slotSize, 0.5f, 16.0f, 128.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Slot Gap##iu", &ui->slotGap, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
+            char tk[2] = {ui->toggleKey, 0};
+            if (ImGui::InputText("Open Key##iu", tk, sizeof(tk))) { if (tk[0]) ui->toggleKey = tk[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to open/close the backpack (default E).");
+            if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Drag items##iu", &ui->dragItems)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag stacks between slots while the backpack is open (swap / merge).");
+            if (ImGui::Checkbox("Darken when open##iu", &ui->darkenWhenOpen)) ed.dirty = true;
+            char icf[128]; std::snprintf(icf, sizeof(icf), "%s", ui->iconFolder.c_str());
+            if (ImGui::InputText("Icon Folder##iu", icf, sizeof(icf))) { ui->iconFolder = icf; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Looks for <folder><item-name>.png per slot; falls back to the item name.");
+            auto cc = [&](const char* lbl, Color& c, const char* id) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+            };
+            cc("Slot", ui->slotColor, "iuc1"); cc("Border", ui->slotBorder, "iuc2");
+            cc("Selected", ui->selectedColor, "iuc3"); cc("Text", ui->textColor, "iuc4");
+            cc("Count", ui->countColor, "iuc5");
+            if (ImGui::TreeNodeEx("Layout / Style##iu", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Checkbox("Anchor to top##iu", &ui->anchorTop)) ed.dirty = true;
+                if (ImGui::DragFloat("Margin X##iu", &ui->marginX, 0.5f, -2000.0f, 2000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Edge Margin##iu", &ui->marginY, 0.5f, 0.0f, 2000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Corner Radius##iu", &ui->cornerRadius, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Border Width##iu", &ui->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Label Scale##iu", &ui->labelScale, 0.02f, 0.2f, 4.0f)) ed.dirty = true;
+                if (ImGui::SliderInt("Name Chars##iu", &ui->nameChars, 1, 12)) ed.dirty = true;
+                if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Show names##iu", &ui->showNames)) ed.dirty = true;
+                if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Held item name##iu", &ui->showSelectedName)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar (Minecraft-style).");
+                if (ui->showPanel && ImGui::DragFloat("Panel Padding##iu", &ui->panelPad, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
+                float pc[4] = {ui->panelColor.r, ui->panelColor.g, ui->panelColor.b, ui->panelColor.a};
+                if (ImGui::ColorEdit4("Panel Color##iu", pc)) { ui->panelColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
+                float hc[4] = {ui->hoverColor.r, ui->hoverColor.g, ui->hoverColor.b, ui->hoverColor.a};
+                if (ImGui::ColorEdit4("Hover Color##iu", hc)) { ui->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
+                ImGui::TreePop();
+            }
+            if (ImGui::SmallButton("Remove##iu")) toRemove = ui;
+        }
+    }
+    if (auto* gi = dynamic_cast<GridInventory*>(curComp)) {
+        if (CompHeader("Grid Inventory (DayZ/Unturned)", gi, &toRemove)) {
+            ImGui::TextDisabled("Multi-cell items in a grid; drag to rearrange in Play.");
+            char tb[96]; std::snprintf(tb, sizeof(tb), "%s", gi->title.c_str());
+            if (ImGui::InputText("Title##gi", tb, sizeof(tb))) { gi->title = tb; ed.dirty = true; }
+            if (ImGui::SliderInt("Columns##gi", &gi->cols, 1, 16)) ed.dirty = true;
+            if (ImGui::SliderInt("Rows##gi", &gi->rows, 1, 12)) ed.dirty = true;
+            char ok[2] = {gi->toggleKey, 0};
+            if (ImGui::InputText("Open Key##gi", ok, sizeof(ok))) { if (ok[0]) gi->toggleKey = ok[0]; ed.dirty = true; }
+            ImGui::Text("Total weight: %.1f", gi->TotalWeight());
+            if (ImGui::TreeNodeEx("Items##gi", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (std::size_t i = 0; i < gi->items.size(); ++i) {
+                    auto& it = gi->items[i];
+                    ImGui::PushID((int)i);
+                    char nb[64]; std::snprintf(nb, sizeof(nb), "%s", it.name.c_str());
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::InputText("##n", nb, sizeof(nb))) { it.name = nb; ed.dirty = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(150);
+                    int wh[2] = {it.w, it.h};
+                    if (ImGui::DragInt2("wxh##s", wh, 0.1f, 1, 12)) { it.w = wh[0]; it.h = wh[1]; ed.dirty = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragInt("##c", &it.count, 0.2f, 1, 9999)) ed.dirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("x")) { gi->items.erase(gi->items.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                    ImGui::PopID();
+                }
+                if (ImGui::SmallButton("+ Add item##gi")) { gi->AddItem("Item", 1, 1, 1, 0.5f); ed.dirty = true; }
+                ImGui::TreePop();
+            }
+            if (ImGui::SmallButton("Remove##gi")) toRemove = gi;
+        }
+    }
+    if (auto* gu = dynamic_cast<GridInventoryUI*>(curComp)) {
+        if (CompHeader("Grid Inventory UI", gu, &toRemove)) {
+            if (!gu->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add a Grid Inventory component to show items.");
+            if (ImGui::DragFloat("Cell Size##gu", &gu->cellSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Gap##gu", &gu->gap, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Corner Radius##gu", &gu->cornerRadius, 0.25f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Show weight##gu", &gu->showWeight)) ed.dirty = true;
+            char icf[128]; std::snprintf(icf, sizeof(icf), "%s", gu->iconFolder.c_str());
+            if (ImGui::InputText("Icon Folder##gu", icf, sizeof(icf))) { gu->iconFolder = icf; ed.dirty = true; }
+            auto cc = [&](const char* lbl, Color& c, const char* id) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+            };
+            cc("Panel", gu->panelColor, "guc0"); cc("Cell", gu->cellColor, "guc1");
+            cc("Item", gu->itemColor, "guc2"); cc("Border", gu->itemBorder, "guc3");
+            cc("Title Bar", gu->titleBar, "guc4");
+            cc("Drop OK", gu->dropOk, "guc5"); cc("Drop Blocked", gu->dropBad, "guc6");
+            if (ImGui::SmallButton("Remove##gu")) toRemove = gu;
         }
     }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
@@ -8255,7 +9149,13 @@ void DrawInspector(EditorState& ed) {
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
-            ImGui::TextDisabled("8x8 bitmap font; renders in the built game");
+            // Font: a drag-only slot — empty = built-in 8x8 bitmap; drop a .ttf/.otf
+            // from the Project panel to use it. (No typing, Unity-style.)
+            ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Font"); ImGui::SameLine();
+            if (AssetSlot("txtfont", tr->fontPath, "Font", {".ttf", ".otf"})) ed.dirty = true;
+            if (tr->fontPath.empty())            ImGui::TextDisabled("Built-in 8x8 bitmap font.");
+            else if (okay::GetFont(tr->fontPath)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
+            else                                 ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
             if (ImGui::SmallButton("Remove##txt")) toRemove = tr;
         }
     }
@@ -8568,8 +9468,14 @@ void DrawInspector(EditorState& ed) {
             if (UIShapeUsesRadius(btn->shape))
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             // Font Scale only styles the built-in label; with a child Text it's edited there.
-            if (!childTr)
+            if (!childTr) {
                 if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
+                // Optional TTF label font — drag-only slot (empty = built-in bitmap).
+                ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Font"); ImGui::SameLine();
+                if (AssetSlot("uibfont", btn->fontPath, "Font", {".ttf", ".otf"})) ed.dirty = true;
+                if (!btn->fontPath.empty() && !okay::GetFont(btn->fontPath))
+                    ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+            }
             if (ImGui::Checkbox("Drop Shadow##uib", &btn->shadow)) ed.dirty = true;
             if (btn->shadow) {
                 float sc[4] = {btn->shadowColor.r, btn->shadowColor.g, btn->shadowColor.b, btn->shadowColor.a};
@@ -9017,6 +9923,7 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(tx, im->texture.c_str(), sizeof(tx) - 1);
             tx[sizeof(tx) - 1] = '\0';
             if (ImGui::InputText("Texture##uim", tx, sizeof(tx))) { im->texture = tx; ed.dirty = true; }
+            if (AcceptAssetPathField(im->texture)) ed.dirty = true;   // drop an image from Project
             float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
             if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             ImGui::TextDisabled("image path (PNG/JPG); empty = colored rect");
@@ -9464,6 +10371,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BlockBuilder>(), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }
+            if (item(!go->GetComponent<StructureBuilder>(), "Structure Builder (Rust-style)")) { go->AddComponent<StructureBuilder>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
@@ -9516,6 +10425,11 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Minimap>(), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
             if (item(!go->GetComponent<MinimapBlip>(), "Minimap Blip")) { go->AddComponent<MinimapBlip>(); ed.dirty = true; }
             if (item(!go->GetComponent<Crosshair>(), "Crosshair")) { go->AddComponent<Crosshair>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LoadingScreen>(), "Loading Screen")) {
+                auto* ls = go->AddComponent<LoadingScreen>();
+                ls->tips = {"Tip: hold Shift to sprint.", "Tip: build a foundation first.", "Loading the world..."};
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<WorldUI>(), "World UI (3D label)")) { go->AddComponent<WorldUI>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIStepper>(), "UI Stepper")) { go->AddComponent<UIStepper>(); ed.dirty = true; }
@@ -9553,7 +10467,8 @@ void DrawInspector(EditorState& ed) {
             if (fs::exists(p, se)) {
                 ConsoleLog("Script already exists: " + p.string());
             } else {
-                std::ofstream(p) << extide::StarterScript("okayscript");
+                // Class name follows the file name (Unity-style).
+                std::ofstream(p) << extide::StarterScriptNamed("okayscript", p.stem().string());
             }
             auto* nsc = g_newScriptGO->AddComponent<ScriptComponent>("okayscript");
             std::string err; nsc->LoadFile(p.string(), &err); nsc->SetPath(p.string());
@@ -9601,12 +10516,74 @@ void DrawInspector(EditorState& ed) {
     ImGui::End();
 }
 
+// Upload a TTF font's glyph atlas as an SDL texture (once) for the editor's ImGui
+// draw lists. Cached per font; returns nullptr if it can't be created.
+static SDL_Texture* TtfAtlasTexture(okay::TtfFont* f) {
+    if (!f || !f->Valid() || !g_sdlRenderer) return nullptr;
+    static std::unordered_map<okay::TtfFont*, SDL_Texture*> cache;
+    auto it = cache.find(f);
+    if (it != cache.end()) return it->second;
+    const okay::Image& a = f->Atlas();
+    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                         SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        SDL_UpdateTexture(tex, nullptr, a.Data(), a.Width() * 4);
+    }
+    cache[f] = tex;
+    return tex;
+}
+
+// Draw a string with a TTF font into an ImGui draw list (a textured quad per glyph,
+// tinted by `col`). Shares the font-pixel space of the bitmap path so callers don't
+// special-case sizing. Gradient is approximated as the flat top color.
+static void DrawTtfText(ImDrawList* dl, okay::TtfFont* f, SDL_Texture* tex,
+                        const std::string& text, float ox, float oy, float px,
+                        ImU32 col, float letterSp, float lineSp, bool italic) {
+    const float s = px * (float)okay::Font8x8::Height / f->BakeHeight(); // screen px per atlas px
+    const float aw = (float)f->Atlas().Width(), ah = (float)f->Atlas().Height();
+    const float baseline = f->Ascent((float)okay::Font8x8::Height) * px; // top -> baseline, screen px
+    const float slant = italic ? 0.30f : 0.0f;
+    float penX = ox, penY = oy;
+    for (char ch : text) {
+        if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
+        const okay::TtfFont::Glyph* g = f->Get(ch);
+        if (!g) { penX += px * 4.0f; continue; }
+        int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
+        if (gw > 0 && gh > 0) {
+            float x0 = penX + g->xoff * s, y0 = penY + baseline + g->yoff * s;
+            float x1 = x0 + gw * s, y1 = y0 + gh * s;
+            ImVec2 uv0(g->x0 / aw, g->y0 / ah), uv1(g->x1 / aw, g->y1 / ah);
+            float sh0 = (penY + baseline - y0) * slant, sh1 = (penY + baseline - y1) * slant; // shear by height above baseline
+            dl->AddImageQuad((ImTextureID)tex,
+                ImVec2(x0 + sh0, y0), ImVec2(x1 + sh0, y0), ImVec2(x1 + sh1, y1), ImVec2(x0 + sh1, y1),
+                uv0, ImVec2(uv1.x, uv0.y), uv1, ImVec2(uv0.x, uv1.y), col);
+        }
+        penX += g->xadvance * s + letterSp * px;
+    }
+}
+
+// Scene-wide default UI font: when a text/widget draw passes no explicit font,
+// DrawBitmapText falls back to this. Set for the duration of the UI pass (from
+// Scene::uiFont) and cleared after, so it only affects game UI, not editor chrome.
+okay::TtfFont* g_uiDefaultFont = nullptr;
+
 // Draw a string with the engine's 8x8 bitmap font into an ImGui draw list, so
 // the editor viewport shows the same text the built game will (HUDs, labels).
+// When `ttf` is a loaded font, the TTF atlas is used instead (same sizing).
 void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
                     float px, ImU32 col, float letterSp = 0.0f, float lineSp = 0.0f,
-                    bool italic = false, bool gradient = false, ImU32 col2 = 0) {
+                    bool italic = false, bool gradient = false, ImU32 col2 = 0,
+                    okay::TtfFont* ttf = nullptr) {
     if (px < 1.0f) px = 1.0f;
+    if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
+    if (ttf && ttf->Valid()) {
+        if (SDL_Texture* tex = TtfAtlasTexture(ttf)) {
+            DrawTtfText(dl, ttf, tex, text, ox, oy, px, col, letterSp, lineSp, italic);
+            return;
+        }
+    }
     const float slant = italic ? 0.30f : 0.0f;
     int ca = (col >> IM_COL32_A_SHIFT) & 0xFF, cr = (col >> IM_COL32_R_SHIFT) & 0xFF;
     int cg = (col >> IM_COL32_G_SHIFT) & 0xFF, cb = (col >> IM_COL32_B_SHIFT) & 0xFF;
@@ -9641,6 +10618,31 @@ static void UIHandlePositions(ImVec2 a, ImVec2 b, ImVec2 out[8]) {
     out[6] = ImVec2(a.x, b.y); out[7] = ImVec2(a.x, my);
 }
 
+// The 9 anchor-pip positions on a rect, row-major (TL,T,TR, L,C,R, BL,B,BR) —
+// matching UIAnchor's index order — for the Scene-view anchor handles.
+static void UIAnchorPips(ImVec2 a, ImVec2 b, ImVec2 out[9]) {
+    float xs[3] = {a.x, (a.x + b.x) * 0.5f, b.x};
+    float ys[3] = {a.y, (a.y + b.y) * 0.5f, b.y};
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col) out[row * 3 + col] = ImVec2(xs[col], ys[row]);
+}
+
+// The screen rect (canvas-local + canvasPos applied) a widget anchors WITHIN: its
+// owning UI parent if any, else the whole canvas. Used to place the anchor pips.
+static void UIAnchorRefRect(GameObject* go, ImVec2 canvasPos, ImVec2 canvasSize,
+                            ImVec2& a, ImVec2& b) {
+    if (GameObject* par = OwningUIParent(go)) {
+        Vec2 po, ps;
+        if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) {
+            a = ImVec2(canvasPos.x + po.x, canvasPos.y + po.y);
+            b = ImVec2(a.x + ps.x, a.y + ps.y);
+            return;
+        }
+    }
+    a = canvasPos;
+    b = ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+}
+
 // The camera to frame the Game view through: the scene's main camera if one is
 // active (set on Play), else the first Camera component found (edit mode).
 static Camera* SceneCamera(Scene& s) {
@@ -9667,6 +10669,10 @@ static Camera* SceneCamera(Scene& s) {
 void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
+    // The scene's default UI font applies to every widget in this pass unless the
+    // widget overrides it; cleared at the end so editor chrome stays unaffected.
+    g_uiDefaultFont = okay::GetFont(ed.scene().uiFont);
+    struct ClearUIFont { ~ClearUIFont() { g_uiDefaultFont = nullptr; } } _clearUIFont;
 
     // Mirror the player's draw order: Canvas sortOrder first, then hierarchy
     // pre-order (parent before children, sibling order honored) so the editor
@@ -10131,12 +11137,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         // Button→Text) — that child renders itself in the text pass.
         if (!UIButtonTextChild(up.get())) {
             float px = btn->fontScale * s;
-            float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+            okay::TtfFont* fnt = okay::GetFont(btn->fontPath);
+            float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
+                           : btn->label.size() * (Font8x8::Width + 1) * px;
             float left  = a.x + (isz > 0.0f && !btn->iconRight ? isz + 12 * s : 0.0f);
             float right = b.x - (isz > 0.0f &&  btn->iconRight ? isz + 12 * s : 0.0f);
             DrawBitmapText(dl, btn->label, left + ((right - left) - tw) * 0.5f,
                            a.y + ((b.y - a.y) - Font8x8::Height * px) * 0.5f + shift, px,
-                           ToColor(btn->CurrentTextColor()));
+                           ToColor(btn->CurrentTextColor()), 0.0f, 0.0f, false, false, 0, fnt);
         }
     }
 
@@ -10207,18 +11215,19 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         std::string disp = tr->DisplayText();
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
         bool it = tr->italic; ImU32 c2 = ToColor(tr->colorBottom);
+        okay::TtfFont* fnt = tr->Font();   // null = built-in bitmap font
         if (tr->shadow)
             DrawBitmapText(dl, disp, bx + tr->shadowOffset.x * px,
-                           by + tr->shadowOffset.y * px, px, sh, ls, lp, it);
+                           by + tr->shadowOffset.y * px, px, sh, ls, lp, it, false, 0, fnt);
         if (tr->outline) {                            // 4-direction outline
             ImU32 oc = ToColor(tr->outlineColor);
-            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp, it);
-            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp, it);
-            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp, it);
-            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp, it);
+            DrawBitmapText(dl, disp, bx - px, by, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx + px, by, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx, by - px, px, oc, ls, lp, it, false, 0, fnt);
+            DrawBitmapText(dl, disp, bx, by + px, px, oc, ls, lp, it, false, 0, fnt);
         }
-        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp, it, tr->gradient, c2);
-        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp, it, tr->gradient, c2);  // faux-bold
+        DrawBitmapText(dl, disp, bx, by, px, col, ls, lp, it, tr->gradient, c2, fnt);
+        if (tr->bold) DrawBitmapText(dl, disp, bx + px, by, px, col, ls, lp, it, tr->gradient, c2, fnt);  // faux-bold
     }
 
     // UI dropdowns: header (shows the selection + a caret); when open, the option
@@ -10286,15 +11295,20 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (GetUIScreenRect(ed.selected(), canvasSize.x, canvasSize.y, o, sz)) {
             ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
             ImVec2 b(a.x + sz.x, a.y + sz.y);
-            // Anchor marker: a diamond at the canvas point this widget anchors to,
-            // with a thin line to the widget — so anchoring is visible at a glance.
+            // Anchor handles: 9 pips on the rect this widget anchors WITHIN (its UI
+            // parent, else the canvas). The current anchor is the big filled diamond;
+            // click any pip to re-anchor there (handled in the press logic). A thin
+            // line links the active anchor to the widget so it's clear at a glance.
             int ai = (int)r.anchor;
-            float ax = (ai % 3 == 0) ? 0.0f : (ai % 3 == 1) ? canvasSize.x * 0.5f : canvasSize.x;
-            float ay = (ai / 3 == 0) ? 0.0f : (ai / 3 == 1) ? canvasSize.y * 0.5f : canvasSize.y;
-            ImVec2 ap(canvasPos.x + ax, canvasPos.y + ay);
+            ImVec2 ra, rb; UIAnchorRefRect(ed.selected(), canvasPos, canvasSize, ra, rb);
+            ImVec2 pips[9]; UIAnchorPips(ra, rb, pips);
             ImVec2 wc((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-            dl->AddLine(ap, wc, IM_COL32(90, 170, 240, 150), 1.0f);
-            dl->AddNgonFilled(ap, 5.0f, IM_COL32(90, 170, 240, 230), 4);  // diamond
+            dl->AddLine(pips[ai], wc, IM_COL32(90, 170, 240, 150), 1.0f);
+            for (int pi = 0; pi < 9; ++pi) {
+                bool cur = (pi == ai);
+                dl->AddNgonFilled(pips[pi], cur ? 5.0f : 3.0f,
+                                  cur ? IM_COL32(90, 170, 240, 235) : IM_COL32(90, 170, 240, 110), 4);
+            }
             // Selection box.
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
                         IM_COL32(255, 200, 0, 255), 2.0f, 0, 2.0f);
@@ -10319,6 +11333,179 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                         ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY),
                         IM_COL32(255, 80, 220, 200), 1.0f);
     }
+    // Minecraft-style inventory hotbar / backpack preview (mirrors the player).
+    for (const auto& up : objs) {
+        auto* ui = up ? up->GetComponent<okay::InventoryUI>() : nullptr;
+        if (!ui) continue;
+        okay::Inventory* inv = ui->Inv();
+        int n = ui->hotbarSlots < 1 ? 1 : ui->hotbarSlots;
+        float sz = ui->slotSize, gap = ui->slotGap;
+        float cr = ui->cornerRadius;
+        auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
+        auto slot = [&](float x, float y, int idx, bool sel) {
+            ImVec2 p0(canvasPos.x + x, canvasPos.y + y), p1(p0.x + sz, p0.y + sz);
+            dl->AddRectFilled(p0, p1, sel ? col(ui->selectedColor) : col(ui->slotBorder), cr);
+            float b = (ui->borderWidth < 0 ? 0 : ui->borderWidth) + (sel ? 1.0f : 0.0f);
+            dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(ui->slotColor), cr > b ? cr - b : 0.0f);
+            if (idx != ui->dragIndex && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
+                const auto& it = inv->slots[idx];
+                SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
+                if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
+                else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                if (ui->showCounts && it.count > 1) {
+                    std::string cs = std::to_string(it.count);
+                    ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
+                    dl->AddText(ImVec2(p1.x - ts.x - 4, p1.y - ts.y - 3), col(ui->countColor), cs.c_str());
+                }
+            }
+        };
+        float rowW = n * sz + (n - 1) * gap;
+        float hx = (canvasSize.x - rowW) * 0.5f + ui->marginX;
+        float hy = ui->anchorTop ? ui->marginY : canvasSize.y - sz - ui->marginY;
+        auto bpY = [&](int row) {
+            return ui->anchorTop ? hy + sz + 14.0f + row * (sz + gap)
+                                 : hy - 14.0f - (ui->backpackRows - row) * (sz + gap);
+        };
+        if (ui->open && ui->backpackRows > 0) {
+            if (ui->darkenWhenOpen)
+                dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
+            for (int row = 0; row < ui->backpackRows; ++row)
+                for (int c = 0; c < n; ++c)
+                    slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
+        }
+        for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
+        // Drag-and-drop in the editor Play view (Input is fed canvas-relative, matching
+        // the slots' local coords). Mirrors the player.
+        if (ui->open && ui->dragItems && inv) {
+            auto hitL = [&](float px, float py, float x, float y) { return px >= x && px < x + sz && py >= y && py < y + sz; };
+            auto slotAt = [&](float px, float py) -> int {
+                for (int i = 0; i < n; ++i) if (hitL(px, py, hx + i * (sz + gap), hy)) return i;
+                for (int row = 0; row < ui->backpackRows; ++row)
+                    for (int c = 0; c < n; ++c) if (hitL(px, py, hx + c * (sz + gap), bpY(row))) return n + row * n + c;
+                return -1;
+            };
+            okay::Vec2 m = okay::Input::MousePosition();
+            if (ui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+                int idx = slotAt(m.x, m.y);
+                if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui->dragIndex = idx;
+            }
+            if (ui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
+                ui->MoveSlot(ui->dragIndex, slotAt(m.x, m.y));
+                ui->dragIndex = -1;
+            }
+            if (ui->dragIndex >= 0 && ui->dragIndex < (int)inv->slots.size()) {
+                const auto& it = inv->slots[ui->dragIndex];
+                ImVec2 p0(canvasPos.x + m.x - sz * 0.5f, canvasPos.y + m.y - sz * 0.5f);
+                ImVec2 p1(p0.x + sz, p0.y + sz);
+                dl->AddRectFilled(p0, p1, col(ui->slotBorder), cr);
+                dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ui->slotColor), cr);
+                SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
+                if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
+                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+            }
+        } else ui->dragIndex = -1;
+        break;
+    }
+    // DayZ/Unturned grid inventory preview (drawn when its inventory is open).
+    for (const auto& up : objs) {
+        auto* gui = up ? up->GetComponent<okay::GridInventoryUI>() : nullptr;
+        if (!gui) continue;
+        okay::GridInventory* inv = gui->Inv();
+        if (!inv || !inv->open) break;
+        float cs = gui->cellSize, gp = gui->gap;
+        float gridW = inv->cols * cs + (inv->cols - 1) * gp, gridH = inv->rows * cs + (inv->rows - 1) * gp;
+        float ox = canvasPos.x + (canvasSize.x - gridW) * 0.5f, oy = canvasPos.y + (canvasSize.y - gridH) * 0.5f + 10.0f;
+        float cr = gui->cornerRadius;
+        auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
+        if (gui->darkenWhenOpen)
+            dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 38), ImVec2(ox + gridW + 12, oy + gridH + 12), col(gui->panelColor), cr + 2);
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 38), ImVec2(ox + gridW + 12, oy - 10), col(gui->titleBar), cr + 2);
+        dl->AddText(ImVec2(ox, oy - 31), col(gui->textColor), inv->title.c_str());
+        for (int y = 0; y < inv->rows; ++y)
+            for (int x = 0; x < inv->cols; ++x)
+                dl->AddRectFilled(ImVec2(ox + x * (cs + gp), oy + y * (cs + gp)),
+                                  ImVec2(ox + x * (cs + gp) + cs, oy + y * (cs + gp) + cs), col(gui->cellColor), cr);
+        // Mouse (canvas-local, as the editor feeds Input during Play) → cell.
+        okay::Vec2 m = okay::Input::MousePosition();
+        float lox = (canvasSize.x - gridW) * 0.5f, loy = (canvasSize.y - gridH) * 0.5f + 10.0f;
+        int cx = (int)std::floor((m.x - lox) / (cs + gp)), cy = (int)std::floor((m.y - loy) / (cs + gp));
+        // Drop-target highlight while dragging.
+        if (gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size()) {
+            const auto& it = inv->items[gui->dragIndex];
+            int tx = cx - gui->grabX, ty = cy - gui->grabY;
+            bool okp = inv->CanPlace(tx, ty, it.w, it.h, gui->dragIndex);
+            for (int yy = 0; yy < it.h; ++yy)
+                for (int xx = 0; xx < it.w; ++xx) {
+                    int gxc = tx + xx, gyc = ty + yy;
+                    if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
+                    dl->AddRectFilled(ImVec2(ox + gxc * (cs + gp), oy + gyc * (cs + gp)),
+                                      ImVec2(ox + gxc * (cs + gp) + cs, oy + gyc * (cs + gp) + cs),
+                                      col(okp ? gui->dropOk : gui->dropBad), cr);
+                }
+        }
+        for (int i = 0; i < (int)inv->items.size(); ++i) {
+            if (i == gui->dragIndex) continue;
+            const auto& it = inv->items[i];
+            ImVec2 p0(ox + it.x * (cs + gp), oy + it.y * (cs + gp));
+            ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
+            SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
+            dl->AddRectFilled(p0, p1, col(gui->itemColor), cr);
+            dl->AddRect(p0, p1, col(gui->itemBorder), cr);
+            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
+            else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
+        }
+        // Drag-and-drop (Play view).
+        if (gui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+            int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
+            if (idx >= 0) { gui->dragIndex = idx; gui->grabX = cx - inv->items[idx].x; gui->grabY = cy - inv->items[idx].y; }
+        }
+        if (gui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
+            inv->PlaceAt(gui->dragIndex, cx - gui->grabX, cy - gui->grabY);
+            gui->dragIndex = -1;
+        }
+        if (gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size()) {
+            const auto& it = inv->items[gui->dragIndex];
+            ImVec2 p0(canvasPos.x + m.x - gui->grabX * (cs + gp) - cs * 0.5f, canvasPos.y + m.y - gui->grabY * (cs + gp) - cs * 0.5f);
+            ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
+            SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
+            dl->AddRectFilled(p0, p1, col(gui->itemColor), cr);
+            dl->AddRect(p0, p1, col(gui->itemBorder), cr);
+            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
+            else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
+        }
+        break;
+    }
+    // Loading-screen overlay: covers the view while a LoadingScreen is active in Play
+    // (mirrors what the built player draws over the game).
+    for (const auto& up : objs) {
+        auto* ls = up ? up->GetComponent<okay::LoadingScreen>() : nullptr;
+        if (!ls || !ls->Active()) continue;
+        float a = ls->Alpha(); a = a < 0 ? 0 : (a > 1 ? 1 : a);
+        auto col = [&](const okay::Color& c) {
+            return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(a * 255));
+        };
+        ImVec2 p0 = canvasPos, p1 = ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+        SDL_Texture* bgtex = ls->backgroundImage.empty() ? nullptr : GetThumb(ls->backgroundImage);
+        if (bgtex) dl->AddImage((ImTextureID)bgtex, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, (int)(a * 255)));
+        else       dl->AddRectFilled(p0, p1, col(ls->backgroundColor));
+        float cx = canvasPos.x + canvasSize.x * 0.5f;
+        if (ls->showTitle && !ls->title.empty()) {
+            ImVec2 ts = ImGui::CalcTextSize(ls->title.c_str());
+            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * 0.40f), col(ls->textColor), ls->title.c_str());
+        }
+        if (!ls->CurrentTip().empty()) {
+            ImVec2 ts = ImGui::CalcTextSize(ls->CurrentTip().c_str());
+            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * 0.78f), col(ls->textColor), ls->CurrentTip().c_str());
+        }
+        if (ls->showBar) {
+            float bw = canvasSize.x * 0.5f, bh = canvasSize.y * 0.022f; if (bh < 6.0f) bh = 6.0f;
+            float bx = cx - bw * 0.5f, by = canvasPos.y + canvasSize.y * 0.86f;
+            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), col(ls->barBackground), 3.0f);
+            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * ls->Progress(), by + bh), col(ls->barFill), 3.0f);
+        }
+        break;
+    }
     UIWorld().active = false;   // end world-space UI projection for this overlay
 }
 
@@ -10332,6 +11519,12 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
     UIWorld().active = true;
     UIWorld().screenW = canvasSize.x; UIWorld().screenH = canvasSize.y;
     ImVec2 cs = canvasSize;
+    // A hidden/minimized/just-switched-away Game view leaves the canvas size stale or
+    // zero. A zero (or non-finite) dimension divides to NaN in the projection below and
+    // bakes NaN into the hit-test lambdas, which then crashes the next in-world UI
+    // Contains() during Play (the "crashes when I switch tabs / click off" bug). Skip
+    // the projector cleanly in that case rather than installing a poisoned one.
+    if (!(cs.x >= 1.0f) || !(cs.y >= 1.0f)) { UIWorld().active = false; return; }
     if (view3D) {
         Mat4 view, proj; Vec3 right{1.0f, 0.0f, 0.0f};
         if (gameView) {
@@ -10362,8 +11555,10 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
         Vec2 camPos = ed.cameraPos; float zoom = ed.cameraZoom;
         if (gameView) {
             if (Camera* mc = SceneCamera(ed.scene())) {
-                Vec3 cp = mc->gameObject->transform->Position();
-                camPos = {cp.x, cp.y}; zoom = mc->orthographicSize * 2.0f;
+                if (mc->gameObject && mc->gameObject->transform) {
+                    Vec3 cp = mc->gameObject->transform->Position();
+                    camPos = {cp.x, cp.y}; zoom = mc->orthographicSize * 2.0f;
+                }
             }
         }
         float scale = cs.y / (zoom > 0.001f ? zoom : 1.0f);
@@ -10521,6 +11716,26 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         if (right)  rr = edge(rr, cx, g_uiGuideX, gxHit);
                         if (top)    t  = edge(t,  cy, g_uiGuideY, gyHit);
                         if (bottom) bb = edge(bb, cy, g_uiGuideY, gyHit);
+                        // Stickier snap to the OWNING PARENT's edges so you can drag a
+                        // child flush to its parent (and so dragging both corners makes
+                        // it exactly the parent's size) — Unity-style. Parent wins over
+                        // the generic guides above, with a slightly larger threshold.
+                        if (GameObject* par = OwningUIParent(g_uiDragTarget)) {
+                            Vec2 po, ps;
+                            if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) {
+                                const float pthr = g_uiSnapDist * 1.6f;
+                                auto psnap = [&](float v, float lo, float hi, float& guide, bool& hit) {
+                                    float dl = v > lo ? v - lo : lo - v, dh = v > hi ? v - hi : hi - v;
+                                    if (dl < pthr && dl <= dh) { guide = lo; hit = true; return lo; }
+                                    if (dh < pthr)             { guide = hi; hit = true; return hi; }
+                                    return v;
+                                };
+                                if (left)   l  = psnap(l,  po.x, po.x + ps.x, g_uiGuideX, gxHit);
+                                if (right)  rr = psnap(rr, po.x, po.x + ps.x, g_uiGuideX, gxHit);
+                                if (top)    t  = psnap(t,  po.y, po.y + ps.y, g_uiGuideY, gyHit);
+                                if (bottom) bb = psnap(bb, po.y, po.y + ps.y, g_uiGuideY, gyHit);
+                            }
+                        }
                     }
                     Vec2 newScreen{rr - l, bb - t};
                     // Reconstruct the stored offset by inverting the anchor WITHIN the
@@ -10623,6 +11838,33 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         g_uiResizeHandle = i;
                         g_uiDragRawValid = false;          // fresh drag: reseed accumulator
                         g_uiHandled = true;
+                        break;
+                    }
+                }
+            }
+        }
+        // Anchor pips of the selected widget: click one to re-anchor (keeping its
+        // on-screen position). Checked after resize handles, before move-pick.
+        if (!g_uiHandled && ed.selected()) {
+            UIRect ar = GetUIRect(ed.selected());
+            if (ar.anchorPtr && ar.position) {
+                ImVec2 ra, rb; UIAnchorRefRect(ed.selected(), canvasPos, canvasSize, ra, rb);
+                ImVec2 pips[9]; UIAnchorPips(ra, rb, pips);
+                // Design-space reference size for preserving the on-screen position.
+                float refW, refH;
+                if (GameObject* par = OwningUIParent(ed.selected())) { UIRect pr = GetUIRect(par); refW = pr.size.x; refH = pr.size.y; }
+                else { refW = UICanvas::Width(); refH = UICanvas::Height(); }
+                for (int i = 0; i < 9; ++i) {
+                    float dx = io.MousePos.x - pips[i].x, dy = io.MousePos.y - pips[i].y;
+                    if (dx * dx + dy * dy <= 7.0f * 7.0f) {
+                        ed.PushUndo();
+                        UIAnchor cand = (UIAnchor)i;
+                        Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, refW, refH);
+                        *ar.anchorPtr = cand;
+                        Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, refW, refH);
+                        ar.position->x = resolved.x - term.x;
+                        ar.position->y = resolved.y - term.y;
+                        ed.dirty = true; g_uiHandled = true;
                         break;
                     }
                 }
@@ -10767,11 +12009,12 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImU32 sh = ToColor(tr->shadowColor);
         ImVec2 o = worldToScreen(up->transform->Position());
         float px = tr->pixelSize * scale;
+        okay::TtfFont* fnt = tr->Font();
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
-                           o.y + tr->shadowOffset.y * px, px, sh);
-        DrawBitmapText(dl, tr->text, o.x, o.y, px, col);
-        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + px, o.y, px, col);  // faux-bold
+                           o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, 0, fnt);
+        DrawBitmapText(dl, tr->text, o.x, o.y, px, col, 0, 0, false, false, 0, fnt);
+        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + px, o.y, px, col, 0, 0, false, false, 0, fnt);  // faux-bold
     }
 
     // 2D collider wireframes (Unity-style green outlines), Scene view only.
@@ -12206,6 +13449,7 @@ int main(int argc, char** argv) {
     SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
+    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);  // accept OS file drops (asset import)
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -12220,6 +13464,63 @@ int main(int argc, char** argv) {
     ApplyTheme();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
+
+#ifdef OKAY_HAVE_OKAYUI
+    // Install an OkayUI-backed script UI bridge so a playing game's ui_* script
+    // builtins (ui_begin/ui_button/ui_slider/...) draw real OkayUI widgets right
+    // here in the editor during Play — the same code path the shipped player uses.
+    // The editor brackets each frame with OkayUI::BeginFrame()/EndFrame() below.
+    static okay::OkayUIScriptBridge g_editorUIBridge;
+    okay::SetScriptUI(&g_editorUIBridge);
+#endif
+
+    // Optional GPU (OpenGL) 3D renderer on an ISOLATED hidden context, so the GPU
+    // can rasterize the Scene view (hardware MSAA + depth) without touching the
+    // editor's SDL_Renderer. If any step fails we silently keep the software path.
+    {
+        // Ask for a 3.2 *compatibility* context: it guarantees core framebuffer
+        // objects, multisample renderbuffers + blit, and VAOs, while still accepting
+        // our legacy #version 120 shaders. If the driver can't provide it,
+        // SDL_GL_CreateContext fails and we fall back to software (no crash).
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
+        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+        g_glWindow = SDL_CreateWindow("okay-gl", 0, 0, 16, 16,
+                                      SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        if (g_glWindow) {
+            g_glCtx = SDL_GL_CreateContext(g_glWindow);
+            if (g_glCtx) {
+                SDL_GL_MakeCurrent(g_glWindow, g_glCtx);
+                if (okay::GLRenderer::LoadGL((okay::GLRenderer::GLGetProc)SDL_GL_GetProcAddress)) {
+                    g_glRenderer = new okay::GLRenderer();
+                    g_glReady = true;
+                    ConsoleLog("GPU renderer available (View > GPU Renderer).");
+                }
+            }
+        }
+        // Restore whatever context SDL_Renderer had current (its own on the GL backend,
+        // or none on the D3D backend) so the editor UI keeps drawing normally.
+        SDL_GL_MakeCurrent(prevWin, prevCtx);
+        if (!g_glReady) ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
+    }
+
+#if defined(_WIN32)
+    // Optional Direct3D 11 3D renderer on its own isolated device (offscreen → readback),
+    // selectable alongside the OpenGL path. Falls back to software if unavailable.
+    {
+        g_d3dRenderer = new okay::D3D11Renderer();
+        if (g_d3dRenderer->Init()) {
+            g_d3dReady = true;
+            ConsoleLog("Direct3D 11 renderer available (View > GPU renderer (Direct3D 11)).");
+        } else {
+            delete g_d3dRenderer; g_d3dRenderer = nullptr;
+            ConsoleLog("Direct3D 11 renderer unavailable; using the software/OpenGL path.", 1);
+        }
+    }
+#endif
 
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
@@ -12266,6 +13567,7 @@ int main(int argc, char** argv) {
             }
         }
         Input::ClearTypedText();   // collect this frame's typed characters
+        g_okayUITyped[0] = '\0'; g_okayUIBack = false;   // OkayUI demo's per-frame keys
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
@@ -12279,6 +13581,20 @@ int main(int argc, char** argv) {
                 Input::FeedText(e.text.text);
             if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
                 Input::FeedMouseWheel((float)e.wheel.y);
+            // Feed OkayUI text fields (Test UI demo or a playing game's ui_inputtext)
+            // when ImGui isn't capturing the keyboard.
+            if ((g_showTestUI || ed.isPlaying()) && !ImGui::GetIO().WantTextInput) {
+                if (e.type == SDL_TEXTINPUT)
+                    SDL_strlcat(g_okayUITyped, e.text.text, sizeof(g_okayUITyped));
+                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE)
+                    g_okayUIBack = true;
+            }
+            // Import by dragging files from the OS file explorer onto the window: copy
+            // each dropped file into the Assets folder the Project panel is browsing.
+            if (e.type == SDL_DROPFILE && e.drop.file) {
+                ImportAssetFile(e.drop.file, std::filesystem::path(g_assetImportDir));
+                SDL_free(e.drop.file);
+            }
         }
 
         Uint64 now = SDL_GetPerformanceCounter();
@@ -12332,7 +13648,15 @@ int main(int argc, char** argv) {
             // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
             // against the same coordinates the preview draws with.
             ImVec2 mp = ImGui::GetMousePos();
-            float rx = mp.x - g_playCanvasPos.x, ry = mp.y - g_playCanvasPos.y;
+            // ImGui reports (-FLT_MAX, -FLT_MAX) when the cursor leaves the window / the
+            // app loses focus. Feeding that into the game (and any UI hit-test math) is
+            // how clicking off during Play could blow up; treat it as "off-canvas".
+            float rx, ry;
+            if (mp.x <= -1.0e6f || mp.y <= -1.0e6f || mp.x >= 1.0e6f || mp.y >= 1.0e6f) {
+                rx = -1.0f; ry = -1.0f;
+            } else {
+                rx = mp.x - g_playCanvasPos.x; ry = mp.y - g_playCanvasPos.y;
+            }
             unsigned mask = 0;
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left))   mask |= 1u << 0;
             if (ImGui::IsMouseDown(ImGuiMouseButton_Right))  mask |= 1u << 1;
@@ -12358,6 +13682,35 @@ int main(int argc, char** argv) {
         if (ed.isPlaying() && SceneCamera(ed.scene()))
             SetEditorWorldUIProjector(ed, g_playCanvasSize, g_playPersp, /*gameView=*/true);
 
+#ifdef OKAY_HAVE_OKAYUI
+        // Open the OkayUI frame BEFORE the scene ticks, so a playing game's ui_*
+        // script calls record their widgets into this frame. The widgets (plus the
+        // optional Test UI demo panel) are flushed to the screen at render end via
+        // OkayUI::EndFrame(). One BeginFrame/EndFrame brackets the whole editor frame.
+        {
+            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            OkayUI::Input uin;
+            uin.mouseX = (float)mx; uin.mouseY = (float)my;
+            uin.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            uin.blocked = io.WantCaptureMouse;
+            uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
+            uin.backspace = g_okayUIBack;
+            OkayUI::SetFont(OkayUI::FontDefault());
+            OkayUI::BeginFrame(uin);
+        }
+#endif
+
+        // An open inventory is modal: controllers pause look/move (mirrors the player).
+        {
+            bool invModal = false;
+            if (ed.isPlaying())
+                for (const auto& up : ed.scene().Objects()) {
+                    if (!up) continue;
+                    if (auto* iu = up->GetComponent<okay::InventoryUI>()) if (iu->open && iu->dragItems) { invModal = true; break; }
+                    if (auto* gi = up->GetComponent<okay::GridInventory>()) if (gi->open) { invModal = true; break; }
+                }
+            okay::Input::SetUICaptured(invModal);
+        }
         if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
@@ -12473,6 +13826,62 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+#ifdef OKAY_HAVE_OKAYUI
+        // Flush OkayUI here, AFTER ImGui, through the SAME SDL_Renderer — so it
+        // composites on top with no GL/D3D conflict. The frame was opened with
+        // BeginFrame() before ed.Tick(), so a playing game's ui_* script widgets are
+        // already recorded; the optional Test UI demo panel is appended below.
+        if (g_showTestUI) {
+            static bool  s_sound  = true;
+            static float s_volume = 60.0f;
+            static int   s_mode   = 0, s_quality = 1;
+            static char  s_name[16] = "Player1";
+            static bool  s_bold   = false;
+            static const char* s_qualOpts[] = {"Low", "Medium", "High"};
+            float wy = io.DisplaySize.y - 420.0f; if (wy < 40.0f) wy = 40.0f;
+            // Written as a sequence of auto-layout calls — no manual coordinates. The
+            // window is draggable by its title bar.
+            OkayUI::SetFont(s_bold ? OkayUI::FontBold() : OkayUI::FontDefault());
+            OkayUI::Begin("Test UI", 24.0f, wy, 320.0f, 380.0f);
+            OkayUI::BeginMenuBar();
+            if (OkayUI::BeginMenu("File")) {
+                if (OkayUI::MenuItem("New"))  ConsoleLog("OkayUI menu: New");
+                if (OkayUI::MenuItem("Open")) ConsoleLog("OkayUI menu: Open");
+                OkayUI::EndMenu();
+            }
+            if (OkayUI::BeginMenu("Help")) {
+                if (OkayUI::MenuItem("About")) ConsoleLog("OkayUI: a tiny immediate-mode toolkit.");
+                OkayUI::EndMenu();
+            }
+            OkayUI::EndMenuBar();
+            OkayUI::Text("Drag me by the title bar");
+            OkayUI::Separator();
+            OkayUI::InputText("Name", s_name, (int)sizeof(s_name));
+            OkayUI::Combo("Quality", s_qualOpts, 3, &s_quality);
+            OkayUI::RadioButton("Easy", &s_mode, 0);
+            OkayUI::SameLine();
+            OkayUI::RadioButton("Hard", &s_mode, 1);
+            OkayUI::SliderFloat("Volume", &s_volume, 0.0f, 100.0f);
+            OkayUI::Checkbox("Sound", &s_sound);
+            OkayUI::Checkbox("Bold font", &s_bold);
+            if (OkayUI::CollapsingHeader("Stats")) {
+                OkayUI::Text("Health"); OkayUI::ProgressBar(0.8f);
+                OkayUI::Text("Hunger"); OkayUI::ProgressBar(0.35f);
+            }
+            OkayUI::Spacing();
+            if (OkayUI::Button("Play"))
+                ConsoleLog("OkayUI: Play clicked (drawn on top of ImGui via SDL_Renderer).");
+            OkayUI::SameLine();
+            OkayUI::Button("Quit");
+            OkayUI::End();
+            OkayUI::SetFont(OkayUI::FontDefault());
+        }
+        // Flush the whole OkayUI frame (game-script widgets + demo) every frame.
+        OkayUI::EndFrame(renderer);
+        // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
+        // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
+        if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
+#endif
         SDL_RenderPresent(renderer);
 
         if (updater::pendingQuit) running = false; // auto-update relaunched
@@ -12481,6 +13890,21 @@ int main(int argc, char** argv) {
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
+    // Tear down the optional GPU renderer: free its GL objects with its own context
+    // current, then drop the context + hidden window.
+    if (g_glRenderer || g_glCtx) {
+        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
+        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+        if (g_glWindow && g_glCtx) SDL_GL_MakeCurrent(g_glWindow, g_glCtx);
+        if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
+        SDL_GL_MakeCurrent(prevWin, prevCtx);
+        if (g_glCtx) { SDL_GL_DeleteContext(g_glCtx); g_glCtx = nullptr; }
+        if (g_glWindow) { SDL_DestroyWindow(g_glWindow); g_glWindow = nullptr; }
+        g_glReady = false;
+    }
+#if defined(_WIN32)
+    if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
+#endif
     if (g_pad) SDL_GameControllerClose(g_pad);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
     SDL_DestroyRenderer(renderer);

@@ -9,6 +9,13 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
+#ifdef OKAY_HAVE_OKAYUI
+#include "okay/UI/OkayUI.hpp"
+#include "OkayScriptUIBridge.hpp"
+#include "OkayTestPanel.hpp"
+#endif
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -107,12 +114,63 @@ static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, flo
     SDL_RenderFillRect(r, &rect);
 }
 
+// Upload a TTF glyph atlas as an SDL texture (once, cached) for the player.
+static SDL_Texture* TtfAtlasTexture(SDL_Renderer* r, okay::TtfFont* f) {
+    if (!f || !f->Valid()) return nullptr;
+    static std::unordered_map<okay::TtfFont*, SDL_Texture*> cache;
+    auto it = cache.find(f);
+    if (it != cache.end()) return it->second;
+    const okay::Image& a = f->Atlas();
+    SDL_Texture* tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+                                         SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        SDL_UpdateTexture(tex, nullptr, a.Data(), a.Width() * 4);
+    }
+    cache[f] = tex;
+    return tex;
+}
+
+// Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
+static void DrawTtfText(SDL_Renderer* r, okay::TtfFont* f, const std::string& text,
+                        float ox, float oy, float px, SDL_Color col, float letterSp, float lineSp) {
+    SDL_Texture* tex = TtfAtlasTexture(r, f);
+    if (!tex) return;
+    SDL_SetTextureColorMod(tex, col.r, col.g, col.b);
+    SDL_SetTextureAlphaMod(tex, col.a);
+    const float s = px * (float)okay::Font8x8::Height / f->BakeHeight();
+    const float baseline = f->Ascent((float)okay::Font8x8::Height) * px;
+    float penX = ox, penY = oy;
+    for (char ch : text) {
+        if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
+        const okay::TtfFont::Glyph* g = f->Get(ch);
+        if (!g) { penX += px * 4.0f; continue; }
+        int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
+        if (gw > 0 && gh > 0) {
+            SDL_Rect src{g->x0, g->y0, gw, gh};
+            SDL_FRect dst{penX + g->xoff * s, penY + baseline + g->yoff * s, gw * s, gh * s};
+            SDL_RenderCopyF(r, tex, &src, &dst);
+        }
+        penX += g->xadvance * s + letterSp * px;
+    }
+}
+
+// Scene-wide default UI font (from Scene::uiFont): DrawText falls back to it when no
+// explicit font is given. Set around the screen-UI pass and cleared after, so world
+// text without its own font keeps the bitmap font (matching the editor preview).
+static okay::TtfFont* g_uiDefaultFont = nullptr;
+
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
-// in screen pixels, each font pixel `px` screen pixels wide.
+// in screen pixels, each font pixel `px` screen pixels wide. When `ttf` is loaded,
+// the TTF atlas is used instead (same sizing space).
 static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float oy,
                      float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f,
-                     bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0}) {
+                     bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0},
+                     okay::TtfFont* ttf = nullptr) {
     if (px < 1.0f) px = 1.0f;
+    if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
+    if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
     if (!gradient) SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
     float cx = ox;
@@ -163,6 +221,270 @@ static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
     return tex;
 }
 
+// Full-screen loading-screen overlay (background + centred title + tip + progress bar).
+static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const std::string& baseDir,
+                              std::unordered_map<std::string, SDL_Texture*>& cache) {
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    if (W <= 0 || H <= 0) return;
+    float a = ls.Alpha(); a = a < 0 ? 0 : (a > 1 ? 1 : a);
+    const Uint8 A = (Uint8)(255.0f * a);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_Rect full{0, 0, W, H};
+    SDL_Texture* bgTex = ls.backgroundImage.empty() ? nullptr : GetTexture(r, ls.backgroundImage, baseDir, cache);
+    if (bgTex) { SDL_SetTextureAlphaMod(bgTex, A); SDL_RenderCopy(r, bgTex, nullptr, &full); }
+    else {
+        const Color& b = ls.backgroundColor;
+        SDL_SetRenderDrawColor(r, (Uint8)(b.r * 255), (Uint8)(b.g * 255), (Uint8)(b.b * 255), A);
+        SDL_RenderFillRect(r, &full);
+    }
+    auto sc = [](const Color& c, Uint8 al) {
+        return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), al};
+    };
+    const float adv = (float)(Font8x8::Width + 1);
+    if (ls.showTitle && !ls.title.empty()) {
+        float px = H * 0.006f; if (px < 2.0f) px = 2.0f;
+        float tw = ls.title.size() * adv * px;
+        DrawText(r, ls.title, (W - tw) * 0.5f, H * 0.40f, px, sc(ls.textColor, A));
+    }
+    if (!ls.CurrentTip().empty()) {
+        float px = H * 0.0032f; if (px < 1.0f) px = 1.0f;
+        float tw = ls.CurrentTip().size() * adv * px;
+        DrawText(r, ls.CurrentTip(), (W - tw) * 0.5f, H * 0.78f, px, sc(ls.textColor, A));
+    }
+    if (ls.showBar) {
+        int bw = (int)(W * 0.5f), bh = (int)(H * 0.022f); if (bh < 6) bh = 6;
+        int bx = (W - bw) / 2, by = (int)(H * 0.86f);
+        SDL_Rect bgr{bx, by, bw, bh};
+        const Color& bb = ls.barBackground;
+        SDL_SetRenderDrawColor(r, (Uint8)(bb.r * 255), (Uint8)(bb.g * 255), (Uint8)(bb.b * 255), A);
+        SDL_RenderFillRect(r, &bgr);
+        SDL_Rect fr{bx, by, (int)(bw * ls.Progress()), bh};
+        const Color& bf = ls.barFill;
+        SDL_SetRenderDrawColor(r, (Uint8)(bf.r * 255), (Uint8)(bf.g * 255), (Uint8)(bf.b * 255), A);
+        SDL_RenderFillRect(r, &fr);
+    }
+}
+
+// A Minecraft-style hotbar (+ openable backpack) drawn from an Inventory.
+static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::string& baseDir,
+                            std::unordered_map<std::string, SDL_Texture*>& cache) {
+    okay::Inventory* inv = ui.Inv();
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    if (W <= 0 || H <= 0) return;
+    const int n = ui.hotbarSlots < 1 ? 1 : ui.hotbarSlots;
+    const float sz = ui.slotSize, gap = ui.slotGap;
+    auto setc = [&](const Color& c, int a = -1) {
+        SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
+                               (Uint8)(a < 0 ? c.a * 255 : a));
+    };
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    const float cr = ui.cornerRadius;
+    const UIShape shp = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
+    // Draw one slot at (x,y) for inventory stack index `idx`, highlighted if selected.
+    auto slot = [&](float x, float y, int idx, bool sel) {
+        float b = (ui.borderWidth < 0 ? 0 : ui.borderWidth) + (sel ? 1.0f : 0.0f);
+        SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
+        const Color& bc = sel ? ui.selectedColor : ui.slotBorder;
+        FillUIShape(r, outer, shp, cr, bc, bc, false, false, 1.0f);
+        SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
+        float ir = cr > 0.5f ? (cr - b < 0 ? 0 : cr - b) : 0.0f;
+        FillUIShape(r, inner, ir > 0.5f ? UIShape::Rounded : UIShape::Rectangle, ir, ui.slotColor, ui.slotColor, false, false, 1.0f);
+        if (idx != ui.dragIndex && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
+            const auto& it = inv->slots[idx];
+            SDL_Texture* icon = ui.iconFolder.empty() ? nullptr
+                              : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
+            if (icon) { SDL_Rect d{inner.x + 2, inner.y + 2, inner.w - 4, inner.h - 4}; SDL_RenderCopy(r, icon, nullptr, &d); }
+            else if (ui.showNames) {
+                std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
+                float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
+                if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;   // fit the slot
+                DrawText(r, nm, x + 4, y + 5, px,
+                         SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+            }
+            if (ui.showCounts && it.count > 1) {
+                std::string cs = std::to_string(it.count);
+                float px = sz * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+                float tw = cs.size() * (Font8x8::Width + 1) * px;
+                DrawText(r, cs, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 3, px,
+                         SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
+            }
+        }
+    };
+    // Layout: hotbar docked to the bottom (or top), nudged by margins; the backpack
+    // grows away from the docked edge.
+    const float rowW = n * sz + (n - 1) * gap;
+    const float hx = (W - rowW) * 0.5f + ui.marginX;
+    const float hy = ui.anchorTop ? ui.marginY : H - sz - ui.marginY;
+    auto bpY = [&](int row) {
+        return ui.anchorTop ? hy + sz + 14.0f + row * (sz + gap)
+                            : hy - 14.0f - (ui.backpackRows - row) * (sz + gap);
+    };
+    auto panel = [&](float x, float y, float w, float h) {
+        SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
+        FillUIShape(r, rc, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr + 2.0f,
+                    ui.panelColor, ui.panelColor, false, false, 1.0f);
+    };
+    // Backpack (when open): darken, then the grid.
+    if (ui.open && ui.backpackRows > 0) {
+        if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+        if (ui.showPanel) {
+            float t = bpY(0), b = bpY(ui.backpackRows - 1);
+            float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = ui.panelPad;
+            panel(hx - pad, top - pad, rowW + 2 * pad, (bot - top) + 2 * pad);
+        }
+        for (int row = 0; row < ui.backpackRows; ++row)
+            for (int c = 0; c < n; ++c)
+                slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
+    }
+    if (ui.showPanel) panel(hx - ui.panelPad, hy - ui.panelPad, rowW + 2 * ui.panelPad, sz + 2 * ui.panelPad);
+    for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+    // Minecraft-style held-item name above (or below) the hotbar.
+    if (ui.showSelectedName) {
+        std::string nm = ui.SelectedItem();
+        if (!nm.empty()) {
+            float px = 2.0f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+            float tw = nm.size() * (Font8x8::Width + 1) * px;
+            float ty = ui.anchorTop ? hy + sz + ui.panelPad + 4.0f : hy - (Font8x8::Height + 1) * px - ui.panelPad - 4.0f;
+            DrawText(r, nm, hx + rowW * 0.5f - tw * 0.5f, ty, px,
+                     SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+        }
+    }
+
+    // Drag-and-drop (only while the backpack is open). Pick a slot under the cursor,
+    // drop it on another to swap/merge — works across the hotbar and backpack.
+    if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; return; }
+    auto hit = [&](float px, float py, float x, float y) {
+        return px >= x && px < x + sz && py >= y && py < y + sz;
+    };
+    auto slotAt = [&](float px, float py) -> int {
+        for (int i = 0; i < n; ++i) if (hit(px, py, hx + i * (sz + gap), hy)) return i;
+        for (int row = 0; row < ui.backpackRows; ++row)
+            for (int c = 0; c < n; ++c)
+                if (hit(px, py, hx + c * (sz + gap), bpY(row))) return n + row * n + c;
+        return -1;
+    };
+    okay::Vec2 mp = okay::Input::MousePosition();
+    auto slotXY = [&](int idx, float& sx, float& sy) {
+        if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
+        else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
+    };
+    // Hover highlight on the slot under the cursor (not while dragging).
+    if (ui.dragIndex < 0) {
+        int h = slotAt(mp.x, mp.y);
+        if (h >= 0) { float sx, sy; slotXY(h, sx, sy);
+            SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
+            FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, ui.hoverColor, ui.hoverColor, false, false, 1.0f);
+        }
+    }
+    if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+        int idx = slotAt(mp.x, mp.y);
+        if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui.dragIndex = idx;
+    }
+    if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
+        ui.MoveSlot(ui.dragIndex, slotAt(mp.x, mp.y));
+        ui.dragIndex = -1;
+    }
+    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->slots.size()) {
+        const auto& it = inv->slots[ui.dragIndex];
+        float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
+        slot(x, y, -2, false);   // an empty slot frame floating under the cursor
+        SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
+        if (icon) { SDL_Rect d{(int)x + 4, (int)y + 4, (int)sz - 8, (int)sz - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
+        else {
+            std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
+            float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
+            if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
+            DrawText(r, nm, x + 4, y + 5, px,
+                     SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+        }
+    }
+}
+
+// A DayZ/Unturned grid inventory: multi-cell items, drag-and-drop within the grid.
+static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const std::string& baseDir,
+                              std::unordered_map<std::string, SDL_Texture*>& cache) {
+    okay::GridInventory* inv = ui.Inv();
+    if (!inv || !inv->open) { ui.dragIndex = -1; return; }
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    if (W <= 0 || H <= 0) return;
+    const float cs = ui.cellSize, gp = ui.gap;
+    float gridW = inv->cols * cs + (inv->cols - 1) * gp;
+    float gridH = inv->rows * cs + (inv->rows - 1) * gp;
+    float ox = (W - gridW) * 0.5f, oy = (H - gridH) * 0.5f + 10.0f;
+    auto setc = [&](const Color& c, int a = -1) {
+        SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
+    };
+    auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255}; };
+    const float cr = ui.cornerRadius;
+    auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
+        SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
+        FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
+    };
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+    okay::Vec2 mp = okay::Input::MousePosition();
+    int cx = (int)std::floor((mp.x - ox) / (cs + gp));
+    int cy = (int)std::floor((mp.y - oy) / (cs + gp));
+    // Panel + a title bar strip.
+    fill(ox - 12, oy - 38, gridW + 24, gridH + 50, ui.panelColor, cr + 2);
+    fill(ox - 12, oy - 38, gridW + 24, 28, ui.titleBar, cr + 2);
+    DrawText(r, inv->title, ox, oy - 31, 2.0f, sc(ui.textColor));
+    if (ui.showWeight) {
+        char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f kg", inv->TotalWeight());
+        float px = 2.0f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;
+        DrawText(r, wb, ox + gridW - tw, oy - 31, px, sc(ui.textColor));
+    }
+    for (int y = 0; y < inv->rows; ++y)
+        for (int x = 0; x < inv->cols; ++x)
+            fill(ox + x * (cs + gp), oy + y * (cs + gp), cs, cs, ui.cellColor, cr);
+    // While dragging, tint the target footprint green (fits) / red (blocked).
+    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size()) {
+        const auto& it = inv->items[ui.dragIndex];
+        int tx = cx - ui.grabX, ty = cy - ui.grabY;
+        bool ok = inv->CanPlace(tx, ty, it.w, it.h, ui.dragIndex);
+        for (int yy = 0; yy < it.h; ++yy)
+            for (int xx = 0; xx < it.w; ++xx) {
+                int gxc = tx + xx, gyc = ty + yy;
+                if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
+                fill(ox + gxc * (cs + gp), oy + gyc * (cs + gp), cs, cs, ok ? ui.dropOk : ui.dropBad, cr);
+            }
+    }
+    auto drawItem = [&](const okay::GridItem& it, float px0, float py0, bool ghost, bool hover) {
+        float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
+        fill(px0, py0, w, h, ghost ? Color{ui.itemColor.r, ui.itemColor.g, ui.itemColor.b, 0.6f} : ui.itemColor, cr);
+        SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
+        setc(ui.itemBorder, ghost ? 170 : 255); SDL_RenderDrawRect(r, &box);
+        if (hover) fill(px0, py0, w, h, ui.hoverColor, cr);
+        SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.name + ".png", baseDir, cache);
+        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 4, box.y + 4, box.w - 8, box.h - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
+        else DrawText(r, it.name.substr(0, 8), box.x + 4, box.y + 5, 1.4f, sc(ui.textColor));
+        if (it.count > 1) {
+            std::string cstr = std::to_string(it.count); float px = 1.4f;
+            float tw = cstr.size() * (Font8x8::Width + 1) * px;
+            DrawText(r, cstr, box.x + box.w - tw - 3, box.y + box.h - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255, 255, 255, 255});
+        }
+    };
+    int hovered = (ui.dragIndex < 0 && cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
+    for (int i = 0; i < (int)inv->items.size(); ++i) {
+        if (i == ui.dragIndex) continue;
+        const auto& it = inv->items[i];
+        drawItem(it, ox + it.x * (cs + gp), oy + it.y * (cs + gp), false, i == hovered);
+    }
+    // Drag-and-drop: pick an item under the cursor, drop it where it fits.
+    if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+        int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
+        if (idx >= 0) { ui.dragIndex = idx; ui.grabX = cx - inv->items[idx].x; ui.grabY = cy - inv->items[idx].y; }
+    }
+    if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
+        inv->PlaceAt(ui.dragIndex, cx - ui.grabX, cy - ui.grabY);   // no-op if it doesn't fit
+        ui.dragIndex = -1;
+    }
+    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size()) {
+        const auto& it = inv->items[ui.dragIndex];
+        drawItem(it, mp.x - ui.grabX * (cs + gp) - cs * 0.5f, mp.y - ui.grabY * (cs + gp) - cs * 0.5f, true, false);
+    }
+}
+
 int main(int argc, char** argv) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -186,6 +508,7 @@ int main(int argc, char** argv) {
         float volume = 1.0f;
         bool lockCursor = false, perPixel = false, shadows = false, bloom = false, ssao = false, fxaa = true;
         int  antialias = 1;
+        bool gpu = true;   // try the GPU (D3D11/OpenGL) 3D renderer; fall back to software
         std::string startup;
         std::vector<std::string> scenes;
     } cfg;
@@ -216,6 +539,7 @@ int main(int argc, char** argv) {
             else if (k == "ssao")       cfg.ssao = std::atoi(v.c_str()) != 0;
             else if (k == "fxaa")       cfg.fxaa = std::atoi(v.c_str()) != 0;
             else if (k == "antialias")  cfg.antialias = std::atoi(v.c_str());
+            else if (k == "gpu")        cfg.gpu = std::atoi(v.c_str()) != 0;
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
         }
@@ -264,6 +588,49 @@ int main(int argc, char** argv) {
     if (cfg.lockCursor) Cursor::Capture(true);
     SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
 
+    // Optional GPU 3D renderer — the same hardware path the editor's Scene view uses,
+    // now shipped with the game. Picks the best backend for this machine (Direct3D 11
+    // on Windows, OpenGL elsewhere); each renders the scene to an offscreen target and
+    // reads back RGBA8, a drop-in for the software rasterizer. If a GPU backend can't
+    // be created (or a frame fails repeatedly), the player silently uses software, so
+    // a build never fails to display 3D. Toggle in Build Game > GPU renderer.
+    okay::GLRenderer*    glRenderer = nullptr;   // OpenGL backend (any platform)
+#if defined(_WIN32)
+    okay::D3D11Renderer* d3dRenderer = nullptr;  // Direct3D 11 backend (Windows)
+#endif
+    SDL_Window*          glWindow = nullptr;      // hidden context window for the GL path
+    SDL_GLContext        glCtx = nullptr;
+    bool                 glReady = false, d3dReady = false;
+#ifndef __EMSCRIPTEN__
+    if (cfg.gpu) {
+#if defined(_WIN32)
+        d3dRenderer = new okay::D3D11Renderer();
+        if (d3dRenderer->Init()) d3dReady = true;
+        else { delete d3dRenderer; d3dRenderer = nullptr; }
+#endif
+        // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders.
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        glWindow = SDL_CreateWindow("okay-gl", 0, 0, 16, 16, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        if (glWindow) {
+            glCtx = SDL_GL_CreateContext(glWindow);
+            if (glCtx) {
+                SDL_GL_MakeCurrent(glWindow, glCtx);
+                if (okay::GLRenderer::LoadGL((okay::GLRenderer::GLGetProc)SDL_GL_GetProcAddress)) {
+                    glRenderer = new okay::GLRenderer();
+                    glReady = true;
+                }
+                SDL_GL_MakeCurrent(nullptr, nullptr);
+            }
+        }
+    }
+#endif
+    // Reused scratch buffer for GPU downscale/readback (mirrors the editor's path).
+    std::vector<std::uint32_t> mesh3DGpu;
+    int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
+
     SDL_AudioSpec want{}, have{};
     want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
     SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
@@ -305,13 +672,30 @@ int main(int argc, char** argv) {
         if (SDL_IsGameController(i)) { pad = SDL_GameControllerOpen(i); break; }
 
     bool running = true;
+#ifdef OKAY_HAVE_OKAYUI
+    bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
+    char g_uiText[32] = {0}; bool g_uiBack = false;
+    // Let game scripts draw OkayUI via the ui_* builtins.
+    static okay::OkayUIScriptBridge g_uiBridge;
+    okay::SetScriptUI(&g_uiBridge);
+#endif
     Uint64 last = SDL_GetPerformanceCounter();
     auto frame = [&]() {
         Uint64 fStart = SDL_GetPerformanceCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
+#ifdef OKAY_HAVE_OKAYUI
+        g_uiText[0] = '\0'; g_uiBack = false;
+#endif
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
+#ifdef OKAY_HAVE_OKAYUI
+            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F1) g_testUI = !g_testUI;
+            if (g_testUI) {
+                if (e.type == SDL_TEXTINPUT) SDL_strlcat(g_uiText, e.text.text, sizeof(g_uiText));
+                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) g_uiBack = true;
+            }
+#endif
             if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
                 pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
@@ -372,11 +756,21 @@ int main(int argc, char** argv) {
         Input::FeedKeys(down);
         Input::FeedGamepad(padAxis, padMask);
 
+        // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
+        // can point at and drag items, and show it — just like Minecraft/DayZ.
+        bool invModal = false;
+        for (const auto& up : scene.Objects()) {
+            if (!up) continue;
+            if (auto* iu = up->GetComponent<InventoryUI>()) if (iu->open && iu->dragItems) { invModal = true; break; }
+            if (auto* gi = up->GetComponent<GridInventory>()) if (gi->open) { invModal = true; break; }
+        }
+        Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
+
         // Apply the game's requested cursor state (Unity-style Cursor lock/visibility).
         static Vec2 s_virtualMouse{0, 0};
-        bool locked = Cursor::IsLocked();
+        bool locked = Cursor::IsLocked() && !invModal;
         SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
-        SDL_ShowCursor(Cursor::visible ? SDL_ENABLE : SDL_DISABLE);
+        SDL_ShowCursor((Cursor::visible || invModal) ? SDL_ENABLE : SDL_DISABLE);
 
         // Feed the mouse (position in pixels + left/right/middle button state). When
         // locked we accumulate relative motion into a virtual position so the
@@ -430,6 +824,20 @@ int main(int argc, char** argv) {
                     sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
                 }
 
+#ifdef OKAY_HAVE_OKAYUI
+        // Start the OkayUI frame BEFORE the scene updates, so scripts' ui_* builtins
+        // (via the installed ScriptUIBridge) draw into this frame. Flushed after the
+        // game is rendered (see EndFrame near the present), so UI sits on top.
+        {
+            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            OkayUI::Input ui;
+            ui.mouseX = (float)mx; ui.mouseY = (float)my;
+            ui.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            ui.text = g_uiText[0] ? g_uiText : nullptr;
+            ui.backspace = g_uiBack;
+            OkayUI::BeginFrame(ui);
+        }
+#endif
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
         Time::Step(dt);
@@ -511,22 +919,44 @@ int main(int argc, char** argv) {
             Mat4 vp = cam->ProjectionMatrix(h > 0 ? (float)w / h : 1.0f) * cam->ViewMatrix();
             if (w > 0 && h > 0) {
                 ApplySceneLight(scene);                 // a Light object aims the shading
-                // Native-resolution software render (FXAA handles edge AA). 2x
-                // supersampling is 4x the pixels — far too slow with the full
-                // shadow/SSAO/bloom pipeline — so it's off by default.
-                static std::vector<std::uint32_t> mesh3DDown;
-                const std::uint32_t* px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h,
-                                                         cfg.antialias < 1 ? 1 : cfg.antialias,
-                                                         cam ? cam->ignoreObject : nullptr);
-                if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
-                    if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
-                    mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
-                                                  SDL_TEXTUREACCESS_STREAMING, w, h);
-                    SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
-                    mesh3DW = w; mesh3DH = h;
+                const GameObject* ignore = cam ? cam->ignoreObject : nullptr;
+                const std::uint32_t* px = nullptr;
+                // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
+                // offscreen target and reading back RGBA8. A self-heal counter disables
+                // the GPU path after repeated failures so the game is never stuck.
+                if (cfg.gpu && (d3dReady || glReady) && gpuFails < 3) {
+#if defined(_WIN32)
+                    if (!px && d3dReady && d3dRenderer)
+                        px = d3dRenderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                                                         0.0f, 0.0f, 0.0f, 0.0f, ignore);
+#endif
+                    if (!px && glReady && glRenderer && glWindow && glCtx) {
+                        if (SDL_GL_MakeCurrent(glWindow, glCtx) == 0) {
+                            px = glRenderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                                                            0.0f, 0.0f, 0.0f, 0.0f, ignore);
+                            SDL_GL_MakeCurrent(nullptr, nullptr);
+                        }
+                    }
+                    if (!px) ++gpuFails; else gpuFails = 0;
+                    (void)mesh3DGpu;
                 }
-                SDL_UpdateTexture(mesh3DTex, nullptr, px, w * 4);
-                SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
+                // Software fallback: native-resolution z-buffered raster (FXAA handles
+                // edge AA). 2x supersampling is 4x the pixels — off by default.
+                static std::vector<std::uint32_t> mesh3DDown;
+                if (!px)
+                    px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h,
+                                        cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
+                if (px) {
+                    if (!mesh3DTex || mesh3DW != w || mesh3DH != h) {
+                        if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
+                        mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+                                                      SDL_TEXTUREACCESS_STREAMING, w, h);
+                        SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
+                        mesh3DW = w; mesh3DH = h;
+                    }
+                    SDL_UpdateTexture(mesh3DTex, nullptr, px, w * 4);
+                    SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
+                }
             }
         } else {
             float ortho = cam ? cam->orthographicSize : 5.0f;
@@ -627,17 +1057,18 @@ int main(int argc, char** argv) {
                              (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
                 SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
                 float px = tr->pixelSize * scale;
+                okay::TtfFont* fnt = tr->Font();
                 if (tr->shadow)
                     DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
-                             o.y + tr->shadowOffset.y * px, px, sh);
+                             o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
                 if (tr->outline) {
-                    DrawText(renderer, tr->text, o.x - px, o.y, px, ol);
-                    DrawText(renderer, tr->text, o.x + px, o.y, px, ol);
-                    DrawText(renderer, tr->text, o.x, o.y - px, px, ol);
-                    DrawText(renderer, tr->text, o.x, o.y + px, px, ol);
+                    DrawText(renderer, tr->text, o.x - px, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x + px, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x, o.y - px, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                    DrawText(renderer, tr->text, o.x, o.y + px, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
                 }
-                DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col);
-                if (tr->bold) DrawText(renderer, tr->text, (float)o.x + px, (float)o.y, px, col);
+                DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                if (tr->bold) DrawText(renderer, tr->text, (float)o.x + px, (float)o.y, px, col, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
             }
         }
 
@@ -700,6 +1131,7 @@ int main(int argc, char** argv) {
                 return GetUIScreenRect(go, (float)ww, (float)hh, o, sz);
             };
         }
+        g_uiDefaultFont = okay::GetFont(scene.uiFont);   // scene-wide default for this pass
         for (const UIDrawItem& _it : uiItems) {
             const auto& up = scene.Objects()[_it.index];
             if (_it.kind == K_DropBg) {   // drop-target slot backgrounds (behind items)
@@ -1187,14 +1619,16 @@ int main(int argc, char** argv) {
             // (Unity-style Button→Text) — that child draws itself in the text pass.
             if (!UIButtonTextChild(up.get())) {
                 float px = btn->fontScale * bk;
-                float tw = btn->label.size() * (Font8x8::Width + 1) * px;
+                okay::TtfFont* fnt = okay::GetFont(btn->fontPath);
+                float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
+                               : btn->label.size() * (Font8x8::Width + 1) * px;
                 float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f * bk : 0.0f);
                 float right = o.x + bsz.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f * bk : 0.0f);
                 float tx = left + ((right - left) - tw) * 0.5f;
                 float ty = o.y + (bsz.y - Font8x8::Height * px) * 0.5f + shift;
                 Color tcc = btn->CurrentTextColor();
                 SDL_Color tc{(Uint8)(tcc.r * 255), (Uint8)(tcc.g * 255), (Uint8)(tcc.b * 255), (Uint8)(tcc.a * 255 * op)};
-                DrawText(renderer, btn->label, tx, ty, px, tc);
+                DrawText(renderer, btn->label, tx, ty, px, tc, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
             }
         }
             else if (_it.kind == K_Text) {   // screen-space text — on top of panels/controls
@@ -1234,17 +1668,18 @@ int main(int argc, char** argv) {
             bool it = tr->italic;
             SDL_Color c2{(Uint8)(tr->colorBottom.r * 255), (Uint8)(tr->colorBottom.g * 255),
                          (Uint8)(tr->colorBottom.b * 255), (Uint8)(tr->colorBottom.a * 255 * op)};
+            okay::TtfFont* fnt = tr->Font();
             if (tr->shadow)
                 DrawText(renderer, disp, o.x + tr->shadowOffset.x * p,
-                         o.y + tr->shadowOffset.y * p, p, sh, ls, lp, it);
+                         o.y + tr->shadowOffset.y * p, p, sh, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
             if (tr->outline) {
-                DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp, it);
-                DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp, it);
-                DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp, it);
-                DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp, it);
+                DrawText(renderer, disp, o.x - p, o.y, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x + p, o.y, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x, o.y - p, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
+                DrawText(renderer, disp, o.x, o.y + p, p, ol, ls, lp, it, false, SDL_Color{0,0,0,0}, fnt);
             }
-            DrawText(renderer, disp, o.x, o.y, p, col, ls, lp, it, tr->gradient, c2);
-            if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp, it, tr->gradient, c2);
+            DrawText(renderer, disp, o.x, o.y, p, col, ls, lp, it, tr->gradient, c2, fnt);
+            if (tr->bold) DrawText(renderer, disp, o.x + p, o.y, p, col, ls, lp, it, tr->gradient, c2, fnt);
         }
             else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
             auto* wu = up->GetComponent<WorldUI>();
@@ -1376,6 +1811,7 @@ int main(int argc, char** argv) {
             DrawText(renderer, tt->text, m.x + 20, m.y + 19, px, tc);
             }
         }   // end single UI draw pass
+        g_uiDefaultFont = nullptr;   // world text / FPS overlay keep the bitmap font
         SDL_RenderSetClipRect(renderer, nullptr);   // end any scroll clipping
 
         // Optional FPS overlay (top-left) when enabled in build settings.
@@ -1392,6 +1828,34 @@ int main(int argc, char** argv) {
             DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
         }
         UIWorld().active = false;   // end of the frame's world-space UI projection
+#ifdef OKAY_HAVE_OKAYUI
+        // Scripts drew their UI during scene.Update (via the bridge); add the optional
+        // F1 "Test UI" panel on top, then flush the whole OkayUI frame here so it
+        // composites above the game.
+        if (g_testUI) okay_testui::Panel(24.0f, 24.0f);
+        OkayUI::EndFrame(renderer);
+        SDL_StartTextInput();   // keep text flowing for OkayUI text fields
+#endif
+        // Minecraft-style inventory hotbar / backpack (under the loading screen).
+        for (const auto& up : scene.Objects()) {
+            auto* ui = up ? up->GetComponent<InventoryUI>() : nullptr;
+            if (!ui) continue;
+            DrawInventoryUI(renderer, *ui, baseDir, textureCache);
+            break;
+        }
+        for (const auto& up : scene.Objects()) {
+            auto* gui = up ? up->GetComponent<GridInventoryUI>() : nullptr;
+            if (!gui) continue;
+            DrawGridInventory(renderer, *gui, baseDir, textureCache);
+            break;
+        }
+        // Loading-screen overlay: drawn on top of everything (and the UI) when active.
+        for (const auto& up : scene.Objects()) {
+            auto* ls = up ? up->GetComponent<LoadingScreen>() : nullptr;
+            if (!ls || !ls->Active()) continue;
+            DrawLoadingScreen(renderer, *ls, baseDir, textureCache);
+            break;
+        }
         SDL_RenderPresent(renderer);
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.
@@ -1420,6 +1884,16 @@ int main(int argc, char** argv) {
         if (kv.second) SDL_DestroyTexture(kv.second);
     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
+#if defined(_WIN32)
+    if (d3dRenderer) { d3dRenderer->Destroy(); delete d3dRenderer; }
+#endif
+    if (glRenderer) {
+        if (glWindow && glCtx) SDL_GL_MakeCurrent(glWindow, glCtx);
+        glRenderer->Destroy(); delete glRenderer;
+        SDL_GL_MakeCurrent(nullptr, nullptr);
+    }
+    if (glCtx) SDL_GL_DeleteContext(glCtx);
+    if (glWindow) SDL_DestroyWindow(glWindow);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

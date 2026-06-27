@@ -85,5 +85,37 @@ int main() {
         CHECK(s3.renderSettings.skybox == true);
     }
 
+    // Font fields round-trip: scene default UI font, TextRenderer.fontPath, and
+    // UIButton.fontPath all save and reload (and old scenes without them are fine).
+    {
+        Scene s("fonts");
+        s.uiFont = "Assets/Fonts/DejaVuSans.ttf";
+        GameObject* t = s.CreateGameObject("Label");
+        auto* tr = t->AddComponent<TextRenderer>();
+        tr->text = "Hi"; tr->fontPath = "Assets/Custom.ttf";
+        GameObject* b = s.CreateGameObject("Btn");
+        auto* bt = b->AddComponent<UIButton>();
+        bt->label = "Play"; bt->fontPath = "Assets/Btn.otf";
+
+        std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("x"); std::string e;
+        CHECK(SceneSerializer::Deserialize(s2, txt, &e));
+        CHECK(s2.uiFont == "Assets/Fonts/DejaVuSans.ttf");
+        if (auto* lt = s2.Find("Label")) {
+            auto* ltr = lt->GetComponent<TextRenderer>();
+            CHECK(ltr && ltr->fontPath == "Assets/Custom.ttf");
+        }
+        if (auto* lb = s2.Find("Btn")) {
+            auto* lbt = lb->GetComponent<UIButton>();
+            CHECK(lbt && lbt->fontPath == "Assets/Btn.otf");
+        }
+        // A scene with no fonts set leaves them empty after a round-trip (and an old
+        // file simply omits the tokens — back-compat).
+        Scene plain("plain"); plain.CreateGameObject("X")->AddComponent<UIButton>();
+        Scene p2("z"); CHECK(SceneSerializer::Deserialize(p2, SceneSerializer::Serialize(plain)));
+        CHECK(p2.uiFont.empty());
+        if (auto* x = p2.Find("X")) { auto* xb = x->GetComponent<UIButton>(); CHECK(xb && xb->fontPath.empty()); }
+    }
+
     TEST_MAIN_RESULT();
 }

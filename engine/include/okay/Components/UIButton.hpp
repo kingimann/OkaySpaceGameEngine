@@ -27,6 +27,9 @@ public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{160.0f, 48.0f};
     std::string label = "Button";
+    /// Optional TTF/OTF font for the label (e.g. "Assets/MyFont.ttf"). Empty = the
+    /// built-in 8x8 bitmap font.
+    std::string fontPath;
     /// Optional icon image drawn inside the button, left of the label (PNG/JPG;
     /// bundled by Build Game). `iconSize` is its square size in pixels (0 hides
     /// it); the label shifts right to make room.

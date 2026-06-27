@@ -4,7 +4,9 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Graphics/Font.hpp"
+#include "okay/Graphics/TtfFont.hpp"
 #include <string>
+#include <cmath>
 #include <cctype>
 #include <algorithm>
 
@@ -16,6 +18,10 @@ namespace okay {
 class TextRenderer : public Component {
 public:
     std::string text = "Text";
+    /// Optional path to an imported TrueType/OpenType font (e.g. "Assets/MyFont.ttf").
+    /// Empty = the built-in 8x8 bitmap font. When set and loadable, hosts draw the
+    /// text with the TTF glyph atlas; metrics fall back to the bitmap if it can't load.
+    std::string fontPath;
     Color color = Color::White;
     /// World units per font pixel (world space) or window pixels per font pixel
     /// (screen space).
@@ -107,9 +113,24 @@ public:
         return s;
     }
 
+    /// The resolved TTF font for this label, or nullptr to use the bitmap font.
+    /// All measurement/draw use the SAME "font pixel" space (Font8x8::Height tall),
+    /// so a host can scale either font by `pixelSize` identically.
+    TtfFont* Font() const { return fontPath.empty() ? nullptr : GetFont(fontPath); }
+
     /// Width of the widest line in font pixels (honors letter spacing + wrap).
     int PixelWidth() const {
         std::string s = DisplayText();
+        if (TtfFont* tf = Font()) {
+            float best = 0.0f, cur = 0.0f;
+            float adv = letterSpacing; // extra spacing per glyph, in font pixels
+            for (char ch : s) {
+                if (ch == '\n') { best = std::max(best, cur); cur = 0.0f; continue; }
+                const TtfFont::Glyph* g = tf->Get(ch);
+                cur += (g ? g->xadvance * tf->ScaleFor((float)Font8x8::Height) : 0.0f) + adv;
+            }
+            return (int)std::ceil(std::max(best, cur));
+        }
         int best = 0, cur = 0;
         auto lineW = [this](int glyphs) {
             return glyphs > 0 ? (int)((glyphs - 1) * Advance() + Font8x8::Width) : 0;
@@ -125,6 +146,10 @@ public:
         std::string s = DisplayText();
         int lines = 1;
         for (char c : s) if (c == '\n') ++lines;
+        if (TtfFont* tf = Font()) {
+            float lh = tf->LineHeight((float)Font8x8::Height) + lineSpacing;
+            return (int)std::ceil((lines - 1) * lh + (float)Font8x8::Height);
+        }
         return (int)((lines - 1) * LineAdvance() + Font8x8::Height);
     }
 

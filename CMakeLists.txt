@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.206.0
+    VERSION 2.256.0
     DESCRIPTION "A Unity-inspired C++ game engine"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)   # C enabled for vendored single-file C libs (e.g. tinyfiledialogs)
 
 # Stamp the version into binaries (used by the editor's self-updater).
 add_compile_definitions(OKAY_ENGINE_VERSION="${PROJECT_VERSION}")
@@ -22,6 +22,7 @@ option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
+option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
 if(MSVC)
     add_compile_options(/W4 /permissive-)
@@ -55,6 +56,13 @@ endif()
 
 # ---- The engine library ----------------------------------------------
 add_subdirectory(engine)
+
+# ---- OkayUI (SDL_Renderer immediate-mode UI toolkit) -----------------
+# Self-gates on SDL2 (skips quietly if absent). Added before the editor and tests
+# so both can link okay::ui. Only needed by SDL-based hosts and its own test.
+if(OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_TESTS)
+    add_subdirectory(okayui)
+endif()
 
 # ---- Sample game ------------------------------------------------------
 if(OKAY_BUILD_SANDBOX)
@@ -104,6 +112,11 @@ if(WIN32 AND NOT OKAY_STATIC_SDL AND DEFINED SDL2_DIR)
     else()
         message(WARNING "SDL2.dll not found at ${_okay_sdl_dll}; ship it manually or use -DOKAY_STATIC_SDL=ON.")
     endif()
+endif()
+
+# ---- Developer tools (opt-in) ----------------------------------------
+if(OKAY_BUILD_TOOLS)
+    add_subdirectory(tools)
 endif()
 
 # ---- Reference relay (NAT traversal) ---------------------------------

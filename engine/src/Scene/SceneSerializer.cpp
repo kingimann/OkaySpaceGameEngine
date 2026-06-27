@@ -15,6 +15,12 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/BlockBuilder.hpp"
+#include "okay/Components/StructureBuilder.hpp"
+#include "okay/Components/LoadingScreen.hpp"
+#include "okay/Components/InventoryUI.hpp"
+#include "okay/Components/GridInventory.hpp"
+#include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -332,6 +338,76 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
                 << v->trackWidth << " " << v->bodyLean << " " << v->maxTilt << " " << v->tiltSmooth << "\n";
+    }
+    if (auto* bb = go->GetComponent<BlockBuilder>()) {
+        out << "  blockbuilder " << bb->blockSize << " " << bb->reach << " "
+            << bb->blockColor.r << " " << bb->blockColor.g << " " << bb->blockColor.b << " " << bb->blockColor.a
+            << " " << bb->placeButton << " " << bb->removeButton
+            << " " << Quote(bb->blockTag) << " " << Quote(bb->blockTexture)
+            << " " << (bb->showPreview ? 1 : 0) << " " << (bb->showCrosshair ? 1 : 0)
+            << " " << (bb->placeInAir ? 1 : 0) << "\n";
+    }
+    if (auto* sb = go->GetComponent<StructureBuilder>()) {
+        out << "  structurebuilder " << (int)sb->piece << " " << sb->cellSize << " " << sb->wallHeight
+            << " " << sb->slabThickness << " " << sb->wallThickness << " " << sb->pillarThickness
+            << " " << sb->reach << " " << sb->rotSteps << " " << sb->placeButton << " " << sb->removeButton
+            << " " << (sb->showPreview ? 1 : 0) << " " << (sb->showCrosshair ? 1 : 0)
+            << " " << (sb->requireResources ? 1 : 0) << " " << sb->refundFraction
+            << " " << sb->costWood << " " << sb->costStone << " " << sb->costMetal
+            << " " << Quote(sb->structureTag) << " " << Quote(sb->structureTexture)
+            << " " << Quote(sb->woodItem) << " " << Quote(sb->stoneItem) << " " << Quote(sb->metalItem) << "\n";
+    }
+    if (auto* bp = go->GetComponent<BuildPiece>()) {
+        out << "  buildpiece " << bp->tier << " " << bp->health << " " << bp->maxHealth
+            << " " << bp->cost << " " << Quote(bp->material) << "\n";
+    }
+    if (auto* ls = go->GetComponent<LoadingScreen>()) {
+        auto& bg = ls->backgroundColor; auto& tc = ls->textColor;
+        auto& bb = ls->barBackground; auto& bf = ls->barFill;
+        out << "  loadingscreen " << bg.r << " " << bg.g << " " << bg.b << " " << bg.a
+            << " " << tc.r << " " << tc.g << " " << tc.b << " " << tc.a
+            << " " << bb.r << " " << bb.g << " " << bb.b << " " << bb.a
+            << " " << bf.r << " " << bf.g << " " << bf.b << " " << bf.a
+            << " " << (ls->showBar ? 1 : 0) << " " << (ls->showTitle ? 1 : 0) << " " << ls->duration
+            << " " << (ls->showOnStart ? 1 : 0) << " " << ls->fadeTime
+            << " " << Quote(ls->title) << " " << Quote(ls->targetScene) << " " << Quote(ls->backgroundImage)
+            << " " << ls->tips.size();
+        for (const auto& t : ls->tips) out << " " << Quote(t);
+        out << "\n";
+    }
+    if (auto* ui = go->GetComponent<InventoryUI>()) {
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  inventoryui " << ui->hotbarSlots << " " << ui->backpackRows << " " << ui->selected
+            << " " << (int)(unsigned char)ui->toggleKey << " " << (ui->selectHotkeys ? 1 : 0)
+            << " " << (ui->scrollSelect ? 1 : 0) << " " << ui->slotSize << " " << ui->slotGap
+            << " " << (ui->darkenWhenOpen ? 1 : 0);
+        wc(ui->slotColor); wc(ui->slotBorder); wc(ui->selectedColor); wc(ui->textColor); wc(ui->panelColor);
+        out << " " << Quote(ui->iconFolder) << " " << (ui->dragItems ? 1 : 0)
+            << " " << ui->marginX << " " << ui->marginY << " " << (ui->anchorTop ? 1 : 0)
+            << " " << ui->cornerRadius << " " << ui->borderWidth << " " << ui->labelScale
+            << " " << (ui->showCounts ? 1 : 0) << " " << (ui->showNames ? 1 : 0);
+        wc(ui->countColor);
+        out << " " << (ui->showPanel ? 1 : 0) << " " << ui->panelPad;
+        wc(ui->hoverColor);
+        out << " " << (ui->showSelectedName ? 1 : 0) << " " << ui->nameChars;
+        out << "\n";
+    }
+    if (auto* gi = go->GetComponent<GridInventory>()) {
+        out << "  gridinventory " << gi->cols << " " << gi->rows
+            << " " << (int)(unsigned char)gi->toggleKey << " " << Quote(gi->title) << " " << gi->items.size();
+        for (const auto& it : gi->items)
+            out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.x
+                << " " << it.y << " " << it.count << " " << it.weight;
+        out << "\n";
+    }
+    if (auto* gu = go->GetComponent<GridInventoryUI>()) {
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  gridinventoryui " << gu->cellSize << " " << gu->gap
+            << " " << (gu->darkenWhenOpen ? 1 : 0) << " " << (gu->showWeight ? 1 : 0);
+        wc(gu->panelColor); wc(gu->cellColor); wc(gu->itemColor); wc(gu->itemBorder); wc(gu->textColor);
+        out << " " << Quote(gu->iconFolder) << " " << gu->cornerRadius;
+        wc(gu->titleBar); wc(gu->hoverColor); wc(gu->dropOk); wc(gu->dropBad);
+        out << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -665,7 +741,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // typewriter (visibleChars + typeSpeed), bottom-align.
             << " " << (tr->italic ? 1 : 0) << " " << (tr->gradient ? 1 : 0) << " "
             << tr->colorBottom.r << " " << tr->colorBottom.g << " " << tr->colorBottom.b << " " << tr->colorBottom.a
-            << " " << tr->visibleChars << " " << tr->typeSpeed << " " << (tr->alignBottom ? 1 : 0) << "\n";
+            << " " << tr->visibleChars << " " << tr->typeSpeed << " " << (tr->alignBottom ? 1 : 0)
+            << " " << Quote(tr->fontPath) << "\n";   // optional TTF font path (newest)
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -722,7 +799,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << btn->shadowSoftness
             // extended: assigned OnClick action (target object + public function)
             << " " << Quote(btn->clickTarget) << " " << Quote(btn->clickFunction)
-            << " " << btn->clickArg << "\n";
+            << " " << btn->clickArg
+            << " " << Quote(btn->fontPath) << "\n";   // optional TTF label font (newest)
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -983,6 +1061,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     std::ostringstream out;
     out << "okayscene 1\n";
     out << "name " << Quote(scene.Name()) << "\n";
+    if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
     {
         const auto& rs = scene.renderSettings;
@@ -1041,6 +1120,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     while (in >> token) {
         if (token == "name") {
             scene.SetName(ReadQuoted(in));
+        } else if (token == "uifont") {
+            scene.uiFont = ReadQuoted(in);
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
             scene.physics().gravity = g;
@@ -1419,6 +1500,108 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         v->rideHeight = rh; v->springStrength = ss; v->springDamping = sd;
                         v->suspensionTravel = st; v->wheelBase = wb; v->trackWidth = tw;
                         v->bodyLean = bl; v->maxTilt = mt; v->tiltSmooth = ts;
+                    }
+                } else if (field == "blockbuilder") {
+                    auto* bb = go->AddComponent<BlockBuilder>();
+                    in >> bb->blockSize >> bb->reach
+                       >> bb->blockColor.r >> bb->blockColor.g >> bb->blockColor.b >> bb->blockColor.a
+                       >> bb->placeButton >> bb->removeButton;
+                    bb->blockTag = ReadQuoted(in);
+                    bb->blockTexture = ReadQuoted(in);
+                    // Optional trailing toggles, added over time — read each only if
+                    // present (older scenes omit them; component lines start with a
+                    // keyword, never a digit, so a peek tells us when they run out).
+                    auto optBool = [&](bool& dst) {
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { int v = 0; in >> v; dst = (v != 0); }
+                    };
+                    optBool(bb->showPreview);
+                    optBool(bb->showCrosshair);
+                    optBool(bb->placeInAir);
+                } else if (field == "structurebuilder") {
+                    auto* sb = go->AddComponent<StructureBuilder>();
+                    int pc = 0; in >> pc; sb->piece = (StructureBuilder::Piece)pc;
+                    in >> sb->cellSize >> sb->wallHeight >> sb->slabThickness
+                       >> sb->wallThickness >> sb->pillarThickness >> sb->reach
+                       >> sb->rotSteps >> sb->placeButton >> sb->removeButton;
+                    int sp = 1, sc = 1, rr = 1; in >> sp >> sc >> rr;
+                    sb->showPreview = (sp != 0); sb->showCrosshair = (sc != 0); sb->requireResources = (rr != 0);
+                    in >> sb->refundFraction >> sb->costWood >> sb->costStone >> sb->costMetal;
+                    sb->structureTag = ReadQuoted(in);
+                    sb->structureTexture = ReadQuoted(in);
+                    sb->woodItem = ReadQuoted(in);
+                    sb->stoneItem = ReadQuoted(in);
+                    sb->metalItem = ReadQuoted(in);
+                } else if (field == "buildpiece") {
+                    auto* bp = go->AddComponent<BuildPiece>();
+                    in >> bp->tier >> bp->health >> bp->maxHealth >> bp->cost;
+                    bp->material = ReadQuoted(in);
+                } else if (field == "loadingscreen") {
+                    auto* ls = go->AddComponent<LoadingScreen>();
+                    auto& bg = ls->backgroundColor; auto& tc = ls->textColor;
+                    auto& bb = ls->barBackground; auto& bf = ls->barFill;
+                    in >> bg.r >> bg.g >> bg.b >> bg.a >> tc.r >> tc.g >> tc.b >> tc.a
+                       >> bb.r >> bb.g >> bb.b >> bb.a >> bf.r >> bf.g >> bf.b >> bf.a;
+                    int sb = 1, st = 1, so = 1; in >> sb >> st >> ls->duration >> so >> ls->fadeTime;
+                    ls->showBar = (sb != 0); ls->showTitle = (st != 0); ls->showOnStart = (so != 0);
+                    ls->title = ReadQuoted(in);
+                    ls->targetScene = ReadQuoted(in);
+                    ls->backgroundImage = ReadQuoted(in);
+                    int n = 0; in >> n;
+                    ls->tips.clear();
+                    for (int i = 0; i < n; ++i) ls->tips.push_back(ReadQuoted(in));
+                } else if (field == "inventoryui") {
+                    auto* ui = go->AddComponent<InventoryUI>();
+                    int tk = 'e', sh = 1, ss = 1, dk = 1;
+                    in >> ui->hotbarSlots >> ui->backpackRows >> ui->selected >> tk >> sh >> ss
+                       >> ui->slotSize >> ui->slotGap >> dk;
+                    ui->toggleKey = (char)tk; ui->selectHotkeys = (sh != 0);
+                    ui->scrollSelect = (ss != 0); ui->darkenWhenOpen = (dk != 0);
+                    auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    rc(ui->slotColor); rc(ui->slotBorder); rc(ui->selectedColor); rc(ui->textColor); rc(ui->panelColor);
+                    ui->iconFolder = ReadQuoted(in);
+                    in >> std::ws;   // optional dragItems toggle (added later)
+                    if (std::isdigit(in.peek())) { int d = 1; in >> d; ui->dragItems = (d != 0); }
+                    in >> std::ws;   // optional layout/style block (added later; numeric)
+                    int pk = in.peek();
+                    if (std::isdigit(pk) || pk == '-' || pk == '.') {
+                        int at = 0, scn = 1, snm = 1;
+                        in >> ui->marginX >> ui->marginY >> at >> ui->cornerRadius >> ui->borderWidth
+                           >> ui->labelScale >> scn >> snm
+                           >> ui->countColor.r >> ui->countColor.g >> ui->countColor.b >> ui->countColor.a;
+                        ui->anchorTop = (at != 0); ui->showCounts = (scn != 0); ui->showNames = (snm != 0);
+                        in >> std::ws;   // optional second style block (panel / hover / held name)
+                        int pk2 = in.peek();
+                        if (std::isdigit(pk2) || pk2 == '-' || pk2 == '.') {
+                            int sp = 0, ssn = 0;
+                            in >> sp >> ui->panelPad
+                               >> ui->hoverColor.r >> ui->hoverColor.g >> ui->hoverColor.b >> ui->hoverColor.a
+                               >> ssn >> ui->nameChars;
+                            ui->showPanel = (sp != 0); ui->showSelectedName = (ssn != 0);
+                        }
+                    }
+                } else if (field == "gridinventory") {
+                    auto* gi = go->AddComponent<GridInventory>();
+                    int tk = 'i'; in >> gi->cols >> gi->rows >> tk; gi->toggleKey = (char)tk;
+                    gi->title = ReadQuoted(in);
+                    int n = 0; in >> n; gi->items.clear();
+                    for (int i = 0; i < n; ++i) {
+                        GridItem it; it.name = ReadQuoted(in);
+                        in >> it.w >> it.h >> it.x >> it.y >> it.count >> it.weight;
+                        gi->items.push_back(it);
+                    }
+                } else if (field == "gridinventoryui") {
+                    auto* gu = go->AddComponent<GridInventoryUI>();
+                    int dk = 1, sw = 1; in >> gu->cellSize >> gu->gap >> dk >> sw;
+                    gu->darkenWhenOpen = (dk != 0); gu->showWeight = (sw != 0);
+                    auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    rc(gu->panelColor); rc(gu->cellColor); rc(gu->itemColor); rc(gu->itemBorder); rc(gu->textColor);
+                    gu->iconFolder = ReadQuoted(in);
+                    in >> std::ws;   // optional polish block (added later; numeric)
+                    int gpk = in.peek();
+                    if (std::isdigit(gpk) || gpk == '-' || gpk == '.') {
+                        in >> gu->cornerRadius;
+                        rc(gu->titleBar); rc(gu->hoverColor); rc(gu->dropOk); rc(gu->dropBad);
                     }
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
@@ -1878,6 +2061,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tr->italic = (it != 0); tr->gradient = (gr != 0);
                         tr->colorBottom = cb; tr->alignBottom = (ab != 0);
                     }
+                    in >> std::ws; // optional TTF font path (newest)
+                    if (in.peek() == '"') tr->fontPath = ReadQuoted(in);
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;
@@ -1979,6 +2164,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     btn->clickTarget = ReadQuoted(in); btn->clickFunction = ReadQuoted(in);
                                     in >> std::ws; // optional OnClick argument (added later)
                                     if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') in >> btn->clickArg;
+                                    in >> std::ws; // optional TTF label font (newest)
+                                    if (in.peek() == '"') btn->fontPath = ReadQuoted(in);
                                 }
                             }
                         }

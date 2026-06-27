@@ -50,9 +50,21 @@ target_include_directories(okay_imgui SYSTEM PUBLIC
 target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
-add_executable(okay-editor main.cpp EditorState.cpp)
-target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_executable(okay-editor main.cpp EditorState.cpp
+    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)  # native file dialogs
+target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared
+    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd)
+set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c
+    PROPERTIES COMPILE_OPTIONS "-w")
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
+if(WIN32)
+    target_link_libraries(okay-editor PRIVATE comdlg32 ole32 shell32 user32)
+endif()
+# OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
+if(TARGET okay_ui)
+    target_link_libraries(okay-editor PRIVATE okay_ui)
+    target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
+endif()
 set_target_properties(okay-editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     OUTPUT_NAME "OkayEngine")    # the name the launcher looks for

@@ -114,6 +114,12 @@ public:
     };
     RenderSettings renderSettings;
 
+    /// Default TTF/OTF font for this scene's UI widgets (buttons, dropdowns, tabs,
+    /// toggles, sliders, input fields, tooltips, ...). Empty = the built-in 8x8
+    /// bitmap font. A widget/Text with its own fontPath overrides this. Travels with
+    /// the scene so the editor preview and the shipped player match.
+    std::string uiFont;
+
     // ---- Lifecycle (driven by the Application) ------------------------
     /// Run Awake/Start on all components created so far.
     void Start();

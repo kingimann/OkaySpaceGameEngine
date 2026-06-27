@@ -6,6 +6,8 @@ add_library(okay_engine
     src/Core/DataAsset.cpp
     src/Input/Input.cpp
     src/Render/ConsoleRenderer.cpp
+    src/Render/GLRenderer.cpp
+    src/Render/D3D11Renderer.cpp
     src/Scene/Component.cpp
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp
@@ -44,6 +46,7 @@ add_library(okay_engine
     src/AI/Pathfinding.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
+    src/Graphics/TtfFont.cpp
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
@@ -58,7 +61,7 @@ target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/font8x8
 )
 # Silence warnings from the third-party single-header libraries.
-set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp
+set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Graphics/TtfFont.cpp
     PROPERTIES COMPILE_OPTIONS "-w")
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)
@@ -69,6 +72,9 @@ target_link_libraries(okay_engine PUBLIC Threads::Threads)
 # Networking needs the Windows sockets library when targeting Windows.
 if(WIN32)
     target_link_libraries(okay_engine PUBLIC ws2_32)
+    # The Direct3D 11 scene renderer (D3D11Renderer.cpp, guarded by _WIN32) needs the
+    # D3D runtime + HLSL compiler. Off Windows the file compiles to nothing.
+    target_link_libraries(okay_engine PUBLIC d3d11 d3dcompiler)
 endif()
 
 # ---- Optional packet encryption (libsodium) --------------------------

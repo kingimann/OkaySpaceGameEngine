@@ -170,13 +170,21 @@ const char* kFrag =
     "uniform vec3 uAmbient; uniform vec3 uEmissive; uniform vec3 uEye;\n"
     "uniform float uSpecular; uniform float uShininess; uniform float uUnlit;\n"
     "uniform sampler2D uTex; uniform float uUseTex;\n"
+    "uniform float uShaderMode; uniform float uToonBands; uniform float uRimStr;\n"
+    "uniform vec3 uRimColor; uniform vec3 uGradTop; uniform vec3 uGradBot;\n"
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol;\n"
     "void main(){\n"
+    "  vec3 N = normalize(vN);\n"
     "  vec3 base = uColor * vCol;\n"
     "  if (uUseTex > 0.5) base *= texture2D(uTex, vUV).rgb;\n"
+    "  if (uShaderMode > 2.5 && uShaderMode < 3.5)\n"             // Gradient
+    "    base = mix(uGradBot, uGradTop, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"
+    "  bool fres = uShaderMode > 3.5;\n"                          // Fresnel
+    "  if (fres) base *= 0.10;\n"
     "  if (uUnlit > 0.5) { gl_FragColor = vec4(base + uEmissive, 1.0); return; }\n"
-    "  vec3 N = normalize(vN);\n"
     "  float ndl = max(dot(N, uLightDir), 0.0);\n"
+    "  if (uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5)\n"   // Toon banding
+    "    ndl = ceil(ndl * uToonBands) / uToonBands;\n"
     "  vec3 diff = base * (uAmbient + uLightColor * ndl);\n"
     "  float spec = 0.0;\n"
     "  if (uSpecular > 0.0) {\n"
@@ -184,7 +192,11 @@ const char* kFrag =
     "    vec3 H = normalize(uLightDir + V);\n"
     "    spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular;\n"
     "  }\n"
-    "  gl_FragColor = vec4(diff + vec3(spec) + uEmissive, 1.0);\n"
+    "  vec3 rim = vec3(0.0);\n"                                   // rim glow (Fresnel model or rimStr>0)
+    "  float rs = uRimStr; if (fres && rs < 0.8) rs = 1.6;\n"
+    "  if (rs > 0.0) { vec3 V = normalize(uEye - vWorld); float f = 1.0 - max(dot(N,V),0.0);\n"
+    "    rim = uRimColor * (f*f*f * rs); }\n"
+    "  gl_FragColor = vec4(diff + vec3(spec) + rim + uEmissive, 1.0);\n"
     "}\n";
 
 GLuint compile(GLenum type, const char* src) {
@@ -296,6 +308,12 @@ bool GLRenderer::EnsureProgram() {
     m_uTex = g.GetUniformLocation(m_prog, "uTex");
     m_uUseTex = g.GetUniformLocation(m_prog, "uUseTex");
     m_uTiling = g.GetUniformLocation(m_prog, "uTiling");
+    m_uShaderMode = g.GetUniformLocation(m_prog, "uShaderMode");
+    m_uToonBands = g.GetUniformLocation(m_prog, "uToonBands");
+    m_uRimStr = g.GetUniformLocation(m_prog, "uRimStr");
+    m_uRimColor = g.GetUniformLocation(m_prog, "uRimColor");
+    m_uGradTop = g.GetUniformLocation(m_prog, "uGradTop");
+    m_uGradBot = g.GetUniformLocation(m_prog, "uGradBot");
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
     // crash on the attempt). Create one when available; on a compatibility context
@@ -445,6 +463,12 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform1f(m_uSpecular, unlit ? 0.0f : mr->specular);
         g.Uniform1f(m_uShininess, mr->shininess);
         g.Uniform1f(m_uUnlit, unlit ? 1.0f : 0.0f);
+        g.Uniform1f(m_uShaderMode, (float)(int)mr->shader);
+        g.Uniform1f(m_uToonBands, (float)mr->toonBands);
+        g.Uniform1f(m_uRimStr, mr->rimStrength);
+        g.Uniform3f(m_uRimColor, mr->rimColor.r, mr->rimColor.g, mr->rimColor.b);
+        g.Uniform3f(m_uGradTop, mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b);
+        g.Uniform3f(m_uGradBot, mr->gradientBottom.r, mr->gradientBottom.g, mr->gradientBottom.b);
         if (tex) {
             g.ActiveTexture(GL_TEXTURE0);
             g.BindTexture(GL_TEXTURE_2D, tex);

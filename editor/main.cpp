@@ -6996,6 +6996,82 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##sprite")) toRemove = sr;
         }
     }
+    if (auto* ps = dynamic_cast<ParticleSystem*>(curComp)) {
+        if (CompHeader("Particle System", ps, &toRemove)) {
+            // ---- Emission ----
+            ImGui::SeparatorText("Emission");
+            if (ImGui::Checkbox("Playing##ps", &ps->playing)) ed.dirty = true;
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%d live)", ps->AliveCount());
+            if (ImGui::DragFloat("Rate / sec##ps", &ps->emissionRate, 0.5f, 0.0f, 10000.0f)) ed.dirty = true;
+            if (ImGui::DragInt("Max Particles##ps", &ps->maxParticles, 1.0f, 0, 100000)) ed.dirty = true;
+
+            // ---- Shape ----
+            ImGui::SeparatorText("Shape");
+            const char* shapes[] = {"Point", "Circle", "Sphere", "Box", "Cone", "Edge"};
+            int shp = (int)ps->shape;
+            if (ImGui::Combo("Shape##ps", &shp, shapes, 6)) { ps->shape = (ParticleSystem::Shape)shp; ed.dirty = true; }
+            if (ps->shape == ParticleSystem::Shape::Circle || ps->shape == ParticleSystem::Shape::Sphere ||
+                ps->shape == ParticleSystem::Shape::Edge)
+                if (ImGui::DragFloat("Radius##ps", &ps->shapeRadius, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ps->shape == ParticleSystem::Shape::Cone)
+                if (ImGui::SliderFloat("Cone Angle##ps", &ps->shapeAngle, 0.0f, 180.0f)) ed.dirty = true;
+            if (ps->shape == ParticleSystem::Shape::Box) {
+                float bs[2] = {ps->boxSize.x, ps->boxSize.y};
+                if (ImGui::DragFloat2("Box Size##ps", bs, 0.05f, 0.0f, 1000.0f)) { ps->boxSize = {bs[0], bs[1]}; ed.dirty = true; }
+            }
+
+            // ---- Start values ----
+            ImGui::SeparatorText("Start");
+            if (ImGui::DragFloat("Lifetime##ps", &ps->startLifetime, 0.05f, 0.01f, 1000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Lifetime +/-##ps", &ps->startLifetimeRandom, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Size##ps", &ps->startSize, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Size +/-##ps", &ps->startSizeRandom, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            float sc[4] = {ps->startColor.r, ps->startColor.g, ps->startColor.b, ps->startColor.a};
+            if (ImGui::ColorEdit4("Start Color##ps", sc)) { ps->startColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+            float sv[2] = {ps->startVelocity.x, ps->startVelocity.y};
+            if (ImGui::DragFloat2("Velocity##ps", sv, 0.05f)) { ps->startVelocity = {sv[0], sv[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Velocity +/-##ps", &ps->velocityRandom, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Speed +/- %##ps", &ps->speedRandom, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+
+            // ---- Over lifetime ----
+            ImGui::SeparatorText("Over Lifetime");
+            if (ImGui::Checkbox("Fade Out##ps", &ps->fadeOverLife)) ed.dirty = true;
+            if (ImGui::Checkbox("Color Over Life##ps", &ps->colorOverLife)) ed.dirty = true;
+            if (ps->colorOverLife) {
+                float ec[4] = {ps->endColor.r, ps->endColor.g, ps->endColor.b, ps->endColor.a};
+                if (ImGui::ColorEdit4("End Color##ps", ec)) { ps->endColor = {ec[0], ec[1], ec[2], ec[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Size Over Life##ps", &ps->sizeOverLife)) ed.dirty = true;
+            if (ps->sizeOverLife)
+                if (ImGui::DragFloat("End Size##ps", &ps->endSize, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+
+            // ---- Forces ----
+            ImGui::SeparatorText("Forces");
+            float gv[2] = {ps->gravity.x, ps->gravity.y};
+            if (ImGui::DragFloat2("Gravity##ps", gv, 0.05f)) { ps->gravity = {gv[0], gv[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
+
+            // ---- Bursts & duration ----
+            ImGui::SeparatorText("Bursts & Duration");
+            if (ImGui::DragInt("Burst Count##ps", &ps->burstCount, 1.0f, 0, 100000)) ed.dirty = true;
+            if (ps->burstCount > 0)
+                if (ImGui::DragFloat("Burst Time##ps", &ps->burstTime, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Duration##ps", &ps->duration, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
+            ImGui::SameLine(); ImGui::TextDisabled("(0 = forever)");
+            if (ImGui::Checkbox("Loop##ps", &ps->loop)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Restart##ps")) ps->Restart();
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Burst##ps")) ps->Emit(ps->burstCount > 0 ? ps->burstCount : 16);
+
+            int seedI = (int)ps->seed;
+            if (ImGui::DragInt("Seed##ps", &seedI, 1.0f, 0, 2000000000)) { ps->seed = (std::uint64_t)seedI; ed.dirty = true; }
+
+            if (ImGui::SmallButton("Remove##ps")) toRemove = ps;
+        }
+    }
     if (auto* mr = dynamic_cast<MeshRenderer*>(curComp)) {
         if (CompHeader("Mesh Renderer", mr, &toRemove)) {
             float col[4] = {mr->color.r, mr->color.g, mr->color.b, mr->color.a};
@@ -7007,14 +7083,24 @@ void DrawInspector(EditorState& ed) {
             // Unlit flag into the selector; the renderer treats Unlit-shader == unlit.
             int sh = (int)mr->shader;
             if (mr->unlit && mr->shader == MeshRenderer::Shader::Standard) sh = 1;  // legacy unlit flag
-            const char* shaders[] = {"Standard", "Unlit", "Toon"};
-            if (ImGui::Combo("Shader##mesh", &sh, shaders, 3)) {
+            const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel"};
+            if (ImGui::Combo("Shader##mesh", &sh, shaders, 5)) {
                 mr->shader = (MeshRenderer::Shader)sh;
                 mr->unlit = (mr->shader == MeshRenderer::Shader::Unlit);  // keep legacy flag in sync
                 ed.dirty = true;
             }
             if (mr->shader == MeshRenderer::Shader::Toon)
                 if (ImGui::SliderInt("Cel Bands##mesh", &mr->toonBands, 2, 6)) ed.dirty = true;
+            // Gradient (vertical sky/atmosphere ramp): pick the top + bottom colours.
+            if (mr->shader == MeshRenderer::Shader::Gradient) {
+                float gt[3] = {mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b};
+                if (ImGui::ColorEdit3("Gradient Top##mesh", gt)) { mr->gradientTop = {gt[0], gt[1], gt[2], 1.0f}; ed.dirty = true; }
+                float gb[3] = {mr->gradientBottom.r, mr->gradientBottom.g, mr->gradientBottom.b};
+                if (ImGui::ColorEdit3("Gradient Bottom##mesh", gb)) { mr->gradientBottom = {gb[0], gb[1], gb[2], 1.0f}; ed.dirty = true; }
+            }
+            // Fresnel (rim-glow shell): the rim controls below tune the edge glow.
+            if (mr->shader == MeshRenderer::Shader::Fresnel)
+                ImGui::TextDisabled("Edge glow uses the Rim settings below.");
             // Rim (Fresnel) backlight — a per-material glow, great with Toon.
             if (ImGui::SliderFloat("Rim##mesh", &mr->rimStrength, 0.0f, 2.0f)) ed.dirty = true;
             if (mr->rimStrength > 0.0f) {
@@ -14163,6 +14249,21 @@ int main(int argc, char** argv) {
             // Esc releases the manual capture.
             const Uint8* ks2 = SDL_GetKeyboardState(nullptr);
             if (ks2[SDL_SCANCODE_ESCAPE]) g_gameMouseCapture = false;
+            // Unity-style hand-off (mirrors the player): when a bag/chest opens or closes
+            // while the game wants a locked cursor, warp the pointer to the Game-view
+            // centre so it appears in the middle on open and the look anchor resets on
+            // close before re-locking.
+            static bool s_prevGameModal = false;
+            if (gameModal != s_prevGameModal && (g_gameMouseCapture || Cursor::IsLocked())) {
+                int ww = 0, wh = 0, ow = 0, oh = 0;
+                SDL_GetWindowSize(window, &ww, &wh);
+                SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                float sx = ow > 0 ? (float)ww / ow : 1.0f, sy = oh > 0 ? (float)wh / oh : 1.0f;
+                int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
+                int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
+                SDL_WarpMouseInWindow(window, cx, cy);
+            }
+            s_prevGameModal = gameModal;
             // Capture when the user asked OR the game requested a locked cursor, unless a
             // modal panel is open (then we need a visible cursor to click it).
             bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal;
@@ -14240,6 +14341,8 @@ int main(int argc, char** argv) {
                     if (!up) continue;
                     if (auto* iu = up->GetComponent<okay::InventoryUI>()) if (iu->open && iu->dragItems) { invModal = true; break; }
                     if (auto* gi = up->GetComponent<okay::GridInventory>()) if (gi->open) { invModal = true; break; }
+                    if (auto* cs = up->GetComponent<okay::CraftingStation>()) if (cs->open) { invModal = true; break; }
+                    if (auto* ce = up->GetComponent<okay::ChestInventory>()) if (ce->open) { invModal = true; break; }
                 }
             okay::Input::SetUICaptured(invModal);
         }

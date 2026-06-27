@@ -43,6 +43,57 @@ int main() {
         }
     }
 
+    // Gradient shader round-trips its top/bottom colours through the scene.
+    {
+        Scene s("G"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("Cube")->AddComponent<MeshRenderer>();
+        mr->shader = MeshRenderer::Shader::Gradient;
+        mr->gradientTop = Color::FromBytes(255, 0, 0);
+        mr->gradientBottom = Color::FromBytes(0, 0, 255);
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* mr2 = s2.Find("Cube") ? s2.Find("Cube")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) {
+            CHECK(mr2->shader == MeshRenderer::Shader::Gradient);
+            CHECK_NEAR(mr2->gradientTop.r, 1.0f, 0.02f);
+            CHECK_NEAR(mr2->gradientBottom.b, 1.0f, 0.02f);
+        }
+    }
+
+    // Gradient + Fresnel actually change the rendered image vs Standard.
+    {
+        auto renderSphere = [](MeshRenderer::Shader shader) {
+            Scene scene("SH"); scene.physicsEnabled = false;
+            GameObject* lgo = scene.CreateGameObject("Sun");
+            auto* light = lgo->AddComponent<Light>();
+            light->type = Light::Type::Directional; light->intensity = 1.0f;
+            lgo->transform->localRotation = Quat::Euler(45, -30, 0);
+            GameObject* go = scene.CreateGameObject("Ball");
+            auto* mr = go->AddComponent<MeshRenderer>();
+            mr->mesh = Mesh::Sphere();
+            mr->color = Color::FromBytes(180, 180, 180);
+            mr->shader = shader;
+            mr->gradientTop = Color::FromBytes(255, 0, 0);
+            mr->gradientBottom = Color::FromBytes(0, 0, 255);
+            Raster r; r.Resize(64, 64); r.Clear(0xFF000000u);
+            Mat4 view = Mat4::LookAt({0, 0, 4}, {0, 0, 0}, Vec3::Up);
+            Mat4 proj = Mat4::Perspective(60.0f, 1.0f, 0.1f, 100.0f);
+            RenderMeshes(r, scene, proj * view, {0, 0, 4});
+            return r;
+        };
+        Raster std0 = renderSphere(MeshRenderer::Shader::Standard);
+        Raster grad = renderSphere(MeshRenderer::Shader::Gradient);
+        Raster fres = renderSphere(MeshRenderer::Shader::Fresnel);
+        int dGrad = 0, dFres = 0;
+        for (int i = 0; i < 64 * 64; ++i) {
+            if (std0.Get(i % 64, i / 64) != grad.Get(i % 64, i / 64)) ++dGrad;
+            if (std0.Get(i % 64, i / 64) != fres.Get(i % 64, i / 64)) ++dFres;
+        }
+        CHECK(dGrad > 0);   // gradient ramp repaints the sphere
+        CHECK(dFres > 0);   // fresnel rim/darkening repaints the sphere
+    }
+
     // The Toon shader posterizes shading: a lit sphere shows far fewer distinct
     // shades than the smooth Standard shader.
     {

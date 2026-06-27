@@ -75,7 +75,7 @@ public:
     float mouseSensitivity = 0.2f;      // degrees per pixel
     bool  invertY = false;              // invert vertical mouse look
     bool  invertX = false;             // invert horizontal mouse look
-    bool  lockCursor = false;           // hide + lock the cursor while playing (off: keep the pointer for UI)
+    bool  lockCursor = true;            // hide + lock the cursor while playing (off: keep the pointer for UI)
     float distance  = 5.0f;             // camera distance from the player
     float minDistance = 2.0f, maxDistance = 12.0f;
     float zoomSpeed = 1.0f;             // wheel zoom step

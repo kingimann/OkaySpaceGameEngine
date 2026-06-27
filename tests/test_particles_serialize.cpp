@@ -20,6 +20,24 @@ int main() {
     ps->gravity = {0.0f, -9.8f};
     ps->fadeOverLife = false;
     ps->seed = 99887766ull;
+    // Expanded (v2) fields.
+    ps->endColor = Color(0.9f, 0.1f, 0.05f, 0.0f);
+    ps->colorOverLife = true;
+    ps->endSize = 0.05f;
+    ps->sizeOverLife = true;
+    ps->startLifetimeRandom = 0.5f;
+    ps->startSizeRandom = 0.1f;
+    ps->speedRandom = 0.25f;
+    ps->shape = ParticleSystem::Shape::Cone;
+    ps->shapeRadius = 1.75f;
+    ps->shapeAngle = 33.0f;
+    ps->boxSize = {2.0f, 0.5f};
+    ps->gravityModifier = 1.5f;
+    ps->damping = 0.8f;
+    ps->duration = 4.0f;
+    ps->loop = false;
+    ps->burstCount = 25;
+    ps->burstTime = 0.2f;
 
     std::string text = SceneSerializer::Serialize(scene);
     Scene loaded("L");
@@ -39,6 +57,42 @@ int main() {
     CHECK_NEAR(r->gravity.y, -9.8f, 0.001f);
     CHECK(!r->fadeOverLife);
     CHECK(r->seed == 99887766ull);
+    // Expanded (v2) fields round-trip.
+    CHECK_NEAR(r->endColor.r, 0.9f, 0.01f);
+    CHECK(r->colorOverLife);
+    CHECK_NEAR(r->endSize, 0.05f, 0.001f);
+    CHECK(r->sizeOverLife);
+    CHECK_NEAR(r->startLifetimeRandom, 0.5f, 0.001f);
+    CHECK_NEAR(r->startSizeRandom, 0.1f, 0.001f);
+    CHECK_NEAR(r->speedRandom, 0.25f, 0.001f);
+    CHECK(r->shape == ParticleSystem::Shape::Cone);
+    CHECK_NEAR(r->shapeRadius, 1.75f, 0.001f);
+    CHECK_NEAR(r->shapeAngle, 33.0f, 0.001f);
+    CHECK_NEAR(r->boxSize.x, 2.0f, 0.001f);
+    CHECK_NEAR(r->gravityModifier, 1.5f, 0.001f);
+    CHECK_NEAR(r->damping, 0.8f, 0.001f);
+    CHECK_NEAR(r->duration, 4.0f, 0.001f);
+    CHECK(!r->loop);
+    CHECK(r->burstCount == 25);
+    CHECK_NEAR(r->burstTime, 0.2f, 0.001f);
+
+    // Behaviour: a cone emitter actually spawns and integrates particles.
+    Scene sim("S");
+    GameObject* e2 = sim.CreateGameObject("E2");
+    auto* ps2 = e2->AddComponent<ParticleSystem>();
+    ps2->shape = ParticleSystem::Shape::Cone;
+    ps2->emissionRate = 100.0f;
+    ps2->startLifetime = 1.0f;
+    ps2->Awake();
+    ps2->Update(0.1f);
+    CHECK(ps2->AliveCount() > 0);
+    // A burst spawns its exact count immediately.
+    Scene sim2("S2");
+    auto* ps3 = sim2.CreateGameObject("E3")->AddComponent<ParticleSystem>();
+    ps3->emissionRate = 0.0f;
+    ps3->Awake();
+    ps3->Emit(10);
+    CHECK(ps3->AliveCount() == 10);
 
     TEST_MAIN_RESULT();
 }

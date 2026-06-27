@@ -1117,7 +1117,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ps->startColor.r << " " << ps->startColor.g << " " << ps->startColor.b << " "
             << ps->startColor.a << " " << ps->startVelocity.x << " " << ps->startVelocity.y << " "
             << ps->velocityRandom << " " << ps->gravity.x << " " << ps->gravity.y << " "
-            << (ps->fadeOverLife ? 1 : 0) << " " << ps->seed << "\n";
+            << (ps->fadeOverLife ? 1 : 0) << " " << ps->seed << " "
+            // --- appended (v2): over-lifetime, shapes, bursts, duration ---
+            << ps->endColor.r << " " << ps->endColor.g << " " << ps->endColor.b << " "
+            << ps->endColor.a << " " << (ps->colorOverLife ? 1 : 0) << " "
+            << ps->endSize << " " << (ps->sizeOverLife ? 1 : 0) << " "
+            << ps->startLifetimeRandom << " " << ps->startSizeRandom << " " << ps->speedRandom << " "
+            << (int)ps->shape << " " << ps->shapeRadius << " " << ps->shapeAngle << " "
+            << ps->boxSize.x << " " << ps->boxSize.y << " "
+            << ps->gravityModifier << " " << ps->damping << " "
+            << ps->duration << " " << (ps->loop ? 1 : 0) << " "
+            << ps->burstCount << " " << ps->burstTime << "\n";
     }
 }
 } // namespace
@@ -2761,6 +2771,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ps->playing = (playing != 0);
                     ps->fadeOverLife = (fade != 0);
                     ps->seed = static_cast<std::uint64_t>(seed);
+                    // Appended v2 fields (older scenes simply stop here).
+                    in >> std::ws;
+                    int pk = in.peek();
+                    if (std::isdigit(pk) || pk == '-' || pk == '+' || pk == '.') {
+                        int colLife = 0, szLife = 0, shapeI = 0, loopI = 1;
+                        in >> ps->endColor.r >> ps->endColor.g >> ps->endColor.b >> ps->endColor.a
+                           >> colLife >> ps->endSize >> szLife
+                           >> ps->startLifetimeRandom >> ps->startSizeRandom >> ps->speedRandom
+                           >> shapeI >> ps->shapeRadius >> ps->shapeAngle
+                           >> ps->boxSize.x >> ps->boxSize.y
+                           >> ps->gravityModifier >> ps->damping
+                           >> ps->duration >> loopI >> ps->burstCount >> ps->burstTime;
+                        ps->colorOverLife = (colLife != 0);
+                        ps->sizeOverLife = (szLife != 0);
+                        ps->loop = (loopI != 0);
+                        ps->shape = (ParticleSystem::Shape)shapeI;
+                    }
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;

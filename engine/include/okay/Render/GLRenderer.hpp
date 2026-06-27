@@ -73,7 +73,9 @@ private:
     int m_uMVP = -1, m_uModel = -1, m_uColor = -1, m_uLightDir = -1,
         m_uLightColor = -1, m_uAmbient = -1, m_uEmissive = -1, m_uEye = -1,
         m_uSpecular = -1, m_uShininess = -1, m_uUnlit = -1,
-        m_uTex = -1, m_uUseTex = -1, m_uTiling = -1;
+        m_uTex = -1, m_uUseTex = -1, m_uTiling = -1,
+        m_uShaderMode = -1, m_uToonBands = -1, m_uRimStr = -1,
+        m_uRimColor = -1, m_uGradTop = -1, m_uGradBot = -1;
     std::vector<float> m_verts;             // interleaved pos(3)+normal(3)+uv(2) scratch
     std::vector<unsigned int> m_indices;    // scratch index buffer
     std::vector<std::uint32_t> m_pixels;    // read-back result

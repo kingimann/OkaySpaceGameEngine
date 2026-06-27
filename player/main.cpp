@@ -1030,6 +1030,15 @@ int main(int argc, char** argv) {
         // Apply the game's requested cursor state (Unity-style Cursor lock/visibility).
         static Vec2 s_virtualMouse{0, 0};
         bool locked = Cursor::IsLocked() && !invModal;
+        // Unity-style hand-off: when a bag opens (mouselook was locked) free the pointer
+        // AT SCREEN CENTRE, and when it closes warp back to centre before re-locking, so
+        // the cursor always appears in the middle and the look anchor resets cleanly.
+        static bool s_prevInvModal = false;
+        if (invModal != s_prevInvModal && Cursor::IsLocked()) {
+            int ww = 0, wh = 0; SDL_GetWindowSize(window, &ww, &wh);
+            SDL_WarpMouseInWindow(window, ww / 2, wh / 2);
+        }
+        s_prevInvModal = invModal;
         SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
         // While actively dragging a stack, hide the OS arrow: the dragged icon (drawn
         // centred on the mouse) becomes the pointer. The arrow's hotspot sits at its

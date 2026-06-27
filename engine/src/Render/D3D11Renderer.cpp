@@ -35,6 +35,9 @@ const char* kHLSL =
     "  float3 uAmbient;   float _p0;\n"
     "  float3 uEye;       float _p1;\n"
     "  float2 uTiling;    float2 _p2;\n"
+    "  float3 uRimColor;  float uShaderMode;\n"
+    "  float3 uGradTop;   float uToonBands;\n"
+    "  float3 uGradBot;   float uRimStr;\n"
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "SamplerState uSamp : register(s0);\n"
@@ -52,11 +55,17 @@ const char* kHLSL =
     "  return o;\n"
     "}\n"
     "float4 PSMain(PSIn i):SV_TARGET {\n"
+    "  float3 N = normalize(i.nrm);\n"
     "  float3 base = uColor * i.col;\n"      // per-vertex/face color (white when unused)
     "  if (uUseTex > 0.5) base *= uTex.Sample(uSamp, i.uv).rgb;\n"
+    "  if (uShaderMode > 2.5 && uShaderMode < 3.5)\n"           // Gradient
+    "    base = lerp(uGradBot, uGradTop, saturate(N.y * 0.5 + 0.5));\n"
+    "  bool fres = uShaderMode > 3.5;\n"                        // Fresnel
+    "  if (fres) base *= 0.10;\n"
     "  if (uUnlit > 0.5) return float4(base + uEmissive, 1.0);\n"
-    "  float3 N = normalize(i.nrm);\n"
     "  float ndl = max(dot(N, uLightDir), 0.0);\n"
+    "  if (uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5)\n"   // Toon
+    "    ndl = ceil(ndl * uToonBands) / uToonBands;\n"
     "  float3 diff = base * (uAmbient + uLightColor * ndl);\n"
     "  float spec = 0.0;\n"
     "  if (uSpecular > 0.0) {\n"
@@ -64,7 +73,11 @@ const char* kHLSL =
     "    float3 H = normalize(uLightDir + V);\n"
     "    spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular;\n"
     "  }\n"
-    "  return float4(diff + spec.xxx + uEmissive, 1.0);\n"
+    "  float3 rim = float3(0,0,0);\n"
+    "  float rs = uRimStr; if (fres && rs < 0.8) rs = 1.6;\n"
+    "  if (rs > 0.0) { float3 V = normalize(uEye - i.world); float f = 1.0 - max(dot(N,V),0.0);\n"
+    "    rim = uRimColor * (f*f*f * rs); }\n"
+    "  return float4(diff + spec.xxx + rim + uEmissive, 1.0);\n"
     "}\n";
 
 // Constant-buffer layout mirrored on the C++ side (must match the cbuffer, 16-byte
@@ -79,6 +92,9 @@ struct CB {
     float ambient[3];   float _p0;
     float eye[3];       float _p1;
     float tiling[2];    float _p2[2];
+    float rimColor[3];  float shaderMode;
+    float gradTop[3];   float toonBands;
+    float gradBot[3];   float rimStr;
 };
 
 } // namespace
@@ -347,6 +363,12 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.ambient[0] = 0.35f; cb.ambient[1] = 0.36f; cb.ambient[2] = 0.40f;
         cb.eye[0] = eye.x; cb.eye[1] = eye.y; cb.eye[2] = eye.z;
         cb.tiling[0] = srv ? mr->tiling.x : 1.0f; cb.tiling[1] = srv ? mr->tiling.y : 1.0f;
+        cb.shaderMode = (float)(int)mr->shader;
+        cb.toonBands = (float)mr->toonBands;
+        cb.rimStr = mr->rimStrength;
+        cb.rimColor[0] = mr->rimColor.r; cb.rimColor[1] = mr->rimColor.g; cb.rimColor[2] = mr->rimColor.b;
+        cb.gradTop[0] = mr->gradientTop.r; cb.gradTop[1] = mr->gradientTop.g; cb.gradTop[2] = mr->gradientTop.b;
+        cb.gradBot[0] = mr->gradientBottom.r; cb.gradBot[1] = mr->gradientBottom.g; cb.gradBot[2] = mr->gradientBottom.b;
         if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
         }

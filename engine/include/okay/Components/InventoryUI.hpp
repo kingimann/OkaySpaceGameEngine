@@ -7,6 +7,8 @@
 #include "okay/Render/Color.hpp"
 #include <string>
 #include <utility>
+#include <algorithm>
+#include <vector>
 
 namespace okay {
 
@@ -64,6 +66,13 @@ public:
     bool  slotNumbers    = false;   ///< draw 1–9 in the corner of each hotbar slot
     Color numberColor    = Color::FromBytes(180, 184, 200, 255); ///< hotbar slot-number tint
     char  sortKey        = 0;       ///< press to compact + merge stacks (0 = disabled)
+    /// How Sort() orders the packed stacks. Compact keeps gather-order (just closes
+    /// holes + merges); Name = A→Z; Count = biggest stacks first; Rarity = by the
+    /// order items appear in `rarities` (rarest-first), then by name.
+    enum class SortMode { Compact, Name, Count, Rarity };
+    SortMode sortMode    = SortMode::Compact;
+    bool  sortOnClose    = false;   ///< auto-Sort() the bag when the backpack closes
+    char  dropKey        = 0;       ///< press to drop one of the selected hotbar item (0 = disabled)
     bool  splitRightClick = true;   ///< right-click a stack to pick up part of it
     bool  splitHalf       = true;   ///< right-click lifts half the stack (else just one)
     bool  shiftQuickMove  = true;   ///< shift+click moves a stack hotbar↔backpack
@@ -114,8 +123,18 @@ public:
         return false;
     }
 
+    /// Index of `item` in the rarity rules (lower = listed earlier = treated as rarer
+    /// for sorting). Returns a large number when the item has no rarity rule, so
+    /// unranked items sort after ranked ones.
+    int RarityIndex(const std::string& item) const {
+        for (std::size_t i = 0; i < rarities.size(); ++i)
+            if (rarities[i].item == item) return (int)i;
+        return 1 << 20;
+    }
+
     /// Compact the bag: merge identical stacks and pull everything to the front, so
-    /// holes left by dragging close up. Bound to `sortKey` (e.g. set it to 'r').
+    /// holes left by dragging close up. `sortMode` then orders the result (A→Z, by
+    /// count, or by rarity). Bound to `sortKey` (e.g. set it to 'r').
     void Sort() {
         Inventory* inv = Inv();
         if (!inv) return;
@@ -127,9 +146,33 @@ public:
                 if (p.item == s.item) { p.count += s.count; merged = true; break; }
             if (!merged) packed.push_back(Inventory::Slot{s.item, s.count});
         }
+        // Order the packed stacks per the chosen mode (Compact keeps gather order).
+        if (sortMode == SortMode::Name)
+            std::stable_sort(packed.begin(), packed.end(),
+                             [](const Inventory::Slot& a, const Inventory::Slot& b){ return a.item < b.item; });
+        else if (sortMode == SortMode::Count)
+            std::stable_sort(packed.begin(), packed.end(),
+                             [](const Inventory::Slot& a, const Inventory::Slot& b){ return a.count > b.count; });
+        else if (sortMode == SortMode::Rarity)
+            std::stable_sort(packed.begin(), packed.end(),
+                             [this](const Inventory::Slot& a, const Inventory::Slot& b){
+                                 int ra = RarityIndex(a.item), rb = RarityIndex(b.item);
+                                 if (ra != rb) return ra < rb; return a.item < b.item; });
         for (auto& s : inv->slots) s = Inventory::Slot{};     // clear, keeping slot count
         for (std::size_t i = 0; i < packed.size() && i < inv->slots.size(); ++i)
             inv->slots[i] = packed[i];
+    }
+
+    /// Drop one of the selected hotbar item: removes it from the inventory and returns
+    /// its name (empty if nothing to drop) so gameplay can spawn a world pickup.
+    std::string DropSelected() {
+        Inventory* inv = Inv();
+        if (!inv || selected < 0 || selected >= (int)inv->slots.size()) return "";
+        Inventory::Slot& s = inv->slots[selected];
+        if (Inventory::Empty(s)) return "";
+        std::string item = s.item;
+        if (--s.count <= 0) { s.item.clear(); s.count = 0; }
+        return item;
     }
 
     /// The Inventory this UI shows: on the same object, else on the player root.
@@ -207,8 +250,13 @@ public:
             if (w > 0.5f)      selected = (selected - 1 + hotbarSlots) % hotbarSlots;
             else if (w < -0.5f) selected = (selected + 1) % hotbarSlots;
         }
-        if (toggleKey && Input::GetKeyDown(toggleKey)) open = !open;
+        if (toggleKey && Input::GetKeyDown(toggleKey)) {
+            bool wasOpen = open;
+            open = !open;
+            if (wasOpen && !open && sortOnClose) Sort();   // auto-tidy on close
+        }
         if (sortKey && Input::GetKeyDown(sortKey)) Sort();
+        if (dropKey && Input::GetKeyDown(dropKey)) DropSelected();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
     }

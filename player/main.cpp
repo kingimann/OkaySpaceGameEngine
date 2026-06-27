@@ -22,6 +22,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -112,6 +113,48 @@ static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, flo
     SDL_Rect rect{c.x - hw, c.y - hh, hw * 2 > 0 ? hw * 2 : 1, hh * 2 > 0 ? hh * 2 : 1};
     SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     SDL_RenderFillRect(r, &rect);
+}
+
+// --- Small raster helpers for the minimap (filled circle / ring / triangle). ----
+static void MMFillCircle(SDL_Renderer* r, int cx, int cy, int rad, SDL_Color col) {
+    if (rad < 1) rad = 1;
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    for (int dy = -rad; dy <= rad; ++dy) {
+        int dx = (int)std::sqrt((double)(rad * rad - dy * dy));
+        SDL_RenderDrawLine(r, cx - dx, cy + dy, cx + dx, cy + dy);
+    }
+}
+static void MMDrawRing(SDL_Renderer* r, int cx, int cy, int rad, int width, SDL_Color col) {
+    if (rad < 1) rad = 1; if (width < 1) width = 1;
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    const int seg = 64;
+    int prevx = cx + rad, prevy = cy;
+    for (int i = 1; i <= seg; ++i) {
+        float a = (float)i / seg * 6.2831853f;
+        int x = cx + (int)(std::cos(a) * rad), y = cy + (int)(std::sin(a) * rad);
+        for (int w2 = 0; w2 < width; ++w2) SDL_RenderDrawLine(r, prevx, prevy + w2, x, y + w2);
+        prevx = x; prevy = y;
+    }
+}
+static void MMFillTriangle(SDL_Renderer* r, SDL_Point a, SDL_Point b, SDL_Point c, SDL_Color col) {
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    int minY = std::min({a.y, b.y, c.y}), maxY = std::max({a.y, b.y, c.y});
+    auto edgeX = [](SDL_Point p, SDL_Point q, int y, float& x) -> bool {
+        if (p.y == q.y) return false;
+        if (y < std::min(p.y, q.y) || y > std::max(p.y, q.y)) return false;
+        float t = (float)(y - p.y) / (float)(q.y - p.y);
+        x = p.x + t * (q.x - p.x); return true;
+    };
+    for (int y = minY; y <= maxY; ++y) {
+        float xs[3]; int n = 0; float xv;
+        if (edgeX(a, b, y, xv)) xs[n++] = xv;
+        if (edgeX(b, c, y, xv)) xs[n++] = xv;
+        if (edgeX(c, a, y, xv)) xs[n++] = xv;
+        if (n >= 2) {
+            int x0 = (int)std::min(xs[0], xs[1]), x1 = (int)std::max(xs[0], xs[1]);
+            SDL_RenderDrawLine(r, x0, y, x1, y);
+        }
+    }
 }
 
 // Upload a TTF glyph atlas as an SDL texture (once, cached) for the player.
@@ -1603,46 +1646,114 @@ int main(int argc, char** argv) {
             float op = UIOpacity(up.get());
             Vec2 o, sz; if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
             SDL_Rect box{(int)o.x, (int)o.y, (int)sz.x, (int)sz.y};
-            // Background fill.
-            SDL_SetRenderDrawColor(renderer, (Uint8)(mm->background.r*255), (Uint8)(mm->background.g*255),
-                                   (Uint8)(mm->background.b*255), (Uint8)(mm->background.a*255*op));
-            SDL_RenderFillRect(renderer, &box);
-            // Border (nested 1px rects for borderWidth).
-            SDL_SetRenderDrawColor(renderer, (Uint8)(mm->border.r*255), (Uint8)(mm->border.g*255),
-                                   (Uint8)(mm->border.b*255), (Uint8)(mm->border.a*255*op));
+            int cx = (int)(o.x + sz.x * 0.5f), cy = (int)(o.y + sz.y * 0.5f);
+            int radius = (int)((sz.x < sz.y ? sz.x : sz.y) * 0.5f);
+            SDL_Color bgCol{(Uint8)(mm->background.r*255), (Uint8)(mm->background.g*255),
+                            (Uint8)(mm->background.b*255), (Uint8)(mm->background.a*255*op)};
+            SDL_Color bdCol{(Uint8)(mm->border.r*255), (Uint8)(mm->border.g*255),
+                            (Uint8)(mm->border.b*255), (Uint8)(mm->border.a*255*op)};
             int bw = (int)mm->borderWidth; if (bw < 1) bw = 1;
-            for (int i = 0; i < bw; ++i) {
-                SDL_Rect e{box.x + i, box.y + i, box.w - 2*i, box.h - 2*i};
-                if (e.w <= 0 || e.h <= 0) break;
-                SDL_RenderDrawRect(renderer, &e);
+            // Clip everything (grid + blips) to the map rect so nothing bleeds out.
+            SDL_Rect prevClip; SDL_RenderGetClipRect(renderer, &prevClip);
+            bool hadClip = SDL_RenderIsClipEnabled(renderer);
+            if (mm->circular) {
+                MMFillCircle(renderer, cx, cy, radius, bgCol);
+            } else {
+                SDL_SetRenderDrawColor(renderer, bgCol.r, bgCol.g, bgCol.b, bgCol.a);
+                SDL_RenderFillRect(renderer, &box);
             }
-            // Center world position: the target object if named/found, else origin.
+            SDL_RenderSetClipRect(renderer, &box);
+            // Reference grid (rectangular maps only).
+            if (mm->showGrid && !mm->circular && mm->gridSpacing > 1.0f) {
+                SDL_SetRenderDrawColor(renderer, (Uint8)(mm->gridColor.r*255), (Uint8)(mm->gridColor.g*255),
+                                       (Uint8)(mm->gridColor.b*255), (Uint8)(mm->gridColor.a*255*op));
+                for (float gx = sz.x*0.5f; gx < sz.x; gx += mm->gridSpacing) {
+                    SDL_RenderDrawLine(renderer, (int)(o.x+gx), box.y, (int)(o.x+gx), box.y+box.h);
+                    SDL_RenderDrawLine(renderer, (int)(o.x+sz.x-gx), box.y, (int)(o.x+sz.x-gx), box.y+box.h);
+                }
+                for (float gy = sz.y*0.5f; gy < sz.y; gy += mm->gridSpacing) {
+                    SDL_RenderDrawLine(renderer, box.x, (int)(o.y+gy), box.x+box.w, (int)(o.y+gy));
+                    SDL_RenderDrawLine(renderer, box.x, (int)(o.y+sz.y-gy), box.x+box.w, (int)(o.y+sz.y-gy));
+                }
+            }
+            // Center world position + heading of the target (for heading-up rotation).
             Vec3 center{0,0,0};
+            float mapHeading = 0.0f;
             if (!mm->target.empty()) {
-                if (GameObject* tg = scene.Find(mm->target); tg && tg->transform)
+                if (GameObject* tg = scene.Find(mm->target); tg && tg->transform) {
                     center = tg->transform->Position();
+                    if (mm->rotateWithTarget) mapHeading = Minimap::HeadingOf(tg->transform->Forward(), mm->useXZ);
+                }
             }
+            // Draw a marker (square/dot/triangle/arrow) at (px,py).
+            auto drawBlip = [&](float px, float py, int half, SDL_Color col,
+                                MinimapBlip::Shape shp, float ang) {
+                switch (shp) {
+                    case MinimapBlip::Shape::Dot:
+                        MMFillCircle(renderer, (int)px, (int)py, half, col); break;
+                    case MinimapBlip::Shape::Triangle:
+                    case MinimapBlip::Shape::Arrow: {
+                        SDL_Point tip{(int)(px + std::sin(ang)*half), (int)(py - std::cos(ang)*half)};
+                        float ba = 2.4f;
+                        SDL_Point l{(int)(px + std::sin(ang-ba)*half), (int)(py - std::cos(ang-ba)*half)};
+                        SDL_Point r{(int)(px + std::sin(ang+ba)*half), (int)(py - std::cos(ang+ba)*half)};
+                        if (shp == MinimapBlip::Shape::Arrow) {
+                            SDL_Point tail{(int)(px - std::sin(ang)*half*0.4f), (int)(py + std::cos(ang)*half*0.4f)};
+                            MMFillTriangle(renderer, tip, l, tail, col);
+                            MMFillTriangle(renderer, tip, r, tail, col);
+                        } else {
+                            MMFillTriangle(renderer, tip, l, r, col);
+                        }
+                    } break;
+                    default: {
+                        SDL_Rect br{(int)px - half, (int)py - half, half*2, half*2};
+                        SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
+                        SDL_RenderFillRect(renderer, &br);
+                    }
+                }
+            };
             // Plot every MinimapBlip.
             for (const auto& bp : scene.Objects()) {
                 if (!bp || !bp->active) continue;
                 auto* bl = bp->GetComponent<MinimapBlip>();
                 if (!bl || !bp->transform) continue;
                 float mx, my;
-                if (!Minimap::WorldToMap(*mm, center, bp->transform->Position(), sz.x, sz.y, mx, my))
-                    continue;   // outside the map rect
+                bool inside = Minimap::WorldToMapR(*mm, center, bp->transform->Position(), sz.x, sz.y, mapHeading, mx, my);
+                if (!inside) {
+                    if (!mm->clampBlips) continue;
+                    float dx = mx - sz.x*0.5f, dy = my - sz.y*0.5f;
+                    float len = std::sqrt(dx*dx + dy*dy); if (len < 1e-3f) continue;
+                    float rr = (mm->circular ? radius : (sz.x < sz.y ? sz.x : sz.y) * 0.5f) - mm->blipSize;
+                    mx = sz.x*0.5f + dx/len*rr; my = sz.y*0.5f + dy/len*rr;
+                }
                 int half = (int)(bl->size > 0 ? bl->size : mm->blipSize);
-                SDL_SetRenderDrawColor(renderer, (Uint8)(bl->color.r*255), (Uint8)(bl->color.g*255),
-                                       (Uint8)(bl->color.b*255), (Uint8)(bl->color.a*255*op));
-                SDL_Rect br{(int)(o.x + mx) - half, (int)(o.y + my) - half, half*2, half*2};
-                SDL_RenderFillRect(renderer, &br);
+                SDL_Color col{(Uint8)(bl->color.r*255), (Uint8)(bl->color.g*255),
+                              (Uint8)(bl->color.b*255), (Uint8)(bl->color.a*255*op)};
+                float ang = bl->rotateWithObject ? (Minimap::HeadingOf(bp->transform->Forward(), mm->useXZ) - mapHeading) : 0.0f;
+                drawBlip(o.x + mx, o.y + my, half, col, bl->shape, ang);
             }
             // The target marker at the map center.
             {
                 int half = (int)(mm->blipSize);
-                SDL_SetRenderDrawColor(renderer, (Uint8)(mm->targetColor.r*255), (Uint8)(mm->targetColor.g*255),
-                                       (Uint8)(mm->targetColor.b*255), (Uint8)(mm->targetColor.a*255*op));
-                SDL_Rect tr{(int)(o.x + sz.x*0.5f) - half, (int)(o.y + sz.y*0.5f) - half, half*2, half*2};
-                SDL_RenderFillRect(renderer, &tr);
+                SDL_Color col{(Uint8)(mm->targetColor.r*255), (Uint8)(mm->targetColor.g*255),
+                              (Uint8)(mm->targetColor.b*255), (Uint8)(mm->targetColor.a*255*op)};
+                if (mm->playerArrow)
+                    drawBlip((float)cx, (float)cy, (int)(half*1.4f), col, MinimapBlip::Shape::Arrow, 0.0f);
+                else
+                    drawBlip((float)cx, (float)cy, half, col, MinimapBlip::Shape::Square, 0.0f);
+            }
+            // Restore clip and draw the border on top (rect rings or circle ring).
+            if (hadClip) SDL_RenderSetClipRect(renderer, &prevClip);
+            else SDL_RenderSetClipRect(renderer, nullptr);
+            if (mm->circular) {
+                MMDrawRing(renderer, cx, cy, radius, bw, bdCol);
+            } else {
+                SDL_SetRenderDrawColor(renderer, bdCol.r, bdCol.g, bdCol.b, bdCol.a);
+                for (int i = 0; i < bw; ++i) {
+                    SDL_Rect e{box.x + i, box.y + i, box.w - 2*i, box.h - 2*i};
+                    if (e.w <= 0 || e.h <= 0) break;
+                    SDL_RenderDrawRect(renderer, &e);
+                }
             }
         }
             else if (_it.kind == K_Crosshair) {   // aim reticle at screen center

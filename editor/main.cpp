@@ -8124,6 +8124,16 @@ void DrawInspector(EditorState& ed) {
                 char sk[2] = {ui->sortKey, 0};
                 if (ImGui::InputText("Sort Key##iu", sk, sizeof(sk))) { ui->sortKey = sk[0]; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to compact + merge stacks (blank = off).");
+                const char* sortModes[] = {"Compact", "Name", "Count", "Rarity"};
+                int smi = (int)ui->sortMode;
+                if (ImGui::Combo("Sort Mode##iu", &smi, sortModes, 4)) { ui->sortMode = (InventoryUI::SortMode)smi; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the Sort key orders stacks: keep gather order, A-Z, biggest first, or by rarity list.");
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Sort on close##iu", &ui->sortOnClose)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-tidy the bag whenever the backpack closes.");
+                char dk[2] = {ui->dropKey, 0};
+                if (ImGui::InputText("Drop Key##iu", dk, sizeof(dk))) { ui->dropKey = dk[0]; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to drop one of the selected hotbar item (blank = off).");
                 if (ImGui::Checkbox("Right-click split##iu", &ui->splitRightClick)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click a stack to pick up part of it, then drop it where you want.");
                 ImGui::SameLine();
@@ -10189,6 +10199,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Use XZ (3D)##umm", &mm->useXZ)) ed.dirty = true;
             if (ImGui::DragFloat("Blip Size##umm", &mm->blipSize, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
             AnchorCombo("Anchor##umm", mm->anchor, ed);
+            ImGui::SeparatorText("Style");
+            if (ImGui::Checkbox("Circular##umm", &mm->circular)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Heading Up##umm", &mm->rotateWithTarget)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate the map so the target always faces up.");
+            if (ImGui::Checkbox("Player Arrow##umm", &mm->playerArrow)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Clamp Blips##umm", &mm->clampBlips)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pin off-map blips to the edge as direction markers.");
+            if (ImGui::Checkbox("Grid##umm", &mm->showGrid)) ed.dirty = true;
+            if (mm->showGrid) {
+                ImGui::SameLine();
+                if (ImGui::DragFloat("Spacing##umm", &mm->gridSpacing, 0.5f, 4.0f, 256.0f)) ed.dirty = true;
+                float gc[4] = {mm->gridColor.r, mm->gridColor.g, mm->gridColor.b, mm->gridColor.a};
+                if (ImGui::ColorEdit4("Grid Color##umm", gc)) { mm->gridColor = {gc[0], gc[1], gc[2], gc[3]}; ed.dirty = true; }
+            }
             ImGui::TextDisabled("add a Minimap Blip to objects to plot them");
             if (ImGui::SmallButton("Remove##umm")) toRemove = mm;
         }
@@ -10198,7 +10224,15 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {bl->color.r, bl->color.g, bl->color.b, bl->color.a};
             if (ImGui::ColorEdit4("Color##umb", c)) { bl->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             if (ImGui::DragFloat("Size##umb", &bl->size, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
-            if (ImGui::Checkbox("Square##umb", &bl->square)) ed.dirty = true;
+            const char* blShapes[] = {"Square", "Dot", "Triangle", "Arrow"};
+            int bs = (int)bl->shape;
+            if (ImGui::Combo("Shape##umb", &bs, blShapes, 4)) {
+                bl->shape = (MinimapBlip::Shape)bs;
+                bl->square = (bl->shape == MinimapBlip::Shape::Square);  // keep legacy flag in sync
+                ed.dirty = true;
+            }
+            if (bl->shape == MinimapBlip::Shape::Triangle || bl->shape == MinimapBlip::Shape::Arrow)
+                if (ImGui::Checkbox("Face Heading##umb", &bl->rotateWithObject)) ed.dirty = true;
             ImGui::TextDisabled("appears on every Minimap");
             if (ImGui::SmallButton("Remove##umb")) toRemove = bl;
         }
@@ -11336,33 +11370,87 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 b(a.x + sz.x, a.y + sz.y);
-        dl->AddRectFilled(a, b, ToColor(mm->background));
+        float cxp = a.x + sz.x * 0.5f, cyp = a.y + sz.y * 0.5f;
+        float radius = (sz.x < sz.y ? sz.x : sz.y) * 0.5f;
         float bw = mm->borderWidth > 0.0f ? mm->borderWidth : 1.0f;
-        dl->AddRect(a, b, ToColor(mm->border), 0.0f, 0, bw);
-        // Center world position: the target object if named/found, else origin.
-        Vec3 center{0,0,0};
-        if (!mm->target.empty()) {
-            if (GameObject* tg = ed.scene().Find(mm->target); tg && tg->transform)
-                center = tg->transform->Position();
+        if (mm->circular) {
+            dl->AddCircleFilled(ImVec2(cxp, cyp), radius, ToColor(mm->background), 48);
+            dl->AddCircle(ImVec2(cxp, cyp), radius, ToColor(mm->border), 48, bw);
+        } else {
+            dl->AddRectFilled(a, b, ToColor(mm->background));
+            dl->AddRect(a, b, ToColor(mm->border), 0.0f, 0, bw);
         }
+        // Reference grid (rectangular maps only).
+        if (mm->showGrid && !mm->circular && mm->gridSpacing > 1.0f) {
+            ImU32 gc = ToColor(mm->gridColor);
+            for (float gx = sz.x * 0.5f; gx < sz.x; gx += mm->gridSpacing) {
+                dl->AddLine(ImVec2(a.x + gx, a.y), ImVec2(a.x + gx, b.y), gc);
+                dl->AddLine(ImVec2(a.x + sz.x - gx, a.y), ImVec2(a.x + sz.x - gx, b.y), gc);
+            }
+            for (float gy = sz.y * 0.5f; gy < sz.y; gy += mm->gridSpacing) {
+                dl->AddLine(ImVec2(a.x, a.y + gy), ImVec2(b.x, a.y + gy), gc);
+                dl->AddLine(ImVec2(a.x, a.y + sz.y - gy), ImVec2(b.x, a.y + sz.y - gy), gc);
+            }
+        }
+        // Center world position + heading of the target (for heading-up rotation).
+        Vec3 center{0,0,0};
+        float mapHeading = 0.0f;
+        if (!mm->target.empty()) {
+            if (GameObject* tg = ed.scene().Find(mm->target); tg && tg->transform) {
+                center = tg->transform->Position();
+                if (mm->rotateWithTarget) mapHeading = Minimap::HeadingOf(tg->transform->Forward(), mm->useXZ);
+            }
+        }
+        // Draw a marker (square/dot/triangle/arrow), optionally rotated, at (px,py).
+        auto drawBlip = [&](float px, float py, float half, ImU32 col,
+                            MinimapBlip::Shape shp, float ang) {
+            switch (shp) {
+                case MinimapBlip::Shape::Dot:
+                    dl->AddCircleFilled(ImVec2(px, py), half, col, 12); break;
+                case MinimapBlip::Shape::Triangle:
+                case MinimapBlip::Shape::Arrow: {
+                    float s = std::sin(ang), c = std::cos(ang);
+                    ImVec2 tip(px + s * half, py - c * half);
+                    float ba = 2.4f;   // base spread (rad) from "up"
+                    ImVec2 l(px + std::sin(ang - ba) * half, py - std::cos(ang - ba) * half);
+                    ImVec2 r(px + std::sin(ang + ba) * half, py - std::cos(ang + ba) * half);
+                    if (shp == MinimapBlip::Shape::Arrow) {
+                        ImVec2 tail(px - s * half * 0.4f, py + c * half * 0.4f);
+                        dl->AddTriangleFilled(tip, l, tail, col);
+                        dl->AddTriangleFilled(tip, r, tail, col);
+                    } else {
+                        dl->AddTriangleFilled(tip, l, r, col);
+                    }
+                } break;
+                default:
+                    dl->AddRectFilled(ImVec2(px - half, py - half), ImVec2(px + half, py + half), col);
+            }
+        };
         // Plot every MinimapBlip in the scene.
         for (const auto& bp : ed.scene().Objects()) {
             if (!bp || !bp->active) continue;
             auto* bl = bp->GetComponent<MinimapBlip>();
             if (!bl || !bp->transform) continue;
             float mx, my;
-            if (!Minimap::WorldToMap(*mm, center, bp->transform->Position(), sz.x, sz.y, mx, my))
-                continue;
+            bool inside = Minimap::WorldToMapR(*mm, center, bp->transform->Position(), sz.x, sz.y, mapHeading, mx, my);
+            if (!inside) {
+                if (!mm->clampBlips) continue;
+                float dx = mx - sz.x * 0.5f, dy = my - sz.y * 0.5f;
+                float len = std::sqrt(dx*dx + dy*dy); if (len < 1e-3f) continue;
+                float rr = (mm->circular ? radius : (sz.x < sz.y ? sz.x : sz.y) * 0.5f) - mm->blipSize;
+                mx = sz.x * 0.5f + dx / len * rr; my = sz.y * 0.5f + dy / len * rr;
+            }
             float half = bl->size > 0 ? bl->size : mm->blipSize;
-            ImVec2 c0(a.x + mx - half, a.y + my - half), c1(a.x + mx + half, a.y + my + half);
-            dl->AddRectFilled(c0, c1, ToColor(bl->color));
+            float ang = bl->rotateWithObject ? (Minimap::HeadingOf(bp->transform->Forward(), mm->useXZ) - mapHeading) : 0.0f;
+            drawBlip(a.x + mx, a.y + my, half, ToColor(bl->color), bl->shape, ang);
         }
-        // The target marker at the map center.
+        // The target marker at the map center (arrow points up when heading-up).
         {
             float half = mm->blipSize;
-            ImVec2 t0(a.x + sz.x*0.5f - half, a.y + sz.y*0.5f - half);
-            ImVec2 t1(a.x + sz.x*0.5f + half, a.y + sz.y*0.5f + half);
-            dl->AddRectFilled(t0, t1, ToColor(mm->targetColor));
+            if (mm->playerArrow)
+                drawBlip(cxp, cyp, half * 1.4f, ToColor(mm->targetColor), MinimapBlip::Shape::Arrow, 0.0f);
+            else
+                dl->AddRectFilled(ImVec2(cxp - half, cyp - half), ImVec2(cxp + half, cyp + half), ToColor(mm->targetColor));
         }
     }
 

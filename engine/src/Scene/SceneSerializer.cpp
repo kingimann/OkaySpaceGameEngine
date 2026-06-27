@@ -414,6 +414,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Scaling / split / icon (appended; numeric-peek guarded).
         out << " " << (ui->scaleToScreen ? 1 : 0) << " " << ui->referenceHeight
             << " " << (ui->splitHalf ? 1 : 0) << " " << ui->iconInset;
+        // Sort mode / auto-sort / drop key (appended; numeric-peek guarded).
+        out << " " << (int)ui->sortMode << " " << (ui->sortOnClose ? 1 : 0)
+            << " " << (int)(unsigned char)ui->dropKey;
         out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
@@ -1031,11 +1034,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mm->borderWidth << " " << Quote(mm->target) << " "
             << mm->targetColor.r << " " << mm->targetColor.g << " " << mm->targetColor.b << " " << mm->targetColor.a << " "
             << mm->worldPerPixel << " " << (mm->useXZ ? 1 : 0) << " " << mm->blipSize
-            << " " << (int)mm->anchor << "\n";
+            << " " << (int)mm->anchor << " "
+            // --- appended (v2): circular / rotation / arrow / clamp / grid ---
+            << (mm->circular ? 1 : 0) << " " << (mm->rotateWithTarget ? 1 : 0) << " "
+            << (mm->playerArrow ? 1 : 0) << " " << (mm->clampBlips ? 1 : 0) << " "
+            << (mm->showGrid ? 1 : 0) << " "
+            << mm->gridColor.r << " " << mm->gridColor.g << " " << mm->gridColor.b << " " << mm->gridColor.a << " "
+            << mm->gridSpacing << "\n";
     }
     if (auto* bl = go->GetComponent<MinimapBlip>()) {
         out << "  minimapblip " << bl->color.r << " " << bl->color.g << " " << bl->color.b << " " << bl->color.a << " "
-            << bl->size << " " << (bl->square ? 1 : 0) << "\n";
+            << bl->size << " " << (bl->square ? 1 : 0) << " "
+            // --- appended (v2): shape enum + heading rotation ---
+            << (int)bl->shape << " " << (bl->rotateWithObject ? 1 : 0) << "\n";
     }
     if (auto* cr = go->GetComponent<Crosshair>()) {
         out << "  crosshair " << cr->position.x << " " << cr->position.y << " "
@@ -1697,6 +1708,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         int sts = 1, sh = 1;
                                         in >> sts >> ui->referenceHeight >> sh >> ui->iconInset;
                                         ui->scaleToScreen = (sts != 0); ui->splitHalf = (sh != 0);
+                                        in >> std::ws;   // optional sort-mode / auto-sort / drop-key block
+                                        int pk6 = in.peek();
+                                        if (std::isdigit(pk6) || pk6 == '-' || pk6 == '.') {
+                                            int sm = 0, soc = 0, dk = 0;
+                                            in >> sm >> soc >> dk;
+                                            ui->sortMode = (InventoryUI::SortMode)sm;
+                                            ui->sortOnClose = (soc != 0);
+                                            ui->dropKey = (char)dk;
+                                        }
                                     }
                                 }
                             }
@@ -2639,11 +2659,33 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> mm->worldPerPixel >> xz >> mm->blipSize >> an;
                     mm->background = bg; mm->border = bd; mm->targetColor = tc;
                     mm->useXZ = (xz != 0); mm->anchor = (UIAnchor)an;
+                    // Appended v2 fields (older scenes simply stop here).
+                    in >> std::ws;
+                    int pk = in.peek();
+                    if (std::isdigit(pk) || pk == '-' || pk == '+' || pk == '.') {
+                        int ci = 0, rt = 0, pa = 1, cb = 0, sg = 0;
+                        Color gc;
+                        in >> ci >> rt >> pa >> cb >> sg
+                           >> gc.r >> gc.g >> gc.b >> gc.a >> mm->gridSpacing;
+                        mm->circular = (ci != 0); mm->rotateWithTarget = (rt != 0);
+                        mm->playerArrow = (pa != 0); mm->clampBlips = (cb != 0);
+                        mm->showGrid = (sg != 0); mm->gridColor = gc;
+                    }
                 } else if (field == "minimapblip") {
                     auto* bl = go->AddComponent<MinimapBlip>();
                     Color c; int sq = 1;
                     in >> c.r >> c.g >> c.b >> c.a >> bl->size >> sq;
                     bl->color = c; bl->square = (sq != 0);
+                    bl->shape = (sq != 0) ? MinimapBlip::Shape::Square : MinimapBlip::Shape::Dot;
+                    // Appended v2 fields.
+                    in >> std::ws;
+                    int pk = in.peek();
+                    if (std::isdigit(pk) || pk == '-' || pk == '+' || pk == '.') {
+                        int sh = 0, rot = 0;
+                        in >> sh >> rot;
+                        bl->shape = (MinimapBlip::Shape)sh;
+                        bl->rotateWithObject = (rot != 0);
+                    }
                 } else if (field == "crosshair") {
                     auto* cr = go->AddComponent<Crosshair>();
                     Color c, dc, oc; int sl = 1, dt = 0, ol = 1, an = 0;

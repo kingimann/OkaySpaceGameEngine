@@ -1,5 +1,29 @@
 OkaySpace Game Engine — Changelog
 
+v2.270.0  (Expanded minimap + inventory sorting)
+  - Minimap: big upgrade — a circular mask, heading-up rotation (the map spins so
+    the target always faces up), a directional player arrow at the centre, off-map
+    blips clamped to the edge as objective markers, and an optional reference grid.
+    Blips now choose a shape (Square / Dot / Triangle / Arrow) and can rotate to
+    point along the object's heading. Works in the built player and the editor.
+  - Inventory: the Sort key now has modes — Compact (close holes), Name (A-Z),
+    Count (biggest first), or Rarity (your rarity list's order). Added "Sort on
+    close" to auto-tidy the bag, and a Drop key to discard the held item.
+  - All new fields serialize and round-trip; full tests added.
+
+v2.269.0  (Expanded shaders, particles, Unity cursor lock)
+  - Shaders: new Gradient (vertical colour ramp) and Fresnel (rim-glow) surface
+    models on the Mesh Renderer, wired through the software, OpenGL, and Direct3D 11
+    renderers, with gradient colour pickers in the inspector.
+  - Particle System: expanded from a basic emitter to a Unity-style system —
+    emission shapes (Point / Circle / Sphere / Box / Cone / Edge), timed bursts,
+    looping duration, colour- and size-over-lifetime, lifetime/size/speed
+    randomness, a gravity multiplier, and linear damping, with a full inspector.
+  - Cursor: Unity-style lock hand-off — opening a bag/chest frees the pointer at
+    the screen centre and closing it warps back to centre before re-locking, in
+    both the player and the editor Game tab. Third-person controller now locks the
+    cursor by default. Opening a chest also freezes the camera like the inventory.
+
 v2.148.0  (Canvas sort order: stack UI canvases)
   - The Canvas "Sort Order" now actually layers canvases in built games: a popup
     or modal Canvas with a higher Sort Order draws on top of the HUD. Widgets that

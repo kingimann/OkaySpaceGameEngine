@@ -128,7 +128,7 @@ public:
             Vec3 pos{std::round(hit.point.x / c) * c, hit.point.y + slabThickness * 0.5f,
                      std::round(hit.point.z / c) * c};
             r.position = pos; r.scale = {c, slabThickness, c}; r.yaw = yaw; r.show = true;
-            r.valid = affordable && !Occupied(s, pos, c * 0.3f);
+            r.valid = affordable && !Occupied(s, pos, c * 0.3f) && Clear(s, r, hit.gameObject);
             return r;
         }
 
@@ -154,7 +154,7 @@ public:
                 r.position = {center.x, top + wallHeight * 0.5f, center.z + sz * ts.z * 0.5f};
                 r.scale = {ts.x, wallHeight, wallThickness};
             }
-            r.show = true; r.valid = affordable && !Occupied(s, r.position, 0.35f);
+            r.show = true; r.valid = affordable && !Occupied(s, r.position, 0.35f) && Clear(s, r, tgt);
             return r;
         }
         if (piece == Piece::Pillar) {
@@ -162,14 +162,14 @@ public:
             float sx = d.x >= 0 ? 1.0f : -1.0f, sz = d.z >= 0 ? 1.0f : -1.0f;
             r.position = {center.x + sx * ts.x * 0.5f, top + wallHeight * 0.5f, center.z + sz * ts.z * 0.5f};
             r.scale = {pillarThickness, wallHeight, pillarThickness};
-            r.show = true; r.valid = affordable && !Occupied(s, r.position, pillarThickness * 0.6f);
+            r.show = true; r.valid = affordable && !Occupied(s, r.position, pillarThickness * 0.6f) && Clear(s, r, tgt);
             return r;
         }
         if (piece == Piece::Floor) {
             if (!slab) return r;
             r.position = {center.x, top + wallHeight + slabThickness * 0.5f, center.z};
             r.scale = {ts.x, slabThickness, ts.z}; r.yaw = yaw;
-            r.show = true; r.valid = affordable && !Occupied(s, r.position, ts.x * 0.3f);
+            r.show = true; r.valid = affordable && !Occupied(s, r.position, ts.x * 0.3f) && Clear(s, r, tgt);
             return r;
         }
         if (piece == Piece::Ramp) {
@@ -185,7 +185,7 @@ public:
                 r.yaw = sz > 0 ? 90.0f : 270.0f;
             }
             r.scale = {c, wallHeight, c}; r.show = true;
-            r.valid = affordable && !Occupied(s, r.position, c * 0.3f);
+            r.valid = affordable && !Occupied(s, r.position, c * 0.3f) && Clear(s, r, tgt);
             return r;
         }
         return r;
@@ -381,6 +381,35 @@ private:
             if (up && up->GetComponent<Crosshair>()) return;
         if (gameObject && !gameObject->GetComponent<Crosshair>())
             gameObject->AddComponent<Crosshair>()->dot = true;
+    }
+    bool IsUnder(GameObject* go, GameObject* root) const {
+        for (Transform* t = (go && go->transform) ? go->transform : nullptr; t; t = t->Parent())
+            if (t->gameObject == root) return true;
+        return false;
+    }
+    /// True if a box at `center` (half-extents `half`) would overlap a solid world
+    /// object — i.e. there's something in the way. Skips your own body, the surface
+    /// you're snapping onto, other structures (they snap by design) and triggers.
+    bool Obstructed(Scene& s, const Vec3& center, const Vec3& half, GameObject* support) const {
+        GameObject* owner = Owner();
+        const float m = 0.03f;   // shrink so merely touching a surface doesn't count
+        Vec3 amn{center.x - half.x + m, center.y - half.y + m, center.z - half.z + m};
+        Vec3 amx{center.x + half.x - m, center.y + half.y - m, center.z + half.z - m};
+        for (Collider3D* c : s.FindObjectsOfType<Collider3D>()) {
+            if (!c || c->isTrigger || !c->gameObject) continue;
+            GameObject* go = c->gameObject;
+            if (go == support) continue;
+            if (go->tag == structureTag) continue;
+            if (owner && IsUnder(go, owner)) continue;
+            Vec3 mn, mx; c->WorldAABB(mn, mx);
+            if (amn.x < mx.x && amx.x > mn.x && amn.y < mx.y &&
+                amx.y > mn.y && amn.z < mx.z && amx.z > mn.z)
+                return true;
+        }
+        return false;
+    }
+    bool Clear(Scene& s, const Placement& r, GameObject* support) const {
+        return !Obstructed(s, r.position, {r.scale.x * 0.5f, r.scale.y * 0.5f, r.scale.z * 0.5f}, support);
     }
     bool Occupied(Scene& s, const Vec3& pos, float eps) const {
         for (const auto& up : s.Objects()) {

@@ -130,5 +130,23 @@ int main() {
         CHECK(ghost && ghost->transform->localPosition.z < 0.0f);  // in front (-Z), not behind
     }
 
+    // --- Obstruction: can't place a block where a world object already is ---
+    {
+        Scene os("obstruct");
+        GameObject* bgo = os.CreateGameObject("Builder");
+        auto* ob = bgo->AddComponent<BlockBuilder>();
+        ob->blockSize = 1.0f; ob->reach = 4.0f; ob->placeInAir = true;
+        // A crate overlapping the cell an air-placement would land in (the aim ray
+        // passes beside it, so the crate is an obstruction, not the support surface).
+        GameObject* box = os.CreateGameObject("Crate");
+        box->transform->localPosition = {0.9f, 0.5f, -3.5f};
+        box->transform->localScale = {0.6f, 1.0f, 0.6f};
+        box->AddComponent<BoxCollider3D>();
+        GameObject* refused = ob->Build(os, Vec3{0, 0, 0}, Vec3{0, 0, -1}, true, false);
+        CHECK(refused == nullptr);                       // cell overlaps the crate
+        GameObject* placed = ob->Build(os, Vec3{0, 0, 0}, Vec3{0, 0, 1}, true, false);
+        CHECK(placed != nullptr);                        // opposite way is clear
+    }
+
     TEST_MAIN_RESULT();
 }

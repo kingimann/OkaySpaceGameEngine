@@ -76,6 +76,18 @@ int main() {
     auto miss = sb->Resolve(scene, Vec3{0.0f, 10.0f, 0.0f}, Vec3{0, 1, 0});
     CHECK(!miss.show && !miss.valid);
 
+    // --- Obstruction: can't build where a world object is in the way ---
+    // A crate overlapping the foundation cell (but not the surface we aim at) blocks it.
+    GameObject* crate = scene.CreateGameObject("Crate");
+    crate->transform->localPosition = {10.4f, 1.0f, 9.0f};
+    crate->transform->localScale = {1, 2, 1};      // spans x≈[9.9,10.9]
+    crate->AddComponent<BoxCollider3D>();
+    auto blockedByCrate = sb->Resolve(scene, Vec3{9.0f, 10.0f, 9.0f}, Vec3{0, -1, 0});
+    CHECK(blockedByCrate.show && !blockedByCrate.valid);   // cell (x≈[7.5,10.5]) overlaps the crate
+    // An empty patch of ground is still fine.
+    auto clearCell = sb->Resolve(scene, Vec3{-9.0f, 10.0f, -9.0f}, Vec3{0, -1, 0});
+    CHECK(clearCell.valid);
+
     // --- Inventory / tiers: building costs resources; upgrade + repair + refund ---
     {
         Scene rs("res");

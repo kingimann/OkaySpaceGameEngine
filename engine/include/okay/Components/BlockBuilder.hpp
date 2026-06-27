@@ -81,7 +81,8 @@ public:
             Vec3 target = hit.hit ? hit.point + hit.normal * (blockSize * 0.5f)
                                   : origin + dir * r;
             Vec3 cell = Snap(target);
-            return Occupied(s, cell) ? nullptr : PlaceBlock(s, cell);
+            if (Occupied(s, cell) || Blocked(s, cell, hit.gameObject)) return nullptr;
+            return PlaceBlock(s, cell);
         }
         if (remove && hit.hit && hit.gameObject && hit.gameObject->tag == blockTag) {
             GameObject* g = hit.gameObject;
@@ -117,6 +118,31 @@ private:
         return t->gameObject ? t->gameObject : gameObject;
     }
 
+    bool IsUnder(GameObject* go, GameObject* root) const {
+        for (Transform* t = (go && go->transform) ? go->transform : nullptr; t; t = t->Parent())
+            if (t->gameObject == root) return true;
+        return false;
+    }
+    /// True if a block cell would overlap a solid world object (something's in the
+    /// way). Skips your own body, the surface you're stacking on, other blocks (they
+    /// tile exactly) and triggers — so only real obstructions block placement.
+    bool Blocked(Scene& s, const Vec3& cell, GameObject* support) const {
+        GameObject* owner = Owner();
+        float h = (blockSize > 1e-4f ? blockSize : 1.0f) * 0.5f - 0.03f;
+        Vec3 amn{cell.x - h, cell.y - h, cell.z - h}, amx{cell.x + h, cell.y + h, cell.z + h};
+        for (Collider3D* c : s.FindObjectsOfType<Collider3D>()) {
+            if (!c || c->isTrigger || !c->gameObject) continue;
+            GameObject* go = c->gameObject;
+            if (go == support || go->tag == blockTag) continue;
+            if (owner && IsUnder(go, owner)) continue;
+            Vec3 mn, mx; c->WorldAABB(mn, mx);
+            if (amn.x < mx.x && amx.x > mn.x && amn.y < mx.y &&
+                amx.y > mn.y && amn.z < mx.z && amx.z > mn.z)
+                return true;
+        }
+        return false;
+    }
+
     /// Distance from the camera to the player carrying this builder — the orbit gap
     /// in third person (≈ eye height in first person). Added to reach so building
     /// range is measured from the player regardless of camera placement.
@@ -138,10 +164,10 @@ private:
         Vec3 cell; bool canPlace;
         if (hit.hit) {
             cell = Snap(hit.point + hit.normal * (blockSize * 0.5f));
-            canPlace = !Occupied(s, cell);
+            canPlace = !Occupied(s, cell) && !Blocked(s, cell, hit.gameObject);
         } else {
             cell = Snap(origin + dir * r);          // arm's length, where you're pointing
-            canPlace = placeInAir;                  // only valid if mid-air placing is on
+            canPlace = placeInAir && !Blocked(s, cell, nullptr);
         }
 
         GameObject* p = EnsurePreview(s);

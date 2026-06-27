@@ -19,6 +19,8 @@
 #include "okay/Components/StructureBuilder.hpp"
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/InventoryUI.hpp"
+#include "okay/Components/GridInventory.hpp"
+#include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -381,6 +383,21 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (ui->darkenWhenOpen ? 1 : 0);
         wc(ui->slotColor); wc(ui->slotBorder); wc(ui->selectedColor); wc(ui->textColor); wc(ui->panelColor);
         out << " " << Quote(ui->iconFolder) << "\n";
+    }
+    if (auto* gi = go->GetComponent<GridInventory>()) {
+        out << "  gridinventory " << gi->cols << " " << gi->rows
+            << " " << (int)(unsigned char)gi->toggleKey << " " << Quote(gi->title) << " " << gi->items.size();
+        for (const auto& it : gi->items)
+            out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.x
+                << " " << it.y << " " << it.count << " " << it.weight;
+        out << "\n";
+    }
+    if (auto* gu = go->GetComponent<GridInventoryUI>()) {
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  gridinventoryui " << gu->cellSize << " " << gu->gap
+            << " " << (gu->darkenWhenOpen ? 1 : 0) << " " << (gu->showWeight ? 1 : 0);
+        wc(gu->panelColor); wc(gu->cellColor); wc(gu->itemColor); wc(gu->itemBorder); wc(gu->textColor);
+        out << " " << Quote(gu->iconFolder) << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -1533,6 +1550,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
                     rc(ui->slotColor); rc(ui->slotBorder); rc(ui->selectedColor); rc(ui->textColor); rc(ui->panelColor);
                     ui->iconFolder = ReadQuoted(in);
+                } else if (field == "gridinventory") {
+                    auto* gi = go->AddComponent<GridInventory>();
+                    int tk = 'i'; in >> gi->cols >> gi->rows >> tk; gi->toggleKey = (char)tk;
+                    gi->title = ReadQuoted(in);
+                    int n = 0; in >> n; gi->items.clear();
+                    for (int i = 0; i < n; ++i) {
+                        GridItem it; it.name = ReadQuoted(in);
+                        in >> it.w >> it.h >> it.x >> it.y >> it.count >> it.weight;
+                        gi->items.push_back(it);
+                    }
+                } else if (field == "gridinventoryui") {
+                    auto* gu = go->AddComponent<GridInventoryUI>();
+                    int dk = 1, sw = 1; in >> gu->cellSize >> gu->gap >> dk >> sw;
+                    gu->darkenWhenOpen = (dk != 0); gu->showWeight = (sw != 0);
+                    auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    rc(gu->panelColor); rc(gu->cellColor); rc(gu->itemColor); rc(gu->itemBorder); rc(gu->textColor);
+                    gu->iconFolder = ReadQuoted(in);
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

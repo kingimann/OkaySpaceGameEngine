@@ -102,6 +102,10 @@ add_executable(test_inventory_ui test_inventory_ui.cpp)
 target_link_libraries(test_inventory_ui PRIVATE okay::engine)
 add_test(NAME inventory_ui COMMAND test_inventory_ui)
 
+add_executable(test_grid_inventory test_grid_inventory.cpp)
+target_link_libraries(test_grid_inventory PRIVATE okay::engine)
+add_test(NAME grid_inventory COMMAND test_grid_inventory)
+
 add_executable(test_spriteanim test_spriteanim.cpp)
 target_link_libraries(test_spriteanim PRIVATE okay::engine)
 add_test(NAME spriteanim COMMAND test_spriteanim)

@@ -325,6 +325,72 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
 }
 
+// A DayZ/Unturned grid inventory: multi-cell items, drag-and-drop within the grid.
+static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const std::string& baseDir,
+                              std::unordered_map<std::string, SDL_Texture*>& cache) {
+    okay::GridInventory* inv = ui.Inv();
+    if (!inv || !inv->open) { ui.dragIndex = -1; return; }
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    if (W <= 0 || H <= 0) return;
+    const float cs = ui.cellSize, gp = ui.gap;
+    float gridW = inv->cols * cs + (inv->cols - 1) * gp;
+    float gridH = inv->rows * cs + (inv->rows - 1) * gp;
+    float ox = (W - gridW) * 0.5f, oy = (H - gridH) * 0.5f + 10.0f;
+    auto setc = [&](const Color& c, int a = -1) {
+        SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
+    };
+    auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255}; };
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+    SDL_Rect panel{(int)ox - 12, (int)oy - 34, (int)gridW + 24, (int)gridH + 46};
+    setc(ui.panelColor); SDL_RenderFillRect(r, &panel);
+    DrawText(r, inv->title, ox, oy - 26, 2.0f, sc(ui.textColor));
+    if (ui.showWeight) {
+        char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f kg", inv->TotalWeight());
+        float px = 2.0f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;
+        DrawText(r, wb, ox + gridW - tw, oy - 26, px, sc(ui.textColor));
+    }
+    for (int y = 0; y < inv->rows; ++y)
+        for (int x = 0; x < inv->cols; ++x) {
+            SDL_Rect cell{(int)(ox + x * (cs + gp)), (int)(oy + y * (cs + gp)), (int)cs, (int)cs};
+            setc(ui.cellColor); SDL_RenderFillRect(r, &cell);
+        }
+    auto drawItem = [&](const okay::GridItem& it, float px0, float py0, bool ghost) {
+        SDL_Rect box{(int)px0, (int)py0, (int)(it.w * cs + (it.w - 1) * gp), (int)(it.h * cs + (it.h - 1) * gp)};
+        setc(ui.itemColor, ghost ? 150 : 255); SDL_RenderFillRect(r, &box);
+        setc(ui.itemBorder, ghost ? 170 : 255); SDL_RenderDrawRect(r, &box);
+        SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.name + ".png", baseDir, cache);
+        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 3, box.y + 3, box.w - 6, box.h - 6}; SDL_RenderCopy(r, icon, nullptr, &d); }
+        else DrawText(r, it.name.substr(0, 8), box.x + 4, box.y + 4, 1.4f, sc(ui.textColor));
+        if (it.count > 1) {
+            std::string cstr = std::to_string(it.count); float px = 1.4f;
+            float tw = cstr.size() * (Font8x8::Width + 1) * px;
+            DrawText(r, cstr, box.x + box.w - tw - 3, box.y + box.h - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255, 255, 255, 255});
+        }
+    };
+    for (int i = 0; i < (int)inv->items.size(); ++i) {
+        if (i == ui.dragIndex) continue;
+        const auto& it = inv->items[i];
+        drawItem(it, ox + it.x * (cs + gp), oy + it.y * (cs + gp), false);
+    }
+    // Drag-and-drop: pick an item under the cursor, drop it where it fits.
+    okay::Vec2 mp = okay::Input::MousePosition();
+    int cx = (int)std::floor((mp.x - ox) / (cs + gp));
+    int cy = (int)std::floor((mp.y - oy) / (cs + gp));
+    if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+        int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
+        if (idx >= 0) { ui.dragIndex = idx; ui.grabX = cx - inv->items[idx].x; ui.grabY = cy - inv->items[idx].y; }
+    }
+    if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
+        inv->PlaceAt(ui.dragIndex, cx - ui.grabX, cy - ui.grabY);   // no-op if it doesn't fit
+        ui.dragIndex = -1;
+    }
+    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size()) {
+        const auto& it = inv->items[ui.dragIndex];
+        drawItem(it, mp.x - ui.grabX * (cs + gp) - cs * 0.5f, mp.y - ui.grabY * (cs + gp) - cs * 0.5f, true);
+    }
+}
+
 int main(int argc, char** argv) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -1671,6 +1737,12 @@ int main(int argc, char** argv) {
             auto* ui = up ? up->GetComponent<InventoryUI>() : nullptr;
             if (!ui) continue;
             DrawInventoryUI(renderer, *ui, baseDir, textureCache);
+            break;
+        }
+        for (const auto& up : scene.Objects()) {
+            auto* gui = up ? up->GetComponent<GridInventoryUI>() : nullptr;
+            if (!gui) continue;
+            DrawGridInventory(renderer, *gui, baseDir, textureCache);
             break;
         }
         // Loading-screen overlay: drawn on top of everything (and the UI) when active.

@@ -1710,6 +1710,19 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(g); ed.dirty = true; created = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. Drives off an Inventory you can fill from gameplay.");
+            if (ImGui::MenuItem("Grid Inventory (DayZ/Unturned-style)")) {
+                GameObject* g = ed.CreateEmpty("GridInventory");
+                auto* gi = g->AddComponent<GridInventory>();
+                gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
+                gi->AddItem("Rifle", 2, 6, 1, 4.0f);
+                gi->AddItem("Backpack", 3, 3, 1, 1.0f);
+                gi->AddItem("Beans", 1, 1, 2, 0.4f);
+                gi->AddItem("Bandage", 1, 1, 3, 0.1f);
+                gi->AddItem("Water", 1, 2, 1, 0.6f);
+                g->AddComponent<GridInventoryUI>();
+                ed.Select(g); ed.dirty = true; created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
             if (ImGui::MenuItem("UI Document"))  {
                 GameObject* root = EnsureUIRoot(ed);
                 GameObject* g = ed.CreateEmpty("UIDocument");
@@ -7914,6 +7927,56 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##iu")) toRemove = ui;
         }
     }
+    if (auto* gi = dynamic_cast<GridInventory*>(curComp)) {
+        if (CompHeader("Grid Inventory (DayZ/Unturned)", gi, &toRemove)) {
+            ImGui::TextDisabled("Multi-cell items in a grid; drag to rearrange in Play.");
+            char tb[96]; std::snprintf(tb, sizeof(tb), "%s", gi->title.c_str());
+            if (ImGui::InputText("Title##gi", tb, sizeof(tb))) { gi->title = tb; ed.dirty = true; }
+            if (ImGui::SliderInt("Columns##gi", &gi->cols, 1, 16)) ed.dirty = true;
+            if (ImGui::SliderInt("Rows##gi", &gi->rows, 1, 12)) ed.dirty = true;
+            char ok[2] = {gi->toggleKey, 0};
+            if (ImGui::InputText("Open Key##gi", ok, sizeof(ok))) { if (ok[0]) gi->toggleKey = ok[0]; ed.dirty = true; }
+            ImGui::Text("Total weight: %.1f", gi->TotalWeight());
+            if (ImGui::TreeNodeEx("Items##gi", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (std::size_t i = 0; i < gi->items.size(); ++i) {
+                    auto& it = gi->items[i];
+                    ImGui::PushID((int)i);
+                    char nb[64]; std::snprintf(nb, sizeof(nb), "%s", it.name.c_str());
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::InputText("##n", nb, sizeof(nb))) { it.name = nb; ed.dirty = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(150);
+                    int wh[2] = {it.w, it.h};
+                    if (ImGui::DragInt2("wxh##s", wh, 0.1f, 1, 12)) { it.w = wh[0]; it.h = wh[1]; ed.dirty = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragInt("##c", &it.count, 0.2f, 1, 9999)) ed.dirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("x")) { gi->items.erase(gi->items.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                    ImGui::PopID();
+                }
+                if (ImGui::SmallButton("+ Add item##gi")) { gi->AddItem("Item", 1, 1, 1, 0.5f); ed.dirty = true; }
+                ImGui::TreePop();
+            }
+            if (ImGui::SmallButton("Remove##gi")) toRemove = gi;
+        }
+    }
+    if (auto* gu = dynamic_cast<GridInventoryUI*>(curComp)) {
+        if (CompHeader("Grid Inventory UI", gu, &toRemove)) {
+            if (!gu->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add a Grid Inventory component to show items.");
+            if (ImGui::DragFloat("Cell Size##gu", &gu->cellSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Gap##gu", &gu->gap, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Show weight##gu", &gu->showWeight)) ed.dirty = true;
+            char icf[128]; std::snprintf(icf, sizeof(icf), "%s", gu->iconFolder.c_str());
+            if (ImGui::InputText("Icon Folder##gu", icf, sizeof(icf))) { gu->iconFolder = icf; ed.dirty = true; }
+            auto cc = [&](const char* lbl, Color& c, const char* id) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+            };
+            cc("Panel", gu->panelColor, "guc0"); cc("Cell", gu->cellColor, "guc1");
+            cc("Item", gu->itemColor, "guc2"); cc("Border", gu->itemBorder, "guc3");
+            if (ImGui::SmallButton("Remove##gu")) toRemove = gu;
+        }
+    }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
         if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
             ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
@@ -11278,6 +11341,35 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
         float rowW = n * sz + (n - 1) * gap, hx = (canvasSize.x - rowW) * 0.5f, hy = canvasSize.y - sz - 16.0f;
         for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
+        break;
+    }
+    // DayZ/Unturned grid inventory preview (drawn when its inventory is open).
+    for (const auto& up : objs) {
+        auto* gui = up ? up->GetComponent<okay::GridInventoryUI>() : nullptr;
+        if (!gui) continue;
+        okay::GridInventory* inv = gui->Inv();
+        if (!inv || !inv->open) break;
+        float cs = gui->cellSize, gp = gui->gap;
+        float gridW = inv->cols * cs + (inv->cols - 1) * gp, gridH = inv->rows * cs + (inv->rows - 1) * gp;
+        float ox = canvasPos.x + (canvasSize.x - gridW) * 0.5f, oy = canvasPos.y + (canvasSize.y - gridH) * 0.5f + 10.0f;
+        auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
+        if (gui->darkenWhenOpen)
+            dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + gridW + 12, oy + gridH + 12), col(gui->panelColor));
+        dl->AddText(ImVec2(ox, oy - 26), col(gui->textColor), inv->title.c_str());
+        for (int y = 0; y < inv->rows; ++y)
+            for (int x = 0; x < inv->cols; ++x)
+                dl->AddRectFilled(ImVec2(ox + x * (cs + gp), oy + y * (cs + gp)),
+                                  ImVec2(ox + x * (cs + gp) + cs, oy + y * (cs + gp) + cs), col(gui->cellColor));
+        for (const auto& it : inv->items) {
+            ImVec2 p0(ox + it.x * (cs + gp), oy + it.y * (cs + gp));
+            ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
+            SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
+            dl->AddRectFilled(p0, p1, col(gui->itemColor), 2.0f);
+            dl->AddRect(p0, p1, col(gui->itemBorder), 2.0f);
+            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
+            else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
+        }
         break;
     }
     // Loading-screen overlay: covers the view while a LoadingScreen is active in Play

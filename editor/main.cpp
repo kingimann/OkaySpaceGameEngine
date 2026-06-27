@@ -11337,7 +11337,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(p0, p1, sel ? col(ui->selectedColor) : col(ui->slotBorder), cr);
             float b = (ui->borderWidth < 0 ? 0 : ui->borderWidth) + (sel ? 1.0f : 0.0f);
             dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(ui->slotColor), cr > b ? cr - b : 0.0f);
-            if (inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
+            if (idx != ui->dragIndex && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
                 SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
@@ -11364,6 +11364,36 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                     slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
         }
         for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
+        // Drag-and-drop in the editor Play view (Input is fed canvas-relative, matching
+        // the slots' local coords). Mirrors the player.
+        if (ui->open && ui->dragItems && inv) {
+            auto hitL = [&](float px, float py, float x, float y) { return px >= x && px < x + sz && py >= y && py < y + sz; };
+            auto slotAt = [&](float px, float py) -> int {
+                for (int i = 0; i < n; ++i) if (hitL(px, py, hx + i * (sz + gap), hy)) return i;
+                for (int row = 0; row < ui->backpackRows; ++row)
+                    for (int c = 0; c < n; ++c) if (hitL(px, py, hx + c * (sz + gap), bpY(row))) return n + row * n + c;
+                return -1;
+            };
+            okay::Vec2 m = okay::Input::MousePosition();
+            if (ui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+                int idx = slotAt(m.x, m.y);
+                if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui->dragIndex = idx;
+            }
+            if (ui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
+                ui->MoveSlot(ui->dragIndex, slotAt(m.x, m.y));
+                ui->dragIndex = -1;
+            }
+            if (ui->dragIndex >= 0 && ui->dragIndex < (int)inv->slots.size()) {
+                const auto& it = inv->slots[ui->dragIndex];
+                ImVec2 p0(canvasPos.x + m.x - sz * 0.5f, canvasPos.y + m.y - sz * 0.5f);
+                ImVec2 p1(p0.x + sz, p0.y + sz);
+                dl->AddRectFilled(p0, p1, col(ui->slotBorder), cr);
+                dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ui->slotColor), cr);
+                SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
+                if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
+                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, 4).c_str());
+            }
+        } else ui->dragIndex = -1;
         break;
     }
     // DayZ/Unturned grid inventory preview (drawn when its inventory is open).
@@ -11386,8 +11416,47 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             for (int x = 0; x < inv->cols; ++x)
                 dl->AddRectFilled(ImVec2(ox + x * (cs + gp), oy + y * (cs + gp)),
                                   ImVec2(ox + x * (cs + gp) + cs, oy + y * (cs + gp) + cs), col(gui->cellColor), cr);
-        for (const auto& it : inv->items) {
+        // Mouse (canvas-local, as the editor feeds Input during Play) → cell.
+        okay::Vec2 m = okay::Input::MousePosition();
+        float lox = (canvasSize.x - gridW) * 0.5f, loy = (canvasSize.y - gridH) * 0.5f + 10.0f;
+        int cx = (int)std::floor((m.x - lox) / (cs + gp)), cy = (int)std::floor((m.y - loy) / (cs + gp));
+        // Drop-target highlight while dragging.
+        if (gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size()) {
+            const auto& it = inv->items[gui->dragIndex];
+            int tx = cx - gui->grabX, ty = cy - gui->grabY;
+            bool okp = inv->CanPlace(tx, ty, it.w, it.h, gui->dragIndex);
+            for (int yy = 0; yy < it.h; ++yy)
+                for (int xx = 0; xx < it.w; ++xx) {
+                    int gxc = tx + xx, gyc = ty + yy;
+                    if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
+                    dl->AddRectFilled(ImVec2(ox + gxc * (cs + gp), oy + gyc * (cs + gp)),
+                                      ImVec2(ox + gxc * (cs + gp) + cs, oy + gyc * (cs + gp) + cs),
+                                      col(okp ? gui->dropOk : gui->dropBad), cr);
+                }
+        }
+        for (int i = 0; i < (int)inv->items.size(); ++i) {
+            if (i == gui->dragIndex) continue;
+            const auto& it = inv->items[i];
             ImVec2 p0(ox + it.x * (cs + gp), oy + it.y * (cs + gp));
+            ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
+            SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
+            dl->AddRectFilled(p0, p1, col(gui->itemColor), cr);
+            dl->AddRect(p0, p1, col(gui->itemBorder), cr);
+            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
+            else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
+        }
+        // Drag-and-drop (Play view).
+        if (gui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+            int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
+            if (idx >= 0) { gui->dragIndex = idx; gui->grabX = cx - inv->items[idx].x; gui->grabY = cy - inv->items[idx].y; }
+        }
+        if (gui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
+            inv->PlaceAt(gui->dragIndex, cx - gui->grabX, cy - gui->grabY);
+            gui->dragIndex = -1;
+        }
+        if (gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size()) {
+            const auto& it = inv->items[gui->dragIndex];
+            ImVec2 p0(canvasPos.x + m.x - gui->grabX * (cs + gp) - cs * 0.5f, canvasPos.y + m.y - gui->grabY * (cs + gp) - cs * 0.5f);
             ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
             SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
             dl->AddRectFilled(p0, p1, col(gui->itemColor), cr);
@@ -13621,6 +13690,17 @@ int main(int argc, char** argv) {
         }
 #endif
 
+        // An open inventory is modal: controllers pause look/move (mirrors the player).
+        {
+            bool invModal = false;
+            if (ed.isPlaying())
+                for (const auto& up : ed.scene().Objects()) {
+                    if (!up) continue;
+                    if (auto* iu = up->GetComponent<okay::InventoryUI>()) if (iu->open && iu->dragItems) { invModal = true; break; }
+                    if (auto* gi = up->GetComponent<okay::GridInventory>()) if (gi->open) { invModal = true; break; }
+                }
+            okay::Input::SetUICaptured(invModal);
+        }
         if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
         ed.TickServices(dt); // Steam callbacks + networking every frame
 

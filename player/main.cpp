@@ -726,6 +726,7 @@ int main(int argc, char** argv) {
             if (auto* iu = up->GetComponent<InventoryUI>()) if (iu->open && iu->dragItems) { invModal = true; break; }
             if (auto* gi = up->GetComponent<GridInventory>()) if (gi->open) { invModal = true; break; }
         }
+        Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
         // Apply the game's requested cursor state (Unity-style Cursor lock/visibility).
         static Vec2 s_virtualMouse{0, 0};

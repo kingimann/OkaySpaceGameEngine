@@ -110,17 +110,17 @@ public:
         // first-person controller's convention (yaw decreases as the mouse moves
         // right). Flip per-axis with invertX / invertY.
         Vec2 mp = Input::MousePosition();
-        if (m_haveMouse) {
+        if (m_haveMouse && !Input::UICaptured()) {   // a modal UI (open inventory) pauses look
             yaw   += (invertX ? 1.0f : -1.0f) * (mp.x - m_lastMouse.x) * mouseSensitivity;
             pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
         m_lastMouse = mp; m_haveMouse = true;
-        float wheel = Input::MouseWheel();
+        float wheel = Input::UICaptured() ? 0.0f : Input::MouseWheel();
         if (wheel != 0.0f) distance = Mathf::Clamp(distance - wheel * zoomSpeed, minDistance, maxDistance);
 
         // ---- Movement relative to the camera's yaw (keyboard or gamepad) ----
-        Vec2 axis = Input::AxisWASD();
+        Vec2 axis = Input::UICaptured() ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
         Vec2 pad  = Input::GamepadAxis();
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) axis = pad;   // left stick overrides
         Quat flat = Quat::Euler(0, yaw, 0);

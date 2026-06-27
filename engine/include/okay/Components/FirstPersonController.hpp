@@ -104,7 +104,7 @@ public:
         // Mouse-right turns right and mouse-up looks up. The camera looks down its
         // local -Z, so yaw decreases with rightward mouse movement.
         Vec2 mp = Input::MousePosition();
-        if (m_haveMouse) {
+        if (m_haveMouse && !Input::UICaptured()) {   // a modal UI (open inventory) pauses look
             yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;
             pitch += (invertY ? 1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
@@ -126,7 +126,7 @@ public:
         UpdateStance();
 
         // ---- Movement: forward is where the camera looks (its -Z), flattened. ----
-        Vec2 axis = Input::AxisWASD();                 // x strafe, y forward
+        Vec2 axis = Input::UICaptured() ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
         Quat flat = Quat::Euler(0, yaw, 0);
         Vec3 fwd = flat * Vec3{0, 0, -1}, right = flat * Vec3::Right;
         Vec3 dir = fwd * axis.y + right * axis.x;

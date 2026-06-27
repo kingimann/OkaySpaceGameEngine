@@ -75,6 +75,13 @@ public:
     /// Add to this frame's wheel delta (from the OS scroll event).
     static void FeedMouseWheel(float delta);
 
+    // ---- UI capture (modal panels: inventories, menus) ----
+    /// True while a modal UI (an open inventory, a menu) owns the pointer — player
+    /// controllers should pause mouse-look / movement so the game feels paused.
+    static bool UICaptured();
+    /// Set by the windowed runtime each frame before the scene updates.
+    static void SetUICaptured(bool captured);
+
 private:
     friend class Application;
     static void BeginSession();   // put terminal into raw, non-blocking mode
@@ -95,6 +102,7 @@ private:
 
     static std::string s_typedText;
     static float       s_mouseWheel;
+    static bool        s_uiCaptured;
 };
 
 } // namespace okay

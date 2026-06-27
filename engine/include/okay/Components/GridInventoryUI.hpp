@@ -5,6 +5,7 @@
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -28,6 +29,21 @@ public:
     float cornerRadius = 4.0f;
     bool  darkenWhenOpen = true;
     bool  showWeight  = true;
+
+    // ---- Features ----
+    bool  showTooltips = true;   ///< hover an item to see its name, size and weight
+    Color tooltipColor = Color::FromBytes(12, 13, 18, 240);   ///< tooltip background
+    Color tooltipText  = Color::FromBytes(245, 245, 250, 255); ///< tooltip text
+    char  rotateKey    = 'r';    ///< while dragging, rotate the item 90° (0 = disabled)
+    Color overweightColor = Color::FromBytes(235, 90, 90, 255); ///< weight text when over the limit
+
+    /// A rarity/tier tint: items named `item` get their border drawn in `color`.
+    struct RarityRule { std::string item; Color color = Color::FromBytes(255, 215, 0, 255); };
+    std::vector<RarityRule> rarities;
+    const Color* RarityOf(const std::string& item) const {
+        for (const auto& r : rarities) if (!r.item.empty() && r.item == item) return &r.color;
+        return nullptr;
+    }
 
     // ---- Runtime drag state (driven by the renderer's mouse handling) ----
     int   dragIndex = -1;     ///< item being dragged, or -1

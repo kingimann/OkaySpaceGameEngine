@@ -390,6 +390,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << (ui->showPanel ? 1 : 0) << " " << ui->panelPad;
         wc(ui->hoverColor);
         out << " " << (ui->showSelectedName ? 1 : 0) << " " << ui->nameChars;
+        // Features (appended; read with numeric-peek guards for back-compat).
+        out << " " << (ui->showTooltips ? 1 : 0) << " " << (ui->slotNumbers ? 1 : 0)
+            << " " << (int)(unsigned char)ui->sortKey;
+        wc(ui->tooltipColor); wc(ui->tooltipText); wc(ui->numberColor);
+        // Split / quick-move / rarity rules (appended; numeric-peek guarded).
+        out << " " << (ui->splitRightClick ? 1 : 0) << " " << (ui->shiftQuickMove ? 1 : 0)
+            << " " << ui->rarities.size();
+        for (const auto& rr : ui->rarities) { out << " " << Quote(rr.item); wc(rr.color); }
         out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
@@ -398,6 +406,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& it : gi->items)
             out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.x
                 << " " << it.y << " " << it.count << " " << it.weight;
+        out << " " << gi->weightLimit;   // appended (numeric-peek guarded on read)
         out << "\n";
     }
     if (auto* gu = go->GetComponent<GridInventoryUI>()) {
@@ -407,6 +416,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wc(gu->panelColor); wc(gu->cellColor); wc(gu->itemColor); wc(gu->itemBorder); wc(gu->textColor);
         out << " " << Quote(gu->iconFolder) << " " << gu->cornerRadius;
         wc(gu->titleBar); wc(gu->hoverColor); wc(gu->dropOk); wc(gu->dropBad);
+        // Features (appended; read with numeric-peek guards for back-compat).
+        out << " " << (gu->showTooltips ? 1 : 0) << " " << (int)(unsigned char)gu->rotateKey;
+        wc(gu->tooltipColor); wc(gu->tooltipText);
+        // Overweight colour + rarity rules (appended; numeric-peek guarded).
+        wc(gu->overweightColor);
+        out << " " << gu->rarities.size();
+        for (const auto& rr : gu->rarities) { out << " " << Quote(rr.item); wc(rr.color); }
         out << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
@@ -1578,6 +1594,26 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                >> ui->hoverColor.r >> ui->hoverColor.g >> ui->hoverColor.b >> ui->hoverColor.a
                                >> ssn >> ui->nameChars;
                             ui->showPanel = (sp != 0); ui->showSelectedName = (ssn != 0);
+                            in >> std::ws;   // optional features block (tooltips / numbers / sort)
+                            int pk3 = in.peek();
+                            if (std::isdigit(pk3) || pk3 == '-' || pk3 == '.') {
+                                int st = 1, sn = 0, srt = 0;
+                                in >> st >> sn >> srt;
+                                ui->showTooltips = (st != 0); ui->slotNumbers = (sn != 0); ui->sortKey = (char)srt;
+                                rc(ui->tooltipColor); rc(ui->tooltipText); rc(ui->numberColor);
+                                in >> std::ws;   // optional split / quick-move / rarity block
+                                int pk4 = in.peek();
+                                if (std::isdigit(pk4) || pk4 == '-' || pk4 == '.') {
+                                    int sr = 1, qm = 1; std::size_t rn = 0;
+                                    in >> sr >> qm >> rn;
+                                    ui->splitRightClick = (sr != 0); ui->shiftQuickMove = (qm != 0);
+                                    ui->rarities.clear();
+                                    for (std::size_t ri = 0; ri < rn; ++ri) {
+                                        InventoryUI::RarityRule rr; rr.item = ReadQuoted(in); rc(rr.color);
+                                        ui->rarities.push_back(rr);
+                                    }
+                                }
+                            }
                         }
                     }
                 } else if (field == "gridinventory") {
@@ -1590,6 +1626,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> it.w >> it.h >> it.x >> it.y >> it.count >> it.weight;
                         gi->items.push_back(it);
                     }
+                    in >> std::ws;   // optional weight limit (appended later)
+                    int wpk = in.peek();
+                    if (std::isdigit(wpk) || wpk == '-' || wpk == '.') in >> gi->weightLimit;
                 } else if (field == "gridinventoryui") {
                     auto* gu = go->AddComponent<GridInventoryUI>();
                     int dk = 1, sw = 1; in >> gu->cellSize >> gu->gap >> dk >> sw;
@@ -1602,6 +1641,25 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(gpk) || gpk == '-' || gpk == '.') {
                         in >> gu->cornerRadius;
                         rc(gu->titleBar); rc(gu->hoverColor); rc(gu->dropOk); rc(gu->dropBad);
+                        in >> std::ws;   // optional features block (tooltips / rotate)
+                        int gpk2 = in.peek();
+                        if (std::isdigit(gpk2) || gpk2 == '-' || gpk2 == '.') {
+                            int st = 1, rkk = (int)(unsigned char)'r';
+                            in >> st >> rkk;
+                            gu->showTooltips = (st != 0); gu->rotateKey = (char)rkk;
+                            rc(gu->tooltipColor); rc(gu->tooltipText);
+                            in >> std::ws;   // optional overweight colour + rarity rules
+                            int gpk3 = in.peek();
+                            if (std::isdigit(gpk3) || gpk3 == '-' || gpk3 == '.') {
+                                rc(gu->overweightColor);
+                                std::size_t rn = 0; in >> rn;
+                                gu->rarities.clear();
+                                for (std::size_t ri = 0; ri < rn; ++ri) {
+                                    GridInventoryUI::RarityRule rr; rr.item = ReadQuoted(in); rc(rr.color);
+                                    gu->rarities.push_back(rr);
+                                }
+                            }
+                        }
                     }
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();

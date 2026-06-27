@@ -3,6 +3,7 @@
 #include "okay/Input/Input.hpp"
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace okay {
 
@@ -26,6 +27,10 @@ public:
     bool open = false;
     char toggleKey = 'i';
     std::string title = "Inventory";
+    float weightLimit = 0.0f;     ///< max carry weight (0 = unlimited); shown by the UI
+
+    /// True when a weight limit is set and the contents exceed it (over-encumbered).
+    bool OverWeight() const { return weightLimit > 0.0f && TotalWeight() > weightLimit; }
 
     /// Is the w×h block at (x,y) fully in-bounds and free (ignoring item `ignore`)?
     bool CanPlace(int x, int y, int w, int h, int ignore = -1) const {
@@ -82,6 +87,16 @@ public:
 
     void RemoveAt(int index) {
         if (index >= 0 && index < (int)items.size()) items.erase(items.begin() + index);
+    }
+
+    /// Rotate item `index` 90° (swap its w/h) if the rotated footprint still fits at
+    /// its current cell. Returns true if it rotated. Used by the UI while dragging.
+    bool Rotate(int index) {
+        if (index < 0 || index >= (int)items.size()) return false;
+        GridItem& it = items[index];
+        if (!CanPlace(it.x, it.y, it.h, it.w, index)) return false;
+        std::swap(it.w, it.h);
+        return true;
     }
 
     float TotalWeight() const {

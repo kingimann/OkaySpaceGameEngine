@@ -284,7 +284,9 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     auto slot = [&](float x, float y, int idx, bool sel) {
         float b = (ui.borderWidth < 0 ? 0 : ui.borderWidth) + (sel ? 1.0f : 0.0f);
         SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
-        const Color& bc = sel ? ui.selectedColor : ui.slotBorder;
+        Color bc = sel ? ui.selectedColor : ui.slotBorder;
+        if (!sel && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty())
+            if (const Color* rc = ui.RarityOf(inv->slots[idx].item)) bc = *rc;   // rarity tint
         FillUIShape(r, outer, shp, cr, bc, bc, false, false, 1.0f);
         SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
         float ir = cr > 0.5f ? (cr - b < 0 ? 0 : cr - b) : 0.0f;
@@ -338,6 +340,34 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     }
     if (ui.showPanel) panel(hx - ui.panelPad, hy - ui.panelPad, rowW + 2 * ui.panelPad, sz + 2 * ui.panelPad);
     for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+    // Hotbar slot numbers (1–9) in the top-left corner.
+    if (ui.slotNumbers) {
+        float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+        for (int i = 0; i < n && i < 9; ++i)
+            DrawText(r, std::to_string(i + 1), hx + i * (sz + gap) + 3, hy + 2, px,
+                     SDL_Color{(Uint8)(ui.numberColor.r*255),(Uint8)(ui.numberColor.g*255),(Uint8)(ui.numberColor.b*255),255});
+    }
+    // Tooltip helper: a small panel near the cursor with the item's name + count.
+    okay::Vec2 mpos = okay::Input::MousePosition();
+    auto drawTip = [&](const std::string& label) {
+        if (!ui.showTooltips || label.empty()) return;
+        float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+        float tw = label.size() * (Font8x8::Width + 1) * px, th = Font8x8::Height * px, pad = 6.0f;
+        SDL_Rect bg{(int)(mpos.x + 14), (int)(mpos.y + 14), (int)(tw + pad * 2), (int)(th + pad * 2)};
+        FillUIShape(r, bg, UIShape::Rounded, 4.0f, ui.tooltipColor, ui.tooltipColor, false, false, 1.0f);
+        DrawText(r, label, bg.x + pad, bg.y + pad, px,
+                 SDL_Color{(Uint8)(ui.tooltipText.r*255),(Uint8)(ui.tooltipText.g*255),(Uint8)(ui.tooltipText.b*255),255});
+    };
+    auto slotLabel = [&](const Inventory::Slot& it) {
+        return it.item + (it.count > 1 ? " x" + std::to_string(it.count) : std::string());
+    };
+    // Hotbar tooltip on hover (shown even when the backpack is closed).
+    if (inv && ui.showTooltips && !ui.open && ui.dragIndex < 0)
+        for (int i = 0; i < n && i < (int)inv->slots.size(); ++i) {
+            float sx = hx + i * (sz + gap);
+            if (mpos.x >= sx && mpos.x < sx + sz && mpos.y >= hy && mpos.y < hy + sz &&
+                !inv->slots[i].item.empty()) { drawTip(slotLabel(inv->slots[i])); break; }
+        }
     // Minecraft-style held-item name above (or below) the hotbar.
     if (ui.showSelectedName) {
         std::string nm = ui.SelectedItem();
@@ -384,13 +414,24 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     };
     // Highlight the target slot: the one under the cursor while hovering, or the
     // nearest slot the dragged item will drop into.
-    if (ui.dragIndex < 0) hilite(nearest(mp.x, mp.y), ui.hoverColor);
+    if (ui.dragIndex < 0) {
+        int hi = nearest(mp.x, mp.y);
+        hilite(hi, ui.hoverColor);
+        if (inv && hi >= 0 && hi < (int)inv->slots.size() && !inv->slots[hi].item.empty())
+            drawTip(slotLabel(inv->slots[hi]));
+    }
     else { int t = nearest(mp.x, mp.y);
         if (t >= 0 && t != ui.dragIndex)
             hilite(t, Color{ui.selectedColor.r, ui.selectedColor.g, ui.selectedColor.b, 0.40f}); }
-    if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+    if (ui.dragIndex < 0) {
         int idx = nearest(mp.x, mp.y);
-        if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui.dragIndex = idx;
+        bool onItem = idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty();
+        if (onItem && okay::Input::GetMouseButtonDown(0)) {
+            if (ui.shiftQuickMove && okay::Input::GetKey(okay::Input::KeyShift)) ui.QuickMove(idx);
+            else ui.dragIndex = idx;                                  // start a drag
+        } else if (onItem && ui.splitRightClick && okay::Input::GetMouseButtonDown(1)) {
+            ui.SplitSlot(idx);                                        // right-click: split half
+        }
     }
     if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
         ui.MoveSlot(ui.dragIndex, nearest(mp.x, mp.y));
@@ -442,9 +483,11 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     fill(ox - 12, oy - 38, gridW + 24, 28, ui.titleBar, cr + 2);
     DrawText(r, inv->title, ox, oy - 31, 2.0f, sc(ui.textColor));
     if (ui.showWeight) {
-        char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f kg", inv->TotalWeight());
+        char wb[64];
+        if (inv->weightLimit > 0.0f) std::snprintf(wb, sizeof(wb), "%.1f / %.0f kg", inv->TotalWeight(), inv->weightLimit);
+        else std::snprintf(wb, sizeof(wb), "%.1f kg", inv->TotalWeight());
         float px = 2.0f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;
-        DrawText(r, wb, ox + gridW - tw, oy - 31, px, sc(ui.textColor));
+        DrawText(r, wb, ox + gridW - tw, oy - 31, px, sc(inv->OverWeight() ? ui.overweightColor : ui.textColor));
     }
     for (int y = 0; y < inv->rows; ++y)
         for (int x = 0; x < inv->cols; ++x)
@@ -465,7 +508,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
         fill(px0, py0, w, h, ghost ? Color{ui.itemColor.r, ui.itemColor.g, ui.itemColor.b, 0.6f} : ui.itemColor, cr);
         SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
-        setc(ui.itemBorder, ghost ? 170 : 255); SDL_RenderDrawRect(r, &box);
+        const Color* rar = ui.RarityOf(it.name);
+        setc(rar ? *rar : ui.itemBorder, ghost ? 170 : 255); SDL_RenderDrawRect(r, &box);
         if (hover) fill(px0, py0, w, h, ui.hoverColor, cr);
         SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.name + ".png", baseDir, cache);
         if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 4, box.y + 4, box.w - 8, box.h - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
@@ -481,6 +525,24 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         if (i == ui.dragIndex) continue;
         const auto& it = inv->items[i];
         drawItem(it, ox + it.x * (cs + gp), oy + it.y * (cs + gp), false, i == hovered);
+    }
+    // Rotate the held item 90° (swap its footprint) — the drop still validates the fit.
+    if (ui.rotateKey && ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size() &&
+        okay::Input::GetKeyDown(ui.rotateKey)) {
+        auto& it = inv->items[ui.dragIndex];
+        std::swap(it.w, it.h);
+        if (ui.grabX >= it.w) ui.grabX = it.w - 1;
+        if (ui.grabY >= it.h) ui.grabY = it.h - 1;
+    }
+    // Hover tooltip: item name, footprint and weight.
+    if (ui.showTooltips && hovered >= 0 && hovered < (int)inv->items.size()) {
+        const auto& it = inv->items[hovered];
+        char tip[96];
+        std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
+                      it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
+        float px = 1.4f, tw = (float)std::strlen(tip) * (Font8x8::Width + 1) * px, pad = 6.0f;
+        fill(mp.x + 14, mp.y + 14, tw + pad * 2, Font8x8::Height * px + pad * 2, ui.tooltipColor, 4.0f);
+        DrawText(r, tip, mp.x + 14 + pad, mp.y + 14 + pad, px, sc(ui.tooltipText));
     }
     // Drag-and-drop: pick an item under the cursor, drop it where it fits.
     if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {

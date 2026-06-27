@@ -7948,6 +7948,42 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Hover Color##iu", hc)) { ui->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
                 ImGui::TreePop();
             }
+            if (ImGui::TreeNodeEx("Features##iu", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Checkbox("Tooltips##iu", &ui->showTooltips)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hover a slot to see the item's name + count.");
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Slot numbers##iu", &ui->slotNumbers)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw 1–9 in the corner of each hotbar slot.");
+                char sk[2] = {ui->sortKey, 0};
+                if (ImGui::InputText("Sort Key##iu", sk, sizeof(sk))) { ui->sortKey = sk[0]; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to compact + merge stacks (blank = off).");
+                if (ImGui::Checkbox("Right-click split##iu", &ui->splitRightClick)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click a stack to split half into an empty slot.");
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Shift quick-move##iu", &ui->shiftQuickMove)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shift+click moves a stack between the hotbar and backpack.");
+                cc("Tooltip BG", ui->tooltipColor, "iutt0");
+                cc("Tooltip Text", ui->tooltipText, "iutt1");
+                cc("Number", ui->numberColor, "iutt2");
+                // Rarity / tier colours: name → border tint.
+                if (ImGui::TreeNode("Rarity colours##iu")) {
+                    for (std::size_t i = 0; i < ui->rarities.size(); ++i) {
+                        ImGui::PushID((int)i);
+                        char nb[64]; std::snprintf(nb, sizeof(nb), "%s", ui->rarities[i].item.c_str());
+                        ImGui::SetNextItemWidth(120);
+                        if (ImGui::InputText("##rn", nb, sizeof(nb))) { ui->rarities[i].item = nb; ed.dirty = true; }
+                        ImGui::SameLine(); float rv[4] = {ui->rarities[i].color.r, ui->rarities[i].color.g, ui->rarities[i].color.b, ui->rarities[i].color.a};
+                        ImGui::SetNextItemWidth(150);
+                        if (ImGui::ColorEdit4("##rc", rv, ImGuiColorEditFlags_NoInputs)) { ui->rarities[i].color = {rv[0], rv[1], rv[2], rv[3]}; ed.dirty = true; }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("x")) { ui->rarities.erase(ui->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                        ImGui::PopID();
+                    }
+                    if (ImGui::SmallButton("+ Add rarity##iu")) { ui->rarities.push_back({}); ed.dirty = true; }
+                    ImGui::TreePop();
+                }
+                ImGui::TreePop();
+            }
             if (ImGui::SmallButton("Remove##iu")) toRemove = ui;
         }
     }
@@ -7960,7 +7996,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SliderInt("Rows##gi", &gi->rows, 1, 12)) ed.dirty = true;
             char ok[2] = {gi->toggleKey, 0};
             if (ImGui::InputText("Open Key##gi", ok, sizeof(ok))) { if (ok[0]) gi->toggleKey = ok[0]; ed.dirty = true; }
-            ImGui::Text("Total weight: %.1f", gi->TotalWeight());
+            if (ImGui::DragFloat("Weight Limit##gi", &gi->weightLimit, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max carry weight (0 = unlimited). The UI turns red when over.");
+            ImGui::Text("Total weight: %.1f%s", gi->TotalWeight(), gi->OverWeight() ? "  (OVER!)" : "");
             if (ImGui::TreeNodeEx("Items##gi", ImGuiTreeNodeFlags_DefaultOpen)) {
                 for (std::size_t i = 0; i < gi->items.size(); ++i) {
                     auto& it = gi->items[i];
@@ -8001,6 +8039,33 @@ void DrawInspector(EditorState& ed) {
             cc("Item", gu->itemColor, "guc2"); cc("Border", gu->itemBorder, "guc3");
             cc("Title Bar", gu->titleBar, "guc4");
             cc("Drop OK", gu->dropOk, "guc5"); cc("Drop Blocked", gu->dropBad, "guc6");
+            if (ImGui::TreeNodeEx("Features##gu", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Checkbox("Tooltips##gu", &gu->showTooltips)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hover an item to see its name, size and weight.");
+                char rk[2] = {gu->rotateKey, 0};
+                if (ImGui::InputText("Rotate Key##gu", rk, sizeof(rk))) { gu->rotateKey = rk[0]; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("While dragging an item, rotate it 90° (blank = off).");
+                cc("Tooltip BG", gu->tooltipColor, "gutt0");
+                cc("Tooltip Text", gu->tooltipText, "gutt1");
+                cc("Overweight", gu->overweightColor, "gutt2");
+                if (ImGui::TreeNode("Rarity colours##gu")) {
+                    for (std::size_t i = 0; i < gu->rarities.size(); ++i) {
+                        ImGui::PushID((int)i);
+                        char nb[64]; std::snprintf(nb, sizeof(nb), "%s", gu->rarities[i].item.c_str());
+                        ImGui::SetNextItemWidth(120);
+                        if (ImGui::InputText("##rn", nb, sizeof(nb))) { gu->rarities[i].item = nb; ed.dirty = true; }
+                        ImGui::SameLine(); float rv[4] = {gu->rarities[i].color.r, gu->rarities[i].color.g, gu->rarities[i].color.b, gu->rarities[i].color.a};
+                        ImGui::SetNextItemWidth(150);
+                        if (ImGui::ColorEdit4("##rc", rv, ImGuiColorEditFlags_NoInputs)) { gu->rarities[i].color = {rv[0], rv[1], rv[2], rv[3]}; ed.dirty = true; }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("x")) { gu->rarities.erase(gu->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                        ImGui::PopID();
+                    }
+                    if (ImGui::SmallButton("+ Add rarity##gu")) { gu->rarities.push_back({}); ed.dirty = true; }
+                    ImGui::TreePop();
+                }
+                ImGui::TreePop();
+            }
             if (ImGui::SmallButton("Remove##gu")) toRemove = gu;
         }
     }
@@ -11344,7 +11409,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         auto slot = [&](float x, float y, int idx, bool sel) {
             ImVec2 p0(canvasPos.x + x, canvasPos.y + y), p1(p0.x + sz, p0.y + sz);
-            dl->AddRectFilled(p0, p1, sel ? col(ui->selectedColor) : col(ui->slotBorder), cr);
+            okay::Color bcol = sel ? ui->selectedColor : ui->slotBorder;
+            if (!sel && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty())
+                if (const okay::Color* rc = ui->RarityOf(inv->slots[idx].item)) bcol = *rc;   // rarity tint
+            dl->AddRectFilled(p0, p1, col(bcol), cr);
             float b = (ui->borderWidth < 0 ? 0 : ui->borderWidth) + (sel ? 1.0f : 0.0f);
             dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(ui->slotColor), cr > b ? cr - b : 0.0f);
             if (idx != ui->dragIndex && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
@@ -11374,6 +11442,30 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                     slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
         }
         for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
+        // Hotbar slot numbers (1–9).
+        if (ui->slotNumbers)
+            for (int i = 0; i < n && i < 9; ++i)
+                dl->AddText(ImVec2(canvasPos.x + hx + i * (sz + gap) + 3, canvasPos.y + hy + 2),
+                            col(ui->numberColor), std::to_string(i + 1).c_str());
+        // Hover tooltip (Game view only — the mouse is fed against that canvas).
+        if (gameView && ui->showTooltips && inv && ui->dragIndex < 0) {
+            okay::Vec2 m = okay::Input::MousePosition();
+            int hov = -1;
+            for (int i = 0; i < n; ++i) { float sx = hx + i * (sz + gap);
+                if (m.x >= sx && m.x < sx + sz && m.y >= hy && m.y < hy + sz) { hov = i; break; } }
+            if (ui->open && hov < 0)
+                for (int row = 0; row < ui->backpackRows && hov < 0; ++row)
+                    for (int c = 0; c < n; ++c) { float sx = hx + c * (sz + gap), sy = bpY(row);
+                        if (m.x >= sx && m.x < sx + sz && m.y >= sy && m.y < sy + sz) { hov = n + row * n + c; break; } }
+            if (hov >= 0 && hov < (int)inv->slots.size() && !inv->slots[hov].item.empty()) {
+                const auto& it = inv->slots[hov];
+                std::string label = it.item + (it.count > 1 ? " x" + std::to_string(it.count) : std::string());
+                ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+                ImVec2 p0(canvasPos.x + m.x + 14, canvasPos.y + m.y + 14);
+                dl->AddRectFilled(p0, ImVec2(p0.x + ts.x + 12, p0.y + ts.y + 10), col(ui->tooltipColor), 4.0f);
+                dl->AddText(ImVec2(p0.x + 6, p0.y + 5), col(ui->tooltipText), label.c_str());
+            }
+        }
         // Drag-and-drop in the editor Play view (Input is fed canvas-relative, matching
         // the slots' local coords). Mirrors the player. ONLY in the Game view: this
         // overlay is also drawn for the Scene view, whose canvas size differs, so its
@@ -11410,9 +11502,15 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddRectFilled(ImVec2(canvasPos.x + sx, canvasPos.y + sy),
                                   ImVec2(canvasPos.x + sx + sz, canvasPos.y + sy + sz), hc, cr);
             }
-            if (ui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+            if (ui->dragIndex < 0) {
                 int idx = nearest(m.x, m.y);
-                if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui->dragIndex = idx;
+                bool onItem = idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty();
+                if (onItem && okay::Input::GetMouseButtonDown(0)) {
+                    if (ui->shiftQuickMove && okay::Input::GetKey(okay::Input::KeyShift)) ui->QuickMove(idx);
+                    else ui->dragIndex = idx;
+                } else if (onItem && ui->splitRightClick && okay::Input::GetMouseButtonDown(1)) {
+                    ui->SplitSlot(idx);
+                }
             }
             if (ui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
                 ui->MoveSlot(ui->dragIndex, nearest(m.x, m.y));
@@ -11447,6 +11545,13 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         dl->AddRectFilled(ImVec2(ox - 12, oy - 38), ImVec2(ox + gridW + 12, oy + gridH + 12), col(gui->panelColor), cr + 2);
         dl->AddRectFilled(ImVec2(ox - 12, oy - 38), ImVec2(ox + gridW + 12, oy - 10), col(gui->titleBar), cr + 2);
         dl->AddText(ImVec2(ox, oy - 31), col(gui->textColor), inv->title.c_str());
+        if (gui->showWeight) {
+            char wb[64];
+            if (inv->weightLimit > 0.0f) std::snprintf(wb, sizeof(wb), "%.1f / %.0f kg", inv->TotalWeight(), inv->weightLimit);
+            else std::snprintf(wb, sizeof(wb), "%.1f kg", inv->TotalWeight());
+            ImVec2 ts = ImGui::CalcTextSize(wb);
+            dl->AddText(ImVec2(ox + gridW - ts.x, oy - 31), col(inv->OverWeight() ? gui->overweightColor : gui->textColor), wb);
+        }
         for (int y = 0; y < inv->rows; ++y)
             for (int x = 0; x < inv->cols; ++x)
                 dl->AddRectFilled(ImVec2(ox + x * (cs + gp), oy + y * (cs + gp)),
@@ -11476,7 +11581,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
             SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
             dl->AddRectFilled(p0, p1, col(gui->itemColor), cr);
-            dl->AddRect(p0, p1, col(gui->itemBorder), cr);
+            const okay::Color* rar = gui->RarityOf(it.name);
+            dl->AddRect(p0, p1, col(rar ? *rar : gui->itemBorder), cr);
             if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
             else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
         }
@@ -11485,6 +11591,29 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         // mouse-up and drop into the wrong cell. See the Minecraft block above. The
         // Scene pass leaves dragIndex untouched (the Game pass owns it), so it can't
         // clobber an in-progress drag depending on which view draws first.
+        // Rotate the held item 90° (swap footprint); the drop validates the fit.
+        if (gameView && gui->rotateKey && gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size() &&
+            okay::Input::GetKeyDown(gui->rotateKey)) {
+            auto& it = inv->items[gui->dragIndex];
+            std::swap(it.w, it.h);
+            if (gui->grabX >= it.w) gui->grabX = it.w - 1;
+            if (gui->grabY >= it.h) gui->grabY = it.h - 1;
+        }
+        // Hover tooltip: item name, footprint, weight.
+        if (gameView && gui->showTooltips && gui->dragIndex < 0 &&
+            cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) {
+            int hov = inv->ItemAtCell(cx, cy);
+            if (hov >= 0) {
+                const auto& it = inv->items[hov];
+                char tip[96];
+                std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
+                              it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
+                ImVec2 ts = ImGui::CalcTextSize(tip);
+                ImVec2 p0(canvasPos.x + m.x + 14, canvasPos.y + m.y + 14);
+                dl->AddRectFilled(p0, ImVec2(p0.x + ts.x + 12, p0.y + ts.y + 10), col(gui->tooltipColor), 4.0f);
+                dl->AddText(ImVec2(p0.x + 6, p0.y + 5), col(gui->tooltipText), tip);
+            }
+        }
         if (gameView && gui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
             int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
             if (idx >= 0) { gui->dragIndex = idx; gui->grabX = cx - inv->items[idx].x; gui->grabY = cy - inv->items[idx].y; }
@@ -11499,7 +11628,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
             SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
             dl->AddRectFilled(p0, p1, col(gui->itemColor), cr);
-            dl->AddRect(p0, p1, col(gui->itemBorder), cr);
+            const okay::Color* rar = gui->RarityOf(it.name);
+            dl->AddRect(p0, p1, col(rar ? *rar : gui->itemBorder), cr);
             if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
             else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
         }

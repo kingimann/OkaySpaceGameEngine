@@ -54,6 +54,73 @@ public:
     bool  showSelectedName = false; ///< Minecraft-style: held item's name above the hotbar
     int   nameChars      = 6;       ///< how many characters of the item name to show in a slot
 
+    // ---- Features ----
+    bool  showTooltips   = true;    ///< hover a slot to see the item's name + count
+    Color tooltipColor   = Color::FromBytes(12, 13, 18, 240);   ///< tooltip background
+    Color tooltipText    = Color::FromBytes(245, 245, 250, 255); ///< tooltip text
+    bool  slotNumbers    = false;   ///< draw 1–9 in the corner of each hotbar slot
+    Color numberColor    = Color::FromBytes(180, 184, 200, 255); ///< hotbar slot-number tint
+    char  sortKey        = 0;       ///< press to compact + merge stacks (0 = disabled)
+    bool  splitRightClick = true;   ///< right-click a stack to split half into an empty slot
+    bool  shiftQuickMove  = true;   ///< shift+click moves a stack hotbar↔backpack
+
+    /// A rarity/tier tint: stacks of `item` get their slot border drawn in `color`
+    /// (Minecraft net-style quality colours). Add as many as you like.
+    struct RarityRule { std::string item; Color color = Color::FromBytes(255, 215, 0, 255); };
+    std::vector<RarityRule> rarities;
+    const Color* RarityOf(const std::string& item) const {
+        for (const auto& r : rarities) if (!r.item.empty() && r.item == item) return &r.color;
+        return nullptr;
+    }
+
+    /// Right-click split: move half of stack `from` into the first empty slot.
+    bool SplitSlot(int from) {
+        Inventory* inv = Inv();
+        if (!inv || from < 0 || from >= (int)inv->slots.size()) return false;
+        Inventory::Slot& s = inv->slots[from];
+        if (Inventory::Empty(s) || s.count < 2) return false;
+        int move = s.count / 2;
+        int cap = inv->capacity > 0 ? inv->capacity : (hotbarSlots + backpackRows * hotbarSlots);
+        for (auto& d : inv->slots)
+            if (Inventory::Empty(d)) { d.item = s.item; d.count = move; s.count -= move; return true; }
+        if ((int)inv->slots.size() < cap) { inv->slots.push_back({s.item, move}); s.count -= move; return true; }
+        return false;
+    }
+
+    /// Shift-move a stack between the hotbar and the backpack (whichever it isn't in).
+    bool QuickMove(int from) {
+        Inventory* inv = Inv();
+        if (!inv || from < 0 || from >= (int)inv->slots.size() || Inventory::Empty(inv->slots[from])) return false;
+        int n = hotbarSlots < 1 ? 1 : hotbarSlots, total = n + backpackRows * n;
+        int lo = (from < n) ? n : 0, hi = (from < n) ? total : n;
+        while ((int)inv->slots.size() < hi) inv->slots.push_back(Inventory::Slot{});
+        for (int i = lo; i < hi; ++i)            // merge onto a matching stack first
+            if (!Inventory::Empty(inv->slots[i]) && inv->slots[i].item == inv->slots[from].item) {
+                inv->slots[i].count += inv->slots[from].count; inv->slots[from] = Inventory::Slot{}; return true;
+            }
+        for (int i = lo; i < hi; ++i)            // else first empty slot in the other region
+            if (Inventory::Empty(inv->slots[i])) { std::swap(inv->slots[i], inv->slots[from]); return true; }
+        return false;
+    }
+
+    /// Compact the bag: merge identical stacks and pull everything to the front, so
+    /// holes left by dragging close up. Bound to `sortKey` (e.g. set it to 'r').
+    void Sort() {
+        Inventory* inv = Inv();
+        if (!inv) return;
+        std::vector<Inventory::Slot> packed;
+        for (auto& s : inv->slots) {
+            if (Inventory::Empty(s)) continue;
+            bool merged = false;
+            for (auto& p : packed)
+                if (p.item == s.item) { p.count += s.count; merged = true; break; }
+            if (!merged) packed.push_back(Inventory::Slot{s.item, s.count});
+        }
+        for (auto& s : inv->slots) s = Inventory::Slot{};     // clear, keeping slot count
+        for (std::size_t i = 0; i < packed.size() && i < inv->slots.size(); ++i)
+            inv->slots[i] = packed[i];
+    }
+
     /// The Inventory this UI shows: on the same object, else on the player root.
     Inventory* Inv() const {
         if (gameObject)
@@ -104,6 +171,7 @@ public:
             else if (w < -0.5f) selected = (selected + 1) % hotbarSlots;
         }
         if (toggleKey && Input::GetKeyDown(toggleKey)) open = !open;
+        if (sortKey && Input::GetKeyDown(sortKey)) Sort();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
     }

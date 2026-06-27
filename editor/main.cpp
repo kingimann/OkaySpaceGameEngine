@@ -11375,14 +11375,24 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
         for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
         // Drag-and-drop in the editor Play view (Input is fed canvas-relative, matching
-        // the slots' local coords). Mirrors the player.
-        if (ui->open && ui->dragItems && inv) {
+        // the slots' local coords). Mirrors the player. ONLY in the Game view: this
+        // overlay is also drawn for the Scene view, whose canvas size differs, so its
+        // slot layout wouldn't match the game-relative mouse — running the drop there
+        // (it shares the same fed mouse and consumes the mouse-up) landed items in the
+        // wrong slot, ~a row off. The Game view's canvas is what the mouse is fed against.
+        if (gameView && ui->open && ui->dragItems && inv) {
             auto slotXY = [&](int idx, float& sx, float& sy) {
                 if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
                 else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
             };
             const int slotCount = n + ui->backpackRows * n;
+            // Containment-first (see the player): the slot the point is inside wins,
+            // so hovering over a slot always picks it; nearest-centre only fills gaps.
             auto nearest = [&](float px, float py) -> int {
+                for (int idx = 0; idx < slotCount; ++idx) {
+                    float sx, sy; slotXY(idx, sx, sy);
+                    if (px >= sx && px < sx + sz && py >= sy && py < sy + sz) return idx;
+                }
                 int best = -1; float bestD = (sz + gap) * (sz + gap) * 1.1f;
                 for (int idx = 0; idx < slotCount; ++idx) {
                     float sx, sy; slotXY(idx, sx, sy);
@@ -11418,7 +11428,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
                 else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
             }
-        } else ui->dragIndex = -1;
+        } else if (gameView) ui->dragIndex = -1;   // only the Game pass clears the drag
         break;
     }
     // DayZ/Unturned grid inventory preview (drawn when its inventory is open).
@@ -11470,16 +11480,20 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
             else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
         }
-        // Drag-and-drop (Play view).
-        if (gui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+        // Drag-and-drop — Game view ONLY: the mouse is fed against the Game canvas, so
+        // running this in the Scene-view pass (different canvas size) would consume the
+        // mouse-up and drop into the wrong cell. See the Minecraft block above. The
+        // Scene pass leaves dragIndex untouched (the Game pass owns it), so it can't
+        // clobber an in-progress drag depending on which view draws first.
+        if (gameView && gui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
             int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
             if (idx >= 0) { gui->dragIndex = idx; gui->grabX = cx - inv->items[idx].x; gui->grabY = cy - inv->items[idx].y; }
         }
-        if (gui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
+        if (gameView && gui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
             inv->PlaceAt(gui->dragIndex, cx - gui->grabX, cy - gui->grabY);
             gui->dragIndex = -1;
         }
-        if (gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size()) {
+        if (gameView && gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size()) {
             const auto& it = inv->items[gui->dragIndex];
             ImVec2 p0(canvasPos.x + m.x - gui->grabX * (cs + gp) - cs * 0.5f, canvasPos.y + m.y - gui->grabY * (cs + gp) - cs * 0.5f);
             ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);

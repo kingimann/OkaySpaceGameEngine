@@ -358,8 +358,15 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
     };
     const int slotCount = n + ui.backpackRows * n;
-    // Slot whose centre is closest to (px,py), within a slot's reach (else -1).
+    // Which slot a point picks: the slot it's actually inside (so hovering over a
+    // slot always picks THAT slot), else — for gaps / imperfect aim — the slot whose
+    // centre is nearest, within a slot's reach. Containment wins so the cursor sitting
+    // between two rows never snaps to the row above the one it's visually over.
     auto nearest = [&](float px, float py) -> int {
+        for (int idx = 0; idx < slotCount; ++idx) {
+            float sx, sy; slotXY(idx, sx, sy);
+            if (px >= sx && px < sx + sz && py >= sy && py < sy + sz) return idx;
+        }
         int best = -1; float bestD = (sz + gap) * (sz + gap) * 1.1f;
         for (int idx = 0; idx < slotCount; ++idx) {
             float sx, sy; slotXY(idx, sx, sy);

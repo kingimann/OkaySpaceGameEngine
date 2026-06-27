@@ -559,6 +559,43 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     }
 }
 
+// Crafting bench panel: lists recipes, tints by affordability, crafts on click.
+static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
+    if (!cs.open) return;
+    okay::Inventory* inv = cs.Inv();
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    if (W <= 0 || H <= 0) return;
+    const float cr = cs.cornerRadius;
+    auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
+    auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
+        SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
+        FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
+    };
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    int n = (int)cs.recipes.size();
+    float pw = cs.width, ph = n * cs.rowHeight + 8.0f;
+    float px = (W - pw) * 0.5f + cs.marginX, py = (H - ph) * 0.5f + cs.marginY;
+    fill(px, py - 26, pw, ph + 26, cs.panelColor, cr + 2);
+    fill(px, py - 26, pw, 24, cs.titleBar, cr + 2);
+    DrawText(r, cs.title, px + 8, py - 20, 1.6f, sc(cs.textColor));
+    okay::Vec2 mp = okay::Input::MousePosition();
+    for (int i = 0; i < n; ++i) {
+        const auto& rec = cs.recipes[i];
+        float ry = py + i * cs.rowHeight + 4.0f;
+        bool can = inv && cs.CanCraft(rec, *inv);
+        bool hover = mp.x >= px + 4 && mp.x < px + pw - 4 && mp.y >= ry && mp.y < ry + cs.rowHeight - 2;
+        fill(px + 4, ry, pw - 8, cs.rowHeight - 2, can ? cs.canColor : cs.cantColor, cr);
+        if (hover) fill(px + 4, ry, pw - 8, cs.rowHeight - 2, cs.hoverColor, cr);
+        std::string out = rec.output + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
+        DrawText(r, out, px + 10, ry + 4, 1.4f, sc(cs.textColor));
+        std::string ins;
+        for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + rec.inputs[k].item; }
+        float tw = ins.size() * (Font8x8::Width + 1) * 1.0f;
+        DrawText(r, ins, px + pw - 10 - tw, ry + 6, 1.0f, sc(cs.textColor));
+        if (hover && can && okay::Input::GetMouseButtonDown(0)) cs.Craft(i);
+    }
+}
+
 int main(int argc, char** argv) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -841,6 +878,7 @@ int main(int argc, char** argv) {
             }
             if (auto* gi = up->GetComponent<GridInventory>()) { if (gi->open) invModal = true; }
             if (auto* gu = up->GetComponent<GridInventoryUI>()) { if (gu->dragIndex >= 0) itemDragging = true; }
+            if (auto* cs = up->GetComponent<CraftingStation>()) { if (cs->open) invModal = true; }
         }
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
@@ -1938,6 +1976,12 @@ int main(int argc, char** argv) {
             auto* gui = up ? up->GetComponent<GridInventoryUI>() : nullptr;
             if (!gui) continue;
             DrawGridInventory(renderer, *gui, baseDir, textureCache);
+            break;
+        }
+        for (const auto& up : scene.Objects()) {
+            auto* cs = up ? up->GetComponent<CraftingStation>() : nullptr;
+            if (!cs) continue;
+            DrawCrafting(renderer, *cs);
             break;
         }
         // Loading-screen overlay: drawn on top of everything (and the UI) when active.

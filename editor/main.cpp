@@ -8069,6 +8069,58 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##gu")) toRemove = gu;
         }
     }
+    if (auto* cs = dynamic_cast<CraftingStation*>(curComp)) {
+        if (CompHeader("Crafting Station", cs, &toRemove)) {
+            ImGui::TextDisabled("Recipes consume items from a sibling/owner Inventory.");
+            if (!cs->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to craft from.");
+            char tb[96]; std::snprintf(tb, sizeof(tb), "%s", cs->title.c_str());
+            if (ImGui::InputText("Title##cs", tb, sizeof(tb))) { cs->title = tb; ed.dirty = true; }
+            char ok[2] = {cs->toggleKey, 0};
+            if (ImGui::InputText("Open Key##cs", ok, sizeof(ok))) { if (ok[0]) cs->toggleKey = ok[0]; ed.dirty = true; }
+            if (ImGui::Checkbox("Close after craft##cs", &cs->closeWhenCrafted)) ed.dirty = true;
+            if (ImGui::DragFloat("Width##cs", &cs->width, 0.5f, 80.0f, 800.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Row Height##cs", &cs->rowHeight, 0.25f, 14.0f, 60.0f)) ed.dirty = true;
+            auto cc = [&](const char* lbl, Color& c, const char* id) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+            };
+            cc("Panel", cs->panelColor, "csc0"); cc("Title Bar", cs->titleBar, "csc1");
+            cc("Craftable", cs->canColor, "csc2"); cc("Missing", cs->cantColor, "csc3");
+            cc("Text", cs->textColor, "csc4");
+            if (ImGui::TreeNodeEx("Recipes##cs", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (std::size_t i = 0; i < cs->recipes.size(); ++i) {
+                    auto& rec = cs->recipes[i];
+                    ImGui::PushID((int)i);
+                    char ob[64]; std::snprintf(ob, sizeof(ob), "%s", rec.output.c_str());
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::InputText("out##o", ob, sizeof(ob))) { rec.output = ob; ed.dirty = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    if (ImGui::DragInt("x##oc", &rec.outputCount, 0.1f, 1, 999)) ed.dirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("del")) { cs->recipes.erase(cs->recipes.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                    ImGui::Indent();
+                    for (std::size_t j = 0; j < rec.inputs.size(); ++j) {
+                        ImGui::PushID((int)j);
+                        char nb[64]; std::snprintf(nb, sizeof(nb), "%s", rec.inputs[j].item.c_str());
+                        ImGui::SetNextItemWidth(100);
+                        if (ImGui::InputText("##in", nb, sizeof(nb))) { rec.inputs[j].item = nb; ed.dirty = true; }
+                        ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                        if (ImGui::DragInt("##ic", &rec.inputs[j].count, 0.1f, 1, 999)) ed.dirty = true;
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("x")) { rec.inputs.erase(rec.inputs.begin() + j); ed.dirty = true; ImGui::PopID(); break; }
+                        ImGui::PopID();
+                    }
+                    if (ImGui::SmallButton("+ ingredient")) { rec.inputs.push_back({}); ed.dirty = true; }
+                    ImGui::Unindent();
+                    ImGui::Separator();
+                    ImGui::PopID();
+                }
+                if (ImGui::SmallButton("+ Add recipe##cs")) { cs->recipes.push_back({}); ed.dirty = true; }
+                ImGui::TreePop();
+            }
+            if (ImGui::SmallButton("Remove##cs")) toRemove = cs;
+        }
+    }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
         if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
             ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
@@ -10475,6 +10527,12 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<Stats>(), "Stats")) { go->AddComponent<Stats>(); ed.dirty = true; }
             if (item(!go->GetComponent<Inventory>(), "Inventory")) { go->AddComponent<Inventory>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CraftingStation>(), "Crafting Station")) {
+                auto* cs = go->AddComponent<CraftingStation>();
+                CraftingStation::Recipe r; r.inputs = {{"wood", 4}}; r.output = "table"; r.outputCount = 1;
+                cs->recipes = {r};
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<TurnManager>(), "Turn Manager")) { go->AddComponent<TurnManager>(); ed.dirty = true; }
           } EndCat(o); }
 
@@ -11634,6 +11692,40 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRect(p0, p1, col(rar ? *rar : gui->itemBorder), cr);
             if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
             else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
+        }
+        break;
+    }
+    // Crafting bench panel (mirrors the player): lists recipes, crafts on click.
+    for (const auto& up : objs) {
+        auto* cs = up ? up->GetComponent<okay::CraftingStation>() : nullptr;
+        if (!cs || !cs->open) continue;
+        okay::Inventory* inv = cs->Inv();
+        auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
+        float cr = cs->cornerRadius;
+        int n = (int)cs->recipes.size();
+        float pw = cs->width, ph = n * cs->rowHeight + 8.0f;
+        float lx = (canvasSize.x - pw) * 0.5f + cs->marginX, ly = (canvasSize.y - ph) * 0.5f + cs->marginY;
+        float px = canvasPos.x + lx, py = canvasPos.y + ly;
+        dl->AddRectFilled(ImVec2(px, py - 26), ImVec2(px + pw, py + ph), col(cs->panelColor), cr + 2);
+        dl->AddRectFilled(ImVec2(px, py - 26), ImVec2(px + pw, py - 2), col(cs->titleBar), cr + 2);
+        dl->AddText(ImVec2(px + 8, py - 20), col(cs->textColor), cs->title.c_str());
+        okay::Vec2 m = okay::Input::MousePosition();   // canvas-local (Game view)
+        for (int i = 0; i < n; ++i) {
+            const auto& rec = cs->recipes[i];
+            float ry = py + i * cs->rowHeight + 4.0f;            // screen-space row top
+            float lry = ly + i * cs->rowHeight + 4.0f;          // canvas-local row top
+            bool can = inv && cs->CanCraft(rec, *inv);
+            bool hover = gameView && m.x >= lx + 4 && m.x < lx + pw - 4 &&
+                         m.y >= lry && m.y < lry + cs->rowHeight - 2;
+            dl->AddRectFilled(ImVec2(px + 4, ry), ImVec2(px + pw - 4, ry + cs->rowHeight - 2), col(can ? cs->canColor : cs->cantColor), cr);
+            if (hover) dl->AddRectFilled(ImVec2(px + 4, ry), ImVec2(px + pw - 4, ry + cs->rowHeight - 2), col(cs->hoverColor), cr);
+            std::string out = rec.output + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
+            dl->AddText(ImVec2(px + 10, ry + 5), col(cs->textColor), out.c_str());
+            std::string ins;
+            for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + rec.inputs[k].item; }
+            ImVec2 ts = ImGui::CalcTextSize(ins.c_str());
+            dl->AddText(ImVec2(px + pw - 10 - ts.x, ry + 6), col(cs->textColor), ins.c_str());
+            if (hover && can && okay::Input::GetMouseButtonDown(0)) cs->Craft(i);
         }
         break;
     }

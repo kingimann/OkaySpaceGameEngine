@@ -21,6 +21,7 @@
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
+#include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -423,6 +424,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wc(gu->overweightColor);
         out << " " << gu->rarities.size();
         for (const auto& rr : gu->rarities) { out << " " << Quote(rr.item); wc(rr.color); }
+        out << "\n";
+    }
+    if (auto* cs = go->GetComponent<CraftingStation>()) {
+        auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  craftingstation " << (cs->open ? 1 : 0) << " " << (int)(unsigned char)cs->toggleKey
+            << " " << Quote(cs->title) << " " << (cs->closeWhenCrafted ? 1 : 0)
+            << " " << cs->rowHeight << " " << cs->width << " " << cs->marginX << " " << cs->marginY
+            << " " << cs->cornerRadius << " " << Quote(cs->iconFolder);
+        wc(cs->panelColor); wc(cs->titleBar); wc(cs->rowColor); wc(cs->canColor);
+        wc(cs->cantColor); wc(cs->textColor); wc(cs->hoverColor);
+        out << " " << cs->recipes.size();
+        for (const auto& r : cs->recipes) {
+            out << " " << r.inputs.size();
+            for (const auto& in : r.inputs) out << " " << Quote(in.item) << " " << in.count;
+            out << " " << Quote(r.output) << " " << r.outputCount;
+        }
         out << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
@@ -1661,6 +1678,26 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 }
                             }
                         }
+                    }
+                } else if (field == "craftingstation") {
+                    auto* cs = go->AddComponent<CraftingStation>();
+                    auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    int op = 0, tk = 'c', cw = 0;
+                    in >> op >> tk; cs->title = ReadQuoted(in); in >> cw
+                       >> cs->rowHeight >> cs->width >> cs->marginX >> cs->marginY >> cs->cornerRadius;
+                    cs->open = (op != 0); cs->toggleKey = (char)tk; cs->closeWhenCrafted = (cw != 0);
+                    cs->iconFolder = ReadQuoted(in);
+                    rc(cs->panelColor); rc(cs->titleBar); rc(cs->rowColor); rc(cs->canColor);
+                    rc(cs->cantColor); rc(cs->textColor); rc(cs->hoverColor);
+                    std::size_t rn = 0; in >> rn; cs->recipes.clear();
+                    for (std::size_t ri = 0; ri < rn; ++ri) {
+                        CraftingStation::Recipe r; std::size_t ic = 0; in >> ic;
+                        for (std::size_t ii = 0; ii < ic; ++ii) {
+                            CraftingStation::Ingredient ing; ing.item = ReadQuoted(in); in >> ing.count;
+                            r.inputs.push_back(ing);
+                        }
+                        r.output = ReadQuoted(in); in >> r.outputCount;
+                        cs->recipes.push_back(r);
                     }
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();

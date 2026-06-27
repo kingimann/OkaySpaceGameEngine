@@ -16,6 +16,7 @@
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
+#include "okay/Components/StructureBuilder.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -341,6 +342,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << Quote(bb->blockTag) << " " << Quote(bb->blockTexture)
             << " " << (bb->showPreview ? 1 : 0) << " " << (bb->showCrosshair ? 1 : 0)
             << " " << (bb->placeInAir ? 1 : 0) << "\n";
+    }
+    if (auto* sb = go->GetComponent<StructureBuilder>()) {
+        out << "  structurebuilder " << (int)sb->piece << " " << sb->cellSize << " " << sb->wallHeight
+            << " " << sb->slabThickness << " " << sb->wallThickness << " " << sb->pillarThickness
+            << " " << sb->reach << " " << sb->color.r << " " << sb->color.g << " " << sb->color.b << " " << sb->color.a
+            << " " << sb->rotSteps << " " << sb->placeButton << " " << sb->removeButton
+            << " " << (sb->showPreview ? 1 : 0) << " " << (sb->showCrosshair ? 1 : 0)
+            << " " << Quote(sb->structureTag) << " " << Quote(sb->structureTexture) << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -1451,6 +1460,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     optBool(bb->showPreview);
                     optBool(bb->showCrosshair);
                     optBool(bb->placeInAir);
+                } else if (field == "structurebuilder") {
+                    auto* sb = go->AddComponent<StructureBuilder>();
+                    int pc = 0; in >> pc; sb->piece = (StructureBuilder::Piece)pc;
+                    in >> sb->cellSize >> sb->wallHeight >> sb->slabThickness
+                       >> sb->wallThickness >> sb->pillarThickness >> sb->reach
+                       >> sb->color.r >> sb->color.g >> sb->color.b >> sb->color.a
+                       >> sb->rotSteps >> sb->placeButton >> sb->removeButton;
+                    int sp = 1, sc = 1; in >> sp >> sc;
+                    sb->showPreview = (sp != 0); sb->showCrosshair = (sc != 0);
+                    sb->structureTag = ReadQuoted(in);
+                    sb->structureTexture = ReadQuoted(in);
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

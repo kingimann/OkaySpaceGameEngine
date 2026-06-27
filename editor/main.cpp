@@ -7750,6 +7750,32 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##bb")) toRemove = bb;
         }
     }
+    if (auto* sb = dynamic_cast<StructureBuilder*>(curComp)) {
+        if (CompHeader("Structure Builder (Rust-style)", sb, &toRemove)) {
+            ImGui::TextDisabled("Snap foundations/walls/floors/pillars/ramps. 1-5 pick, R rotates.");
+            ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
+            const char* pieces[] = {"Foundation", "Wall", "Floor", "Pillar", "Ramp"};
+            int pc = (int)sb->piece;
+            if (ImGui::Combo("Piece##sb", &pc, pieces, 5)) { sb->piece = (StructureBuilder::Piece)pc; ed.dirty = true; }
+            if (ImGui::SliderInt("Rotation (90°)##sb", &sb->rotSteps, 0, 3)) ed.dirty = true;
+            if (ImGui::DragFloat("Cell Size##sb", &sb->cellSize, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Wall Height##sb", &sb->wallHeight, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Slab Thickness##sb", &sb->slabThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Wall Thickness##sb", &sb->wallThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Pillar Thickness##sb", &sb->pillarThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Reach##sb", &sb->reach, 0.25f, 1.0f, 200.0f)) ed.dirty = true;
+            float sc[4] = {sb->color.r, sb->color.g, sb->color.b, sb->color.a};
+            if (ImGui::ColorEdit4("Color##sb", sc)) { sb->color = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+            ImGui::Text("Texture"); ImGui::SameLine(120);
+            if (AssetSlot("sbtex", sb->structureTexture, "Texture", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
+            char tagbuf[64]; std::snprintf(tagbuf, sizeof(tagbuf), "%s", sb->structureTag.c_str());
+            if (ImGui::InputText("Structure Tag##sb", tagbuf, sizeof(tagbuf))) { sb->structureTag = tagbuf; ed.dirty = true; }
+            if (ImGui::Checkbox("Placement preview##sb", &sb->showPreview)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Crosshair##sb", &sb->showCrosshair)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##sb")) toRemove = sb;
+        }
+    }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
         if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
             ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
@@ -10118,6 +10144,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BlockBuilder>(), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }
+            if (item(!go->GetComponent<StructureBuilder>(), "Structure Builder (Rust-style)")) { go->AddComponent<StructureBuilder>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }

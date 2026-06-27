@@ -403,7 +403,8 @@ public:
                        float matRimStr = 0.0f, float matRimPow = 3.0f,
                        float rimR = 1.0f, float rimG = 1.0f, float rimB = 1.0f,
                        bool triplanar = false, float triTileX = 1.0f, float triTileY = 1.0f,
-                       int clipY0 = 0, int clipY1 = (1 << 30)) {
+                       int clipY0 = 0, int clipY1 = (1 << 30),
+                       int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -562,6 +563,16 @@ public:
                         br = tc.r * tint.r; bg = tc.g * tint.g; bb2 = tc.b * tint.b;
                     }
                 }
+                // Gradient shader: replace the albedo with a two-colour ramp by the
+                // surface's up-ness (downward faces -> bottom colour, up -> top).
+                if (shaderMode == 3 && gradTop && gradBot) {
+                    float t = n.y * 0.5f + 0.5f; t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                    br  = gradBot[0] + (gradTop[0] - gradBot[0]) * t;
+                    bg  = gradBot[1] + (gradTop[1] - gradBot[1]) * t;
+                    bb2 = gradBot[2] + (gradTop[2] - gradBot[2]) * t;
+                }
+                // Fresnel shader: a dark body with a glowing rim (the rim colour does the work).
+                if (shaderMode == 4) { br *= 0.10f; bg *= 0.10f; bb2 *= 0.10f; }
                 // Metallic workflow: metals have (almost) no diffuse, and they tint
                 // both their specular highlight and their environment reflection by
                 // the albedo color (so gold reflects gold). Dielectrics keep a white
@@ -587,14 +598,16 @@ public:
                 // Per-material Fresnel rim: an additive, colored backlight independent
                 // of the global rim toggle (a first-class shader feature).
                 float mrimR = 0.0f, mrimG = 0.0f, mrimB = 0.0f;
-                if (matRimStr > 0.0f) {
+                float useRim = matRimStr;                      // Fresnel shader forces a strong rim
+                if (shaderMode == 4 && useRim < 0.8f) useRim = 1.6f;
+                if (useRim > 0.0f) {
                     Vec3 toEye = (eye - wpos).Normalized();
                     float f = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
                     float fp = (matRimPow == 3.0f) ? f * f * f
                              : (matRimPow == 2.0f) ? f * f
                              : (matRimPow == 4.0f) ? (f * f) * (f * f)
                              : std::pow(f, matRimPow);
-                    float m = fp * matRimStr;
+                    float m = fp * useRim;
                     mrimR = m * rimR; mrimG = m * rimG; mrimB = m * rimB;
                 }
                 float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + mrimR + er;
@@ -1499,8 +1512,13 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // Toon needs the per-pixel path (that's where the cel banding lives), so
             // it forces per-pixel lighting for its mesh regardless of the global toggle.
             const bool perPixel = (PerPixelLighting() || mr->shader == MeshRenderer::Shader::Toon
+                                   || mr->shader == MeshRenderer::Shader::Gradient
+                                   || mr->shader == MeshRenderer::Shader::Fresnel
                                    || mr->rimStrength > 0.0f || mr->triplanar)
                                   && !unlit && !useMatcap;
+            const int  shaderMode = (int)mr->shader;
+            const float gradTopC[3] = {mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b};
+            const float gradBotC[3] = {mr->gradientBottom.r, mr->gradientBottom.g, mr->gradientBottom.b};
             for (int j = 1; j + 1 < pn; ++j) {
                 const CV* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
                 float sx[3], sy[3], sd[3], iw[3], uu[3], vv[3];
@@ -1525,7 +1543,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->rimStrength, mr->rimPower,
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
-                                    bandY0, bandY1);
+                                    bandY0, bandY1, shaderMode, gradTopC, gradBotC);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

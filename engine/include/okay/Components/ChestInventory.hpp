@@ -5,6 +5,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/InventoryUI.hpp"
+#include "okay/Components/Camera.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
@@ -21,7 +22,7 @@ class ChestInventory : public Behaviour {
 public:
     bool        open    = false;
     char        openKey = 'f';          ///< open/close when in range (default F to avoid the E backpack)
-    float       range   = 4.0f;         ///< how close the player must be (0 = open from anywhere)
+    float       range   = 0.0f;         ///< how close the player must be (0 = open from anywhere; set >0 for proximity)
     std::string title   = "Chest";
     int         cols     = 6;           ///< chest grid columns
 
@@ -36,18 +37,43 @@ public:
     Color hoverColor = Color::FromBytes(255, 255, 255, 36);
     bool  darkenWhenOpen = true;
 
+    // ---- Runtime drag state (driven by the renderer's mouse handling) ----
+    int   dragSide  = -1;   ///< 0 = chest grid, 1 = player grid, -1 = not dragging
+    int   dragIndex = -1;   ///< slot being dragged
+
+    /// Move (or swap/merge) the stack in src slot `si` into dst slot `di`. Works within
+    /// one grid or across the chest<->player grids (drag-and-drop, place where you want).
+    static void MoveStack(Inventory* src, int si, Inventory* dst, int di) {
+        if (!src || !dst || si < 0 || di < 0 || si >= (int)src->slots.size()) return;
+        if (src == dst && si == di) return;
+        int cap = dst->capacity > 0 ? dst->capacity : di + 1;
+        if (di >= cap) return;
+        while ((int)dst->slots.size() <= di) dst->slots.push_back(Inventory::Slot{});
+        Inventory::Slot& a = src->slots[si];
+        Inventory::Slot& b = dst->slots[di];
+        if (Inventory::Empty(a)) return;
+        if (Inventory::Empty(b)) { b = a; a = Inventory::Slot{}; }
+        else if (b.item == a.item) { b.count += a.count; a = Inventory::Slot{}; }   // merge
+        else { std::swap(a, b); }                                                   // swap
+    }
+
     /// The chest's own contents (a sibling Inventory).
     Inventory* Inv() const {
         if (gameObject) if (auto* in = gameObject->GetComponent<Inventory>()) return in;
         return nullptr;
     }
-    /// The player's inventory: the first InventoryUI's Inventory in the scene.
-    Inventory* PlayerInv() const {
+    /// The player's inventory UI (for its own slot size / columns when drawn in the chest).
+    InventoryUI* PlayerUI() const {
         Scene* s = GetScene();
         if (!s) return nullptr;
         for (const auto& o : s->Objects())
-            if (o) if (auto* iu = o->GetComponent<InventoryUI>()) { if (auto* in = iu->Inv()) return in; }
+            if (o) if (auto* iu = o->GetComponent<InventoryUI>()) return iu;
         return nullptr;
+    }
+    /// The player's inventory: the first InventoryUI's Inventory in the scene.
+    Inventory* PlayerInv() const {
+        InventoryUI* iu = PlayerUI();
+        return iu ? iu->Inv() : nullptr;
     }
 
     /// Move the whole stack in chest slot `i` into the player's inventory.
@@ -69,21 +95,18 @@ public:
         return false;       // chest full
     }
 
-    /// Is the player (the InventoryUI owner's root) within `range` of this chest?
+    /// Is the player within `range` of this chest? Uses the main camera's world position
+    /// as the player's location (works across the FPS/third-person templates); falls back
+    /// to "in range" if there's no camera, so the key always works.
     bool PlayerInRange() const {
         if (range <= 0.0f) return true;
         Scene* s = GetScene();
         if (!s || !gameObject || !gameObject->transform) return true;
-        GameObject* player = nullptr;
+        Transform* camT = nullptr;
         for (const auto& o : s->Objects())
-            if (o && o->GetComponent<InventoryUI>()) {
-                Transform* t = o->transform;
-                while (t && t->Parent()) t = t->Parent();
-                player = (t && t->gameObject) ? t->gameObject : o.get();
-                break;
-            }
-        if (!player || !player->transform) return true;
-        Vec3 a = gameObject->transform->Position(), b = player->transform->Position();
+            if (o && o->GetComponent<Camera>() && o->transform) { camT = o->transform; break; }
+        if (!camT) return true;
+        Vec3 a = gameObject->transform->Position(), b = camT->Position();
         float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
         return (dx * dx + dy * dy + dz * dz) <= range * range;
     }

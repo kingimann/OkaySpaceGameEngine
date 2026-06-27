@@ -18,10 +18,17 @@ public:
     /// Material). Standard = the full lit PBR-ish model; Unlit = flat base color, no
     /// lighting; Toon = cel-shaded (the diffuse banded into `toonBands` hard steps
     /// with a single hard specular glint).
-    enum class Shader { Standard, Unlit, Toon };
+    /// Standard = full lit; Unlit = flat base; Toon = cel bands; Gradient = a two-colour
+    /// ramp by surface up-ness (gradientBottom -> gradientTop); Fresnel = a glowing rim
+    /// look (base darkened, edges lit by rimColor). New models are honoured by the
+    /// software renderer and the GPU (GL / D3D11) renderers.
+    enum class Shader { Standard, Unlit, Toon, Gradient, Fresnel };
     Shader shader = Shader::Standard;
     /// Number of cel bands for the Toon shader (2-6 reads best). Ignored otherwise.
     int    toonBands = 3;
+    /// Gradient shader endpoints (bottom = downward faces, top = upward faces).
+    Color  gradientTop    = Color::FromBytes(120, 180, 255);
+    Color  gradientBottom = Color::FromBytes(20, 30, 60);
 
     /// Rim / Fresnel backlight (per-material; works with any shader, great with Toon):
     /// a colored glow that strengthens toward grazing angles (1 - n·view)^power. 0 = off.

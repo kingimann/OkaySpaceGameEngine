@@ -657,14 +657,23 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
     okay::Inventory* cinv = ch.Inv(); okay::Inventory* pinv = ch.PlayerInv();
     if (!cinv) return;
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H); if (W <= 0 || H <= 0) return;
-    const float sz = ch.slotSize, gp = ch.gap, cr = ch.cornerRadius;
-    int cols = ch.cols < 1 ? 1 : ch.cols;
+    const float cr = ch.cornerRadius;
+    // Chest grid uses the chest's size; the player grid uses the player's OWN inventory
+    // UI size/columns — so resizing the chest doesn't resize your inventory.
+    float cs = ch.slotSize, cg = ch.gap; int cc = ch.cols < 1 ? 1 : ch.cols;
+    okay::InventoryUI* pui = ch.PlayerUI();
+    float ps = pui ? pui->slotSize : cs, pg = pui ? pui->slotGap : cg;
+    int   pc = pui ? (pui->hotbarSlots < 1 ? 1 : pui->hotbarSlots) : cc;
     int chestN = cinv->capacity > 0 ? cinv->capacity : (int)cinv->slots.size();
     int playN  = pinv ? (pinv->capacity > 0 ? pinv->capacity : (int)pinv->slots.size()) : 0;
-    int chestRows = (chestN + cols - 1) / cols, playRows = (playN + cols - 1) / cols;
-    float gridW = cols * sz + (cols - 1) * gp;
-    float totalH = chestRows * (sz + gp) + 30.0f + playRows * (sz + gp);
-    float ox = (W - gridW) * 0.5f, oy = (H - totalH) * 0.5f + 16.0f;
+    int chestRows = (chestN + cc - 1) / cc, playRows = playN > 0 ? (playN + pc - 1) / pc : 0;
+    float chestW = cc * cs + (cc - 1) * cg, playW = pc * ps + (pc - 1) * pg;
+    float panelW = chestW > playW ? chestW : playW;
+    float chestH = chestRows * (cs + cg), playH = playRows * (ps + pg);
+    float totalH = chestH + 30.0f + playH;
+    float panelX = (W - panelW) * 0.5f, topY = (H - totalH) * 0.5f + 16.0f;
+    float chestOx = panelX + (panelW - chestW) * 0.5f, playOx = panelX + (panelW - playW) * 0.5f;
+    float chestGy = topY, playGy = topY + chestH + 24.0f;
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     if (ch.darkenWhenOpen) { SDL_SetRenderDrawColor(r, 0, 0, 0, 150); SDL_Rect f{0, 0, W, H}; SDL_RenderFillRect(r, &f); }
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
@@ -673,18 +682,19 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
     okay::Vec2 mp = okay::Input::MousePosition();
-    fill(ox - 12, oy - 34, gridW + 24, totalH + 46, ch.panelColor, cr + 2);
-    fill(ox - 12, oy - 34, gridW + 24, 26, ch.titleBar, cr + 2);
-    DrawText(r, ch.title, ox, oy - 28, 1.6f, sc(ch.textColor));
-    auto grid = [&](okay::Inventory* inv, float gy, int count) -> int {
-        int clicked = -1;
+    fill(panelX - 12, topY - 34, panelW + 24, totalH + 46, ch.panelColor, cr + 2);
+    fill(panelX - 12, topY - 34, panelW + 24, 26, ch.titleBar, cr + 2);
+    DrawText(r, ch.title, panelX, topY - 28, 1.6f, sc(ch.textColor));
+    int hovSide = -1, hovIdx = -1;   // which grid + slot the cursor is over
+    auto grid = [&](okay::Inventory* inv, float gx, float gy, float sz, float gp, int cols, int count, int side) {
         for (int i = 0; i < count; ++i) {
-            float x = ox + (i % cols) * (sz + gp), y = gy + (i / cols) * (sz + gp);
+            float x = gx + (i % cols) * (sz + gp), y = gy + (i / cols) * (sz + gp);
             fill(x, y, sz, sz, ch.slotBorder, cr);
             fill(x + 2, y + 2, sz - 4, sz - 4, ch.slotColor, cr > 2 ? cr - 2 : 0);
             bool hov = mp.x >= x && mp.x < x + sz && mp.y >= y && mp.y < y + sz;
-            if (hov) fill(x, y, sz, sz, ch.hoverColor, cr);
-            if (inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) {
+            if (hov) { hovSide = side; hovIdx = i; fill(x, y, sz, sz, ch.hoverColor, cr); }
+            bool dragged = (side == ch.dragSide && i == ch.dragIndex);   // hide the lifted item
+            if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) {
                 const auto& it = inv->slots[i];
                 SDL_Texture* icon = ch.iconFolder.empty() ? nullptr : GetTexture(r, ch.iconFolder + it.item + ".png", baseDir, cache);
                 if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
@@ -693,15 +703,41 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
                     float tw = c.size() * (Font8x8::Width + 1) * px;
                     DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
             }
-            if (hov && okay::Input::GetMouseButtonDown(0)) clicked = i;
         }
-        return clicked;
     };
-    int cClick = grid(cinv, oy, chestN);
-    DrawText(r, "Your inventory", ox, oy + chestRows * (sz + gp) + 6, 1.2f, sc(ch.textColor));
-    int pClick = pinv ? grid(pinv, oy + chestRows * (sz + gp) + 24, playN) : -1;
-    if (cClick >= 0) ch.TakeToPlayer(cClick);
-    else if (pClick >= 0) ch.StashFromPlayer(pClick);
+    grid(cinv, chestOx, chestGy, cs, cg, cc, chestN, 0);
+    DrawText(r, "Your inventory", playOx, topY + chestH + 6, 1.2f, sc(ch.textColor));
+    if (pinv) grid(pinv, playOx, playGy, ps, pg, pc, playN, 1);
+    auto sideInv = [&](int side) { return side == 0 ? cinv : pinv; };
+    float sz = ch.dragSide == 1 ? ps : cs;   // floating-item size = source grid's slot size
+    // Start a drag by pressing on a non-empty slot.
+    if (ch.dragSide < 0 && hovIdx >= 0 && okay::Input::GetMouseButtonDown(0)) {
+        okay::Inventory* inv = sideInv(hovSide);
+        if (inv && hovIdx < (int)inv->slots.size() && !inv->slots[hovIdx].item.empty()) {
+            ch.dragSide = hovSide; ch.dragIndex = hovIdx;
+        }
+    }
+    // Drop onto the slot under the cursor (move / swap / merge), or cancel if outside.
+    if (ch.dragSide >= 0 && okay::Input::GetMouseButtonUp(0)) {
+        if (hovIdx >= 0) okay::ChestInventory::MoveStack(sideInv(ch.dragSide), ch.dragIndex, sideInv(hovSide), hovIdx);
+        ch.dragSide = -1; ch.dragIndex = -1;
+    }
+    // The lifted item floats under the cursor.
+    if (ch.dragSide >= 0) {
+        okay::Inventory* inv = sideInv(ch.dragSide);
+        if (inv && ch.dragIndex < (int)inv->slots.size() && !inv->slots[ch.dragIndex].item.empty()) {
+            const auto& it = inv->slots[ch.dragIndex];
+            float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
+            fill(x, y, sz, sz, ch.slotBorder, cr);
+            fill(x + 2, y + 2, sz - 4, sz - 4, ch.slotColor, cr > 2 ? cr - 2 : 0);
+            SDL_Texture* icon = ch.iconFolder.empty() ? nullptr : GetTexture(r, ch.iconFolder + it.item + ".png", baseDir, cache);
+            if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
+            else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
+            if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
+                float tw = c.size() * (Font8x8::Width + 1) * px;
+                DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
+        } else { ch.dragSide = -1; ch.dragIndex = -1; }
+    }
 }
 
 int main(int argc, char** argv) {

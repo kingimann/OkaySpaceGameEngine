@@ -224,7 +224,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << "  specmap " << Quote(mr->specularMap) << "\n";
         // Shading model (separate record so older scenes still load).
         if (mr->shader != MeshRenderer::Shader::Standard)
-            out << "  shader " << (int)mr->shader << " " << mr->toonBands << "\n";
+            out << "  shader " << (int)mr->shader << " " << mr->toonBands
+                << " " << mr->gradientTop.r << " " << mr->gradientTop.g << " " << mr->gradientTop.b
+                << " " << mr->gradientBottom.r << " " << mr->gradientBottom.g << " " << mr->gradientBottom.b << "\n";
         // Per-material rim (Fresnel) backlight (separate record).
         if (mr->rimStrength > 0.0f)
             out << "  rim " << mr->rimStrength << " " << mr->rimPower << " "
@@ -1356,6 +1358,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         int s = 0; in >> s >> mr->toonBands;
                         mr->shader = (MeshRenderer::Shader)s;
+                        in >> std::ws;   // optional gradient colours (appended later)
+                        int gpk = in.peek();
+                        if (std::isdigit(gpk) || gpk == '-' || gpk == '.') {
+                            in >> mr->gradientTop.r >> mr->gradientTop.g >> mr->gradientTop.b
+                               >> mr->gradientBottom.r >> mr->gradientBottom.g >> mr->gradientBottom.b;
+                        }
                     }
                 } else if (field == "rim") {
                     if (auto* mr = go->GetComponent<MeshRenderer>())

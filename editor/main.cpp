@@ -8215,7 +8215,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Open Key##ch", ok, sizeof(ok))) { if (ok[0]) ch->openKey = ok[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press near the chest to open (default F). Click items to move them.");
             if (ImGui::DragFloat("Open Range##ch", &ch->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be (0 = open from anywhere).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be to press the key. 0 = open from anywhere (recommended if it won't open).");
             if (ImGui::SliderInt("Columns##ch", &ch->cols, 1, 12)) ed.dirty = true;
             if (ImGui::DragFloat("Slot Size##ch", &ch->slotSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Gap##ch", &ch->gap, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
@@ -11886,31 +11886,39 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         okay::Inventory* cinv = ch->Inv(); okay::Inventory* pinv = ch->PlayerInv();
         if (!cinv) break;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
-        float sz = ch->slotSize, gp = ch->gap, cr = ch->cornerRadius;
-        int cols = ch->cols < 1 ? 1 : ch->cols;
+        float cr = ch->cornerRadius;
+        // Chest grid from the chest; player grid from the player's own InventoryUI size.
+        float cs = ch->slotSize, cg = ch->gap; int cc = ch->cols < 1 ? 1 : ch->cols;
+        okay::InventoryUI* pui = ch->PlayerUI();
+        float ps = pui ? pui->slotSize : cs, pg = pui ? pui->slotGap : cg;
+        int   pc = pui ? (pui->hotbarSlots < 1 ? 1 : pui->hotbarSlots) : cc;
         int chestN = cinv->capacity > 0 ? cinv->capacity : (int)cinv->slots.size();
         int playN  = pinv ? (pinv->capacity > 0 ? pinv->capacity : (int)pinv->slots.size()) : 0;
-        int chestRows = (chestN + cols - 1) / cols, playRows = (playN + cols - 1) / cols;
-        float gridW = cols * sz + (cols - 1) * gp;
-        float totalH = chestRows * (sz + gp) + 30.0f + playRows * (sz + gp);
-        float lx = (canvasSize.x - gridW) * 0.5f, ly = (canvasSize.y - totalH) * 0.5f + 16.0f;
+        int chestRows = (chestN + cc - 1) / cc, playRows = playN > 0 ? (playN + pc - 1) / pc : 0;
+        float chestW = cc * cs + (cc - 1) * cg, playW = pc * ps + (pc - 1) * pg;
+        float panelW = chestW > playW ? chestW : playW;
+        float chestH = chestRows * (cs + cg), playH = playRows * (ps + pg);
+        float totalH = chestH + 30.0f + playH;
+        float lx = (canvasSize.x - panelW) * 0.5f, ly = (canvasSize.y - totalH) * 0.5f + 16.0f;
+        float chestLx = lx + (panelW - chestW) * 0.5f, playLx = lx + (panelW - playW) * 0.5f;
         float ox = canvasPos.x + lx, oy = canvasPos.y + ly;
         if (ch->darkenWhenOpen)
             dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
-        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + gridW + 12, oy + totalH + 12), col(ch->panelColor), cr + 2);
-        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + gridW + 12, oy - 8), col(ch->titleBar), cr + 2);
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + panelW + 12, oy + totalH + 12), col(ch->panelColor), cr + 2);
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + panelW + 12, oy - 8), col(ch->titleBar), cr + 2);
         dl->AddText(ImVec2(ox, oy - 28), col(ch->textColor), ch->title.c_str());
         okay::Vec2 m = okay::Input::MousePosition();
-        auto grid = [&](okay::Inventory* inv, float lgy, int count) -> int {
-            int clicked = -1;
+        int hovSide = -1, hovIdx = -1;
+        auto grid = [&](okay::Inventory* inv, float glx, float lgy, float sz, float gp, int cols, int count, int side) {
             for (int i = 0; i < count; ++i) {
-                float lx2 = lx + (i % cols) * (sz + gp), ly2 = lgy + (i / cols) * (sz + gp);
+                float lx2 = glx + (i % cols) * (sz + gp), ly2 = lgy + (i / cols) * (sz + gp);
                 ImVec2 p0(canvasPos.x + lx2, canvasPos.y + ly2), p1(p0.x + sz, p0.y + sz);
                 dl->AddRectFilled(p0, p1, col(ch->slotBorder), cr);
                 dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ch->slotColor), cr);
                 bool hov = gameView && m.x >= lx2 && m.x < lx2 + sz && m.y >= ly2 && m.y < ly2 + sz;
-                if (hov) dl->AddRectFilled(p0, p1, col(ch->hoverColor), cr);
-                if (inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) {
+                if (hov) { hovSide = side; hovIdx = i; dl->AddRectFilled(p0, p1, col(ch->hoverColor), cr); }
+                bool dragged = (side == ch->dragSide && i == ch->dragIndex);
+                if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) {
                     const auto& it = inv->slots[i];
                     SDL_Texture* icon = ch->iconFolder.empty() ? nullptr : GetThumb(ch->iconFolder + it.item + ".png");
                     if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
@@ -11918,15 +11926,35 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                     if (it.count > 1) { std::string c = std::to_string(it.count); ImVec2 ts = ImGui::CalcTextSize(c.c_str());
                         dl->AddText(ImVec2(p1.x - ts.x - 3, p1.y - ts.y - 2), col(ch->textColor), c.c_str()); }
                 }
-                if (hov && okay::Input::GetMouseButtonDown(0)) clicked = i;
             }
-            return clicked;
         };
-        int cClick = grid(cinv, ly, chestN);
-        dl->AddText(ImVec2(ox, oy + chestRows * (sz + gp) + 6), col(ch->textColor), "Your inventory");
-        int pClick = pinv ? grid(pinv, ly + chestRows * (sz + gp) + 24, playN) : -1;
-        if (cClick >= 0) ch->TakeToPlayer(cClick);
-        else if (pClick >= 0) ch->StashFromPlayer(pClick);
+        grid(cinv, chestLx, ly, cs, cg, cc, chestN, 0);
+        dl->AddText(ImVec2(canvasPos.x + playLx, oy + chestH + 6), col(ch->textColor), "Your inventory");
+        if (pinv) grid(pinv, playLx, ly + chestH + 24, ps, pg, pc, playN, 1);
+        auto sideInv = [&](int side) { return side == 0 ? cinv : pinv; };
+        float sz = ch->dragSide == 1 ? ps : cs;   // floating item = source grid's size
+        if (gameView) {
+            if (ch->dragSide < 0 && hovIdx >= 0 && okay::Input::GetMouseButtonDown(0)) {
+                okay::Inventory* inv = sideInv(hovSide);
+                if (inv && hovIdx < (int)inv->slots.size() && !inv->slots[hovIdx].item.empty()) { ch->dragSide = hovSide; ch->dragIndex = hovIdx; }
+            }
+            if (ch->dragSide >= 0 && okay::Input::GetMouseButtonUp(0)) {
+                if (hovIdx >= 0) okay::ChestInventory::MoveStack(sideInv(ch->dragSide), ch->dragIndex, sideInv(hovSide), hovIdx);
+                ch->dragSide = -1; ch->dragIndex = -1;
+            }
+            if (ch->dragSide >= 0) {
+                okay::Inventory* inv = sideInv(ch->dragSide);
+                if (inv && ch->dragIndex < (int)inv->slots.size() && !inv->slots[ch->dragIndex].item.empty()) {
+                    const auto& it = inv->slots[ch->dragIndex];
+                    ImVec2 p0(canvasPos.x + m.x - sz * 0.5f, canvasPos.y + m.y - sz * 0.5f), p1(p0.x + sz, p0.y + sz);
+                    dl->AddRectFilled(p0, p1, col(ch->slotBorder), cr);
+                    dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ch->slotColor), cr);
+                    SDL_Texture* icon = ch->iconFolder.empty() ? nullptr : GetThumb(ch->iconFolder + it.item + ".png");
+                    if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
+                    else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(ch->textColor), it.item.substr(0, 5).c_str());
+                } else { ch->dragSide = -1; ch->dragIndex = -1; }
+            }
+        }
         break;
     }
     // Loading-screen overlay: covers the view while a LoadingScreen is active in Play

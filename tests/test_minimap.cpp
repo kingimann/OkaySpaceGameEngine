@@ -127,6 +127,15 @@ int main() {
         mm->labelColor = Color::FromBytes(200, 210, 220);
         mm->routeMarker = 1; mm->routeWidth = 3.0f;
         mm->routeColor = Color::FromBytes(235, 70, 200, 230);
+        {
+            Minimap::MapShape road; road.kind = Minimap::MapShape::Kind::Line;
+            road.color = Color::FromBytes(90, 92, 104); road.thickness = 5.0f; road.filled = false;
+            road.points = {{0,0},{20,0},{20,15}};
+            Minimap::MapShape house; house.kind = Minimap::MapShape::Kind::Rect;
+            house.color = Color::FromBytes(150, 140, 120); house.points = {{5,5},{12,11}};
+            mm->mapShapes.push_back(road);
+            mm->mapShapes.push_back(house);
+        }
         mm->showSelf = false;
         mm->viewCone = true; mm->viewConeAngle = 75.0f; mm->viewConeLength = 50.0f;
         mm->viewConeColor = Color::FromBytes(10, 20, 30, 80);
@@ -196,6 +205,17 @@ int main() {
             CHECK_NEAR(lm->labelSize, 12.0f, 1e-3f);
             CHECK(lm->routeMarker == 1);
             CHECK_NEAR(lm->routeWidth, 3.0f, 1e-3f);
+            CHECK(lm->mapShapes.size() == 2);
+            if (lm->mapShapes.size() == 2) {
+                CHECK(lm->mapShapes[0].kind == Minimap::MapShape::Kind::Line);
+                CHECK(!lm->mapShapes[0].filled);
+                CHECK_NEAR(lm->mapShapes[0].thickness, 5.0f, 1e-3f);
+                CHECK(lm->mapShapes[0].points.size() == 3);
+                CHECK_NEAR(lm->mapShapes[0].points[1].x, 20.0f, 1e-3f);
+                CHECK(lm->mapShapes[1].kind == Minimap::MapShape::Kind::Rect);
+                CHECK(lm->mapShapes[1].points.size() == 2);
+                CHECK_NEAR(lm->mapShapes[1].points[1].y, 11.0f, 1e-3f);
+            }
             if (lm->markers.size() == 2) {
                 CHECK(lm->markers[0].label == "Shop");
                 CHECK(lm->markers[1].label == "Boss");

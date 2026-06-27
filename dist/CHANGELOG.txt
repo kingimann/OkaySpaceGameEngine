@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.274.0  (Authorable vector map: roads, houses, zones)
+  - Draw your own minimap world without an image: add Map Shapes in world
+    coordinates — Line (roads/walls, with thickness), Rect (houses/buildings),
+    and Poly (zones/lots), each with colour and fill/outline. Edit points right
+    in the inspector with quick "+ Road / + House / + Zone" buttons.
+  - Shapes pan/zoom/rotate with the map and render in the player + editor;
+    serialized and tested.
+
 v2.273.0  (Minimap labels + route line)
   - Minimap text labels: name your blips and waypoint markers and toggle
     "Show Labels" to draw them on the map (size + colour configurable).

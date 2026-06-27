@@ -10288,6 +10288,53 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("+ Add Marker##umm")) { mm->markers.push_back({}); ed.dirty = true; }
                 ImGui::TreePop();
             }
+            ImGui::SeparatorText("Map Shapes (roads / houses / zones)");
+            if (ImGui::TreeNode("Shapes##umm")) {
+                ImGui::TextDisabled("Build your own map in world coords: Line=road/wall, Rect=house, Poly=zone.");
+                const char* kinds[] = {"Line", "Rect", "Poly"};
+                int sdel = -1;
+                for (std::size_t i = 0; i < mm->mapShapes.size(); ++i) {
+                    ImGui::PushID(20000 + (int)i);
+                    auto& sh = mm->mapShapes[i];
+                    int ki = (int)sh.kind;
+                    ImGui::SetNextItemWidth(80);
+                    if (ImGui::Combo("##shk", &ki, kinds, 3)) { sh.kind = (Minimap::MapShape::Kind)ki; ed.dirty = true; }
+                    ImGui::SameLine();
+                    float sc[4] = {sh.color.r, sh.color.g, sh.color.b, sh.color.a};
+                    if (ImGui::ColorEdit4("##shc", sc, ImGuiColorEditFlags_NoInputs)) { sh.color = {sc[0],sc[1],sc[2],sc[3]}; ed.dirty = true; }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(70);
+                    if (ImGui::DragFloat("##sht", &sh.thickness, 0.2f, 0.5f, 64.0f, "w%.1f")) ed.dirty = true;
+                    if (sh.kind != Minimap::MapShape::Kind::Line) { ImGui::SameLine(); if (ImGui::Checkbox("Fill##shf", &sh.filled)) ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Del##shd")) sdel = (int)i;
+                    // Points editor.
+                    int pdel = -1;
+                    for (std::size_t p = 0; p < sh.points.size(); ++p) {
+                        ImGui::PushID((int)p);
+                        float pv[2] = {sh.points[p].x, sh.points[p].y};
+                        ImGui::SetNextItemWidth(160);
+                        if (ImGui::DragFloat2("##shp", pv, 0.25f)) { sh.points[p] = {pv[0], pv[1]}; ed.dirty = true; }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("x")) pdel = (int)p;
+                        ImGui::PopID();
+                    }
+                    if (pdel >= 0) { sh.points.erase(sh.points.begin() + pdel); ed.dirty = true; }
+                    if (ImGui::SmallButton("+ Point##shpa")) {
+                        Vec2 last = sh.points.empty() ? Vec2{0,0} : sh.points.back();
+                        sh.points.push_back({last.x + 5.0f, last.y}); ed.dirty = true;
+                    }
+                    ImGui::Separator();
+                    ImGui::PopID();
+                }
+                if (sdel >= 0) { mm->mapShapes.erase(mm->mapShapes.begin() + sdel); ed.dirty = true; }
+                if (ImGui::SmallButton("+ Road##umm")) { Minimap::MapShape s; s.kind = Minimap::MapShape::Kind::Line; s.color = okay::Color::FromBytes(90,92,104); s.thickness = 4.0f; s.points = {{0,0},{20,0}}; mm->mapShapes.push_back(s); ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("+ House##umm")) { Minimap::MapShape s; s.kind = Minimap::MapShape::Kind::Rect; s.color = okay::Color::FromBytes(150,140,120); s.points = {{0,0},{10,10}}; mm->mapShapes.push_back(s); ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("+ Zone##umm")) { Minimap::MapShape s; s.kind = Minimap::MapShape::Kind::Poly; s.color = okay::Color::FromBytes(60,120,80,160); s.points = {{0,0},{10,0},{5,10}}; mm->mapShapes.push_back(s); ed.dirty = true; }
+                ImGui::TreePop();
+            }
             ImGui::SeparatorText("Labels & Route");
             if (ImGui::Checkbox("Show Labels##umm", &mm->showLabels)) ed.dirty = true;
             if (mm->showLabels) {
@@ -11517,6 +11564,32 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             }
         }
         float selfAng = targetHeading - mapHeading;   // facing of the player on-map
+        // Authorable vector map: roads (lines), houses (rects), zones (polys).
+        for (const auto& shp : mm->mapShapes) {
+            if (shp.points.empty()) continue;
+            ImU32 col = ToColor(shp.color);
+            std::vector<ImVec2> pts;
+            auto projPlane = [&](const Vec2& en) {
+                float pmx, pmy;
+                Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(en), sz.x, sz.y, mapHeading, pmx, pmy, mmWpp);
+                return ImVec2(a.x + pmx, a.y + pmy);
+            };
+            if (shp.kind == Minimap::MapShape::Kind::Rect && shp.points.size() >= 2) {
+                Vec2 p0 = shp.points[0], p1 = shp.points[1];
+                Vec2 corners[4] = {{p0.x,p0.y},{p1.x,p0.y},{p1.x,p1.y},{p0.x,p1.y}};
+                for (auto& c : corners) pts.push_back(projPlane(c));
+            } else {
+                for (const auto& p : shp.points) pts.push_back(projPlane(p));
+            }
+            bool fill = shp.filled && shp.kind != Minimap::MapShape::Kind::Line;
+            if (fill && pts.size() >= 3) {
+                dl->AddConvexPolyFilled(pts.data(), (int)pts.size(), col);
+            } else if (shp.kind == Minimap::MapShape::Kind::Line) {
+                dl->AddPolyline(pts.data(), (int)pts.size(), col, ImDrawFlags_None, shp.thickness);
+            } else {
+                dl->AddPolyline(pts.data(), (int)pts.size(), col, ImDrawFlags_Closed, shp.thickness);
+            }
+        }
         // Range rings (concentric distance circles).
         if (mm->rangeRings > 0) {
             ImU32 rc = ToColor(mm->ringColor);

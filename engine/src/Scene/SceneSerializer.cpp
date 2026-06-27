@@ -1069,6 +1069,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << mm->routeColor.r << " " << mm->routeColor.g << " " << mm->routeColor.b << " " << mm->routeColor.a
             << " " << mm->routeWidth;
         for (const auto& mk : mm->markers) out << " " << Quote(mk.label);
+        // --- appended (v7): authorable vector map shapes ---
+        out << " " << mm->mapShapes.size();
+        for (const auto& sh : mm->mapShapes) {
+            out << " " << (int)sh.kind
+                << " " << sh.color.r << " " << sh.color.g << " " << sh.color.b << " " << sh.color.a
+                << " " << sh.thickness << " " << (sh.filled ? 1 : 0)
+                << " " << sh.points.size();
+            for (const auto& p : sh.points) out << " " << p.x << " " << p.y;
+        }
         out << "\n";
     }
     if (auto* bl = go->GetComponent<MinimapBlip>()) {
@@ -2747,6 +2756,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                            >> rcl.r >> rcl.g >> rcl.b >> rcl.a >> mm->routeWidth;
                                         mm->showLabels = (sl != 0); mm->labelColor = lc; mm->routeColor = rcl;
                                         for (auto& mk : mm->markers) mk.label = ReadQuoted(in);
+                                        // v7: authorable vector map shapes.
+                                        in >> std::ws;
+                                        int pk10 = in.peek();
+                                        if (std::isdigit(pk10) || pk10 == '-' || pk10 == '+' || pk10 == '.') {
+                                            std::size_t shn = 0; in >> shn;
+                                            mm->mapShapes.clear();
+                                            for (std::size_t si = 0; si < shn; ++si) {
+                                                Minimap::MapShape sh; int kd = 0, fl = 1; std::size_t pn = 0;
+                                                in >> kd >> sh.color.r >> sh.color.g >> sh.color.b >> sh.color.a
+                                                   >> sh.thickness >> fl >> pn;
+                                                sh.kind = (Minimap::MapShape::Kind)kd; sh.filled = (fl != 0);
+                                                for (std::size_t pi = 0; pi < pn; ++pi) {
+                                                    Vec2 p; in >> p.x >> p.y; sh.points.push_back(p);
+                                                }
+                                                mm->mapShapes.push_back(std::move(sh));
+                                            }
+                                        }
                                     }
                                 }
                             }

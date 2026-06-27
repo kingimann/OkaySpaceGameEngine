@@ -136,6 +136,7 @@ static void MMDrawRing(SDL_Renderer* r, int cx, int cy, int rad, int width, SDL_
         prevx = x; prevy = y;
     }
 }
+static void MMThickLine(SDL_Renderer* r, float x0, float y0, float x1, float y1, float width, SDL_Color col);
 static void MMFillTriangle(SDL_Renderer* r, SDL_Point a, SDL_Point b, SDL_Point c, SDL_Color col) {
     SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     int minY = std::min({a.y, b.y, c.y}), maxY = std::max({a.y, b.y, c.y});
@@ -155,6 +156,20 @@ static void MMFillTriangle(SDL_Renderer* r, SDL_Point a, SDL_Point b, SDL_Point 
             SDL_RenderDrawLine(r, x0, y, x1, y);
         }
     }
+}
+// A line segment with thickness, drawn as a filled quad (for minimap roads/walls).
+static void MMThickLine(SDL_Renderer* r, float x0, float y0, float x1, float y1, float width, SDL_Color col) {
+    float dx = x1 - x0, dy = y1 - y0, len = std::sqrt(dx*dx + dy*dy);
+    if (len < 1e-3f) return;
+    float nx = -dy / len * width * 0.5f, ny = dx / len * width * 0.5f;
+    SDL_Point a{(int)(x0+nx),(int)(y0+ny)}, b{(int)(x1+nx),(int)(y1+ny)},
+              c{(int)(x1-nx),(int)(y1-ny)}, d{(int)(x0-nx),(int)(y0-ny)};
+    MMFillTriangle(r, a, b, c, col); MMFillTriangle(r, a, c, d, col);
+}
+// Fill a simple (convex) polygon by fanning triangles from the first vertex.
+static void MMFillPoly(SDL_Renderer* r, const std::vector<SDL_Point>& pts, SDL_Color col) {
+    for (std::size_t i = 1; i + 1 < pts.size(); ++i)
+        MMFillTriangle(r, pts[0], pts[i], pts[i+1], col);
 }
 
 // Upload a TTF glyph atlas as an SDL texture (once, cached) for the player.
@@ -1708,6 +1723,38 @@ int main(int argc, char** argv) {
                 }
             }
             float selfAng = targetHeading - mapHeading;   // facing of the player on-map
+            // Authorable vector map: roads (lines), houses (rects), zones (polys).
+            auto projPlane = [&](const Vec2& en, float& ox, float& oy) {
+                float pmx, pmy;
+                Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(en), sz.x, sz.y, mapHeading, pmx, pmy, wpp);
+                ox = o.x + pmx; oy = o.y + pmy;
+            };
+            for (const auto& shp : mm->mapShapes) {
+                if (shp.points.empty()) continue;
+                SDL_Color col{(Uint8)(shp.color.r*255), (Uint8)(shp.color.g*255),
+                              (Uint8)(shp.color.b*255), (Uint8)(shp.color.a*255*op)};
+                std::vector<SDL_Point> pts;
+                if (shp.kind == Minimap::MapShape::Kind::Rect && shp.points.size() >= 2) {
+                    Vec2 p0 = shp.points[0], p1 = shp.points[1];
+                    Vec2 corners[4] = {{p0.x,p0.y},{p1.x,p0.y},{p1.x,p1.y},{p0.x,p1.y}};
+                    for (auto& c : corners) { float x,y; projPlane(c,x,y); pts.push_back({(int)x,(int)y}); }
+                } else {
+                    for (const auto& p : shp.points) { float x,y; projPlane(p,x,y); pts.push_back({(int)x,(int)y}); }
+                }
+                bool fill = shp.filled && shp.kind != Minimap::MapShape::Kind::Line;
+                if (fill && pts.size() >= 3) {
+                    MMFillPoly(renderer, pts, col);
+                } else if (shp.kind == Minimap::MapShape::Kind::Line) {
+                    for (std::size_t i = 0; i + 1 < pts.size(); ++i)
+                        MMThickLine(renderer, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y, shp.thickness, col);
+                } else {   // closed outline for Rect/Poly
+                    SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
+                    for (std::size_t i = 0; i < pts.size(); ++i) {
+                        const SDL_Point& a2 = pts[i]; const SDL_Point& b2 = pts[(i+1)%pts.size()];
+                        MMThickLine(renderer, a2.x, a2.y, b2.x, b2.y, shp.thickness, col);
+                    }
+                }
+            }
             // Range rings (concentric distance circles).
             if (mm->rangeRings > 0) {
                 SDL_Color rc{(Uint8)(mm->ringColor.r*255), (Uint8)(mm->ringColor.g*255),

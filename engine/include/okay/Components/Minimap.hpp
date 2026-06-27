@@ -89,6 +89,21 @@ public:
     struct Marker { Vec2 world{0.0f, 0.0f}; Color color = Color::FromBytes(255, 230, 90, 255); float size = 6.0f; std::string label; };
     std::vector<Marker> markers;
 
+    // ---- Authorable vector map (draw your own world: roads, walls, houses, zones) ----
+    /// A map feature drawn from world-space points (east, north):
+    ///   Line  — a polyline: roads (thick) and walls (thin).
+    ///   Rect  — a filled/outlined box from two opposite corners (houses/buildings).
+    ///   Poly  — a filled/outlined polygon from N points (zones / odd-shaped lots).
+    struct MapShape {
+        enum class Kind { Line, Rect, Poly };
+        Kind kind = Kind::Line;
+        std::vector<Vec2> points;                  // world (east, north)
+        Color color = Color::FromBytes(120, 124, 140, 255);
+        float thickness = 2.0f;                    // line width / outline thickness (px)
+        bool  filled = true;                       // Rect/Poly: fill vs outline only
+    };
+    std::vector<MapShape> mapShapes;
+
     // ---- Runtime zoom (GTA scroll-zoom) ----
     char  zoomInKey = 0, zoomOutKey = 0;               // nudge worldPerPixel (0 = off)
     float minZoom = 0.05f, maxZoom = 16.0f;            // worldPerPixel clamp

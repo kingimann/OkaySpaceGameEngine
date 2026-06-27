@@ -351,37 +351,42 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     }
 
     // Drag-and-drop (only while the backpack is open). Pick a slot under the cursor,
-    // drop it on another to swap/merge — works across the hotbar and backpack.
+    // drop it on the NEAREST slot (forgiving — gaps/imperfect aim still land cleanly).
     if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; return; }
-    auto hit = [&](float px, float py, float x, float y) {
-        return px >= x && px < x + sz && py >= y && py < y + sz;
-    };
-    auto slotAt = [&](float px, float py) -> int {
-        for (int i = 0; i < n; ++i) if (hit(px, py, hx + i * (sz + gap), hy)) return i;
-        for (int row = 0; row < ui.backpackRows; ++row)
-            for (int c = 0; c < n; ++c)
-                if (hit(px, py, hx + c * (sz + gap), bpY(row))) return n + row * n + c;
-        return -1;
-    };
-    okay::Vec2 mp = okay::Input::MousePosition();
     auto slotXY = [&](int idx, float& sx, float& sy) {
         if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
         else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
     };
-    // Hover highlight on the slot under the cursor (not while dragging).
-    if (ui.dragIndex < 0) {
-        int h = slotAt(mp.x, mp.y);
-        if (h >= 0) { float sx, sy; slotXY(h, sx, sy);
-            SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
-            FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, ui.hoverColor, ui.hoverColor, false, false, 1.0f);
+    const int slotCount = n + ui.backpackRows * n;
+    // Slot whose centre is closest to (px,py), within a slot's reach (else -1).
+    auto nearest = [&](float px, float py) -> int {
+        int best = -1; float bestD = (sz + gap) * (sz + gap) * 1.1f;
+        for (int idx = 0; idx < slotCount; ++idx) {
+            float sx, sy; slotXY(idx, sx, sy);
+            float dx = px - (sx + sz * 0.5f), dy = py - (sy + sz * 0.5f);
+            float d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; best = idx; }
         }
-    }
+        return best;
+    };
+    okay::Vec2 mp = okay::Input::MousePosition();
+    auto hilite = [&](int idx, const Color& c) {
+        if (idx < 0) return; float sx, sy; slotXY(idx, sx, sy);
+        SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
+        FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, c, c, false, false, 1.0f);
+    };
+    // Highlight the target slot: the one under the cursor while hovering, or the
+    // nearest slot the dragged item will drop into.
+    if (ui.dragIndex < 0) hilite(nearest(mp.x, mp.y), ui.hoverColor);
+    else { int t = nearest(mp.x, mp.y);
+        if (t >= 0 && t != ui.dragIndex)
+            hilite(t, Color{ui.selectedColor.r, ui.selectedColor.g, ui.selectedColor.b, 0.40f}); }
     if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
-        int idx = slotAt(mp.x, mp.y);
+        int idx = nearest(mp.x, mp.y);
         if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui.dragIndex = idx;
     }
     if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
-        ui.MoveSlot(ui.dragIndex, slotAt(mp.x, mp.y));
+        ui.MoveSlot(ui.dragIndex, nearest(mp.x, mp.y));
         ui.dragIndex = -1;
     }
     if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->slots.size()) {

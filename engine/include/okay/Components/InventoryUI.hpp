@@ -48,6 +48,11 @@ public:
     float labelScale     = 1.0f;    ///< multiplier on item-name / count text size
     bool  showCounts     = true;    ///< draw stack counts
     bool  showNames      = true;    ///< draw the item name when there's no icon
+    bool  showPanel      = false;   ///< a rounded background panel behind the slots
+    float panelPad       = 8.0f;    ///< panel padding around the slots (px)
+    Color hoverColor     = Color::FromBytes(255, 255, 255, 36);  ///< tint on the slot under the cursor
+    bool  showSelectedName = false; ///< Minecraft-style: held item's name above the hotbar
+    int   nameChars      = 6;       ///< how many characters of the item name to show in a slot
 
     /// The Inventory this UI shows: on the same object, else on the player root.
     Inventory* Inv() const {

@@ -1701,16 +1701,19 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
             if (ImGui::MenuItem("Inventory (Minecraft-style)")) {
+                GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
                 GameObject* g = ed.CreateEmpty("Inventory");
                 auto* inv = g->AddComponent<Inventory>();
                 inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft
                 inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
                 inv->Add("Torch", 16); inv->Add("Sword", 1);
                 g->AddComponent<InventoryUI>();
+                if (root) g->transform->SetParent(root->transform, false);
                 ed.Select(g); ed.dirty = true; created = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. Drives off an Inventory you can fill from gameplay.");
             if (ImGui::MenuItem("Grid Inventory (DayZ/Unturned-style)")) {
+                GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
                 GameObject* g = ed.CreateEmpty("GridInventory");
                 auto* gi = g->AddComponent<GridInventory>();
                 gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
@@ -1720,6 +1723,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 gi->AddItem("Bandage", 1, 1, 3, 0.1f);
                 gi->AddItem("Water", 1, 2, 1, 0.6f);
                 g->AddComponent<GridInventoryUI>();
+                if (root) g->transform->SetParent(root->transform, false);
                 ed.Select(g); ed.dirty = true; created = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
@@ -7934,8 +7938,17 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Corner Radius##iu", &ui->cornerRadius, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Border Width##iu", &ui->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Label Scale##iu", &ui->labelScale, 0.02f, 0.2f, 4.0f)) ed.dirty = true;
+                if (ImGui::SliderInt("Name Chars##iu", &ui->nameChars, 1, 12)) ed.dirty = true;
                 if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
                 if (ImGui::Checkbox("Show names##iu", &ui->showNames)) ed.dirty = true;
+                if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Held item name##iu", &ui->showSelectedName)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar (Minecraft-style).");
+                if (ui->showPanel && ImGui::DragFloat("Panel Padding##iu", &ui->panelPad, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
+                float pc[4] = {ui->panelColor.r, ui->panelColor.g, ui->panelColor.b, ui->panelColor.a};
+                if (ImGui::ColorEdit4("Panel Color##iu", pc)) { ui->panelColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
+                float hc[4] = {ui->hoverColor.r, ui->hoverColor.g, ui->hoverColor.b, ui->hoverColor.a};
+                if (ImGui::ColorEdit4("Hover Color##iu", hc)) { ui->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##iu")) toRemove = ui;
@@ -11341,7 +11354,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 const auto& it = inv->slots[idx];
                 SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
-                else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, 4).c_str());
+                else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
                 if (ui->showCounts && it.count > 1) {
                     std::string cs = std::to_string(it.count);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
@@ -11391,7 +11404,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ui->slotColor), cr);
                 SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
-                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, 4).c_str());
+                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
             }
         } else ui->dragIndex = -1;
         break;

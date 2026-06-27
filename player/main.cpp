@@ -295,15 +295,17 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
                               : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
             if (icon) { SDL_Rect d{inner.x + 2, inner.y + 2, inner.w - 4, inner.h - 4}; SDL_RenderCopy(r, icon, nullptr, &d); }
             else if (ui.showNames) {
-                float px = sz * 0.10f * ui.labelScale; if (px < 1) px = 1;
-                DrawText(r, it.item.substr(0, 4), x + 5, y + 6, px,
+                std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
+                float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
+                if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;   // fit the slot
+                DrawText(r, nm, x + 4, y + 5, px,
                          SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
             }
             if (ui.showCounts && it.count > 1) {
                 std::string cs = std::to_string(it.count);
-                float px = sz * 0.085f * ui.labelScale; if (px < 1) px = 1;
+                float px = sz * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
                 float tw = cs.size() * (Font8x8::Width + 1) * px;
-                DrawText(r, cs, x + sz - tw - 4, y + sz - (Font8x8::Height + 1) * px - 3, px,
+                DrawText(r, cs, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 3, px,
                          SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
             }
         }
@@ -317,14 +319,36 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         return ui.anchorTop ? hy + sz + 14.0f + row * (sz + gap)
                             : hy - 14.0f - (ui.backpackRows - row) * (sz + gap);
     };
+    auto panel = [&](float x, float y, float w, float h) {
+        SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
+        FillUIShape(r, rc, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr + 2.0f,
+                    ui.panelColor, ui.panelColor, false, false, 1.0f);
+    };
     // Backpack (when open): darken, then the grid.
     if (ui.open && ui.backpackRows > 0) {
         if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+        if (ui.showPanel) {
+            float t = bpY(0), b = bpY(ui.backpackRows - 1);
+            float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = ui.panelPad;
+            panel(hx - pad, top - pad, rowW + 2 * pad, (bot - top) + 2 * pad);
+        }
         for (int row = 0; row < ui.backpackRows; ++row)
             for (int c = 0; c < n; ++c)
                 slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
     }
+    if (ui.showPanel) panel(hx - ui.panelPad, hy - ui.panelPad, rowW + 2 * ui.panelPad, sz + 2 * ui.panelPad);
     for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+    // Minecraft-style held-item name above (or below) the hotbar.
+    if (ui.showSelectedName) {
+        std::string nm = ui.SelectedItem();
+        if (!nm.empty()) {
+            float px = 2.0f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+            float tw = nm.size() * (Font8x8::Width + 1) * px;
+            float ty = ui.anchorTop ? hy + sz + ui.panelPad + 4.0f : hy - (Font8x8::Height + 1) * px - ui.panelPad - 4.0f;
+            DrawText(r, nm, hx + rowW * 0.5f - tw * 0.5f, ty, px,
+                     SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+        }
+    }
 
     // Drag-and-drop (only while the backpack is open). Pick a slot under the cursor,
     // drop it on another to swap/merge — works across the hotbar and backpack.
@@ -340,6 +364,18 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         return -1;
     };
     okay::Vec2 mp = okay::Input::MousePosition();
+    auto slotXY = [&](int idx, float& sx, float& sy) {
+        if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
+        else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
+    };
+    // Hover highlight on the slot under the cursor (not while dragging).
+    if (ui.dragIndex < 0) {
+        int h = slotAt(mp.x, mp.y);
+        if (h >= 0) { float sx, sy; slotXY(h, sx, sy);
+            SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
+            FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, ui.hoverColor, ui.hoverColor, false, false, 1.0f);
+        }
+    }
     if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
         int idx = slotAt(mp.x, mp.y);
         if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui.dragIndex = idx;
@@ -355,8 +391,10 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
         if (icon) { SDL_Rect d{(int)x + 4, (int)y + 4, (int)sz - 8, (int)sz - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
         else {
-            float px = sz * 0.10f; if (px < 1) px = 1;
-            DrawText(r, it.item.substr(0, 4), x + 5, y + 6, px,
+            std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
+            float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
+            if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
+            DrawText(r, nm, x + 4, y + 5, px,
                      SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
         }
     }

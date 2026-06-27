@@ -387,6 +387,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ui->cornerRadius << " " << ui->borderWidth << " " << ui->labelScale
             << " " << (ui->showCounts ? 1 : 0) << " " << (ui->showNames ? 1 : 0);
         wc(ui->countColor);
+        out << " " << (ui->showPanel ? 1 : 0) << " " << ui->panelPad;
+        wc(ui->hoverColor);
+        out << " " << (ui->showSelectedName ? 1 : 0) << " " << ui->nameChars;
         out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
@@ -1567,6 +1570,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                            >> ui->labelScale >> scn >> snm
                            >> ui->countColor.r >> ui->countColor.g >> ui->countColor.b >> ui->countColor.a;
                         ui->anchorTop = (at != 0); ui->showCounts = (scn != 0); ui->showNames = (snm != 0);
+                        in >> std::ws;   // optional second style block (panel / hover / held name)
+                        int pk2 = in.peek();
+                        if (std::isdigit(pk2) || pk2 == '-' || pk2 == '.') {
+                            int sp = 0, ssn = 0;
+                            in >> sp >> ui->panelPad
+                               >> ui->hoverColor.r >> ui->hoverColor.g >> ui->hoverColor.b >> ui->hoverColor.a
+                               >> ssn >> ui->nameChars;
+                            ui->showPanel = (sp != 0); ui->showSelectedName = (ssn != 0);
+                        }
                     }
                 } else if (field == "gridinventory") {
                     auto* gi = go->AddComponent<GridInventory>();

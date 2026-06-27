@@ -8971,6 +8971,8 @@ void DrawInspector(EditorState& ed) {
     if (auto* inv = dynamic_cast<Inventory*>(curComp)) {
         if (CompHeader("Inventory", inv, &toRemove)) {
             if (ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999)) ed.dirty = true;
+            if (ImGui::DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
             ImGui::Text("Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
             int eraseS = -1;
             for (int i = 0; i < (int)inv->slots.size(); ++i) {

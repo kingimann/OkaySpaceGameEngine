@@ -693,6 +693,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* inv = go->GetComponent<Inventory>()) {
         out << "  inventory " << inv->capacity << " " << inv->slots.size();
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
+        out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
         out << "\n";
     }
     if (auto* tm = go->GetComponent<TurnManager>()) {
@@ -2008,6 +2009,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         Inventory::Slot s; s.item = ReadQuoted(in); in >> s.count;
                         inv->slots.push_back(s);
                     }
+                    in >> std::ws;   // optional max stack size (appended later)
+                    int mpk = in.peek();
+                    if (std::isdigit(mpk) || mpk == '-') in >> inv->maxStack;
                 } else if (field == "turnmgr") {
                     auto* tm = go->AddComponent<TurnManager>();
                     int as = 1; std::size_t count = 0;

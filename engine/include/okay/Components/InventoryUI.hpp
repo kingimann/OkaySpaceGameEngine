@@ -96,6 +96,12 @@ public:
         while ((int)inv->slots.size() < hi) inv->slots.push_back(Inventory::Slot{});
         for (int i = lo; i < hi; ++i)            // merge onto a matching stack first
             if (!Inventory::Empty(inv->slots[i]) && inv->slots[i].item == inv->slots[from].item) {
+                int cap = inv->maxStack;
+                if (cap > 0) { int room = cap - inv->slots[i].count; if (room < 0) room = 0;
+                    int mv = inv->slots[from].count < room ? inv->slots[from].count : room;
+                    inv->slots[i].count += mv; inv->slots[from].count -= mv;
+                    if (inv->slots[from].count <= 0) inv->slots[from] = Inventory::Slot{};
+                    return true; }
                 inv->slots[i].count += inv->slots[from].count; inv->slots[from] = Inventory::Slot{}; return true;
             }
         for (int i = lo; i < hi; ++i)            // else first empty slot in the other region
@@ -153,7 +159,11 @@ public:
         Inventory::Slot& a = inv->slots[from];
         Inventory::Slot& b = inv->slots[to];
         if (!Inventory::Empty(a) && !Inventory::Empty(b) && a.item == b.item) {
-            b.count += a.count; a.item.clear(); a.count = 0;      // merge identical stacks
+            int cap = inv->maxStack;                              // merge identical stacks
+            if (cap > 0) { int room = cap - b.count; if (room < 0) room = 0;
+                int mv = a.count < room ? a.count : room; b.count += mv; a.count -= mv;
+                if (a.count <= 0) { a.item.clear(); a.count = 0; } }
+            else { b.count += a.count; a.item.clear(); a.count = 0; }
         } else {
             std::swap(a, b);                                      // swap (target may be empty)
         }

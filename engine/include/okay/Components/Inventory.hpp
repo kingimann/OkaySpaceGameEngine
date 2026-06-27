@@ -17,6 +17,7 @@ public:
 
     std::vector<Slot> slots;
     int capacity = 20;            // max distinct stacks
+    int maxStack = 0;             // max items per stack (0 = unlimited); Add() overflows
 
     /// Slots may be FIXED-POSITION: an empty stack (item == "" or count <= 0) is a
     /// reusable hole, so the UI can drag an item to any slot and leave a gap behind.
@@ -25,38 +26,57 @@ public:
     bool IsFull() const { return SlotsUsed() >= capacity; }
 
     int Count(const std::string& item) const {
-        for (const auto& s : slots) if (!Empty(s) && s.item == item) return s.count;
-        return 0;
+        int total = 0;   // sum across stacks (an item may span several once maxStack splits it)
+        for (const auto& s : slots) if (!Empty(s) && s.item == item) total += s.count;
+        return total;
     }
     bool Has(const std::string& item, int n = 1) const { return Count(item) >= n; }
 
-    /// Add `n` of an item: stacks onto an existing stack, else fills the first empty
-    /// slot, else takes a new one. Returns false only when there's no room.
+    /// Add `n` of an item: tops up existing stacks (respecting maxStack), then fills
+    /// empty holes / new slots, splitting into multiple stacks when maxStack is set.
+    /// Returns false if some couldn't fit (no room left).
     bool Add(const std::string& item, int n = 1) {
         if (n <= 0 || item.empty()) return false;
-        for (auto& s : slots)
-            if (!Empty(s) && s.item == item) { s.count += n; Changed(); return true; }
-        for (auto& s : slots)
-            if (Empty(s)) { s.item = item; s.count = n; Changed(); return true; }   // reuse a hole
-        if (IsFull()) return false;
-        slots.push_back({item, n});
-        Changed();
-        return true;
+        const int cap = maxStack > 0 ? maxStack : 0;   // 0 = unlimited
+        bool changed = false;
+        // 1) Top up existing stacks of this item.
+        for (auto& s : slots) {
+            if (n <= 0) break;
+            if (Empty(s) || s.item != item) continue;
+            int room = cap > 0 ? cap - s.count : n;
+            if (room <= 0) continue;
+            int add = n < room ? n : room;
+            s.count += add; n -= add; changed = true;
+        }
+        // 2) Put the remainder into empty holes / new slots, splitting by cap.
+        while (n > 0) {
+            int put = (cap > 0 && n > cap) ? cap : n;
+            Slot* dst = nullptr;
+            for (auto& s : slots) if (Empty(s)) { dst = &s; break; }   // reuse a hole
+            if (!dst) {
+                if (IsFull()) { if (changed) Changed(); return false; }
+                slots.push_back(Slot{}); dst = &slots.back();
+            }
+            dst->item = item; dst->count = put; n -= put; changed = true;
+        }
+        if (changed) Changed();
+        return n <= 0;
     }
 
     /// Remove up to `n` of an item; the slot becomes an empty hole when it drains
     /// (positions stay stable). Returns true if the full amount was removed.
     bool Remove(const std::string& item, int n = 1) {
         if (n <= 0) return false;
-        for (auto& s : slots) {
+        int need = n; bool changed = false;
+        for (auto& s : slots) {                 // drain across stacks (holes stay put)
+            if (need <= 0) break;
             if (Empty(s) || s.item != item) continue;
-            bool enough = s.count >= n;
-            s.count -= n;
+            int take = s.count < need ? s.count : need;
+            s.count -= take; need -= take; changed = true;
             if (s.count <= 0) { s.item.clear(); s.count = 0; }
-            Changed();
-            return enough;
         }
-        return false;
+        if (changed) Changed();
+        return need <= 0;
     }
 
     void Clear() { slots.clear(); Changed(); }

@@ -34,5 +34,16 @@ int main() {
     auto* ui2 = cam->AddComponent<InventoryUI>();
     CHECK(ui2->Inv() == inv);
 
+    // Drag-and-drop: MoveSlot swaps two stacks, merges identical ones.
+    ui->MoveSlot(0, 1);                            // swap Dirt <-> Stone
+    CHECK(inv->slots[0].item == "Stone" && inv->slots[1].item == "Dirt");
+    inv->slots.push_back({"Stone", 5});            // a second Stone stack at the end
+    int last = (int)inv->slots.size() - 1;
+    CHECK(inv->slots[last].item == "Stone");
+    ui->MoveSlot(last, 0);                         // drop Stone onto Stone → merge
+    CHECK(inv->slots[0].item == "Stone");
+    CHECK(inv->slots[0].count == 15);              // 10 + 5 merged
+    CHECK(inv->Count("Stone") == 15);
+
     TEST_MAIN_RESULT();
 }

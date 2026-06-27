@@ -382,7 +382,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (ui->scrollSelect ? 1 : 0) << " " << ui->slotSize << " " << ui->slotGap
             << " " << (ui->darkenWhenOpen ? 1 : 0);
         wc(ui->slotColor); wc(ui->slotBorder); wc(ui->selectedColor); wc(ui->textColor); wc(ui->panelColor);
-        out << " " << Quote(ui->iconFolder) << "\n";
+        out << " " << Quote(ui->iconFolder) << " " << (ui->dragItems ? 1 : 0) << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
         out << "  gridinventory " << gi->cols << " " << gi->rows
@@ -1550,6 +1550,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
                     rc(ui->slotColor); rc(ui->slotBorder); rc(ui->selectedColor); rc(ui->textColor); rc(ui->panelColor);
                     ui->iconFolder = ReadQuoted(in);
+                    in >> std::ws;   // optional dragItems toggle (added later)
+                    if (std::isdigit(in.peek())) { int d = 1; in >> d; ui->dragItems = (d != 0); }
                 } else if (field == "gridinventory") {
                     auto* gi = go->AddComponent<GridInventory>();
                     int tk = 'i'; in >> gi->cols >> gi->rows >> tk; gi->toggleKey = (char)tk;

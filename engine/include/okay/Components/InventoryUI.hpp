@@ -6,6 +6,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
+#include <utility>
 
 namespace okay {
 
@@ -24,6 +25,8 @@ public:
     char  toggleKey    = 'e';     ///< open / close the backpack
     bool  selectHotkeys = true;   ///< 1–9 select a hotbar slot
     bool  scrollSelect  = true;   ///< mouse wheel cycles the selection
+    bool  dragItems     = true;   ///< drag items between slots while the backpack is open
+    int   dragIndex     = -1;     ///< slot being dragged (runtime), or -1
 
     float slotSize = 50.0f;       ///< slot square, pixels
     float slotGap  = 6.0f;
@@ -52,6 +55,28 @@ public:
         Inventory* inv = Inv();
         if (!inv || selected < 0 || selected >= (int)inv->slots.size()) return 0;
         return inv->slots[selected].count;
+    }
+
+    /// Drag a stack from slot `from` onto slot `to`: swap, merge identical stacks, or
+    /// (dropping past the used slots) send it to the end. Operates on the Inventory's
+    /// stack list, so hotbar (0..hotbar-1) and backpack slots reorder freely.
+    void MoveSlot(int from, int to) {
+        Inventory* inv = Inv();
+        if (!inv) return;
+        int n = (int)inv->slots.size();
+        if (from < 0 || from >= n || from == to) return;
+        if (to >= 0 && to < n) {
+            if (!inv->slots[from].item.empty() && inv->slots[to].item == inv->slots[from].item) {
+                inv->slots[to].count += inv->slots[from].count;   // merge same item
+                inv->slots.erase(inv->slots.begin() + from);
+            } else {
+                std::swap(inv->slots[from], inv->slots[to]);      // swap positions
+            }
+        } else {                                                  // dropped on an empty slot
+            Inventory::Slot s = inv->slots[from];
+            inv->slots.erase(inv->slots.begin() + from);
+            inv->slots.push_back(s);
+        }
     }
 
     void Update(float) override {

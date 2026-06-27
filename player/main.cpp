@@ -285,7 +285,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         float b = sel ? 3.0f : 2.0f;
         SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
         setc(ui.slotColor); SDL_RenderFillRect(r, &inner);
-        if (inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
+        if (idx != ui.dragIndex && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
             const auto& it = inv->slots[idx];
             SDL_Texture* icon = ui.iconFolder.empty() ? nullptr
                               : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
@@ -323,6 +323,43 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     float rowW = n * sz + (n - 1) * gap;
     float hx = (W - rowW) * 0.5f, hy = H - sz - 16.0f;
     for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+
+    // Drag-and-drop (only while the backpack is open). Pick a slot under the cursor,
+    // drop it on another to swap/merge — works across the hotbar and backpack.
+    if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; return; }
+    float gx = (W - rowW) * 0.5f, gyBottom = H - sz - 16.0f - 14.0f;
+    auto hit = [&](float px, float py, float x, float y) {
+        return px >= x && px < x + sz && py >= y && py < y + sz;
+    };
+    auto slotAt = [&](float px, float py) -> int {
+        for (int i = 0; i < n; ++i) if (hit(px, py, hx + i * (sz + gap), hy)) return i;
+        for (int row = 0; row < ui.backpackRows; ++row)
+            for (int c = 0; c < n; ++c)
+                if (hit(px, py, gx + c * (sz + gap), gyBottom - (ui.backpackRows - row) * (sz + gap)))
+                    return n + row * n + c;
+        return -1;
+    };
+    okay::Vec2 mp = okay::Input::MousePosition();
+    if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
+        int idx = slotAt(mp.x, mp.y);
+        if (idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) ui.dragIndex = idx;
+    }
+    if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
+        ui.MoveSlot(ui.dragIndex, slotAt(mp.x, mp.y));
+        ui.dragIndex = -1;
+    }
+    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->slots.size()) {
+        const auto& it = inv->slots[ui.dragIndex];
+        float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
+        slot(x, y, -2, false);   // an empty slot frame floating under the cursor
+        SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
+        if (icon) { SDL_Rect d{(int)x + 4, (int)y + 4, (int)sz - 8, (int)sz - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
+        else {
+            float px = sz * 0.10f; if (px < 1) px = 1;
+            DrawText(r, it.item.substr(0, 4), x + 5, y + 6, px,
+                     SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+        }
+    }
 }
 
 // A DayZ/Unturned grid inventory: multi-cell items, drag-and-drop within the grid.

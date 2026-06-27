@@ -7914,6 +7914,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to open/close the backpack (default E).");
             if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
             if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Drag items##iu", &ui->dragItems)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag stacks between slots while the backpack is open (swap / merge).");
             if (ImGui::Checkbox("Darken when open##iu", &ui->darkenWhenOpen)) ed.dirty = true;
             char icf[128]; std::snprintf(icf, sizeof(icf), "%s", ui->iconFolder.c_str());
             if (ImGui::InputText("Icon Folder##iu", icf, sizeof(icf))) { ui->iconFolder = icf; ed.dirty = true; }

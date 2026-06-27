@@ -763,11 +763,15 @@ int main(int argc, char** argv) {
 
         // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
         // can point at and drag items, and show it — just like Minecraft/DayZ.
-        bool invModal = false;
+        bool invModal = false, itemDragging = false;
         for (const auto& up : scene.Objects()) {
             if (!up) continue;
-            if (auto* iu = up->GetComponent<InventoryUI>()) if (iu->open && iu->dragItems) { invModal = true; break; }
-            if (auto* gi = up->GetComponent<GridInventory>()) if (gi->open) { invModal = true; break; }
+            if (auto* iu = up->GetComponent<InventoryUI>()) {
+                if (iu->open && iu->dragItems) invModal = true;
+                if (iu->dragIndex >= 0) itemDragging = true;
+            }
+            if (auto* gi = up->GetComponent<GridInventory>()) { if (gi->open) invModal = true; }
+            if (auto* gu = up->GetComponent<GridInventoryUI>()) { if (gu->dragIndex >= 0) itemDragging = true; }
         }
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
@@ -775,7 +779,13 @@ int main(int argc, char** argv) {
         static Vec2 s_virtualMouse{0, 0};
         bool locked = Cursor::IsLocked() && !invModal;
         SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
-        SDL_ShowCursor((Cursor::visible || invModal) ? SDL_ENABLE : SDL_DISABLE);
+        // While actively dragging a stack, hide the OS arrow: the dragged icon (drawn
+        // centred on the mouse) becomes the pointer. The arrow's hotspot sits at its
+        // tip — ~half a slot above where it looks like it's pointing — which biased the
+        // nearest-slot drop to the slot above. Hiding it makes the icon centre the only
+        // reference, so "drop where the item is" lines up with the slot under it.
+        bool showCursor = (Cursor::visible || invModal) && !itemDragging;
+        SDL_ShowCursor(showCursor ? SDL_ENABLE : SDL_DISABLE);
 
         // Feed the mouse (position in pixels + left/right/middle button state). When
         // locked we accumulate relative motion into a virtual position so the

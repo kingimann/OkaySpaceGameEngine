@@ -123,6 +123,11 @@ int main() {
         mm->minZoom = 0.1f; mm->maxZoom = 20.0f; mm->zoomStep = 1.25f;
         mm->markers.push_back({{10.0f, 20.0f}, Color::FromBytes(0, 255, 0), 7.0f});
         mm->markers.push_back({{-30.0f, 5.0f}, Color::FromBytes(255, 0, 0), 5.0f});
+        mm->showSelf = false;
+        mm->viewCone = true; mm->viewConeAngle = 75.0f; mm->viewConeLength = 50.0f;
+        mm->viewConeColor = Color::FromBytes(10, 20, 30, 80);
+        mm->rangeRings = 3; mm->ringColor = Color::FromBytes(40, 50, 60, 90);
+        mm->showNorth = true; mm->northColor = Color::FromBytes(250, 80, 80);
 
         GameObject* enemy = s.CreateGameObject("Enemy");
         auto* bl = enemy->AddComponent<MinimapBlip>();
@@ -175,6 +180,13 @@ int main() {
                 CHECK_NEAR(lm->markers[0].size, 7.0f, 1e-3f);
                 CHECK_NEAR(lm->markers[1].world.x, -30.0f, 1e-3f);
             }
+            CHECK(!lm->showSelf);
+            CHECK(lm->viewCone);
+            CHECK_NEAR(lm->viewConeAngle, 75.0f, 1e-3f);
+            CHECK_NEAR(lm->viewConeLength, 50.0f, 1e-3f);
+            CHECK(lm->rangeRings == 3);
+            CHECK(lm->showNorth);
+            CHECK_NEAR(lm->northColor.r, 250.0f/255.0f, 0.01f);
         }
 
         GameObject* le = loaded.Find("Enemy");

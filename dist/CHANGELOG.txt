@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.272.0  (More minimap options)
+  - Minimap radar options: a view cone (FOV wedge showing where the player
+    faces), concentric range rings, a north-indicator tick, and a "show self"
+    toggle for the centre marker. All render in the player + editor, serialize,
+    and have inspector controls. Tests extended.
+
 v2.271.0  (Camera freeze fix, GTA maps, particle preview)
   - FIXED: opening the inventory or a chest no longer moves the camera. The
     third-person-shooter and free-roam controllers were ignoring the modal-UI

@@ -10215,6 +10215,29 @@ void DrawInspector(EditorState& ed) {
                 float gc[4] = {mm->gridColor.r, mm->gridColor.g, mm->gridColor.b, mm->gridColor.a};
                 if (ImGui::ColorEdit4("Grid Color##umm", gc)) { mm->gridColor = {gc[0], gc[1], gc[2], gc[3]}; ed.dirty = true; }
             }
+            ImGui::SeparatorText("Radar");
+            if (ImGui::Checkbox("Show Self##umm", &mm->showSelf)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw the centre (player) marker.");
+            ImGui::SameLine();
+            if (ImGui::Checkbox("North Tick##umm", &mm->showNorth)) ed.dirty = true;
+            if (mm->showNorth) {
+                ImGui::SameLine();
+                float nc[4] = {mm->northColor.r, mm->northColor.g, mm->northColor.b, mm->northColor.a};
+                if (ImGui::ColorEdit4("##nc", nc, ImGuiColorEditFlags_NoInputs)) { mm->northColor = {nc[0],nc[1],nc[2],nc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("View Cone##umm", &mm->viewCone)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A translucent FOV wedge showing where the player faces.");
+            if (mm->viewCone) {
+                if (ImGui::SliderFloat("Cone Angle##umm", &mm->viewConeAngle, 5.0f, 170.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Cone Length##umm", &mm->viewConeLength, 0.5f, 2.0f, 4000.0f)) ed.dirty = true;
+                float vc[4] = {mm->viewConeColor.r, mm->viewConeColor.g, mm->viewConeColor.b, mm->viewConeColor.a};
+                if (ImGui::ColorEdit4("Cone Color##umm", vc)) { mm->viewConeColor = {vc[0],vc[1],vc[2],vc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::SliderInt("Range Rings##umm", &mm->rangeRings, 0, 6)) ed.dirty = true;
+            if (mm->rangeRings > 0) {
+                float rc[4] = {mm->ringColor.r, mm->ringColor.g, mm->ringColor.b, mm->ringColor.a};
+                if (ImGui::ColorEdit4("Ring Color##umm", rc)) { mm->ringColor = {rc[0],rc[1],rc[2],rc[3]}; ed.dirty = true; }
+            }
             ImGui::SeparatorText("Custom Map (GTA-style)");
             char mt[256];
             std::strncpy(mt, mm->mapTexture.c_str(), sizeof(mt) - 1);
@@ -11473,6 +11496,20 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddLine(ImVec2(a.x, a.y + sz.y - gy), ImVec2(b.x, a.y + sz.y - gy), gc);
             }
         }
+        float selfAng = targetHeading - mapHeading;   // facing of the player on-map
+        // Range rings (concentric distance circles).
+        if (mm->rangeRings > 0) {
+            ImU32 rc = ToColor(mm->ringColor);
+            for (int k = 1; k <= mm->rangeRings; ++k)
+                dl->AddCircle(ImVec2(cxp, cyp), radius * k / (mm->rangeRings + 1), rc, 32, 1.0f);
+        }
+        // View cone (FOV wedge from the centre along the player's facing).
+        if (mm->viewCone) {
+            float half = mm->viewConeAngle * 0.5f * 0.0174532925f, L = mm->viewConeLength;
+            ImVec2 lft(cxp + std::sin(selfAng-half)*L, cyp - std::cos(selfAng-half)*L);
+            ImVec2 rgt(cxp + std::sin(selfAng+half)*L, cyp - std::cos(selfAng+half)*L);
+            dl->AddTriangleFilled(ImVec2(cxp, cyp), lft, rgt, ToColor(mm->viewConeColor));
+        }
         // Draw a marker (square/dot/triangle/arrow), optionally rotated, at (px,py).
         auto drawBlip = [&](float px, float py, float half, ImU32 col,
                             MinimapBlip::Shape shp, float ang) {
@@ -11538,13 +11575,22 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
         // The target marker at the map center (arrow shows facing; GTA north-up maps
         // spin the arrow instead of the map).
-        {
+        if (mm->showSelf) {
             float half = mm->blipSize;
-            float selfAng = targetHeading - mapHeading;
             if (mm->playerArrow)
                 drawBlip(cxp, cyp, half * 1.4f, ToColor(mm->targetColor), MinimapBlip::Shape::Arrow, selfAng);
             else
                 dl->AddRectFilled(ImVec2(cxp - half, cyp - half), ImVec2(cxp + half, cyp + half), ToColor(mm->targetColor));
+        }
+        // North indicator: a small tick at the edge in the world-north direction.
+        if (mm->showNorth) {
+            float northAng = -mapHeading;
+            float edge = radius - 4.0f;
+            float nx = cxp + std::sin(northAng) * edge, ny = cyp - std::cos(northAng) * edge;
+            ImVec2 tip(cxp + std::sin(northAng)*(edge+5), cyp - std::cos(northAng)*(edge+5));
+            ImVec2 l(nx + std::sin(northAng-2.4f)*5, ny - std::cos(northAng-2.4f)*5);
+            ImVec2 r(nx + std::sin(northAng+2.4f)*5, ny - std::cos(northAng+2.4f)*5);
+            dl->AddTriangleFilled(tip, l, r, ToColor(mm->northColor));
         }
     }
 

@@ -1707,6 +1707,24 @@ int main(int argc, char** argv) {
                     SDL_RenderDrawLine(renderer, box.x, (int)(o.y+sz.y-gy), box.x+box.w, (int)(o.y+sz.y-gy));
                 }
             }
+            float selfAng = targetHeading - mapHeading;   // facing of the player on-map
+            // Range rings (concentric distance circles).
+            if (mm->rangeRings > 0) {
+                SDL_Color rc{(Uint8)(mm->ringColor.r*255), (Uint8)(mm->ringColor.g*255),
+                             (Uint8)(mm->ringColor.b*255), (Uint8)(mm->ringColor.a*255*op)};
+                for (int k = 1; k <= mm->rangeRings; ++k)
+                    MMDrawRing(renderer, cx, cy, radius * k / (mm->rangeRings + 1), 1, rc);
+            }
+            // View cone (FOV wedge from the centre along the player's facing).
+            if (mm->viewCone) {
+                SDL_Color vc{(Uint8)(mm->viewConeColor.r*255), (Uint8)(mm->viewConeColor.g*255),
+                             (Uint8)(mm->viewConeColor.b*255), (Uint8)(mm->viewConeColor.a*255*op)};
+                float half = mm->viewConeAngle * 0.5f * 0.0174532925f, L = mm->viewConeLength;
+                SDL_Point apex{cx, cy};
+                SDL_Point lft{(int)(cx + std::sin(selfAng-half)*L), (int)(cy - std::cos(selfAng-half)*L)};
+                SDL_Point rgt{(int)(cx + std::sin(selfAng+half)*L), (int)(cy - std::cos(selfAng+half)*L)};
+                MMFillTriangle(renderer, apex, lft, rgt, vc);
+            }
             // Draw a marker (square/dot/triangle/arrow) at (px,py).
             auto drawBlip = [&](float px, float py, int half, SDL_Color col,
                                 MinimapBlip::Shape shp, float ang) {
@@ -1780,18 +1798,28 @@ int main(int argc, char** argv) {
                 MMFillTriangle(renderer, top, rgt, bot, col);
                 MMFillTriangle(renderer, top, lft, bot, col);
             }
-            // The target marker at the map center.
-            {
+            // The target marker at the map center (the arrow shows facing; a north-up
+            // map spins the arrow GTA-style).
+            if (mm->showSelf) {
                 int half = (int)(mm->blipSize);
                 SDL_Color col{(Uint8)(mm->targetColor.r*255), (Uint8)(mm->targetColor.g*255),
                               (Uint8)(mm->targetColor.b*255), (Uint8)(mm->targetColor.a*255*op)};
-                // The arrow shows the target's facing relative to the map's rotation
-                // (north-up map => the arrow itself spins, GTA-style).
-                float selfAng = targetHeading - mapHeading;
                 if (mm->playerArrow)
                     drawBlip((float)cx, (float)cy, (int)(half*1.4f), col, MinimapBlip::Shape::Arrow, selfAng);
                 else
                     drawBlip((float)cx, (float)cy, half, col, MinimapBlip::Shape::Square, 0.0f);
+            }
+            // North indicator: a small tick at the edge in the world-north direction.
+            if (mm->showNorth) {
+                float northAng = -mapHeading;   // north is "up" rotated by the map heading
+                float edge = (mm->circular ? radius : (sz.x < sz.y ? sz.x : sz.y) * 0.5f) - 4.0f;
+                float nx = cx + std::sin(northAng) * edge, ny = cy - std::cos(northAng) * edge;
+                SDL_Color nc{(Uint8)(mm->northColor.r*255), (Uint8)(mm->northColor.g*255),
+                             (Uint8)(mm->northColor.b*255), (Uint8)(mm->northColor.a*255*op)};
+                SDL_Point tip{(int)(cx + std::sin(northAng)*(edge+5)), (int)(cy - std::cos(northAng)*(edge+5))};
+                SDL_Point l{(int)(nx + std::sin(northAng-2.4f)*5), (int)(ny - std::cos(northAng-2.4f)*5)};
+                SDL_Point r{(int)(nx + std::sin(northAng+2.4f)*5), (int)(ny - std::cos(northAng+2.4f)*5)};
+                MMFillTriangle(renderer, tip, l, r, nc);
             }
             // Restore clip and draw the border on top (rect rings or circle ring).
             if (hadClip) SDL_RenderSetClipRect(renderer, &prevClip);

@@ -1053,6 +1053,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& mk : mm->markers)
             out << " " << mk.world.x << " " << mk.world.y << " "
                 << mk.color.r << " " << mk.color.g << " " << mk.color.b << " " << mk.color.a << " " << mk.size;
+        // --- appended (v5): self/cone/rings/north ---
+        out << " " << (mm->showSelf ? 1 : 0)
+            << " " << (mm->viewCone ? 1 : 0) << " " << mm->viewConeAngle << " " << mm->viewConeLength
+            << " " << mm->viewConeColor.r << " " << mm->viewConeColor.g << " " << mm->viewConeColor.b << " " << mm->viewConeColor.a
+            << " " << mm->rangeRings
+            << " " << mm->ringColor.r << " " << mm->ringColor.g << " " << mm->ringColor.b << " " << mm->ringColor.a
+            << " " << (mm->showNorth ? 1 : 0)
+            << " " << mm->northColor.r << " " << mm->northColor.g << " " << mm->northColor.b << " " << mm->northColor.a;
         out << "\n";
     }
     if (auto* bl = go->GetComponent<MinimapBlip>()) {
@@ -2706,6 +2714,21 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     in >> mk.world.x >> mk.world.y
                                        >> mk.color.r >> mk.color.g >> mk.color.b >> mk.color.a >> mk.size;
                                     mm->markers.push_back(mk);
+                                }
+                                // v5: self / view cone / range rings / north.
+                                in >> std::ws;
+                                int pk8 = in.peek();
+                                if (std::isdigit(pk8) || pk8 == '-' || pk8 == '+' || pk8 == '.') {
+                                    int ss = 1, vc = 0, sn = 0;
+                                    Color vcc, rc2, nc;
+                                    in >> ss >> vc >> mm->viewConeAngle >> mm->viewConeLength
+                                       >> vcc.r >> vcc.g >> vcc.b >> vcc.a
+                                       >> mm->rangeRings
+                                       >> rc2.r >> rc2.g >> rc2.b >> rc2.a
+                                       >> sn >> nc.r >> nc.g >> nc.b >> nc.a;
+                                    mm->showSelf = (ss != 0); mm->viewCone = (vc != 0);
+                                    mm->viewConeColor = vcc; mm->ringColor = rc2;
+                                    mm->showNorth = (sn != 0); mm->northColor = nc;
                                 }
                             }
                         }

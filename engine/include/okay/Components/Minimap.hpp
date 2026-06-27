@@ -46,6 +46,21 @@ public:
     bool  showGrid = false;                          // faint reference grid
     Color gridColor = Color::FromBytes(80, 90, 105, 120);
     float gridSpacing = 24.0f;                        // grid line spacing (map pixels)
+    bool  showSelf = true;                            // draw the centre (player) marker at all
+
+    // ---- View cone (FOV wedge from the centre, GTA radar style) ----
+    bool  viewCone = false;
+    float viewConeAngle  = 60.0f;                     // full cone angle, degrees
+    float viewConeLength = 40.0f;                     // cone reach in map pixels
+    Color viewConeColor  = Color::FromBytes(120, 200, 255, 70);
+
+    // ---- Range rings (concentric distance circles) ----
+    int   rangeRings = 0;                             // number of rings (0 = off)
+    Color ringColor  = Color::FromBytes(150, 160, 180, 90);
+
+    // ---- North indicator (a compass 'N' tick on the map edge) ----
+    bool  showNorth = false;
+    Color northColor = Color::FromBytes(235, 90, 90, 255);
 
     // ---- GTA-style custom world map ----
     std::string mapTexture;                          // image drawn under the blips ("" = none)

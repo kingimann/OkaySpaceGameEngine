@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.296.0  (Cleaner, safer game builds + easier profiler)
+  Build Game:
+  - Tidy Unity-style layout: the game .exe + runtime DLLs sit at the folder root;
+    scenes, config and assets go in a "Data/" subfolder, so the game root is clean
+    (toggle in Build Settings > Scenes > Output).
+  - Clean output: a build first removes the files a previous build left behind, so
+    no stale/leftover junk piles up. Only files OkaySpace itself writes are touched.
+  - Safer: assets are de-duplicated and copied path-traversal-safe (a crafted "../"
+    or absolute asset path can no longer write outside the build). The build refuses
+    to scatter files into a filesystem root, your home folder, or the project folder.
+  - Build report now shows the total size on disk and the bundled asset size.
+  - The player auto-detects the Data/ layout and still runs older flat-layout builds.
+  Profiler:
+  - Added a plain-language "Diagnosis" line (CPU- vs GPU-bound, the heaviest section,
+    and an FPS verdict) and a column-help tooltip, so it's easy to see what to fix.
+
 v2.295.0  (Profiler — CPU/GPU, Unity-style)
   - New View > Profiler window: a detailed CPU/GPU performance profiler.
     * Frame-time + GPU-time timelines (last ~4s); Pause and SCRUB back through

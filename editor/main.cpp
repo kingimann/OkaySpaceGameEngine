@@ -26,6 +26,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <set>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -734,6 +735,8 @@ struct BuildSettings {
     bool  showFps = false;
     bool  includeAllProjectScenes = false; // else just the current scene
     bool  developmentBuild = false;
+    bool  cleanOutput = true;              // wipe stale build files first
+    bool  dataFolder = true;               // clean Data/ layout (exe at root)
     // ---- Graphics / quality (applied by the player at startup) ----
     bool  lockCursor = false;              // hide + lock the cursor on launch
     bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
@@ -1100,22 +1103,72 @@ struct Options {
          bloom = false, ssao = false, fxaa = true;
     int  antialias = 1;
     bool gpuRenderer = true;
+    bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
+    bool dataFolder  = true;   // tuck scenes/config/assets into a "Data/" subfolder (clean root)
 };
+
+// Sanitize an asset's relative path so the build can't write outside its Data
+// folder: drop any leading drive/root and reject "." / ".." components (path
+// traversal). Returns a clean relative path; empty if nothing usable remains.
+inline fs::path SafeRelative(const fs::path& rel) {
+    fs::path out;
+    for (const auto& part : rel) {
+        std::string s = part.string();
+        if (s.empty() || s == "." || s == ".." || s == "/" || s == "\\") continue;
+        if (part.has_root_name() || part.has_root_directory()) continue;   // drive letters, leading slash
+        out /= part;
+    }
+    return out;
+}
 
 // Build the game into outDir. Returns a human-readable status string.
 std::string Build(EditorState& ed, const std::string& outDir,
                   const std::string& gameName, const Options& opt = {}) {
     std::error_code ec;
-    fs::path dir(outDir);
+    fs::path dir = fs::weakly_canonical(fs::path(outDir), ec);
+    if (dir.empty()) dir = fs::path(outDir);
+
+    // Safety: refuse to scatter a build across a dangerous folder (a filesystem
+    // root, the user's home, or the project folder itself), where Clean could
+    // delete the wrong things and the output would mix with source files.
+    {
+        fs::path home;
+        if (const char* h = std::getenv("HOME")) home = h;
+        else if (const char* up = std::getenv("USERPROFILE")) home = up;
+        fs::path proj = ed.projectDir().empty() ? fs::path() : fs::weakly_canonical(fs::path(ed.projectDir()), ec);
+        if (dir == dir.root_path()) return "Refusing to build into a filesystem root. Pick a dedicated build folder.";
+        if (!home.empty() && fs::weakly_canonical(home, ec) == dir)
+            return "Refusing to build into your home folder. Pick a dedicated build folder.";
+        if (!proj.empty() && (dir == proj || dir == proj / "Assets"))
+            return "Refusing to build into the project/Assets folder. Pick a separate build folder so game files stay clean.";
+    }
     fs::create_directories(dir, ec);
     if (ec) return "Couldn't create folder: " + ec.message();
 
-    // 1) Write the active scene next to the player as game.okayscene (the
-    // startup scene), and gather the scene list for the config.
-    if (!SceneSerializer::SaveToFile(ed.scene(), (dir / "game.okayscene").string()))
+    // Clean stale build artifacts so old builds never leave junk behind. We only
+    // remove files THIS builder writes (the managed Data/ folder + the runtime/
+    // config at the root), never the user's unrelated files.
+    if (opt.cleanOutput) {
+        std::error_code ce;
+        fs::remove_all(dir / "Data", ce);
+        for (const char* f : {"game.okayscene", "game.okayconfig", "game.okayprefs"})
+            fs::remove(dir / f, ce);
+        // Drop any *.okayscene left at the root by an older flat-layout build.
+        for (auto& e : fs::directory_iterator(dir, ce))
+            if (e.is_regular_file() && e.path().extension() == ".okayscene")
+                fs::remove(e.path(), ce);
+    }
+
+    // Unity-style layout: the exe + runtime DLLs sit at the root; everything else
+    // (scenes, config, assets) lives in a Data/ subfolder so the game root is clean.
+    fs::path data = opt.dataFolder ? (dir / "Data") : dir;
+    fs::create_directories(data, ec);
+
+    // 1) Write the active scene as Data/game.okayscene (the startup scene).
+    if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
         return "Failed to write game.okayscene.";
 
-    std::vector<std::string> sceneFiles; // filenames placed in the build folder
+    std::vector<std::string> sceneFiles; // filenames placed in the Data folder
     sceneFiles.push_back("game.okayscene");
     int extraScenes = 0;
     if (opt.includeAllProjectScenes && !ed.projectDir().empty()) {
@@ -1125,14 +1178,14 @@ std::string Build(EditorState& ed, const std::string& outDir,
                 if (!e.is_regular_file() || e.path().extension() != ".okayscene") continue;
                 std::string fn = e.path().filename().string();
                 if (fn == "game.okayscene") continue;
-                fs::copy_file(e.path(), dir / fn, fs::copy_options::overwrite_existing, ec);
+                fs::copy_file(e.path(), data / fn, fs::copy_options::overwrite_existing, ec);
                 if (!ec) { sceneFiles.push_back(fn); ++extraScenes; }
             }
     }
 
     // 1b) Write game.okayconfig (window + scene list) read by the player.
     {
-        std::ofstream cf((dir / "game.okayconfig").string());
+        std::ofstream cf((data / "game.okayconfig").string());
         cf << "title=" << gameName << "\n";
         cf << "company=" << opt.company << "\n";
         cf << "version=" << opt.version << "\n";
@@ -1215,25 +1268,48 @@ std::string Build(EditorState& ed, const std::string& outDir,
         }
     }
 
-    // 3) Copy every asset the scene references (textures, WAVs, frames) so the
-    // shipped game folder is self-contained, preserving relative subpaths.
+    // 3) Copy every asset the scene references (textures, WAVs, frames) into the
+    // Data folder, self-contained — de-duplicated, and path-traversal-safe so a
+    // crafted asset path can never write outside the build.
     int copied = 0, missing = 0;
+    std::uintmax_t assetBytes = 0;
+    std::set<std::string> seen;   // de-dupe identical source paths
     for (const std::string& asset : SceneSerializer::CollectAssetPaths(ed.scene())) {
+        if (asset.empty() || !seen.insert(asset).second) continue;
         fs::path src(asset);
         std::error_code aec;
-        if (!fs::exists(src, aec)) { ++missing; continue; }
-        fs::path dst = src.is_absolute() ? (dir / src.filename()) : (dir / src);
+        if (!fs::exists(src, aec) || !fs::is_regular_file(src, aec)) { ++missing; continue; }
+        // Keep the relative folder layout when safe; otherwise drop to the bare
+        // filename. Absolute paths and any "../" escapes collapse to the filename.
+        fs::path rel = src.is_absolute() ? fs::path(src.filename()) : SafeRelative(src);
+        if (rel.empty()) rel = src.filename();
+        fs::path dst = data / rel;
         if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
         fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
-        if (!aec) ++copied;
+        if (!aec) { ++copied; std::error_code se; assetBytes += fs::file_size(dst, se); }
     }
 
+    // Total build size on disk (so the user sees a clean, accounted-for output).
+    std::uintmax_t totalBytes = 0;
+    { std::error_code te;
+      for (auto& e : fs::recursive_directory_iterator(dir, te))
+          if (e.is_regular_file(te)) { std::error_code se; totalBytes += fs::file_size(e.path(), se); } }
+    auto human = [](std::uintmax_t b) {
+        char s[32]; double v = (double)b;
+        const char* u = "B";
+        if (v >= 1024*1024) { v /= 1024*1024; u = "MB"; }
+        else if (v >= 1024) { v /= 1024; u = "KB"; }
+        std::snprintf(s, sizeof(s), "%.1f %s", v, u); return std::string(s);
+    };
+
     std::string msg = "Built '" + gameName + "' to " + dir.string() +
-                      " — run " + exeName + " to play.";
+                      " — run " + exeName + " to play.  [" + human(totalBytes) + " total";
+    if (opt.dataFolder) msg += ", game data in Data/";
+    msg += "]";
     if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0)
         msg += "  (runtime fetched from GitHub)";
     if (extraScenes) msg += "  (" + std::to_string(extraScenes + 1) + " scenes)";
-    if (copied)  msg += "  (" + std::to_string(copied) + " asset(s) copied)";
+    if (copied)  msg += "  (" + std::to_string(copied) + " asset(s), " + human(assetBytes) + ")";
     if (missing) msg += "  WARNING: " + std::to_string(missing) +
                         " referenced asset(s) not found and not copied.";
     return msg;
@@ -4828,7 +4904,12 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::TextDisabled("The current scene is always the startup scene.");
                 ImGui::Spacing();
                 ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene / load_scene_index work at runtime");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene / load_scene_index work at runtime.\nOff = ship ONLY this scene (smaller, no unused scenes leaked).");
+                ImGui::Spacing(); ImGui::SeparatorText("Output");
+                ImGui::Checkbox("Clean output folder", &g_build.cleanOutput);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove leftover files from a previous build first, so the folder has no stale junk.");
+                ImGui::Checkbox("Tidy layout (Data/ folder)", &g_build.dataFolder);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unity-style: the game .exe + DLLs sit at the root; scenes/config/assets go in a Data/ subfolder so the game root is clean.");
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -4849,6 +4930,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.shadows = g_build.shadows; o.bloom = g_build.bloom; o.ssao = g_build.ssao;
             o.fxaa = g_build.fxaa; o.antialias = g_build.antialias;
             o.gpuRenderer = g_build.gpuRenderer;
+            o.cleanOutput = g_build.cleanOutput; o.dataFolder = g_build.dataFolder;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);
@@ -14541,6 +14623,31 @@ void DrawProfiler(EditorState& ed) {
     bar("Physics", cPh, ImVec4(0.55f,0.9f,0.55f,1));
     bar("Render",  cRd, ImVec4(1.0f,0.75f,0.4f,1));
     bar("Other",   cOt, ImVec4(0.7f,0.7f,0.75f,1));
+
+    // Plain-language diagnosis: tell the user what to look at, so the profiler is
+    // actually actionable instead of just numbers.
+    {
+        const char* heaviestCat = "Scripts"; double cm = cSc;
+        if (cPh > cm) { cm = cPh; heaviestCat = "Physics"; }
+        if (cRd > cm) { cm = cRd; heaviestCat = "Render"; }
+        if (cOt > cm) { cm = cOt; heaviestCat = "Other (engine/UI)"; }
+        std::string heaviestSec; double hs = 0.0;
+        for (const auto& b : F.buckets) if (b.self > hs) { hs = b.self; heaviestSec = b.name; }
+        std::string diag;
+        if (F.total < 0.001) diag = "Waiting for frames...";
+        else if (F.gpu > F.cpu * 1.3) diag = "GPU-bound: rendering dominates. Lower resolution/AA, fewer triangles, or simpler shaders.";
+        else if (F.cpu > F.gpu * 1.3) diag = "CPU-bound: " + std::string(heaviestCat) + " is heaviest"
+                                              + (heaviestSec.empty() ? "" : " (top: " + heaviestSec + ").");
+        else diag = "Balanced CPU/GPU.";
+        if (F.total > 0.001) {
+            double fps = 1000.0 / F.total;
+            if (fps >= 58) diag += "  Running smoothly (60+ FPS).";
+            else if (fps >= 28) diag += "  ~30 FPS.";
+            else diag += "  Below 30 FPS — optimise the heaviest section above.";
+        }
+        ImGui::TextColored(ImVec4(0.85f,0.9f,1.0f,1.0f), "Diagnosis:");
+        ImGui::SameLine(); ImGui::TextWrapped("%s", diag.c_str());
+    }
     ImGui::Separator();
 
     // ---- CSV copy of the displayed frame ----
@@ -14556,7 +14663,14 @@ void DrawProfiler(EditorState& ed) {
         ImGui::SetClipboardText(csv.c_str());
         ConsoleLog("Profiler frame copied as CSV.");
     }
-    ImGui::SameLine(); ImGui::TextDisabled("section breakdown (self-time, with min/avg/max over the window)");
+    ImGui::SameLine(); ImGui::TextDisabled("section breakdown  (?)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Self ms  = time spent in this section, NOT counting nested sections.\n"
+                          "Total ms = time including everything it called (indented = nested).\n"
+                          "%%        = share of this frame's CPU.\n"
+                          "Calls    = how many times it ran this frame.\n"
+                          "Avg/Max  = over the recorded window.\n"
+                          "Red rows are 'hot' (>30%% of CPU) — start optimising there.");
 
     // ---- Per-section table: self/total/calls/%, indented by call depth, with stats ----
     if (ImGui::BeginTable("profrows", 7,

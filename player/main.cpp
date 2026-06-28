@@ -833,9 +833,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Resolve where the game files live (beside the executable).
+    // Resolve where the game files live. New builds use a clean Unity-style layout
+    // (exe + DLLs at the root, scenes/config/assets in a Data/ subfolder); prefer
+    // that when present, else fall back to the flat layout (everything beside exe).
     std::string baseDir;
     { char* base = SDL_GetBasePath(); baseDir = base ? base : ""; if (base) SDL_free(base); }
+    {
+        std::ifstream probe(baseDir + "Data/game.okayconfig");
+        if (probe.good()) baseDir += "Data/";
+    }
 
     // Build settings (written by the editor's Build Settings) live in an optional
     // game.okayconfig beside the exe: window size/title/flags, the scene list (so

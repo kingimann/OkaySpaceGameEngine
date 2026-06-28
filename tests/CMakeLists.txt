@@ -150,6 +150,10 @@ add_executable(test_profiler test_profiler.cpp)
 target_link_libraries(test_profiler PRIVATE okay::engine)
 add_test(NAME profiler COMMAND test_profiler)
 
+add_executable(test_datapack test_datapack.cpp)
+target_link_libraries(test_datapack PRIVATE okay::engine)
+add_test(NAME datapack COMMAND test_datapack)
+
 add_executable(test_timescale test_timescale.cpp)
 target_link_libraries(test_timescale PRIVATE okay::engine)
 add_test(NAME timescale COMMAND test_timescale)

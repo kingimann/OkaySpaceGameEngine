@@ -94,6 +94,7 @@
 
 #include <cctype>
 #include <functional>
+#include "okay/Core/DataPack.hpp"   // transparent unpack of obfuscated game data
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
@@ -3186,11 +3187,13 @@ bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string
 
 GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string& path,
                                                  std::string* error) {
-    std::ifstream f(path);
+    std::ifstream f(path, std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
     std::stringstream ss; ss << f.rdbuf();
+    std::string text = DataPack::Unpack(ss.str());   // decode if obfuscated
+    if (text.empty() && DataPack::IsPacked(ss.str())) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
     GameObject* root = nullptr;
-    if (!ParseInto(scene, ss.str(), /*clear=*/false, &root, error)) return nullptr;
+    if (!ParseInto(scene, text, /*clear=*/false, &root, error)) return nullptr;
     return root;
 }
 
@@ -3223,11 +3226,14 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
 }
 
 bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::string* error) {
-    std::ifstream f(path);
+    std::ifstream f(path, std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss;
     ss << f.rdbuf();
-    return Deserialize(scene, ss.str(), error);
+    std::string raw = ss.str();
+    std::string text = DataPack::Unpack(raw);   // decode if obfuscated (plaintext passes through)
+    if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
+    return Deserialize(scene, text, error);
 }
 
 } // namespace okay

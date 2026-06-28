@@ -737,6 +737,14 @@ struct BuildSettings {
     bool  developmentBuild = false;
     bool  cleanOutput = true;              // wipe stale build files first
     bool  dataFolder = true;               // clean Data/ layout (exe at root)
+    bool  encryptData = false;             // obfuscate scenes + config
+    // ---- Player presentation (Unity-parity) ----
+    char  icon[260] = "";                  // window/taskbar icon PNG (Unity's Default Icon)
+    char  bundleId[160] = "com.okayspace.game";  // application identifier
+    bool  runInBackground = true;          // keep updating when the window loses focus
+    bool  muteOnFocusLoss = false;         // silence audio when unfocused
+    bool  startMaximized = false;          // open maximized
+    int   minWidth = 0, minHeight = 0;     // minimum window size (0 = none)
     // ---- Graphics / quality (applied by the player at startup) ----
     bool  lockCursor = false;              // hide + lock the cursor on launch
     bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
@@ -1105,7 +1113,28 @@ struct Options {
     bool gpuRenderer = true;
     bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
     bool dataFolder  = true;   // tuck scenes/config/assets into a "Data/" subfolder (clean root)
+    bool encryptData = false;  // obfuscate scenes + config so players can't read/edit them
+    // ---- Player presentation (Unity-parity) ----
+    std::string iconPath;      // window icon PNG (copied into the build)
+    std::string bundleId = "com.okayspace.game";
+    bool runInBackground = true;
+    bool muteOnFocusLoss = false;
+    bool startMaximized  = false;
+    int  minWidth = 0, minHeight = 0;
 };
+
+// Obfuscate a just-written text file in place (scene/config) so it can't be read
+// or edited in a text editor; the player decodes it transparently at load.
+inline void PackFileInPlace(const fs::path& p) {
+    std::error_code ec;
+    if (!fs::exists(p, ec)) return;
+    std::ifstream in(p.string(), std::ios::binary);
+    std::stringstream ss; ss << in.rdbuf(); in.close();
+    std::string raw = ss.str();
+    if (okay::DataPack::IsPacked(raw)) return;        // already packed
+    std::ofstream out(p.string(), std::ios::binary | std::ios::trunc);
+    out << okay::DataPack::Pack(raw);
+}
 
 // Sanitize an asset's relative path so the build can't write outside its Data
 // folder: drop any leading drive/root and reject "." / ".." components (path
@@ -1209,8 +1238,24 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "fxaa=" << (opt.fxaa ? 1 : 0) << "\n";
         cf << "antialias=" << opt.antialias << "\n";
         cf << "gpu=" << (opt.gpuRenderer ? 1 : 0) << "\n";
+        // Player presentation (Unity-parity).
+        if (!opt.iconPath.empty()) cf << "icon=" << fs::path(opt.iconPath).filename().string() << "\n";
+        cf << "bundle_id=" << opt.bundleId << "\n";
+        cf << "run_background=" << (opt.runInBackground ? 1 : 0) << "\n";
+        cf << "mute_unfocused=" << (opt.muteOnFocusLoss ? 1 : 0) << "\n";
+        cf << "start_maximized=" << (opt.startMaximized ? 1 : 0) << "\n";
+        cf << "min_width=" << opt.minWidth << "\n";
+        cf << "min_height=" << opt.minHeight << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
+    }
+
+    // Optional: obfuscate the shipped scenes + config so they can't be read or
+    // edited in a text editor (the player decodes them transparently). Deters
+    // casual tampering; not strong DRM (the key ships in the binary).
+    if (opt.encryptData) {
+        PackFileInPlace(data / "game.okayconfig");
+        for (const std::string& s : sceneFiles) PackFileInPlace(data / s);
     }
 
     // 2) Copy the player runtime, renamed to <Game>.exe. If it isn't beside the
@@ -1287,6 +1332,12 @@ std::string Build(EditorState& ed, const std::string& outDir,
         if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
         fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
         if (!aec) { ++copied; std::error_code se; assetBytes += fs::file_size(dst, se); }
+    }
+    // Window icon (Unity's Default Icon): copy it beside the config in Data/.
+    if (!opt.iconPath.empty()) {
+        std::error_code ie; fs::path isrc(opt.iconPath);
+        if (fs::exists(isrc, ie) && fs::is_regular_file(isrc, ie))
+            fs::copy_file(isrc, data / isrc.filename(), fs::copy_options::overwrite_existing, ie);
     }
 
     // Total build size on disk (so the user sees a clean, accounted-for output).
@@ -4830,7 +4881,11 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Product name", g_buildNameBuf, sizeof(g_buildNameBuf));
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Company", g_build.company, sizeof(g_build.company));
                 ImGui::SetNextItemWidth(160); ImGui::InputText("Version", g_build.version, sizeof(g_build.version));
+                ImGui::SetNextItemWidth(300); ImGui::InputText("Identifier", g_build.bundleId, sizeof(g_build.bundleId));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Application identifier (Unity's bundle id), e.g. com.studio.game.");
                 ImGui::SetNextItemWidth(420); ImGui::InputText("Output folder", g_buildDirBuf, sizeof(g_buildDirBuf));
+                ImGui::SetNextItemWidth(420); ImGui::InputText("Icon (PNG)", g_build.icon, sizeof(g_build.icon));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Window/taskbar icon (Unity's Default Icon). A PNG path; bundled into the build.");
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                 ImGui::Checkbox("Development build", &g_build.developmentBuild);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra logging; marks the build as non-final");
@@ -4853,12 +4908,21 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(180);
                 if (ImGui::Combo("Window mode", &wm, wmodes, 3)) { g_build.fullscreen = (wm == 2); g_build.borderless = (wm == 1); }
                 ImGui::Checkbox("Resizable", &g_build.resizable); ImGui::SameLine();
-                ImGui::Checkbox("VSync", &g_build.vsync);
+                ImGui::Checkbox("VSync", &g_build.vsync); ImGui::SameLine();
+                ImGui::Checkbox("Start maximized", &g_build.startMaximized);
                 const char* fpsOpts[] = {"Uncapped", "30", "60", "120", "144"};
                 const int   fpsVals[] = {0, 30, 60, 120, 144};
                 int fpsSel = 0; for (int i = 0; i < 5; ++i) if (fpsVals[i] == g_build.fpsCap) fpsSel = i;
                 ImGui::SetNextItemWidth(180);
                 if (ImGui::Combo("Frame rate cap", &fpsSel, fpsOpts, 5)) g_build.fpsCap = fpsVals[fpsSel];
+                ImGui::Spacing(); ImGui::SeparatorText("Minimum window size (resizable)");
+                ImGui::SetNextItemWidth(90); ImGui::InputInt("Min W", &g_build.minWidth, 0); ImGui::SameLine();
+                ImGui::SetNextItemWidth(90); ImGui::InputInt("Min H", &g_build.minHeight, 0);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop the player shrinking the window below this (0 = no minimum).");
+                ImGui::Spacing(); ImGui::SeparatorText("Focus");
+                ImGui::Checkbox("Run in background", &g_build.runInBackground);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the game updating when its window isn't focused (Unity's Run In Background). Off = pause when minimized/unfocused.");
+                ImGui::Checkbox("Mute audio when unfocused", &g_build.muteOnFocusLoss);
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Graphics")) {
@@ -4910,6 +4974,8 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove leftover files from a previous build first, so the folder has no stale junk.");
                 ImGui::Checkbox("Tidy layout (Data/ folder)", &g_build.dataFolder);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unity-style: the game .exe + DLLs sit at the root; scenes/config/assets go in a Data/ subfolder so the game root is clean.");
+                ImGui::Checkbox("Encrypt game data", &g_build.encryptData);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Obfuscate the shipped scenes + config so players can't open them in a text editor to read or cheat-edit your game.\nNote: deters casual tampering, not a determined attacker (the key ships in the game).");
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -4931,6 +4997,11 @@ void DrawFileDialogs(EditorState& ed) {
             o.fxaa = g_build.fxaa; o.antialias = g_build.antialias;
             o.gpuRenderer = g_build.gpuRenderer;
             o.cleanOutput = g_build.cleanOutput; o.dataFolder = g_build.dataFolder;
+            o.encryptData = g_build.encryptData;
+            o.iconPath = g_build.icon; o.bundleId = g_build.bundleId;
+            o.runInBackground = g_build.runInBackground; o.muteOnFocusLoss = g_build.muteOnFocusLoss;
+            o.startMaximized = g_build.startMaximized;
+            o.minWidth = g_build.minWidth; o.minHeight = g_build.minHeight;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);

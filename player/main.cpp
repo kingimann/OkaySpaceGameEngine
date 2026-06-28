@@ -858,9 +858,19 @@ int main(int argc, char** argv) {
         bool gpu = true;   // try the GPU (D3D11/OpenGL) 3D renderer; fall back to software
         std::string startup;
         std::vector<std::string> scenes;
+        // Presentation (Unity-parity).
+        std::string icon;          // window icon PNG (in the Data folder)
+        bool runInBackground = true;
+        bool muteOnFocusLoss = false;
+        bool startMaximized = false;
+        int  minWidth = 0, minHeight = 0;
     } cfg;
     {
-        std::ifstream cf(baseDir + "game.okayconfig");
+        // Read the whole config and transparently decode it if it was obfuscated at
+        // build time (DataPack), so encrypted builds load their settings too.
+        std::ifstream cfRaw(baseDir + "game.okayconfig", std::ios::binary);
+        std::stringstream cfBuf; cfBuf << cfRaw.rdbuf();
+        std::istringstream cf(okay::DataPack::Unpack(cfBuf.str()));
         std::string line;
         while (std::getline(cf, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -889,6 +899,12 @@ int main(int argc, char** argv) {
             else if (k == "gpu")        cfg.gpu = std::atoi(v.c_str()) != 0;
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
+            else if (k == "icon")           cfg.icon = v;
+            else if (k == "run_background") cfg.runInBackground = std::atoi(v.c_str()) != 0;
+            else if (k == "mute_unfocused") cfg.muteOnFocusLoss = std::atoi(v.c_str()) != 0;
+            else if (k == "start_maximized")cfg.startMaximized = std::atoi(v.c_str()) != 0;
+            else if (k == "min_width")      cfg.minWidth = std::atoi(v.c_str());
+            else if (k == "min_height")     cfg.minHeight = std::atoi(v.c_str());
         }
     }
     // Register the build's scenes so scripts can load_scene_index / load_next.
@@ -917,11 +933,23 @@ int main(int argc, char** argv) {
     if (cfg.resizable)  winFlags |= SDL_WINDOW_RESIZABLE;
     if (cfg.fullscreen) winFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     if (cfg.borderless) winFlags |= SDL_WINDOW_BORDERLESS;
+    if (cfg.startMaximized && cfg.resizable && !cfg.fullscreen) winFlags |= SDL_WINDOW_MAXIMIZED;
     if (!cfg.showCursor) SDL_ShowCursor(SDL_DISABLE);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
     SDL_Window* window = SDL_CreateWindow(
         title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         cfg.width, cfg.height, winFlags);
+    if (window && cfg.minWidth > 0 && cfg.minHeight > 0)
+        SDL_SetWindowMinimumSize(window, cfg.minWidth, cfg.minHeight);
+    // Window/taskbar icon (Unity's Default Icon): load the PNG and apply it.
+    if (window && !cfg.icon.empty()) {
+        okay::Image ico;
+        if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon)) {
+            SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
+                (void*)ico.Data(), ico.Width(), ico.Height(), 32, ico.Width() * 4, SDL_PIXELFORMAT_ABGR8888);
+            if (surf) { SDL_SetWindowIcon(window, surf); SDL_FreeSurface(surf); }
+        }
+    }
     Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
@@ -1027,6 +1055,7 @@ int main(int argc, char** argv) {
     okay::SetScriptUI(&g_uiBridge);
 #endif
     Uint64 last = SDL_GetPerformanceCounter();
+    bool windowFocused = true;   // Unity's Run In Background / mute-on-focus-loss
     auto frame = [&]() {
         Uint64 fStart = SDL_GetPerformanceCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
@@ -1043,6 +1072,10 @@ int main(int argc, char** argv) {
                 if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) g_uiBack = true;
             }
 #endif
+            if (e.type == SDL_WINDOWEVENT) {
+                if (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) windowFocused = true;
+                else if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) windowFocused = false;
+            }
             if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
                 pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
@@ -1216,10 +1249,14 @@ int main(int argc, char** argv) {
             OkayUI::BeginFrame(ui);
         }
 #endif
+        // Focus behaviour (Unity-parity): optionally pause the sim and/or mute audio
+        // when the window isn't focused.
+        if (cfg.muteOnFocusLoss) AudioMixer::masterVolume = windowFocused ? cfg.volume : 0.0f;
+        const bool tick = windowFocused || cfg.runInBackground;
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
-        Time::Step(dt);
-        scene.Update(Time::DeltaTime());
+        Time::Step(tick ? dt : 0.0f);
+        if (tick) scene.Update(Time::DeltaTime());
 
         // Keyboard / gamepad menu navigation (arrows/WASD + Enter/Space/A).
         NavigateUI(scene);

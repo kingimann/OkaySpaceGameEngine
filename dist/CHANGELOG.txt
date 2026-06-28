@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.297.0  (Encrypted game data + expanded build settings)
+  - Encrypt game data (Build Settings > Scenes): optionally obfuscate the shipped
+    scenes + config so players can't open them in a text editor to read or
+    cheat-edit your game. The player decodes them transparently, and a checksum
+    detects tampering. (Obfuscation, not strong DRM — the key ships in the game.)
+  - Expanded, Unity-style build settings:
+    * Player: Application Identifier (bundle id) and a Default Icon (PNG) for the
+      window/taskbar.
+    * Display: Start Maximized, a Minimum window size, Run In Background (keep
+      updating when unfocused — off pauses the game), and Mute Audio When Unfocused.
+  - The player honors all of the above and bundles the icon into the build.
+
 v2.296.0  (Cleaner, safer game builds + easier profiler)
   Build Game:
   - Tidy Unity-style layout: the game .exe + runtime DLLs sit at the folder root;

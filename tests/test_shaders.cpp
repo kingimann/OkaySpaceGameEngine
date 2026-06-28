@@ -43,6 +43,36 @@ int main() {
         }
     }
 
+    // Ground contact shadow: the planar projection flattens any point onto the
+    // ground plane along the light, and the MeshRenderer fields round-trip.
+    {
+        // Light pointing straight down: a point at (3, 5, -2) projects to y = groundY,
+        // keeping x/z (vertical light = no horizontal shear).
+        Mat4 s = Mat4::PlanarShadow(0.0f, Vec3{0, -1, 0});
+        Vec3 p = s.MultiplyPoint(Vec3{3.0f, 5.0f, -2.0f});
+        CHECK_NEAR(p.y, 0.0f, 1e-3f);
+        CHECK_NEAR(p.x, 3.0f, 1e-3f);
+        CHECK_NEAR(p.z, -2.0f, 1e-3f);
+        // A slanted light shears the shadow sideways but still lands on the plane.
+        Mat4 s2 = Mat4::PlanarShadow(1.0f, Vec3{1, -1, 0});
+        Vec3 q = s2.MultiplyPoint(Vec3{0.0f, 5.0f, 0.0f});   // 4 units above the plane
+        CHECK_NEAR(q.y, 1.0f, 1e-3f);
+        CHECK_NEAR(q.x, 4.0f, 1e-2f);                        // sheared east by the height drop
+
+        Scene sc("GS"); sc.physicsEnabled = false;
+        auto* mr = sc.CreateGameObject("Box")->AddComponent<MeshRenderer>();
+        CHECK(mr->groundShadow);                              // on by default
+        mr->groundShadow = false; mr->groundShadowY = 2.5f; mr->groundShadowStrength = 0.7f;
+        Scene s3("x"); SceneSerializer::Deserialize(s3, SceneSerializer::Serialize(sc));
+        auto* mr2 = s3.Find("Box") ? s3.Find("Box")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) {
+            CHECK(!mr2->groundShadow);
+            CHECK_NEAR(mr2->groundShadowY, 2.5f, 1e-3f);
+            CHECK_NEAR(mr2->groundShadowStrength, 0.7f, 1e-3f);
+        }
+    }
+
     // Gradient shader round-trips its top/bottom colours through the scene.
     {
         Scene s("G"); s.physicsEnabled = false;

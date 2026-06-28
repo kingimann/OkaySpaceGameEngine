@@ -239,6 +239,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (mr->uvScroll.x != 0.0f || mr->uvScroll.y != 0.0f || mr->triplanar)
             out << "  uvanim " << mr->uvScroll.x << " " << mr->uvScroll.y << " "
                 << (mr->triplanar ? 1 : 0) << "\n";
+        // Ground contact shadow (separate record; written when it differs from default).
+        if (!mr->groundShadow || mr->groundShadowY != 0.0f || mr->groundShadowStrength != 0.5f)
+            out << "  groundshadow " << (mr->groundShadow ? 1 : 0) << " "
+                << mr->groundShadowY << " " << mr->groundShadowStrength << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -1446,6 +1450,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         int tp = 0; in >> mr->uvScroll.x >> mr->uvScroll.y >> tp;
                         mr->triplanar = (tp != 0);
+                    }
+                } else if (field == "groundshadow") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        int gs = 1; in >> gs >> mr->groundShadowY >> mr->groundShadowStrength;
+                        mr->groundShadow = (gs != 0);
                     }
                 } else if (field == "light") {
                     auto* li = go->AddComponent<Light>();

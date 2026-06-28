@@ -34,7 +34,7 @@ const char* kHLSL =
     "  float3 uLightColor; float uUseTex;\n"
     "  float3 uAmbient;   float _p0;\n"
     "  float3 uEye;       float _p1;\n"
-    "  float2 uTiling;    float2 _p2;\n"
+    "  float2 uTiling;    float uShadowAlpha; float _p2;\n"
     "  float3 uRimColor;  float uShaderMode;\n"
     "  float3 uGradTop;   float uToonBands;\n"
     "  float3 uGradBot;   float uRimStr;\n"
@@ -55,6 +55,7 @@ const char* kHLSL =
     "  return o;\n"
     "}\n"
     "float4 PSMain(PSIn i):SV_TARGET {\n"
+    "  if (uShadowAlpha >= 0.0) return float4(0,0,0,uShadowAlpha);\n"   // flat ground contact shadow
     "  float3 N = normalize(i.nrm);\n"
     "  float3 base = uColor * i.col;\n"      // per-vertex/face color (white when unused)
     "  if (uUseTex > 0.5) base *= uTex.Sample(uSamp, i.uv).rgb;\n"
@@ -91,7 +92,7 @@ struct CB {
     float lightColor[3]; float useTex;
     float ambient[3];   float _p0;
     float eye[3];       float _p1;
-    float tiling[2];    float _p2[2];
+    float tiling[2];    float shadowAlpha; float _p2;
     float rimColor[3];  float shaderMode;
     float gradTop[3];   float toonBands;
     float gradBot[3];   float rimStr;
@@ -109,6 +110,8 @@ struct D3D11Renderer::Impl {
     ID3D11Buffer*           vb = nullptr; int vbCap = 0;
     ID3D11RasterizerState*  raster = nullptr;
     ID3D11DepthStencilState* depth = nullptr;
+    ID3D11DepthStencilState* depthNoWrite = nullptr;   // ground-shadow pass: test but don't write
+    ID3D11BlendState*       blend = nullptr;           // alpha blend for the ground shadow
     ID3D11SamplerState*     samp = nullptr;
     // Size-dependent targets:
     int w = 0, h = 0, samples = 0;
@@ -169,6 +172,20 @@ bool D3D11Renderer::Init() {
     dd.DepthEnable = TRUE; dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
     dd.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
     p->dev->CreateDepthStencilState(&dd, &p->depth);
+    // Ground-shadow pass: depth-test but don't write (so it never occludes geometry).
+    dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+    p->dev->CreateDepthStencilState(&dd, &p->depthNoWrite);
+    // Straight alpha blend for the translucent shadow.
+    D3D11_BLEND_DESC bd2; std::memset(&bd2, 0, sizeof(bd2));
+    bd2.RenderTarget[0].BlendEnable = TRUE;
+    bd2.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    bd2.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    bd2.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    bd2.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    bd2.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+    bd2.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    bd2.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    p->dev->CreateBlendState(&bd2, &p->blend);
 
     D3D11_SAMPLER_DESC sd; std::memset(&sd, 0, sizeof(sd));
     sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -369,6 +386,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.rimColor[0] = mr->rimColor.r; cb.rimColor[1] = mr->rimColor.g; cb.rimColor[2] = mr->rimColor.b;
         cb.gradTop[0] = mr->gradientTop.r; cb.gradTop[1] = mr->gradientTop.g; cb.gradTop[2] = mr->gradientTop.b;
         cb.gradBot[0] = mr->gradientBottom.r; cb.gradBot[1] = mr->gradientBottom.g; cb.gradBot[2] = mr->gradientBottom.b;
+        cb.shadowAlpha = -1.0f;   // lit pass (>=0 would draw the flat shadow — must be off here)
         if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
         }
@@ -377,6 +395,24 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         UINT stride = 11 * sizeof(float), offset = 0;
         c->IASetVertexBuffers(0, 1, &p->vb, &stride, &offset);
         c->Draw((UINT)vcount, 0);
+
+        // Ground contact shadow: re-draw the SAME geometry flattened onto the ground
+        // plane as flat translucent black, so objects sit on the ground (not floating).
+        if (mr->groundShadow && mr->groundShadowStrength > 0.001f && p->blend && p->depthNoWrite) {
+            Mat4 sModel = Mat4::PlanarShadow(mr->groundShadowY + 0.01f, SceneLight::Direction()) * model;
+            Mat4 sMvp = vp * sModel;
+            std::memcpy(cb.mvp, sMvp.m, sizeof(cb.mvp));
+            cb.shadowAlpha = mr->groundShadowStrength > 1.0f ? 1.0f : mr->groundShadowStrength;
+            if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
+            }
+            const float bf[4] = {0, 0, 0, 0};
+            c->OMSetBlendState(p->blend, bf, 0xffffffff);
+            c->OMSetDepthStencilState(p->depthNoWrite, 0);
+            c->Draw((UINT)vcount, 0);
+            c->OMSetBlendState(nullptr, bf, 0xffffffff);
+            c->OMSetDepthStencilState(p->depth, 0);
+        }
     }
 
     // Resolve MSAA (or copy) -> staging -> read back. D3D textures are top-left, so
@@ -403,6 +439,8 @@ void D3D11Renderer::Destroy() {
     p->texCache.clear();
     if (p->vb)     p->vb->Release();
     if (p->samp)   p->samp->Release();
+    if (p->blend)  p->blend->Release();
+    if (p->depthNoWrite) p->depthNoWrite->Release();
     if (p->depth)  p->depth->Release();
     if (p->raster) p->raster->Release();
     if (p->cb)     p->cb->Release();

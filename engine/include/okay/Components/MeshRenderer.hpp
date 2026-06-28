@@ -36,6 +36,14 @@ public:
     float  rimPower    = 3.0f;
     Color  rimColor    = Color::White;
 
+    /// Ground contact shadow: cast a flat "blob" shadow projected onto the horizontal
+    /// plane y = groundShadowY along the light, so objects sit on the ground instead of
+    /// looking like they float. Cheap (one extra flat pass) and works in every renderer.
+    /// On by default; turn off for flying/UI/skybox meshes.
+    bool   groundShadow         = true;
+    float  groundShadowY        = 0.0f;    // world height of the ground plane
+    float  groundShadowStrength = 0.5f;    // 0..1 darkness of the shadow
+
     /// Silhouette outline (inverted-hull): render an expanded shell of back faces in a
     /// solid color behind the mesh, leaving a clean cartoon edge. Pairs with Toon.
     bool   outline      = false;

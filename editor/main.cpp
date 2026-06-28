@@ -7115,6 +7115,14 @@ void DrawInspector(EditorState& ed) {
                 float oc[3] = {mr->outlineColor.r, mr->outlineColor.g, mr->outlineColor.b};
                 if (ImGui::ColorEdit3("Outline Color##mesh", oc)) { mr->outlineColor = {oc[0], oc[1], oc[2], 1.0f}; ed.dirty = true; }
             }
+            // Ground contact shadow: a flat blob projected onto the ground so the
+            // object doesn't look like it's floating. On by default.
+            if (ImGui::Checkbox("Ground Shadow##mesh", &mr->groundShadow)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cast a flat contact shadow onto the ground plane so the object sits on it instead of floating.");
+            if (mr->groundShadow) {
+                if (ImGui::DragFloat("Shadow Ground Y##mesh", &mr->groundShadowY, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Shadow Strength##mesh", &mr->groundShadowStrength, 0.0f, 1.0f)) ed.dirty = true;
+            }
             // Material: emissive glow + specular highlight.
             float em[3] = {mr->emissive.r, mr->emissive.g, mr->emissive.b};
             if (ImGui::ColorEdit3("Emissive##mesh", em)) {

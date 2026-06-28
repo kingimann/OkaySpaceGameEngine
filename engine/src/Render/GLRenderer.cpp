@@ -105,6 +105,9 @@ typedef void   (*PFNViewport)(GLint, GLint, GLsizei, GLsizei);
 typedef void   (*PFNClearColor)(GLfloat, GLfloat, GLfloat, GLfloat);
 typedef void   (*PFNClear)(GLbitfield);
 typedef void   (*PFNEnable)(GLenum);
+typedef void   (*PFNDisable)(GLenum);
+typedef void   (*PFNBlendFunc)(GLenum, GLenum);
+typedef void   (*PFNDepthMask)(GLboolean);
 typedef void   (*PFNDepthFunc)(GLenum);
 typedef void   (*PFNDrawArrays)(GLenum, GLint, GLsizei);
 typedef void   (*PFNReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*);
@@ -137,6 +140,7 @@ struct GL {
     PFNGenTextures GenTextures; PFNBindTexture BindTexture; PFNTexImage2D TexImage2D;
     PFNTexParameteri TexParameteri; PFNDeleteTextures DeleteTextures; PFNViewport Viewport;
     PFNClearColor ClearColor; PFNClear Clear; PFNEnable Enable; PFNDepthFunc DepthFunc;
+    PFNDisable Disable; PFNBlendFunc BlendFunc; PFNDepthMask DepthMask;
     PFNDrawArrays DrawArrays; PFNReadPixels ReadPixels; PFNGetError GetError;
     PFNUniform1i Uniform1i; PFNUniform2f Uniform2f;
     PFNActiveTexture ActiveTexture; PFNGenerateMipmap GenerateMipmap;
@@ -172,8 +176,10 @@ const char* kFrag =
     "uniform sampler2D uTex; uniform float uUseTex;\n"
     "uniform float uShaderMode; uniform float uToonBands; uniform float uRimStr;\n"
     "uniform vec3 uRimColor; uniform vec3 uGradTop; uniform vec3 uGradBot;\n"
+    "uniform float uShadowAlpha;\n"   // >=0: draw a flat translucent black (ground contact shadow)
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol;\n"
     "void main(){\n"
+    "  if (uShadowAlpha >= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowAlpha); return; }\n"
     "  vec3 N = normalize(vN);\n"
     "  vec3 base = uColor * vCol;\n"
     "  if (uUseTex > 0.5) base *= texture2D(uTex, vUV).rgb;\n"
@@ -259,6 +265,9 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     r &= load(g.ClearColor, gp, "glClearColor");
     r &= load(g.Clear, gp, "glClear");
     r &= load(g.Enable, gp, "glEnable");
+    r &= load(g.Disable, gp, "glDisable");
+    r &= load(g.BlendFunc, gp, "glBlendFunc");
+    r &= load(g.DepthMask, gp, "glDepthMask");
     r &= load(g.DepthFunc, gp, "glDepthFunc");
     r &= load(g.DrawArrays, gp, "glDrawArrays");
     r &= load(g.ReadPixels, gp, "glReadPixels");
@@ -314,6 +323,7 @@ bool GLRenderer::EnsureProgram() {
     m_uRimColor = g.GetUniformLocation(m_prog, "uRimColor");
     m_uGradTop = g.GetUniformLocation(m_prog, "uGradTop");
     m_uGradBot = g.GetUniformLocation(m_prog, "uGradBot");
+    m_uShadowAlpha = g.GetUniformLocation(m_prog, "uShadowAlpha");
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
     // crash on the attempt). Create one when available; on a compatibility context
@@ -399,7 +409,9 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     g.UseProgram(m_prog);
     if (g.BindVertexArray && m_vao) g.BindVertexArray(m_vao);
     Vec3 toLight = (SceneLight::Direction() * -1.0f).Normalized();
+    Vec3 lightTravel = SceneLight::Direction();   // direction light travels (for ground shadows)
     g.Uniform3f(m_uLightDir, toLight.x, toLight.y, toLight.z);
+    g.Uniform1f(m_uShadowAlpha, -1.0f);           // normal (lit) draws; flipped on for the shadow pass
     g.Uniform3f(m_uLightColor, 0.85f, 0.85f, 0.85f);
     g.Uniform3f(m_uAmbient, 0.35f, 0.36f, 0.40f);
     g.Uniform3f(m_uEye, eye.x, eye.y, eye.z);
@@ -492,6 +504,23 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.EnableVertexAttribArray(3);
         g.VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(8 * sizeof(float)));
         g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 11));
+
+        // Ground contact shadow: re-draw the SAME geometry flattened onto the ground
+        // plane (a planar projection along the light) as a flat translucent black, so
+        // the object reads as sitting on the ground instead of floating.
+        if (mr->groundShadow && mr->groundShadowStrength > 0.001f) {
+            Mat4 shadowModel = Mat4::PlanarShadow(mr->groundShadowY + 0.01f, lightTravel) * model;
+            Mat4 smvp = vp * shadowModel;
+            g.UniformMatrix4fv(m_uMVP, 1, GL_FALSE, smvp.m);
+            g.Uniform1f(m_uShadowAlpha, mr->groundShadowStrength > 1.0f ? 1.0f : mr->groundShadowStrength);
+            g.Enable(GL_BLEND);
+            g.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            g.DepthMask(GL_FALSE);
+            g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 11));
+            g.DepthMask(GL_TRUE);
+            g.Disable(GL_BLEND);
+            g.Uniform1f(m_uShadowAlpha, -1.0f);
+        }
     }
 
     // Resolve MSAA into the single-sample texture, then read it back.

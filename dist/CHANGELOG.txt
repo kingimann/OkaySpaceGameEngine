@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.301.0  (Editor theme refresh + accent colours)
+  - Retuned the dark editor theme toward a neutral, professional Unity-style grey
+    (instead of a blue-tinted near-black): flatter panels, subtle frame borders,
+    crisper rounding, and the accent colour reserved for interactive states.
+  - NEW View > Accent color: pick Blue / Teal / Violet / Green / Amber / Rose /
+    Slate. Theme, accent and UI scale now persist between sessions.
+
 v2.300.0  (Build size breakdown report)
   - After a build, the result dialog now shows a size breakdown: category bars
     (Executable / Libraries / Game data / Assets) with their share of the total,

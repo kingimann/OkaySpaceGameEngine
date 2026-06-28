@@ -571,6 +571,21 @@ bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
+int  g_accent = 0;               // accent colour preset (see kAccents)
+
+// Selectable editor accent colours (the highlight used on selections, buttons,
+// checks, tabs, etc.). Index persists in settings.
+struct AccentPreset { const char* name; float r, g, b; };
+static const AccentPreset kAccents[] = {
+    {"Blue",   0.26f, 0.59f, 0.98f},
+    {"Teal",   0.18f, 0.78f, 0.74f},
+    {"Violet", 0.56f, 0.46f, 0.96f},
+    {"Green",  0.36f, 0.80f, 0.46f},
+    {"Amber",  0.95f, 0.66f, 0.26f},
+    {"Rose",   0.96f, 0.42f, 0.56f},
+    {"Slate",  0.52f, 0.58f, 0.68f},
+};
+static const int kAccentCount = (int)(sizeof(kAccents) / sizeof(kAccents[0]));
 bool g_autosave = true;          // periodically write a crash-recovery sidecar
 double g_lastAutosave = 0.0;     // seconds since last autosave
 float  g_autosaveInterval = 120.0f;  // seconds between autosaves
@@ -621,6 +636,9 @@ void LoadSettings() {
         else if (k == "showcamhud") g_showCamHud = (v != 0);
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
         else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
+        else if (k == "theme") g_theme = (v < 0 ? 0 : (v > 2 ? 2 : v));
+        else if (k == "accent") g_accent = (v < 0 ? 0 : (v >= kAccentCount ? 0 : v));
+        else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
@@ -645,7 +663,10 @@ void SaveSettings() {
       << "showworldaxes " << (g_showWorldAxes ? 1 : 0) << "\n"
       << "showcamhud " << (g_showCamHud ? 1 : 0) << "\n"
       << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n"
-      << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n";
+      << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n"
+      << "theme " << g_theme << "\n"
+      << "accent " << g_accent << "\n"
+      << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -1465,22 +1486,23 @@ void ApplyTheme() {
     else if (g_theme == 2) ImGui::StyleColorsClassic();
     else                   ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Rounding for a soft, modern look.
-    s.WindowRounding    = 7.0f;  s.ChildRounding    = 6.0f;
-    s.FrameRounding     = 5.0f;  s.GrabRounding     = 5.0f;
-    s.PopupRounding     = 7.0f;  s.TabRounding      = 6.0f;
-    s.ScrollbarRounding = 10.0f;
+    // Flatter, more professional rounding (closer to Unity's crisp panels) while
+    // keeping a hint of softness on windows/popups.
+    s.WindowRounding    = 5.0f;  s.ChildRounding    = 4.0f;
+    s.FrameRounding     = 3.0f;  s.GrabRounding     = 2.0f;
+    s.PopupRounding     = 5.0f;  s.TabRounding      = 4.0f;
+    s.ScrollbarRounding = 8.0f;
     // Balanced spacing: comfortable but not bloated (slightly roomier than the
     // ImGui defaults). View > UI Scale scales everything for bigger displays.
     s.WindowPadding   = ImVec2(10, 9);  s.FramePadding = ImVec2(8, 5);
-    s.ItemSpacing     = ImVec2(8, 7);   s.ItemInnerSpacing = ImVec2(7, 5);
-    s.CellPadding     = ImVec2(6, 4);   s.IndentSpacing = 19.0f;
-    s.ScrollbarSize   = 13.0f;          s.GrabMinSize = 11.0f;
-    s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 0.0f;
+    s.ItemSpacing     = ImVec2(8, 6);   s.ItemInnerSpacing = ImVec2(7, 5);
+    s.CellPadding     = ImVec2(6, 4);   s.IndentSpacing = 18.0f;
+    s.ScrollbarSize   = 12.0f;          s.GrabMinSize = 10.0f;
+    s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 1.0f;   // thin frame borders for definition (Unity-like)
     s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 2.0f;
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
     s.WindowMenuButtonPosition = ImGuiDir_None;
-    s.DockingSeparatorSize = 2.0f;
+    s.DockingSeparatorSize = 1.5f;
     // Apply the global UI scale LAST so every metric above is scaled together.
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
@@ -1488,50 +1510,55 @@ void ApplyTheme() {
     // Light / Classic keep ImGui's own palette (only the metrics above apply).
     if (g_theme != 0) return;
 
-    // A cohesive dark palette with a warm blue accent.
-    const ImVec4 accent      = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-    const ImVec4 accentDim   = ImVec4(0.26f, 0.59f, 0.98f, 0.55f);
-    const ImVec4 accentHover = ImVec4(0.34f, 0.66f, 1.00f, 1.00f);
+    // A cohesive dark palette with the user's chosen accent colour.
+    const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
+    auto lighten = [](float v) { return v + (1.0f - v) * 0.30f; };   // brighter for hover
+    const ImVec4 accent      = ImVec4(ap.r, ap.g, ap.b, 1.00f);
+    const ImVec4 accentDim   = ImVec4(ap.r, ap.g, ap.b, 0.55f);
+    const ImVec4 accentHover = ImVec4(lighten(ap.r), lighten(ap.g), lighten(ap.b), 1.00f);
+    // Neutral medium-gray base (Unity Pro dark) instead of a blue-tinted near-black:
+    // panels read as professional gray, with the chosen accent only on interactive
+    // states (selection, buttons, checks, tabs, slider grabs).
     ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]         = ImVec4(0.115f, 0.123f, 0.145f, 1.00f);
-    c[ImGuiCol_ChildBg]          = ImVec4(0.135f, 0.143f, 0.168f, 0.40f);
-    c[ImGuiCol_PopupBg]          = ImVec4(0.10f, 0.107f, 0.128f, 0.98f);
-    c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.35f);
-    c[ImGuiCol_FrameBg]          = ImVec4(0.20f, 0.21f, 0.245f, 1.00f);
-    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.26f, 0.28f, 0.32f, 1.00f);
-    c[ImGuiCol_FrameBgActive]    = ImVec4(0.30f, 0.33f, 0.38f, 1.00f);
-    c[ImGuiCol_TitleBg]          = ImVec4(0.09f, 0.095f, 0.115f, 1.00f);
-    c[ImGuiCol_TitleBgActive]    = ImVec4(0.13f, 0.20f, 0.31f, 1.00f);
-    c[ImGuiCol_MenuBarBg]        = ImVec4(0.135f, 0.143f, 0.168f, 1.00f);
-    c[ImGuiCol_Header]           = accentDim;
-    c[ImGuiCol_HeaderHovered]    = accentHover;
-    c[ImGuiCol_HeaderActive]     = accent;
-    c[ImGuiCol_Button]           = ImVec4(0.22f, 0.24f, 0.29f, 1.00f);
-    c[ImGuiCol_ButtonHovered]    = accentHover;
-    c[ImGuiCol_ButtonActive]     = accent;
-    c[ImGuiCol_CheckMark]        = accent;
+    c[ImGuiCol_WindowBg]         = ImVec4(0.180f, 0.180f, 0.192f, 1.00f);  // ~#2E2E31 panels
+    c[ImGuiCol_ChildBg]          = ImVec4(0.160f, 0.160f, 0.170f, 0.00f);
+    c[ImGuiCol_PopupBg]          = ImVec4(0.145f, 0.145f, 0.155f, 0.99f);
+    c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
+    c[ImGuiCol_FrameBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);  // sunken input fields
+    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.175f, 0.175f, 0.190f, 1.00f);
+    c[ImGuiCol_FrameBgActive]    = ImVec4(0.215f, 0.215f, 0.235f, 1.00f);
+    c[ImGuiCol_TitleBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);
+    c[ImGuiCol_TitleBgActive]    = ImVec4(0.165f, 0.165f, 0.180f, 1.00f);
+    c[ImGuiCol_MenuBarBg]        = ImVec4(0.155f, 0.155f, 0.165f, 1.00f);
+    c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.42f);  // selection (muted)
+    c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.55f);
+    c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.70f);
+    c[ImGuiCol_Button]           = ImVec4(0.255f, 0.255f, 0.275f, 1.00f);  // raised buttons
+    c[ImGuiCol_ButtonHovered]    = ImVec4(0.305f, 0.305f, 0.330f, 1.00f);
+    c[ImGuiCol_ButtonActive]     = ImVec4(accent.x, accent.y, accent.z, 0.80f);
+    c[ImGuiCol_CheckMark]        = accentHover;
     c[ImGuiCol_SliderGrab]       = accent;
     c[ImGuiCol_SliderGrabActive] = accentHover;
-    c[ImGuiCol_Separator]        = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
+    c[ImGuiCol_Separator]        = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
     c[ImGuiCol_SeparatorHovered] = accentDim;
-    c[ImGuiCol_ResizeGrip]       = accentDim;
-    c[ImGuiCol_ResizeGripHovered]= accentHover;
-    c[ImGuiCol_Tab]              = ImVec4(0.155f, 0.165f, 0.195f, 1.00f);
-    c[ImGuiCol_TabHovered]       = accentHover;
-    c[ImGuiCol_TabActive]        = ImVec4(0.20f, 0.32f, 0.50f, 1.00f);
-    c[ImGuiCol_TabUnfocused]     = ImVec4(0.135f, 0.143f, 0.168f, 1.00f);
-    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.17f, 0.22f, 0.30f, 1.00f);
+    c[ImGuiCol_ResizeGrip]       = ImVec4(0.40f, 0.40f, 0.43f, 0.30f);
+    c[ImGuiCol_ResizeGripHovered]= accentDim;
+    c[ImGuiCol_ResizeGripActive] = accent;
+    c[ImGuiCol_Tab]              = ImVec4(0.150f, 0.150f, 0.160f, 1.00f);
+    c[ImGuiCol_TabHovered]       = ImVec4(accent.x, accent.y, accent.z, 0.55f);
+    c[ImGuiCol_TabActive]        = ImVec4(0.235f, 0.235f, 0.255f, 1.00f);   // active tab = raised panel
+    c[ImGuiCol_TabUnfocused]     = ImVec4(0.135f, 0.135f, 0.145f, 1.00f);
+    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.190f, 0.190f, 0.205f, 1.00f);
     c[ImGuiCol_DockingPreview]   = accentDim;
-    c[ImGuiCol_TextSelectedBg]   = accentDim;
+    c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
     c[ImGuiCol_NavHighlight]     = accent;
-    c[ImGuiCol_Text]             = ImVec4(0.90f, 0.92f, 0.95f, 1.00f);
-    c[ImGuiCol_TextDisabled]     = ImVec4(0.50f, 0.53f, 0.60f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.18f);
-    c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.32f, 0.35f, 0.42f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.40f, 0.44f, 0.52f, 1.00f);
+    c[ImGuiCol_Text]             = ImVec4(0.860f, 0.865f, 0.880f, 1.00f);   // soft off-white
+    c[ImGuiCol_TextDisabled]     = ImVec4(0.480f, 0.485f, 0.510f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
+    c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.330f, 0.330f, 0.355f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.400f, 0.400f, 0.430f, 1.00f);
     c[ImGuiCol_ScrollbarGrabActive]  = accent;
-    c[ImGuiCol_CheckMark]        = ImVec4(0.40f, 0.80f, 1.00f, 1.00f);
-    c[ImGuiCol_DockingEmptyBg]   = ImVec4(0.085f, 0.09f, 0.11f, 1.00f);
+    c[ImGuiCol_DockingEmptyBg]   = ImVec4(0.110f, 0.110f, 0.118f, 1.00f);
 }
 
 // Build the default Unity-style dock layout once.
@@ -1724,13 +1751,19 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 {"Comfortable (110%)", 1.1f}, {"Large (125%)", 1.25f}, {"Huge (150%)", 1.5f}};
             for (auto& p : presets)
                 if (ImGui::MenuItem(p.n, nullptr, std::fabs(g_uiScale - p.s) < 0.01f))
-                    { g_uiScale = p.s; ApplyTheme(); }
+                    { g_uiScale = p.s; ApplyTheme(); SaveSettings(); }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Theme")) {
-            if (ImGui::MenuItem("Dark", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); }
-            if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); }
-            if (ImGui::MenuItem("Classic", nullptr, g_theme == 2)) { g_theme = 2; ApplyTheme(); }
+            if (ImGui::MenuItem("Dark", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); SaveSettings(); }
+            if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); SaveSettings(); }
+            if (ImGui::MenuItem("Classic", nullptr, g_theme == 2)) { g_theme = 2; ApplyTheme(); SaveSettings(); }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Accent color")) {
+            for (int i = 0; i < kAccentCount; ++i)
+                if (ImGui::MenuItem(kAccents[i].name, nullptr, g_accent == i)) { g_accent = i; ApplyTheme(); SaveSettings(); }
+            if (ImGui::IsItemHovered()) {}
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
@@ -15157,6 +15190,7 @@ int main(int argc, char** argv) {
     EditorState ed;
     LoadRecent();
     LoadSettings();
+    ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
 
     // Route engine logs (and script print/log/debug output) into the Console
     // with the matching severity (Unity-style info/warning/error).

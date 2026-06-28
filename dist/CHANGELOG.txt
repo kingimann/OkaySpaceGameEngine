@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.299.0  (Startup splash screen)
+  - Build Settings > Player > Splash screen: show your studio/game logo at startup
+    before the game loads. It fades in and out over a solid background colour, is
+    skippable with a key or click, and the image is bundled into the build.
+  - Configurable image, duration, and background colour. Leave the image blank for
+    no splash.
+
 v2.298.0  (Per-user save folder — persistentDataPath)
   - Games now save to a proper per-user app folder (Unity's persistentDataPath),
     derived from Company + Product name, instead of next to the .exe. So saving

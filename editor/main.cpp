@@ -746,6 +746,9 @@ struct BuildSettings {
     bool  startMaximized = false;          // open maximized
     int   minWidth = 0, minHeight = 0;     // minimum window size (0 = none)
     bool  saveToUserDir = true;            // saves to per-user app folder (persistentDataPath)
+    char  splash[260] = "";                // startup logo PNG
+    float splashTime = 2.0f;
+    float splashBg[3] = {0.05f, 0.05f, 0.06f};
     // ---- Graphics / quality (applied by the player at startup) ----
     bool  lockCursor = false;              // hide + lock the cursor on launch
     bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
@@ -1123,6 +1126,9 @@ struct Options {
     bool startMaximized  = false;
     int  minWidth = 0, minHeight = 0;
     bool saveToUserDir = true;   // saves -> per-user app folder (persistentDataPath)
+    std::string splashImage;     // startup logo PNG
+    float splashTime = 2.0f;
+    float splashBg[3] = {0.05f, 0.05f, 0.06f};
 };
 
 // Obfuscate a just-written text file in place (scene/config) so it can't be read
@@ -1249,6 +1255,12 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "min_width=" << opt.minWidth << "\n";
         cf << "min_height=" << opt.minHeight << "\n";
         cf << "save_userdir=" << (opt.saveToUserDir ? 1 : 0) << "\n";
+        if (!opt.splashImage.empty()) {
+            cf << "splash=" << fs::path(opt.splashImage).filename().string() << "\n";
+            cf << "splash_time=" << opt.splashTime << "\n";
+            cf << "splash_bg=" << (int)(opt.splashBg[0] * 255) << "," << (int)(opt.splashBg[1] * 255)
+               << "," << (int)(opt.splashBg[2] * 255) << "\n";
+        }
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
     }
@@ -1341,6 +1353,12 @@ std::string Build(EditorState& ed, const std::string& outDir,
         std::error_code ie; fs::path isrc(opt.iconPath);
         if (fs::exists(isrc, ie) && fs::is_regular_file(isrc, ie))
             fs::copy_file(isrc, data / isrc.filename(), fs::copy_options::overwrite_existing, ie);
+    }
+    // Startup splash image.
+    if (!opt.splashImage.empty()) {
+        std::error_code se; fs::path ssrc(opt.splashImage);
+        if (fs::exists(ssrc, se) && fs::is_regular_file(ssrc, se))
+            fs::copy_file(ssrc, data / ssrc.filename(), fs::copy_options::overwrite_existing, se);
     }
 
     // Total build size on disk (so the user sees a clean, accounted-for output).
@@ -4895,6 +4913,13 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
                 ImGui::Checkbox("Save to user folder", &g_build.saveToUserDir);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write game saves/prefs to a per-user app folder (Unity's persistentDataPath),\nfrom Company + Product name. Saving then works even from a read-only install\n(e.g. Program Files), and two games never overwrite each other.\nOff = save beside the .exe (old behaviour).");
+                ImGui::Spacing(); ImGui::SeparatorText("Splash screen");
+                ImGui::SetNextItemWidth(420); ImGui::InputText("Splash image (PNG)", g_build.splash, sizeof(g_build.splash));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A logo shown at startup (fades in/out, skippable). Leave blank for none. Bundled into the build.");
+                if (g_build.splash[0]) {
+                    ImGui::SetNextItemWidth(160); ImGui::DragFloat("Duration (s)", &g_build.splashTime, 0.1f, 0.3f, 15.0f);
+                    ImGui::SetNextItemWidth(220); ImGui::ColorEdit3("Background##splash", g_build.splashBg);
+                }
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Display")) {
@@ -5008,6 +5033,8 @@ void DrawFileDialogs(EditorState& ed) {
             o.startMaximized = g_build.startMaximized;
             o.minWidth = g_build.minWidth; o.minHeight = g_build.minHeight;
             o.saveToUserDir = g_build.saveToUserDir;
+            o.splashImage = g_build.splash; o.splashTime = g_build.splashTime;
+            o.splashBg[0] = g_build.splashBg[0]; o.splashBg[1] = g_build.splashBg[1]; o.splashBg[2] = g_build.splashBg[2];
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);

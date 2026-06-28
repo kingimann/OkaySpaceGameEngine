@@ -866,6 +866,9 @@ int main(int argc, char** argv) {
         int  minWidth = 0, minHeight = 0;
         std::string company = "OkaySpace";
         bool saveToUserDir = true; // saves -> per-user app folder (persistentDataPath)
+        std::string splash;        // startup logo PNG (in the Data folder)
+        float splashTime = 2.0f;   // seconds the splash shows
+        int   splashBg[3] = {12, 12, 16};  // splash background colour
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -909,6 +912,9 @@ int main(int argc, char** argv) {
             else if (k == "min_height")     cfg.minHeight = std::atoi(v.c_str());
             else if (k == "company")        cfg.company = v;
             else if (k == "save_userdir")   cfg.saveToUserDir = std::atoi(v.c_str()) != 0;
+            else if (k == "splash")         cfg.splash = v;
+            else if (k == "splash_time")    cfg.splashTime = (float)std::atof(v.c_str());
+            else if (k == "splash_bg")      std::sscanf(v.c_str(), "%d,%d,%d", &cfg.splashBg[0], &cfg.splashBg[1], &cfg.splashBg[2]);
         }
     }
     // Register the build's scenes so scripts can load_scene_index / load_next.
@@ -2638,6 +2644,44 @@ int main(int argc, char** argv) {
     static auto* s_frame = &frame;
     emscripten_set_main_loop([]() { (*s_frame)(); }, 0, 1);
 #else
+    // Startup splash (Unity-style): show a logo over a solid colour, fading in and
+    // out, before the game proper. Skippable with a key/click; closing quits.
+    if (running && !cfg.splash.empty()) {
+        if (SDL_Texture* stex = GetTexture(renderer, cfg.splash, baseDir, textureCache)) {
+            Uint64 t0 = SDL_GetPerformanceCounter();
+            const double dur = cfg.splashTime > 0.1f ? cfg.splashTime : 2.0;
+            const double fade = std::min(0.5, dur * 0.3);
+            bool done = false;
+            while (running && !done) {
+                double el = (double)(SDL_GetPerformanceCounter() - t0) / (double)SDL_GetPerformanceFrequency();
+                if (el >= dur) break;
+                SDL_Event e;
+                while (SDL_PollEvent(&e)) {
+                    if (e.type == SDL_QUIT) { running = false; }
+                    else if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN) done = true;  // skip
+                }
+                double a = 1.0;
+                if (el < fade) a = el / fade;
+                else if (el > dur - fade) a = (dur - el) / fade;
+                if (a < 0) a = 0; if (a > 1) a = 1;
+                int w = 0, h = 0; SDL_GetRendererOutputSize(renderer, &w, &h);
+                SDL_SetRenderDrawColor(renderer, (Uint8)cfg.splashBg[0], (Uint8)cfg.splashBg[1], (Uint8)cfg.splashBg[2], 255);
+                SDL_RenderClear(renderer);
+                int iw = 0, ih = 0; SDL_QueryTexture(stex, nullptr, nullptr, &iw, &ih);
+                if (iw > 0 && ih > 0) {
+                    double fit = std::min((double)w / iw, (double)h / ih) * 0.55;  // 55% of the window
+                    int dw = (int)(iw * fit), dh = (int)(ih * fit);
+                    SDL_Rect dst{(w - dw) / 2, (h - dh) / 2, dw, dh};
+                    SDL_SetTextureBlendMode(stex, SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureAlphaMod(stex, (Uint8)(a * 255));
+                    SDL_RenderCopy(renderer, stex, nullptr, &dst);
+                }
+                SDL_RenderPresent(renderer);
+                SDL_Delay(8);
+            }
+        }
+    }
+
     while (running) frame();
 #endif
 

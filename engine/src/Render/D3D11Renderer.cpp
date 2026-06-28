@@ -42,7 +42,9 @@ const char* kHLSL =
     "  float4 uPbr2;\n"                       // x=aoStrength y=envOn z=texOffset.x w=texOffset.y
     "  float4 uSky[3];\n"                     // [0]=top [1]=horizon [2]=bottom (xyz) for reflections
     "  float4 uLightCount;\n"                 // .x = number of scene lights (0 = use uLightDir)
-    "  float4 uLights[32];\n"                 // 8 lights x 4: [dir,type][pos,range][col,cosOut][cosIn,..]
+    "  float4 uLights[64];\n"                 // 16 lights x 4: [dir,type][pos,range][col,cosOut][cosIn,..]
+    "  float4 uFog;\n"                        // x=on y=start z=end (distance fog)
+    "  float4 uFogCol;\n"                     // xyz = fog colour
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "Texture2D uNormalTex : register(t1);\n"        // bump/normal map (tangent-space)
@@ -102,7 +104,7 @@ const char* kHLSL =
     "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
     "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular; }\n"
     "  } else {\n"
-    "    for (int li = 0; li < 8; li++) { if (li >= lc) break;\n"      // directional + point + spot
+    "    for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"      // directional + point + spot
     "      float4 d0 = uLights[li*4+0]; float4 d1 = uLights[li*4+1];\n"
     "      float4 d2 = uLights[li*4+2]; float4 d3 = uLights[li*4+3];\n"
     "      float3 ld; float at = 1.0;\n"
@@ -143,6 +145,11 @@ const char* kHLSL =
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
     "  }\n"
+    "  if (uFog.x > 0.5) {\n"                                    // distance fog
+    "    float fd = length(uEye - i.world);\n"
+    "    float ff = saturate((fd - uFog.y) / max(uFog.z - uFog.y, 1e-3));\n"
+    "    col = lerp(col, uFogCol.xyz, ff);\n"
+    "  }\n"
     "  return float4(col, uAlpha);\n"
     "}\n";
 
@@ -165,7 +172,9 @@ struct CB {
     float pbr2[4];             // aoStrength, envOn, texOffset.x, texOffset.y
     float sky[12];             // 3 float4: top, horizon, bottom (xyz)
     float lightCount[4];       // .x = number of scene lights
-    float lights[128];         // 32 float4: per light [dir,type][pos,range][col,cosOut][cosIn,..]
+    float lights[256];         // 64 float4: 16 lights x 4 rows
+    float fog[4];              // x=on y=start z=end
+    float fogCol[4];           // xyz = fog colour
 };
 
 } // namespace
@@ -377,11 +386,11 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     Vec3 toLight = (SceneLight::Direction() * -1.0f).Normalized();
     // Gather all scene lights once per frame (directional + point + spot) into the
     // packed cbuffer array so every light shades on the GPU, not just the sun.
-    float frameLights[128]; std::memset(frameLights, 0, sizeof(frameLights));
+    float frameLights[256]; std::memset(frameLights, 0, sizeof(frameLights));
     int frameLightCount = 0;
     {
         const auto& LS = SceneLights::List();
-        int n = (int)LS.size(); if (n > 8) n = 8; frameLightCount = n;
+        int n = (int)LS.size(); if (n > 16) n = 16; frameLightCount = n;
         for (int i = 0; i < n; ++i) {
             const LightSample& s = LS[i]; Vec3 d = s.dir.Normalized(); int b = i * 16;
             frameLights[b+0] = d.x; frameLights[b+1] = d.y; frameLights[b+2] = d.z; frameLights[b+3] = (float)s.type;
@@ -521,6 +530,12 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.alpha = mr->color.a;   // material opacity (1 = opaque); < 1 alpha-blends (water/glass)
         cb.lightCount[0] = (float)frameLightCount;
         std::memcpy(cb.lights, frameLights, sizeof(frameLights));
+        {
+            const auto& rs = scene.renderSettings;
+            bool fogOn = rs.fog && rs.fogEnd > rs.fogStart;
+            cb.fog[0] = fogOn ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd; cb.fog[3] = 0.0f;
+            cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b; cb.fogCol[3] = 1.0f;
+        }
         if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
         }

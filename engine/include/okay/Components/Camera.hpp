@@ -27,7 +27,7 @@ public:
     float fieldOfView = 60.0f;
     bool  fovAxisHorizontal = false;   // false = vertical FOV (Unity default), true = horizontal
     float nearClip = 0.3f;   // Unity-like near plane
-    float farClip  = 1000.0f;
+    float farClip  = 4000.0f; // generous default so large voxel worlds / open terrain stay visible to the horizon
 
     /// Physical camera (Unity's Physical Camera): derive the field of view from a
     /// real lens focal length + sensor size instead of an angle. Great for matching

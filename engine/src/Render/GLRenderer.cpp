@@ -193,8 +193,9 @@ const char* kFrag =
     "uniform float uShadowAlpha;\n"   // >=0: draw a flat translucent black (ground contact shadow)
     "uniform float uAlpha;\n"         // material opacity (1 = opaque); blended for water/glass
     "uniform int uLightCount;\n"      // multi-light: directional + point + spot from the scene
-    "uniform float uLType[8]; uniform vec3 uLPos[8]; uniform vec3 uLDir[8];\n"
-    "uniform vec3 uLCol[8]; uniform float uLRange[8]; uniform float uLCosOut[8]; uniform float uLCosIn[8];\n"
+    "uniform float uLType[16]; uniform vec3 uLPos[16]; uniform vec3 uLDir[16];\n"
+    "uniform vec3 uLCol[16]; uniform float uLRange[16]; uniform float uLCosOut[16]; uniform float uLCosIn[16];\n"
+    "uniform float uFogOn; uniform vec3 uFogColor; uniform float uFogStart; uniform float uFogEnd;\n"  // distance fog
     "uniform sampler2D uNormalTex; uniform float uHasNormal; uniform float uNormalStrength;\n"  // bump/normal map
     "uniform sampler2D uSpecTex; uniform float uHasSpecMap;\n"                  // gloss map (per-texel specular)
     "uniform sampler2D uAoTex; uniform float uHasAo; uniform float uAoStrength;\n"  // ambient-occlusion map
@@ -239,7 +240,7 @@ const char* kFrag =
     "    if (uSpecular > 0.0) { vec3 H = normalize(uLightDir + Vv);\n"
     "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular; }\n"
     "  } else {\n"
-    "    for (int i = 0; i < 8; i++) { if (i >= uLightCount) break;\n"   // directional + point + spot
+    "    for (int i = 0; i < 16; i++) { if (i >= uLightCount) break;\n"   // directional + point + spot
     "      vec3 ld; float at = 1.0;\n"
     "      if (uLType[i] < 0.5) { ld = normalize(-uLDir[i]); }\n"        // directional
     "      else { vec3 toL = uLPos[i] - vWorld; float d = length(toL); ld = toL / max(d, 1e-4);\n"
@@ -278,6 +279,11 @@ const char* kFrag =
     "    float fr2 = 1.0 - ndv; fr2 = fr2*fr2*fr2*fr2*fr2;\n"     // Schlick (1-n·v)^5
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
+    "  }\n"
+    "  if (uFogOn > 0.5) {\n"                                      // distance fog (matches the software path)
+    "    float fd = length(uEye - vWorld);\n"
+    "    float ff = clamp((fd - uFogStart) / max(uFogEnd - uFogStart, 1e-3), 0.0, 1.0);\n"
+    "    col = mix(col, uFogColor, ff);\n"
     "  }\n"
     "  gl_FragColor = vec4(col, uAlpha);\n"
     "}\n";
@@ -428,6 +434,10 @@ bool GLRenderer::EnsureProgram() {
     m_uSkyHor = g.GetUniformLocation(m_prog, "uSkyHor");
     m_uSkyBot = g.GetUniformLocation(m_prog, "uSkyBot");
     m_uEnvOn = g.GetUniformLocation(m_prog, "uEnvOn");
+    m_uFogOn = g.GetUniformLocation(m_prog, "uFogOn");
+    m_uFogColor = g.GetUniformLocation(m_prog, "uFogColor");
+    m_uFogStart = g.GetUniformLocation(m_prog, "uFogStart");
+    m_uFogEnd = g.GetUniformLocation(m_prog, "uFogEnd");
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
     // crash on the attempt). Create one when available; on a compatibility context
@@ -542,13 +552,23 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     g.Uniform3f(m_uSkyBot, sky.bottom.x, sky.bottom.y, sky.bottom.z);
     g.Uniform1f(m_uEnvOn, sky.enabled ? 1.0f : 0.0f);
 
+    // Distance fog from the scene's render settings (matches the software renderer).
+    {
+        const auto& rs = scene.renderSettings;
+        bool fogOn = rs.fog && rs.fogEnd > rs.fogStart;
+        g.Uniform1f(m_uFogOn, fogOn ? 1.0f : 0.0f);
+        g.Uniform3f(m_uFogColor, rs.fogColor.r, rs.fogColor.g, rs.fogColor.b);
+        g.Uniform1f(m_uFogStart, rs.fogStart);
+        g.Uniform1f(m_uFogEnd, rs.fogEnd);
+    }
+
     // Upload every gathered scene light (directional + point + spot) so all lights
     // shade on the GPU exactly like the software renderer — not just the sun.
     {
         const auto& L = SceneLights::List();
-        int n = (int)L.size(); if (n > 8) n = 8;
-        float lt[8] = {0}, lr[8] = {0}, lco[8] = {0}, lci[8] = {0};
-        float lp[24] = {0}, ld[24] = {0}, lc[24] = {0};
+        int n = (int)L.size(); if (n > 16) n = 16;
+        float lt[16] = {0}, lr[16] = {0}, lco[16] = {0}, lci[16] = {0};
+        float lp[48] = {0}, ld[48] = {0}, lc[48] = {0};
         for (int i = 0; i < n; ++i) {
             const LightSample& s = L[i];
             lt[i] = (float)s.type;

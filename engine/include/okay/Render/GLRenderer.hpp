@@ -82,7 +82,8 @@ private:
         m_uTexOffset = -1, m_uSpecTex = -1, m_uHasSpecMap = -1,
         m_uAoTex = -1, m_uHasAo = -1, m_uAoStrength = -1,
         m_uMetallic = -1, m_uReflectivity = -1,
-        m_uSkyTop = -1, m_uSkyHor = -1, m_uSkyBot = -1, m_uEnvOn = -1;
+        m_uSkyTop = -1, m_uSkyHor = -1, m_uSkyBot = -1, m_uEnvOn = -1,
+        m_uFogOn = -1, m_uFogColor = -1, m_uFogStart = -1, m_uFogEnd = -1;
     std::vector<float> m_verts;             // interleaved pos(3)+normal(3)+uv(2) scratch
     std::vector<unsigned int> m_indices;    // scratch index buffer
     std::vector<std::uint32_t> m_pixels;    // read-back result

@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.310.0  (Renderer expansion — more lights, fog, ground shadows, view distance)
+  - MORE LIGHTS: every GPU backend (OpenGL, Direct3D 11, Direct3D 12) now shades
+    up to 16 scene lights at once (was 8). Light a big interior or a busy scene
+    without running out of slots; the software renderer already had no fixed cap.
+  - DISTANCE FOG on the GPU: the scene's Distance Fog (Environment panel) is now
+    honoured by OpenGL, D3D11 and D3D12 too — not just the software renderer. Far
+    geometry fades toward the fog colour between Fog Start and Fog End, so large
+    worlds melt into the horizon instead of popping at the far clip plane.
+  - D3D12 feature parity: the Direct3D 12 path now draws the planar ground-shadow
+    pass (blended contact shadows under meshes), matching D3D11.
+  - VIEW DISTANCE: the default camera far clip is now 4000 (was 1000) so big voxel
+    terrains and open worlds stay visible to the horizon. You can still set any far
+    distance per-camera in the inspector (up to 100000).
+  - The Sandbox template now ships with gentle atmospheric fog tuned to the larger
+    view distance, so the edges of a dug-out world read as depth, not a wall.
+
 v2.309.0  (Direct3D 12 renderer — opt-in)
   - NEW Direct3D 12 backend. A full D3D12 scene renderer (isolated device, command
     queue/list, descriptor heaps, root signature + PSOs, fence sync, offscreen

@@ -979,6 +979,14 @@ inline void VoxelSandbox(Scene& scene) {
     light->AddComponent<Light>();
     light->transform->localRotation = Quat::Euler({50, -30, 0});
 
+    // Atmospheric distance fog so the far edges of a big voxel world melt into
+    // the horizon instead of popping at the camera's far clip plane. Now honoured
+    // by all four renderers (software, GL, D3D11, D3D12).
+    scene.renderSettings.fog      = true;
+    scene.renderSettings.fogColor = scene.renderSettings.skyHorizon;
+    scene.renderSettings.fogStart = 120.0f;
+    scene.renderSettings.fogEnd   = 520.0f;
+
     // The single terrain: a voxel field with rolling hills and a cave network.
     GameObject* ground = scene.CreateGameObject("Terrain");
     auto* vox = ground->AddComponent<VoxelTerrain>();

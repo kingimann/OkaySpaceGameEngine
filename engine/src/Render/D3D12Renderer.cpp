@@ -46,7 +46,9 @@ const char* kHLSL12 =
     "  float4 uPbr2;\n"
     "  float4 uSky[3];\n"
     "  float4 uLightCount;\n"
-    "  float4 uLights[32];\n"
+    "  float4 uLights[64];\n"
+    "  float4 uFog;\n"
+    "  float4 uFogCol;\n"
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "Texture2D uNormalTex : register(t1);\n"
@@ -106,7 +108,7 @@ const char* kHLSL12 =
     "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
     "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular; }\n"
     "  } else {\n"
-    "    for (int li = 0; li < 8; li++) { if (li >= lc) break;\n"
+    "    for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"
     "      float4 d0 = uLights[li*4+0]; float4 d1 = uLights[li*4+1];\n"
     "      float4 d2 = uLights[li*4+2]; float4 d3 = uLights[li*4+3];\n"
     "      float3 ld; float at = 1.0;\n"
@@ -147,6 +149,11 @@ const char* kHLSL12 =
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
     "  }\n"
+    "  if (uFog.x > 0.5) {\n"
+    "    float fd = length(uEye - i.world);\n"
+    "    float ff = saturate((fd - uFog.y) / max(uFog.z - uFog.y, 1e-3));\n"
+    "    col = lerp(col, uFogCol.xyz, ff);\n"
+    "  }\n"
     "  return float4(col, uAlpha);\n"
     "}\n";
 
@@ -168,7 +175,9 @@ struct CB {
     float pbr2[4];
     float sky[12];
     float lightCount[4];
-    float lights[128];
+    float lights[256];
+    float fog[4];
+    float fogCol[4];
 };
 
 inline UINT Align(UINT v, UINT a) { return (v + a - 1) & ~(a - 1); }
@@ -555,11 +564,11 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
     p->list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     // Light packing — identical layout to the D3D11 backend.
-    float frameLights[128]; std::memset(frameLights, 0, sizeof(frameLights));
+    float frameLights[256]; std::memset(frameLights, 0, sizeof(frameLights));
     int frameLightCount = 0;
     {
         const auto& LS = SceneLights::List();
-        int n = (int)LS.size(); if (n > 8) n = 8; frameLightCount = n;
+        int n = (int)LS.size(); if (n > 16) n = 16; frameLightCount = n;
         for (int i = 0; i < n; ++i) {
             const LightSample& s = LS[i]; Vec3 d = s.dir.Normalized(); int b = i * 16;
             frameLights[b+0]=d.x; frameLights[b+1]=d.y; frameLights[b+2]=d.z; frameLights[b+3]=(float)s.type;
@@ -693,6 +702,12 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.sky[8]=sky.bottom.x; cb.sky[9]=sky.bottom.y; cb.sky[10]=sky.bottom.z;
         cb.lightCount[0]=(float)frameLightCount;
         std::memcpy(cb.lights, frameLights, sizeof(frameLights));
+        {
+            const auto& rs = scene.renderSettings;
+            bool fogOn = rs.fog && rs.fogEnd > rs.fogStart;
+            cb.fog[0] = fogOn ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd; cb.fog[3] = 0.0f;
+            cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b; cb.fogCol[3] = 1.0f;
+        }
 
         UINT cbOff = p->cbNext;
         std::memcpy(p->cbPtr + cbOff, &cb, sizeof(cb));
@@ -717,6 +732,21 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
 
         p->list->SetPipelineState(mr->color.a < 0.999f ? p->psoBlend : p->psoOpaque);
         p->list->DrawInstanced((UINT)vcount, 1, 0, 0);
+
+        // Ground contact shadow: re-draw the SAME geometry flattened onto the ground
+        // plane as flat translucent black (the shader returns that when shadowAlpha>=0).
+        if (mr->groundShadow && mr->groundShadowStrength > 0.001f && p->cbNext + p->cbStride <= p->cbCap) {
+            CB scb = cb;
+            Mat4 sModel = Mat4::PlanarShadow(mr->groundShadowY + 0.01f, SceneLight::Direction()) * model;
+            Mat4 sMvp = vp * sModel;
+            std::memcpy(scb.mvp, sMvp.m, sizeof(scb.mvp));
+            scb.shadowAlpha = mr->groundShadowStrength > 1.0f ? 1.0f : mr->groundShadowStrength;
+            UINT soff = p->cbNext;
+            std::memcpy(p->cbPtr + soff, &scb, sizeof(scb)); p->cbNext += p->cbStride;
+            p->list->SetGraphicsRootConstantBufferView(0, cbBase + soff);
+            p->list->SetPipelineState(p->psoBlend);
+            p->list->DrawInstanced((UINT)vcount, 1, 0, 0);
+        }
     }
 
     // Copy the render target to the readback buffer and present it to the CPU.

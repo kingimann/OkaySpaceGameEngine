@@ -232,6 +232,17 @@ void Terrain::Apply() {
     mr->mesh = BuildMesh();
     mr->color = color;
     mr->doubleSided = true;   // visible from above and below regardless of winding
+    // Ground texture via the material pipeline. Triplanar keeps cliffs from smearing;
+    // tiling repeats the texture across the surface. Auto-colours (per-face) tint it.
+    mr->texture = texture;
+    if (!texture.empty()) {
+        mr->tiling = {textureTiling, textureTiling};
+        mr->triplanar = triplanarTex;
+    } else {
+        mr->triplanar = false;
+    }
+    mr->normalMap = normalMap;
+    mr->normalStrength = normalStrength;
 }
 
 } // namespace okay

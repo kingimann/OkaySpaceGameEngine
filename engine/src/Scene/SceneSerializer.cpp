@@ -79,6 +79,7 @@
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/TerrainDigger.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
@@ -263,7 +264,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wcol(tr->waterColor); wcol(tr->sandColor); wcol(tr->grassColor);
         wcol(tr->rockColor); wcol(tr->snowColor);
         out << " " << tr->waterLevel << " " << tr->snowLevel << " " << tr->rockSlope;
+        // Texturing (appended; quote-guarded on read so older scenes still load).
+        out << " " << Quote(tr->texture) << " " << tr->textureTiling << " " << (tr->triplanarTex ? 1 : 0)
+            << " " << Quote(tr->normalMap) << " " << tr->normalStrength;
         out << "\n";
+    }
+    if (auto* td = go->GetComponent<TerrainDigger>()) {
+        out << "  terraindigger " << (int)td->mode << " " << td->button
+            << " " << (int)(unsigned char)td->key << " " << td->radius << " " << td->strength
+            << " " << td->range << " " << td->relax << "\n";
     }
     if (auto* ch = go->GetComponent<Character>()) out << "  character " << ch->ToText() << "\n";
     if (auto* li = go->GetComponent<Light>()) {
@@ -2556,8 +2565,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         rcol(tr->waterColor); rcol(tr->sandColor); rcol(tr->grassColor);
                         rcol(tr->rockColor);  rcol(tr->snowColor);
                         in >> tr->waterLevel >> tr->snowLevel >> tr->rockSlope;
+                        in >> std::ws;   // optional texturing block (quoted texture path)
+                        if (in.peek() == '"') {
+                            int tp = 1;
+                            tr->texture = ReadQuoted(in);
+                            in >> tr->textureTiling >> tp; tr->triplanarTex = (tp != 0);
+                            in >> std::ws;
+                            if (in.peek() == '"') { tr->normalMap = ReadQuoted(in); in >> tr->normalStrength; }
+                        }
                     }
                     tr->Apply();   // rebuild the mesh into a MeshRenderer
+                } else if (field == "terraindigger") {
+                    auto* td = go->AddComponent<TerrainDigger>();
+                    int md = 0, btn = 0, k = 0;
+                    in >> md >> btn >> k >> td->radius >> td->strength >> td->range >> td->relax;
+                    td->mode = (TerrainDigger::Mode)md;
+                    td->button = btn;
+                    td->key = (char)k;
                 } else if (field == "character") {
                     std::string rest; std::getline(in, rest);   // rest of the line after the field token
                     if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
@@ -3188,6 +3212,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
         if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); }
+        if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); }
         if (auto* ps = go->GetComponent<ParticleSystem>())  add(ps->texture);
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
         if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);

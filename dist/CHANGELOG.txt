@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.293.0  (Terrain digging + texturing)
+  - NEW Terrain Digger component: aim with the camera and hold a button to reshape
+    a heightmap terrain at runtime — Dig (lower), Raise, Smooth or Flatten. Smooth
+    craters/trenches/mounds, NOT Minecraft cubes. The mesh rebuilds live. (Heightmaps
+    are a single top surface, so it carves holes and hills but not caves/overhangs.)
+    Created automatically with new Terrains; also under Add Component > Rendering.
+  - Terrain texturing: terrains can now wear a tiled ground texture (grass/rock/dirt)
+    with Triplanar projection so steep cliffs don't smear, plus an optional normal
+    map for fine bump detail. The auto-colour layers tint the texture, so one grass
+    texture reads green on flats and grey on slopes. Build Game bundles the files.
+  - All exposed in the Terrain inspector (Texturing section); round-trips through the
+    scene file; old terrains load unchanged.
+
 v2.292.0  (More inventory UI customization)
   - Hotbar Align: dock the hotbar Left / Center / Right (still nudged by Margin X).
   - Selected Pop: the selected hotbar slot grows by a tunable factor (Minecraft-

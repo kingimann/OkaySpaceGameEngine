@@ -22,6 +22,20 @@ public:
     //      by its elevation and steepness — water/sand at the bottom, grass in
     //      the middle, rock on steep slopes, snow on the peaks. ----
     bool  autoColor  = true;
+    // ---- Texturing (leverages the material pipeline: triplanar + normal maps) ----
+    /// Ground texture tiled across the surface (grass/rock/dirt PNG). Empty = flat
+    /// auto-colours only. When `autoColor` is also on, the texture is TINTED by the
+    /// elevation/slope colours, so one grass texture reads green on flats and grey on
+    /// cliffs. Build Game bundles the file.
+    std::string texture;
+    float       textureTiling = 12.0f;  ///< how many times the texture repeats across the terrain
+    /// Triplanar projection: texture by world axes so steep cliffs don't smear (the
+    /// classic terrain-texture fix). Uses `textureTiling` as world-space scale.
+    bool        triplanarTex = true;
+    /// Optional normal/bump map for fine surface detail (pebbles, grain) under lighting.
+    std::string normalMap;
+    float       normalStrength = 1.0f;
+
     Color waterColor = Color::FromBytes(54, 110, 158);
     Color sandColor  = Color::FromBytes(205, 195, 145);
     Color grassColor = Color::FromBytes(96, 150, 80);

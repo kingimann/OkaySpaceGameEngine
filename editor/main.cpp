@@ -1602,8 +1602,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 tr->Resize(64); tr->size = 80.0f;
                 tr->Generate(1, 10.0f, 3.0f, 5, (unsigned)(ImGui::GetTime() * 1000.0)); // rolling hills
                 tr->Apply();
+                go->AddComponent<TerrainDigger>();   // dig/raise it at runtime out of the box
                 ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
-                ConsoleLog("Created Terrain");
+                ConsoleLog("Created Terrain (with a Terrain Digger: hold Left Mouse in Play to dig)");
             }
             if (ImGui::MenuItem("Character")) {
                 GameObject* g = ed.CreateEmpty("Character");
@@ -7324,6 +7325,28 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Size##terr", &tr->size, 0.5f, 2.0f, 1000.0f)) { tr->Apply(); ed.dirty = true; }
 
+            ImGui::SeparatorText("Texturing");
+            char ttex[260]; std::strncpy(ttex, tr->texture.c_str(), sizeof(ttex) - 1); ttex[sizeof(ttex) - 1] = '\0';
+            if (ImGui::InputText("Ground Texture##terr", ttex, sizeof(ttex))) { tr->texture = ttex; tr->Apply(); ed.dirty = true; }
+            if (AcceptAssetPathField(tr->texture)) { tr->Apply(); ed.dirty = true; }   // drop from Project
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tiled ground texture (grass/rock/dirt PNG). Empty = flat auto-colours only.");
+            if (!tr->texture.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##terrtex")) { tr->texture.clear(); tr->Apply(); ed.dirty = true; }
+                if (ImGui::DragFloat("Tiling##terr", &tr->textureTiling, 0.1f, 0.1f, 200.0f)) { tr->Apply(); ed.dirty = true; }
+                if (ImGui::Checkbox("Triplanar (no cliff smear)##terr", &tr->triplanarTex)) { tr->Apply(); ed.dirty = true; }
+            }
+            char tnrm[260]; std::strncpy(tnrm, tr->normalMap.c_str(), sizeof(tnrm) - 1); tnrm[sizeof(tnrm) - 1] = '\0';
+            if (ImGui::InputText("Normal Map##terr", tnrm, sizeof(tnrm))) { tr->normalMap = tnrm; tr->Apply(); ed.dirty = true; }
+            if (AcceptAssetPathField(tr->normalMap)) { tr->Apply(); ed.dirty = true; }
+            if (!tr->normalMap.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##terrnrm")) { tr->normalMap.clear(); tr->Apply(); ed.dirty = true; }
+                if (ImGui::SliderFloat("Bump##terr", &tr->normalStrength, 0.0f, 2.0f)) { tr->Apply(); ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Auto-color layers##terr", &tr->autoColor)) { tr->Apply(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tint by elevation/slope (water/sand/grass/rock/snow). Tints the texture when one is set.");
+
             ImGui::SeparatorText("Sculpt brush (drag in the 3D view)");
             ImGui::Checkbox("Sculpt##terr", &g_terrainSculpt);
             ImGui::SameLine(); ImGui::TextDisabled("(Shift = lower/invert)");
@@ -7414,6 +7437,27 @@ void DrawInspector(EditorState& ed) {
             }
 
             if (ImGui::SmallButton("Remove##terr")) toRemove = tr;
+        }
+    }
+    if (auto* td = dynamic_cast<TerrainDigger*>(curComp)) {
+        if (CompHeader("Terrain Digger", td, &toRemove)) {
+            ImGui::TextDisabled("Aim with the camera and hold the button to reshape the terrain in Play.");
+            const char* modes[] = {"Dig (lower)", "Raise", "Smooth", "Flatten"};
+            int md = (int)td->mode;
+            if (ImGui::Combo("Mode##tdg", &md, modes, 4)) { td->mode = (TerrainDigger::Mode)md; ed.dirty = true; }
+            const char* btns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+            int bi = (td->button < 0 || td->button > 2) ? 3 : td->button;
+            if (ImGui::Combo("Button##tdg", &bi, btns, 4)) { td->button = (bi == 3) ? -1 : bi; ed.dirty = true; }
+            char kb[2] = {td->key, 0};
+            if (ImGui::InputText("Also Key##tdg", kb, sizeof(kb))) { td->key = kb[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional key that also digs (blank = none).");
+            if (ImGui::DragFloat("Brush Radius##tdg", &td->radius, 0.1f, 0.25f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Strength / sec##tdg", &td->strength, 0.1f, 0.1f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Reach##tdg", &td->range, 0.5f, 1.0f, 500.0f)) ed.dirty = true;
+            if ((td->mode == TerrainDigger::Mode::Smooth || td->mode == TerrainDigger::Mode::Flatten) &&
+                ImGui::DragFloat("Relax / sec##tdg", &td->relax, 0.1f, 0.1f, 40.0f)) ed.dirty = true;
+            ImGui::TextDisabled("Heightmap: carves holes/hills, not caves/overhangs.");
+            if (ImGui::SmallButton("Remove##tdg")) toRemove = td;
         }
     }
     if (auto* ch = dynamic_cast<Character*>(curComp)) {
@@ -10908,6 +10952,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TerrainDigger>(), "Terrain Digger")) { go->AddComponent<TerrainDigger>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
           } EndCat(o); }

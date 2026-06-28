@@ -161,5 +161,58 @@ int main() {
         std::remove("test.okaymat");
     }
 
+    // Terrain texturing fields round-trip through the scene serializer.
+    {
+        Scene s("TT"); s.physicsEnabled = false;
+        auto* tr = s.CreateGameObject("Ground")->AddComponent<Terrain>();
+        tr->Resize(8); tr->Flatten(0.0f);
+        tr->texture = "grass.png"; tr->textureTiling = 16.0f; tr->triplanarTex = true;
+        tr->normalMap = "grass_n.png"; tr->normalStrength = 0.7f;
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* r = s2.Find("Ground") ? s2.Find("Ground")->GetComponent<Terrain>() : nullptr;
+        CHECK(r != nullptr);
+        if (r) {
+            CHECK(r->texture == "grass.png");
+            CHECK_NEAR(r->textureTiling, 16.0f, 1e-3f);
+            CHECK(r->triplanarTex);
+            CHECK(r->normalMap == "grass_n.png");
+            CHECK_NEAR(r->normalStrength, 0.7f, 1e-3f);
+            r->Apply();   // pushes the texture onto the sibling MeshRenderer (triplanar on)
+            auto* mr = r->gameObject->GetComponent<MeshRenderer>();
+            CHECK(mr && mr->texture == "grass.png" && mr->triplanar);
+        }
+    }
+
+    // TerrainDigger: Dig lowers the terrain under an aimed crater; fields round-trip.
+    {
+        Scene s("DIG"); s.physicsEnabled = false;
+        auto* tr = s.CreateGameObject("Ground")->AddComponent<Terrain>();
+        tr->Resize(16); tr->size = 32.0f; tr->Flatten(5.0f);   // flat plateau at y=5
+        GameObject* camgo = s.CreateGameObject("Cam");
+        camgo->transform->localPosition = {0, 20, 0};
+        camgo->transform->localRotation = Quat::Euler(90, 0, 0);   // look straight down
+        camgo->AddComponent<Camera>();
+        auto* dig = tr->gameObject->AddComponent<TerrainDigger>();
+        dig->mode = TerrainDigger::Mode::Dig; dig->radius = 6.0f; dig->strength = 10.0f;
+        float before = tr->SampleHeight(0.0f, 0.0f);
+        float lx = 1.0f, lz = 1.0f;
+        CHECK(dig->AimAtTerrain(tr, lx, lz));           // the ray reaches the ground
+        tr->RaiseAt(0.0f, 0.0f, dig->radius, -1.0f);    // dig one unit at the centre
+        CHECK(tr->SampleHeight(0.0f, 0.0f) < before);   // the crater lowered the surface
+
+        dig->mode = TerrainDigger::Mode::Flatten; dig->radius = 4.5f;
+        dig->range = 99.0f; dig->relax = 2.5f; dig->button = 1; dig->key = 'f';
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* r = s2.Find("Ground") ? s2.Find("Ground")->GetComponent<TerrainDigger>() : nullptr;
+        CHECK(r != nullptr);
+        if (r) {
+            CHECK(r->mode == TerrainDigger::Mode::Flatten);
+            CHECK_NEAR(r->radius, 4.5f, 1e-3f);
+            CHECK_NEAR(r->range, 99.0f, 1e-3f);
+            CHECK(r->button == 1);
+            CHECK(r->key == 'f');
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

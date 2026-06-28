@@ -43,6 +43,11 @@ public:
     float mouseSensitivity = 0.15f;     // degrees per pixel of mouse movement
     float minPitch = -85.0f, maxPitch = 85.0f;
     bool  invertY = false;              // invert vertical mouse look
+    // View bob: a subtle up/down camera sway in step with walking, so movement
+    // feels grounded instead of gliding. Scales with speed; smooths out when idle.
+    bool  headBob   = true;
+    float bobAmount = 0.05f;            // bob height (world units)
+    float bobSpeed  = 9.0f;             // bob cadence (≈ footstep rate)
     char  sprintKey = Input::KeyShift;  // hold (or tap, if toggleRun) to run; 0 = disabled
     bool  toggleRun = false;            // tap sprint to keep running instead of holding
     bool  canJump = true;
@@ -194,6 +199,13 @@ public:
                 ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
         }
 
+        // ---- View bob (footstep sway) ----
+        {
+            float hSpeed = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z)
+                              : (moving ? speed : 0.0f);
+            ApplyHeadBob(dt, grounded, hSpeed);
+        }
+
         // ---- Animation ----
         if (driveAnimation)
             if (Character* ch = FindCharacter()) {
@@ -254,20 +266,41 @@ private:
         m_lean += (target - m_lean) * t;
     }
 
-    // Ease the child camera's local height toward the active stance's eye height.
+    // Ease the base eye height toward the active stance's height (the view bob is
+    // added on top of this each frame in ApplyHeadBob).
     void ApplyEyeHeight(float dt) {
         Transform* cam = FindCameraChild();
         if (!cam) return;
+        if (!m_haveEyeBase) { m_eyeBase = cam->localPosition.y; m_haveEyeBase = true; }
         float target = m_stance == Stance::Prone  ? proneEyeHeight
                      : m_stance == Stance::Crouch ? crouchEyeHeight : standEyeHeight;
         float t = stanceLerp > 0.0f ? (1.0f - std::exp(-stanceLerp * dt)) : 1.0f;
-        cam->localPosition.y += (target - cam->localPosition.y) * t;
+        m_eyeBase += (target - m_eyeBase) * t;
+        cam->localPosition.y = m_eyeBase;     // bob (if any) is layered on after movement
+    }
+
+    // Layer a walking head-bob on top of the eased eye height.
+    void ApplyHeadBob(float dt, bool grounded, float hSpeed) {
+        Transform* cam = FindCameraChild();
+        if (!cam) return;
+        if (headBob && grounded && hSpeed > 0.3f) {
+            float ref = Mathf::Max(0.1f, walkSpeed);
+            m_bobPhase += dt * bobSpeed * Mathf::Max(0.4f, hSpeed / ref);
+            float amp = bobAmount * Mathf::Min(1.0f, hSpeed / ref);
+            m_bob = std::sin(m_bobPhase) * amp;
+        } else {
+            m_bob += (0.0f - m_bob) * Mathf::Min(1.0f, 10.0f * dt);   // ease out when idle/airborne
+        }
+        cam->localPosition.y = m_eyeBase + m_bob;
     }
 
     Vec2 m_lastMouse{0, 0};
     bool m_haveMouse = false;
     bool m_runToggled = false;
     Stance m_stance = Stance::Stand;
+    float m_eyeBase = 1.6f;          // eased base eye height (bob layered on top)
+    bool  m_haveEyeBase = false;
+    float m_bobPhase = 0.0f, m_bob = 0.0f;   // walking view-bob state
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     float m_groundContact = 0.0f;

@@ -406,14 +406,40 @@ void Physics3D::Step(Scene& scene, float dt) {
                 headY = (mx.y - radius) - pos.y;
             }
             if (headY < footY) headY = footY;
-            const int SPHERES = 3;
+            // Overlapping probe spheres (spacing <= radius) so a thin wall/floor/ceiling
+            // can never slip BETWEEN two spheres and be missed.
+            int spheres = (int)std::ceil((headY - footY) / std::max(radius, 0.01f)) + 1;
+            if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
 
             for (VoxelTerrain* vox : voxels) {
                 if (!vox->gameObject || !vox->gameObject->transform) continue;
                 Vec3 vp = vox->gameObject->transform->Position();
-                for (int si = 0; si < SPHERES; ++si) {
-                    float fy = (SPHERES == 1) ? footY
-                             : footY + (headY - footY) * (float)si / (float)(SPHERES - 1);
+
+                // --- Swept (continuous) catch: a fast fall (or low frame rate) can
+                // jump the body past a thin floor in one step. March the foot sphere
+                // from its PREVIOUS position to its current one; if it crossed from air
+                // into solid, place it back on that surface so it can't tunnel through.
+                if (rb->hasPrevPos) {
+                    Vec3 cur = t->Position();
+                    float footCurY = cur.y + footY, footPrevY = rb->prevPos.y + footY;
+                    if (footPrevY - footCurY > radius) {          // moved down more than a radius
+                        float step = radius * 0.5f;
+                        for (float yy = footPrevY; yy >= footCurY - radius; yy -= step) {
+                            Vec3 local{cur.x - vp.x, yy - vp.y, cur.z - vp.z};
+                            if (!vox->WithinBounds(local, radius)) continue;
+                            if (vox->SampleDensity(local) > vox->iso) {   // solid the body skipped over
+                                t->localPosition.y += (yy + radius) - footCurY;  // sit the foot on it
+                                if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
+                                rb->groundedOnTerrain = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // --- Static depenetration: push each sphere out of any solid it overlaps.
+                for (int si = 0; si < spheres; ++si) {
+                    float fy = footY + (headY - footY) * (float)si / (float)(spheres - 1);
                     for (int it = 0; it < 4; ++it) {     // a few depenetration iterations
                         Vec3 pos = t->Position();
                         Vec3 local{pos.x - vp.x, pos.y + fy - vp.y, pos.z - vp.z};
@@ -438,6 +464,13 @@ void Physics3D::Step(Scene& scene, float dt) {
                 }
             }
         }
+    }
+
+    // Record where every dynamic body ended up, for next step's swept collision.
+    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+        if (rb->bodyType == Rigidbody3D::BodyType::Static || !rb->transform) continue;
+        rb->prevPos = rb->transform->Position();
+        rb->hasPrevPos = true;
     }
 }
 

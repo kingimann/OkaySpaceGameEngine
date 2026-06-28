@@ -27,6 +27,13 @@ public:
     /// ground signal so you can jump, refill jumps, etc. while standing on terrain.
     bool     groundedOnTerrain = false;
 
+    /// World position at the end of the previous physics step — used for swept
+    /// (continuous) voxel collision so a fast-moving body can't tunnel through a
+    /// thin floor/wall in one big step (e.g. at a low frame rate). Maintained by
+    /// Physics3D; `hasPrevPos` is false until the first step records it.
+    Vec3     prevPos = Vec3::Zero;
+    bool     hasPrevPos = false;
+
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; }
     /// Apply an instantaneous change in momentum (immediate velocity change).

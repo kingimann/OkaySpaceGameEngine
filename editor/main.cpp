@@ -897,7 +897,7 @@ float g_terrainHmLow  = 0.0f;         // heightmap import: black -> this world Y
 float g_terrainHmHigh = 25.0f;        // heightmap import: white -> this world Y
 float g_voxSurface = 0.5f;            // voxel generate: surface height fraction
 float g_voxAmp     = 6.0f;            // voxel generate: relief amplitude
-float g_voxCaves   = 0.5f;            // voxel generate: cave amount (0..1)
+float g_voxCaves   = 0.0f;            // voxel generate: cave amount (0..1; 0 = solid)
 int   g_scatterProp = 0;       // 0 Tree,1 Pine,2 Rock,3 Bush
 int   g_scatterCount = 80;     // how many props to scatter per pass
 float g_scatterMinScale = 0.7f, g_scatterMaxScale = 1.5f;
@@ -1857,7 +1857,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 GameObject* go = ed.CreateEmpty("Voxel Terrain");
                 auto* v = go->AddComponent<VoxelTerrain>();
                 v->Resize(56, 32, 56); v->voxelSize = 1.5f;
-                v->Generate(0.5f, 7.0f, 0.55f, (unsigned)(ImGui::GetTime() * 1000.0));
+                v->Generate(0.5f, 7.0f, 0.0f, (unsigned)(ImGui::GetTime() * 1000.0));   // solid (no caves)
                 v->Apply();
                 go->AddComponent<VoxelDigger>();     // dig caves / raise at runtime
                 ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
@@ -11549,7 +11549,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
             if (item(!go->GetComponent<TerrainDigger>(), "Terrain Digger")) { go->AddComponent<TerrainDigger>(); ed.dirty = true; }
-            if (item(!go->GetComponent<VoxelTerrain>(), "Voxel Terrain (caves)")) { auto* v = go->AddComponent<VoxelTerrain>(); v->Generate(0.5f, 6.0f, 0.5f, 1u); v->Apply(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<VoxelTerrain>(), "Voxel Terrain (diggable)")) { auto* v = go->AddComponent<VoxelTerrain>(); v->Generate(0.5f, 6.0f, 0.0f, 1u); v->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<VoxelDigger>(), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
             if (item(!go->GetComponent<Water>(), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>(); ed.dirty = true; }
@@ -15734,7 +15734,12 @@ int main(int argc, char** argv) {
                 }
             okay::Input::SetUICaptured(invModal);
         }
-        if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
+        // Pause freezes the sim (Step advances it). A PauseMenu pausing the game
+        // (Game::Paused) also freezes gameplay — tick with dt=0 so the menu's UI
+        // still updates (button clicks) but physics/gravity don't run (otherwise the
+        // player keeps falling at full speed behind the menu and tunnels through the
+        // terrain). The built player already ticks with the scaled Time::DeltaTime().
+        if (!g_paused) ed.Tick(okay::Game::Paused() ? 0.0f : dt);
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).
         if (ed.isPlaying() && okay::Game::QuitRequested()) { ed.Stop(); g_paused = false; ConsoleLog("Quit (game requested exit)"); }
         ed.TickServices(dt); // Steam callbacks + networking every frame

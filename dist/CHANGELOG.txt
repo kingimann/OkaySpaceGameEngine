@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.307.0  (Pause fix, solid terrain, no-tunnel collision, FPS feel)
+  - FIX: pause menu was glitchy in the editor — the game kept simulating behind the
+    menu (the editor Play loop ticked at full speed regardless of pause), so the
+    player kept falling and could tunnel through the terrain. The editor now ticks
+    the scene with dt=0 while paused: the menu's UI still works, but physics and
+    gravity freeze (the built player already did this).
+  - SOLID terrain. The Sandbox (and the Voxel Terrain create/add menus) now
+    generate a SOLID block with NO pre-cut caves or tunnels — dig your own.
+  - FIX: voxel collision no longer lets you fall through after digging a tunnel and
+    jumping around. Collision now uses overlapping probe spheres (a thin wall/floor
+    can't slip between them) plus a swept (continuous) downward catch using the
+    body's previous position — so even a fast fall or a low frame rate can't tunnel
+    the player through a thin floor.
+  - FPS feel: the first-person camera now has a subtle walking head-bob (scales with
+    speed, smooths out when idle/airborne) so movement feels grounded.
+
 v2.306.0  (GPU transparency + terrain/water/digging polish)
   - See-through water in the BUILT game. Transparency now works on the GPU
     renderers too (Direct3D 11 + OpenGL), not just the software preview: a material

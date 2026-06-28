@@ -192,5 +192,32 @@ int main() {
         }
     }
 
+    // --- Anti-tunnel: a fast fall (big dt / low FPS) does NOT pass through ------
+    {
+        Scene s("TUN");
+        GameObject* go = s.CreateGameObject("Voxel");
+        auto* v = go->AddComponent<VoxelTerrain>();
+        v->Resize(24, 24, 24); v->voxelSize = 1.0f;
+        v->FillSlab(0.5f);
+        v->Apply();
+        float topY = v->SizeY() * 0.5f;
+
+        GameObject* body = s.CreateGameObject("Body");
+        body->transform->localPosition = {0, topY + 6.0f, 0};
+        auto* rb = body->AddComponent<Rigidbody3D>();
+        rb->bodyType = Rigidbody3D::BodyType::Dynamic;
+        auto* bc = body->AddComponent<BoxCollider3D>();
+        bc->size = {1.0f, 1.8f, 1.0f}; bc->offset = {0, 0.9f, 0};
+
+        // Establish a previous position, then slam it down at huge speed with a big
+        // timestep (would skip ~9 units in one step — far past the surface).
+        s.Update(1.0f / 60.0f);
+        rb->velocity = {0, -90.0f, 0};
+        s.Update(0.1f);                 // 10 FPS step
+        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);
+        float y = body->transform->Position().y;
+        CHECK(y > topY - 1.0f);         // caught on the surface, did not tunnel through
+    }
+
     TEST_MAIN_RESULT();
 }

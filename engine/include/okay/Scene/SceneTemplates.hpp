@@ -983,7 +983,7 @@ inline void VoxelSandbox(Scene& scene) {
     auto* vox = ground->AddComponent<VoxelTerrain>();
     vox->Resize(72, 44, 72);
     vox->voxelSize = 1.5f;
-    vox->Generate(0.55f, 9.0f, 0.6f, 2024u);
+    vox->Generate(0.55f, 9.0f, 0.0f, 2024u);   // solid hills — NO pre-cut caves; dig your own
     vox->Apply();
     auto* dig = ground->AddComponent<VoxelDigger>();
     dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)

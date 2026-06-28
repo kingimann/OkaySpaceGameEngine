@@ -176,18 +176,19 @@ int main() {
         OcclusionDepth& od = SceneOcclusionDepth();
         od.w = 4; od.h = 4; od.valid = true;
         od.d.assign(16, 0.0f);
-        od.d[1 * 4 + 1] = 1.0f;   // scene at (1,1) is at 1/w = 1.0 (w = 1.0, very near)
+        od.d[1 * 4 + 1] = 1.0f;   // scene at cell (1,1) is at 1/w = 1.0 (w = 1.0, very near)
 
-        // Particle at (1,1) with clip-w 5 (1/w = 0.2) is BEHIND the scene -> occluded.
-        CHECK(ParticleOccluded(1, 1, 5.0f));
-        // Same pixel but the particle is nearer (w = 0.5 -> 1/w = 2.0) -> visible.
-        CHECK(!ParticleOccluded(1, 1, 0.5f));
-        // A pixel with no geometry (depth 0) never occludes.
-        CHECK(!ParticleOccluded(2, 2, 100.0f));
+        // Normalized coords ~ (0.3,0.3) land in cell (1,1). Particle clip-w 5 (1/w=0.2)
+        // is BEHIND the scene -> occluded.
+        CHECK(ParticleOccluded(0.3f, 0.3f, 5.0f));
+        // Same spot but the particle is nearer (w = 0.5 -> 1/w = 2.0) -> visible.
+        CHECK(!ParticleOccluded(0.3f, 0.3f, 0.5f));
+        // A spot with no geometry (depth 0) never occludes.
+        CHECK(!ParticleOccluded(0.6f, 0.6f, 100.0f));
         // Out-of-bounds and invalid buffers are safe (visible).
-        CHECK(!ParticleOccluded(99, 99, 5.0f));
+        CHECK(!ParticleOccluded(9.0f, 9.0f, 5.0f));
         od.valid = false;
-        CHECK(!ParticleOccluded(1, 1, 5.0f));
+        CHECK(!ParticleOccluded(0.3f, 0.3f, 5.0f));
         od.valid = false; od.d.clear(); od.w = od.h = 0;   // leave the global clean
     }
 

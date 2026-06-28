@@ -1304,6 +1304,20 @@ int main(int argc, char** argv) {
                     SDL_UpdateTexture(mesh3DTex, nullptr, px, w * 4);
                     SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
                 }
+                // Depth occlusion on the GPU color path: the GPU renderers don't read
+                // their depth back, so when one of them drew the frame, run a cheap
+                // HALF-resolution software depth pre-pass to fill the occlusion buffer so
+                // particles still hide behind geometry. Only pay it when particles exist.
+                if (!SceneOcclusionDepth().valid) {
+                    bool anyParticles = false;
+                    for (const auto& up : scene.Objects())
+                        if (up && up->active && up->GetComponent<ParticleSystem>()) { anyParticles = true; break; }
+                    if (anyParticles) {
+                        static Raster occWork; static std::vector<std::uint32_t> occDown;
+                        int hw = w > 1 ? w / 2 : 1, hh = h > 1 ? h / 2 : 1;
+                        RenderMeshesSS(occWork, occDown, scene, vp, camPos, hw, hh, 1, ignore);
+                    }
+                }
                 // Particles in 3D: camera-facing billboards projected with the camera
                 // (the 2D quad path below only runs for orthographic scenes, so 3D games
                 // showed no particles at all). Collected, depth-sorted back-to-front, and
@@ -1324,7 +1338,7 @@ int main(int argc, char** argv) {
                             if (c.w <= 0.05f) continue;
                             float sx = w * 0.5f + (c.x / c.w) * w * 0.5f;
                             float sy = h * 0.5f - (c.y / c.w) * h * 0.5f;
-                            if (ParticleOccluded((int)sx, (int)sy, c.w)) continue;  // hidden behind geometry
+                            if (ParticleOccluded(sx / w, sy / h, c.w)) continue;  // hidden behind geometry
                             float rad = p.size * 0.5f / c.w * w * 0.5f;
                             if (rad < 1.0f) rad = 1.0f; if (rad > 400.0f) rad = 400.0f;
                             SDL_Color col{(Uint8)(p.color.r*255), (Uint8)(p.color.g*255),

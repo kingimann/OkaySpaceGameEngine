@@ -87,12 +87,15 @@ inline EnvSkyData& EnvSky() { static EnvSkyData e; return e; }
 struct OcclusionDepth { std::vector<float> d; int w = 0, h = 0; bool valid = false; };
 inline OcclusionDepth& SceneOcclusionDepth() { static OcclusionDepth o; return o; }
 
-/// True if the scene pixel at (x,y) is NEARER than a particle at clip-w `clipW`
-/// (so the particle is hidden). Safe to call with no/sized-mismatched depth: returns
-/// false (visible) when occlusion data is unavailable.
-inline bool ParticleOccluded(int x, int y, float clipW) {
+/// True if the scene is NEARER than a particle at clip-w `clipW` at normalized
+/// screen coords (nx,ny in [0,1]) — so the particle is hidden behind geometry. The
+/// normalized coords make this independent of the depth buffer's resolution (the
+/// occlusion pre-pass may run at a lower res than the screen). Safe with no/invalid
+/// data: returns false (visible).
+inline bool ParticleOccluded(float nx, float ny, float clipW) {
     const OcclusionDepth& od = SceneOcclusionDepth();
     if (!od.valid || od.w <= 0 || od.h <= 0) return false;
+    int x = (int)(nx * od.w), y = (int)(ny * od.h);
     if (x < 0 || y < 0 || x >= od.w || y >= od.h) return false;
     float sceneNear = od.d[(std::size_t)y * od.w + x];   // 1/w; 0 = empty/far
     if (sceneNear <= 0.0f) return false;                 // nothing drawn here

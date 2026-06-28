@@ -38,11 +38,16 @@ const char* kHLSL =
     "  float3 uRimColor;  float uShaderMode;\n"
     "  float3 uGradTop;   float uToonBands;\n"
     "  float3 uGradBot;   float uRimStr;\n"
+    "  float4 uPbr;\n"                        // x=metallic y=reflectivity z=hasSpecMap w=hasAo
+    "  float4 uPbr2;\n"                       // x=aoStrength y=envOn z=texOffset.x w=texOffset.y
+    "  float4 uSky[3];\n"                     // [0]=top [1]=horizon [2]=bottom (xyz) for reflections
     "  float4 uLightCount;\n"                 // .x = number of scene lights (0 = use uLightDir)
     "  float4 uLights[32];\n"                 // 8 lights x 4: [dir,type][pos,range][col,cosOut][cosIn,..]
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "Texture2D uNormalTex : register(t1);\n"        // bump/normal map (tangent-space)
+    "Texture2D uSpecTex : register(t2);\n"          // gloss/specular map
+    "Texture2D uAoTex : register(t3);\n"            // ambient-occlusion map
     "SamplerState uSamp : register(s0);\n"
     "struct VSIn { float3 pos:POSITION; float3 nrm:NORMAL; float2 uv:TEXCOORD; float3 col:COLOR; float3 tan:TANGENT; };\n"
     "struct PSIn { float4 pos:SV_POSITION; float3 nrm:NORMAL; float3 world:TEXCOORD1; float2 uv:TEXCOORD0; float3 col:COLOR; float3 tan:TEXCOORD2; };\n"
@@ -54,7 +59,7 @@ const char* kHLSL =
     "  o.nrm = mul((float3x3)uModel, i.nrm);\n"
     "  o.tan = mul((float3x3)uModel, i.tan);\n"
     "  o.world = mul(uModel, float4(i.pos,1.0)).xyz;\n"
-    "  o.uv = i.uv * uTiling;\n"
+    "  o.uv = i.uv * uTiling + uPbr2.zw;\n"
     "  o.col = i.col;\n"
     "  return o;\n"
     "}\n"
@@ -114,11 +119,31 @@ const char* kHLSL =
     "    }\n"
     "  }\n"
     "  if (uShaderMode > 7.5) lit += fz * fz * lit * 0.6;\n"      // Velvet: fuzzy grazing sheen
-    "  float3 diff = base * lit;\n"
+    "  float gloss = 1.0;\n"                                      // gloss/specular map
+    "  if (uPbr.z > 0.5) gloss = dot(uSpecTex.Sample(uSamp, i.uv).rgb, float3(0.2126, 0.7152, 0.0722));\n"
+    "  if (uPbr.w > 0.5) {\n"                                     // ambient-occlusion map
+    "    float ao = dot(uAoTex.Sample(uSamp, i.uv).rgb, float3(0.2126, 0.7152, 0.0722));\n"
+    "    lit *= (1.0 - uPbr2.x * (1.0 - ao));\n"
+    "  }\n"
+    "  float metal = saturate(uPbr.x);\n"                         // metalness
+    "  float diffK = 1.0 - 0.9 * metal;\n"
+    "  float3 f0 = lerp(float3(1,1,1), base, metal);\n"
+    "  float3 diff = base * lit * diffK;\n"
     "  float3 rim = float3(0,0,0);\n"
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
     "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
-    "  return float4(diff + spec.xxx + rim + uEmissive, 1.0);\n"
+    "  float3 col = diff + (spec * gloss) * f0 + rim + uEmissive;\n"
+    "  float reflAmt = max(uPbr.y, metal);\n"                     // env reflection of the sky gradient
+    "  float reflK = reflAmt * gloss;\n"
+    "  if (reflK > 0.0 && uPbr2.y > 0.5) {\n"
+    "    float ndv = max(dot(N, Vv), 0.0);\n"
+    "    float3 R = reflect(-Vv, N); float ry = clamp(R.y, -1.0, 1.0);\n"
+    "    float3 env = lerp(uSky[1].xyz, ry >= 0.0 ? uSky[0].xyz : uSky[2].xyz, abs(ry));\n"
+    "    float fr2 = 1.0 - ndv; fr2 = fr2*fr2*fr2*fr2*fr2;\n"     // Schlick
+    "    float kk = reflK + (1.0 - reflK) * fr2;\n"
+    "    col = col * (1.0 - kk) + env * f0 * kk;\n"
+    "  }\n"
+    "  return float4(col, 1.0);\n"
     "}\n";
 
 // Constant-buffer layout mirrored on the C++ side (must match the cbuffer, 16-byte
@@ -136,6 +161,9 @@ struct CB {
     float rimColor[3];  float shaderMode;
     float gradTop[3];   float toonBands;
     float gradBot[3];   float rimStr;
+    float pbr[4];              // metallic, reflectivity, hasSpecMap, hasAo
+    float pbr2[4];             // aoStrength, envOn, texOffset.x, texOffset.y
+    float sky[12];             // 3 float4: top, horizon, bottom (xyz)
     float lightCount[4];       // .x = number of scene lights
     float lights[128];         // 32 float4: per light [dir,type][pos,range][col,cosOut][cosIn,..]
 };
@@ -364,6 +392,15 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     }
     Vec3 d3amb = SceneLights::AmbientColor();
     if (d3amb.x + d3amb.y + d3amb.z < 1e-4f) d3amb = Vec3{0.35f, 0.36f, 0.40f};
+    // Refresh the env sky (for reflective/metal materials) from the scene, since the
+    // software RenderMeshes that normally does this may not run on the GPU path.
+    {
+        const auto& rs = scene.renderSettings;
+        EnvSky().enabled = rs.skybox;
+        EnvSky().top     = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
+        EnvSky().horizon = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
+        EnvSky().bottom  = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+    }
 
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
@@ -459,6 +496,20 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         ID3D11ShaderResourceView* nsrv = mr->normalMap.empty() ? nullptr : p->TextureFor(mr->normalMap);
         cb.hasNormal = nsrv ? 1.0f : 0.0f;
         cb.normalStrength = mr->normalStrength;
+        ID3D11ShaderResourceView* ssrv = mr->specularMap.empty() ? nullptr : p->TextureFor(mr->specularMap);
+        ID3D11ShaderResourceView* aosrv = mr->aoMap.empty() ? nullptr : p->TextureFor(mr->aoMap);
+        bool d3unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        cb.pbr[0] = d3unlit ? 0.0f : mr->metallic;       // metallic
+        cb.pbr[1] = d3unlit ? 0.0f : mr->reflectivity;   // reflectivity
+        cb.pbr[2] = ssrv ? 1.0f : 0.0f;                  // hasSpecMap
+        cb.pbr[3] = aosrv ? 1.0f : 0.0f;                 // hasAo
+        cb.pbr2[0] = mr->aoStrength;                      // aoStrength
+        cb.pbr2[1] = EnvSky().enabled ? 1.0f : 0.0f;     // envOn
+        cb.pbr2[2] = mr->texOffset.x; cb.pbr2[3] = mr->texOffset.y;
+        { const EnvSkyData& sky = EnvSky();
+          cb.sky[0] = sky.top.x;     cb.sky[1] = sky.top.y;     cb.sky[2] = sky.top.z;
+          cb.sky[4] = sky.horizon.x; cb.sky[5] = sky.horizon.y; cb.sky[6] = sky.horizon.z;
+          cb.sky[8] = sky.bottom.x;  cb.sky[9] = sky.bottom.y;  cb.sky[10] = sky.bottom.z; }
         cb.tiling[0] = srv ? mr->tiling.x : 1.0f; cb.tiling[1] = srv ? mr->tiling.y : 1.0f;
         cb.shaderMode = (float)(int)mr->shader;
         cb.toonBands = (float)mr->toonBands;
@@ -474,6 +525,8 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
         if (srv) c->PSSetShaderResources(0, 1, &srv);
         if (nsrv) c->PSSetShaderResources(1, 1, &nsrv);   // normal/bump map on t1
+        if (ssrv) c->PSSetShaderResources(2, 1, &ssrv);   // gloss/specular map on t2
+        if (aosrv) c->PSSetShaderResources(3, 1, &aosrv); // ambient-occlusion map on t3
         // Per-material texture filter (Pixel = nearest, Smooth = aniso/linear).
         ID3D11SamplerState* useSamp = (mr->texFilter == MeshRenderer::TexFilter::Pixel && p->sampPoint) ? p->sampPoint : p->samp;
         c->PSSetSamplers(0, 1, &useSamp);

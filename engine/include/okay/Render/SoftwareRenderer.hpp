@@ -404,7 +404,8 @@ public:
                        float rimR = 1.0f, float rimG = 1.0f, float rimB = 1.0f,
                        bool triplanar = false, float triTileX = 1.0f, float triTileY = 1.0f,
                        int clipY0 = 0, int clipY1 = (1 << 30),
-                       int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr) {
+                       int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
+                       const std::vector<Image>* aoMips = nullptr, float aoStrength = 1.0f) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -426,6 +427,9 @@ public:
         const bool glossMap = specMips && !specMips->empty() && (*specMips)[0].Width() > 0;
         int gw = glossMap ? (*specMips)[0].Width() : 0, gh = glossMap ? (*specMips)[0].Height() : 0;
         LodGrad lgG = glossMap ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
+        const bool aoMap = aoMips && !aoMips->empty() && (*aoMips)[0].Width() > 0;
+        int aw = aoMap ? (*aoMips)[0].Width() : 0, ah = aoMap ? (*aoMips)[0].Height() : 0;
+        LodGrad lgA = aoMap ? MakeLodGrad(X, Y, inv, U, V, IW) : LodGrad{};
         // Hoist the global render-state out of the per-pixel loop: these accessors
         // each carry a function-call + thread-safe-static-guard cost that adds up
         // over a million pixels.
@@ -502,6 +506,19 @@ public:
                         gloss = 0.2126f * gc.r + 0.7152f * gc.g + 0.0722f * gc.b;
                     }
                 }
+                // Ambient-occlusion map: darken the ambient + diffuse lighting in
+                // creases/contact areas (Unity's Occlusion / Unreal's AO). 1 = lit.
+                float ao = 1.0f;
+                if (aoMap) {
+                    float iwa = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                    if (iwa != 0.0f) {
+                        float ua = (w0 * U[0] + w1 * U[1] + w2 * U[2]) / iwa;
+                        float va = (w0 * V[0] + w1 * V[1] + w2 * V[2]) / iwa;
+                        Color ac = SampleMips(*aoMips, ua, va, PixelLod(ua * iwa, va * iwa, iwa, lgA, aw, ah));
+                        float l = 0.2126f * ac.r + 0.7152f * ac.g + 0.0722f * ac.b;
+                        ao = 1.0f - aoStrength * (1.0f - l);   // aoStrength blends toward full occlusion
+                    }
+                }
                 // Cast shadows: fade the direct light toward the ambient floor for
                 // fragments occluded from the light (specular is shadowed below).
                 float sh = 1.0f;
@@ -522,6 +539,7 @@ public:
                     lit.y = std::ceil(lit.y * q) / q;
                     lit.z = std::ceil(lit.z * q) / q;
                 }
+                if (aoMap) { lit.x *= ao; lit.y *= ao; lit.z *= ao; }   // occlude ambient + diffuse
                 // Colored Blinn-Phong specular from every light (sun + point + spot),
                 // each tinted by its own color and attenuation; the sun's part is
                 // shadowed. Scaled by the material strength and the gloss map.
@@ -1247,6 +1265,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!mr->texture.empty())     GetCachedMips(mr->texture);
         if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
         if (!mr->specularMap.empty()) GetCachedMips(mr->specularMap);
+        if (!mr->aoMap.empty())       GetCachedMips(mr->aoMap);
         if (!mr->matcap.empty() && !mr->unlit && mr->shader != MeshRenderer::Shader::Unlit) GetCachedTexture(mr->matcap);
     }
     // Rasterize the meshes across CPU cores: each worker owns a horizontal band
@@ -1273,6 +1292,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
         const std::vector<Image>* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         const std::vector<Image>* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
+        const std::vector<Image>* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
         Image* mcap = (mr->matcap.empty() || unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
         const bool useMatcap = mcap && mr->mesh.HasNormals();
@@ -1576,7 +1596,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->rimStrength, mr->rimPower,
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
-                                    bandY0, bandY1, shaderMode, gradTopC, gradBotC);
+                                    bandY0, bandY1, shaderMode, gradTopC, gradBotC,
+                                    aoMips, mr->aoStrength);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

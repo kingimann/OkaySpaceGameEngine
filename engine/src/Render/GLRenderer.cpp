@@ -46,6 +46,12 @@
 #ifndef GL_TEXTURE1
 #define GL_TEXTURE1            0x84C1
 #endif
+#ifndef GL_TEXTURE2
+#define GL_TEXTURE2            0x84C2
+#endif
+#ifndef GL_TEXTURE3
+#define GL_TEXTURE3            0x84C3
+#endif
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE       0x812F
 #endif
@@ -163,7 +169,7 @@ template <class F> bool load(F& fn, GLRenderer::GLGetProc gp, const char* name) 
 
 const char* kVert =
     "#version 120\n"
-    "uniform mat4 uMVP; uniform mat4 uModel; uniform vec2 uTiling;\n"
+    "uniform mat4 uMVP; uniform mat4 uModel; uniform vec2 uTiling; uniform vec2 uTexOffset;\n"
     "attribute vec3 aPos; attribute vec3 aNormal; attribute vec2 aUV; attribute vec3 aColor;\n"
     "attribute vec3 aTan;\n"
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
@@ -172,7 +178,7 @@ const char* kVert =
     "  vN = mat3(uModel) * aNormal;\n"
     "  vTan = mat3(uModel) * aTan;\n"
     "  vWorld = (uModel * vec4(aPos,1.0)).xyz;\n"
-    "  vUV = aUV * uTiling;\n"
+    "  vUV = aUV * uTiling + uTexOffset;\n"
     "  vCol = aColor;\n"
     "}\n";
 
@@ -189,6 +195,10 @@ const char* kFrag =
     "uniform float uLType[8]; uniform vec3 uLPos[8]; uniform vec3 uLDir[8];\n"
     "uniform vec3 uLCol[8]; uniform float uLRange[8]; uniform float uLCosOut[8]; uniform float uLCosIn[8];\n"
     "uniform sampler2D uNormalTex; uniform float uHasNormal; uniform float uNormalStrength;\n"  // bump/normal map
+    "uniform sampler2D uSpecTex; uniform float uHasSpecMap;\n"                  // gloss map (per-texel specular)
+    "uniform sampler2D uAoTex; uniform float uHasAo; uniform float uAoStrength;\n"  // ambient-occlusion map
+    "uniform float uMetallic; uniform float uReflectivity;\n"                  // PBR metalness + env reflection
+    "uniform vec3 uSkyTop; uniform vec3 uSkyHor; uniform vec3 uSkyBot; uniform float uEnvOn;\n"  // sky for reflections
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
     "void main(){\n"
     "  if (uShadowAlpha >= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowAlpha); return; }\n"
@@ -244,11 +254,31 @@ const char* kFrag =
     "    }\n"
     "  }\n"
     "  if (uShaderMode > 7.5) lit += fz * fz * (lit) * 0.6;\n"     // Velvet: fuzzy grazing sheen
-    "  vec3 diff = base * lit;\n"
+    "  float gloss = 1.0;\n"                                      // gloss/specular map (per-texel shininess)
+    "  if (uHasSpecMap > 0.5) gloss = dot(texture2D(uSpecTex, vUV).rgb, vec3(0.2126, 0.7152, 0.0722));\n"
+    "  if (uHasAo > 0.5) {\n"                                     // occlude ambient + diffuse in creases
+    "    float ao = dot(texture2D(uAoTex, vUV).rgb, vec3(0.2126, 0.7152, 0.0722));\n"
+    "    lit *= (1.0 - uAoStrength * (1.0 - ao));\n"
+    "  }\n"
+    "  float metal = clamp(uMetallic, 0.0, 1.0);\n"               // metalness: kill diffuse, tint spec/reflection
+    "  float diffK = 1.0 - 0.9 * metal;\n"
+    "  vec3 f0 = mix(vec3(1.0), base, metal);\n"                  // dielectric = white, metal = albedo-tinted
+    "  vec3 diff = base * lit * diffK;\n"
     "  vec3 rim = vec3(0.0);\n"                                   // rim glow (Fresnel/Hologram or rimStr>0)
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
     "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
-    "  gl_FragColor = vec4(diff + vec3(spec) + rim + uEmissive, 1.0);\n"
+    "  vec3 col = diff + (spec * gloss) * f0 + rim + uEmissive;\n"
+    "  float reflAmt = max(uReflectivity, metal);\n"              // env reflection of the sky gradient
+    "  float reflK = reflAmt * gloss;\n"
+    "  if (reflK > 0.0 && uEnvOn > 0.5) {\n"
+    "    float ndv = max(dot(N, Vv), 0.0);\n"
+    "    vec3 R = reflect(-Vv, N); float ry = clamp(R.y, -1.0, 1.0);\n"
+    "    vec3 env = mix(uSkyHor, ry >= 0.0 ? uSkyTop : uSkyBot, abs(ry));\n"
+    "    float fr2 = 1.0 - ndv; fr2 = fr2*fr2*fr2*fr2*fr2;\n"     // Schlick (1-n·v)^5
+    "    float kk = reflK + (1.0 - reflK) * fr2;\n"
+    "    col = col * (1.0 - kk) + env * f0 * kk;\n"
+    "  }\n"
+    "  gl_FragColor = vec4(col, 1.0);\n"
     "}\n";
 
 GLuint compile(GLenum type, const char* src) {
@@ -384,6 +414,18 @@ bool GLRenderer::EnsureProgram() {
     m_uNormalTex = g.GetUniformLocation(m_prog, "uNormalTex");
     m_uHasNormal = g.GetUniformLocation(m_prog, "uHasNormal");
     m_uNormalStrength = g.GetUniformLocation(m_prog, "uNormalStrength");
+    m_uTexOffset = g.GetUniformLocation(m_prog, "uTexOffset");
+    m_uSpecTex = g.GetUniformLocation(m_prog, "uSpecTex");
+    m_uHasSpecMap = g.GetUniformLocation(m_prog, "uHasSpecMap");
+    m_uAoTex = g.GetUniformLocation(m_prog, "uAoTex");
+    m_uHasAo = g.GetUniformLocation(m_prog, "uHasAo");
+    m_uAoStrength = g.GetUniformLocation(m_prog, "uAoStrength");
+    m_uMetallic = g.GetUniformLocation(m_prog, "uMetallic");
+    m_uReflectivity = g.GetUniformLocation(m_prog, "uReflectivity");
+    m_uSkyTop = g.GetUniformLocation(m_prog, "uSkyTop");
+    m_uSkyHor = g.GetUniformLocation(m_prog, "uSkyHor");
+    m_uSkyBot = g.GetUniformLocation(m_prog, "uSkyBot");
+    m_uEnvOn = g.GetUniformLocation(m_prog, "uEnvOn");
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
     // crash on the attempt). Create one when available; on a compatibility context
@@ -481,6 +523,21 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     if (amb.x + amb.y + amb.z < 1e-4f) amb = Vec3{0.35f, 0.36f, 0.40f};
     g.Uniform3f(m_uAmbient, amb.x, amb.y, amb.z);
     g.Uniform3f(m_uEye, eye.x, eye.y, eye.z);
+    // Sky gradient for environment reflections. Refresh the shared global from the
+    // scene first (the software RenderMeshes does this too, but it may not run on the
+    // GPU path), so reflective/metal materials see the right sky in the editor + game.
+    {
+        const auto& rs = scene.renderSettings;
+        EnvSky().enabled = rs.skybox;
+        EnvSky().top     = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
+        EnvSky().horizon = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
+        EnvSky().bottom  = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+    }
+    const EnvSkyData& sky = EnvSky();
+    g.Uniform3f(m_uSkyTop, sky.top.x, sky.top.y, sky.top.z);
+    g.Uniform3f(m_uSkyHor, sky.horizon.x, sky.horizon.y, sky.horizon.z);
+    g.Uniform3f(m_uSkyBot, sky.bottom.x, sky.bottom.y, sky.bottom.z);
+    g.Uniform1f(m_uEnvOn, sky.enabled ? 1.0f : 0.0f);
 
     // Upload every gathered scene light (directional + point + spot) so all lights
     // shade on the GPU exactly like the software renderer — not just the sun.
@@ -618,6 +675,36 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         } else {
             g.Uniform1f(m_uHasNormal, 0.0f);
         }
+
+        // Gloss/specular map on unit 2 (per-texel specular + reflection scale).
+        unsigned int stex = mr->specularMap.empty() ? 0u : TextureFor(mr->specularMap);
+        if (stex) {
+            g.ActiveTexture(GL_TEXTURE2);
+            g.BindTexture(GL_TEXTURE_2D, stex);
+            g.Uniform1i(m_uSpecTex, 2);
+            g.Uniform1f(m_uHasSpecMap, 1.0f);
+            g.ActiveTexture(GL_TEXTURE0);
+        } else {
+            g.Uniform1f(m_uHasSpecMap, 0.0f);
+        }
+
+        // Ambient-occlusion map on unit 3 (darken ambient + diffuse in creases).
+        unsigned int aotex = mr->aoMap.empty() ? 0u : TextureFor(mr->aoMap);
+        if (aotex) {
+            g.ActiveTexture(GL_TEXTURE3);
+            g.BindTexture(GL_TEXTURE_2D, aotex);
+            g.Uniform1i(m_uAoTex, 3);
+            g.Uniform1f(m_uHasAo, 1.0f);
+            g.Uniform1f(m_uAoStrength, mr->aoStrength);
+            g.ActiveTexture(GL_TEXTURE0);
+        } else {
+            g.Uniform1f(m_uHasAo, 0.0f);
+        }
+
+        // PBR scalars + texture offset (slide/atlas). Metalness/reflection tint by albedo.
+        g.Uniform1f(m_uMetallic, unlit ? 0.0f : mr->metallic);
+        g.Uniform1f(m_uReflectivity, unlit ? 0.0f : mr->reflectivity);
+        g.Uniform2f(m_uTexOffset, mr->texOffset.x, mr->texOffset.y);
 
         g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
         g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);

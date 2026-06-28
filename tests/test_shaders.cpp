@@ -330,5 +330,66 @@ int main() {
         CHECK(diff > 0);                       // triplanar differs from UV mapping
     }
 
+    // Ambient-occlusion map: a dark AO texture darkens the lit surface, and the
+    // aoMap + aoStrength fields round-trip through the scene serializer.
+    {
+        // Half-occluded map: left half black (occluded), right half white (lit).
+        Image ao(16, 16);
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 16; ++x)
+                ao.SetPixel(x, y, x < 8 ? Color::FromBytes(10, 10, 10) : Color::White);
+        RegisterTexture("@aotest", ao);
+
+        auto renderBall = [](const std::string& aoMap) {
+            Scene scene("AO"); scene.physicsEnabled = false;
+            GameObject* sun = scene.CreateGameObject("Sun");
+            auto* light = sun->AddComponent<Light>();
+            light->type = Light::Type::Directional; light->intensity = 1.0f;
+            sun->transform->localRotation = Quat::Euler(20, 0, 0);
+            auto* mr = scene.CreateGameObject("Ball")->AddComponent<MeshRenderer>();
+            mr->mesh = Mesh::Sphere();
+            mr->color = Color::White;
+            mr->rimStrength = 0.0001f;     // force the per-pixel lit path (where AO applies)
+            mr->aoMap = aoMap; mr->aoStrength = 1.0f;
+            Raster r; r.Resize(64, 64); r.Clear(0xFF000000u);
+            Mat4 view = Mat4::LookAt({0, 0, 4}, {0, 0, 0}, Vec3::Up);
+            Mat4 proj = Mat4::Perspective(60.0f, 1.0f, 0.1f, 100.0f);
+            RenderMeshes(r, scene, proj * view, {0, 0, 4});
+            return r;
+        };
+        auto luma = [](const Raster& r) {
+            long sum = 0;
+            for (int i = 0; i < 64 * 64; ++i) { std::uint32_t p = r.Get(i % 64, i / 64);
+                sum += (p & 0xFF) + ((p >> 8) & 0xFF) + ((p >> 16) & 0xFF); }
+            return sum;
+        };
+        Raster noAo = renderBall("");
+        Raster withAo = renderBall("@aotest");
+        CHECK(luma(withAo) < luma(noAo));   // occlusion darkened the surface
+
+        Scene s("AOS"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("Q")->AddComponent<MeshRenderer>();
+        mr->aoMap = "rock_ao.png"; mr->aoStrength = 0.6f;
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* mr2 = s2.Find("Q") ? s2.Find("Q")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) { CHECK(mr2->aoMap == "rock_ao.png"); CHECK_NEAR(mr2->aoStrength, 0.6f, 1e-4f); }
+    }
+
+    // Metallic + reflectivity round-trip through the scene serializer.
+    {
+        Scene s("PBR"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("M")->AddComponent<MeshRenderer>();
+        mr->metallic = 0.8f; mr->reflectivity = 0.4f; mr->specularMap = "gloss.png";
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* mr2 = s2.Find("M") ? s2.Find("M")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) {
+            CHECK_NEAR(mr2->metallic, 0.8f, 1e-4f);
+            CHECK_NEAR(mr2->reflectivity, 0.4f, 1e-4f);
+            CHECK(mr2->specularMap == "gloss.png");
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

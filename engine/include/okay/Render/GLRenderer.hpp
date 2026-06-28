@@ -78,7 +78,11 @@ private:
         m_uRimColor = -1, m_uGradTop = -1, m_uGradBot = -1, m_uShadowAlpha = -1,
         m_uLightCount = -1, m_uLType = -1, m_uLPos = -1, m_uLDir = -1,
         m_uLCol = -1, m_uLRange = -1, m_uLCosOut = -1, m_uLCosIn = -1,
-        m_uNormalTex = -1, m_uHasNormal = -1, m_uNormalStrength = -1;
+        m_uNormalTex = -1, m_uHasNormal = -1, m_uNormalStrength = -1,
+        m_uTexOffset = -1, m_uSpecTex = -1, m_uHasSpecMap = -1,
+        m_uAoTex = -1, m_uHasAo = -1, m_uAoStrength = -1,
+        m_uMetallic = -1, m_uReflectivity = -1,
+        m_uSkyTop = -1, m_uSkyHor = -1, m_uSkyBot = -1, m_uEnvOn = -1;
     std::vector<float> m_verts;             // interleaved pos(3)+normal(3)+uv(2) scratch
     std::vector<unsigned int> m_indices;    // scratch index buffer
     std::vector<std::uint32_t> m_pixels;    // read-back result

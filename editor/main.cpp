@@ -7167,6 +7167,9 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat2("Tiling##mesh", til, 0.05f, 0.01f, 64.0f)) {
                     mr->tiling = {til[0], til[1]}; ed.dirty = true;
                 }
+                float toff[2] = {mr->texOffset.x, mr->texOffset.y};
+                if (ImGui::DragFloat2("Offset##mesh", toff, 0.01f)) { mr->texOffset = {toff[0], toff[1]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide the texture (UV offset after tiling) — position a texture or pick a cell from an atlas.");
                 const char* filters[] = {"Smooth", "Pixel"};
                 int fi = (int)mr->texFilter;
                 if (ImGui::Combo("Filter##mesh", &fi, filters, 2)) { mr->texFilter = (MeshRenderer::TexFilter)fi; ed.dirty = true; }
@@ -7197,6 +7200,18 @@ void DrawInspector(EditorState& ed) {
             if (!mr->specularMap.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##smap")) { mr->specularMap.clear(); ed.dirty = true; }
+            }
+            // Ambient-occlusion map (Unity's Occlusion / Unreal's AO): darkens ambient
+            // + diffuse in creases. Works on the software AND GPU (GL/D3D11) renderers.
+            char aomap[260];
+            std::strncpy(aomap, mr->aoMap.c_str(), sizeof(aomap) - 1);
+            aomap[sizeof(aomap) - 1] = '\0';
+            if (ImGui::InputText("Occlusion Map##mesh", aomap, sizeof(aomap))) { mr->aoMap = aomap; ed.dirty = true; }
+            if (AcceptAssetPathField(mr->aoMap)) ed.dirty = true;   // drop from Project
+            if (!mr->aoMap.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##aomap")) { mr->aoMap.clear(); ed.dirty = true; }
+                if (ImGui::SliderFloat("Occlusion##mesh", &mr->aoStrength, 0.0f, 1.0f)) ed.dirty = true;
             }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());

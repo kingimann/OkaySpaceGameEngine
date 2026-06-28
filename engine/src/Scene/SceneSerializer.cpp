@@ -227,6 +227,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Specular/gloss map (separate record so older scenes still load).
         if (!mr->specularMap.empty())
             out << "  specmap " << Quote(mr->specularMap) << "\n";
+        // Ambient-occlusion map + strength (separate record so older scenes still load).
+        if (!mr->aoMap.empty())
+            out << "  aomap " << Quote(mr->aoMap) << " " << mr->aoStrength << "\n";
         // Shading model (separate record so older scenes still load).
         if (mr->shader != MeshRenderer::Shader::Standard)
             out << "  shader " << (int)mr->shader << " " << mr->toonBands
@@ -1447,6 +1450,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         in >> std::ws;
                         if (in.peek() == '"') mr->specularMap = ReadQuoted(in);
+                    }
+                } else if (field == "aomap") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->aoMap = ReadQuoted(in);
+                        in >> std::ws;
+                        int p = in.peek();   // optional trailing strength
+                        if (std::isdigit(p) || p == '-' || p == '.') in >> mr->aoStrength;
                     }
                 } else if (field == "shader") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -3114,7 +3125,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     for (const auto& go : scene.Objects()) {
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
-        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); }
+        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); }
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
         if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
         if (auto* an = go->GetComponent<SpriteAnimator>())

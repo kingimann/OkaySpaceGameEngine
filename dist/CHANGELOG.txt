@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.285.0  (PBR materials on the GPU + Occlusion maps — Unity/Unreal parity)
+  - The metallic + reflective Standard material now renders on the OpenGL +
+    Direct3D 11 paths (editor preview AND exported game), not just the software
+    fallback. Closes the gap with Unity's Standard / Unreal's default Lit:
+      * Metallic — metals lose their diffuse and tint both their specular
+        highlight and their environment reflection by the albedo (gold reflects
+        gold).
+      * Reflectivity — surfaces mirror the scene's sky gradient, Fresnel-weighted
+        (Schlick), so edges always reflect a little more than face-on.
+      * Specular/gloss map — per-texel luminance scales the highlight + reflection,
+        so one material mixes shiny and matte regions.
+  - NEW Occlusion (ambient-occlusion) map — the dedicated slot Unity and Unreal
+    both have that OkaySpace lacked. A grayscale map darkens ambient + diffuse in
+    creases/contact areas; an Occlusion strength slider blends it in. Works on the
+    software AND GPU renderers.
+  - Texture Offset control wired into every renderer (slide a texture or pick a
+    cell from an atlas) — previously a dead field on the GPU path.
+
 v2.284.0  (GPU normal/bump maps)
   - Normal (bump) maps now light up on the OpenGL + Direct3D 11 renderers — the
     same maps the software renderer already used. Flat faces show sculpted detail

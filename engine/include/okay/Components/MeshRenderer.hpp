@@ -104,6 +104,14 @@ public:
     /// matte regions (per-pixel lighting only). Build Game bundles the file.
     std::string specularMap;
 
+    /// Optional ambient-occlusion map (grayscale PNG, like Unity's Occlusion slot
+    /// / Unreal's AO input): its per-texel luminance darkens the ambient + diffuse
+    /// in creases and contact areas the direct lighting can't see, grounding the
+    /// surface. 1 (white) = fully lit, 0 (black) = fully occluded. Build Game
+    /// bundles the file. `aoStrength` blends it in (0 = off, 1 = full).
+    std::string aoMap;
+    float aoStrength = 1.0f;
+
     /// Metalness [0,1]: metals lose their diffuse and tint both their specular
     /// highlight and their environment reflection by the albedo color (so gold
     /// reflects gold). 0 = dielectric (plastic/wood), 1 = pure metal.

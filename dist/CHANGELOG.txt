@@ -1,5 +1,28 @@
 OkaySpace Game Engine — Changelog
 
+v2.304.0  (Voxel caves, real water, pause menu, bigger terrain)
+  - VOXEL TERRAIN (real caves). A new smooth marching-cubes voxel terrain you can
+    dig actual caves, tunnels and overhangs into — the "dig a real hole, not
+    Minecraft cubes" terrain that heightmaps can't do. Generate a landscape with a
+    cave network, then carve it live in Play with the new Voxel Digger (a brush
+    sphere marker shows your aim). Create from GameObject > 3D Object > Voxel
+    Terrain, or start with the new "Voxel Sandbox" template.
+  - RAISE terrain too. Both the heightmap Terrain Digger and the Voxel Digger now
+    have a secondary button (right mouse by default) that does the OPPOSITE of the
+    primary action — so one digger both digs AND builds the ground up.
+  - REAL WATER. A new Water component: a living, reflective, semi-transparent water
+    surface with rolling waves (it actually animates), a flowing current, and
+    sun-glint — not just a flat blue plane. Create from GameObject > 3D Object >
+    Water; the Terrain Sandbox now includes a lake.
+  - PAUSE MENU. A ready-made pause menu component: press Escape (configurable) to
+    freeze the game and pop up Resume / Quit (and an optional Main Menu) buttons
+    over a dimmed backdrop — no scripting. It pauses all gameplay via a new global
+    game state and frees the cursor to click; Quit cleanly exits the built game (or
+    stops Play in the editor). Both sandbox templates ship with one.
+  - BIGGER terrain. The terrain Size / Resolution (and voxel grid, water size)
+    limits are lifted — make maps as large as you want (huge values cost memory /
+    CPU, but that's your call). Pairs with World Streaming for giant worlds.
+
 v2.303.0  (Terrain overhaul: erosion, collision, digging)
   A big terrain pass — realism, physics, and fixes for the digging workflow:
 

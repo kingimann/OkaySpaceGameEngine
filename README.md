@@ -134,7 +134,18 @@ planet, `A` player ship.)*
   **import/export as PNG** (round-trip with World Machine / Gaea / Photoshop).
   Bodies walk on it with slope-aware collision (slide / bounce / friction), and a
   runtime **Terrain Digger** carves it live in Play with an on-ground brush marker.
-  Try the **Terrain Sandbox** template. The heightmap saves with the scene.
+  Try the **Terrain Sandbox** template. The heightmap saves with the scene. Size
+  and resolution are uncapped — build maps as large as you like.
+- **Voxel terrain (real caves)** — a smooth marching-cubes `VoxelTerrain` you can
+  dig actual caves, tunnels and overhangs into (not heightmap craters). Generate a
+  cave-riddled landscape and carve it live in Play with the `VoxelDigger` (left
+  mouse digs, right mouse adds), with a brush marker. See the **Voxel Sandbox**
+  template.
+- **Water** — a living `Water` surface: reflective, semi-transparent, with rolling
+  animated waves, a flowing current and sun-glint (not a flat blue plane).
+- **Pause menu** — a no-code `PauseMenu`: press Escape to freeze the game and show
+  Resume / Quit (and optional Main Menu) buttons. Pauses all gameplay and exits the
+  built game cleanly.
 - **Cascaded shadows** — directional cast shadows rendered as several
   camera-focused cascades so they stay crisp up close while cheaply covering
   distance on big maps (the practical, DX11-class stand-in for virtual shadow

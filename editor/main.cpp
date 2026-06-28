@@ -895,6 +895,9 @@ int   g_terrainThermalIters = 25;     // thermal erosion iterations
 float g_terrainThermalTalus = 1.2f;   // thermal erosion talus angle (height step)
 float g_terrainHmLow  = 0.0f;         // heightmap import: black -> this world Y
 float g_terrainHmHigh = 25.0f;        // heightmap import: white -> this world Y
+float g_voxSurface = 0.5f;            // voxel generate: surface height fraction
+float g_voxAmp     = 6.0f;            // voxel generate: relief amplitude
+float g_voxCaves   = 0.5f;            // voxel generate: cave amount (0..1)
 int   g_scatterProp = 0;       // 0 Tree,1 Pine,2 Rock,3 Bush
 int   g_scatterCount = 80;     // how many props to scatter per pass
 float g_scatterMinScale = 0.7f, g_scatterMaxScale = 1.5f;
@@ -1849,6 +1852,23 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 go->AddComponent<TerrainDigger>();   // dig/raise it at runtime out of the box
                 ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
                 ConsoleLog("Created Terrain (with a Terrain Digger: hold Left Mouse in Play to dig)");
+            }
+            if (ImGui::MenuItem("Voxel Terrain (caves)")) {
+                GameObject* go = ed.CreateEmpty("Voxel Terrain");
+                auto* v = go->AddComponent<VoxelTerrain>();
+                v->Resize(56, 32, 56); v->voxelSize = 1.5f;
+                v->Generate(0.5f, 7.0f, 0.55f, (unsigned)(ImGui::GetTime() * 1000.0));
+                v->Apply();
+                go->AddComponent<VoxelDigger>();     // dig caves / raise at runtime
+                ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
+                ConsoleLog("Created Voxel Terrain (Voxel Digger: Left Mouse digs caves, Right Mouse adds)");
+            }
+            if (ImGui::MenuItem("Water")) {
+                GameObject* go = ed.CreateEmpty("Water");
+                auto* w = go->AddComponent<Water>();
+                w->size = 80.0f; w->Apply();
+                ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
+                ConsoleLog("Created Water (animated reflective surface)");
             }
             if (ImGui::MenuItem("Character")) {
                 GameObject* g = ed.CreateEmpty("Character");
@@ -5243,7 +5263,8 @@ void DrawNewProjectPopup(EditorState& ed) {
             {C_3D,    "Third Person","Orbit camera",       "Your blocky Character with an orbit camera behind it: WASD relative to the camera, Space to jump, with walk/run animation. You see and control the character.", &EditorState::NewThirdPerson},
             {C_3D,    "Third Person Shooter","Over-the-shoulder aim", "An over-the-shoulder shooter: the body faces where you aim, right mouse aims (camera zooms in), left mouse fires, cursor locked. Ground with cover crates and a row of targets to shoot.", &EditorState::NewThirdPersonShooter},
             {C_3D,    "Point & Click","Click to move",     "RuneScape / Diablo style: click the ground and your Character walks there, under a high angled camera. Powered by the Click To Move controller.", &EditorState::NewPointAndClick},
-            {C_3D,    "Terrain Sandbox","Dig & sculpt",    "A procedurally generated, eroded hilly terrain you walk on in first person and reshape live: hold Left Mouse to dig craters (a ring marker shows the brush), Space to jump. A base for survival / mining / building games.", &EditorState::NewTerrainSandbox},
+            {C_3D,    "Terrain Sandbox","Dig & sculpt",    "A procedurally generated, eroded hilly terrain you walk on in first person and reshape live: hold Left Mouse to dig craters (a ring marker shows the brush), Right Mouse raises, Space to jump. A lake of real animated water, and Esc pauses. A base for survival / mining / building games.", &EditorState::NewTerrainSandbox},
+            {C_3D,    "Voxel Sandbox","Dig real caves",    "A smooth marching-cubes voxel terrain riddled with caves you can tunnel through in first person: Left Mouse digs, Right Mouse fills, Space jumps, Esc pauses. Real caves / tunnels / overhangs (not heightmap craters).", &EditorState::NewVoxelSandbox},
             {C_3D,    "Vehicle (3D)","Arcade driving",     "A drivable car on a wide ground with a chase camera and a few blocks to weave around. WASD/arrows to steer, Space to handbrake. Powered by the Vehicle Controller.", &EditorState::NewVehicle3D},
             {C_2D,    "Vehicle (2D)","Top-down driving",   "A top-down car with grip + drift, an orthographic follow camera, and cones to weave around. WASD/arrows to drive, Space to handbrake. Powered by the Vehicle Controller 2D.", &EditorState::NewVehicle2D},
             {C_2D,    "Platformer",  "Side-scroller",      "A side-scroller: follow camera, a physics player on a wide ground, and a coin.", &EditorState::NewPlatformer},
@@ -7679,10 +7700,15 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##terr", c)) { tr->color = {c[0],c[1],c[2],c[3]}; tr->Apply(); ed.dirty = true; }
             int res = tr->resolution;
-            if (ImGui::SliderInt("Resolution##terr", &res, 4, 128) && res != tr->resolution) {
+            // Resolution: drag for unbounded detail (huge values cost memory/CPU —
+            // that's the user's call). Ctrl-click any drag field to type a value.
+            if (ImGui::DragInt("Resolution##terr", &res, 1.0f, 4, 2048) && res != tr->resolution) {
+                if (res < 4) res = 4;
                 tr->Resize(res); tr->Apply(); ed.dirty = true;
             }
-            if (ImGui::DragFloat("Size##terr", &tr->size, 0.5f, 2.0f, 1000.0f)) { tr->Apply(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vertices per side. Large maps: raise Size and Resolution together.");
+            if (ImGui::DragFloat("Size##terr", &tr->size, 1.0f, 2.0f, 1000000.0f)) { tr->Apply(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("World width/depth. Make it as large as you like (pair with Resolution for detail).");
 
             ImGui::SeparatorText("Texturing");
             char ttex[260]; std::strncpy(ttex, tr->texture.c_str(), sizeof(ttex) - 1); ttex[sizeof(ttex) - 1] = '\0';
@@ -7869,8 +7895,101 @@ void DrawInspector(EditorState& ed) {
                 float bc[4] = {td->brushColor.r, td->brushColor.g, td->brushColor.b, td->brushColor.a};
                 if (ImGui::ColorEdit4("Marker color##tdg", bc)) { td->brushColor = {bc[0],bc[1],bc[2],bc[3]}; ed.dirty = true; }
             }
+            const char* rbtns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+            int rbi = (td->raiseButton < 0 || td->raiseButton > 2) ? 3 : td->raiseButton;
+            if (ImGui::Combo("Raise Button##tdg", &rbi, rbtns, 4)) { td->raiseButton = (rbi == 3) ? -1 : rbi; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold this to RAISE terrain (build it up). Default right mouse, so the same digger both digs and raises.");
             ImGui::TextDisabled("Heightmap: carves holes/hills, not caves/overhangs.");
             if (ImGui::SmallButton("Remove##tdg")) toRemove = td;
+        }
+    }
+    if (auto* v = dynamic_cast<VoxelTerrain*>(curComp)) {
+        if (CompHeader("Voxel Terrain", v, &toRemove)) {
+            ImGui::TextDisabled("Smooth marching-cubes voxels: real caves, tunnels & overhangs.");
+            float c[4] = {v->color.r, v->color.g, v->color.b, v->color.a};
+            if (ImGui::ColorEdit4("Color##vox", c)) { v->color = {c[0],c[1],c[2],c[3]}; v->Apply(); ed.dirty = true; }
+            if (ImGui::Checkbox("Auto-color (height/slope)##vox", &v->autoColor)) { v->Apply(); ed.dirty = true; }
+            int dims[3] = {v->nx, v->ny, v->nz};
+            if (ImGui::DragInt3("Grid (X,Y,Z)##vox", dims, 1, 4, 512)) {
+                for (int& d : dims) if (d < 4) d = 4;
+                v->Resize(dims[0], dims[1], dims[2]); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sample resolution. Resizing clears the field — regenerate after.");
+            if (ImGui::DragFloat("Voxel Size##vox", &v->voxelSize, 0.05f, 0.1f, 10.0f)) { v->Apply(); ed.dirty = true; }
+            ImGui::SeparatorText("Generate");
+            if (ImGui::DragFloat("Surface##vox", &g_voxSurface, 0.01f, 0.1f, 0.95f)) {}
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of the height the ground surface sits at.");
+            ImGui::DragFloat("Relief##vox", &g_voxAmp, 0.2f, 0.0f, 40.0f);
+            ImGui::SliderFloat("Caves##vox", &g_voxCaves, 0.0f, 1.0f);
+            if (ImGui::Button("Generate##voxgen")) {
+                v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)(ImGui::GetTime() * 1000.0));
+                v->Apply(); ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Solid Slab##voxgen")) { v->FillSlab(0.5f); v->Apply(); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear##voxgen")) { v->Resize(v->nx, v->ny, v->nz); v->Apply(); ed.dirty = true; }
+            ImGui::TextDisabled("Add a Voxel Digger to carve it live in Play.");
+            if (ImGui::SmallButton("Remove##vox")) toRemove = v;
+        }
+    }
+    if (auto* vd = dynamic_cast<VoxelDigger*>(curComp)) {
+        if (CompHeader("Voxel Digger", vd, &toRemove)) {
+            ImGui::TextDisabled("Aim with the camera and hold to carve caves/tunnels (or add material).");
+            const char* modes[] = {"Dig (remove)", "Add (build)"};
+            int md = (int)vd->mode;
+            if (ImGui::Combo("Primary##vdg", &md, modes, 2)) { vd->mode = (VoxelDigger::Mode)md; ed.dirty = true; }
+            const char* btns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+            int bi = (vd->button < 0 || vd->button > 2) ? 3 : vd->button;
+            if (ImGui::Combo("Primary Button##vdg", &bi, btns, 4)) { vd->button = (bi == 3) ? -1 : bi; ed.dirty = true; }
+            int abi = (vd->addButton < 0 || vd->addButton > 2) ? 3 : vd->addButton;
+            if (ImGui::Combo("Opposite Button##vdg", &abi, btns, 4)) { vd->addButton = (abi == 3) ? -1 : abi; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Does the opposite of Primary, so one digger both digs AND raises. Default right mouse.");
+            if (ImGui::DragFloat("Brush Radius##vdg", &vd->radius, 0.1f, 0.25f, 30.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Strength / sec##vdg", &vd->strength, 0.1f, 0.1f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Reach##vdg", &vd->range, 0.5f, 1.0f, 500.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Show brush marker##vdg", &vd->showBrush)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##vdg")) toRemove = vd;
+        }
+    }
+    if (auto* w = dynamic_cast<Water*>(curComp)) {
+        if (CompHeader("Water", w, &toRemove)) {
+            ImGui::TextDisabled("A living, reflective water surface with rolling waves.");
+            float c[4] = {w->color.r, w->color.g, w->color.b, w->opacity};
+            if (ImGui::ColorEdit4("Color##wat", c)) { w->color = {c[0],c[1],c[2],c[3]}; w->opacity = c[3]; w->Apply(); ed.dirty = true; }
+            if (ImGui::DragFloat("Size##wat", &w->size, 1.0f, 1.0f, 1000000.0f)) { w->Apply(); ed.dirty = true; }
+            if (ImGui::SliderInt("Detail##wat", &w->resolution, 4, 128)) { w->Apply(); ed.dirty = true; }
+            ImGui::SeparatorText("Waves");
+            if (ImGui::DragFloat("Height##wat", &w->waveHeight, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Length##wat", &w->waveLength, 0.1f, 0.5f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Speed##wat", &w->waveSpeed, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            ImGui::SeparatorText("Surface");
+            if (ImGui::SliderFloat("Reflectivity##wat", &w->reflectivity, 0.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
+            if (ImGui::SliderFloat("Glint##wat", &w->specular, 0.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
+            if (ImGui::DragFloat2("Flow##wat", &w->flow.x, 0.005f, -1.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("UV scroll speed — the current the surface drifts at.");
+            if (ImGui::SmallButton("Remove##wat")) toRemove = w;
+        }
+    }
+    if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
+        if (CompHeader("Pause Menu", pm, &toRemove)) {
+            ImGui::TextDisabled("Press the toggle key in Play to pause; Resume / Quit buttons appear.");
+            char tbuf[128]; std::snprintf(tbuf, sizeof(tbuf), "%s", pm->title.c_str());
+            if (ImGui::InputText("Title##pm", tbuf, sizeof(tbuf))) { pm->title = tbuf; ed.dirty = true; }
+            const char* keys[] = {"Escape", "P", "Tab"};
+            const char kcodes[] = {27, 'p', 9};
+            int ki = 0; for (int i = 0; i < 3; ++i) if (pm->toggleKey == kcodes[i]) ki = i;
+            if (ImGui::Combo("Toggle Key##pm", &ki, keys, 3)) { pm->toggleKey = kcodes[ki]; ed.dirty = true; }
+            if (ImGui::Checkbox("Resume button##pm", &pm->showResume)) ed.dirty = true;
+            if (ImGui::Checkbox("Quit button##pm", &pm->showQuit)) ed.dirty = true;
+            char mbuf[200]; std::snprintf(mbuf, sizeof(mbuf), "%s", pm->mainMenuScene.c_str());
+            if (ImGui::InputText("Main Menu Scene##pm", mbuf, sizeof(mbuf))) { pm->mainMenuScene = mbuf; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayscene to load from a 'Main Menu' button (blank = no button).");
+            float dc[4] = {pm->dimColor.r, pm->dimColor.g, pm->dimColor.b, pm->dimColor.a};
+            if (ImGui::ColorEdit4("Backdrop##pm", dc)) { pm->dimColor = {dc[0],dc[1],dc[2],dc[3]}; ed.dirty = true; }
+            float pc[4] = {pm->panelColor.r, pm->panelColor.g, pm->panelColor.b, pm->panelColor.a};
+            if (ImGui::ColorEdit4("Panel##pm", pc)) { pm->panelColor = {pc[0],pc[1],pc[2],pc[3]}; ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##pm")) toRemove = pm;
         }
     }
     if (auto* ws = dynamic_cast<WorldStreamer*>(curComp)) {
@@ -11422,6 +11541,10 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
             if (item(!go->GetComponent<TerrainDigger>(), "Terrain Digger")) { go->AddComponent<TerrainDigger>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VoxelTerrain>(), "Voxel Terrain (caves)")) { auto* v = go->AddComponent<VoxelTerrain>(); v->Generate(0.5f, 6.0f, 0.5f, 1u); v->Apply(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<VoxelDigger>(), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Water>(), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
@@ -15604,6 +15727,8 @@ int main(int argc, char** argv) {
             okay::Input::SetUICaptured(invModal);
         }
         if (!g_paused) ed.Tick(dt);   // Pause freezes the sim (Step advances it)
+        // A PauseMenu / script Quit during Play stops play (mirrors the built game).
+        if (ed.isPlaying() && okay::Game::QuitRequested()) { ed.Stop(); g_paused = false; ConsoleLog("Quit (game requested exit)"); }
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
         // When the open scene changes, reset the autosave timer and look for a

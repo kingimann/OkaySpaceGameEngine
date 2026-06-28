@@ -51,6 +51,7 @@ public:
     void NewSnake();
     void NewInventory();
     void NewTerrainSandbox();
+    void NewVoxelSandbox();
 
     // ---- Files ---------------------------------------------------------
     bool Save(const std::string& path);

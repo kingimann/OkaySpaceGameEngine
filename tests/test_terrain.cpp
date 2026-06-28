@@ -370,6 +370,40 @@ int main() {
         }
     }
 
+    // --- Water: builds an animated mesh and round-trips through the serializer -
+    {
+        Scene s("WATER");
+        GameObject* go = s.CreateGameObject("Lake");
+        auto* w = go->AddComponent<Water>();
+        w->size = 60.0f; w->resolution = 24; w->waveHeight = 0.5f;
+        w->color = Color::FromBytes(30, 100, 150, 180); w->opacity = 0.6f;
+        w->Apply();
+        auto* mr = go->GetComponent<MeshRenderer>();
+        CHECK(mr != nullptr);
+        if (mr) {
+            CHECK((int)mr->mesh.vertices.size() == 25 * 25);   // (res+1)^2 grid
+            CHECK(mr->doubleSided);
+            CHECK(mr->reflectivity > 0.0f);
+            CHECK_NEAR(mr->color.a, 0.6f, 1e-3f);              // opacity drives alpha
+        }
+
+        // The surface actually animates: stepping time moves the vertices.
+        float y0 = mr ? mr->mesh.vertices[312].y : 0.0f;
+        for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);   // Start() ran on first update
+        float y1 = mr ? mr->mesh.vertices[312].y : 0.0f;
+        CHECK(std::fabs(y1 - y0) > 1e-4f);                      // waves rolled
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* w2 = s2.Find("Lake") ? s2.Find("Lake")->GetComponent<Water>() : nullptr;
+        CHECK(w2 != nullptr);
+        if (w2) {
+            CHECK_NEAR(w2->size, 60.0f, 1e-3f);
+            CHECK(w2->resolution == 24);
+            CHECK_NEAR(w2->waveHeight, 0.5f, 1e-3f);
+            CHECK_NEAR(w2->opacity, 0.6f, 1e-3f);
+        }
+    }
+
     // --- The Terrain Sandbox template builds a playable dig scene -------------
     {
         Scene s("sandbox");

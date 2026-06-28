@@ -82,6 +82,10 @@
 #include "okay/Components/TerrainDigger.hpp"
 #include "okay/Components/WorldStreamer.hpp"
 #include "okay/Components/Destructible.hpp"
+#include "okay/Components/VoxelTerrain.hpp"
+#include "okay/Components/VoxelDigger.hpp"
+#include "okay/Components/Water.hpp"
+#include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
@@ -278,7 +282,42 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << td->range << " " << td->relax
             << " " << td->hardness << " " << (td->showBrush ? 1 : 0)
             << " " << td->brushColor.r << " " << td->brushColor.g
-            << " " << td->brushColor.b << " " << td->brushColor.a << "\n";
+            << " " << td->brushColor.b << " " << td->brushColor.a
+            << " " << td->raiseButton << "\n";
+    }
+    if (auto* v = go->GetComponent<VoxelTerrain>()) {
+        out << "  voxelterrain " << v->nx << " " << v->ny << " " << v->nz
+            << " " << v->voxelSize << " " << v->iso << " " << (v->autoColor ? 1 : 0)
+            << " " << v->snowLevel << " " << v->rockSlope
+            << " " << v->color.r << " " << v->color.g << " " << v->color.b << " " << v->color.a
+            << " " << v->grassColor.r << " " << v->grassColor.g << " " << v->grassColor.b
+            << " " << v->rockColor.r << " " << v->rockColor.g << " " << v->rockColor.b
+            << " " << v->soilColor.r << " " << v->soilColor.g << " " << v->soilColor.b
+            << " " << v->snowColor.r << " " << v->snowColor.g << " " << v->snowColor.b
+            << " " << v->EncodeDensity() << "\n";
+    }
+    if (auto* vd = go->GetComponent<VoxelDigger>()) {
+        out << "  voxeldigger " << (int)vd->mode << " " << vd->button
+            << " " << (int)(unsigned char)vd->key << " " << vd->radius << " " << vd->strength
+            << " " << vd->range << " " << (vd->showBrush ? 1 : 0)
+            << " " << vd->brushColor.r << " " << vd->brushColor.g
+            << " " << vd->brushColor.b << " " << vd->brushColor.a
+            << " " << vd->addButton << "\n";
+    }
+    if (auto* pm = go->GetComponent<PauseMenu>()) {
+        out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
+            << " " << (pm->showResume ? 1 : 0) << " " << (pm->showQuit ? 1 : 0)
+            << " " << pm->dimColor.r << " " << pm->dimColor.g << " " << pm->dimColor.b << " " << pm->dimColor.a
+            << " " << pm->panelColor.r << " " << pm->panelColor.g << " " << pm->panelColor.b << " " << pm->panelColor.a
+            << " " << Quote(pm->title) << " " << Quote(pm->mainMenuScene) << "\n";
+    }
+    if (auto* w = go->GetComponent<Water>()) {
+        out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
+            << " " << w->waveLength << " " << w->waveSpeed
+            << " " << w->color.r << " " << w->color.g << " " << w->color.b
+            << " " << w->opacity << " " << w->reflectivity << " " << w->specular
+            << " " << w->shininess << " " << w->flow.x << " " << w->flow.y
+            << " " << Quote(w->texture) << "\n";
     }
     if (auto* ws = go->GetComponent<WorldStreamer>()) {
         out << "  worldstreamer " << ws->cellSize << " " << ws->loadRadius
@@ -2610,7 +2649,50 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> td->hardness;
                         int sb = 1; in >> sb; td->showBrush = (sb != 0);
                         in >> td->brushColor.r >> td->brushColor.g >> td->brushColor.b >> td->brushColor.a;
+                        in >> std::ws;
+                        if (std::isdigit(in.peek()) || in.peek() == '-') in >> td->raiseButton;
                     }
+                } else if (field == "voxelterrain") {
+                    auto* v = go->AddComponent<VoxelTerrain>();
+                    int X = 48, Y = 28, Z = 48, ac = 1;
+                    in >> X >> Y >> Z;
+                    v->Resize(X, Y, Z);
+                    in >> v->voxelSize >> v->iso >> ac >> v->snowLevel >> v->rockSlope;
+                    v->autoColor = (ac != 0);
+                    in >> v->color.r >> v->color.g >> v->color.b >> v->color.a
+                       >> v->grassColor.r >> v->grassColor.g >> v->grassColor.b
+                       >> v->rockColor.r >> v->rockColor.g >> v->rockColor.b
+                       >> v->soilColor.r >> v->soilColor.g >> v->soilColor.b
+                       >> v->snowColor.r >> v->snowColor.g >> v->snowColor.b;
+                    std::string blob; in >> blob;     // base64 density (whitespace-free)
+                    v->DecodeDensity(blob);
+                    v->Apply();
+                } else if (field == "voxeldigger") {
+                    auto* vd = go->AddComponent<VoxelDigger>();
+                    int md = 0, btn = 0, k = 0, sb = 1;
+                    in >> md >> btn >> k >> vd->radius >> vd->strength >> vd->range >> sb
+                       >> vd->brushColor.r >> vd->brushColor.g >> vd->brushColor.b >> vd->brushColor.a;
+                    vd->mode = (VoxelDigger::Mode)md;
+                    vd->button = btn; vd->key = (char)k; vd->showBrush = (sb != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') in >> vd->addButton;
+                } else if (field == "pausemenu") {
+                    auto* pm = go->AddComponent<PauseMenu>();
+                    int tk = 27, sr = 1, sq = 1;
+                    in >> tk >> sr >> sq
+                       >> pm->dimColor.r >> pm->dimColor.g >> pm->dimColor.b >> pm->dimColor.a
+                       >> pm->panelColor.r >> pm->panelColor.g >> pm->panelColor.b >> pm->panelColor.a;
+                    pm->toggleKey = (char)tk; pm->showResume = (sr != 0); pm->showQuit = (sq != 0);
+                    pm->title = ReadQuoted(in);
+                    pm->mainMenuScene = ReadQuoted(in);
+                } else if (field == "water") {
+                    auto* w = go->AddComponent<Water>();
+                    in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed
+                       >> w->color.r >> w->color.g >> w->color.b >> w->opacity
+                       >> w->reflectivity >> w->specular >> w->shininess >> w->flow.x >> w->flow.y;
+                    w->color.a = w->opacity;
+                    w->texture = ReadQuoted(in);
+                    w->Apply();
                 } else if (field == "worldstreamer") {
                     auto* ws = go->AddComponent<WorldStreamer>();
                     int once = 1;

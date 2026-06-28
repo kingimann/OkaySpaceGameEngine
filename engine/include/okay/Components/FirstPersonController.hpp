@@ -8,6 +8,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
@@ -95,6 +96,7 @@ public:
 
     void Update(float dt) override {
         if (!transform) return;
+        if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
         ApplyBodyVisibility();
         // Keep the cursor hidden + locked while playing (re-assert if something freed
         // it). Turn lockCursor off to author with a normal pointer / click screen UI.

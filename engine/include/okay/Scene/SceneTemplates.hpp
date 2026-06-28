@@ -36,6 +36,10 @@
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/TerrainDigger.hpp"
+#include "okay/Components/VoxelTerrain.hpp"
+#include "okay/Components/VoxelDigger.hpp"
+#include "okay/Components/Water.hpp"
+#include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Light.hpp"
 
 namespace okay {
@@ -946,10 +950,66 @@ inline void TerrainSandbox(Scene& scene) {
     camObj->transform->SetParent(player->transform, false);
     camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height
 
+    // A lake: animated reflective water sitting in the low ground.
+    GameObject* lake = scene.CreateGameObject("Water");
+    lake->transform->localPosition = {0, 3.0f, 0};
+    auto* water = lake->AddComponent<Water>();
+    water->size = 110.0f;
+    water->Apply();
+
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD + mouse to move    Hold Left Mouse to dig    Space to jump";
+    ht->text = "WASD + mouse to move    Left Mouse dig / Right Mouse raise    Space jump";
     ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
+
+    scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();   // Esc to pause / quit
+}
+
+/// A voxel-digging sandbox: a smooth marching-cubes voxel terrain riddled with
+/// caves you can tunnel through (and add material back) in first person — the
+/// "dig a real hole / mine a cave" sandbox heightmaps can't do. Left mouse digs,
+/// right mouse builds.
+inline void VoxelSandbox(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Voxel Sandbox");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* ground = scene.CreateGameObject("Voxel Terrain");
+    auto* vox = ground->AddComponent<VoxelTerrain>();
+    vox->Resize(64, 40, 64);
+    vox->voxelSize = 1.5f;
+    vox->Generate(0.55f, 8.0f, 0.7f, 2024u);   // hills + a cave network
+    vox->Apply();
+    auto* dig = ground->AddComponent<VoxelDigger>();
+    dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)
+
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = {0, vox->SizeY() + 6.0f, 0};
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};
+    }
+    player->AddComponent<FirstPersonController>();
+
+    GameObject* camObj = scene.CreateGameObject("FPS Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->SetParent(player->transform, false);
+    camObj->transform->localPosition = {0, 1.62f, 0.0f};
+
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* ht = help->AddComponent<TextRenderer>();
+    ht->text = "WASD + mouse    Left Mouse = dig cave / tunnel    Right Mouse = add    Space = jump";
+    ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
+
+    scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();   // Esc to pause / quit
 }
 
 } // namespace Templates

@@ -345,6 +345,14 @@ add_executable(test_terrain test_terrain.cpp)
 target_link_libraries(test_terrain PRIVATE okay::engine)
 add_test(NAME terrain COMMAND test_terrain)
 
+add_executable(test_voxel test_voxel.cpp)
+target_link_libraries(test_voxel PRIVATE okay::engine)
+add_test(NAME voxel COMMAND test_voxel)
+
+add_executable(test_pausemenu test_pausemenu.cpp)
+target_link_libraries(test_pausemenu PRIVATE okay::engine)
+add_test(NAME pausemenu COMMAND test_pausemenu)
+
 add_executable(test_worldstreamer test_worldstreamer.cpp)
 target_link_libraries(test_worldstreamer PRIVATE okay::engine)
 add_test(NAME worldstreamer COMMAND test_worldstreamer)

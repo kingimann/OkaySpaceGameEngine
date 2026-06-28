@@ -288,6 +288,18 @@ void EditorState::NewTerrainSandbox() {
     dirty = false;
 }
 
+void EditorState::NewVoxelSandbox() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::VoxelSandbox(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 4, 0};
+    camDist = 36.0f;
+    m_selected = m_scene.Find("Voxel Terrain");
+    dirty = false;
+}
+
 void EditorState::NewThirdPerson() {
     NewScene();
     m_suppressUndo = true;
@@ -429,6 +441,7 @@ void EditorState::Play() {
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
     m_selected = nullptr;
     ActionList::ResetVars();   // clear visual-script variables each Play session
+    Game::Reset();             // clear stale pause/quit state from a prior session
     m_scene.Start();
     m_playing = true;
 }
@@ -436,6 +449,7 @@ void EditorState::Play() {
 void EditorState::Stop() {
     if (!m_playing) return;
     m_playing = false;
+    Game::Reset();   // unpause + clear quit so the next Play starts clean
     // Deserialize rebuilds the scene, destroying every live component — including
     // any NetworkManager m_net points at. Drop the pointer first so TickServices
     // never dereferences freed memory (a use-after-free crash).

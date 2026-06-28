@@ -27,7 +27,10 @@ class TerrainDigger : public Behaviour {
 public:
     enum class Mode { Dig, Raise, Smooth, Flatten };
     Mode  mode      = Mode::Dig;
-    int   button    = 0;        ///< mouse button held to act (0=left, 1=right, 2=middle); <0 = none
+    int   button    = 0;        ///< mouse button held for the primary action (mode); <0 = none
+    /// Secondary button that RAISES the terrain (so the same digger both digs and
+    /// builds up ground): left mouse runs `mode`, right mouse raises by default.
+    int   raiseButton = 1;
     char  key       = 0;        ///< optional key that also acts (0 = none)
     float radius    = 3.0f;     ///< brush radius (world units)
     float strength  = 6.0f;     ///< height change per second while held (Dig/Raise)
@@ -88,14 +91,15 @@ public:
         if (showBrush && aiming) ShowBrushAt(*terr, lx, lz);
         else HideBrush();
 
-        bool act = false;
-        if (button >= 0 && Input::GetMouseButton(button)) act = true;
-        if (key && Input::GetKey(key)) act = true;
-        if (!act || dt <= 0.0f || !aiming) return;
+        bool primary = (button >= 0 && Input::GetMouseButton(button)) || (key && Input::GetKey(key));
+        bool raise = (raiseButton >= 0 && Input::GetMouseButton(raiseButton));
+        if ((!primary && !raise) || dt <= 0.0f || !aiming) return;
 
         const float amt = strength * dt;
         const float rate = std::min(1.0f, relax * dt);
-        switch (mode) {
+        // Secondary button always raises; otherwise run the configured mode.
+        Mode m = (raise && !primary) ? Mode::Raise : mode;
+        switch (m) {
             case Mode::Dig:     terr->RaiseAt(lx, lz, radius, -amt, hardness); break;
             case Mode::Raise:   terr->RaiseAt(lx, lz, radius,  amt, hardness); break;
             case Mode::Smooth:  terr->SmoothAt(lx, lz, radius, rate, hardness); break;

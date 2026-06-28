@@ -1070,6 +1070,7 @@ int main(int argc, char** argv) {
         if (ok && !m.vertices.empty()) mr->mesh = m;
     }
 
+    okay::Game::Reset();   // clear any stale pause/quit state from a prior scene
     scene.Start();
 
     // Open the first connected game controller, if any.
@@ -1116,7 +1117,10 @@ int main(int argc, char** argv) {
                 bool typing = false;
                 for (const auto& up : scene.Objects())
                     if (auto* f = up->GetComponent<UIInputField>()) if (f->focused) typing = true;
-                if (!typing && cfg.quitOnEscape) running = false;
+                // A PauseMenu owns Escape (it pauses instead of quitting); only hard-quit
+                // on Escape when the scene has no pause menu.
+                bool hasPause = scene.FindObjectOfType<okay::PauseMenu>() != nullptr;
+                if (!typing && cfg.quitOnEscape && !hasPause) running = false;
             }
         }
 
@@ -1288,6 +1292,7 @@ int main(int argc, char** argv) {
         // advance the scene by the scaled delta (timeScale 0 = paused).
         Time::Step(tick ? dt : 0.0f);
         if (tick) scene.Update(Time::DeltaTime());
+        if (okay::Game::QuitRequested()) running = false;   // a PauseMenu / script asked to quit
 
         // Keyboard / gamepad menu navigation (arrows/WASD + Enter/Space/A).
         NavigateUI(scene);

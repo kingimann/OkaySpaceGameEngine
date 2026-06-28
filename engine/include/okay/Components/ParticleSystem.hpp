@@ -92,6 +92,16 @@ public:
     float gravityModifier = 1.0f;       // scales gravity (Unity-style)
     float damping = 0.0f;               // linear drag per second (0 = none)
 
+    // ---- Collision (Unity's Collision module, world-plane mode) ----
+    /// Bounce particles off a horizontal ground plane at world height `collisionY`
+    /// (sparks skittering off a floor, bouncing debris, rain splatter). Cheap — one
+    /// plane test per particle, no colliders needed.
+    bool  collision = false;
+    float collisionY = 0.0f;            // world height of the plane
+    float bounce = 0.5f;                // restitution: 0 = stick, 1 = perfect bounce
+    float collisionFriction = 0.1f;     // 0..1 tangential speed lost per bounce
+    float collisionLifeLoss = 0.0f;     // 0..1 fraction of remaining life lost per bounce
+
     std::uint64_t seed = 1234567u;
 
     /// Clamp the pool size so a malformed/hand-edited scene (negative or absurd
@@ -142,6 +152,15 @@ public:
             if (drag != 1.0f) p.velocity *= drag;
             p.position += p.velocity * dt;
             p.rotation += p.angularVel * dt;
+            // Ground-plane collision: reflect downward motion, lose tangential speed
+            // to friction and (optionally) some life on each impact.
+            if (collision && p.position.y < collisionY && p.velocity.y < 0.0f) {
+                p.position.y = collisionY;
+                p.velocity.y = -p.velocity.y * bounce;
+                float keep = 1.0f - Mathf::Clamp01(collisionFriction);
+                p.velocity.x *= keep; p.velocity.z *= keep;
+                if (collisionLifeLoss > 0.0f) p.life -= p.maxLife * Mathf::Clamp01(collisionLifeLoss);
+            }
             float t = 1.0f - Mathf::Clamp01(p.life / p.maxLife);   // 0 at birth -> 1 at death
             if (sizeOverLife) p.size = p.size0 + (endSize - p.size0) * t;
             if (colorOverLife) {

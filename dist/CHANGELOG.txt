@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.288.0  (Particle collision)
+  - Particles can now bounce off a horizontal ground plane (Unity's Collision
+    module, world-plane mode): sparks skittering off a floor, bouncing debris,
+    rain splatter — all without adding colliders.
+  - Tunable per system: enable collision, the plane height (Ground Y), Bounce
+    (restitution 0..1), Friction (tangential speed lost per hit), and Life Loss
+    (fraction of life shed per impact, for quick-settling effects).
+  - One cheap plane test per particle in the integration step, so it runs the
+    same in the editor preview and the exported game. New Inspector "Collision"
+    section; old scenes load unchanged.
+
 v2.287.0  (Particle sprites + spin)
   - Particles can now use a sprite TEXTURE (smoke/spark/flare/glow PNG), drawn as
     a camera-facing billboard tinted by the particle colour — so emitters read as

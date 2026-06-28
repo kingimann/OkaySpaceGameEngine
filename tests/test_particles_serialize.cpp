@@ -44,6 +44,12 @@ int main() {
     ps->startRotationRandom = 15.0f;
     ps->rotationSpeed = 90.0f;
     ps->rotationSpeedRandom = 10.0f;
+    // v5: ground-plane collision.
+    ps->collision = true;
+    ps->collisionY = -1.5f;
+    ps->bounce = 0.7f;
+    ps->collisionFriction = 0.25f;
+    ps->collisionLifeLoss = 0.1f;
 
     std::string text = SceneSerializer::Serialize(scene);
     Scene loaded("L");
@@ -88,6 +94,11 @@ int main() {
     CHECK(r->texture == "smoke.png");
     CHECK_NEAR(r->startRotation, 45.0f, 0.001f);
     CHECK_NEAR(r->rotationSpeed, 90.0f, 0.001f);
+    // v5 collision fields round-trip.
+    CHECK(r->collision);
+    CHECK_NEAR(r->collisionY, -1.5f, 0.001f);
+    CHECK_NEAR(r->bounce, 0.7f, 0.001f);
+    CHECK_NEAR(r->collisionFriction, 0.25f, 0.001f);
 
     // Spin: a particle's billboard rotation advances by rotationSpeed * dt.
     Scene spin("SP");
@@ -98,6 +109,27 @@ int main() {
     ps5->Update(0.5f);   // +50 degrees
     for (const auto& p : ps5->Particles())
         if (p.alive) CHECK_NEAR(p.rotation, 50.0f, 1.0f);
+
+    // Collision: a particle falling onto the ground plane bounces back UP, losing
+    // speed to restitution.
+    Scene coll("CL");
+    auto* ps6 = coll.CreateGameObject("E6")->AddComponent<ParticleSystem>();
+    ps6->emissionRate = 0.0f; ps6->startLifetime = 10.0f;
+    ps6->gravity = {0, 0, 0};            // isolate the bounce from gravity
+    ps6->collision = true; ps6->collisionY = 0.0f; ps6->bounce = 0.5f;
+    ps6->collisionFriction = 0.0f;
+    ps6->Awake();
+    ps6->Emit(1);
+    // Drive the single particle straight down through the plane.
+    for (auto& pp : const_cast<std::vector<ParticleSystem::Particle>&>(ps6->Particles()))
+        if (pp.alive) { pp.position = {0, 0.05f, 0}; pp.velocity = {0, -2.0f, 0}; }
+    ps6->Update(0.1f);                   // moves to y<0 -> reflects
+    for (const auto& pp : ps6->Particles())
+        if (pp.alive) {
+            CHECK(pp.velocity.y > 0.0f);          // bounced upward
+            CHECK_NEAR(pp.velocity.y, 1.0f, 0.01f); // 2.0 * 0.5 restitution
+            CHECK(pp.position.y >= 0.0f);         // pushed back to the plane
+        }
 
     // Behaviour: a cone emitter actually spawns and integrates particles.
     Scene sim("S");

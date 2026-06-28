@@ -1214,7 +1214,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ps->startVelocity.z << " " << ps->gravity.z << " " << ps->boxSize.z << " "
             // --- appended (v4): sprite texture + billboard rotation ---
             << Quote(ps->texture) << " " << ps->startRotation << " " << ps->startRotationRandom << " "
-            << ps->rotationSpeed << " " << ps->rotationSpeedRandom << "\n";
+            << ps->rotationSpeed << " " << ps->rotationSpeedRandom << " "
+            // --- appended (v5): ground-plane collision ---
+            << (ps->collision ? 1 : 0) << " " << ps->collisionY << " " << ps->bounce << " "
+            << ps->collisionFriction << " " << ps->collisionLifeLoss << "\n";
     }
 }
 } // namespace
@@ -3040,9 +3043,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 ps->texture = ReadQuoted(in);
                                 in >> std::ws;
                                 int pk4 = in.peek();
-                                if (std::isdigit(pk4) || pk4 == '-' || pk4 == '+' || pk4 == '.')
+                                if (std::isdigit(pk4) || pk4 == '-' || pk4 == '+' || pk4 == '.') {
                                     in >> ps->startRotation >> ps->startRotationRandom
                                        >> ps->rotationSpeed >> ps->rotationSpeedRandom;
+                                    // Appended v5 fields: ground-plane collision.
+                                    in >> std::ws;
+                                    int pk5 = in.peek();
+                                    if (std::isdigit(pk5) || pk5 == '-' || pk5 == '+' || pk5 == '.') {
+                                        int coll = 0;
+                                        in >> coll >> ps->collisionY >> ps->bounce
+                                           >> ps->collisionFriction >> ps->collisionLifeLoss;
+                                        ps->collision = (coll != 0);
+                                    }
+                                }
                             }
                         }
                     }

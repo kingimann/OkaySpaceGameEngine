@@ -7070,6 +7070,17 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
 
+            // ---- Collision (ground plane) ----
+            ImGui::SeparatorText("Collision");
+            if (ImGui::Checkbox("Collide w/ Ground##ps", &ps->collision)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bounce particles off a horizontal plane at the height below (sparks/debris/rain).");
+            if (ps->collision) {
+                if (ImGui::DragFloat("Ground Y##ps", &ps->collisionY, 0.05f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Bounce##ps", &ps->bounce, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Friction##ps", &ps->collisionFriction, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::SliderFloat("Life Loss##ps", &ps->collisionLifeLoss, 0.0f, 1.0f)) ed.dirty = true;
+            }
+
             // ---- Bursts & duration ----
             ImGui::SeparatorText("Bursts & Duration");
             if (ImGui::DragInt("Burst Count##ps", &ps->burstCount, 1.0f, 0, 100000)) ed.dirty = true;

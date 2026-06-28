@@ -10198,6 +10198,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom: world units per map pixel (smaller = more zoomed in)");
             if (ImGui::Checkbox("Use XZ (3D)##umm", &mm->useXZ)) ed.dirty = true;
             if (ImGui::DragFloat("Blip Size##umm", &mm->blipSize, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Blip Range##umm", &mm->blipRange, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Radar range: hide blips farther than this many world units from the centre (0 = show all).");
             AnchorCombo("Anchor##umm", mm->anchor, ed);
             ImGui::SeparatorText("Style");
             if (ImGui::Checkbox("Circular##umm", &mm->circular)) ed.dirty = true;
@@ -11657,6 +11659,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (!bp || !bp->active) continue;
             auto* bl = bp->GetComponent<MinimapBlip>();
             if (!bl || !bp->transform) continue;
+            if (!Minimap::WithinRange(*mm, center, bp->transform->Position())) continue;   // radar range
             float mx, my;
             bool inside = Minimap::WorldToMapR(*mm, center, bp->transform->Position(), sz.x, sz.y, mapHeading, mx, my, mmWpp);
             if (!inside) {

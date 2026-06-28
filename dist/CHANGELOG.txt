@@ -1,5 +1,10 @@
 OkaySpace Game Engine — Changelog
 
+v2.276.0  (Minimap radar range / fog-of-war)
+  - New "Blip Range" on the Minimap: blips farther than this many world units
+    from the centre are hidden (0 = show all) — a radar-style sweep / soft
+    fog-of-war for contacts. Renders in player + editor, serialized + tested.
+
 v2.275.0  (Minimap: generate map from scene)
   - New "Generate from Scene" button on the Minimap: auto-creates a footprint
     rectangle for every MeshRenderer in the level (using its world position +

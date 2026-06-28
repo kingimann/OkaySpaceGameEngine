@@ -1078,6 +1078,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << " " << sh.points.size();
             for (const auto& p : sh.points) out << " " << p.x << " " << p.y;
         }
+        // --- appended (v8): radar blip range ---
+        out << " " << mm->blipRange;
         out << "\n";
     }
     if (auto* bl = go->GetComponent<MinimapBlip>()) {
@@ -2772,6 +2774,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                                 }
                                                 mm->mapShapes.push_back(std::move(sh));
                                             }
+                                            // v8: radar blip range.
+                                            in >> std::ws;
+                                            int pk11 = in.peek();
+                                            if (std::isdigit(pk11) || pk11 == '-' || pk11 == '+' || pk11 == '.')
+                                                in >> mm->blipRange;
                                         }
                                     }
                                 }

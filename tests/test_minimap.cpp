@@ -136,6 +136,7 @@ int main() {
             mm->mapShapes.push_back(road);
             mm->mapShapes.push_back(house);
         }
+        mm->blipRange = 42.5f;
         mm->showSelf = false;
         mm->viewCone = true; mm->viewConeAngle = 75.0f; mm->viewConeLength = 50.0f;
         mm->viewConeColor = Color::FromBytes(10, 20, 30, 80);
@@ -216,6 +217,7 @@ int main() {
                 CHECK(lm->mapShapes[1].points.size() == 2);
                 CHECK_NEAR(lm->mapShapes[1].points[1].y, 11.0f, 1e-3f);
             }
+            CHECK_NEAR(lm->blipRange, 42.5f, 1e-3f);
             if (lm->markers.size() == 2) {
                 CHECK(lm->markers[0].label == "Shop");
                 CHECK(lm->markers[1].label == "Boss");
@@ -234,6 +236,16 @@ int main() {
             CHECK(lb->icon == "icons/enemy.png");
             CHECK(lb->label == "Grunt");
         }
+    }
+
+    // --- Radar blip range gating -----------------------------------------
+    {
+        Minimap m; m.useXZ = true; m.blipRange = 10.0f;
+        Vec3 center{0, 0, 0};
+        CHECK(Minimap::WithinRange(m, center, Vec3{6, 0, 0}));        // within 10
+        CHECK(!Minimap::WithinRange(m, center, Vec3{0, 0, 15}));      // beyond 10
+        m.blipRange = 0.0f;                                            // 0 = unlimited
+        CHECK(Minimap::WithinRange(m, center, Vec3{1000, 0, 0}));
     }
 
     // --- Runtime zoom keys nudge worldPerPixel within [min,max] ----------

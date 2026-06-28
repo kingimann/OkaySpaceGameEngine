@@ -1804,6 +1804,7 @@ int main(int argc, char** argv) {
                 if (!bp || !bp->active) continue;
                 auto* bl = bp->GetComponent<MinimapBlip>();
                 if (!bl || !bp->transform) continue;
+                if (!Minimap::WithinRange(*mm, center, bp->transform->Position())) continue;   // radar range
                 float mx, my;
                 bool inside = Minimap::WorldToMapR(*mm, center, bp->transform->Position(), sz.x, sz.y, mapHeading, mx, my, wpp);
                 if (!inside) {

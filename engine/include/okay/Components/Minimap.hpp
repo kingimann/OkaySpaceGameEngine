@@ -37,6 +37,8 @@ public:
     float worldPerPixel = 0.5f;                      // zoom: world units per map pixel
     bool  useXZ = true;                              // 3D: plot X/Z; false: 2D X/Y
     float blipSize = 4.0f;                           // default blip square half-extent (px)
+    float blipRange = 0.0f;                           // radar range: hide blips farther than this
+                                                      // many world units from the centre (0 = all)
 
     // ---- Expanded options ----
     bool  circular = false;                          // round map (mask + circular border)
@@ -138,6 +140,15 @@ public:
         float originN = m.mapWorldCenter.y + S * 0.5f;   // texture's north edge (world north)
         u0 = ((ceE - halfX) - originW) / S; u1 = ((ceE + halfX) - originW) / S;
         v0 = (originN - (ceN + halfY)) / S; v1 = (originN - (ceN - halfY)) / S;
+    }
+
+    /// True if `world` is within `blipRange` world units of `center` on the map plane
+    /// (always true when blipRange <= 0). Used to gate radar contacts.
+    static bool WithinRange(const Minimap& m, const Vec3& center, const Vec3& world) {
+        if (m.blipRange <= 0.0f) return true;
+        float de = world.x - center.x;
+        float dn = m.useXZ ? (world.z - center.z) : (world.y - center.y);
+        return de * de + dn * dn <= m.blipRange * m.blipRange;
     }
 
     /// Heading (radians) of a forward vector in the map plane, measured from "north"

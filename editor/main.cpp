@@ -7034,6 +7034,23 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Velocity +/-##ps", &ps->velocityRandom, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Speed +/- %##ps", &ps->speedRandom, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
 
+            // ---- Appearance (sprite + spin) ----
+            ImGui::SeparatorText("Appearance");
+            char ptex[260];
+            std::strncpy(ptex, ps->texture.c_str(), sizeof(ptex) - 1);
+            ptex[sizeof(ptex) - 1] = '\0';
+            if (ImGui::InputText("Sprite##ps", ptex, sizeof(ptex))) { ps->texture = ptex; ed.dirty = true; }
+            if (AcceptAssetPathField(ps->texture)) ed.dirty = true;   // drop from Project
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional particle texture (smoke/spark/flare PNG). Empty = a soft round puff.");
+            if (!ps->texture.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##ptex")) { ps->texture.clear(); ed.dirty = true; }
+            }
+            if (ImGui::DragFloat("Rotation##ps", &ps->startRotation, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Rotation +/-##ps", &ps->startRotationRandom, 1.0f, 0.0f, 360.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Spin / sec##ps", &ps->rotationSpeed, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Spin +/-##ps", &ps->rotationSpeedRandom, 1.0f, 0.0f, 720.0f)) ed.dirty = true;
+
             // ---- Over lifetime ----
             ImGui::SeparatorText("Over Lifetime");
             if (ImGui::Checkbox("Fade Out##ps", &ps->fadeOverLife)) ed.dirty = true;
@@ -14047,11 +14064,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // depth-sorted back-to-front, and drawn as soft volumetric puffs (a faint outer
     // halo + bright core) so the now-3D particle motion reads as real depth.
     {
-        struct PP { float depth; ImVec2 sp; float rad; ImU32 col; };
+        struct PP { float depth; ImVec2 sp; float rad; ImU32 col; float rot; ImTextureID tex; };
         static std::vector<PP> pp; pp.clear();
         for (const auto& up : objs) {
             auto* ps = up->GetComponent<ParticleSystem>();
             if (!ps || !up->active) continue;
+            ImTextureID ptex = ps->texture.empty() ? (ImTextureID)0
+                               : (ImTextureID)GetThumb(ps->texture);   // sprite handle (0 = soft puff)
             for (const auto& p : ps->Particles()) {
                 if (!p.alive) continue;
                 Vec4 c = vp * Vec4{p.position, 1.0f};
@@ -14060,14 +14079,26 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                           center.y - (c.y / c.w) * canvasSize.y * 0.5f);
                 float rad = p.size * 0.5f / c.w * canvasSize.x * 0.5f;   // perspective size
                 if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
-                pp.push_back({c.w, sp, rad, ToColor(p.color)});
+                pp.push_back({c.w, sp, rad, ToColor(p.color), p.rotation, ptex});
             }
         }
         std::sort(pp.begin(), pp.end(), [](const PP& a, const PP& b) { return a.depth > b.depth; });
         for (const PP& q : pp) {
-            ImU32 halo = (q.col & 0x00FFFFFFu) | ((((q.col >> 24) & 0xFF) / 3) << 24);  // 1/3 alpha
-            dl->AddCircleFilled(q.sp, q.rad * 1.6f, halo, 12);   // soft outer glow
-            dl->AddCircleFilled(q.sp, q.rad, q.col, 12);          // bright core
+            if (q.tex) {
+                // Rotated, tinted sprite quad (smoke/spark/flare).
+                float ca = std::cos(q.rot * 0.01745329f), sa = std::sin(q.rot * 0.01745329f);
+                ImVec2 ax(ca * q.rad, sa * q.rad), ay(-sa * q.rad, ca * q.rad);
+                ImVec2 p1(q.sp.x - ax.x - ay.x, q.sp.y - ax.y - ay.y);
+                ImVec2 p2(q.sp.x + ax.x - ay.x, q.sp.y + ax.y - ay.y);
+                ImVec2 p3(q.sp.x + ax.x + ay.x, q.sp.y + ax.y + ay.y);
+                ImVec2 p4(q.sp.x - ax.x + ay.x, q.sp.y - ax.y + ay.y);
+                dl->AddImageQuad(q.tex, p1, p2, p3, p4,
+                                 ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1), q.col);
+            } else {
+                ImU32 halo = (q.col & 0x00FFFFFFu) | ((((q.col >> 24) & 0xFF) / 3) << 24);  // 1/3 alpha
+                dl->AddCircleFilled(q.sp, q.rad * 1.6f, halo, 12);   // soft outer glow
+                dl->AddCircleFilled(q.sp, q.rad, q.col, 12);          // bright core
+            }
         }
     }
 

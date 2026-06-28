@@ -1211,7 +1211,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ps->duration << " " << (ps->loop ? 1 : 0) << " "
             << ps->burstCount << " " << ps->burstTime << " "
             // --- appended (v3): 3D z-components for the now-3D vectors ---
-            << ps->startVelocity.z << " " << ps->gravity.z << " " << ps->boxSize.z << "\n";
+            << ps->startVelocity.z << " " << ps->gravity.z << " " << ps->boxSize.z << " "
+            // --- appended (v4): sprite texture + billboard rotation ---
+            << Quote(ps->texture) << " " << ps->startRotation << " " << ps->startRotationRandom << " "
+            << ps->rotationSpeed << " " << ps->rotationSpeedRandom << "\n";
     }
 }
 } // namespace
@@ -3029,8 +3032,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         // leaving z at its 0/1 default so they still load flat-but-valid).
                         in >> std::ws;
                         int pk3 = in.peek();
-                        if (std::isdigit(pk3) || pk3 == '-' || pk3 == '+' || pk3 == '.')
+                        if (std::isdigit(pk3) || pk3 == '-' || pk3 == '+' || pk3 == '.') {
                             in >> ps->startVelocity.z >> ps->gravity.z >> ps->boxSize.z;
+                            // Appended v4 fields: sprite texture (quoted) + billboard rotation.
+                            in >> std::ws;
+                            if (in.peek() == '"') {
+                                ps->texture = ReadQuoted(in);
+                                in >> std::ws;
+                                int pk4 = in.peek();
+                                if (std::isdigit(pk4) || pk4 == '-' || pk4 == '+' || pk4 == '.')
+                                    in >> ps->startRotation >> ps->startRotationRandom
+                                       >> ps->rotationSpeed >> ps->rotationSpeedRandom;
+                            }
+                        }
                     }
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
@@ -3134,6 +3148,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
         if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); }
+        if (auto* ps = go->GetComponent<ParticleSystem>())  add(ps->texture);
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
         if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
         if (auto* an = go->GetComponent<SpriteAnimator>())

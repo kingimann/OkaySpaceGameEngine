@@ -38,6 +38,12 @@ int main() {
     ps->loop = false;
     ps->burstCount = 25;
     ps->burstTime = 0.2f;
+    // v4: sprite texture + billboard rotation.
+    ps->texture = "smoke.png";
+    ps->startRotation = 45.0f;
+    ps->startRotationRandom = 15.0f;
+    ps->rotationSpeed = 90.0f;
+    ps->rotationSpeedRandom = 10.0f;
 
     std::string text = SceneSerializer::Serialize(scene);
     Scene loaded("L");
@@ -78,6 +84,20 @@ int main() {
     CHECK(!r->loop);
     CHECK(r->burstCount == 25);
     CHECK_NEAR(r->burstTime, 0.2f, 0.001f);
+    // v4 fields round-trip.
+    CHECK(r->texture == "smoke.png");
+    CHECK_NEAR(r->startRotation, 45.0f, 0.001f);
+    CHECK_NEAR(r->rotationSpeed, 90.0f, 0.001f);
+
+    // Spin: a particle's billboard rotation advances by rotationSpeed * dt.
+    Scene spin("SP");
+    auto* ps5 = spin.CreateGameObject("E5")->AddComponent<ParticleSystem>();
+    ps5->emissionRate = 0.0f; ps5->rotationSpeed = 100.0f; ps5->startLifetime = 5.0f;
+    ps5->Awake();
+    ps5->Emit(1);
+    ps5->Update(0.5f);   // +50 degrees
+    for (const auto& p : ps5->Particles())
+        if (p.alive) CHECK_NEAR(p.rotation, 50.0f, 1.0f);
 
     // Behaviour: a cone emitter actually spawns and integrates particles.
     Scene sim("S");

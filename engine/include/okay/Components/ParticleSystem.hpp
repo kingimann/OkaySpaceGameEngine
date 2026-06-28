@@ -33,6 +33,8 @@ public:
         float maxLife = 1.0f;
         float size = 0.25f;    // current (rendered) size
         float size0 = 0.25f;   // size at birth (for size-over-life lerp)
+        float rotation = 0.0f; // billboard spin, degrees
+        float angularVel = 0.0f;  // degrees/second
         Color color = Color::White;
         bool  alive = false;
     };
@@ -65,6 +67,18 @@ public:
     Vec3  startVelocity{0.0f, 3.0f, 0.0f};   // launch velocity (3D)
     float velocityRandom = 1.5f;        // +/- added to each velocity component
     float speedRandom = 0.0f;           // +/- scale on the launch speed (shapes)
+
+    // ---- Appearance ----
+    /// Optional sprite texture for each particle (smoke/spark/flare/glow PNG),
+    /// drawn as a camera-facing billboard tinted by the particle colour. Empty =
+    /// a soft round puff. Build Game bundles the file alongside the exe.
+    std::string texture;
+    /// Per-particle billboard spin (Unity's Rotation / Rotation-over-Lifetime),
+    /// degrees and degrees-per-second, each with a +/- randomiser.
+    float startRotation = 0.0f;
+    float startRotationRandom = 0.0f;
+    float rotationSpeed = 0.0f;
+    float rotationSpeedRandom = 0.0f;
 
     // ---- Over-lifetime ----
     Color endColor = Color::White;
@@ -127,6 +141,7 @@ public:
             p.velocity += gravity * (gravityModifier * dt);
             if (drag != 1.0f) p.velocity *= drag;
             p.position += p.velocity * dt;
+            p.rotation += p.angularVel * dt;
             float t = 1.0f - Mathf::Clamp01(p.life / p.maxLife);   // 0 at birth -> 1 at death
             if (sizeOverLife) p.size = p.size0 + (endSize - p.size0) * t;
             if (colorOverLife) {
@@ -161,6 +176,10 @@ private:
             p.size0 = p.size = startSize + (startSizeRandom > 0.0f
                                ? m_rng.Range(-startSizeRandom, startSizeRandom) : 0.0f);
             if (p.size0 < 0.0f) p.size0 = p.size = 0.0f;
+            p.rotation = startRotation + (startRotationRandom > 0.0f
+                         ? m_rng.Range(-startRotationRandom, startRotationRandom) : 0.0f);
+            p.angularVel = rotationSpeed + (rotationSpeedRandom > 0.0f
+                           ? m_rng.Range(-rotationSpeedRandom, rotationSpeedRandom) : 0.0f);
             p.color = startColor;
 
             Vec3 origin = transform ? transform->Position() : Vec3::Zero;

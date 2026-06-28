@@ -1306,11 +1306,13 @@ int main(int argc, char** argv) {
                 // showed no particles at all). Collected, depth-sorted back-to-front, and
                 // drawn as soft volumetric puffs so the 3D particle motion reads as depth.
                 {
-                    struct PP { float depth; int sx, sy, rad; SDL_Color col; };
+                    struct PP { float depth; float sx, sy, rad, rot; SDL_Color col; SDL_Texture* tex; };
                     std::vector<PP> pp;
                     for (const auto& up : scene.Objects()) {
                         auto* ps = up->GetComponent<ParticleSystem>();
                         if (!ps || !up->active || UIHidden(up.get())) continue;
+                        SDL_Texture* ptex = ps->texture.empty() ? nullptr
+                                            : GetTexture(renderer, ps->texture, baseDir, textureCache);
                         for (const auto& p : ps->Particles()) {
                             if (!p.alive) continue;
                             Vec4 c = vp * Vec4{p.position, 1.0f};
@@ -1321,14 +1323,23 @@ int main(int argc, char** argv) {
                             if (rad < 1.0f) rad = 1.0f; if (rad > 400.0f) rad = 400.0f;
                             SDL_Color col{(Uint8)(p.color.r*255), (Uint8)(p.color.g*255),
                                           (Uint8)(p.color.b*255), (Uint8)(p.color.a*255)};
-                            pp.push_back({c.w, (int)sx, (int)sy, (int)rad, col});
+                            pp.push_back({c.w, sx, sy, rad, p.rotation, col, ptex});
                         }
                     }
                     std::sort(pp.begin(), pp.end(), [](const PP& a, const PP& b){ return a.depth > b.depth; });
                     for (const PP& q : pp) {
-                        SDL_Color halo = q.col; halo.a = (Uint8)(q.col.a / 3);   // soft outer glow
-                        MMFillCircle(renderer, q.sx, q.sy, (int)(q.rad * 1.6f), halo);
-                        MMFillCircle(renderer, q.sx, q.sy, q.rad, q.col);          // bright core
+                        if (q.tex) {
+                            // Rotated, tinted sprite (smoke/spark/flare).
+                            SDL_SetTextureColorMod(q.tex, q.col.r, q.col.g, q.col.b);
+                            SDL_SetTextureAlphaMod(q.tex, q.col.a);
+                            SDL_SetTextureBlendMode(q.tex, SDL_BLENDMODE_BLEND);
+                            SDL_FRect dst{q.sx - q.rad, q.sy - q.rad, q.rad * 2.0f, q.rad * 2.0f};
+                            SDL_RenderCopyExF(renderer, q.tex, nullptr, &dst, q.rot, nullptr, SDL_FLIP_NONE);
+                        } else {
+                            SDL_Color halo = q.col; halo.a = (Uint8)(q.col.a / 3);   // soft outer glow
+                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)(q.rad * 1.6f), halo);
+                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)q.rad, q.col);  // bright core
+                        }
                     }
                 }
             }

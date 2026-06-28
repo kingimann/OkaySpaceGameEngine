@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.287.0  (Particle sprites + spin)
+  - Particles can now use a sprite TEXTURE (smoke/spark/flare/glow PNG), drawn as
+    a camera-facing billboard tinted by the particle colour — so emitters read as
+    real fire/smoke/magic instead of flat dots. Empty = the soft round puff.
+  - Per-particle billboard ROTATION + spin (Unity's Rotation / Rotation-over-
+    Lifetime): start angle, angle randomness, spin speed, and spin randomness.
+    Textured particles tumble as they fly.
+  - Works in the editor preview AND the exported game (depth-sorted with the rest
+    of the particles). Build Game bundles the sprite alongside the exe.
+  - New Inspector "Appearance" section (Sprite field + drag-drop from Project,
+    Rotation, Rotation +/-, Spin/sec, Spin +/-). Old scenes load unchanged.
+
 v2.286.0  (Particles are now fully 3D)
   - Fixes "I can see particles in the Scene view but not the Game tab" and
     "the particle system is too 2D": both had the same root cause — particles

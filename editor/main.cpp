@@ -248,6 +248,9 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
             }
         } else s_gpuFails = 0;
     }
+    // GPU renderers don't read back depth, so particle occlusion is off for them;
+    // the software path (next) fills + validates the shared depth for occlusion.
+    okay::SceneOcclusionDepth().valid = false;
     if (!px)
         px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
                             scene, vp, eye, rw, rh, ss, ignore);

@@ -170,5 +170,42 @@ int main() {
         if (p.alive) { minZ = Mathf::Min(minZ, p.position.z); maxZ = Mathf::Max(maxZ, p.position.z); }
     CHECK((maxZ - minZ) > 0.2f);   // particles genuinely occupy 3D space
 
+    // Depth occlusion: a particle behind nearer scene geometry is hidden; one in
+    // front (or where nothing was drawn) stays visible.
+    {
+        OcclusionDepth& od = SceneOcclusionDepth();
+        od.w = 4; od.h = 4; od.valid = true;
+        od.d.assign(16, 0.0f);
+        od.d[1 * 4 + 1] = 1.0f;   // scene at (1,1) is at 1/w = 1.0 (w = 1.0, very near)
+
+        // Particle at (1,1) with clip-w 5 (1/w = 0.2) is BEHIND the scene -> occluded.
+        CHECK(ParticleOccluded(1, 1, 5.0f));
+        // Same pixel but the particle is nearer (w = 0.5 -> 1/w = 2.0) -> visible.
+        CHECK(!ParticleOccluded(1, 1, 0.5f));
+        // A pixel with no geometry (depth 0) never occludes.
+        CHECK(!ParticleOccluded(2, 2, 100.0f));
+        // Out-of-bounds and invalid buffers are safe (visible).
+        CHECK(!ParticleOccluded(99, 99, 5.0f));
+        od.valid = false;
+        CHECK(!ParticleOccluded(1, 1, 5.0f));
+        od.valid = false; od.d.clear(); od.w = od.h = 0;   // leave the global clean
+    }
+
+    // The software renderer fills the occlusion depth: a cube in front of the camera
+    // writes a nonzero, valid depth at the screen centre.
+    {
+        Scene s("OCC"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("Cube")->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        Raster work; std::vector<std::uint32_t> down;
+        Mat4 view = Mat4::LookAt({0, 0, 4}, {0, 0, 0}, Vec3::Up);
+        Mat4 proj = Mat4::Perspective(60.0f, 1.0f, 0.1f, 100.0f);
+        RenderMeshesSS(work, down, s, proj * view, {0, 0, 4}, 48, 48, 1);
+        const OcclusionDepth& od = SceneOcclusionDepth();
+        CHECK(od.valid);
+        CHECK(od.w == 48 && od.h == 48);
+        CHECK(od.d[24 * 48 + 24] > 0.0f);   // the cube wrote depth at the centre
+    }
+
     TEST_MAIN_RESULT();
 }

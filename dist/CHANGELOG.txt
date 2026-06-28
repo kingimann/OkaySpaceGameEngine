@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.290.0  (Particles hide behind geometry — depth occlusion)
+  - Particles no longer always draw on top of the world ("in your face"). They're
+    now depth-tested against the scene, so a particle behind a wall, hill, or
+    object is correctly hidden instead of floating over everything.
+  - Works on the software renderer (which exposes its depth buffer). The OpenGL /
+    Direct3D paths don't read depth back yet, so occlusion is skipped there for
+    now (particles still render, just without hiding behind geometry) — GPU-path
+    depth read-back is the next step.
+
 v2.289.0  (Stretched-billboard particles + Game-view fix)
   - FIX: particles were invisible in the editor's Game view and during Play (an
     early-out for the non-interactive Game view returned before the particle

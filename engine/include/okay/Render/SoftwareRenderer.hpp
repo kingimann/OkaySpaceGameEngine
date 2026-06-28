@@ -79,6 +79,27 @@ struct EnvSkyData {
 };
 inline EnvSkyData& EnvSky() { static EnvSkyData e; return e; }
 
+// Scene depth for particle occlusion: the per-pixel W-buffer (1/w, larger = nearer)
+// from the most recent software 3D render, downsampled to the output resolution.
+// The particle overlay samples this so particles hide BEHIND solid geometry instead
+// of always drawing on top ("in your face"). `valid` is false when the frame was
+// drawn by a GPU renderer (no depth read-back), so the overlay then skips occlusion.
+struct OcclusionDepth { std::vector<float> d; int w = 0, h = 0; bool valid = false; };
+inline OcclusionDepth& SceneOcclusionDepth() { static OcclusionDepth o; return o; }
+
+/// True if the scene pixel at (x,y) is NEARER than a particle at clip-w `clipW`
+/// (so the particle is hidden). Safe to call with no/sized-mismatched depth: returns
+/// false (visible) when occlusion data is unavailable.
+inline bool ParticleOccluded(int x, int y, float clipW) {
+    const OcclusionDepth& od = SceneOcclusionDepth();
+    if (!od.valid || od.w <= 0 || od.h <= 0) return false;
+    if (x < 0 || y < 0 || x >= od.w || y >= od.h) return false;
+    float sceneNear = od.d[(std::size_t)y * od.w + x];   // 1/w; 0 = empty/far
+    if (sceneNear <= 0.0f) return false;                 // nothing drawn here
+    float partNear = clipW > 1e-4f ? 1.0f / clipW : 0.0f;
+    return sceneNear > partNear * 1.02f;                 // scene clearly in front -> occlude
+}
+
 /// Sample the sky gradient by a world-space direction's vertical component:
 /// horizon at the equator, fading to `top` looking up and `bottom` looking down.
 inline Vec3 SampleEnvSky(const Vec3& dir) {
@@ -1641,6 +1662,22 @@ inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32
     work.Resize(iw, ih);
     work.Clear(0u);
     RenderMeshes(work, scene, vp, eye, ignore);
+    // Publish the depth (1/w) at the OUTPUT resolution for particle occlusion: take the
+    // nearest (max 1/w) sample over each supersample block so thin geometry still occludes.
+    {
+        OcclusionDepth& od = SceneOcclusionDepth();
+        od.w = w; od.h = h; od.valid = true;
+        od.d.assign((std::size_t)w * h, 0.0f);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                float best = 0.0f;
+                for (int sy = 0; sy < ss; ++sy) {
+                    const float* row = work.depth.data() + (std::size_t)(y * ss + sy) * iw + (std::size_t)x * ss;
+                    for (int sx = 0; sx < ss; ++sx) if (row[sx] > best) best = row[sx];
+                }
+                od.d[(std::size_t)y * w + x] = best;
+            }
+    }
     if (ss == 1) return work.color.data();
     out.assign((std::size_t)w * h, 0u);
     const std::uint32_t* src = work.color.data();

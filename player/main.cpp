@@ -1287,6 +1287,9 @@ int main(int argc, char** argv) {
                 // Software fallback: native-resolution z-buffered raster (FXAA handles
                 // edge AA). 2x supersampling is 4x the pixels — off by default.
                 static std::vector<std::uint32_t> mesh3DDown;
+                // GPU renderers don't read back depth, so particle occlusion is off for
+                // them; the software path (next line) fills + validates the depth buffer.
+                SceneOcclusionDepth().valid = false;
                 if (!px)
                     px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, w, h,
                                         cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
@@ -1321,6 +1324,7 @@ int main(int argc, char** argv) {
                             if (c.w <= 0.05f) continue;
                             float sx = w * 0.5f + (c.x / c.w) * w * 0.5f;
                             float sy = h * 0.5f - (c.y / c.w) * h * 0.5f;
+                            if (ParticleOccluded((int)sx, (int)sy, c.w)) continue;  // hidden behind geometry
                             float rad = p.size * 0.5f / c.w * w * 0.5f;
                             if (rad < 1.0f) rad = 1.0f; if (rad > 400.0f) rad = 400.0f;
                             SDL_Color col{(Uint8)(p.color.r*255), (Uint8)(p.color.g*255),

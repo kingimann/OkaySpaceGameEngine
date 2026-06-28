@@ -7167,6 +7167,10 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat2("Tiling##mesh", til, 0.05f, 0.01f, 64.0f)) {
                     mr->tiling = {til[0], til[1]}; ed.dirty = true;
                 }
+                const char* filters[] = {"Smooth", "Pixel"};
+                int fi = (int)mr->texFilter;
+                if (ImGui::Combo("Filter##mesh", &fi, filters, 2)) { mr->texFilter = (MeshRenderer::TexFilter)fi; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth = bilinear (3D/photos). Pixel = nearest, crisp pixel-art with no up-close blur.");
                 float sc[2] = {mr->uvScroll.x, mr->uvScroll.y};
                 if (ImGui::DragFloat2("UV Scroll##mesh", sc, 0.01f)) { mr->uvScroll = {sc[0], sc[1]}; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Animated texture: UV units/second (flowing water, lava, belts).");

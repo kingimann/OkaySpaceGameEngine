@@ -143,6 +143,7 @@ struct D3D11Renderer::Impl {
     ID3D11DepthStencilState* depthNoWrite = nullptr;   // ground-shadow pass: test but don't write
     ID3D11BlendState*       blend = nullptr;           // alpha blend for the ground shadow
     ID3D11SamplerState*     samp = nullptr;
+    ID3D11SamplerState*     sampPoint = nullptr;   // nearest filtering (crisp pixel-art)
     // Size-dependent targets:
     int w = 0, h = 0, samples = 0;
     ID3D11Texture2D*        colorTex = nullptr;  ID3D11RenderTargetView* rtv = nullptr;
@@ -223,6 +224,9 @@ bool D3D11Renderer::Init() {
     sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
     sd.MaxLOD = D3D11_FLOAT32_MAX;
     p->dev->CreateSamplerState(&sd, &p->samp);
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;   // crisp pixel-art (no up-close blur)
+    sd.MaxAnisotropy = 1;
+    p->dev->CreateSamplerState(&sd, &p->sampPoint);
 
     return p->dev && p->vs && p->ps && p->layout && p->cb && p->raster && p->depth && p->samp;
 }
@@ -441,6 +445,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
         }
         if (srv) c->PSSetShaderResources(0, 1, &srv);
+        // Per-material texture filter (Pixel = nearest, Smooth = aniso/linear).
+        ID3D11SamplerState* useSamp = (mr->texFilter == MeshRenderer::TexFilter::Pixel && p->sampPoint) ? p->sampPoint : p->samp;
+        c->PSSetSamplers(0, 1, &useSamp);
 
         UINT stride = 11 * sizeof(float), offset = 0;
         c->IASetVertexBuffers(0, 1, &p->vb, &stride, &offset);
@@ -489,6 +496,7 @@ void D3D11Renderer::Destroy() {
     p->texCache.clear();
     if (p->vb)     p->vb->Release();
     if (p->samp)   p->samp->Release();
+    if (p->sampPoint) p->sampPoint->Release();
     if (p->blend)  p->blend->Release();
     if (p->depthNoWrite) p->depthNoWrite->Release();
     if (p->depth)  p->depth->Release();

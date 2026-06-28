@@ -73,6 +73,22 @@ int main() {
         }
     }
 
+    // Texture filter + offset round-trip through the scene serializer.
+    {
+        Scene s("TF"); s.physicsEnabled = false;
+        auto* mr = s.CreateGameObject("Q")->AddComponent<MeshRenderer>();
+        mr->texFilter = MeshRenderer::TexFilter::Pixel;
+        mr->texOffset = {0.25f, -0.5f};
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* mr2 = s2.Find("Q") ? s2.Find("Q")->GetComponent<MeshRenderer>() : nullptr;
+        CHECK(mr2 != nullptr);
+        if (mr2) {
+            CHECK(mr2->texFilter == MeshRenderer::TexFilter::Pixel);
+            CHECK_NEAR(mr2->texOffset.x, 0.25f, 1e-4f);
+            CHECK_NEAR(mr2->texOffset.y, -0.5f, 1e-4f);
+        }
+    }
+
     // Gradient shader round-trips its top/bottom colours through the scene.
     {
         Scene s("G"); s.physicsEnabled = false;

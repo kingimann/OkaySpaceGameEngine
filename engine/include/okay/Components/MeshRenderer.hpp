@@ -79,6 +79,13 @@ public:
     std::string texture;
     /// Texture repeat across the surface (UVs are multiplied by this).
     Vec2 tiling = {1.0f, 1.0f};
+    /// Texture offset (added to UVs after tiling) — slide/position a texture or atlas.
+    Vec2 texOffset = {0.0f, 0.0f};
+
+    /// How the texture is sampled. Smooth = bilinear (good for photos/3D); Pixel =
+    /// nearest-neighbour (crisp pixel-art, no up-close blur).
+    enum class TexFilter { Smooth, Pixel };
+    TexFilter texFilter = TexFilter::Smooth;
 
     /// Optional tangent-space normal map (PNG, RGB = XYZ in 0..1). Adds bumpy
     /// surface detail (per-pixel lighting only) without extra geometry. Build Game

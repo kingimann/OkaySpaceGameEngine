@@ -558,6 +558,12 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         if (tex) {
             g.ActiveTexture(GL_TEXTURE0);
             g.BindTexture(GL_TEXTURE_2D, tex);
+            // Per-material filter: Pixel = crisp nearest (no up-close blur); Smooth =
+            // trilinear. Set on the bound texture each draw so one cache serves both.
+            bool pixel = mr->texFilter == MeshRenderer::TexFilter::Pixel;
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, pixel ? GL_NEAREST : GL_LINEAR);
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                            pixel ? GL_NEAREST_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_LINEAR);
             g.Uniform1i(m_uTex, 0);
             g.Uniform1f(m_uUseTex, 1.0f);
             g.Uniform2f(m_uTiling, mr->tiling.x, mr->tiling.y);

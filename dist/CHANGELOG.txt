@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.283.0  (Texture filter: fix up-close blur)
+  - New per-material texture Filter: "Smooth" (bilinear, the default) or "Pixel"
+    (nearest-neighbour) — pick Pixel for crisp pixel-art with no blur when the
+    texture is magnified up close. Works on the OpenGL + Direct3D 11 renderers.
+  - (Tiling, your-own-texture import via the Texture field + asset drag, and
+    software normal maps already shipped; GPU normal maps are coming next.)
+
 v2.282.0  (Colliders: auto-add, new shapes, glitch fix)
   - Every new 3D primitive (Cube/Pyramid/Mesh) now spawns with a Box collider
     auto-fitted to its mesh, so objects block and can be stood on immediately.

@@ -212,6 +212,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
             << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << " "
             << mr->tiling.x << " " << mr->tiling.y << "\n";
+        // Texture filter + offset (separate record; written when non-default).
+        if (mr->texFilter != MeshRenderer::TexFilter::Smooth ||
+            mr->texOffset.x != 0.0f || mr->texOffset.y != 0.0f)
+            out << "  texopts " << (int)mr->texFilter << " "
+                << mr->texOffset.x << " " << mr->texOffset.y << "\n";
         // Normal map (separate record so older scenes still load).
         if (!mr->normalMap.empty())
             out << "  normalmap " << Quote(mr->normalMap) << " " << mr->normalStrength << "\n";
@@ -1417,6 +1422,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int p = in.peek();
                         if (std::isdigit(p) || p == '-' || p == '.')
                             in >> mr->tiling.x >> mr->tiling.y;
+                    }
+                } else if (field == "texopts") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        int fl = 0; in >> fl >> mr->texOffset.x >> mr->texOffset.y;
+                        mr->texFilter = (MeshRenderer::TexFilter)fl;
                     }
                 } else if (field == "normalmap") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {

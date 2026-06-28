@@ -80,6 +80,8 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/TerrainDigger.hpp"
+#include "okay/Components/WorldStreamer.hpp"
+#include "okay/Components/Destructible.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIProgressBar.hpp"
@@ -274,6 +276,21 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  terraindigger " << (int)td->mode << " " << td->button
             << " " << (int)(unsigned char)td->key << " " << td->radius << " " << td->strength
             << " " << td->range << " " << td->relax << "\n";
+    }
+    if (auto* ws = go->GetComponent<WorldStreamer>()) {
+        out << "  worldstreamer " << ws->cellSize << " " << ws->loadRadius
+            << " " << ws->unloadRadius << " " << (ws->onlyOnCellChange ? 1 : 0)
+            << " " << Quote(ws->folder) << " " << Quote(ws->prefix)
+            << " " << Quote(ws->ext) << " " << Quote(ws->target) << "\n";
+    }
+    if (auto* de = go->GetComponent<Destructible>()) {
+        out << "  destructible " << Quote(de->blockTag) << " " << de->voxelSize
+            << " " << de->fractureChunks << " " << de->debrisLifetime
+            << " " << de->explosionForce << " " << de->upwardBias
+            << " " << de->debrisGravityScale << " " << de->debrisDrag
+            << " " << (de->collapseEnabled ? 1 : 0) << " " << de->anchorY
+            << " " << de->maxDebris << " " << de->breakButton
+            << " " << de->breakRadius << " " << de->reach << "\n";
     }
     if (auto* ch = go->GetComponent<Character>()) out << "  character " << ch->ToText() << "\n";
     if (auto* li = go->GetComponent<Light>()) {
@@ -2583,6 +2600,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     td->mode = (TerrainDigger::Mode)md;
                     td->button = btn;
                     td->key = (char)k;
+                } else if (field == "worldstreamer") {
+                    auto* ws = go->AddComponent<WorldStreamer>();
+                    int once = 1;
+                    in >> ws->cellSize >> ws->loadRadius >> ws->unloadRadius >> once;
+                    ws->onlyOnCellChange = (once != 0);
+                    ws->folder = ReadQuoted(in);
+                    ws->prefix = ReadQuoted(in);
+                    ws->ext    = ReadQuoted(in);
+                    ws->target = ReadQuoted(in);
+                } else if (field == "destructible") {
+                    auto* de = go->AddComponent<Destructible>();
+                    int collapse = 1;
+                    de->blockTag = ReadQuoted(in);
+                    in >> de->voxelSize >> de->fractureChunks >> de->debrisLifetime
+                       >> de->explosionForce >> de->upwardBias >> de->debrisGravityScale
+                       >> de->debrisDrag >> collapse >> de->anchorY >> de->maxDebris
+                       >> de->breakButton >> de->breakRadius >> de->reach;
+                    de->collapseEnabled = (collapse != 0);
                 } else if (field == "character") {
                     std::string rest; std::getline(in, rest);   // rest of the line after the field token
                     if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);

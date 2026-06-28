@@ -854,6 +854,8 @@ int main(int argc, char** argv) {
         int  fpsCap = 0;
         float volume = 1.0f;
         bool lockCursor = false, perPixel = false, shadows = false, bloom = false, ssao = false, fxaa = true;
+        float shadowDistance = 80.0f, shadowSoftness = 2.5f;
+        int  shadowCascades = 3, shadowResolution = 1024;
         int  antialias = 1;
         bool gpu = true;   // try the GPU (D3D11/OpenGL) 3D renderer; fall back to software
         std::string startup;
@@ -897,6 +899,10 @@ int main(int argc, char** argv) {
             else if (k == "lock_cursor") cfg.lockCursor = std::atoi(v.c_str()) != 0;
             else if (k == "perpixel")   cfg.perPixel = std::atoi(v.c_str()) != 0;
             else if (k == "shadows")    cfg.shadows = std::atoi(v.c_str()) != 0;
+            else if (k == "shadow_distance")   cfg.shadowDistance = (float)std::atof(v.c_str());
+            else if (k == "shadow_softness")   cfg.shadowSoftness = (float)std::atof(v.c_str());
+            else if (k == "shadow_cascades")   cfg.shadowCascades = std::atoi(v.c_str());
+            else if (k == "shadow_resolution") cfg.shadowResolution = std::atoi(v.c_str());
             else if (k == "bloom")      cfg.bloom = std::atoi(v.c_str()) != 0;
             else if (k == "ssao")       cfg.ssao = std::atoi(v.c_str()) != 0;
             else if (k == "fxaa")       cfg.fxaa = std::atoi(v.c_str()) != 0;
@@ -978,6 +984,10 @@ int main(int argc, char** argv) {
     // Apply the build's graphics/quality settings to the renderer + cursor.
     PerPixelLighting() = cfg.perPixel;
     ShadowsEnabled()   = cfg.shadows;
+    ShadowDistance()   = cfg.shadowDistance;
+    ShadowSoftness()   = cfg.shadowSoftness;
+    ShadowCascades()   = cfg.shadowCascades;
+    ShadowMapResolution() = cfg.shadowResolution;
     BloomEnabled()     = cfg.bloom;
     SSAOEnabled()      = cfg.ssao;
     FXAAEnabled()      = cfg.fxaa;

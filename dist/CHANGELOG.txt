@@ -1,5 +1,34 @@
 OkaySpace Game Engine — Changelog
 
+v2.302.0  (AAA trio: cascaded shadows + world streaming + chaos destruction)
+  Three features inspired by what big engines do, scoped honestly to OkaySpace's
+  renderer/architecture:
+
+  - Cascaded, camera-focused shadow maps ("virtual shadow maps", practical
+    version). Instead of stretching one shadow map over the whole level (blurry on
+    big maps), shadows now render as several cascades that hug a shrinking region
+    in front of the camera: the near cascade has dense texels (crisp shadows where
+    you're looking) while far cascades cheaply cover distance. Each shaded pixel
+    samples the tightest cascade that contains it. New View > Lighting controls and
+    Build Settings: Shadow distance, Cascades (1-4), Softness, Resolution. Setting
+    Shadow distance to 0 keeps the old whole-scene behaviour. (True Nanite-style
+    virtual paging isn't possible in a read-back renderer - this is the standard
+    DX11-class technique that delivers "sharp + cheap over a huge map".)
+
+  - World Partition / streaming. New "World Streamer" component: author a huge map
+    as a grid of cell prefab files (cell_<x>_<z>.okayprefab) and only the chunks
+    near a target (the camera, or a named object) stay loaded - cells within a load
+    radius instantiate, cells past an unload radius are destroyed, with a hysteresis
+    gap so pacing a border doesn't thrash. Missing cells are skipped, so sparse /
+    non-rectangular worlds just work. Lets you build maps far bigger than RAM.
+
+  - Chaos destruction. New "Destructible" component: voxel blocks (BlockBuilder's,
+    or anything tagged) no longer just vanish - they shatter into a cluster of
+    physics-driven debris shards that fly out and despawn, and a structural-support
+    pass flood-fills from the ground so any block left unconnected collapses under
+    gravity. Knock out a wall's base and the top sags and tumbles. Optional built-in
+    "destruction gun" (camera ray + blast radius) for instant use in Play.
+
 v2.301.0  (Editor theme refresh + accent colours)
   - Retuned the dark editor theme toward a neutral, professional Unity-style grey
     (instead of a blue-tinted near-black): flatter panels, subtle frame borders,

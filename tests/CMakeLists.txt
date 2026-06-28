@@ -345,6 +345,18 @@ add_executable(test_terrain test_terrain.cpp)
 target_link_libraries(test_terrain PRIVATE okay::engine)
 add_test(NAME terrain COMMAND test_terrain)
 
+add_executable(test_worldstreamer test_worldstreamer.cpp)
+target_link_libraries(test_worldstreamer PRIVATE okay::engine)
+add_test(NAME worldstreamer COMMAND test_worldstreamer)
+
+add_executable(test_destructible test_destructible.cpp)
+target_link_libraries(test_destructible PRIVATE okay::engine)
+add_test(NAME destructible COMMAND test_destructible)
+
+add_executable(test_shadows test_shadows.cpp)
+target_link_libraries(test_shadows PRIVATE okay::engine)
+add_test(NAME shadows COMMAND test_shadows)
+
 add_executable(test_script_debug test_script_debug.cpp)
 target_link_libraries(test_script_debug PRIVATE okay::engine)
 add_test(NAME script_debug COMMAND test_script_debug)

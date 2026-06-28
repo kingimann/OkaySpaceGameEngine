@@ -130,6 +130,20 @@ planet, `A` player ship.)*
   the 3D view to raise, Shift to lower) or generate (Flatten / Smooth / Randomize
   / Hills), rendered as a generated mesh. Create from GameObject > 3D Object >
   Terrain; the heightmap saves with the scene.
+- **Cascaded shadows** — directional cast shadows rendered as several
+  camera-focused cascades so they stay crisp up close while cheaply covering
+  distance on big maps (the practical, DX11-class stand-in for virtual shadow
+  maps). Tunable Shadow distance / Cascades / Softness / Resolution in
+  View > Lighting and Build Settings; distance 0 falls back to a single
+  whole-scene map.
+- **World Partition / streaming** — the `WorldStreamer` component loads a huge map
+  as a grid of cell prefab files, keeping only the chunks near a target (camera or
+  named object) resident (load/unload radii with hysteresis). Build worlds far
+  bigger than RAM; missing cells are skipped so sparse maps just work.
+- **Chaos destruction** — the `Destructible` component shatters voxel blocks (from
+  `BlockBuilder` or any tagged object) into physics debris instead of vanishing,
+  then runs a structural-support pass so blocks that lose their path to the ground
+  collapse under gravity. Optional camera-ray "destruction gun" for instant use.
 - **Materials** — reusable surface presets (albedo, emissive, specular, texture,
   tiling, unlit, double-sided) saved as `.okaymat` assets and applied to any
   Mesh Renderer (Save/Load in the inspector, or drag a `.okaymat` from Project).

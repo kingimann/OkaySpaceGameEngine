@@ -71,6 +71,8 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/TerrainDigger.hpp"
+#include "okay/Components/WorldStreamer.hpp"
+#include "okay/Components/Destructible.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Render/Material.hpp"
 #include "okay/Components/Tilemap.hpp"

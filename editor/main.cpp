@@ -774,6 +774,10 @@ struct BuildSettings {
     bool  lockCursor = false;              // hide + lock the cursor on launch
     bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
     bool  shadows = false;                 // directional cast shadows
+    float shadowDistance = 80.0f;          // cascaded shadow reach (0 = legacy whole-scene)
+    float shadowSoftness = 2.5f;           // PCF penumbra width (texels)
+    int   shadowCascades = 3;              // number of cascades
+    int   shadowResolution = 1024;         // texels per cascade
     bool  bloom = false;                   // glow on bright/emissive areas
     bool  ssao = false;                    // ambient occlusion
     bool  fxaa = true;                     // cheap edge anti-aliasing
@@ -1134,6 +1138,8 @@ struct Options {
     bool includeAllProjectScenes = false, developmentBuild = false;
     bool lockCursor = false, perPixelLighting = false, shadows = false,
          bloom = false, ssao = false, fxaa = true;
+    float shadowDistance = 80.0f, shadowSoftness = 2.5f;
+    int  shadowCascades = 3, shadowResolution = 1024;
     int  antialias = 1;
     bool gpuRenderer = true;
     bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
@@ -1282,6 +1288,10 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
         cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
         cf << "shadows=" << (opt.shadows ? 1 : 0) << "\n";
+        cf << "shadow_distance=" << opt.shadowDistance << "\n";
+        cf << "shadow_softness=" << opt.shadowSoftness << "\n";
+        cf << "shadow_cascades=" << opt.shadowCascades << "\n";
+        cf << "shadow_resolution=" << opt.shadowResolution << "\n";
         cf << "bloom=" << (opt.bloom ? 1 : 0) << "\n";
         cf << "ssao=" << (opt.ssao ? 1 : 0) << "\n";
         cf << "fxaa=" << (opt.fxaa ? 1 : 0) << "\n";
@@ -3234,8 +3244,24 @@ void DrawStats(EditorState& ed) {
             ImGui::SliderFloat("Hemisphere strength", &HemisphereStrength(), 0.0f, 1.5f, "%.2f");
 
         ImGui::Checkbox("Shadows", &ShadowsEnabled());
-        if (ShadowsEnabled())
+        if (ShadowsEnabled()) {
             ImGui::SliderFloat("Shadow softness", &ShadowSoftness(), 0.0f, 6.0f, "%.1f tx");
+            // Cascaded ("virtual") shadow maps: sharp near, cheap far over big maps.
+            ImGui::SliderFloat("Shadow distance", &ShadowDistance(), 0.0f, 400.0f, "%.0f m");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How far cascaded shadows reach in front of the camera.\n0 = legacy single map fit to the whole scene (blurrier on big maps).");
+            if (ShadowDistance() > 0.0f) {
+                ImGui::SliderInt("Shadow cascades", &ShadowCascades(), 1, ShadowMap::kMaxCascades);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("More cascades = sharper shadows across distance, at the cost of extra depth passes.");
+            }
+            int res = ShadowMapResolution();
+            const char* resLabels[] = {"512", "1024", "2048", "4096"};
+            const int   resVals[]   = {512, 1024, 2048, 4096};
+            int resIdx = 1; for (int i = 0; i < 4; ++i) if (resVals[i] == res) resIdx = i;
+            if (ImGui::Combo("Shadow resolution", &resIdx, resLabels, 4)) ShadowMapResolution() = resVals[resIdx];
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Texels per cascade. Higher = crisper, more memory/time.");
+        }
 
         ImGui::Checkbox("Ambient occlusion (SSAO)", &SSAOEnabled());
         if (SSAOEnabled()) {
@@ -5045,6 +5071,19 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU in the shipped game.\nFalls back to the software renderer if no GPU is available.");
                 ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
                 ImGui::Checkbox("Shadows", &g_build.shadows);
+                if (g_build.shadows) {
+                    ImGui::Indent();
+                    ImGui::SliderFloat("Shadow distance##b", &g_build.shadowDistance, 0.0f, 400.0f, "%.0f m");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cascaded shadow reach. 0 = legacy single map fit to the whole scene.");
+                    if (g_build.shadowDistance > 0.0f)
+                        ImGui::SliderInt("Cascades##b", &g_build.shadowCascades, 1, 4);
+                    ImGui::SliderFloat("Softness##b", &g_build.shadowSoftness, 0.0f, 6.0f, "%.1f tx");
+                    const char* resLabels[] = {"512", "1024", "2048", "4096"};
+                    const int   resVals[]   = {512, 1024, 2048, 4096};
+                    int resIdx = 1; for (int i = 0; i < 4; ++i) if (resVals[i] == g_build.shadowResolution) resIdx = i;
+                    if (ImGui::Combo("Resolution##b", &resIdx, resLabels, 4)) g_build.shadowResolution = resVals[resIdx];
+                    ImGui::Unindent();
+                }
                 ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
                 ImGui::Checkbox("Ambient occlusion", &g_build.ssao); ImGui::SameLine();
                 ImGui::Checkbox("FXAA", &g_build.fxaa);
@@ -5094,6 +5133,8 @@ void DrawFileDialogs(EditorState& ed) {
             o.developmentBuild = g_build.developmentBuild;
             o.lockCursor = g_build.lockCursor; o.perPixelLighting = g_build.perPixelLighting;
             o.shadows = g_build.shadows; o.bloom = g_build.bloom; o.ssao = g_build.ssao;
+            o.shadowDistance = g_build.shadowDistance; o.shadowSoftness = g_build.shadowSoftness;
+            o.shadowCascades = g_build.shadowCascades; o.shadowResolution = g_build.shadowResolution;
             o.fxaa = g_build.fxaa; o.antialias = g_build.antialias;
             o.gpuRenderer = g_build.gpuRenderer;
             o.cleanOutput = g_build.cleanOutput; o.dataFolder = g_build.dataFolder;
@@ -7768,6 +7809,62 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Relax / sec##tdg", &td->relax, 0.1f, 0.1f, 40.0f)) ed.dirty = true;
             ImGui::TextDisabled("Heightmap: carves holes/hills, not caves/overhangs.");
             if (ImGui::SmallButton("Remove##tdg")) toRemove = td;
+        }
+    }
+    if (auto* ws = dynamic_cast<WorldStreamer*>(curComp)) {
+        if (CompHeader("World Streamer", ws, &toRemove)) {
+            ImGui::TextDisabled("Streams cell prefabs in/out around the target (World Partition).");
+            if (ImGui::DragFloat("Cell Size##ws", &ws->cellSize, 1.0f, 1.0f, 5000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units per chunk edge (XZ).");
+            if (ImGui::DragInt("Load Radius##ws", &ws->loadRadius, 0.1f, 0, 32)) ed.dirty = true;
+            if (ImGui::DragInt("Unload Radius##ws", &ws->unloadRadius, 0.1f, 0, 64)) ed.dirty = true;
+            if (ws->unloadRadius < ws->loadRadius)
+                ImGui::TextColored(ImVec4(0.95f,0.7f,0.3f,1), "Unload < Load: set Unload >= Load for hysteresis.");
+            char fbuf[256]; std::snprintf(fbuf, sizeof(fbuf), "%s", ws->folder.c_str());
+            if (ImGui::InputText("Folder##ws", fbuf, sizeof(fbuf))) { ws->folder = fbuf; ed.dirty = true; }
+            char pbuf[128]; std::snprintf(pbuf, sizeof(pbuf), "%s", ws->prefix.c_str());
+            if (ImGui::InputText("Prefix##ws", pbuf, sizeof(pbuf))) { ws->prefix = pbuf; ed.dirty = true; }
+            char ebuf[64]; std::snprintf(ebuf, sizeof(ebuf), "%s", ws->ext.c_str());
+            if (ImGui::InputText("Extension##ws", ebuf, sizeof(ebuf))) { ws->ext = ebuf; ed.dirty = true; }
+            char tbuf[128]; std::snprintf(tbuf, sizeof(tbuf), "%s", ws->target.c_str());
+            if (ImGui::InputText("Follow Object##ws", tbuf, sizeof(tbuf))) { ws->target = tbuf; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the object to follow. Blank = the main camera.");
+            ImGui::Checkbox("Only re-check on cell change##ws", &ws->onlyOnCellChange);
+            ImGui::TextDisabled("Cells: %s%s_<x>_<z>%s  |  resident: %d",
+                                ws->folder.c_str(), ws->prefix.c_str(), ws->ext.c_str(), (int)ws->LoadedCount());
+            if (ImGui::SmallButton("Remove##ws")) toRemove = ws;
+        }
+    }
+    if (auto* de = dynamic_cast<Destructible*>(curComp)) {
+        if (CompHeader("Destructible (Chaos)", de, &toRemove)) {
+            ImGui::TextDisabled("Voxel blocks shatter into physics debris; unsupported blocks collapse.");
+            char tbuf[128]; std::snprintf(tbuf, sizeof(tbuf), "%s", de->blockTag.c_str());
+            if (ImGui::InputText("Block Tag##de", tbuf, sizeof(tbuf))) { de->blockTag = tbuf; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only objects with this tag fracture (matches BlockBuilder's Block Tag).");
+            if (ImGui::DragFloat("Voxel Size##de", &de->voxelSize, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
+            ImGui::SeparatorText("Fracture");
+            if (ImGui::SliderInt("Shards / axis##de", &de->fractureChunks, 1, 4)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Debris cubes per axis: 2 = 8 shards, 3 = 27, 4 = 64.");
+            if (ImGui::DragFloat("Explosion Force##de", &de->explosionForce, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Upward Pop##de", &de->upwardBias, 0.01f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Debris Lifetime##de", &de->debrisLifetime, 0.1f, 0.1f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Debris Gravity##de", &de->debrisGravityScale, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Debris Drag##de", &de->debrisDrag, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::DragInt("Max Debris##de", &de->maxDebris, 1.0f, 8, 4096)) ed.dirty = true;
+            ImGui::SeparatorText("Structural Collapse");
+            if (ImGui::Checkbox("Collapse unsupported##de", &de->collapseEnabled)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("After a break, blocks with no path to the ground fall.");
+            if (ImGui::DragFloat("Ground Anchor Y##de", &de->anchorY, 0.05f, -100.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blocks at/below this world Y are anchored (the ground).");
+            ImGui::SeparatorText("Destruction Gun (optional)");
+            const char* btns[] = {"None", "Left Mouse", "Right Mouse", "Middle Mouse"};
+            int bi = (de->breakButton < 0 || de->breakButton > 2) ? 0 : de->breakButton + 1;
+            if (ImGui::Combo("Fire Button##de", &bi, btns, 4)) { de->breakButton = (bi == 0) ? -1 : bi - 1; ed.dirty = true; }
+            if (de->breakButton >= 0) {
+                if (ImGui::DragFloat("Blast Radius##de", &de->breakRadius, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Reach##de", &de->reach, 0.5f, 1.0f, 200.0f)) ed.dirty = true;
+            }
+            if (ImGui::SmallButton("Remove##de")) toRemove = de;
         }
     }
     if (auto* ch = dynamic_cast<Character*>(curComp)) {
@@ -11263,6 +11360,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
             if (item(!go->GetComponent<TerrainDigger>(), "Terrain Digger")) { go->AddComponent<TerrainDigger>(); ed.dirty = true; }
+            if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
           } EndCat(o); }

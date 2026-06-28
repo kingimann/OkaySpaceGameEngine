@@ -294,6 +294,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << v->rockColor.r << " " << v->rockColor.g << " " << v->rockColor.b
             << " " << v->soilColor.r << " " << v->soilColor.g << " " << v->soilColor.b
             << " " << v->snowColor.r << " " << v->snowColor.g << " " << v->snowColor.b
+            << " " << v->textureTiling << " " << Quote(v->texture)
             << " " << v->EncodeDensity() << "\n";
     }
     if (auto* vd = go->GetComponent<VoxelDigger>()) {
@@ -2663,7 +2664,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> v->grassColor.r >> v->grassColor.g >> v->grassColor.b
                        >> v->rockColor.r >> v->rockColor.g >> v->rockColor.b
                        >> v->soilColor.r >> v->soilColor.g >> v->soilColor.b
-                       >> v->snowColor.r >> v->snowColor.g >> v->snowColor.b;
+                       >> v->snowColor.r >> v->snowColor.g >> v->snowColor.b
+                       >> v->textureTiling;
+                    v->texture = ReadQuoted(in);
                     std::string blob; in >> blob;     // base64 density (whitespace-free)
                     v->DecodeDensity(blob);
                     v->Apply();

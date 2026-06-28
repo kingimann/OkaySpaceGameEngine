@@ -381,7 +381,8 @@ void VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
                 float dx = x - gx, dy = y - gy, dz = z - gz;
                 float d = std::sqrt(dx * dx + dy * dy + dz * dz);
                 if (d > gr) continue;
-                float fall = 1.0f - d / gr;               // soft sphere
+                float t = 1.0f - d / gr;
+                float fall = t * t * (3.0f - 2.0f * t);    // smoothstep sphere (softer edge)
                 float& cell = density[Index(x, y, z)];
                 cell = ClampTo(cell - amount * fall, Clamp());   // subtract = carve air
             }
@@ -389,6 +390,33 @@ void VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
 
 void VoxelTerrain::Add(const Vec3& local, float radius, float amount) {
     Dig(local, radius, -amount);   // adding is digging with negative amount
+}
+
+void VoxelTerrain::SmoothAt(const Vec3& local, float radius, float amount) {
+    if (amount <= 0.0f) return;
+    if (amount > 1.0f) amount = 1.0f;
+    float gx = (local.x + HalfX()) / voxelSize;
+    float gy = local.y / voxelSize;
+    float gz = (local.z + HalfZ()) / voxelSize;
+    float gr = radius / voxelSize;
+    int x0 = std::max(1, (int)std::floor(gx - gr)), x1 = std::min(nx - 2, (int)std::ceil(gx + gr));
+    int y0 = std::max(1, (int)std::floor(gy - gr)), y1 = std::min(ny - 2, (int)std::ceil(gy + gr));
+    int z0 = std::max(1, (int)std::floor(gz - gr)), z1 = std::min(nz - 2, (int)std::ceil(gz + gr));
+    std::vector<float> src = density;   // read from a snapshot so it relaxes evenly
+    for (int z = z0; z <= z1; ++z)
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) {
+                float dx = x - gx, dy = y - gy, dz = z - gz;
+                float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (d > gr) continue;
+                // 6-neighbour average (a light Laplacian relax).
+                float avg = (src[Index(x - 1, y, z)] + src[Index(x + 1, y, z)] +
+                             src[Index(x, y - 1, z)] + src[Index(x, y + 1, z)] +
+                             src[Index(x, y, z - 1)] + src[Index(x, y, z + 1)]) * (1.0f / 6.0f);
+                float w = (1.0f - d / gr) * amount;
+                float& cell = density[Index(x, y, z)];
+                cell = ClampTo(cell + (avg - cell) * w, Clamp());
+            }
 }
 
 float VoxelTerrain::SampleDensity(const Vec3& local) const {
@@ -515,6 +543,15 @@ void VoxelTerrain::Apply() {
     mr->mesh = BuildMesh();
     mr->color = color;
     mr->doubleSided = true;
+    // Triplanar ground texture (tinted by the per-face auto-colours). Triplanar
+    // keeps cave walls / overhangs / floors from smearing.
+    mr->texture = texture;
+    if (!texture.empty()) {
+        mr->tiling = {textureTiling, textureTiling};
+        mr->triplanar = true;
+    } else {
+        mr->triplanar = false;
+    }
 }
 
 // ===================== Compact density (de)serialization ====================

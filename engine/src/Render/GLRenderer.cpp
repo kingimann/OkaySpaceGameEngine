@@ -191,6 +191,7 @@ const char* kFrag =
     "uniform float uShaderMode; uniform float uToonBands; uniform float uRimStr;\n"
     "uniform vec3 uRimColor; uniform vec3 uGradTop; uniform vec3 uGradBot;\n"
     "uniform float uShadowAlpha;\n"   // >=0: draw a flat translucent black (ground contact shadow)
+    "uniform float uAlpha;\n"         // material opacity (1 = opaque); blended for water/glass
     "uniform int uLightCount;\n"      // multi-light: directional + point + spot from the scene
     "uniform float uLType[8]; uniform vec3 uLPos[8]; uniform vec3 uLDir[8];\n"
     "uniform vec3 uLCol[8]; uniform float uLRange[8]; uniform float uLCosOut[8]; uniform float uLCosIn[8];\n"
@@ -228,7 +229,7 @@ const char* kFrag =
     "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"     // Hologram
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(vWorld.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
-    "  if (uUnlit > 0.5) { gl_FragColor = vec4(base + uEmissive, 1.0); return; }\n"
+    "  if (uUnlit > 0.5) { gl_FragColor = vec4(base + uEmissive, uAlpha); return; }\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  vec3 amb = uAmbient * mix(0.55, 1.15, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // hemisphere ambient
     "  vec3 lit = amb; float spec = 0.0;\n"
@@ -278,7 +279,7 @@ const char* kFrag =
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
     "  }\n"
-    "  gl_FragColor = vec4(col, 1.0);\n"
+    "  gl_FragColor = vec4(col, uAlpha);\n"
     "}\n";
 
 GLuint compile(GLenum type, const char* src) {
@@ -403,6 +404,7 @@ bool GLRenderer::EnsureProgram() {
     m_uGradTop = g.GetUniformLocation(m_prog, "uGradTop");
     m_uGradBot = g.GetUniformLocation(m_prog, "uGradBot");
     m_uShadowAlpha = g.GetUniformLocation(m_prog, "uShadowAlpha");
+    m_uAlpha = g.GetUniformLocation(m_prog, "uAlpha");
     m_uLightCount = g.GetUniformLocation(m_prog, "uLightCount");
     m_uLType   = g.GetUniformLocation(m_prog, "uLType");
     m_uLPos    = g.GetUniformLocation(m_prog, "uLPos");
@@ -517,6 +519,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     Vec3 lightTravel = SceneLight::Direction();   // direction light travels (for ground shadows)
     g.Uniform3f(m_uLightDir, toLight.x, toLight.y, toLight.z);
     g.Uniform1f(m_uShadowAlpha, -1.0f);           // normal (lit) draws; flipped on for the shadow pass
+    g.Uniform1f(m_uAlpha, 1.0f);                   // opaque by default; set per material below
     g.Uniform3f(m_uLightColor, 0.85f, 0.85f, 0.85f);
     // Hemisphere/colored ambient from the scene's gathered lights (falls back to grey).
     Vec3 amb = SceneLights::AmbientColor();
@@ -719,7 +722,23 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(8 * sizeof(float)));
         g.EnableVertexAttribArray(4);
         g.VertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(11 * sizeof(float)));
+        // Transparency: a material alpha < 1 (water, glass) alpha-blends over the
+        // scene and doesn't write depth, so geometry behind shows through. (Objects
+        // draw in scene order — keep transparent meshes after opaque ones.)
+        float matAlpha = mr->color.a;
+        bool transparent = matAlpha < 0.999f;
+        g.Uniform1f(m_uAlpha, matAlpha);
+        if (transparent) {
+            g.Enable(GL_BLEND);
+            g.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            g.DepthMask(GL_FALSE);
+        }
         g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 14));
+        if (transparent) {
+            g.DepthMask(GL_TRUE);
+            g.Disable(GL_BLEND);
+            g.Uniform1f(m_uAlpha, 1.0f);
+        }
 
         // Ground contact shadow: re-draw the SAME geometry flattened onto the ground
         // plane (a planar projection along the light) as a flat translucent black, so

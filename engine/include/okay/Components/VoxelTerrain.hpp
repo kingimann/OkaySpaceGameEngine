@@ -30,6 +30,12 @@ public:
     float snowLevel  = 16.0f;          ///< world-Y above which faces read as snow
     float rockSlope  = 0.6f;           ///< steepness (0 flat .. 1 vertical) -> rock
 
+    /// Optional triplanar ground texture (tinted by the auto-colours when on). Build
+    /// Game bundles the file. Triplanar projects along the world axes so cave walls,
+    /// overhangs and floors all texture cleanly with no seams or stretching.
+    std::string texture;
+    float       textureTiling = 0.08f; ///< world-space texture scale (smaller = bigger texels)
+
     std::vector<float> density;        ///< row-major nx*ny*nz field
 
     VoxelTerrain() { Resize(nx, ny, nz); }
@@ -67,6 +73,10 @@ public:
     void Dig(const Vec3& local, float radius, float amount);
     /// Deposit material inside a sphere (build up terrain).
     void Add(const Vec3& local, float radius, float amount);
+    /// Relax (average) the density field inside a sphere — smooths the jagged faces
+    /// a freshly dug hole can leave, and rounds off lumps from filling. `amount` in
+    /// [0,1] per call.
+    void SmoothAt(const Vec3& local, float radius, float amount);
 
     /// Trilinear density at a local-space point (for queries / collision).
     float SampleDensity(const Vec3& local) const;

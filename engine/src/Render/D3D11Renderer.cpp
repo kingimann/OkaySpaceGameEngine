@@ -34,7 +34,7 @@ const char* kHLSL =
     "  float3 uLightColor; float uUseTex;\n"
     "  float3 uAmbient;   float uHasNormal;\n"      // _p0 repurposed: 1 = sample normal map
     "  float3 uEye;       float uNormalStrength;\n" // _p1 repurposed: bump intensity
-    "  float2 uTiling;    float uShadowAlpha; float _p2;\n"
+    "  float2 uTiling;    float uShadowAlpha; float uAlpha;\n"   // _p2 repurposed: material opacity
     "  float3 uRimColor;  float uShaderMode;\n"
     "  float3 uGradTop;   float uToonBands;\n"
     "  float3 uGradBot;   float uRimStr;\n"
@@ -91,7 +91,7 @@ const char* kHLSL =
     "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"   // Hologram
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(i.world.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
-    "  if (uUnlit > 0.5) return float4(base + uEmissive, 1.0);\n"
+    "  if (uUnlit > 0.5) return float4(base + uEmissive, uAlpha);\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = uAmbient * lerp(0.55, 1.15, saturate(N.y * 0.5 + 0.5));\n"  // hemisphere ambient
     "  float3 lit = amb; float spec = 0.0;\n"
@@ -143,7 +143,7 @@ const char* kHLSL =
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
     "  }\n"
-    "  return float4(col, 1.0);\n"
+    "  return float4(col, uAlpha);\n"
     "}\n";
 
 // Constant-buffer layout mirrored on the C++ side (must match the cbuffer, 16-byte
@@ -157,7 +157,7 @@ struct CB {
     float lightColor[3]; float useTex;
     float ambient[3];   float hasNormal;
     float eye[3];       float normalStrength;
-    float tiling[2];    float shadowAlpha; float _p2;
+    float tiling[2];    float shadowAlpha; float alpha;
     float rimColor[3];  float shaderMode;
     float gradTop[3];   float toonBands;
     float gradBot[3];   float rimStr;
@@ -518,6 +518,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.gradTop[0] = mr->gradientTop.r; cb.gradTop[1] = mr->gradientTop.g; cb.gradTop[2] = mr->gradientTop.b;
         cb.gradBot[0] = mr->gradientBottom.r; cb.gradBot[1] = mr->gradientBottom.g; cb.gradBot[2] = mr->gradientBottom.b;
         cb.shadowAlpha = -1.0f;   // lit pass (>=0 would draw the flat shadow — must be off here)
+        cb.alpha = mr->color.a;   // material opacity (1 = opaque); < 1 alpha-blends (water/glass)
         cb.lightCount[0] = (float)frameLightCount;
         std::memcpy(cb.lights, frameLights, sizeof(frameLights));
         if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
@@ -533,7 +534,21 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
 
         UINT stride = 14 * sizeof(float), offset = 0;
         c->IASetVertexBuffers(0, 1, &p->vb, &stride, &offset);
+        // Transparency: a material alpha < 1 (water, glass) alpha-blends over the
+        // scene and doesn't write depth, so geometry behind shows through. Reuses the
+        // ground-shadow blend + no-depth-write states. Draw transparent meshes after
+        // opaque ones (objects draw in scene order).
+        bool transparent = mr->color.a < 0.999f && p->blend && p->depthNoWrite;
+        const float blendF[4] = {0, 0, 0, 0};
+        if (transparent) {
+            c->OMSetBlendState(p->blend, blendF, 0xffffffff);
+            c->OMSetDepthStencilState(p->depthNoWrite, 0);
+        }
         c->Draw((UINT)vcount, 0);
+        if (transparent) {
+            c->OMSetBlendState(nullptr, blendF, 0xffffffff);
+            c->OMSetDepthStencilState(p->depth, 0);
+        }
 
         // Ground contact shadow: re-draw the SAME geometry flattened onto the ground
         // plane as flat translucent black, so objects sit on the ground (not floating).

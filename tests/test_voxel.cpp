@@ -158,5 +158,39 @@ int main() {
         CHECK(body->transform->Position().y < restY - 1.0f);   // fell into the dug pit
     }
 
+    // --- SmoothAt relaxes the field (rounds off a sharp dug edge) -------------
+    {
+        VoxelTerrain v;
+        v.Resize(20, 20, 20); v.voxelSize = 1.0f;
+        v.FillSlab(0.6f);
+        // Punch a jagged single-voxel spike of air into the solid.
+        int cx = 10, cy = 6, cz = 10;
+        v.Set(cx, cy, cz, -3.0f);
+        float before = v.Get(cx, cy, cz);
+        v.SmoothAt(Vec3{cx - v.HalfX(), (float)cy, cz - v.HalfZ()}, 3.0f, 1.0f);
+        // The carved cell relaxes back toward its (solid) neighbours.
+        CHECK(v.Get(cx, cy, cz) > before);
+    }
+
+    // --- Voxel triplanar texture round-trips + drives the renderer ------------
+    {
+        Scene s("VTEX"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Voxel");
+        auto* v = go->AddComponent<VoxelTerrain>();
+        v->Resize(12, 12, 12); v->voxelSize = 1.0f; v->FillSlab(0.5f);
+        v->texture = "rock.png"; v->textureTiling = 0.05f;
+        v->Apply();
+        auto* mr = go->GetComponent<MeshRenderer>();
+        CHECK(mr && mr->texture == "rock.png" && mr->triplanar);
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* v2 = s2.Find("Voxel") ? s2.Find("Voxel")->GetComponent<VoxelTerrain>() : nullptr;
+        CHECK(v2 != nullptr);
+        if (v2) {
+            CHECK(v2->texture == "rock.png");
+            CHECK_NEAR(v2->textureTiling, 0.05f, 1e-4f);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

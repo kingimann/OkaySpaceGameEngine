@@ -21,7 +21,7 @@ namespace okay {
 /// (it finds the first VoxelTerrain). The main Camera supplies the aim ray.
 class VoxelDigger : public Behaviour {
 public:
-    enum class Mode { Dig, Add };
+    enum class Mode { Dig, Add, Smooth };
     Mode  mode     = Mode::Dig;
     int   button   = 0;        ///< mouse button held for the primary action (mode); <0 = none
     /// Secondary button for the OPPOSITE action, so one digger both digs AND
@@ -83,11 +83,14 @@ public:
         if ((!primary && !secondary) || dt <= 0.0f || !aiming) return;
 
         Mode m = mode;
-        if (secondary && !primary) m = (mode == Mode::Dig) ? Mode::Add : Mode::Dig;
+        // The secondary button does the opposite carve/fill action; for the Smooth
+        // mode it stays a smooth (there's no "opposite" of smoothing).
+        if (secondary && !primary && m != Mode::Smooth) m = (mode == Mode::Add) ? Mode::Dig : Mode::Add;
 
         float amt = strength * dt;
-        if (m == Mode::Dig) vox->Dig(local, radius, amt);
-        else                vox->Add(local, radius, amt);
+        if      (m == Mode::Dig)    vox->Dig(local, radius, amt);
+        else if (m == Mode::Add)    vox->Add(local, radius, amt);
+        else                        vox->SmoothAt(local, radius, std::min(1.0f, amt));
         vox->Apply();   // re-skin the surface immediately
     }
 

@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.306.0  (GPU transparency + terrain/water/digging polish)
+  - See-through water in the BUILT game. Transparency now works on the GPU
+    renderers too (Direct3D 11 + OpenGL), not just the software preview: a material
+    with alpha < 1 (water, glass) alpha-blends over the scene and skips depth
+    writes, so you see the ground and depth through it. (Order transparent meshes
+    after opaque ones — they draw in scene order.)
+  - Voxel terrain texturing: a triplanar ground texture option so cave walls,
+    overhangs and floors texture cleanly with no seams (tinted by the auto-colours).
+  - Better digging & filling: the voxel brush now uses a smoothstep falloff (softer,
+    rounder holes), and the Voxel Digger gains a Smooth mode (and VoxelTerrain a
+    SmoothAt brush) that relaxes the field to round off the jagged faces a fresh dig
+    leaves — so carving and filling both look clean.
+
 v2.305.0  (Voxel collision, unified sandbox, see-through water, pause polish)
   - FIX: voxel terrain collision. Players (and any rigid body) now collide with the
     voxel terrain — you stand on the ground and on cave floors, walk through tunnels

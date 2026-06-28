@@ -7915,6 +7915,15 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sample resolution. Resizing clears the field — regenerate after.");
             if (ImGui::DragFloat("Voxel Size##vox", &v->voxelSize, 0.05f, 0.1f, 10.0f)) { v->Apply(); ed.dirty = true; }
+            char vtex[260]; std::strncpy(vtex, v->texture.c_str(), sizeof(vtex) - 1); vtex[sizeof(vtex) - 1] = '\0';
+            if (ImGui::InputText("Texture##vox", vtex, sizeof(vtex))) { v->texture = vtex; v->Apply(); ed.dirty = true; }
+            if (AcceptAssetPathField(v->texture)) { v->Apply(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Triplanar ground texture (no seams on cave walls / overhangs). Empty = auto-colours only.");
+            if (!v->texture.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##voxtex")) { v->texture.clear(); v->Apply(); ed.dirty = true; }
+                if (ImGui::DragFloat("Tex Scale##vox", &v->textureTiling, 0.005f, 0.005f, 2.0f, "%.3f")) { v->Apply(); ed.dirty = true; }
+            }
             ImGui::SeparatorText("Generate");
             if (ImGui::DragFloat("Surface##vox", &g_voxSurface, 0.01f, 0.1f, 0.95f)) {}
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of the height the ground surface sits at.");
@@ -7935,9 +7944,9 @@ void DrawInspector(EditorState& ed) {
     if (auto* vd = dynamic_cast<VoxelDigger*>(curComp)) {
         if (CompHeader("Voxel Digger", vd, &toRemove)) {
             ImGui::TextDisabled("Aim with the camera and hold to carve caves/tunnels (or add material).");
-            const char* modes[] = {"Dig (remove)", "Add (build)"};
+            const char* modes[] = {"Dig (remove)", "Add (build)", "Smooth"};
             int md = (int)vd->mode;
-            if (ImGui::Combo("Primary##vdg", &md, modes, 2)) { vd->mode = (VoxelDigger::Mode)md; ed.dirty = true; }
+            if (ImGui::Combo("Primary##vdg", &md, modes, 3)) { vd->mode = (VoxelDigger::Mode)md; ed.dirty = true; }
             const char* btns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
             int bi = (vd->button < 0 || vd->button > 2) ? 3 : vd->button;
             if (ImGui::Combo("Primary Button##vdg", &bi, btns, 4)) { vd->button = (bi == 3) ? -1 : bi; ed.dirty = true; }

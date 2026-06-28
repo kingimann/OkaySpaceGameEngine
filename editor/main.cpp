@@ -8177,6 +8177,24 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Panel Color##iu", pc)) { ui->panelColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
                 float hc[4] = {ui->hoverColor.r, ui->hoverColor.g, ui->hoverColor.b, ui->hoverColor.a};
                 if (ImGui::ColorEdit4("Hover Color##iu", hc)) { ui->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
+                // --- New style options ---
+                const char* aligns[] = {"Left", "Center", "Right"};
+                int ha = (int)ui->hAlign;
+                if (ImGui::Combo("Hotbar Align##iu", &ha, aligns, 3)) { ui->hAlign = (InventoryUI::HAlign)ha; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dock the hotbar left/centre/right (still nudged by Margin X).");
+                if (ImGui::DragFloat("Selected Pop##iu", &ui->selectedScale, 0.01f, 0.5f, 2.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grow the selected hotbar slot (1 = no pop).");
+                cc("Empty Slot", ui->emptySlotColor, "iue1");
+                cc("Hotbar Slot", ui->hotbarColor, "iuh1");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Separate fill for hotbar slots vs the backpack (Slot color).");
+                cc("Panel Border", ui->panelBorder, "iupb");
+                if (ImGui::DragFloat("Panel Border W##iu", &ui->panelBorderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Backpack title##iu", &ui->showTitle)) ed.dirty = true;
+                if (ui->showTitle) {
+                    char bt[64]; std::strncpy(bt, ui->backpackTitle.c_str(), sizeof(bt) - 1); bt[sizeof(bt) - 1] = '\0';
+                    if (ImGui::InputText("Title Text##iu", bt, sizeof(bt))) { ui->backpackTitle = bt; ed.dirty = true; }
+                    cc("Title Color", ui->titleColor, "iutc");
+                }
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Features##iu", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -12154,13 +12172,19 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float cr = ui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         auto slot = [&](float x, float y, int idx, bool sel) {
-            ImVec2 p0(canvasPos.x + x, canvasPos.y + y), p1(p0.x + sz, p0.y + sz);
+            float S = sz, X = x, Y = y;
+            if (sel && ui->selectedScale != 1.0f && ui->selectedScale > 0.01f) {
+                S = sz * ui->selectedScale; X = x - (S - sz) * 0.5f; Y = y - (S - sz) * 0.5f;
+            }
+            ImVec2 p0(canvasPos.x + X, canvasPos.y + Y), p1(p0.x + S, p0.y + S);
             okay::Color bcol = sel ? ui->selectedColor : ui->slotBorder;
-            if (!sel && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty())
+            bool empty = !(inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty());
+            if (!sel && !empty)
                 if (const okay::Color* rc = ui->RarityOf(inv->slots[idx].item)) bcol = *rc;   // rarity tint
             dl->AddRectFilled(p0, p1, col(bcol), cr);
             float b = (ui->borderWidth < 0 ? 0 : ui->borderWidth) + (sel ? 1.0f : 0.0f);
-            dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(ui->slotColor), cr > b ? cr - b : 0.0f);
+            okay::Color fillc = empty ? ui->emptySlotColor : (idx < n ? ui->hotbarColor : ui->slotColor);
+            dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(fillc), cr > b ? cr - b : 0.0f);
             int shown = (inv && idx >= 0 && idx < (int)inv->slots.size()) ? inv->slots[idx].count : 0;
             if (idx == ui->dragIndex) shown -= (ui->dragAmount > 0 ? ui->dragAmount : shown);
             if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
@@ -12176,7 +12200,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             }
         };
         float rowW = n * sz + (n - 1) * gap;
-        float hx = (canvasSize.x - rowW) * 0.5f + marginX;
+        float hx = (ui->hAlign == okay::InventoryUI::HAlign::Left)  ? marginX
+                 : (ui->hAlign == okay::InventoryUI::HAlign::Right) ? (canvasSize.x - rowW - marginX)
+                 : (canvasSize.x - rowW) * 0.5f + marginX;   // Center (default)
         float hy = ui->anchorTop ? marginY : canvasSize.y - sz - marginY;
         auto bpY = [&](int row) {
             return ui->anchorTop ? hy + sz + 14.0f + row * (sz + gap)
@@ -12188,6 +12214,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             for (int row = 0; row < ui->backpackRows; ++row)
                 for (int c = 0; c < n; ++c)
                     slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
+            // Backpack header title above the grid.
+            if (ui->showTitle && !ui->backpackTitle.empty()) {
+                float t = bpY(0), bb = bpY(ui->backpackRows - 1), top = (t < bb ? t : bb);
+                ImVec2 ts = ImGui::CalcTextSize(ui->backpackTitle.c_str());
+                dl->AddText(ImVec2(canvasPos.x + hx + rowW * 0.5f - ts.x * 0.5f,
+                                   canvasPos.y + top - ts.y - 4.0f),
+                            col(ui->titleColor), ui->backpackTitle.c_str());
+            }
         }
         for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
         // Hotbar slot numbers (1–9).

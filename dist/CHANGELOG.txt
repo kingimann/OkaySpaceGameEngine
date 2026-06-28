@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.292.0  (More inventory UI customization)
+  - Hotbar Align: dock the hotbar Left / Center / Right (still nudged by Margin X).
+  - Selected Pop: the selected hotbar slot grows by a tunable factor (Minecraft-
+    style emphasis); 1 = off.
+  - Empty Slot color: give empty slots their own fill so the grid reads clearly.
+  - Hotbar Slot color: separate fill for the hotbar vs the backpack.
+  - Panel Border: an outline (color + width) around the hotbar/backpack panel.
+  - Backpack title: an optional header label above the open grid, with its own
+    colour.
+  - All in the Inventory UI inspector's Layout / Style section, mirrored in the
+    editor preview and the built game. Old scenes load unchanged (defaults match
+    the previous look).
+
 v2.291.0  (Particle occlusion on the GPU path too)
   - Particle depth occlusion now also works when the game runs on the Direct3D /
     OpenGL renderer (the default). Those paths don't read their depth buffer back,

@@ -441,6 +441,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Sort mode / auto-sort / drop key (appended; numeric-peek guarded).
         out << " " << (int)ui->sortMode << " " << (ui->sortOnClose ? 1 : 0)
             << " " << (int)(unsigned char)ui->dropKey;
+        // Style: align / selected pop / empty + hotbar colours / panel border / title
+        // (appended; numeric-peek + quote guarded on read).
+        out << " " << (int)ui->hAlign << " " << ui->selectedScale;
+        wc(ui->emptySlotColor); wc(ui->hotbarColor); wc(ui->panelBorder);
+        out << " " << ui->panelBorderWidth << " " << (ui->showTitle ? 1 : 0);
+        wc(ui->titleColor);
+        out << " " << Quote(ui->backpackTitle);
         out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
@@ -1832,6 +1839,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                             ui->sortMode = (InventoryUI::SortMode)sm;
                                             ui->sortOnClose = (soc != 0);
                                             ui->dropKey = (char)dk;
+                                            in >> std::ws;   // optional style block (align/pop/colours/border/title)
+                                            int pk7 = in.peek();
+                                            if (std::isdigit(pk7) || pk7 == '-' || pk7 == '.') {
+                                                int ha = 0, st = 0;
+                                                in >> ha; ui->hAlign = (InventoryUI::HAlign)ha;
+                                                in >> ui->selectedScale;
+                                                rc(ui->emptySlotColor); rc(ui->hotbarColor); rc(ui->panelBorder);
+                                                in >> ui->panelBorderWidth >> st; ui->showTitle = (st != 0);
+                                                rc(ui->titleColor);
+                                                ui->backpackTitle = ReadQuoted(in);
+                                            }
                                         }
                                     }
                                 }

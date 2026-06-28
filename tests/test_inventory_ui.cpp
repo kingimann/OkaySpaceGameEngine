@@ -118,5 +118,34 @@ int main() {
         CHECK(r5->dropKey == 'q');
     }
 
+    // New style options round-trip: align, selected pop, empty/hotbar/border/title.
+    {
+        Scene s6("iu6");
+        GameObject* p6 = s6.CreateGameObject("P");
+        p6->AddComponent<Inventory>();
+        auto* u6 = p6->AddComponent<InventoryUI>();
+        u6->hAlign = InventoryUI::HAlign::Right;
+        u6->selectedScale = 1.4f;
+        u6->emptySlotColor = Color::FromBytes(10, 12, 16, 200);
+        u6->hotbarColor = Color::FromBytes(40, 44, 60, 255);
+        u6->panelBorder = Color::FromBytes(200, 180, 60, 255);
+        u6->panelBorderWidth = 3.0f;
+        u6->showTitle = true;
+        u6->backpackTitle = "Backpack";
+        u6->titleColor = Color::FromBytes(250, 250, 250, 255);
+        Scene loaded("L");
+        CHECK(SceneSerializer::Deserialize(loaded, SceneSerializer::Serialize(s6)));
+        auto* r6 = loaded.Find("P")->GetComponent<InventoryUI>();
+        CHECK(r6 != nullptr);
+        CHECK(r6->hAlign == InventoryUI::HAlign::Right);
+        CHECK_NEAR(r6->selectedScale, 1.4f, 0.001f);
+        CHECK_NEAR(r6->emptySlotColor.b, 16.0f / 255.0f, 0.01f);
+        CHECK_NEAR(r6->hotbarColor.g, 44.0f / 255.0f, 0.01f);
+        CHECK(r6->panelBorder.a > 0.9f);
+        CHECK_NEAR(r6->panelBorderWidth, 3.0f, 0.001f);
+        CHECK(r6->showTitle);
+        CHECK(r6->backpackTitle == "Backpack");
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -379,15 +379,22 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     const UIShape shp = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
     // Draw one slot at (x,y) for inventory stack index `idx`, highlighted if selected.
     auto slot = [&](float x, float y, int idx, bool sel) {
+        // Selected hotbar slot "pop": grow it about its centre by selectedScale.
+        float S = sz, X = x, Y = y;
+        if (sel && ui.selectedScale != 1.0f && ui.selectedScale > 0.01f) {
+            S = sz * ui.selectedScale; X = x - (S - sz) * 0.5f; Y = y - (S - sz) * 0.5f;
+        }
         float b = (ui.borderWidth < 0 ? 0 : ui.borderWidth) + (sel ? 1.0f : 0.0f);
-        SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
+        SDL_Rect outer{(int)X, (int)Y, (int)S, (int)S};
         Color bc = sel ? ui.selectedColor : ui.slotBorder;
-        if (!sel && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty())
+        bool empty = !(inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty());
+        if (!sel && !empty)
             if (const Color* rc = ui.RarityOf(inv->slots[idx].item)) bc = *rc;   // rarity tint
         FillUIShape(r, outer, shp, cr, bc, bc, false, false, 1.0f);
-        SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
+        SDL_Rect inner{(int)(X + b), (int)(Y + b), (int)(S - 2 * b), (int)(S - 2 * b)};
         float ir = cr > 0.5f ? (cr - b < 0 ? 0 : cr - b) : 0.0f;
-        FillUIShape(r, inner, ir > 0.5f ? UIShape::Rounded : UIShape::Rectangle, ir, ui.slotColor, ui.slotColor, false, false, 1.0f);
+        Color fillc = empty ? ui.emptySlotColor : (idx < n ? ui.hotbarColor : ui.slotColor);
+        FillUIShape(r, inner, ir > 0.5f ? UIShape::Rounded : UIShape::Rectangle, ir, fillc, fillc, false, false, 1.0f);
         // Count shown in the slot: the source of a split-drag still shows its remainder
         // (a whole-stack drag lifts everything, so the source draws empty).
         int shown = (inv && idx >= 0 && idx < (int)inv->slots.size()) ? inv->slots[idx].count : 0;
@@ -399,16 +406,16 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             if (icon) { int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{inner.x + ins, inner.y + ins, inner.w - 2 * ins, inner.h - 2 * ins}; SDL_RenderCopy(r, icon, nullptr, &d); }
             else if (ui.showNames) {
                 std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-                float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-                if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;   // fit the slot
-                DrawText(r, nm, x + 4, y + 5, px,
+                float px = (S - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
+                if (px < 1.0f) px = 1.0f; if (px > S * 0.05f) px = S * 0.05f;   // fit the slot
+                DrawText(r, nm, X + 4, Y + 5, px,
                          SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
             }
             if (ui.showCounts && shown > 1) {
                 std::string cs = std::to_string(shown);
-                float px = sz * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+                float px = S * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
                 float tw = cs.size() * (Font8x8::Width + 1) * px;
-                DrawText(r, cs, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 3, px,
+                DrawText(r, cs, X + S - tw - 3, Y + S - (Font8x8::Height + 1) * px - 3, px,
                          SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
             }
         }
@@ -416,7 +423,9 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     // Layout: hotbar docked to the bottom (or top), nudged by margins; the backpack
     // grows away from the docked edge.
     const float rowW = n * sz + (n - 1) * gap;
-    const float hx = (W - rowW) * 0.5f + marginX;
+    const float hx = (ui.hAlign == InventoryUI::HAlign::Left)  ? marginX
+                   : (ui.hAlign == InventoryUI::HAlign::Right) ? (W - rowW - marginX)
+                   : (W - rowW) * 0.5f + marginX;   // Center (default)
     const float hy = ui.anchorTop ? marginY : H - sz - marginY;
     auto bpY = [&](int row) {
         return ui.anchorTop ? hy + sz + 14.0f + row * (sz + gap)
@@ -424,8 +433,17 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     };
     auto panel = [&](float x, float y, float w, float h) {
         SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
-        FillUIShape(r, rc, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr + 2.0f,
-                    ui.panelColor, ui.panelColor, false, false, 1.0f);
+        UIShape psh = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
+        FillUIShape(r, rc, psh, cr + 2.0f, ui.panelColor, ui.panelColor, false, false, 1.0f);
+        // Optional outline (alpha 0 = off): a few inset frames approximate a border.
+        if (ui.panelBorder.a > 0.001f && ui.panelBorderWidth > 0.0f) {
+            int bw = (int)(ui.panelBorderWidth * uiScale); if (bw < 1) bw = 1;
+            setc(ui.panelBorder);
+            for (int k = 0; k < bw; ++k) {
+                SDL_Rect fr{rc.x + k, rc.y + k, rc.w - 2 * k, rc.h - 2 * k};
+                if (fr.w > 0 && fr.h > 0) SDL_RenderDrawRect(r, &fr);
+            }
+        }
     };
     // Backpack (when open): darken, then the grid.
     if (ui.open && ui.backpackRows > 0) {
@@ -434,6 +452,16 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             float t = bpY(0), b = bpY(ui.backpackRows - 1);
             float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = panelPad;
             panel(hx - pad, top - pad, rowW + 2 * pad, (bot - top) + 2 * pad);
+        }
+        // Backpack header title above the grid.
+        if (ui.showTitle && !ui.backpackTitle.empty()) {
+            float t = bpY(0), b = bpY(ui.backpackRows - 1);
+            float top = (t < b ? t : b);
+            float px = 2.0f * ui.labelScale * uiScale; if (px < 1.0f) px = 1.0f;
+            float tw = ui.backpackTitle.size() * (Font8x8::Width + 1) * px;
+            DrawText(r, ui.backpackTitle, hx + rowW * 0.5f - tw * 0.5f,
+                     top - panelPad - (Font8x8::Height + 1) * px - 2.0f, px,
+                     SDL_Color{(Uint8)(ui.titleColor.r*255),(Uint8)(ui.titleColor.g*255),(Uint8)(ui.titleColor.b*255),255});
         }
         for (int row = 0; row < ui.backpackRows; ++row)
             for (int c = 0; c < n; ++c)

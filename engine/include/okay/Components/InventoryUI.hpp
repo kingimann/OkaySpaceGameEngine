@@ -59,6 +59,27 @@ public:
     bool  showSelectedName = false; ///< Minecraft-style: held item's name above the hotbar
     int   nameChars      = 6;       ///< how many characters of the item name to show in a slot
 
+    // ---- More style customization ----
+    /// Horizontal anchor of the hotbar row. Center is classic; Left/Right dock it to
+    /// a screen edge (still nudged by `marginX`).
+    enum class HAlign { Left, Center, Right };
+    HAlign hAlign = HAlign::Center;
+    /// The selected hotbar slot grows by this factor (Minecraft-style "pop"); 1 = off.
+    float selectedScale = 1.0f;
+    /// Fill colour for EMPTY slots (defaults to the same look as `slotColor`, so it's
+    /// a no-op until you change it — e.g. a darker empty slot to read the grid).
+    Color emptySlotColor = Color::FromBytes(28, 30, 38, 210);
+    /// Separate fill for hotbar slots (defaults to `slotColor`); lets the hotbar and
+    /// backpack use different colours.
+    Color hotbarColor = Color::FromBytes(28, 30, 38, 210);
+    /// Outline drawn around the hotbar/backpack panel. Alpha 0 (default) = no outline.
+    Color panelBorder = Color::FromBytes(70, 72, 84, 0);
+    float panelBorderWidth = 2.0f;  ///< panel outline thickness (px); ignored when panelBorder is transparent
+    /// Backpack header text (drawn above the open grid when `showTitle` is on).
+    bool        showTitle  = false;
+    std::string backpackTitle = "Inventory";
+    Color       titleColor = Color::FromBytes(235, 236, 245, 255);
+
     // ---- Features ----
     bool  showTooltips   = true;    ///< hover a slot to see the item's name + count
     Color tooltipColor   = Color::FromBytes(12, 13, 18, 240);   ///< tooltip background

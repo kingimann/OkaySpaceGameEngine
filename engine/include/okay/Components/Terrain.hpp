@@ -62,19 +62,59 @@ public:
     void Hills(int count, float maxHeight, unsigned seed = 1u);
 
     /// Procedurally generate a whole landscape from fractal (Perlin-like) noise.
-    /// type: 0 Mountains, 1 Hills, 2 Plains, 3 Plateau (mesas), 4 Islands.
+    /// type: 0 Mountains, 1 Hills, 2 Plains, 3 Plateau (mesas), 4 Islands,
+    ///       5 Ridged Mountains (sharp ridgelines), 6 Canyons (carved channels).
+    /// Types 5/6 use ridged noise + domain warping for natural, organic shapes.
     /// Replaces the current heights.
     void Generate(int type, float amplitude, float frequency, int octaves, unsigned seed);
 
+    // ---- Erosion (geological realism) ----------------------------------
+    /// Hydraulic erosion: simulate `droplets` rain drops that flow downhill,
+    /// picking up soil on steep ground and dropping it in flats — the standard
+    /// technique that carves river valleys, gullies and sediment fans, turning
+    /// blobby noise into believable landscape. `strength` scales how aggressively
+    /// material is moved (0..~1). Operates in place on the heightmap.
+    void Erode(int droplets, float strength = 0.3f, unsigned seed = 1337u);
+
+    /// Thermal erosion: material on slopes steeper than `talus` (height step per
+    /// cell) slumps to the lower neighbours, forming talus piles and softening
+    /// cliffs into scree slopes. `iterations` passes, `strength` in [0,1].
+    void ThermalErode(int iterations, float talus, float strength = 0.5f);
+
+    // ---- Heightmap I/O (interop with World Machine / Gaea / Photoshop) --
+    /// Lowest and highest height in the map (for normalizing exports / UI).
+    void HeightRange(float& lo, float& hi) const;
+    /// Write the heightmap to a grayscale PNG, normalized so the lowest point is
+    /// black and the highest is white (the standard heightmap convention).
+    bool ExportHeightmap(const std::string& path) const;
+    /// Replace the heights from a grayscale PNG: black -> `lowY`, white -> `highY`.
+    /// Bilinearly resampled to the current resolution, so any image size works.
+    bool ImportHeightmap(const std::string& path, float lowY, float highY);
+
+    /// Brush falloff shape. `hardness` in [0,1] sets the radius of the full-strength
+    /// core (Photoshop-style): 0 = soft smoothstep from the centre, 1 = hard edge.
+    /// Used by all the brushes below for a natural, pressure-like feel.
+    static float BrushWeight(float dist, float radius, float hardness);
+
     /// Raise (or lower, with a negative delta) heights within `radius` of a point
     /// in the terrain's local XZ space, with a soft falloff — the sculpt brush.
-    void RaiseAt(float localX, float localZ, float radius, float delta);
+    void RaiseAt(float localX, float localZ, float radius, float delta, float hardness = 0.4f);
     /// Brush that relaxes (averages) heights within `radius` toward their
     /// neighborhood — the Smooth brush. `amount` in [0,1] per application.
-    void SmoothAt(float localX, float localZ, float radius, float amount);
+    void SmoothAt(float localX, float localZ, float radius, float amount, float hardness = 0.4f);
     /// Brush that pulls heights within `radius` toward `target` — the Flatten /
     /// Set-Height brush. `amount` in [0,1] per application.
-    void FlattenAt(float localX, float localZ, float radius, float target, float amount);
+    void FlattenAt(float localX, float localZ, float radius, float target, float amount, float hardness = 0.4f);
+    /// Brush that adds fractal noise detail within `radius` — roughen up flats with
+    /// bumps/grain. `amount` scales the bump height; `seed` varies the pattern.
+    void NoiseAt(float localX, float localZ, float radius, float amount, unsigned seed, float hardness = 0.4f);
+    /// Brush that runs a localized hydraulic erosion pass within `radius` — carve a
+    /// gully / weather a patch right under the cursor. `amount` scales the effect.
+    void ErodeAt(float localX, float localZ, float radius, float amount);
+
+    /// Surface normal at a local XZ point, from the height gradient (bilinear).
+    /// Used by physics for slope-aware terrain collision and by tools.
+    Vec3 NormalAt(float localX, float localZ) const;
     /// Sample the terrain height at a point in local XZ (bilinear) — handy for the
     /// Flatten brush to pick up the height under the cursor.
     float SampleHeight(float localX, float localZ) const;

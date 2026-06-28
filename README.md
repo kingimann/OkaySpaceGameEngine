@@ -126,10 +126,15 @@ planet, `A` player ship.)*
   built-in **VS Code-style editor** (line-number gutter, syntax highlighting,
   Find, inline errors, comment-toggle, go-to-line, duplicate/move-line, zoom and
   snippets).
-- **Terrain** — a Unity-style heightmap terrain you sculpt with a brush (drag in
-  the 3D view to raise, Shift to lower) or generate (Flatten / Smooth / Randomize
-  / Hills), rendered as a generated mesh. Create from GameObject > 3D Object >
-  Terrain; the heightmap saves with the scene.
+- **Terrain** — a Unity-style heightmap terrain you sculpt with brushes (Raise/
+  Lower, Smooth, Flatten, Set Height, Noise, Erode — each with a Hardness control)
+  or generate (Mountains, Hills, Plains, Plateau, Islands, Ridged Mountains,
+  Canyons). **Erosion** weathers generated terrain into believable landscape
+  (hydraulic droplet sim carves valleys; thermal slumps cliffs), and heightmaps
+  **import/export as PNG** (round-trip with World Machine / Gaea / Photoshop).
+  Bodies walk on it with slope-aware collision (slide / bounce / friction), and a
+  runtime **Terrain Digger** carves it live in Play with an on-ground brush marker.
+  Try the **Terrain Sandbox** template. The heightmap saves with the scene.
 - **Cascaded shadows** — directional cast shadows rendered as several
   camera-focused cascades so they stay crisp up close while cheaply covering
   distance on big maps (the practical, DX11-class stand-in for virtual shadow

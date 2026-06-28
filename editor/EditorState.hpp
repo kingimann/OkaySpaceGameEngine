@@ -50,6 +50,7 @@ public:
     void NewMainMenu();
     void NewSnake();
     void NewInventory();
+    void NewTerrainSandbox();
 
     // ---- Files ---------------------------------------------------------
     bool Save(const std::string& path);

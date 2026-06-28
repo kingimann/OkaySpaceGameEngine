@@ -147,11 +147,14 @@ public:
         // that works regardless of how the ground is set up — OR a fresh ground
         // contact. Coyote time + a jump buffer make jumping forgiving.
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
-        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f;
+        // Heightmap terrain has no collider (no collision callbacks); Physics3D flags
+        // resting-on-terrain on the body so terrain counts as ground for jumping.
+        bool terrainGround = rb && rb->groundedOnTerrain;
+        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f || terrainGround;
         // Jump count refills only on a real ground contact, so the zero-velocity at
         // the jump apex can't grant another jump (no more endless jumping). maxJumps
         // enables double (or more) jumps.
-        if (m_groundContact > 0.0f) m_jumpsUsed = 0;
+        if (m_groundContact > 0.0f || terrainGround) m_jumpsUsed = 0;
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
         if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;

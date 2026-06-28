@@ -34,6 +34,9 @@
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
+#include "okay/Components/Terrain.hpp"
+#include "okay/Components/TerrainDigger.hpp"
+#include "okay/Components/Light.hpp"
 
 namespace okay {
 
@@ -890,6 +893,63 @@ function update(d) {
     tr->text = "Score: 0";
     hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
+}
+
+/// A terrain-digging sandbox: a procedurally generated, eroded hilly terrain you
+/// can walk on (first-person) and reshape live in Play with a TerrainDigger — hold
+/// the mouse to carve craters, with a ring marker showing where you're digging.
+/// A ready base for survival / mining / building games.
+inline void TerrainSandbox(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Terrain Sandbox");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    // The terrain: a generated hilly landscape, lightly eroded so it reads natural.
+    GameObject* ground = scene.CreateGameObject("Terrain");
+    auto* terr = ground->AddComponent<Terrain>();
+    terr->resolution = 64;
+    terr->Resize(64);
+    terr->size = 100.0f;
+    terr->Generate(1, 10.0f, 3.0f, 5, 2024u);   // rolling hills
+    terr->Erode(20000, 0.35f, 7u);              // carve a few valleys
+    terr->autoColor = true;
+    terr->Apply();
+
+    // The digger lives on the terrain object: hold Left Mouse to dig, with a ring
+    // marker showing the brush. (It finds the main camera for the aim ray.)
+    auto* dig = ground->AddComponent<TerrainDigger>();
+    dig->mode = TerrainDigger::Mode::Dig;
+    dig->radius = 4.0f;
+    dig->strength = 12.0f;
+    dig->showBrush = true;
+
+    // A first-person player that walks on the terrain (Physics3D grounds it on the
+    // heightmap) and aims the digger with the camera.
+    GameObject* player = scene.CreateGameObject("Player");
+    player->transform->localPosition = {0, 12, 0};   // drop in from above; it settles
+    player->AddComponent<Character>()->Apply();
+    player->AddComponent<Rigidbody3D>();
+    {
+        auto* col = player->AddComponent<BoxCollider3D>();
+        col->size = {0.6f, 1.8f, 0.6f};
+        col->offset = {0.0f, 0.9f, 0.0f};
+    }
+    player->AddComponent<FirstPersonController>();
+
+    GameObject* camObj = scene.CreateGameObject("FPS Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->SetParent(player->transform, false);
+    camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height
+
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* ht = help->AddComponent<TextRenderer>();
+    ht->text = "WASD + mouse to move    Hold Left Mouse to dig    Space to jump";
+    ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
 }
 
 } // namespace Templates

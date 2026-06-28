@@ -276,6 +276,18 @@ void EditorState::NewFPS() {
     dirty = false;
 }
 
+void EditorState::NewTerrainSandbox() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::TerrainSandbox(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 2, 0};
+    camDist = 30.0f;
+    m_selected = m_scene.Find("Terrain");
+    dirty = false;
+}
+
 void EditorState::NewThirdPerson() {
     NewScene();
     m_suppressUndo = true;

@@ -275,7 +275,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* td = go->GetComponent<TerrainDigger>()) {
         out << "  terraindigger " << (int)td->mode << " " << td->button
             << " " << (int)(unsigned char)td->key << " " << td->radius << " " << td->strength
-            << " " << td->range << " " << td->relax << "\n";
+            << " " << td->range << " " << td->relax
+            << " " << td->hardness << " " << (td->showBrush ? 1 : 0)
+            << " " << td->brushColor.r << " " << td->brushColor.g
+            << " " << td->brushColor.b << " " << td->brushColor.a << "\n";
     }
     if (auto* ws = go->GetComponent<WorldStreamer>()) {
         out << "  worldstreamer " << ws->cellSize << " " << ws->loadRadius
@@ -2600,6 +2603,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     td->mode = (TerrainDigger::Mode)md;
                     td->button = btn;
                     td->key = (char)k;
+                    // Optional trailing block (hardness, showBrush, brush rgba) —
+                    // guarded so older scenes without it still load.
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                        in >> td->hardness;
+                        int sb = 1; in >> sb; td->showBrush = (sb != 0);
+                        in >> td->brushColor.r >> td->brushColor.g >> td->brushColor.b >> td->brushColor.a;
+                    }
                 } else if (field == "worldstreamer") {
                     auto* ws = go->AddComponent<WorldStreamer>();
                     int once = 1;

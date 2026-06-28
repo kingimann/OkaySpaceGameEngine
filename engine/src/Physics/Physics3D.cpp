@@ -326,6 +326,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
             Transform* t = rb->transform;
             if (!t) continue;
+            rb->groundedOnTerrain = false;   // recomputed below; cleared when airborne
             Vec3 pos = t->Position();
             // How far the body extends below its origin (so its feet, not its centre,
             // sit on the ground). From its collider AABB, else a small default.
@@ -341,9 +342,33 @@ void Physics3D::Step(Scene& scene, float dt) {
                 float half = terr->size * 0.5f;
                 if (lx < -half || lx > half || lz < -half || lz > half) continue;
                 float targetY = tp.y + terr->SampleHeight(lx, lz) + foot;
+                // Resting on (or just above) the surface counts as grounded, so a
+                // player standing on terrain can jump repeatedly. A small skin
+                // tolerance avoids flicker from the per-frame gravity nudge.
+                if (pos.y <= targetY + 0.05f) rb->groundedOnTerrain = true;
                 if (pos.y < targetY) {                      // sank into the ground -> lift out
                     t->localPosition.y += (targetY - pos.y);
-                    if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;   // ground downward motion
+
+                    // Slope-aware response: resolve velocity against the terrain
+                    // surface normal instead of just zeroing Y. This lets bodies
+                    // slide down hills, bounce off (restitution) and lose tangential
+                    // speed to friction — so debris tumbles and rolls realistically
+                    // instead of sticking flat where it lands.
+                    Vec3 n = terr->NormalAt(lx, lz);        // unit surface normal (Y up)
+                    Vec3& v = rb->velocity;
+                    float vn = v.x * n.x + v.y * n.y + v.z * n.z;   // into-surface component
+                    if (vn < 0.0f) {
+                        float rest = rb->bounciness;        // 0 = no bounce
+                        // Remove the normal component, then add it back scaled by
+                        // restitution (a bounce). Tangential part stays (sliding).
+                        v.x -= vn * n.x * (1.0f + rest);
+                        v.y -= vn * n.y * (1.0f + rest);
+                        v.z -= vn * n.z * (1.0f + rest);
+                        // Kinetic friction on the remaining tangential velocity.
+                        const float friction = 0.18f;
+                        v.x *= (1.0f - friction);
+                        v.z *= (1.0f - friction);
+                    }
                 }
             }
         }

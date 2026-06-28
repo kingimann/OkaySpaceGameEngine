@@ -151,11 +151,16 @@ public:
         // Grounded: resting (low vertical speed) — reliable across any ground setup —
         // OR a fresh ground contact. Coyote time + jump buffer make jumping forgiving.
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
-        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f;
+        // Heightmap terrain has no collider, so it never fires collision callbacks;
+        // Physics3D flags resting-on-terrain on the body instead. Treat it as a real
+        // ground contact so the jump counter refills (otherwise you get exactly one
+        // jump on terrain, then never again).
+        bool terrainGround = rb && rb->groundedOnTerrain;
+        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f || terrainGround;
         // The jump COUNT is what stops endless jumping: it refills only on a real
         // ground contact, so the brief zero-velocity at the jump apex can't hand you
         // another jump. maxJumps allows double (or more) jumps.
-        if (m_groundContact > 0.0f) m_jumpsUsed = 0;
+        if (m_groundContact > 0.0f || terrainGround) m_jumpsUsed = 0;
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
         if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;  // ground jump spent
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;

@@ -1,5 +1,36 @@
 OkaySpace Game Engine — Changelog
 
+v2.303.0  (Terrain overhaul: erosion, collision, digging)
+  A big terrain pass — realism, physics, and fixes for the digging workflow:
+
+  - Erosion. Generated terrain can now be weathered into believable landscape:
+    Hydraulic Erode runs a rain-droplet simulation that carves river valleys and
+    sediment fans; Thermal Erode slumps steep slopes into scree. Both in the
+    Terrain inspector.
+  - Two new generators — Ridged Mountains (knife-edge ridgelines) and Canyons
+    (carved channels) — using ridged noise + domain warping for organic shapes.
+  - Heightmap import / export (PNG). Round-trip with World Machine, Gaea or
+    Photoshop: export the heightmap as grayscale, or paint/import one (black =
+    low, white = high), resampled to any terrain resolution.
+  - Better sculpting. Brushes now have a Hardness control (soft feathered edge ..
+    hard flat-topped core) with a smoothstep falloff, plus two new brushes: Noise
+    (paint fractal detail) and Erode (weather a patch under the cursor).
+  - Slope-aware terrain collision. Bodies on terrain now resolve against the
+    surface normal — they slide down hills, bounce (restitution) and lose speed to
+    friction, so debris tumbles and rolls instead of sticking flat where it lands.
+  - FIX: jumping on terrain. Heightmap terrain has no collider, so controllers
+    never refilled the jump counter on it — you got exactly one jump, then never
+    again. Physics now flags resting-on-terrain and the first/third-person
+    controllers treat it as ground, so you can jump freely on terrain.
+  - FIX: the Terrain Digger aimed *behind* the camera (un-negated forward), so it
+    never hit the ground in front of you — "digger doesn't work". Now it aims
+    where you're looking, matching the block builder.
+  - NEW dig indicator: the Terrain Digger draws a ring marker on the ground where
+    (and how big) the brush will dig, so you can see your aim. Color configurable.
+  - NEW "Terrain Sandbox" template: a procedurally generated, eroded hilly terrain
+    you walk on in first person and reshape live (hold Left Mouse to dig, Space to
+    jump) — a base for survival / mining / building games.
+
 v2.302.0  (AAA trio: cascaded shadows + world streaming + chaos destruction)
   Three features inspired by what big engines do, scoped honestly to OkaySpace's
   renderer/architecture:

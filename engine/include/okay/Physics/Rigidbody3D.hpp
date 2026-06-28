@@ -21,6 +21,12 @@ public:
     /// Freeze movement on selected world axes (e.g. lock Y for a top-down game).
     bool     freezeX = false, freezeY = false, freezeZ = false;
 
+    /// True for the frames this body is resting on heightmap Terrain. Set by
+    /// Physics3D's terrain ground-follow (heightmap terrain has no polygon
+    /// collider, so it produces no collision contacts). Controllers read it as a
+    /// ground signal so you can jump, refill jumps, etc. while standing on terrain.
+    bool     groundedOnTerrain = false;
+
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; }
     /// Apply an instantaneous change in momentum (immediate velocity change).

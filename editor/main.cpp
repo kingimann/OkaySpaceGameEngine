@@ -882,12 +882,19 @@ bool  g_gizmoLocal = false; // gizmo axes in the object's local space (Unity's L
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
 float g_terrainRadius = 6.0f;
 float g_terrainStrength = 4.0f;
-int   g_terrainBrush = 0;      // 0 Raise/Lower, 1 Smooth, 2 Flatten, 3 Set Height
+int   g_terrainBrush = 0;      // 0 Raise/Lower, 1 Smooth, 2 Flatten, 3 Set Height, 4 Noise, 5 Erode
 float g_terrainFlattenH = 0.0f;// target height for the Flatten/Set-Height brush
-int   g_terrainGenType = 0;    // 0 Mountains,1 Hills,2 Plains,3 Plateau,4 Islands
+float g_terrainHardness = 0.4f;// brush falloff hardness (0 soft .. 1 hard edge)
+int   g_terrainGenType = 0;    // 0 Mountains,1 Hills,2 Plains,3 Plateau,4 Islands,5 Ridged,6 Canyons
 float g_terrainGenAmp = 12.0f; // generation amplitude (peak height)
 float g_terrainGenFreq = 3.0f; // generation frequency (feature density)
 int   g_terrainGenOct = 5;     // generation octaves (detail)
+int   g_terrainErodeDroplets = 30000; // hydraulic erosion droplet count
+float g_terrainErodeStrength = 0.4f;  // hydraulic erosion strength
+int   g_terrainThermalIters = 25;     // thermal erosion iterations
+float g_terrainThermalTalus = 1.2f;   // thermal erosion talus angle (height step)
+float g_terrainHmLow  = 0.0f;         // heightmap import: black -> this world Y
+float g_terrainHmHigh = 25.0f;        // heightmap import: white -> this world Y
 int   g_scatterProp = 0;       // 0 Tree,1 Pine,2 Rock,3 Bush
 int   g_scatterCount = 80;     // how many props to scatter per pass
 float g_scatterMinScale = 0.7f, g_scatterMaxScale = 1.5f;
@@ -5236,6 +5243,7 @@ void DrawNewProjectPopup(EditorState& ed) {
             {C_3D,    "Third Person","Orbit camera",       "Your blocky Character with an orbit camera behind it: WASD relative to the camera, Space to jump, with walk/run animation. You see and control the character.", &EditorState::NewThirdPerson},
             {C_3D,    "Third Person Shooter","Over-the-shoulder aim", "An over-the-shoulder shooter: the body faces where you aim, right mouse aims (camera zooms in), left mouse fires, cursor locked. Ground with cover crates and a row of targets to shoot.", &EditorState::NewThirdPersonShooter},
             {C_3D,    "Point & Click","Click to move",     "RuneScape / Diablo style: click the ground and your Character walks there, under a high angled camera. Powered by the Click To Move controller.", &EditorState::NewPointAndClick},
+            {C_3D,    "Terrain Sandbox","Dig & sculpt",    "A procedurally generated, eroded hilly terrain you walk on in first person and reshape live: hold Left Mouse to dig craters (a ring marker shows the brush), Space to jump. A base for survival / mining / building games.", &EditorState::NewTerrainSandbox},
             {C_3D,    "Vehicle (3D)","Arcade driving",     "A drivable car on a wide ground with a chase camera and a few blocks to weave around. WASD/arrows to steer, Space to handbrake. Powered by the Vehicle Controller.", &EditorState::NewVehicle3D},
             {C_2D,    "Vehicle (2D)","Top-down driving",   "A top-down car with grip + drift, an orthographic follow camera, and cones to weave around. WASD/arrows to drive, Space to handbrake. Powered by the Vehicle Controller 2D.", &EditorState::NewVehicle2D},
             {C_2D,    "Platformer",  "Side-scroller",      "A side-scroller: follow camera, a physics player on a wide ground, and a coin.", &EditorState::NewPlatformer},
@@ -7701,18 +7709,21 @@ void DrawInspector(EditorState& ed) {
             ImGui::SeparatorText("Sculpt brush (drag in the 3D view)");
             ImGui::Checkbox("Sculpt##terr", &g_terrainSculpt);
             ImGui::SameLine(); ImGui::TextDisabled("(Shift = lower/invert)");
-            const char* brushes[] = {"Raise / Lower", "Smooth", "Flatten", "Set Height"};
+            const char* brushes[] = {"Raise / Lower", "Smooth", "Flatten", "Set Height", "Noise", "Erode"};
             ImGui::SetNextItemWidth(160);
-            ImGui::Combo("Mode##terrbr", &g_terrainBrush, brushes, 4);
+            ImGui::Combo("Mode##terrbr", &g_terrainBrush, brushes, 6);
             ImGui::SliderFloat("Radius##terr", &g_terrainRadius, 0.5f, 30.0f);
             ImGui::SliderFloat("Strength##terr", &g_terrainStrength, 0.1f, 20.0f);
+            ImGui::SliderFloat("Hardness##terr", &g_terrainHardness, 0.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush edge: 0 = soft, feathered falloff; 1 = hard, flat-topped.");
             if (g_terrainBrush == 3)
                 ImGui::DragFloat("Target Height##terr", &g_terrainFlattenH, 0.1f, -100.0f, 100.0f);
 
-            ImGui::SeparatorText("Generate (Perlin noise)");
-            const char* gens[] = {"Mountains", "Hills", "Plains", "Plateau", "Islands"};
+            ImGui::SeparatorText("Generate (procedural noise)");
+            const char* gens[] = {"Mountains", "Hills", "Plains", "Plateau", "Islands",
+                                  "Ridged Mountains", "Canyons"};
             ImGui::SetNextItemWidth(160);
-            ImGui::Combo("Type##terrgen", &g_terrainGenType, gens, 5);
+            ImGui::Combo("Type##terrgen", &g_terrainGenType, gens, 7);
             ImGui::SliderFloat("Amplitude##terrgen", &g_terrainGenAmp, 1.0f, 60.0f);
             ImGui::SliderFloat("Frequency##terrgen", &g_terrainGenFreq, 0.5f, 12.0f);
             ImGui::SliderInt("Detail##terrgen", &g_terrainGenOct, 1, 8);
@@ -7725,6 +7736,49 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Button("Flatten##terr")) { tr->Flatten(0.0f); tr->Apply(); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Button("Smooth All##terr")) { tr->Smooth(); tr->Apply(); ed.dirty = true; }
+
+            ImGui::SeparatorText("Erosion (geological realism)");
+            ImGui::TextDisabled("Carve valleys & ridgelines into generated terrain.");
+            ImGui::SliderInt("Rain drops##tero", &g_terrainErodeDroplets, 1000, 200000);
+            ImGui::SliderFloat("Erode strength##tero", &g_terrainErodeStrength, 0.05f, 1.0f);
+            if (ImGui::Button("Hydraulic Erode##tero")) {
+                tr->Erode(g_terrainErodeDroplets, g_terrainErodeStrength,
+                          (unsigned)(ImGui::GetTime() * 1000.0));
+                tr->Apply(); ed.dirty = true;
+                ConsoleLog("Hydraulic erosion: " + std::to_string(g_terrainErodeDroplets) + " drops");
+            }
+            ImGui::SliderInt("Thermal passes##tero", &g_terrainThermalIters, 1, 100);
+            ImGui::SliderFloat("Talus angle##tero", &g_terrainThermalTalus, 0.2f, 6.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slopes steeper than this (height step per cell) slump into scree.");
+            if (ImGui::Button("Thermal Erode##tero")) {
+                tr->ThermalErode(g_terrainThermalIters, g_terrainThermalTalus, 0.5f);
+                tr->Apply(); ed.dirty = true;
+                ConsoleLog("Thermal erosion: " + std::to_string(g_terrainThermalIters) + " passes");
+            }
+
+            ImGui::SeparatorText("Heightmap (World Machine / Gaea / Photoshop)");
+            if (ImGui::Button("Import PNG...##terhm")) {
+                const char* filt[] = {"*.png", "*.jpg", "*.bmp"};
+                const char* p = tinyfd_openFileDialog("Import heightmap", "", 3, filt, "Image", 0);
+                if (p && p[0]) {
+                    if (tr->ImportHeightmap(p, g_terrainHmLow, g_terrainHmHigh)) {
+                        tr->Apply(); ed.dirty = true; ConsoleLog("Imported heightmap");
+                    } else ConsoleLog("Failed to import heightmap");
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Export PNG...##terhm")) {
+                const char* p = tinyfd_saveFileDialog("Export heightmap", "heightmap.png", 0, nullptr, "PNG");
+                if (p && p[0]) {
+                    std::string path = p;
+                    if (path.size() < 4 || path.substr(path.size() - 4) != ".png") path += ".png";
+                    if (tr->ExportHeightmap(path)) ConsoleLog("Exported heightmap to " + path);
+                    else ConsoleLog("Failed to export heightmap");
+                }
+            }
+            ImGui::DragFloatRange2("Import Low/High##terhm", &g_terrainHmLow, &g_terrainHmHigh,
+                                   0.2f, -100.0f, 200.0f, "%.1f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Black in the PNG maps to Low, white maps to High.");
 
             ImGui::SeparatorText("Layers (auto-color by height & slope)");
             if (ImGui::Checkbox("Auto Color##terr", &tr->autoColor)) { tr->Apply(); ed.dirty = true; }
@@ -7807,6 +7861,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Reach##tdg", &td->range, 0.5f, 1.0f, 500.0f)) ed.dirty = true;
             if ((td->mode == TerrainDigger::Mode::Smooth || td->mode == TerrainDigger::Mode::Flatten) &&
                 ImGui::DragFloat("Relax / sec##tdg", &td->relax, 0.1f, 0.1f, 40.0f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Hardness##tdg", &td->hardness, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush edge: 0 = soft crater, 1 = hard flat-bottomed.");
+            if (ImGui::Checkbox("Show brush marker##tdg", &td->showBrush)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A ring on the ground shows where you're aiming to dig.");
+            if (td->showBrush) {
+                float bc[4] = {td->brushColor.r, td->brushColor.g, td->brushColor.b, td->brushColor.a};
+                if (ImGui::ColorEdit4("Marker color##tdg", bc)) { td->brushColor = {bc[0],bc[1],bc[2],bc[3]}; ed.dirty = true; }
+            }
             ImGui::TextDisabled("Heightmap: carves holes/hills, not caves/overhangs.");
             if (ImGui::SmallButton("Remove##tdg")) toRemove = td;
         }
@@ -14240,18 +14302,25 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     float dt = io.DeltaTime, sign = io.KeyShift ? -1.0f : 1.0f;
                     switch (g_terrainBrush) {
                         case 1:  // Smooth
-                            terr->SmoothAt(lx, lz, g_terrainRadius, std::min(1.0f, g_terrainStrength * dt));
+                            terr->SmoothAt(lx, lz, g_terrainRadius, std::min(1.0f, g_terrainStrength * dt), g_terrainHardness);
                             break;
                         case 2:  // Flatten: pull toward the height under the cursor
                             terr->FlattenAt(lx, lz, g_terrainRadius, terr->SampleHeight(lx, lz),
-                                            std::min(1.0f, g_terrainStrength * dt));
+                                            std::min(1.0f, g_terrainStrength * dt), g_terrainHardness);
                             break;
                         case 3:  // Set Height: pull toward the explicit target
                             terr->FlattenAt(lx, lz, g_terrainRadius, g_terrainFlattenH,
-                                            std::min(1.0f, g_terrainStrength * dt));
+                                            std::min(1.0f, g_terrainStrength * dt), g_terrainHardness);
+                            break;
+                        case 4:  // Noise: paint fractal detail
+                            terr->NoiseAt(lx, lz, g_terrainRadius, g_terrainStrength * dt,
+                                          (unsigned)(ImGui::GetTime() * 997.0), g_terrainHardness);
+                            break;
+                        case 5:  // Erode: localized hydraulic weathering
+                            terr->ErodeAt(lx, lz, g_terrainRadius, std::min(1.0f, g_terrainStrength * dt));
                             break;
                         default: // Raise / Lower
-                            terr->RaiseAt(lx, lz, g_terrainRadius, g_terrainStrength * dt * sign);
+                            terr->RaiseAt(lx, lz, g_terrainRadius, g_terrainStrength * dt * sign, g_terrainHardness);
                             break;
                     }
                     terr->Apply();

@@ -8044,6 +8044,32 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##fl")) toRemove = fl;
         }
     }
+    if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
+        if (CompHeader("First Person Hand", fh, &toRemove)) {
+            ImGui::TextDisabled("A Minecraft-style arm in view with a punch/swing on click. Put it on the FPS camera.");
+            if (ImGui::Checkbox("Left handed##fh", &fh->leftHanded)) ed.dirty = true;
+            if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
+            if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
+            if (ImGui::SliderFloat("Swing Time##fh", &fh->swingDuration, 0.08f, 0.8f, "%.2f s")) ed.dirty = true;
+            if (ImGui::SliderFloat("Punch Pitch##fh", &fh->punchPitch, 0.0f, 120.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::SliderFloat("Punch Yaw##fh", &fh->punchYaw, -60.0f, 60.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::SliderFloat("Lunge##fh", &fh->lungeForward, 0.0f, 0.5f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Idle Bob##fh", &fh->idleBob, 0.0f, 0.05f, "%.3f")) ed.dirty = true;
+            float rp[3] = {fh->restPosition.x, fh->restPosition.y, fh->restPosition.z};
+            if (ImGui::DragFloat3("Rest Pos##fh", rp, 0.01f)) { fh->restPosition = {rp[0],rp[1],rp[2]}; ed.dirty = true; }
+            float re[3] = {fh->restEuler.x, fh->restEuler.y, fh->restEuler.z};
+            if (ImGui::DragFloat3("Rest Angle##fh", re, 0.5f)) { fh->restEuler = {re[0],re[1],re[2]}; ed.dirty = true; }
+            float as[3] = {fh->armSize.x, fh->armSize.y, fh->armSize.z};
+            if (ImGui::DragFloat3("Arm Size##fh", as, 0.01f, 0.02f, 2.0f)) { fh->armSize = {as[0],as[1],as[2]}; ed.dirty = true; }
+            float sk[3] = {fh->skinColor.r, fh->skinColor.g, fh->skinColor.b};
+            if (ImGui::ColorEdit3("Skin##fh", sk)) { fh->skinColor = {sk[0],sk[1],sk[2],1.0f}; ed.dirty = true; }
+            float sl[3] = {fh->sleeveColor.r, fh->sleeveColor.g, fh->sleeveColor.b};
+            if (ImGui::ColorEdit3("Sleeve##fh", sl)) { fh->sleeveColor = {sl[0],sl[1],sl[2],1.0f}; ed.dirty = true; }
+            ImGui::TextDisabled("Tweaks apply on the next Play (the arm is rebuilt when the game starts).");
+            if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
+        }
+    }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
         if (CompHeader("Pause Menu", pm, &toRemove)) {
             ImGui::TextDisabled("Press the toggle key in Play to pause; Resume / Quit buttons appear.");
@@ -9004,9 +9030,9 @@ void DrawInspector(EditorState& ed) {
                 char ntb[48]; std::snprintf(ntb, sizeof(ntb), "%s", gu->nearbyTitle.c_str());
                 if (ImGui::InputText("Nearby Title##gu", ntb, sizeof(ntb))) { gu->nearbyTitle = ntb; ed.dirty = true; }
             }
-            if (ImGui::DragFloat("Cell Size##gu", &gu->cellSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Gap##gu", &gu->gap, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Corner Radius##gu", &gu->cornerRadius, 0.25f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Cell Size##gu", &gu->cellSize, 0.5f, 20.0f, 160.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Gap##gu", &gu->gap, 0.1f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Corner Radius##gu", &gu->cornerRadius, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
             if (ImGui::Checkbox("Show weight##gu", &gu->showWeight)) ed.dirty = true;
             char icf[128]; std::snprintf(icf, sizeof(icf), "%s", gu->iconFolder.c_str());
@@ -9019,6 +9045,36 @@ void DrawInspector(EditorState& ed) {
             cc("Item", gu->itemColor, "guc2"); cc("Border", gu->itemBorder, "guc3");
             cc("Title Bar", gu->titleBar, "guc4");
             cc("Drop OK", gu->dropOk, "guc5"); cc("Drop Blocked", gu->dropBad, "guc6");
+            if (ImGui::TreeNodeEx("Layout & Style##gu", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextDisabled("Spacing (pixels)");
+                if (ImGui::DragFloat("Header Height##gu", &gu->headerHeight, 0.5f, 12.0f, 60.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Panel Padding##gu", &gu->panelPad, 0.5f, 2.0f, 60.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Container Gap##gu", &gu->containerGap, 0.5f, 0.0f, 80.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Column Gap##gu", &gu->columnGap, 0.5f, 4.0f, 200.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Space between the worn-bags column and the Nearby column.");
+                ImGui::Separator();
+                ImGui::TextDisabled("Title & toggles");
+                if (ImGui::Checkbox("Master title##gu", &gu->showMasterTitle)) ed.dirty = true;
+                if (gu->showMasterTitle) {
+                    char mt[48]; std::snprintf(mt, sizeof(mt), "%s", gu->masterTitle.c_str());
+                    if (ImGui::InputText("Title Text##gu", mt, sizeof(mt))) { gu->masterTitle = mt; ed.dirty = true; }
+                }
+                if (ImGui::Checkbox("Gradients##gu", &gu->useGradients)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Drop shadows##gu", &gu->dropShadows)) ed.dirty = true;
+                if (ImGui::Checkbox("Accent bars##gu", &gu->accentBars)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::Checkbox("Auto accent colour##gu", &gu->autoAccent)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: each bag/item gets a distinct colour from its name. Off: use the fixed Accent colour.");
+                ImGui::Separator();
+                ImGui::TextDisabled("Colours");
+                if (!gu->autoAccent) cc("Accent", gu->accentColor, "guacc");
+                cc("Header", gu->headerColor, "guhdr");
+                cc("Text", gu->textColor, "gutxt");
+                cc("Hover Tint", gu->hoverColor, "guhov");
+                cc("Weight OK", gu->weightGood, "guwg");
+                cc("Weight Near", gu->weightWarn, "guww");
+                cc("Over Weight", gu->overweightColor, "guow");
+                ImGui::TreePop();
+            }
             if (ImGui::TreeNodeEx("Features##gu", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::Checkbox("Tooltips##gu", &gu->showTooltips)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hover an item to see its name, size and weight.");
@@ -11631,6 +11687,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<VoxelDigger>(), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
             if (item(!go->GetComponent<Water>(), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<Flashlight>(), "Flashlight")) { go->AddComponent<Flashlight>(); ed.dirty = true; }
+            if (item(!go->GetComponent<FirstPersonHand>(), "First Person Hand")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
@@ -13060,11 +13117,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!gui) continue;
         okay::GridInventory* primary = gui->Inv();
         if (!primary || !primary->open) break;
-        // Comfortable minimums so an existing tight grid still breathes (kept in sync
-        // with the player so drag hit-testing matches).
-        float cs = gui->cellSize < 54.0f ? 54.0f : gui->cellSize;
-        float gp = gui->gap < 6.0f ? 6.0f : gui->gap;
-        float cr = gui->cornerRadius < 6.0f ? 6.0f : gui->cornerRadius;
+        // Honour the configured sizes (just a minimal sane floor); kept in sync with
+        // the player so drag hit-testing matches.
+        float cs = gui->cellSize < 24.0f ? 24.0f : gui->cellSize;
+        float gp = gui->gap < 0.0f ? 0.0f : gui->gap;
+        float cr = gui->cornerRadius < 0.0f ? 0.0f : gui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         auto lighten = [&](okay::Color c, float f) { return okay::Color{c.r+(1-c.r)*f, c.g+(1-c.g)*f, c.b+(1-c.b)*f, c.a}; };
         auto darken  = [&](okay::Color c, float f) { return okay::Color{c.r*(1-f), c.g*(1-f), c.b*(1-f), c.a}; };
@@ -13073,12 +13130,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto rectS = [&](float x, float y, float w, float h, const okay::Color& c, float rad) {
             dl->AddRect(ImVec2(canvasPos.x+x, canvasPos.y+y), ImVec2(canvasPos.x+x+w, canvasPos.y+y+h), col(c), rad); };
         auto shadowE = [&](float x, float y, float w, float h, float rad) {
-            dl->AddRectFilled(ImVec2(canvasPos.x+x+3, canvasPos.y+y+5), ImVec2(canvasPos.x+x+3+w, canvasPos.y+y+5+h), IM_COL32(0,0,0,90), rad); };
+            if (gui->dropShadows) dl->AddRectFilled(ImVec2(canvasPos.x+x+3, canvasPos.y+y+5), ImVec2(canvasPos.x+x+3+w, canvasPos.y+y+5+h), IM_COL32(0,0,0,90), rad); };
 
         std::vector<okay::GridInventory*> equipped, nearby;
         if (gui->multiContainer) gui->CollectContainers(equipped, nearby);
         else equipped.push_back(primary);
-        const float labelH = 26.0f, vspace = 26.0f, colGap = 60.0f, pad = 20.0f, headH = 30.0f, headGap = 18.0f;
+        const float labelH = gui->headerHeight < 16.0f ? 16.0f : gui->headerHeight;
+        const float vspace = gui->containerGap < 4.0f ? 4.0f : gui->containerGap;
+        const float colGap = gui->columnGap < 8.0f ? 8.0f : gui->columnGap;
+        const float pad    = gui->panelPad < 4.0f ? 4.0f : gui->panelPad;
+        const float headH  = gui->showMasterTitle ? 30.0f : 0.0f;
+        const float headGap = gui->showMasterTitle ? 18.0f : 6.0f;
         auto colSize = [&](const std::vector<okay::GridInventory*>& L, float& cw, float& ch) {
             cw = 0; ch = 0;
             for (auto* g : L) { float gw = g->cols*cs + (g->cols-1)*gp; if (gw > cw) cw = gw;
@@ -13114,20 +13176,19 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         };
         backing(startLX - pad, startLY - pad, lw + pad*2, lh + pad*2);
         if (hasNear) backing(startLX + lw + colGap - pad, startLY - pad, rw + pad*2, rh + pad*2);
-        // One slim centred "INVENTORY" title over the equipped column (the per-bag
-        // headers below carry the container names), plus an aggregate weight bar.
-        {
+        // One slim centred title over the equipped column (the per-bag headers below
+        // carry the container names), plus an aggregate weight bar.
+        if (gui->showMasterTitle) {
             float hbX = startLX - pad, hbW = lw + pad*2; if (hbW < 200.0f) hbW = 200.0f;
             float hbY = startLY - pad - headH - headGap;
-            const char* mt = "INVENTORY";
-            ImVec2 ts = ImGui::CalcTextSize(mt);
-            dl->AddText(ImVec2(canvasPos.x + hbX + (hbW - ts.x) * 0.5f, canvasPos.y + hbY), col(lighten(gui->textColor, 0.0f)), mt);
+            ImVec2 ts = ImGui::CalcTextSize(gui->masterTitle.c_str());
+            dl->AddText(ImVec2(canvasPos.x + hbX + (hbW - ts.x) * 0.5f, canvasPos.y + hbY), col(gui->textColor), gui->masterTitle.c_str());
             float totW = 0, totL = 0; for (auto* g : equipped) { totW += g->TotalWeight(); totL += g->weightLimit; }
             if (gui->showWeight && totL > 0.0f) {
                 bool over = totW > totL; float frac = totW / totL; if (frac > 1) frac = 1; if (frac < 0) frac = 0;
                 float by = hbY + 18.0f, bw = hbW - 8;
                 rectF(hbX + 4, by, bw, 5, darken(gui->panelColor, 0.4f), 2);
-                okay::Color bc = over ? gui->overweightColor : (frac > 0.85f ? okay::Color::FromBytes(230,190,90,255) : okay::Color::FromBytes(110,200,130,255));
+                okay::Color bc = over ? gui->overweightColor : (frac > 0.85f ? gui->weightWarn : gui->weightGood);
                 rectF(hbX + 4, by, bw * frac, 5, bc, 2);
             }
         }
@@ -13149,11 +13210,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto drawOne = [&](const okay::GridItem& it, float lx, float ly, bool ghost, bool hover) {
             float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
             const okay::Color* rar = gui->RarityOf(it.name);
-            okay::Color accent = rar ? *rar : okay::GridInventoryUI::AccentFor(it.name);
+            okay::Color accent = rar ? *rar : gui->Accent(it.name);
             okay::Color base = lighten(gui->itemColor, hover ? 0.12f : 0.0f); if (ghost) base.a *= 0.7f;
             rectF(lx, ly, w, h, base, cr);
-            rectF(lx + 2, ly + 2, w - 4, 2, okay::Color{1,1,1, ghost ? 0.10f : 0.18f}, 0);   // sheen
-            rectF(lx, ly, 3, h, accent, 0);                                                  // accent bar
+            if (gui->useGradients) rectF(lx + 2, ly + 2, w - 4, 2, okay::Color{1,1,1, ghost ? 0.10f : 0.18f}, 0);   // sheen
+            if (gui->accentBars) rectF(lx, ly, 3, h, accent, 0);                             // accent bar
             rectS(lx, ly, w, h, rar ? *rar : gui->itemBorder, cr);
             if (hover) { rectF(lx, ly, w, h, gui->hoverColor, cr); rectS(lx, ly, w, h, lighten(gui->itemBorder, 0.35f), cr); }
             ImVec2 p0(canvasPos.x + lx, canvasPos.y + ly);
@@ -13174,11 +13235,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 
         for (int pi = 0; pi < (int)panels.size(); ++pi) {
             const EPanel& P = panels[pi]; okay::GridInventory* inv = P.inv;
-            okay::Color acc = okay::GridInventoryUI::AccentFor(P.label);
+            okay::Color acc = gui->Accent(P.label);
             float hy = P.oy - labelH - 2;
-            rectF(P.ox - 6, hy, P.gw + 12, labelH, lighten(gui->titleBar, 0.06f), cr);
-            rectF(P.ox - 6, hy, 3, labelH, acc, 0);
-            dl->AddText(ImVec2(canvasPos.x + P.ox + 2, canvasPos.y + hy + 4), col(gui->textColor), P.label.c_str());
+            rectF(P.ox - 6, hy, P.gw + 12, labelH, lighten(gui->headerColor, 0.06f), cr);
+            if (gui->accentBars) rectF(P.ox - 6, hy, 3, labelH, acc, 0);
+            dl->AddText(ImVec2(canvasPos.x + P.ox + (gui->accentBars ? 2.0f : 6.0f), canvasPos.y + hy + 4), col(gui->textColor), P.label.c_str());
             if (gui->showWeight && inv->weightLimit > 0.0f) {
                 char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f/%.0f", inv->TotalWeight(), inv->weightLimit);
                 ImVec2 ts = ImGui::CalcTextSize(wb);

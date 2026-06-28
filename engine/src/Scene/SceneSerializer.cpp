@@ -86,6 +86,7 @@
 #include "okay/Components/VoxelDigger.hpp"
 #include "okay/Components/Water.hpp"
 #include "okay/Components/Flashlight.hpp"
+#include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -317,6 +318,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  flashlight " << (int)(unsigned char)fl->toggleKey << " " << (fl->on ? 1 : 0)
             << " " << fl->range << " " << fl->angle << " " << fl->intensity
             << " " << fl->color.r << " " << fl->color.g << " " << fl->color.b << "\n";
+    }
+    if (auto* fh = go->GetComponent<FirstPersonHand>()) {
+        out << "  fphand " << (fh->leftHanded ? 1 : 0) << " " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
+            << " " << fh->swingDuration << " " << fh->punchPitch << " " << fh->punchYaw
+            << " " << fh->lungeForward << " " << fh->idleBob
+            << " " << fh->restPosition.x << " " << fh->restPosition.y << " " << fh->restPosition.z
+            << " " << fh->restEuler.x << " " << fh->restEuler.y << " " << fh->restEuler.z
+            << " " << fh->armSize.x << " " << fh->armSize.y << " " << fh->armSize.z
+            << " " << fh->skinColor.r << " " << fh->skinColor.g << " " << fh->skinColor.b
+            << " " << fh->sleeveColor.r << " " << fh->sleeveColor.g << " " << fh->sleeveColor.b << "\n";
     }
     if (auto* w = go->GetComponent<Water>()) {
         out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
@@ -552,6 +563,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& rr : gu->rarities) { out << " " << Quote(rr.item); wc(rr.color); }
         // Unturned multi-container screen (appended; numeric-peek guarded on read).
         out << " " << (gu->multiContainer ? 1 : 0) << " " << gu->nearbyRange << " " << Quote(gu->nearbyTitle);
+        // Layout + style customisation (appended; quote-peek guarded on read).
+        out << " " << gu->columnGap << " " << gu->panelPad << " " << gu->containerGap << " " << gu->headerHeight
+            << " " << (gu->showMasterTitle ? 1 : 0) << " " << Quote(gu->masterTitle)
+            << " " << (gu->useGradients ? 1 : 0) << " " << (gu->dropShadows ? 1 : 0)
+            << " " << (gu->accentBars ? 1 : 0) << " " << (gu->autoAccent ? 1 : 0);
+        wc(gu->accentColor); wc(gu->headerColor); wc(gu->weightGood); wc(gu->weightWarn);
         out << "\n";
     }
     if (auto* cs = go->GetComponent<CraftingStation>()) {
@@ -1990,6 +2007,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     int mc = 1; in >> mc >> gu->nearbyRange;
                                     gu->multiContainer = (mc != 0);
                                     gu->nearbyTitle = ReadQuoted(in);
+                                    in >> std::ws;   // optional layout + style block
+                                    int gpk5 = in.peek();
+                                    if (std::isdigit(gpk5) || gpk5 == '-' || gpk5 == '.') {
+                                        int sm = 1, ug = 1, ds = 1, ab = 1, aa = 1;
+                                        in >> gu->columnGap >> gu->panelPad >> gu->containerGap >> gu->headerHeight >> sm;
+                                        gu->masterTitle = ReadQuoted(in);
+                                        in >> ug >> ds >> ab >> aa;
+                                        gu->showMasterTitle = (sm != 0); gu->useGradients = (ug != 0);
+                                        gu->dropShadows = (ds != 0); gu->accentBars = (ab != 0); gu->autoAccent = (aa != 0);
+                                        rc(gu->accentColor); rc(gu->headerColor); rc(gu->weightGood); rc(gu->weightWarn);
+                                    }
                                 }
                             }
                         }
@@ -2717,6 +2745,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> tk >> onv >> fl->range >> fl->angle >> fl->intensity
                        >> fl->color.r >> fl->color.g >> fl->color.b;
                     fl->toggleKey = (char)tk; fl->on = (onv != 0);
+                } else if (field == "fphand") {
+                    auto* fh = go->AddComponent<FirstPersonHand>();
+                    int lh = 0, hs = 1;
+                    in >> lh >> fh->attackButton >> hs
+                       >> fh->swingDuration >> fh->punchPitch >> fh->punchYaw
+                       >> fh->lungeForward >> fh->idleBob
+                       >> fh->restPosition.x >> fh->restPosition.y >> fh->restPosition.z
+                       >> fh->restEuler.x >> fh->restEuler.y >> fh->restEuler.z
+                       >> fh->armSize.x >> fh->armSize.y >> fh->armSize.z
+                       >> fh->skinColor.r >> fh->skinColor.g >> fh->skinColor.b
+                       >> fh->sleeveColor.r >> fh->sleeveColor.g >> fh->sleeveColor.b;
+                    fh->leftHanded = (lh != 0); fh->holdToSwing = (hs != 0);
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed

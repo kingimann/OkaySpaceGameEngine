@@ -603,11 +603,11 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     if (!primary || !primary->open) { ui.dragIndex = -1; ui.dragInv = nullptr; return; }
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
-    // Comfortable minimums so an existing tight grid still breathes (kept in sync
-    // with the editor preview so drag hit-testing matches).
-    const float cs = ui.cellSize < 54.0f ? 54.0f : ui.cellSize;
-    const float gp = ui.gap < 6.0f ? 6.0f : ui.gap;
-    const float cr = ui.cornerRadius < 6.0f ? 6.0f : ui.cornerRadius;
+    // Honour the configured sizes (just a minimal sane floor); kept in sync with the
+    // editor preview so drag hit-testing matches.
+    const float cs = ui.cellSize < 24.0f ? 24.0f : ui.cellSize;
+    const float gp = ui.gap < 0.0f ? 0.0f : ui.gap;
+    const float cr = ui.cornerRadius < 0.0f ? 0.0f : ui.cornerRadius;
     auto setc = [&](const Color& c, int a = -1) {
         SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
     };
@@ -618,11 +618,12 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     };
     auto fillG = [&](float x, float y, float w, float h, const Color& a, const Color& b, float rad) {
         SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
-        FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, a, b, true, false, 1.0f);
+        if (ui.useGradients) FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, a, b, true, false, 1.0f);
+        else                 FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, a, a, false, false, 1.0f);
     };
     auto lighten = [&](Color c, float f) { return Color{c.r + (1 - c.r) * f, c.g + (1 - c.g) * f, c.b + (1 - c.b) * f, c.a}; };
     auto darken  = [&](Color c, float f) { return Color{c.r * (1 - f), c.g * (1 - f), c.b * (1 - f), c.a}; };
-    auto shadow  = [&](float x, float y, float w, float h, float rad) { fill(x + 3, y + 5, w, h, Color{0, 0, 0, 0.35f}, rad); };
+    auto shadow  = [&](float x, float y, float w, float h, float rad) { if (ui.dropShadows) fill(x + 3, y + 5, w, h, Color{0, 0, 0, 0.35f}, rad); };
     auto stroke  = [&](float x, float y, float w, float h, const Color& c, int a) {
         setc(c, a); SDL_Rect bx{(int)x, (int)y, (int)w, (int)h}; SDL_RenderDrawRect(r, &bx);
     };
@@ -631,7 +632,12 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     std::vector<okay::GridInventory*> equipped, nearby;
     if (ui.multiContainer) ui.CollectContainers(equipped, nearby);
     else equipped.push_back(primary);
-    const float labelH = 26.0f, vspace = 26.0f, colGap = 60.0f, pad = 20.0f, headH = 30.0f, headGap = 18.0f;
+    const float labelH = ui.headerHeight < 16.0f ? 16.0f : ui.headerHeight;
+    const float vspace = ui.containerGap < 4.0f ? 4.0f : ui.containerGap;
+    const float colGap = ui.columnGap < 8.0f ? 8.0f : ui.columnGap;
+    const float pad    = ui.panelPad < 4.0f ? 4.0f : ui.panelPad;
+    const float headH  = ui.showMasterTitle ? 30.0f : 0.0f;
+    const float headGap = ui.showMasterTitle ? 18.0f : 6.0f;
     auto colSize = [&](const std::vector<okay::GridInventory*>& L, float& cw, float& ch) {
         cw = 0; ch = 0;
         for (auto* g : L) { float gw = g->cols*cs + (g->cols-1)*gp; if (gw > cw) cw = gw;
@@ -669,20 +675,20 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     backing(startX - pad, startY - pad, lw + pad*2, lh + pad*2);
     if (hasNear) backing(startX + lw + colGap - pad, startY - pad, rw + pad*2, rh + pad*2);
 
-    // One slim centred "INVENTORY" title over the equipped column (the per-bag
-    // headers below carry the container names), plus an aggregate weight bar.
-    {
+    // One slim centred title over the equipped column (the per-bag headers below
+    // carry the container names), plus an aggregate weight bar.
+    if (ui.showMasterTitle) {
         float hbX = startX - pad, hbW = lw + pad*2, hbY = startY - pad - headH - headGap;
         if (hbW < 200.0f) hbW = 200.0f;
-        const char* mt = "INVENTORY"; float px = 1.8f;
-        float tw = (float)std::strlen(mt) * (Font8x8::Width + 1) * px;
+        const std::string& mt = ui.masterTitle; float px = 1.8f;
+        float tw = (float)mt.size() * (Font8x8::Width + 1) * px;
         DrawText(r, mt, hbX + (hbW - tw) * 0.5f, hbY, px, sc(ui.textColor));
         float totW = 0, totL = 0; for (auto* g : equipped) { totW += g->TotalWeight(); totL += g->weightLimit; }
         if (ui.showWeight && totL > 0.0f) {
             bool over = totW > totL; float frac = totW / totL; if (frac > 1.0f) frac = 1.0f; if (frac < 0.0f) frac = 0.0f;
             float bx = hbX + 4, bw = hbW - 8, by = hbY + 20.0f;
             fill(bx, by, bw, 5, darken(ui.panelColor, 0.4f), 2);
-            Color bc = over ? ui.overweightColor : (frac > 0.85f ? Color::FromBytes(230, 190, 90, 255) : Color::FromBytes(110, 200, 130, 255));
+            Color bc = over ? ui.overweightColor : (frac > 0.85f ? ui.weightWarn : ui.weightGood);
             fill(bx, by, bw * frac, 5, bc, 2);
         }
     }
@@ -706,12 +712,12 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     auto drawItem = [&](okay::GridInventoryUI& u, const okay::GridItem& it, float px0, float py0, bool ghost, bool hover) {
         float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
         const Color* rar = u.RarityOf(it.name);
-        Color accent = rar ? *rar : okay::GridInventoryUI::AccentFor(it.name);
+        Color accent = rar ? *rar : u.Accent(it.name);
         Color top = lighten(u.itemColor, hover ? 0.16f : 0.08f), bot = darken(u.itemColor, 0.16f);
         if (ghost) { top.a *= 0.72f; bot.a *= 0.72f; }
         fillG(px0, py0, w, h, top, bot, cr);
-        fill(px0 + 2, py0 + 2, w - 4, 2, Color{1, 1, 1, ghost ? 0.10f : 0.18f}, 0);   // top sheen
-        fill(px0, py0, 3, h, accent, 0);                                              // rarity/category bar
+        if (u.useGradients) fill(px0 + 2, py0 + 2, w - 4, 2, Color{1, 1, 1, ghost ? 0.10f : 0.18f}, 0);   // top sheen
+        if (u.accentBars) fill(px0, py0, 3, h, accent, 0);                            // rarity/category bar
         SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
         stroke(px0, py0, w, h, rar ? *rar : u.itemBorder, ghost ? 170 : 235);
         if (hover) { fill(px0, py0, w, h, u.hoverColor, cr); stroke(px0, py0, w, h, lighten(u.itemBorder, 0.35f), 255); }
@@ -734,11 +740,11 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     // Draw every container: accent header, inset cells, drop highlight, items.
     for (int pi = 0; pi < (int)panels.size(); ++pi) {
         const Panel& P = panels[pi]; okay::GridInventory* inv = P.inv;
-        Color acc = okay::GridInventoryUI::AccentFor(P.label);
+        Color acc = ui.Accent(P.label);
         float hy = P.oy - labelH - 2;
-        fillG(P.ox - 6, hy, P.gw + 12, labelH, lighten(ui.titleBar, 0.08f), darken(ui.titleBar, 0.05f), cr);
-        fill(P.ox - 6, hy, 3, labelH, acc, 0);                       // category accent stripe
-        DrawText(r, P.label, P.ox + 2, hy + 5, 1.4f, sc(ui.textColor));
+        fillG(P.ox - 6, hy, P.gw + 12, labelH, lighten(ui.headerColor, 0.08f), darken(ui.headerColor, 0.05f), cr);
+        if (ui.accentBars) fill(P.ox - 6, hy, 3, labelH, acc, 0);    // category accent stripe
+        DrawText(r, P.label, P.ox + (ui.accentBars ? 2.0f : 6.0f), hy + 5, 1.4f, sc(ui.textColor));
         if (ui.showWeight && inv->weightLimit > 0.0f) {
             char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f/%.0f", inv->TotalWeight(), inv->weightLimit);
             float px = 1.2f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;

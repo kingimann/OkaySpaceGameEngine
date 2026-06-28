@@ -1025,6 +1025,7 @@ inline void VoxelSandbox(Scene& scene) {
     camObj->transform->SetParent(player->transform, false);
     camObj->transform->localPosition = {0, 1.62f, 0.0f};
     camObj->AddComponent<Flashlight>();   // F to toggle — so you can see inside caves
+    camObj->AddComponent<FirstPersonHand>();   // Minecraft-style arm + punch on LMB
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();

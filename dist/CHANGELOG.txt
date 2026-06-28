@@ -1,6 +1,22 @@
 OkaySpace Game Engine — Changelog
 
-v2.314.0  (Inventory roominess + pause-menu polish)
+v2.315.0  (First-person hand + punch, and a very customizable inventory)
+  - NEW First Person Hand: a Minecraft-style arm (forearm + fist + sleeve) drawn in
+    the corner of the view, with a quick punch/swing arc when you click. Add it from
+    Add Component > First Person Hand (put it on the FPS camera) — the Sandbox player
+    has one. Tunable handedness, swing button (hold-to-swing), swing speed, punch
+    pitch/yaw, lunge, idle bob, arm size, and skin/sleeve colours.
+  - INVENTORY is now VERY customizable. The whole Unturned screen reads from new
+    fields you can tweak live in the inspector under "Layout & Style":
+      * Layout: cell size (up to 160), gap, corner radius, header height, panel
+        padding, gap between stacked bags, and gap between the two columns.
+      * Title: toggle the master title and set its text.
+      * Style toggles: gradients, drop shadows, accent bars, and auto-vs-fixed
+        accent colour.
+      * Colours: accent, header, text, hover tint, and the three weight-bar colours
+        (OK / near limit / over) — on top of the existing panel/cell/item colours.
+  - All of it is saved with the scene (back-compatible: older scenes load with the
+    new defaults).
   - Inventory was TOO COMPACT: cells now have comfortable minimum sizes and bigger
     gaps (existing tight grids breathe too), columns and container headers are more
     generously spaced, and item names are clipped to their tile so they never spill.

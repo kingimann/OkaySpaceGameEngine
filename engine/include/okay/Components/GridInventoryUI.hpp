@@ -40,6 +40,28 @@ public:
     char  rotateKey    = 'r';    ///< while dragging, rotate the item 90° (0 = disabled)
     Color overweightColor = Color::FromBytes(235, 90, 90, 255); ///< weight text when over the limit
 
+    // ---- Layout (all in pixels; the renderer enforces a small comfortable floor) ----
+    float columnGap     = 60.0f;   ///< gap between the equipped column and the Nearby column
+    float panelPad      = 20.0f;   ///< padding inside each column's backing panel
+    float containerGap  = 26.0f;   ///< vertical gap between stacked containers
+    float headerHeight  = 26.0f;   ///< height of each container's name header
+    bool  showMasterTitle = true;  ///< the big title above the bags
+    std::string masterTitle = "INVENTORY";
+
+    // ---- Style toggles + extra colours ----
+    bool  useGradients = true;     ///< soft top->bottom gradients on panels/tiles
+    bool  dropShadows  = true;     ///< drop shadows behind panels + the carried item
+    bool  accentBars   = true;     ///< the coloured accent stripe on headers + tiles
+    bool  autoAccent   = true;     ///< derive each container/item accent from its name (else use accentColor)
+    Color accentColor  = Color::FromBytes(120, 140, 180, 255);  ///< fixed accent when autoAccent is off
+    Color headerColor  = Color::FromBytes(46, 50, 64, 255);     ///< container header strip (defaults to titleBar)
+    Color weightGood   = Color::FromBytes(110, 200, 130, 255);  ///< weight bar when comfortably under
+    Color weightWarn   = Color::FromBytes(230, 190, 90, 255);   ///< weight bar when near the limit
+
+    /// The accent colour for a container/item: a stable per-name hue, or the fixed
+    /// accentColor when autoAccent is off. Used by both the player and editor renderers.
+    Color Accent(const std::string& key) const { return autoAccent ? AccentFor(key) : accentColor; }
+
     /// A rarity/tier tint: items named `item` get their border drawn in `color`.
     struct RarityRule { std::string item; Color color = Color::FromBytes(255, 215, 0, 255); };
     std::vector<RarityRule> rarities;

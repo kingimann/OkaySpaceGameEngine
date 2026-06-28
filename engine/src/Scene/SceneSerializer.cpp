@@ -533,6 +533,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.x
                 << " " << it.y << " " << it.count << " " << it.weight;
         out << " " << gi->weightLimit;   // appended (numeric-peek guarded on read)
+        out << " " << Quote(gi->category) << " " << (gi->worldItem ? 1 : 0);   // Unturned role (guarded)
         out << "\n";
     }
     if (auto* gu = go->GetComponent<GridInventoryUI>()) {
@@ -549,6 +550,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wc(gu->overweightColor);
         out << " " << gu->rarities.size();
         for (const auto& rr : gu->rarities) { out << " " << Quote(rr.item); wc(rr.color); }
+        // Unturned multi-container screen (appended; numeric-peek guarded on read).
+        out << " " << (gu->multiContainer ? 1 : 0) << " " << gu->nearbyRange << " " << Quote(gu->nearbyTitle);
         out << "\n";
     }
     if (auto* cs = go->GetComponent<CraftingStation>()) {
@@ -1944,7 +1947,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     in >> std::ws;   // optional weight limit (appended later)
                     int wpk = in.peek();
-                    if (std::isdigit(wpk) || wpk == '-' || wpk == '.') in >> gi->weightLimit;
+                    if (std::isdigit(wpk) || wpk == '-' || wpk == '.') {
+                        in >> gi->weightLimit;
+                        in >> std::ws;   // optional Unturned role (category + worldItem)
+                        if (in.peek() == '"') {
+                            gi->category = ReadQuoted(in);
+                            int wi = 0; in >> wi; gi->worldItem = (wi != 0);
+                        }
+                    }
                 } else if (field == "gridinventoryui") {
                     auto* gu = go->AddComponent<GridInventoryUI>();
                     int dk = 1, sw = 1; in >> gu->cellSize >> gu->gap >> dk >> sw;
@@ -1973,6 +1983,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 for (std::size_t ri = 0; ri < rn; ++ri) {
                                     GridInventoryUI::RarityRule rr; rr.item = ReadQuoted(in); rc(rr.color);
                                     gu->rarities.push_back(rr);
+                                }
+                                in >> std::ws;   // optional Unturned multi-container block
+                                int gpk4 = in.peek();
+                                if (std::isdigit(gpk4) || gpk4 == '-' || gpk4 == '.') {
+                                    int mc = 1; in >> mc >> gu->nearbyRange;
+                                    gu->multiContainer = (mc != 0);
+                                    gu->nearbyTitle = ReadQuoted(in);
                                 }
                             }
                         }

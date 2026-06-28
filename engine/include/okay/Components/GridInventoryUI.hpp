@@ -2,8 +2,10 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Render/Color.hpp"
+#include "okay/Math/Vec3.hpp"
 #include <string>
 #include <vector>
 
@@ -45,8 +47,18 @@ public:
         return nullptr;
     }
 
+    // ---- Unturned-style multi-container screen ----
+    /// When true, opening the screen shows EVERY container the player has — its own grid
+    /// plus each child clothing/bag's grid — stacked in a left column, and every nearby
+    /// ground container (GridInventory.worldItem within `nearbyRange`) in a right column.
+    /// Drag-and-drop works across all of them. When false, only Inv() is drawn (classic).
+    bool  multiContainer = true;
+    float nearbyRange = 4.0f;                ///< world units to gather nearby ground containers
+    std::string nearbyTitle = "Nearby";      ///< header above the ground-loot column
+
     // ---- Runtime drag state (driven by the renderer's mouse handling) ----
-    int   dragIndex = -1;     ///< item being dragged, or -1
+    GridInventory* dragInv = nullptr;  ///< container the dragged item came from (cross-bag drags)
+    int   dragIndex = -1;     ///< item being dragged within dragInv, or -1
     int   grabX = 0, grabY = 0;   ///< grabbed cell offset within the item
 
     GridInventory* Inv() const {
@@ -56,12 +68,44 @@ public:
         return o ? o->GetComponent<GridInventory>() : nullptr;
     }
 
+    /// Collect the containers the multi-container screen should show. `equipped` is the
+    /// player's own grid followed by every GridInventory on a descendant object (clothes /
+    /// bags); `nearby` is every ground container (worldItem) within `nearbyRange`. Both the
+    /// player and editor renderers call this so the layout stays identical.
+    void CollectContainers(std::vector<GridInventory*>& equipped,
+                           std::vector<GridInventory*>& nearby) const {
+        equipped.clear(); nearby.clear();
+        GridInventory* primary = Inv();
+        GameObject* root = Owner();
+        if (primary) equipped.push_back(primary);
+        Scene* sc = root ? root->scene() : (gameObject ? gameObject->scene() : nullptr);
+        if (!sc || !root || !root->transform) return;
+        Vec3 pp = root->transform->Position();
+        for (const auto& up : sc->Objects()) {
+            GameObject* go = up.get();
+            if (!go || go == root) continue;
+            auto* gi = go->GetComponent<GridInventory>();
+            if (!gi || gi == primary) continue;
+            if (IsDescendant(go->transform, root->transform)) {
+                equipped.push_back(gi);                 // a worn/held container (clothes, bag)
+            } else if (gi->worldItem) {
+                Vec3 d = go->transform ? go->transform->Position() - pp : Vec3{1e9f, 1e9f, 1e9f};
+                if (d.Magnitude() <= nearbyRange) nearby.push_back(gi);
+            }
+        }
+    }
+
 private:
     GameObject* Owner() const {
         if (!gameObject || !gameObject->transform) return gameObject;
         Transform* t = gameObject->transform;
         while (t->Parent()) t = t->Parent();
         return t->gameObject ? t->gameObject : gameObject;
+    }
+    static bool IsDescendant(Transform* t, Transform* root) {
+        for (Transform* p = t ? t->Parent() : nullptr; p; p = p->Parent())
+            if (p == root) return true;
+        return false;
     }
 };
 

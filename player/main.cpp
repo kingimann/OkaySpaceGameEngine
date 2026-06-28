@@ -594,108 +594,168 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
 }
 
 // A DayZ/Unturned grid inventory: multi-cell items, drag-and-drop within the grid.
+// Unturned-style multi-container inventory: the player's own grid + every worn
+// clothing/bag grid stacked in a left column, and nearby ground containers in a
+// right column. Drag-and-drop works across all of them (cross-bag / loot moves).
 static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const std::string& baseDir,
                               std::unordered_map<std::string, SDL_Texture*>& cache) {
-    okay::GridInventory* inv = ui.Inv();
-    if (!inv || !inv->open) { ui.dragIndex = -1; return; }
+    okay::GridInventory* primary = ui.Inv();
+    if (!primary || !primary->open) { ui.dragIndex = -1; ui.dragInv = nullptr; return; }
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
-    const float cs = ui.cellSize, gp = ui.gap;
-    float gridW = inv->cols * cs + (inv->cols - 1) * gp;
-    float gridH = inv->rows * cs + (inv->rows - 1) * gp;
-    float ox = (W - gridW) * 0.5f, oy = (H - gridH) * 0.5f + 10.0f;
+    const float cs = ui.cellSize, gp = ui.gap, cr = ui.cornerRadius;
     auto setc = [&](const Color& c, int a = -1) {
         SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
     };
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255}; };
-    const float cr = ui.cornerRadius;
     auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
         SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
         FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
+
+    // Gather the containers to show, then lay them out in (up to) two columns.
+    std::vector<okay::GridInventory*> equipped, nearby;
+    if (ui.multiContainer) ui.CollectContainers(equipped, nearby);
+    else equipped.push_back(primary);
+    const float labelH = 20.0f, vspace = 16.0f, colGap = 40.0f, pad = 12.0f;
+    auto colSize = [&](const std::vector<okay::GridInventory*>& L, float& cw, float& ch) {
+        cw = 0; ch = 0;
+        for (auto* g : L) { float gw = g->cols*cs + (g->cols-1)*gp; if (gw > cw) cw = gw;
+                            ch += labelH + (g->rows*cs + (g->rows-1)*gp) + vspace; }
+        if (!L.empty()) ch -= vspace;
+    };
+    float lw, lh, rw, rh; colSize(equipped, lw, lh); colSize(nearby, rw, rh);
+    bool hasNear = !nearby.empty();
+    float totalW = lw + (hasNear ? colGap + rw : 0.0f);
+    float totalH = lh > rh ? lh : rh;
+    float startX = (W - totalW) * 0.5f, startY = (H - totalH) * 0.5f + 14.0f;
+
+    struct Panel { okay::GridInventory* inv; float ox, oy, gw, gh; std::string label; bool ground; };
+    std::vector<Panel> panels;
+    auto placeCol = [&](const std::vector<okay::GridInventory*>& L, float colX, float colW, bool ground) {
+        float y = startY;
+        for (auto* g : L) {
+            float gw = g->cols*cs + (g->cols-1)*gp, gh = g->rows*cs + (g->rows-1)*gp;
+            panels.push_back({g, colX + (colW-gw)*0.5f, y + labelH, gw, gh,
+                              g->category.empty() ? g->title : g->category, ground});
+            y += labelH + gh + vspace;
+        }
+    };
+    placeCol(equipped, startX, lw, false);
+    if (hasNear) placeCol(nearby, startX + lw + colGap, rw, true);
+
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+    // Backing panels behind each column.
+    fill(startX - pad, startY - pad, lw + pad*2, lh + pad*2, ui.panelColor, cr + 2);
+    if (hasNear) {
+        fill(startX + lw + colGap - pad, startY - pad, rw + pad*2, rh + pad*2, ui.panelColor, cr + 2);
+        DrawText(r, ui.nearbyTitle, startX + lw + colGap, startY - labelH - 4, 1.6f, sc(ui.textColor));
+    }
+
     okay::Vec2 mp = okay::Input::MousePosition();
-    int cx = (int)std::floor((mp.x - ox) / (cs + gp));
-    int cy = (int)std::floor((mp.y - oy) / (cs + gp));
-    // Panel + a title bar strip.
-    fill(ox - 12, oy - 38, gridW + 24, gridH + 50, ui.panelColor, cr + 2);
-    fill(ox - 12, oy - 38, gridW + 24, 28, ui.titleBar, cr + 2);
-    DrawText(r, inv->title, ox, oy - 31, 2.0f, sc(ui.textColor));
-    if (ui.showWeight) {
-        char wb[64];
-        if (inv->weightLimit > 0.0f) std::snprintf(wb, sizeof(wb), "%.1f / %.0f kg", inv->TotalWeight(), inv->weightLimit);
-        else std::snprintf(wb, sizeof(wb), "%.1f kg", inv->TotalWeight());
-        float px = 2.0f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;
-        DrawText(r, wb, ox + gridW - tw, oy - 31, px, sc(inv->OverWeight() ? ui.overweightColor : ui.textColor));
+    // Which panel + cell is under the cursor?
+    int hovPanel = -1, hovCx = 0, hovCy = 0;
+    for (int pi = 0; pi < (int)panels.size(); ++pi) {
+        const Panel& P = panels[pi];
+        int cx = (int)std::floor((mp.x - P.ox) / (cs + gp)), cy = (int)std::floor((mp.y - P.oy) / (cs + gp));
+        if (mp.x >= P.ox && mp.y >= P.oy && cx >= 0 && cy >= 0 && cx < P.inv->cols && cy < P.inv->rows) {
+            hovPanel = pi; hovCx = cx; hovCy = cy;
+        }
     }
-    for (int y = 0; y < inv->rows; ++y)
-        for (int x = 0; x < inv->cols; ++x)
-            fill(ox + x * (cs + gp), oy + y * (cs + gp), cs, cs, ui.cellColor, cr);
-    // While dragging, tint the target footprint green (fits) / red (blocked).
-    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size()) {
-        const auto& it = inv->items[ui.dragIndex];
-        int tx = cx - ui.grabX, ty = cy - ui.grabY;
-        bool ok = inv->CanPlace(tx, ty, it.w, it.h, ui.dragIndex);
-        for (int yy = 0; yy < it.h; ++yy)
-            for (int xx = 0; xx < it.w; ++xx) {
-                int gxc = tx + xx, gyc = ty + yy;
-                if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
-                fill(ox + gxc * (cs + gp), oy + gyc * (cs + gp), cs, cs, ok ? ui.dropOk : ui.dropBad, cr);
-            }
-    }
-    auto drawItem = [&](const okay::GridItem& it, float px0, float py0, bool ghost, bool hover) {
+
+    auto drawItem = [&](okay::GridInventoryUI& u, const okay::GridItem& it, float px0, float py0, bool ghost, bool hover) {
         float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
-        fill(px0, py0, w, h, ghost ? Color{ui.itemColor.r, ui.itemColor.g, ui.itemColor.b, 0.6f} : ui.itemColor, cr);
+        fill(px0, py0, w, h, ghost ? Color{u.itemColor.r, u.itemColor.g, u.itemColor.b, 0.6f} : u.itemColor, cr);
         SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
-        const Color* rar = ui.RarityOf(it.name);
-        setc(rar ? *rar : ui.itemBorder, ghost ? 170 : 255); SDL_RenderDrawRect(r, &box);
-        if (hover) fill(px0, py0, w, h, ui.hoverColor, cr);
-        SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.name + ".png", baseDir, cache);
+        const Color* rar = u.RarityOf(it.name);
+        setc(rar ? *rar : u.itemBorder, ghost ? 170 : 255); SDL_RenderDrawRect(r, &box);
+        if (hover) fill(px0, py0, w, h, u.hoverColor, cr);
+        SDL_Texture* icon = u.iconFolder.empty() ? nullptr : GetTexture(r, u.iconFolder + it.name + ".png", baseDir, cache);
         if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 4, box.y + 4, box.w - 8, box.h - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else DrawText(r, it.name.substr(0, 8), box.x + 4, box.y + 5, 1.4f, sc(ui.textColor));
+        else DrawText(r, it.name.substr(0, 8), box.x + 4, box.y + 5, 1.4f, sc(u.textColor));
         if (it.count > 1) {
             std::string cstr = std::to_string(it.count); float px = 1.4f;
             float tw = cstr.size() * (Font8x8::Width + 1) * px;
             DrawText(r, cstr, box.x + box.w - tw - 3, box.y + box.h - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255, 255, 255, 255});
         }
     };
-    int hovered = (ui.dragIndex < 0 && cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
-    for (int i = 0; i < (int)inv->items.size(); ++i) {
-        if (i == ui.dragIndex) continue;
-        const auto& it = inv->items[i];
-        drawItem(it, ox + it.x * (cs + gp), oy + it.y * (cs + gp), false, i == hovered);
+
+    // Draw every container: label, cells, drop highlight, items.
+    for (int pi = 0; pi < (int)panels.size(); ++pi) {
+        const Panel& P = panels[pi]; okay::GridInventory* inv = P.inv;
+        fill(P.ox - 6, P.oy - labelH - 2, P.gw + 12, labelH, ui.titleBar, cr);
+        DrawText(r, P.label, P.ox, P.oy - labelH + 2, 1.4f, sc(ui.textColor));
+        if (ui.showWeight && inv->weightLimit > 0.0f) {
+            char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f/%.0f", inv->TotalWeight(), inv->weightLimit);
+            float px = 1.2f, tw = (float)std::strlen(wb) * (Font8x8::Width + 1) * px;
+            DrawText(r, wb, P.ox + P.gw - tw, P.oy - labelH + 3, px, sc(inv->OverWeight() ? ui.overweightColor : ui.textColor));
+        }
+        for (int y = 0; y < inv->rows; ++y)
+            for (int x = 0; x < inv->cols; ++x)
+                fill(P.ox + x * (cs + gp), P.oy + y * (cs + gp), cs, cs, ui.cellColor, cr);
+        if (ui.dragInv && hovPanel == pi && ui.dragIndex >= 0 && ui.dragIndex < (int)ui.dragInv->items.size()) {
+            const auto& it = ui.dragInv->items[ui.dragIndex];
+            int tx = hovCx - ui.grabX, ty = hovCy - ui.grabY;
+            int ign = (inv == ui.dragInv) ? ui.dragIndex : -1;
+            bool ok = inv->CanPlace(tx, ty, it.w, it.h, ign);
+            for (int yy = 0; yy < it.h; ++yy)
+                for (int xx = 0; xx < it.w; ++xx) {
+                    int gxc = tx + xx, gyc = ty + yy;
+                    if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
+                    fill(P.ox + gxc * (cs + gp), P.oy + gyc * (cs + gp), cs, cs, ok ? ui.dropOk : ui.dropBad, cr);
+                }
+        }
+        int hovered = (!ui.dragInv && hovPanel == pi) ? inv->ItemAtCell(hovCx, hovCy) : -1;
+        for (int i = 0; i < (int)inv->items.size(); ++i) {
+            if (inv == ui.dragInv && i == ui.dragIndex) continue;
+            const auto& it = inv->items[i];
+            drawItem(ui, it, P.ox + it.x * (cs + gp), P.oy + it.y * (cs + gp), false, i == hovered);
+        }
     }
-    // Rotate the held item 90° (swap its footprint) — the drop still validates the fit.
-    if (ui.rotateKey && ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size() &&
+
+    // Rotate the held item 90° (validated on drop).
+    if (ui.rotateKey && ui.dragInv && ui.dragIndex >= 0 && ui.dragIndex < (int)ui.dragInv->items.size() &&
         okay::Input::GetKeyDown(ui.rotateKey)) {
-        auto& it = inv->items[ui.dragIndex];
+        auto& it = ui.dragInv->items[ui.dragIndex];
         std::swap(it.w, it.h);
         if (ui.grabX >= it.w) ui.grabX = it.w - 1;
         if (ui.grabY >= it.h) ui.grabY = it.h - 1;
     }
-    // Hover tooltip: item name, footprint and weight.
-    if (ui.showTooltips && hovered >= 0 && hovered < (int)inv->items.size()) {
-        const auto& it = inv->items[hovered];
-        char tip[96];
-        std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
-                      it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
-        float px = 1.4f, tw = (float)std::strlen(tip) * (Font8x8::Width + 1) * px, pad = 6.0f;
-        fill(mp.x + 14, mp.y + 14, tw + pad * 2, Font8x8::Height * px + pad * 2, ui.tooltipColor, 4.0f);
-        DrawText(r, tip, mp.x + 14 + pad, mp.y + 14 + pad, px, sc(ui.tooltipText));
+    // Hover tooltip.
+    if (ui.showTooltips && !ui.dragInv && hovPanel >= 0) {
+        okay::GridInventory* inv = panels[hovPanel].inv;
+        int hov = inv->ItemAtCell(hovCx, hovCy);
+        if (hov >= 0) {
+            const auto& it = inv->items[hov];
+            char tip[96];
+            std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
+                          it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
+            float px = 1.4f, tw = (float)std::strlen(tip) * (Font8x8::Width + 1) * px, tpad = 6.0f;
+            fill(mp.x + 14, mp.y + 14, tw + tpad * 2, Font8x8::Height * px + tpad * 2, ui.tooltipColor, 4.0f);
+            DrawText(r, tip, mp.x + 14 + tpad, mp.y + 14 + tpad, px, sc(ui.tooltipText));
+        }
     }
-    // Drag-and-drop: pick an item under the cursor, drop it where it fits.
-    if (ui.dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
-        int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
-        if (idx >= 0) { ui.dragIndex = idx; ui.grabX = cx - inv->items[idx].x; ui.grabY = cy - inv->items[idx].y; }
+    // Pick up an item.
+    if (!ui.dragInv && okay::Input::GetMouseButtonDown(0) && hovPanel >= 0) {
+        okay::GridInventory* inv = panels[hovPanel].inv;
+        int idx = inv->ItemAtCell(hovCx, hovCy);
+        if (idx >= 0) { ui.dragInv = inv; ui.dragIndex = idx; ui.grabX = hovCx - inv->items[idx].x; ui.grabY = hovCy - inv->items[idx].y; }
     }
-    if (ui.dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
-        inv->PlaceAt(ui.dragIndex, cx - ui.grabX, cy - ui.grabY);   // no-op if it doesn't fit
-        ui.dragIndex = -1;
+    // Drop it — same container = move, different container = transfer (cross-bag / loot).
+    if (ui.dragInv && okay::Input::GetMouseButtonUp(0)) {
+        if (hovPanel >= 0) {
+            okay::GridInventory* dst = panels[hovPanel].inv;
+            int tx = hovCx - ui.grabX, ty = hovCy - ui.grabY;
+            if (dst == ui.dragInv) dst->PlaceAt(ui.dragIndex, tx, ty);
+            else ui.dragInv->MoveTo(ui.dragIndex, *dst, tx, ty);
+        }
+        ui.dragInv = nullptr; ui.dragIndex = -1;
     }
-    if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->items.size()) {
-        const auto& it = inv->items[ui.dragIndex];
-        drawItem(it, mp.x - ui.grabX * (cs + gp) - cs * 0.5f, mp.y - ui.grabY * (cs + gp) - cs * 0.5f, true, false);
+    // The lifted item floats under the cursor.
+    if (ui.dragInv && ui.dragIndex >= 0 && ui.dragIndex < (int)ui.dragInv->items.size()) {
+        const auto& it = ui.dragInv->items[ui.dragIndex];
+        drawItem(ui, it, mp.x - ui.grabX * (cs + gp) - cs * 0.5f, mp.y - ui.grabY * (cs + gp) - cs * 0.5f, true, false);
     }
 }
 

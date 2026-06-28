@@ -1999,6 +1999,49 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(g); ed.dirty = true; created = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
+            if (ImGui::MenuItem("Unturned Inventory (worn bags + nearby loot)")) {
+                // A full Unturned-style setup: a Player (NOT under the Canvas, so the
+                // screen finds its worn bags) with a body grid + screen UI, child
+                // clothing/bag containers, and a couple of nearby ground crates.
+                GameObject* player = ed.CreateEmpty("Player");
+                auto* body = player->AddComponent<GridInventory>();
+                body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
+                body->toggleKey = 'i';
+                body->AddItem("Knife", 1, 2, 1, 0.3f);
+                body->AddItem("Map", 2, 2, 1, 0.1f);
+                auto* screen = player->AddComponent<GridInventoryUI>();
+                screen->multiContainer = true; screen->nearbyRange = 4.0f;
+
+                auto worn = [&](const char* name, const char* cat, int c, int rr) {
+                    GameObject* w = ed.CreateEmpty(name);
+                    w->transform->SetParent(player->transform, false);
+                    auto* gi = w->AddComponent<GridInventory>();
+                    gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
+                    return gi;
+                };
+                worn("Shirt", "Shirt", 4, 2)->AddItem("Bandage", 1, 1, 3, 0.1f);
+                worn("Pants", "Pants", 4, 2)->AddItem("Beans", 1, 1, 2, 0.4f);
+                auto* vest = worn("Vest", "Vest", 5, 2);
+                vest->AddItem("Mag", 1, 2, 3, 0.2f);
+                auto* pack = worn("Backpack", "Backpack", 6, 6);
+                pack->weightLimit = 30.0f;
+                pack->AddItem("Rifle", 2, 6, 1, 4.0f);
+                pack->AddItem("Water", 1, 2, 1, 0.6f);
+
+                auto crate = [&](const char* name, float x, float z) {
+                    GameObject* cobj = ed.CreateEmpty(name);
+                    cobj->transform->localPosition = {x, 0.0f, z};
+                    auto* gi = cobj->AddComponent<GridInventory>();
+                    gi->cols = 5; gi->rows = 4; gi->title = name; gi->worldItem = true; gi->toggleKey = 0;
+                    return gi;
+                };
+                auto* gc = crate("Loot Crate", 2.0f, 0.0f);
+                gc->AddItem("Ammo", 1, 1, 30, 0.5f); gc->AddItem("Scope", 1, 2, 1, 0.3f);
+                crate("Supply Box", 2.5f, 1.5f)->AddItem("Medkit", 2, 2, 1, 1.2f);
+
+                ed.Select(player); ed.dirty = true; created = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Full Unturned screen: a Player with worn Shirt/Pants/Vest/Backpack grids + two nearby ground crates. Press I in Play; drag loot across bags.");
             if (ImGui::MenuItem("UI Document"))  {
                 GameObject* root = EnsureUIRoot(ed);
                 GameObject* g = ed.CreateEmpty("UIDocument");
@@ -8924,6 +8967,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SliderInt("Rows##gi", &gi->rows, 1, 12)) ed.dirty = true;
             char ok[2] = {gi->toggleKey, 0};
             if (ImGui::InputText("Open Key##gi", ok, sizeof(ok))) { if (ok[0]) gi->toggleKey = ok[0]; ed.dirty = true; }
+            char cab[48]; std::snprintf(cab, sizeof(cab), "%s", gi->category.c_str());
+            if (ImGui::InputText("Category##gi", cab, sizeof(cab))) { gi->category = cab; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Label shown above this container in the Unturned screen (Shirt, Vest, Backpack...). Blank = use Title.");
+            if (ImGui::Checkbox("Ground / Nearby container##gi", &gi->worldItem)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A lootable world container — appears in the player's 'Nearby' column when in range. Leave off for worn/held bags (child of the player).");
             if (ImGui::DragFloat("Weight Limit##gi", &gi->weightLimit, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max carry weight (0 = unlimited). The UI turns red when over.");
             ImGui::Text("Total weight: %.1f%s", gi->TotalWeight(), gi->OverWeight() ? "  (OVER!)" : "");
@@ -8952,6 +9000,14 @@ void DrawInspector(EditorState& ed) {
     if (auto* gu = dynamic_cast<GridInventoryUI*>(curComp)) {
         if (CompHeader("Grid Inventory UI", gu, &toRemove)) {
             if (!gu->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add a Grid Inventory component to show items.");
+            if (ImGui::Checkbox("Unturned layout (worn bags + nearby)##gu", &gu->multiContainer)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the player's grid + every child clothing/bag's grid, plus nearby ground containers, in one screen with cross-bag drag. Off = just this object's grid.");
+            if (gu->multiContainer) {
+                if (ImGui::DragFloat("Nearby Range##gu", &gu->nearbyRange, 0.25f, 0.0f, 50.0f, "%.1f m")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("World distance within which ground containers (Grid Inventory > Ground/Nearby) show up in the right column.");
+                char ntb[48]; std::snprintf(ntb, sizeof(ntb), "%s", gu->nearbyTitle.c_str());
+                if (ImGui::InputText("Nearby Title##gu", ntb, sizeof(ntb))) { gu->nearbyTitle = ntb; ed.dirty = true; }
+            }
             if (ImGui::DragFloat("Cell Size##gu", &gu->cellSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Gap##gu", &gu->gap, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Corner Radius##gu", &gu->cornerRadius, 0.25f, 0.0f, 24.0f)) ed.dirty = true;
@@ -12991,80 +13047,119 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         } else if (gameView) { ui->dragIndex = -1; ui->dragAmount = 0; }   // only the Game pass clears the drag
         break;
     }
-    // DayZ/Unturned grid inventory preview (drawn when its inventory is open).
+    // Unturned-style multi-container grid inventory preview (player grid + worn
+    // clothes/bags on the left, nearby ground containers on the right; cross-bag drag).
     for (const auto& up : objs) {
         auto* gui = up ? up->GetComponent<okay::GridInventoryUI>() : nullptr;
         if (!gui) continue;
-        okay::GridInventory* inv = gui->Inv();
-        if (!inv || !inv->open) break;
-        float cs = gui->cellSize, gp = gui->gap;
-        float gridW = inv->cols * cs + (inv->cols - 1) * gp, gridH = inv->rows * cs + (inv->rows - 1) * gp;
-        float ox = canvasPos.x + (canvasSize.x - gridW) * 0.5f, oy = canvasPos.y + (canvasSize.y - gridH) * 0.5f + 10.0f;
-        float cr = gui->cornerRadius;
+        okay::GridInventory* primary = gui->Inv();
+        if (!primary || !primary->open) break;
+        float cs = gui->cellSize, gp = gui->gap, cr = gui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
+
+        std::vector<okay::GridInventory*> equipped, nearby;
+        if (gui->multiContainer) gui->CollectContainers(equipped, nearby);
+        else equipped.push_back(primary);
+        const float labelH = 18.0f, vspace = 16.0f, colGap = 40.0f, pad = 12.0f;
+        auto colSize = [&](const std::vector<okay::GridInventory*>& L, float& cw, float& ch) {
+            cw = 0; ch = 0;
+            for (auto* g : L) { float gw = g->cols*cs + (g->cols-1)*gp; if (gw > cw) cw = gw;
+                                ch += labelH + (g->rows*cs + (g->rows-1)*gp) + vspace; }
+            if (!L.empty()) ch -= vspace;
+        };
+        float lw, lh, rw, rh; colSize(equipped, lw, lh); colSize(nearby, rw, rh);
+        bool hasNear = !nearby.empty();
+        float totalW = lw + (hasNear ? colGap + rw : 0.0f), totalH = lh > rh ? lh : rh;
+        // Local (canvas-relative) origin so the mouse hit-test matches the fed Input.
+        float startLX = (canvasSize.x - totalW) * 0.5f, startLY = (canvasSize.y - totalH) * 0.5f + 14.0f;
+
+        struct EPanel { okay::GridInventory* inv; float ox, oy, gw, gh; std::string label; };
+        std::vector<EPanel> panels;
+        auto placeCol = [&](const std::vector<okay::GridInventory*>& L, float colLX, float colW) {
+            float y = startLY;
+            for (auto* g : L) {
+                float gw = g->cols*cs + (g->cols-1)*gp, gh = g->rows*cs + (g->rows-1)*gp;
+                panels.push_back({g, colLX + (colW-gw)*0.5f, y + labelH, gw, gh,
+                                  g->category.empty() ? g->title : g->category});
+                y += labelH + gh + vspace;
+            }
+        };
+        placeCol(equipped, startLX, lw);
+        if (hasNear) placeCol(nearby, startLX + lw + colGap, rw);
+
         if (gui->darkenWhenOpen)
             dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
-        dl->AddRectFilled(ImVec2(ox - 12, oy - 38), ImVec2(ox + gridW + 12, oy + gridH + 12), col(gui->panelColor), cr + 2);
-        dl->AddRectFilled(ImVec2(ox - 12, oy - 38), ImVec2(ox + gridW + 12, oy - 10), col(gui->titleBar), cr + 2);
-        dl->AddText(ImVec2(ox, oy - 31), col(gui->textColor), inv->title.c_str());
-        if (gui->showWeight) {
-            char wb[64];
-            if (inv->weightLimit > 0.0f) std::snprintf(wb, sizeof(wb), "%.1f / %.0f kg", inv->TotalWeight(), inv->weightLimit);
-            else std::snprintf(wb, sizeof(wb), "%.1f kg", inv->TotalWeight());
-            ImVec2 ts = ImGui::CalcTextSize(wb);
-            dl->AddText(ImVec2(ox + gridW - ts.x, oy - 31), col(inv->OverWeight() ? gui->overweightColor : gui->textColor), wb);
+        dl->AddRectFilled(ImVec2(canvasPos.x + startLX - pad, canvasPos.y + startLY - pad),
+                          ImVec2(canvasPos.x + startLX + lw + pad, canvasPos.y + startLY + lh + pad), col(gui->panelColor), cr + 2);
+        if (hasNear) {
+            dl->AddRectFilled(ImVec2(canvasPos.x + startLX + lw + colGap - pad, canvasPos.y + startLY - pad),
+                              ImVec2(canvasPos.x + startLX + lw + colGap + rw + pad, canvasPos.y + startLY + rh + pad), col(gui->panelColor), cr + 2);
+            dl->AddText(ImVec2(canvasPos.x + startLX + lw + colGap, canvasPos.y + startLY - labelH - 4), col(gui->textColor), gui->nearbyTitle.c_str());
         }
-        for (int y = 0; y < inv->rows; ++y)
-            for (int x = 0; x < inv->cols; ++x)
-                dl->AddRectFilled(ImVec2(ox + x * (cs + gp), oy + y * (cs + gp)),
-                                  ImVec2(ox + x * (cs + gp) + cs, oy + y * (cs + gp) + cs), col(gui->cellColor), cr);
-        // Mouse (canvas-local, as the editor feeds Input during Play) → cell.
-        okay::Vec2 m = okay::Input::MousePosition();
-        float lox = (canvasSize.x - gridW) * 0.5f, loy = (canvasSize.y - gridH) * 0.5f + 10.0f;
-        int cx = (int)std::floor((m.x - lox) / (cs + gp)), cy = (int)std::floor((m.y - loy) / (cs + gp));
-        // Drop-target highlight while dragging.
-        if (gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size()) {
-            const auto& it = inv->items[gui->dragIndex];
-            int tx = cx - gui->grabX, ty = cy - gui->grabY;
-            bool okp = inv->CanPlace(tx, ty, it.w, it.h, gui->dragIndex);
-            for (int yy = 0; yy < it.h; ++yy)
-                for (int xx = 0; xx < it.w; ++xx) {
-                    int gxc = tx + xx, gyc = ty + yy;
-                    if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
-                    dl->AddRectFilled(ImVec2(ox + gxc * (cs + gp), oy + gyc * (cs + gp)),
-                                      ImVec2(ox + gxc * (cs + gp) + cs, oy + gyc * (cs + gp) + cs),
-                                      col(okp ? gui->dropOk : gui->dropBad), cr);
-                }
+
+        okay::Vec2 m = okay::Input::MousePosition();   // canvas-local
+        int hovPanel = -1, hovCx = 0, hovCy = 0;
+        for (int pi = 0; pi < (int)panels.size(); ++pi) {
+            const EPanel& P = panels[pi];
+            int cx = (int)std::floor((m.x - P.ox) / (cs + gp)), cy = (int)std::floor((m.y - P.oy) / (cs + gp));
+            if (m.x >= P.ox && m.y >= P.oy && cx >= 0 && cy >= 0 && cx < P.inv->cols && cy < P.inv->rows) {
+                hovPanel = pi; hovCx = cx; hovCy = cy;
+            }
         }
-        for (int i = 0; i < (int)inv->items.size(); ++i) {
-            if (i == gui->dragIndex) continue;
-            const auto& it = inv->items[i];
-            ImVec2 p0(ox + it.x * (cs + gp), oy + it.y * (cs + gp));
+        auto drawOne = [&](const okay::GridItem& it, float lx, float ly, bool ghost) {
+            ImVec2 p0(canvasPos.x + lx, canvasPos.y + ly);
             ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
             SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
-            dl->AddRectFilled(p0, p1, col(gui->itemColor), cr);
+            okay::Color icol = gui->itemColor; if (ghost) icol.a *= 0.6f;
+            dl->AddRectFilled(p0, p1, col(icol), cr);
             const okay::Color* rar = gui->RarityOf(it.name);
             dl->AddRect(p0, p1, col(rar ? *rar : gui->itemBorder), cr);
             if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
             else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
+        };
+
+        for (int pi = 0; pi < (int)panels.size(); ++pi) {
+            const EPanel& P = panels[pi]; okay::GridInventory* inv = P.inv;
+            dl->AddRectFilled(ImVec2(canvasPos.x + P.ox - 6, canvasPos.y + P.oy - labelH - 2),
+                              ImVec2(canvasPos.x + P.ox + P.gw + 6, canvasPos.y + P.oy - 2), col(gui->titleBar), cr);
+            dl->AddText(ImVec2(canvasPos.x + P.ox, canvasPos.y + P.oy - labelH), col(gui->textColor), P.label.c_str());
+            for (int y = 0; y < inv->rows; ++y)
+                for (int x = 0; x < inv->cols; ++x)
+                    dl->AddRectFilled(ImVec2(canvasPos.x + P.ox + x * (cs + gp), canvasPos.y + P.oy + y * (cs + gp)),
+                                      ImVec2(canvasPos.x + P.ox + x * (cs + gp) + cs, canvasPos.y + P.oy + y * (cs + gp) + cs), col(gui->cellColor), cr);
+            if (gui->dragInv && hovPanel == pi && gui->dragIndex >= 0 && gui->dragIndex < (int)gui->dragInv->items.size()) {
+                const auto& it = gui->dragInv->items[gui->dragIndex];
+                int tx = hovCx - gui->grabX, ty = hovCy - gui->grabY;
+                int ign = (inv == gui->dragInv) ? gui->dragIndex : -1;
+                bool okp = inv->CanPlace(tx, ty, it.w, it.h, ign);
+                for (int yy = 0; yy < it.h; ++yy)
+                    for (int xx = 0; xx < it.w; ++xx) {
+                        int gxc = tx + xx, gyc = ty + yy;
+                        if (gxc < 0 || gyc < 0 || gxc >= inv->cols || gyc >= inv->rows) continue;
+                        dl->AddRectFilled(ImVec2(canvasPos.x + P.ox + gxc * (cs + gp), canvasPos.y + P.oy + gyc * (cs + gp)),
+                                          ImVec2(canvasPos.x + P.ox + gxc * (cs + gp) + cs, canvasPos.y + P.oy + gyc * (cs + gp) + cs),
+                                          col(okp ? gui->dropOk : gui->dropBad), cr);
+                    }
+            }
+            for (int i = 0; i < (int)inv->items.size(); ++i) {
+                if (inv == gui->dragInv && i == gui->dragIndex) continue;
+                const auto& it = inv->items[i];
+                drawOne(it, P.ox + it.x * (cs + gp), P.oy + it.y * (cs + gp), false);
+            }
         }
-        // Drag-and-drop — Game view ONLY: the mouse is fed against the Game canvas, so
-        // running this in the Scene-view pass (different canvas size) would consume the
-        // mouse-up and drop into the wrong cell. See the Minecraft block above. The
-        // Scene pass leaves dragIndex untouched (the Game pass owns it), so it can't
-        // clobber an in-progress drag depending on which view draws first.
-        // Rotate the held item 90° (swap footprint); the drop validates the fit.
-        if (gameView && gui->rotateKey && gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size() &&
+
+        // Input — Game view ONLY (the mouse is fed against the Game canvas; the Scene
+        // pass uses a different canvas size and would drop into the wrong cell).
+        if (gameView && gui->rotateKey && gui->dragInv && gui->dragIndex >= 0 && gui->dragIndex < (int)gui->dragInv->items.size() &&
             okay::Input::GetKeyDown(gui->rotateKey)) {
-            auto& it = inv->items[gui->dragIndex];
+            auto& it = gui->dragInv->items[gui->dragIndex];
             std::swap(it.w, it.h);
             if (gui->grabX >= it.w) gui->grabX = it.w - 1;
             if (gui->grabY >= it.h) gui->grabY = it.h - 1;
         }
-        // Hover tooltip: item name, footprint, weight.
-        if (gameView && gui->showTooltips && gui->dragIndex < 0 &&
-            cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) {
-            int hov = inv->ItemAtCell(cx, cy);
+        if (gameView && gui->showTooltips && !gui->dragInv && hovPanel >= 0) {
+            okay::GridInventory* inv = panels[hovPanel].inv;
+            int hov = inv->ItemAtCell(hovCx, hovCy);
             if (hov >= 0) {
                 const auto& it = inv->items[hov];
                 char tip[96];
@@ -13076,24 +13171,23 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddText(ImVec2(p0.x + 6, p0.y + 5), col(gui->tooltipText), tip);
             }
         }
-        if (gameView && gui->dragIndex < 0 && okay::Input::GetMouseButtonDown(0)) {
-            int idx = (cx >= 0 && cy >= 0 && cx < inv->cols && cy < inv->rows) ? inv->ItemAtCell(cx, cy) : -1;
-            if (idx >= 0) { gui->dragIndex = idx; gui->grabX = cx - inv->items[idx].x; gui->grabY = cy - inv->items[idx].y; }
+        if (gameView && !gui->dragInv && okay::Input::GetMouseButtonDown(0) && hovPanel >= 0) {
+            okay::GridInventory* inv = panels[hovPanel].inv;
+            int idx = inv->ItemAtCell(hovCx, hovCy);
+            if (idx >= 0) { gui->dragInv = inv; gui->dragIndex = idx; gui->grabX = hovCx - inv->items[idx].x; gui->grabY = hovCy - inv->items[idx].y; }
         }
-        if (gameView && gui->dragIndex >= 0 && okay::Input::GetMouseButtonUp(0)) {
-            inv->PlaceAt(gui->dragIndex, cx - gui->grabX, cy - gui->grabY);
-            gui->dragIndex = -1;
-        }
-        if (gameView && gui->dragIndex >= 0 && gui->dragIndex < (int)inv->items.size()) {
-            const auto& it = inv->items[gui->dragIndex];
-            ImVec2 p0(canvasPos.x + m.x - gui->grabX * (cs + gp) - cs * 0.5f, canvasPos.y + m.y - gui->grabY * (cs + gp) - cs * 0.5f);
-            ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
-            SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
-            dl->AddRectFilled(p0, p1, col(gui->itemColor), cr);
-            const okay::Color* rar = gui->RarityOf(it.name);
-            dl->AddRect(p0, p1, col(rar ? *rar : gui->itemBorder), cr);
-            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
-            else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
+        if (gameView && gui->dragInv && okay::Input::GetMouseButtonUp(0)) {
+            if (hovPanel >= 0) {
+                okay::GridInventory* dst = panels[hovPanel].inv;
+                int tx = hovCx - gui->grabX, ty = hovCy - gui->grabY;
+                if (dst == gui->dragInv) dst->PlaceAt(gui->dragIndex, tx, ty);
+                else gui->dragInv->MoveTo(gui->dragIndex, *dst, tx, ty);
+            }
+            gui->dragInv = nullptr; gui->dragIndex = -1;
+        } else if (!gameView) { /* Scene pass leaves the drag state to the Game pass */ }
+        if (gameView && gui->dragInv && gui->dragIndex >= 0 && gui->dragIndex < (int)gui->dragInv->items.size()) {
+            const auto& it = gui->dragInv->items[gui->dragIndex];
+            drawOne(it, m.x - gui->grabX * (cs + gp) - cs * 0.5f, m.y - gui->grabY * (cs + gp) - cs * 0.5f, true);
         }
         break;
     }

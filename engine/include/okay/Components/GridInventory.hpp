@@ -29,6 +29,15 @@ public:
     std::string title = "Inventory";
     float weightLimit = 0.0f;     ///< max carry weight (0 = unlimited); shown by the UI
 
+    /// Unturned-style role of this container, shown as the label above its grid in the
+    /// multi-container screen ("Shirt", "Pants", "Vest", "Backpack", "Hands", ...). When
+    /// empty the title is used. Purely a label — the footprint logic is unchanged.
+    std::string category;
+    /// A ground / loot container: it appears in the player screen's "Nearby" column when
+    /// the player is within range, so you can drag loot straight into your bags. Equipped
+    /// containers (the player's own + its child clothes/bags) leave this false.
+    bool worldItem = false;
+
     /// True when a weight limit is set and the contents exceed it (over-encumbered).
     bool OverWeight() const { return weightLimit > 0.0f && TotalWeight() > weightLimit; }
 

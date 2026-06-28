@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.312.0  (Unturned-style inventory — worn bags, clothes & nearby loot)
+  - The grid inventory is now a full UNTURNED-STYLE screen. Opening it shows every
+    container you have — your own pockets PLUS each worn clothing/bag's grid (any
+    child object with a Grid Inventory: Shirt, Pants, Vest, Backpack...) — stacked
+    in a labelled left column, and every nearby ground container in a right
+    "Nearby" column. Drag items freely across all of them: re-pack a bag, move a
+    rifle from your vest to your backpack, or loot a crate straight into your pack.
+  - Grid Inventory gained a "Category" label (shown above its grid, e.g. "Backpack")
+    and a "Ground / Nearby container" flag — tick it on world crates/loot so they
+    appear in the player's Nearby column when within range.
+  - Grid Inventory UI gained "Unturned layout" (on by default), a "Nearby Range"
+    (how close a ground container must be to show), and a "Nearby" column title.
+  - New menu: Add > UI > "Unturned Inventory (worn bags + nearby loot)" drops in a
+    ready Player with Shirt/Pants/Vest/Backpack grids and two nearby loot crates —
+    press I in Play and drag loot across bags.
+  - Back-compatible: existing single-grid inventories still work (turn off
+    "Unturned layout" for the classic one-grid screen). Saves are versioned.
+
 v2.311.0  (GPU cast-shadow maps on every backend + Direct3D 12 MSAA)
   - REAL CAST SHADOWS on the GPU. OpenGL, Direct3D 11 and Direct3D 12 now render a
     depth pre-pass from the sun into a shadow map and sample it (4-tap PCF) during

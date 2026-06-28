@@ -93,6 +93,7 @@ typedef void   (*PFNBufferData)(GLenum, GLsizeiptrOK, const void*, GLenum);
 typedef void   (*PFNDeleteBuffers)(GLsizei, const GLuint*);
 typedef void   (*PFNVertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
 typedef void   (*PFNEnableVertexAttribArray)(GLuint);
+typedef void   (*PFNDisableVertexAttribArray)(GLuint);
 typedef void   (*PFNGenFramebuffers)(GLsizei, GLuint*);
 typedef void   (*PFNBindFramebuffer)(GLenum, GLuint);
 typedef void   (*PFNDeleteFramebuffers)(GLsizei, const GLuint*);
@@ -132,6 +133,10 @@ typedef void   (*PFNGenerateMipmap)(GLenum);
 typedef void   (*PFNGenVertexArrays)(GLsizei, GLuint*);
 typedef void   (*PFNBindVertexArray)(GLuint);
 typedef void   (*PFNDeleteVertexArrays)(GLsizei, const GLuint*);
+// Depth-only FBO (shadow map): GL needs an explicit "no colour buffer" so a
+// depth-texture-only framebuffer is complete. glDrawBuffer/glReadBuffer are core 1.0.
+typedef void   (*PFNDrawBuffer)(GLenum);
+typedef void   (*PFNReadBuffer)(GLenum);
 
 struct GL {
     PFNCreateShader CreateShader; PFNShaderSource ShaderSource; PFNCompileShader CompileShader;
@@ -144,6 +149,7 @@ struct GL {
     PFNUniform3fv Uniform3fv; PFNUniform1fv Uniform1fv;
     PFNGenBuffers GenBuffers; PFNBindBuffer BindBuffer; PFNBufferData BufferData; PFNDeleteBuffers DeleteBuffers;
     PFNVertexAttribPointer VertexAttribPointer; PFNEnableVertexAttribArray EnableVertexAttribArray;
+    PFNDisableVertexAttribArray DisableVertexAttribArray;
     PFNGenFramebuffers GenFramebuffers; PFNBindFramebuffer BindFramebuffer; PFNDeleteFramebuffers DeleteFramebuffers;
     PFNGenRenderbuffers GenRenderbuffers; PFNBindRenderbuffer BindRenderbuffer; PFNDeleteRenderbuffers DeleteRenderbuffers;
     PFNRenderbufferStorage RenderbufferStorage; PFNRenderbufferStorageMultisample RenderbufferStorageMultisample;
@@ -158,6 +164,7 @@ struct GL {
     PFNActiveTexture ActiveTexture; PFNGenerateMipmap GenerateMipmap;
     PFNGenVertexArrays GenVertexArrays; PFNBindVertexArray BindVertexArray;
     PFNDeleteVertexArrays DeleteVertexArrays;
+    PFNDrawBuffer DrawBuffer; PFNReadBuffer ReadBuffer;
     bool ok = false;
 };
 GL g;   // resolved entry points
@@ -201,7 +208,22 @@ const char* kFrag =
     "uniform sampler2D uAoTex; uniform float uHasAo; uniform float uAoStrength;\n"  // ambient-occlusion map
     "uniform float uMetallic; uniform float uReflectivity;\n"                  // PBR metalness + env reflection
     "uniform vec3 uSkyTop; uniform vec3 uSkyHor; uniform vec3 uSkyBot; uniform float uEnvOn;\n"  // sky for reflections
+    "uniform sampler2D uShadowTex; uniform mat4 uLightVP;\n"                                   // directional cast shadows
+    "uniform float uShadowOn; uniform float uShadowTexel; uniform float uShadowSize;\n"
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
+    "float shadowFactor(vec3 wpos, vec3 n){\n"                                                 // 0=shadowed .. 1=lit (4-tap PCF)
+    "  vec3 wp = wpos + n * uShadowTexel * 2.0;\n"                                             // normal-offset bias (anti-acne)
+    "  vec4 sc = uLightVP * vec4(wp, 1.0);\n"
+    "  if (sc.w <= 0.0) return 1.0;\n"
+    "  vec3 p = sc.xyz / sc.w * 0.5 + 0.5;\n"
+    "  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;\n"       // outside the map = lit
+    "  float bias = 0.0015; float t = 1.0 / max(uShadowSize, 1.0); float s = 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.5,-0.5)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.5,-0.5)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.5, 0.5)*t).r) ? 1.0 : 0.0;\n"
+    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.5, 0.5)*t).r) ? 1.0 : 0.0;\n"
+    "  return s * 0.25;\n"
+    "}\n"
     "void main(){\n"
     "  if (uShadowAlpha >= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowAlpha); return; }\n"
     "  vec3 N = normalize(vN);\n"
@@ -234,11 +256,12 @@ const char* kFrag =
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  vec3 amb = uAmbient * mix(0.55, 1.15, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // hemisphere ambient
     "  vec3 lit = amb; float spec = 0.0;\n"
+    "  float sh = (uShadowOn > 0.5) ? shadowFactor(vWorld, N) : 1.0;\n"   // sun occlusion (real cast shadows)
     "  if (uLightCount < 1) {\n"                                  // fallback: the global directional
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
-    "    lit += uLightColor * ndl;\n"
+    "    lit += uLightColor * ndl * sh;\n"
     "    if (uSpecular > 0.0) { vec3 H = normalize(uLightDir + Vv);\n"
-    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular; }\n"
+    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * sh; }\n"
     "  } else {\n"
     "    for (int i = 0; i < 16; i++) { if (i >= uLightCount) break;\n"   // directional + point + spot
     "      vec3 ld; float at = 1.0;\n"
@@ -249,10 +272,11 @@ const char* kFrag =
     "          float dn = uLCosIn[i] - uLCosOut[i];\n"
     "          float sp = dn > 1e-4 ? clamp((cs - uLCosOut[i]) / dn, 0.0, 1.0) : (cs >= uLCosOut[i] ? 1.0 : 0.0);\n"
     "          at *= sp * sp; } }\n"
+    "      float lsh = (uLType[i] < 0.5) ? sh : 1.0;\n"            // cast shadows apply to the directional sun only
     "      float ndl = max(dot(N, ld), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
-    "      lit += uLCol[i] * ndl * at;\n"
+    "      lit += uLCol[i] * ndl * at * lsh;\n"
     "      if (uSpecular > 0.0) { vec3 H = normalize(ld + Vv);\n"
-    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at; }\n"
+    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at * lsh; }\n"
     "    }\n"
     "  }\n"
     "  if (uShaderMode > 7.5) lit += fz * fz * (lit) * 0.6;\n"     // Velvet: fuzzy grazing sheen
@@ -287,6 +311,18 @@ const char* kFrag =
     "  }\n"
     "  gl_FragColor = vec4(col, uAlpha);\n"
     "}\n";
+
+// ---- Depth-only program (shadow-map pass) -------------------------------------
+// Renders just clip-space position from the light's point of view; the depth
+// buffer it fills IS the shadow map the main shader samples. No colour output.
+const char* kDepthVert =
+    "#version 120\n"
+    "attribute vec3 aPos;\n"
+    "uniform mat4 uDepthMVP;\n"
+    "void main(){ gl_Position = uDepthMVP * vec4(aPos, 1.0); }\n";
+const char* kDepthFrag =
+    "#version 120\n"
+    "void main(){ }\n";   // depth is written automatically; no colour
 
 GLuint compile(GLenum type, const char* src) {
     GLuint s = g.CreateShader(type);
@@ -329,6 +365,7 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     r &= load(g.DeleteBuffers, gp, "glDeleteBuffers");
     r &= load(g.VertexAttribPointer, gp, "glVertexAttribPointer");
     r &= load(g.EnableVertexAttribArray, gp, "glEnableVertexAttribArray");
+    r &= load(g.DisableVertexAttribArray, gp, "glDisableVertexAttribArray");
     r &= load(g.GenFramebuffers, gp, "glGenFramebuffers");
     r &= load(g.BindFramebuffer, gp, "glBindFramebuffer");
     r &= load(g.DeleteFramebuffers, gp, "glDeleteFramebuffers");
@@ -365,6 +402,10 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     load(g.GenVertexArrays, gp, "glGenVertexArrays");
     load(g.BindVertexArray, gp, "glBindVertexArray");
     load(g.DeleteVertexArrays, gp, "glDeleteVertexArrays");
+    // Optional: depth-only shadow-map FBO needs these to declare "no colour buffer".
+    // If absent, shadow mapping is skipped (renderer still works without cast shadows).
+    load(g.DrawBuffer, gp, "glDrawBuffer");
+    load(g.ReadBuffer, gp, "glReadBuffer");
     g.ok = r;
     if (!r) Log::Error("[gl] required OpenGL entry points missing — using software renderer");
     return r;
@@ -438,12 +479,64 @@ bool GLRenderer::EnsureProgram() {
     m_uFogColor = g.GetUniformLocation(m_prog, "uFogColor");
     m_uFogStart = g.GetUniformLocation(m_prog, "uFogStart");
     m_uFogEnd = g.GetUniformLocation(m_prog, "uFogEnd");
+    m_uShadowTex = g.GetUniformLocation(m_prog, "uShadowTex");
+    m_uLightVP = g.GetUniformLocation(m_prog, "uLightVP");
+    m_uShadowOn = g.GetUniformLocation(m_prog, "uShadowOn");
+    m_uShadowTexel = g.GetUniformLocation(m_prog, "uShadowTexel");
+    m_uShadowSize = g.GetUniformLocation(m_prog, "uShadowSize");
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
     // crash on the attempt). Create one when available; on a compatibility context
     // the default VAO is used instead. This persists across viewport resizes.
     if (g.GenVertexArrays && !m_vao) g.GenVertexArrays(1, &m_vao);
     return true;
+}
+
+bool GLRenderer::EnsureDepthProgram() {
+    if (m_depthProg) return true;
+    GLuint vs = compile(GL_VERTEX_SHADER, kDepthVert), fs = compile(GL_FRAGMENT_SHADER, kDepthFrag);
+    if (!vs || !fs) return false;
+    m_depthProg = g.CreateProgram();
+    g.AttachShader(m_depthProg, vs); g.AttachShader(m_depthProg, fs);
+    g.BindAttribLocation(m_depthProg, 0, "aPos");
+    g.LinkProgram(m_depthProg);
+    GLint ok = 0; g.GetProgramiv(m_depthProg, GL_LINK_STATUS, &ok);
+    g.DeleteShader(vs); g.DeleteShader(fs);
+    if (!ok) { g.DeleteProgram(m_depthProg); m_depthProg = 0; return false; }
+    m_uDepthMVP = g.GetUniformLocation(m_depthProg, "uDepthMVP");
+    return true;
+}
+
+// (Re)create the depth-only shadow framebuffer at `size` x `size`. A single
+// GL_DEPTH_COMPONENT depth texture, sampled by the main shader for cast shadows.
+bool GLRenderer::EnsureShadow(int size) {
+    if (m_shadowFbo && m_shadowSize == size) return true;
+    DestroyShadow();
+    if (!g.DrawBuffer || !g.ReadBuffer) return false;   // can't make a colourless FBO -> no shadows
+    m_shadowSize = size;
+    g.GenTextures(1, &m_shadowTex);
+    g.BindTexture(GL_TEXTURE_2D, m_shadowTex);
+    g.TexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size, size, 0,
+                 GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    g.GenFramebuffers(1, &m_shadowFbo);
+    g.BindFramebuffer(GL_FRAMEBUFFER, m_shadowFbo);
+    g.FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_shadowTex, 0);
+    g.DrawBuffer(0 /*GL_NONE*/);   // depth-only: declare no colour attachments
+    g.ReadBuffer(0 /*GL_NONE*/);
+    bool okFbo = g.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    g.BindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!okFbo) { DestroyShadow(); return false; }
+    return true;
+}
+
+void GLRenderer::DestroyShadow() {
+    if (m_shadowTex) { g.DeleteTextures(1, &m_shadowTex); m_shadowTex = 0; }
+    if (m_shadowFbo) { g.DeleteFramebuffers(1, &m_shadowFbo); m_shadowFbo = 0; }
+    m_shadowSize = 0;
 }
 
 bool GLRenderer::EnsureTargets(int w, int h, int samples) {
@@ -515,6 +608,57 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     if (!EnsureProgram() || !EnsureTargets(w, h, samples)) return nullptr;
     while (g.GetError() != 0) {}   // drain any stale GL error state before we render
 
+    // ---- Shadow-map depth pre-pass (directional cast shadows) -----------------
+    // Render the scene depth from the sun's point of view into a depth texture the
+    // main shader samples (PCF) for real cast shadows. Opt-in via ShadowsEnabled().
+    Mat4 lightVP; float shadowTexel = 0.0f; bool shadowOn = false;
+    if (ShadowsEnabled() && EnsureDepthProgram() &&
+        ComputeDirectionalShadowVP(scene, vp, eye, lightVP, shadowTexel)) {
+        int ssize = ShadowMapResolution(); if (ssize < 256) ssize = 256; if (ssize > 4096) ssize = 4096;
+        if (EnsureShadow(ssize)) {
+            g.BindFramebuffer(GL_FRAMEBUFFER, m_shadowFbo);
+            g.Viewport(0, 0, ssize, ssize);
+            g.Enable(GL_DEPTH_TEST); g.DepthFunc(GL_LEQUAL); g.DepthMask(GL_TRUE);
+            g.Disable(GL_BLEND);
+            g.Clear(GL_DEPTH_BUFFER_BIT);
+            g.UseProgram(m_depthProg);
+            if (g.BindVertexArray && m_vao) g.BindVertexArray(m_vao);
+            // Only attribute 0 (position) is fed in this pass; make sure no stale
+            // arrays from a previous frame get fetched against the position buffer.
+            g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
+            g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
+            g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
+            for (const auto& up : scene.Objects()) {
+                GameObject* go = up.get();
+                if (!go || !go->active || go == ignore) continue;
+                auto* mr = go->GetComponent<MeshRenderer>();
+                if (!mr || mr->wireframe || !mr->enabled) continue;
+                if (mr->color.a < 0.999f) continue;   // transparent meshes don't cast
+                const Mesh& mesh = mr->mesh;
+                const auto& V = mesh.vertices; const auto& T = mesh.triangles;
+                if (V.empty() || T.size() < 3) continue;
+                const int nv = (int)V.size();
+                m_verts.clear(); m_verts.reserve(T.size() * 3);
+                for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+                    int a = T[i], b = T[i + 1], c = T[i + 2];
+                    if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue;
+                    const Vec3& pa = V[a]; const Vec3& pb = V[b]; const Vec3& pc = V[c];
+                    m_verts.push_back(pa.x); m_verts.push_back(pa.y); m_verts.push_back(pa.z);
+                    m_verts.push_back(pb.x); m_verts.push_back(pb.y); m_verts.push_back(pb.z);
+                    m_verts.push_back(pc.x); m_verts.push_back(pc.y); m_verts.push_back(pc.z);
+                }
+                if (m_verts.empty()) continue;
+                Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
+                g.UniformMatrix4fv(m_uDepthMVP, 1, GL_FALSE, dmvp.m);
+                g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
+                g.EnableVertexAttribArray(0);
+                g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*)0);
+                g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 3));
+            }
+            shadowOn = true;
+        }
+    }
+
     g.BindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     g.Viewport(0, 0, w, h);
     g.ClearColor(clearR, clearG, clearB, clearA);
@@ -560,6 +704,19 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform3f(m_uFogColor, rs.fogColor.r, rs.fogColor.g, rs.fogColor.b);
         g.Uniform1f(m_uFogStart, rs.fogStart);
         g.Uniform1f(m_uFogEnd, rs.fogEnd);
+    }
+
+    // Bind the directional shadow map (texture unit 4) so the main shader can do
+    // its PCF cast-shadow lookup. Disabled (uShadowOn=0) when the pre-pass was skipped.
+    g.Uniform1f(m_uShadowOn, shadowOn ? 1.0f : 0.0f);
+    if (shadowOn) {
+        g.UniformMatrix4fv(m_uLightVP, 1, GL_FALSE, lightVP.m);
+        g.Uniform1f(m_uShadowTexel, shadowTexel);
+        g.Uniform1f(m_uShadowSize, (float)m_shadowSize);
+        g.ActiveTexture(GL_TEXTURE0 + 4);
+        g.BindTexture(GL_TEXTURE_2D, m_shadowTex);
+        g.Uniform1i(m_uShadowTex, 4);
+        g.ActiveTexture(GL_TEXTURE0);
     }
 
     // Upload every gathered scene light (directional + point + spot) so all lights
@@ -815,10 +972,12 @@ void GLRenderer::DestroyTargets() {
 
 void GLRenderer::Destroy() {
     DestroyTargets();
+    DestroyShadow();
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
     m_texCache.clear();
     if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }
     if (m_vao && g.DeleteVertexArrays) { g.DeleteVertexArrays(1, &m_vao); m_vao = 0; }
+    if (m_depthProg) { g.DeleteProgram(m_depthProg); m_depthProg = 0; }
     if (m_prog) { g.DeleteProgram(m_prog); m_prog = 0; }
 }
 

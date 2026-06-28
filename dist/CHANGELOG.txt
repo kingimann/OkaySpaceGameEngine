@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.311.0  (GPU cast-shadow maps on every backend + Direct3D 12 MSAA)
+  - REAL CAST SHADOWS on the GPU. OpenGL, Direct3D 11 and Direct3D 12 now render a
+    depth pre-pass from the sun into a shadow map and sample it (4-tap PCF) during
+    shading, so meshes cast real directional shadows onto each other and the ground
+    — not just the flat "contact" blob. Turn it on with Shadows in the Environment
+    panel (Shadow distance + resolution controls already there). The light's
+    view-projection is fit with the same math the software cascaded path uses, so
+    GPU shadows line up with the CPU reference. (GPU path uses a single high-res
+    map; the software renderer keeps its multi-cascade split.)
+  - DIRECT3D 12 MSAA: the D3D12 backend now renders to a multisampled target (up to
+    4x, device-permitting) and resolves it before read-back, matching D3D11's
+    anti-aliasing. Edges are smooth instead of stair-stepped.
+  - With these, the Direct3D 12 backend is at feature parity with Direct3D 11
+    (lights, fog, ground shadows, cast-shadow maps, MSAA).
+  - Shadow mapping is opt-in (off by default for performance); transparent meshes
+    don't cast. Compile/link-verified on the Windows build; the D3D11/D3D12 paths
+    are intended to be runtime-tested on Windows hardware.
+
 v2.310.0  (Renderer expansion — more lights, fog, ground shadows, view distance)
   - MORE LIGHTS: every GPU backend (OpenGL, Direct3D 11, Direct3D 12) now shades
     up to 16 scene lights at once (was 8). Light a big interior or a busy scene

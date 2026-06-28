@@ -4,9 +4,10 @@
 // the exact D3D11 HLSL + constant-buffer layout + per-mesh vertex/light packing, so
 // shading matches; only the device/command/descriptor plumbing is D3D12-specific.
 //
-// This is an OPT-IN alternative to the default D3D11 backend. Single-sample (no MSAA
-// yet) and no ground-shadow re-draw pass. Compile/link verified via MinGW; intended
-// to be runtime-tested on Windows.
+// This is an OPT-IN alternative to the default D3D11 backend. Feature parity with
+// D3D11: up-to-4x MSAA (resolved before read-back), the planar ground-shadow pass,
+// and real directional cast-shadow maps (depth pre-pass + PCF). Compile/link verified
+// via MinGW; intended to be runtime-tested on Windows.
 #if defined(_WIN32)
 
 #include "okay/Render/D3D12Renderer.hpp"
@@ -49,12 +50,35 @@ const char* kHLSL12 =
     "  float4 uLights[64];\n"
     "  float4 uFog;\n"
     "  float4 uFogCol;\n"
+    "  float4x4 uLightVP;\n"                  // directional shadow-map view-projection
+    "  float4 uShadow;\n"                     // x=on y=texelWorld z=mapSize w=unused
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "Texture2D uNormalTex : register(t1);\n"
     "Texture2D uSpecTex : register(t2);\n"
     "Texture2D uAoTex : register(t3);\n"
+    "Texture2D uShadowTex : register(t4);\n"        // directional shadow map (depth)
     "SamplerState uSamp : register(s0);\n"
+    "SamplerState uShadowSamp : register(s1);\n"    // clamp sampler for the shadow map
+    "float shadowFactor(float3 wpos, float3 n){\n"  // 0=shadowed .. 1=lit (4-tap PCF)
+    "  if (uShadow.x < 0.5) return 1.0;\n"
+    "  float3 wp = wpos + n * uShadow.y * 2.0;\n"
+    "  float4 sc = mul(uLightVP, float4(wp,1.0));\n"
+    "  if (sc.w <= 0.0) return 1.0;\n"
+    "  float3 q = sc.xyz / sc.w;\n"
+    "  float2 uv = float2(q.x*0.5+0.5, -q.y*0.5+0.5);\n"
+    "  float pz = q.z*0.5+0.5;\n"
+    "  if (uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0||pz>1.0) return 1.0;\n"
+    "  float bias=0.0015; float t=1.0/max(uShadow.z,1.0); float s=0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.5,-0.5)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.5,-0.5)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.5, 0.5)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.5, 0.5)*t).r)?1.0:0.0;\n"
+    "  return s*0.25;\n"
+    "}\n"
+    "float4 VSDepth(float3 pos:POSITION):SV_POSITION {\n"          // depth-only shadow pass
+    "  float4 cp = mul(uMVP, float4(pos,1.0)); cp.z = (cp.z + cp.w) * 0.5; return cp;\n"
+    "}\n"
     "struct VSIn { float3 pos:POSITION; float3 nrm:NORMAL; float2 uv:TEXCOORD; float3 col:COLOR; float3 tan:TANGENT; };\n"
     "struct PSIn { float4 pos:SV_POSITION; float3 nrm:NORMAL; float3 world:TEXCOORD1; float2 uv:TEXCOORD0; float3 col:COLOR; float3 tan:TEXCOORD2; };\n"
     "PSIn VSMain(VSIn i){\n"
@@ -101,12 +125,13 @@ const char* kHLSL12 =
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = uAmbient * lerp(0.55, 1.15, saturate(N.y * 0.5 + 0.5));\n"
     "  float3 lit = amb; float spec = 0.0;\n"
+    "  float sh = shadowFactor(i.world, N);\n"                   // sun occlusion (real cast shadows)
     "  int lc = (int)uLightCount.x;\n"
     "  if (lc < 1) {\n"
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
-    "    lit += uLightColor * ndl;\n"
+    "    lit += uLightColor * ndl * sh;\n"
     "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
-    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular; }\n"
+    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * sh; }\n"
     "  } else {\n"
     "    for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"
     "      float4 d0 = uLights[li*4+0]; float4 d1 = uLights[li*4+1];\n"
@@ -118,10 +143,11 @@ const char* kHLSL12 =
     "        if (d0.w > 1.5) { float cs = dot(normalize(d0.xyz), -ld);\n"
     "          float dn = d3.x - d2.w; float sp = dn > 1e-4 ? saturate((cs - d2.w) / dn) : (cs >= d2.w ? 1.0 : 0.0);\n"
     "          at *= sp * sp; } }\n"
+    "      float lsh = (d0.w < 0.5) ? sh : 1.0;\n"               // cast shadows apply to the sun only
     "      float ndl = max(dot(N, ld), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
-    "      lit += d2.xyz * ndl * at;\n"
+    "      lit += d2.xyz * ndl * at * lsh;\n"
     "      if (uSpecular > 0.0) { float3 H = normalize(ld + Vv);\n"
-    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at; }\n"
+    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at * lsh; }\n"
     "    }\n"
     "  }\n"
     "  if (uShaderMode > 7.5) lit += fz * fz * lit * 0.6;\n"
@@ -178,6 +204,8 @@ struct CB {
     float lights[256];
     float fog[4];
     float fogCol[4];
+    float lightVP[16];         // directional shadow-map view-projection
+    float shadowP[4];          // x=on y=texelWorld z=mapSize w=unused
 };
 
 inline UINT Align(UINT v, UINT a) { return (v + a - 1) & ~(a - 1); }
@@ -197,20 +225,29 @@ struct D3D12Renderer::Impl {
     ID3D12RootSignature*       rootSig = nullptr;
     ID3D12PipelineState*       psoOpaque = nullptr;
     ID3D12PipelineState*       psoBlend  = nullptr;
+    ID3D12PipelineState*       psoDepth  = nullptr;   // depth-only shadow pass (single-sample)
+    UINT                       msaa = 1;              // MSAA sample count for the main targets
+
+    // Directional shadow map (single-sample depth texture, sampled in the main pass).
+    ID3D12Resource*            shadowTex = nullptr;
+    int                        shadowSize = 0;
+    D3D12_CPU_DESCRIPTOR_HANDLE shadowSrvCpu{};       // staging-heap SRV for the shadow map
+    bool EnsureShadow(int size);
 
     // Descriptor heaps.
     ID3D12DescriptorHeap* rtvHeap = nullptr;
     ID3D12DescriptorHeap* dsvHeap = nullptr;
     ID3D12DescriptorHeap* srvHeap = nullptr;      // shader-visible ring (4 SRVs / draw)
     ID3D12DescriptorHeap* srvStage = nullptr;     // non-shader-visible: cached texture SRVs
-    UINT srvInc = 0, rtvInc = 0;
+    UINT srvInc = 0, rtvInc = 0, dsvInc = 0;
     UINT srvRingCap = 0, srvRingNext = 0;         // ring cursor (reset per frame)
     UINT stageCap = 0, stageNext = 0;             // staging cursor (persistent)
 
     // Size-dependent targets.
     int w = 0, h = 0;
-    ID3D12Resource* colorTex = nullptr;           // RGBA8 render target
-    ID3D12Resource* depthTex = nullptr;           // D32 depth
+    ID3D12Resource* colorTex = nullptr;           // RGBA8 render target (multisampled when msaa>1)
+    ID3D12Resource* depthTex = nullptr;           // depth (multisampled when msaa>1)
+    ID3D12Resource* resolveTex = nullptr;         // single-sample MSAA resolve target (msaa>1 only)
     ID3D12Resource* readback = nullptr;           // CPU-readable copy buffer
     UINT readbackPitch = 0;
 
@@ -344,7 +381,7 @@ bool D3D12Renderer::Init() {
     // Root signature: b0 = CBV (root descriptor), table of t0..t3 (SRV), static sampler s0.
     D3D12_DESCRIPTOR_RANGE srvRange{};
     srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    srvRange.NumDescriptors = 4; srvRange.BaseShaderRegister = 0;
+    srvRange.NumDescriptors = 5; srvRange.BaseShaderRegister = 0;   // t0..t3 material + t4 shadow map
     srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
     D3D12_ROOT_PARAMETER params[2]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -354,14 +391,18 @@ bool D3D12Renderer::Init() {
     params[1].DescriptorTable.NumDescriptorRanges = 1;
     params[1].DescriptorTable.pDescriptorRanges = &srvRange;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_STATIC_SAMPLER_DESC samp{};
-    samp.Filter = D3D12_FILTER_ANISOTROPIC; samp.MaxAnisotropy = 8;
-    samp.AddressU = samp.AddressV = samp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-    samp.MaxLOD = D3D12_FLOAT32_MAX; samp.ShaderRegister = 0;
-    samp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_STATIC_SAMPLER_DESC samps[2]{};
+    samps[0].Filter = D3D12_FILTER_ANISOTROPIC; samps[0].MaxAnisotropy = 8;
+    samps[0].AddressU = samps[0].AddressV = samps[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    samps[0].MaxLOD = D3D12_FLOAT32_MAX; samps[0].ShaderRegister = 0;
+    samps[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    samps[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;   // shadow map: clamp at borders (outside = lit)
+    samps[1].AddressU = samps[1].AddressV = samps[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    samps[1].MaxLOD = D3D12_FLOAT32_MAX; samps[1].ShaderRegister = 1;
+    samps[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_ROOT_SIGNATURE_DESC rs{};
     rs.NumParameters = 2; rs.pParameters = params;
-    rs.NumStaticSamplers = 1; rs.pStaticSamplers = &samp;
+    rs.NumStaticSamplers = 2; rs.pStaticSamplers = samps;
     rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
     ID3DBlob* rsb = nullptr; ID3DBlob* rerr = nullptr;
     if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &rsb, &rerr))) {
@@ -389,6 +430,18 @@ bool D3D12Renderer::Init() {
         {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 44, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     };
+    // Pick the highest MSAA level (up to 4x) the device supports for BOTH the colour
+    // and depth formats; fall back to 1 (no MSAA) when unsupported.
+    p->msaa = 1;
+    for (UINT s = 4; s >= 2; s >>= 1) {
+        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS qc{}; qc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; qc.SampleCount = s;
+        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS qd{}; qd.Format = DXGI_FORMAT_D32_FLOAT; qd.SampleCount = s;
+        if (SUCCEEDED(p->dev->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &qc, sizeof(qc))) && qc.NumQualityLevels > 0 &&
+            SUCCEEDED(p->dev->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &qd, sizeof(qd))) && qd.NumQualityLevels > 0) {
+            p->msaa = s; break;
+        }
+    }
+
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
     pso.pRootSignature = p->rootSig;
     pso.VS = {vsb->GetBufferPointer(), vsb->GetBufferSize()};
@@ -397,7 +450,7 @@ bool D3D12Renderer::Init() {
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pso.NumRenderTargets = 1; pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
-    pso.SampleDesc.Count = 1; pso.SampleMask = 0xFFFFFFFF;
+    pso.SampleDesc.Count = p->msaa; pso.SampleMask = 0xFFFFFFFF;
     // Rasterizer (no cull, like the other backends).
     pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
@@ -423,13 +476,37 @@ bool D3D12Renderer::Init() {
     p->dev->CreateGraphicsPipelineState(&pso, IID_ID3D12PipelineState, (void**)&p->psoBlend);
     vsb->Release(); psb->Release();
 
+    // Depth-only PSO for the shadow-map pass: position-only input, no pixel shader,
+    // no render target, single-sample D32 depth, depth write on.
+    ID3DBlob* vdb = nullptr; ID3DBlob* derr = nullptr;
+    if (SUCCEEDED(D3DCompile(kHLSL12, n, "okay3d12", nullptr, nullptr, "VSDepth", "vs_5_1", 0, 0, &vdb, &derr)) && vdb) {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC dp{};
+        dp.pRootSignature = p->rootSig;
+        dp.VS = {vdb->GetBufferPointer(), vdb->GetBufferSize()};
+        dp.InputLayout = {il, 1};                 // POSITION only
+        dp.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        dp.NumRenderTargets = 0;
+        dp.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+        dp.SampleDesc.Count = 1; dp.SampleMask = 0xFFFFFFFF;
+        dp.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        dp.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        dp.RasterizerState.DepthClipEnable = TRUE;
+        dp.DepthStencilState.DepthEnable = TRUE;
+        dp.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        dp.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        p->dev->CreateGraphicsPipelineState(&dp, IID_ID3D12PipelineState, (void**)&p->psoDepth);
+        vdb->Release();
+    }
+    if (derr) derr->Release();
+
     // Descriptor heaps.
     p->srvInc = p->dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     p->rtvInc = p->dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     D3D12_DESCRIPTOR_HEAP_DESC rh{}; rh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; rh.NumDescriptors = 1;
     p->dev->CreateDescriptorHeap(&rh, IID_ID3D12DescriptorHeap, (void**)&p->rtvHeap);
-    D3D12_DESCRIPTOR_HEAP_DESC dh{}; dh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV; dh.NumDescriptors = 1;
+    D3D12_DESCRIPTOR_HEAP_DESC dh{}; dh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV; dh.NumDescriptors = 2;  // [0]=main depth [1]=shadow
     p->dev->CreateDescriptorHeap(&dh, IID_ID3D12DescriptorHeap, (void**)&p->dsvHeap);
+    p->dsvInc = p->dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
     p->srvRingCap = 4096;   // 4 SRVs/draw -> up to 1024 draws/frame
     D3D12_DESCRIPTOR_HEAP_DESC sh{}; sh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     sh.NumDescriptors = p->srvRingCap; sh.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -498,7 +575,7 @@ bool D3D12Renderer::Init() {
 bool D3D12Renderer::Available() const { return m_impl && m_impl->dev && m_impl->psoOpaque; }
 
 void D3D12Renderer::Impl::DestroyTargets() {
-    Release(colorTex); Release(depthTex); Release(readback);
+    Release(colorTex); Release(depthTex); Release(resolveTex); Release(readback);
 }
 
 bool D3D12Renderer::Impl::EnsureTargets(int W, int H) {
@@ -506,24 +583,39 @@ bool D3D12Renderer::Impl::EnsureTargets(int W, int H) {
     WaitGPU();
     DestroyTargets();
     w = W; h = H;
+    // When MSAA is on, colour rests in RESOLVE_SOURCE (resolved into a 1-sample target
+    // before read-back); without MSAA it rests in COPY_SOURCE (copied straight to readback).
+    const D3D12_RESOURCE_STATES colorRest = (msaa > 1) ? D3D12_RESOURCE_STATE_RESOLVE_SOURCE
+                                                       : D3D12_RESOURCE_STATE_COPY_SOURCE;
     D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-    // Color RT (kept in COPY_SOURCE between frames; transitioned to RT each frame).
+    // Color RT (multisampled when msaa>1).
     D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     rd.Width = (UINT)W; rd.Height = (UINT)H; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
-    rd.Format = DXGI_FORMAT_R8G8B8A8_UNORM; rd.SampleDesc.Count = 1;
+    rd.Format = DXGI_FORMAT_R8G8B8A8_UNORM; rd.SampleDesc.Count = msaa;
     rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     D3D12_CLEAR_VALUE cv{}; cv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
-            D3D12_RESOURCE_STATE_COPY_SOURCE, &cv, IID_ID3D12Resource, (void**)&colorTex))) return false;
-    dev->CreateRenderTargetView(colorTex, nullptr, rtvHeap->GetCPUDescriptorHandleForHeapStart());
-    // Depth.
+            colorRest, &cv, IID_ID3D12Resource, (void**)&colorTex))) return false;
+    {
+        D3D12_RENDER_TARGET_VIEW_DESC rv{}; rv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        rv.ViewDimension = (msaa > 1) ? D3D12_RTV_DIMENSION_TEXTURE2DMS : D3D12_RTV_DIMENSION_TEXTURE2D;
+        dev->CreateRenderTargetView(colorTex, &rv, rtvHeap->GetCPUDescriptorHandleForHeapStart());
+    }
+    // Depth (multisampled to match the colour target).
     D3D12_RESOURCE_DESC dd = rd; dd.Format = DXGI_FORMAT_D32_FLOAT;
     dd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
     D3D12_CLEAR_VALUE dcv{}; dcv.Format = DXGI_FORMAT_D32_FLOAT; dcv.DepthStencil.Depth = 1.0f;
     if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd,
             D3D12_RESOURCE_STATE_DEPTH_WRITE, &dcv, IID_ID3D12Resource, (void**)&depthTex))) return false;
-    D3D12_DEPTH_STENCIL_VIEW_DESC dvd{}; dvd.Format = DXGI_FORMAT_D32_FLOAT; dvd.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-    dev->CreateDepthStencilView(depthTex, &dvd, dsvHeap->GetCPUDescriptorHandleForHeapStart());
+    D3D12_DEPTH_STENCIL_VIEW_DESC dvd{}; dvd.Format = DXGI_FORMAT_D32_FLOAT;
+    dvd.ViewDimension = (msaa > 1) ? D3D12_DSV_DIMENSION_TEXTURE2DMS : D3D12_DSV_DIMENSION_TEXTURE2D;
+    dev->CreateDepthStencilView(depthTex, &dvd, dsvHeap->GetCPUDescriptorHandleForHeapStart());   // slot 0
+    // MSAA resolve target (single-sample): rests in COPY_SOURCE, resolved into each frame.
+    if (msaa > 1) {
+        D3D12_RESOURCE_DESC rr = rd; rr.SampleDesc.Count = 1; rr.Flags = D3D12_RESOURCE_FLAG_NONE;
+        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rr,
+                D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr, IID_ID3D12Resource, (void**)&resolveTex))) return false;
+    }
     // Readback buffer (256-aligned row pitch).
     readbackPitch = Align((UINT)W * 4, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
     D3D12_HEAP_PROPERTIES rbp{}; rbp.Type = D3D12_HEAP_TYPE_READBACK;
@@ -532,6 +624,40 @@ bool D3D12Renderer::Impl::EnsureTargets(int W, int H) {
     rbd.SampleDesc.Count = 1; rbd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     if (FAILED(dev->CreateCommittedResource(&rbp, D3D12_HEAP_FLAG_NONE, &rbd,
             D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_ID3D12Resource, (void**)&readback))) return false;
+    return true;
+}
+
+// (Re)create the directional shadow map: a single-sample R32-typeless depth texture
+// used as a DSV (depth pass, dsvHeap slot 1) and an SRV (main pass PCF lookup, in the
+// staging heap). Returns false on failure (renderer still works, no shadows).
+bool D3D12Renderer::Impl::EnsureShadow(int size) {
+    if (shadowTex && shadowSize == size) return true;
+    if (shadowTex) { WaitGPU(); Release(shadowTex); }
+    shadowSize = 0;
+    if (!psoDepth) return false;
+    D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Width = (UINT)size; rd.Height = (UINT)size; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+    rd.Format = DXGI_FORMAT_R32_TYPELESS; rd.SampleDesc.Count = 1;
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    D3D12_CLEAR_VALUE dcv{}; dcv.Format = DXGI_FORMAT_D32_FLOAT; dcv.DepthStencil.Depth = 1.0f;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &dcv, IID_ID3D12Resource, (void**)&shadowTex))) return false;
+    // DSV in dsvHeap slot 1.
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv1 = dsvHeap->GetCPUDescriptorHandleForHeapStart();
+    dsv1.ptr += (size_t)dsvInc;
+    D3D12_DEPTH_STENCIL_VIEW_DESC dvd{}; dvd.Format = DXGI_FORMAT_D32_FLOAT; dvd.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    dev->CreateDepthStencilView(shadowTex, &dvd, dsv1);
+    // SRV in the staging heap (copied into the per-draw ring as t4).
+    if (shadowSrvCpu.ptr == 0) {
+        shadowSrvCpu = srvStage->GetCPUDescriptorHandleForHeapStart();
+        shadowSrvCpu.ptr += (size_t)stageNext * srvInc; stageNext++;
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC sd{}; sd.Format = DXGI_FORMAT_R32_FLOAT;
+    sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sd.Texture2D.MipLevels = 1;
+    dev->CreateShaderResourceView(shadowTex, &sd, shadowSrvCpu);
+    shadowSize = size;
     return true;
 }
 
@@ -547,7 +673,83 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
     p->alloc->Reset();
     p->list->Reset(p->alloc, p->psoOpaque);
 
-    p->Barrier(p->colorTex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    // ---- Shadow-map depth pre-pass (directional cast shadows) -----------------
+    // Render scene depth from the sun into the shadow texture, which the main pass
+    // samples (PCF) for real cast shadows. Opt-in via ShadowsEnabled().
+    Mat4 lightVP; float shadowTexel = 0.0f; bool shadowOn = false;
+    if (ShadowsEnabled() && p->psoDepth &&
+        ComputeDirectionalShadowVP(scene, vp, eye, lightVP, shadowTexel)) {
+        int ssize = ShadowMapResolution(); if (ssize < 256) ssize = 256; if (ssize > 4096) ssize = 4096;
+        if (p->EnsureShadow(ssize)) {
+            p->Barrier(p->shadowTex, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            D3D12_CPU_DESCRIPTOR_HANDLE sdsv = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
+            sdsv.ptr += (size_t)p->dsvInc;   // slot 1
+            p->list->OMSetRenderTargets(0, nullptr, FALSE, &sdsv);
+            p->list->ClearDepthStencilView(sdsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+            D3D12_VIEWPORT sv{}; sv.Width = (FLOAT)ssize; sv.Height = (FLOAT)ssize; sv.MaxDepth = 1.0f;
+            D3D12_RECT ssc{0, 0, ssize, ssize};
+            p->list->RSSetViewports(1, &sv); p->list->RSSetScissorRects(1, &ssc);
+            p->list->SetGraphicsRootSignature(p->rootSig);
+            p->list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            p->list->SetPipelineState(p->psoDepth);
+            const D3D12_GPU_VIRTUAL_ADDRESS cbBaseD = p->cbUpload->GetGPUVirtualAddress();
+            for (const auto& upo : scene.Objects()) {
+                GameObject* go = upo.get();
+                if (!go || !go->active || go == ignore) continue;
+                auto* mr = go->GetComponent<MeshRenderer>();
+                if (!mr || mr->wireframe || !mr->enabled) continue;
+                if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
+                const Mesh& mesh = mr->mesh;
+                const auto& Vv = mesh.vertices; const auto& T = mesh.triangles;
+                if (Vv.empty() || T.size() < 3) continue;
+                const int nv = (int)Vv.size();
+                p->verts.clear(); p->verts.reserve(T.size() * 3);
+                for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+                    int a = T[i], b = T[i+1], cc = T[i+2];
+                    if (a < 0 || b < 0 || cc < 0 || a >= nv || b >= nv || cc >= nv) continue;
+                    const Vec3& pa = Vv[a]; const Vec3& pb = Vv[b]; const Vec3& pc = Vv[cc];
+                    p->verts.push_back(pa.x); p->verts.push_back(pa.y); p->verts.push_back(pa.z);
+                    p->verts.push_back(pb.x); p->verts.push_back(pb.y); p->verts.push_back(pb.z);
+                    p->verts.push_back(pc.x); p->verts.push_back(pc.y); p->verts.push_back(pc.z);
+                }
+                const int dvc = (int)(p->verts.size() / 3);
+                if (dvc == 0) continue;
+                const UINT bytes = (UINT)(p->verts.size() * sizeof(float));
+                if (p->vbNext + bytes > p->vbCap) {
+                    p->WaitGPU();
+                    UINT need = p->vbNext + bytes + (1u << 20);
+                    Release(p->vbUpload); p->vbPtr = nullptr;
+                    D3D12_HEAP_PROPERTIES up{}; up.Type = D3D12_HEAP_TYPE_UPLOAD;
+                    D3D12_RESOURCE_DESC bd{}; bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; bd.Width = need; bd.Height = 1;
+                    bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.Format = DXGI_FORMAT_UNKNOWN; bd.SampleDesc.Count = 1;
+                    bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+                    if (FAILED(p->dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd,
+                            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_ID3D12Resource, (void**)&p->vbUpload))) return nullptr;
+                    D3D12_RANGE nr{0, 0}; p->vbUpload->Map(0, &nr, (void**)&p->vbPtr); p->vbCap = need;
+                }
+                UINT vbOff = p->vbNext;
+                std::memcpy(p->vbPtr + vbOff, p->verts.data(), bytes);
+                p->vbNext = Align(vbOff + bytes, 16);
+                D3D12_VERTEX_BUFFER_VIEW vbv{};
+                vbv.BufferLocation = p->vbUpload->GetGPUVirtualAddress() + vbOff;
+                vbv.SizeInBytes = bytes; vbv.StrideInBytes = 3 * sizeof(float);
+                p->list->IASetVertexBuffers(0, 1, &vbv);
+                if (p->cbNext + p->cbStride > p->cbCap) break;
+                CB dcb; std::memset(&dcb, 0, sizeof(dcb));
+                Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
+                std::memcpy(dcb.mvp, dmvp.m, sizeof(dcb.mvp));
+                UINT cbOff = p->cbNext;
+                std::memcpy(p->cbPtr + cbOff, &dcb, sizeof(dcb)); p->cbNext += p->cbStride;
+                p->list->SetGraphicsRootConstantBufferView(0, cbBaseD + cbOff);
+                p->list->DrawInstanced((UINT)dvc, 1, 0, 0);
+            }
+            p->Barrier(p->shadowTex, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            shadowOn = true;
+        }
+    }
+
+    p->Barrier(p->colorTex, (p->msaa > 1) ? D3D12_RESOURCE_STATE_RESOLVE_SOURCE : D3D12_RESOURCE_STATE_COPY_SOURCE,
+               D3D12_RESOURCE_STATE_RENDER_TARGET);
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = p->rtvHeap->GetCPUDescriptorHandleForHeapStart();
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = p->dsvHeap->GetCPUDescriptorHandleForHeapStart();
     p->list->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
@@ -708,22 +910,26 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
             cb.fog[0] = fogOn ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd; cb.fog[3] = 0.0f;
             cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b; cb.fogCol[3] = 1.0f;
         }
+        std::memcpy(cb.lightVP, lightVP.m, sizeof(cb.lightVP));
+        cb.shadowP[0] = shadowOn ? 1.0f : 0.0f; cb.shadowP[1] = shadowTexel;
+        cb.shadowP[2] = (float)p->shadowSize; cb.shadowP[3] = 0.0f;
 
         UINT cbOff = p->cbNext;
         std::memcpy(p->cbPtr + cbOff, &cb, sizeof(cb));
         p->cbNext += p->cbStride;
         p->list->SetGraphicsRootConstantBufferView(0, cbBase + cbOff);
 
-        // Bind the 4 textures (base, normal, spec, ao) into the SRV ring.
-        if (p->srvRingNext + 4 > p->srvRingCap) p->srvRingNext = 0;   // wrap (frame-local)
-        UINT ringStart = p->srvRingNext; p->srvRingNext += 4;
-        D3D12_CPU_DESCRIPTOR_HANDLE src[4] = {
+        // Bind the 5 SRVs (base, normal, spec, ao, shadow map) into the SRV ring.
+        if (p->srvRingNext + 5 > p->srvRingCap) p->srvRingNext = 0;   // wrap (frame-local)
+        UINT ringStart = p->srvRingNext; p->srvRingNext += 5;
+        D3D12_CPU_DESCRIPTOR_HANDLE src[5] = {
             p->TextureFor(baseTex),
             mr->normalMap.empty()   ? p->whiteSrv : p->TextureFor(mr->normalMap),
             mr->specularMap.empty() ? p->whiteSrv : p->TextureFor(mr->specularMap),
             mr->aoMap.empty()       ? p->whiteSrv : p->TextureFor(mr->aoMap),
+            (shadowOn && p->shadowSrvCpu.ptr) ? p->shadowSrvCpu : p->whiteSrv,
         };
-        for (int s = 0; s < 4; ++s) {
+        for (int s = 0; s < 5; ++s) {
             D3D12_CPU_DESCRIPTOR_HANDLE d = srvCpu0; d.ptr += (size_t)(ringStart + s) * p->srvInc;
             p->dev->CopyDescriptorsSimple(1, d, src[s], D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         }
@@ -749,14 +955,24 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         }
     }
 
-    // Copy the render target to the readback buffer and present it to the CPU.
-    p->Barrier(p->colorTex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    // Resolve MSAA (if on) into the single-sample target, then copy to the readback
+    // buffer. Without MSAA the multisample-free colour target is copied directly.
+    ID3D12Resource* copySrc = p->colorTex;
+    if (p->msaa > 1 && p->resolveTex) {
+        p->Barrier(p->colorTex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+        p->Barrier(p->resolveTex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RESOLVE_DEST);
+        p->list->ResolveSubresource(p->resolveTex, 0, p->colorTex, 0, DXGI_FORMAT_R8G8B8A8_UNORM);
+        p->Barrier(p->resolveTex, D3D12_RESOURCE_STATE_RESOLVE_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        copySrc = p->resolveTex;
+    } else {
+        p->Barrier(p->colorTex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    }
     D3D12_TEXTURE_COPY_LOCATION dst{}; dst.pResource = p->readback;
     dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     dst.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     dst.PlacedFootprint.Footprint.Width = (UINT)w; dst.PlacedFootprint.Footprint.Height = (UINT)h;
     dst.PlacedFootprint.Footprint.Depth = 1; dst.PlacedFootprint.Footprint.RowPitch = p->readbackPitch;
-    D3D12_TEXTURE_COPY_LOCATION srcL{}; srcL.pResource = p->colorTex;
+    D3D12_TEXTURE_COPY_LOCATION srcL{}; srcL.pResource = copySrc;
     srcL.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; srcL.SubresourceIndex = 0;
     p->list->CopyTextureRegion(&dst, 0, 0, 0, &srcL, nullptr);
 
@@ -784,9 +1000,10 @@ void D3D12Renderer::Destroy() {
     p->texCache.clear();
     if (p->cbUpload) { D3D12_RANGE wr{0, 0}; p->cbUpload->Unmap(0, &wr); }
     Release(p->vbUpload); Release(p->cbUpload);
+    Release(p->shadowTex);
     p->DestroyTargets();
     Release(p->srvHeap); Release(p->srvStage); Release(p->rtvHeap); Release(p->dsvHeap);
-    Release(p->psoOpaque); Release(p->psoBlend); Release(p->rootSig);
+    Release(p->psoOpaque); Release(p->psoBlend); Release(p->psoDepth); Release(p->rootSig);
     Release(p->list); Release(p->alloc); Release(p->fence); Release(p->queue); Release(p->dev);
     if (p->fenceEvent) { CloseHandle(p->fenceEvent); p->fenceEvent = nullptr; }
     delete p; m_impl = nullptr;

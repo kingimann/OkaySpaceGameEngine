@@ -45,12 +45,35 @@ const char* kHLSL =
     "  float4 uLights[64];\n"                 // 16 lights x 4: [dir,type][pos,range][col,cosOut][cosIn,..]
     "  float4 uFog;\n"                        // x=on y=start z=end (distance fog)
     "  float4 uFogCol;\n"                     // xyz = fog colour
+    "  float4x4 uLightVP;\n"                  // directional shadow-map view-projection
+    "  float4 uShadow;\n"                     // x=on y=texelWorld z=mapSize w=unused
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "Texture2D uNormalTex : register(t1);\n"        // bump/normal map (tangent-space)
     "Texture2D uSpecTex : register(t2);\n"          // gloss/specular map
     "Texture2D uAoTex : register(t3);\n"            // ambient-occlusion map
+    "Texture2D uShadowTex : register(t4);\n"        // directional shadow map (depth)
     "SamplerState uSamp : register(s0);\n"
+    "SamplerState uShadowSamp : register(s1);\n"    // clamp sampler for the shadow map
+    "float shadowFactor(float3 wpos, float3 n){\n"  // 0=shadowed .. 1=lit (4-tap PCF)
+    "  if (uShadow.x < 0.5) return 1.0;\n"
+    "  float3 wp = wpos + n * uShadow.y * 2.0;\n"                  // normal-offset bias
+    "  float4 sc = mul(uLightVP, float4(wp,1.0));\n"
+    "  if (sc.w <= 0.0) return 1.0;\n"
+    "  float3 q = sc.xyz / sc.w;\n"
+    "  float2 uv = float2(q.x*0.5+0.5, -q.y*0.5+0.5);\n"          // D3D texture v is top-down
+    "  float pz = q.z*0.5+0.5;\n"                                  // GL clip z [-1,1] -> [0,1]
+    "  if (uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0||pz>1.0) return 1.0;\n"
+    "  float bias=0.0015; float t=1.0/max(uShadow.z,1.0); float s=0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.5,-0.5)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.5,-0.5)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2(-0.5, 0.5)*t).r)?1.0:0.0;\n"
+    "  s += (pz-bias <= uShadowTex.Sample(uShadowSamp, uv+float2( 0.5, 0.5)*t).r)?1.0:0.0;\n"
+    "  return s*0.25;\n"
+    "}\n"
+    "float4 VSDepth(float3 pos:POSITION):SV_POSITION {\n"          // depth-only shadow pass
+    "  float4 cp = mul(uMVP, float4(pos,1.0)); cp.z = (cp.z + cp.w) * 0.5; return cp;\n"
+    "}\n"
     "struct VSIn { float3 pos:POSITION; float3 nrm:NORMAL; float2 uv:TEXCOORD; float3 col:COLOR; float3 tan:TANGENT; };\n"
     "struct PSIn { float4 pos:SV_POSITION; float3 nrm:NORMAL; float3 world:TEXCOORD1; float2 uv:TEXCOORD0; float3 col:COLOR; float3 tan:TEXCOORD2; };\n"
     "PSIn VSMain(VSIn i){\n"
@@ -97,12 +120,13 @@ const char* kHLSL =
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = uAmbient * lerp(0.55, 1.15, saturate(N.y * 0.5 + 0.5));\n"  // hemisphere ambient
     "  float3 lit = amb; float spec = 0.0;\n"
+    "  float sh = shadowFactor(i.world, N);\n"                   // sun occlusion (real cast shadows)
     "  int lc = (int)uLightCount.x;\n"
     "  if (lc < 1) {\n"                                          // fallback: global directional
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
-    "    lit += uLightColor * ndl;\n"
+    "    lit += uLightColor * ndl * sh;\n"
     "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
-    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular; }\n"
+    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * sh; }\n"
     "  } else {\n"
     "    for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"      // directional + point + spot
     "      float4 d0 = uLights[li*4+0]; float4 d1 = uLights[li*4+1];\n"
@@ -114,10 +138,11 @@ const char* kHLSL =
     "        if (d0.w > 1.5) { float cs = dot(normalize(d0.xyz), -ld);\n"   // spot cone
     "          float dn = d3.x - d2.w; float sp = dn > 1e-4 ? saturate((cs - d2.w) / dn) : (cs >= d2.w ? 1.0 : 0.0);\n"
     "          at *= sp * sp; } }\n"
+    "      float lsh = (d0.w < 0.5) ? sh : 1.0;\n"               // cast shadows apply to the sun only
     "      float ndl = max(dot(N, ld), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
-    "      lit += d2.xyz * ndl * at;\n"
+    "      lit += d2.xyz * ndl * at * lsh;\n"
     "      if (uSpecular > 0.0) { float3 H = normalize(ld + Vv);\n"
-    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at; }\n"
+    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at * lsh; }\n"
     "    }\n"
     "  }\n"
     "  if (uShaderMode > 7.5) lit += fz * fz * lit * 0.6;\n"      // Velvet: fuzzy grazing sheen
@@ -175,6 +200,8 @@ struct CB {
     float lights[256];         // 64 float4: 16 lights x 4 rows
     float fog[4];              // x=on y=start z=end
     float fogCol[4];           // xyz = fog colour
+    float lightVP[16];         // directional shadow-map view-projection
+    float shadowP[4];          // x=on y=texelWorld z=mapSize w=unused
 };
 
 } // namespace
@@ -193,6 +220,16 @@ struct D3D11Renderer::Impl {
     ID3D11BlendState*       blend = nullptr;           // alpha blend for the ground shadow
     ID3D11SamplerState*     samp = nullptr;
     ID3D11SamplerState*     sampPoint = nullptr;   // nearest filtering (crisp pixel-art)
+    ID3D11SamplerState*     sampShadow = nullptr;  // clamp sampler for the shadow map
+    // Directional shadow map (depth-only, single-sample):
+    ID3D11VertexShader*     vsDepth = nullptr;     // position-only depth pass
+    ID3D11InputLayout*      layoutDepth = nullptr;
+    ID3D11Texture2D*        shadowTex = nullptr;
+    ID3D11DepthStencilView* shadowDsv = nullptr;
+    ID3D11ShaderResourceView* shadowSrv = nullptr;
+    ID3D11Buffer*           vbDepth = nullptr; int vbDepthCap = 0;
+    int shadowSize = 0;
+    bool EnsureShadow(int size);
     // Size-dependent targets:
     int w = 0, h = 0, samples = 0;
     ID3D11Texture2D*        colorTex = nullptr;  ID3D11RenderTargetView* rtv = nullptr;
@@ -277,6 +314,24 @@ bool D3D11Renderer::Init() {
     sd.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;   // crisp pixel-art (no up-close blur)
     sd.MaxAnisotropy = 1;
     p->dev->CreateSamplerState(&sd, &p->sampPoint);
+    // Shadow-map sampler: linear filter, clamp at the borders (outside = lit).
+    D3D11_SAMPLER_DESC ss; std::memset(&ss, 0, sizeof(ss));
+    ss.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    ss.AddressU = ss.AddressV = ss.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    ss.MaxLOD = D3D11_FLOAT32_MAX;
+    p->dev->CreateSamplerState(&ss, &p->sampShadow);
+
+    // Depth-only vertex shader + position-only input layout for the shadow pass.
+    ID3DBlob* vdb = nullptr; ID3DBlob* derr = nullptr;
+    if (SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, "VSDepth", "vs_4_0", 0, 0, &vdb, &derr)) && vdb) {
+        p->dev->CreateVertexShader(vdb->GetBufferPointer(), vdb->GetBufferSize(), nullptr, &p->vsDepth);
+        const D3D11_INPUT_ELEMENT_DESC ild[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        };
+        p->dev->CreateInputLayout(ild, 1, vdb->GetBufferPointer(), vdb->GetBufferSize(), &p->layoutDepth);
+        vdb->Release();
+    }
+    if (derr) derr->Release();
 
     return p->dev && p->vs && p->ps && p->layout && p->cb && p->raster && p->depth && p->samp;
 }
@@ -333,6 +388,38 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     return true;
 }
 
+// (Re)create the directional shadow map: a single-sample typeless depth texture
+// usable BOTH as a depth-stencil target (depth pass) and a shader resource (main
+// pass PCF lookup). Returns false on failure (renderer still works, no shadows).
+bool D3D11Renderer::Impl::EnsureShadow(int size) {
+    if (shadowTex && shadowSize == size) return true;
+    if (shadowSrv) { shadowSrv->Release(); shadowSrv = nullptr; }
+    if (shadowDsv) { shadowDsv->Release(); shadowDsv = nullptr; }
+    if (shadowTex) { shadowTex->Release(); shadowTex = nullptr; }
+    shadowSize = 0;
+    if (!vsDepth || !layoutDepth) return false;
+
+    D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+    td.Width = size; td.Height = size; td.MipLevels = 1; td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R24G8_TYPELESS; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+    if (FAILED(dev->CreateTexture2D(&td, nullptr, &shadowTex))) return false;
+
+    D3D11_DEPTH_STENCIL_VIEW_DESC dvd; std::memset(&dvd, 0, sizeof(dvd));
+    dvd.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; dvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+    if (FAILED(dev->CreateDepthStencilView(shadowTex, &dvd, &shadowDsv))) { shadowTex->Release(); shadowTex = nullptr; return false; }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC svd; std::memset(&svd, 0, sizeof(svd));
+    svd.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS; svd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    svd.Texture2D.MipLevels = 1;
+    if (FAILED(dev->CreateShaderResourceView(shadowTex, &svd, &shadowSrv))) {
+        shadowDsv->Release(); shadowDsv = nullptr; shadowTex->Release(); shadowTex = nullptr; return false;
+    }
+    shadowSize = size;
+    return true;
+}
+
 ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& name) {
     if (name.empty()) return nullptr;
     auto it = texCache.find(name);
@@ -364,6 +451,80 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     Impl* p = m_impl;
     if (!p->EnsureTargets(w, h, samples)) return nullptr;
     ID3D11DeviceContext* c = p->ctx;
+
+    // ---- Shadow-map depth pre-pass (directional cast shadows) -----------------
+    // Render scene depth from the sun into a depth texture the main pass samples
+    // (PCF) for real cast shadows. Opt-in via ShadowsEnabled().
+    Mat4 lightVP; float shadowTexel = 0.0f; bool shadowOn = false;
+    if (ShadowsEnabled() && p->vsDepth &&
+        ComputeDirectionalShadowVP(scene, vp, eye, lightVP, shadowTexel)) {
+        int ssize = ShadowMapResolution(); if (ssize < 256) ssize = 256; if (ssize > 4096) ssize = 4096;
+        if (p->EnsureShadow(ssize)) {
+            ID3D11ShaderResourceView* nullsrv = nullptr;
+            c->PSSetShaderResources(4, 1, &nullsrv);   // never bound as SRV + DSV at once
+            D3D11_VIEWPORT sv; std::memset(&sv, 0, sizeof(sv));
+            sv.Width = (FLOAT)ssize; sv.Height = (FLOAT)ssize; sv.MaxDepth = 1.0f;
+            c->RSSetViewports(1, &sv);
+            c->OMSetRenderTargets(0, nullptr, p->shadowDsv);
+            c->ClearDepthStencilView(p->shadowDsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+            c->IASetInputLayout(p->layoutDepth);
+            c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            c->VSSetShader(p->vsDepth, nullptr, 0);
+            c->PSSetShader(nullptr, nullptr, 0);        // depth only — no pixel shader
+            c->VSSetConstantBuffers(0, 1, &p->cb);
+            c->RSSetState(p->raster);
+            c->OMSetDepthStencilState(p->depth, 0);
+            const float bf0[4] = {0, 0, 0, 0};
+            c->OMSetBlendState(nullptr, bf0, 0xffffffff);
+            for (const auto& up : scene.Objects()) {
+                GameObject* go = up.get();
+                if (!go || !go->active || go == ignore) continue;
+                auto* mr = go->GetComponent<MeshRenderer>();
+                if (!mr || mr->wireframe || !mr->enabled) continue;
+                if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
+                const Mesh& mesh = mr->mesh;
+                const auto& V = mesh.vertices; const auto& T = mesh.triangles;
+                if (V.empty() || T.size() < 3) continue;
+                const int nv = (int)V.size();
+                p->verts.clear(); p->verts.reserve(T.size() * 3);
+                for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+                    int a = T[i], b = T[i + 1], cc = T[i + 2];
+                    if (a < 0 || b < 0 || cc < 0 || a >= nv || b >= nv || cc >= nv) continue;
+                    const Vec3& pa = V[a]; const Vec3& pb = V[b]; const Vec3& pc = V[cc];
+                    p->verts.push_back(pa.x); p->verts.push_back(pa.y); p->verts.push_back(pa.z);
+                    p->verts.push_back(pb.x); p->verts.push_back(pb.y); p->verts.push_back(pb.z);
+                    p->verts.push_back(pc.x); p->verts.push_back(pc.y); p->verts.push_back(pc.z);
+                }
+                const int dvc = (int)(p->verts.size() / 3);
+                if (dvc == 0) continue;
+                if (dvc > p->vbDepthCap) {
+                    if (p->vbDepth) { p->vbDepth->Release(); p->vbDepth = nullptr; p->vbDepthCap = 0; }
+                    const int cap = dvc + 1024;
+                    D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
+                    bd.ByteWidth = (UINT)(cap * 3 * sizeof(float)); bd.Usage = D3D11_USAGE_DYNAMIC;
+                    bd.BindFlags = D3D11_BIND_VERTEX_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+                    if (FAILED(p->dev->CreateBuffer(&bd, nullptr, &p->vbDepth))) continue;
+                    p->vbDepthCap = cap;
+                }
+                if (!p->vbDepth) continue;
+                D3D11_MAPPED_SUBRESOURCE dms;
+                if (SUCCEEDED(c->Map(p->vbDepth, 0, D3D11_MAP_WRITE_DISCARD, 0, &dms))) {
+                    std::memcpy(dms.pData, p->verts.data(), p->verts.size() * sizeof(float));
+                    c->Unmap(p->vbDepth, 0);
+                }
+                Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
+                CB dcb; std::memset(&dcb, 0, sizeof(dcb));
+                std::memcpy(dcb.mvp, dmvp.m, sizeof(dcb.mvp));
+                if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &dms))) {
+                    std::memcpy(dms.pData, &dcb, sizeof(dcb)); c->Unmap(p->cb, 0);
+                }
+                UINT ds = 3 * sizeof(float), doff = 0;
+                c->IASetVertexBuffers(0, 1, &p->vbDepth, &ds, &doff);
+                c->Draw((UINT)dvc, 0);
+            }
+            shadowOn = true;
+        }
+    }
 
     D3D11_VIEWPORT vpd; std::memset(&vpd, 0, sizeof(vpd));
     vpd.Width = (FLOAT)w; vpd.Height = (FLOAT)h; vpd.MaxDepth = 1.0f;
@@ -536,8 +697,15 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             cb.fog[0] = fogOn ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd; cb.fog[3] = 0.0f;
             cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b; cb.fogCol[3] = 1.0f;
         }
+        std::memcpy(cb.lightVP, lightVP.m, sizeof(cb.lightVP));
+        cb.shadowP[0] = shadowOn ? 1.0f : 0.0f; cb.shadowP[1] = shadowTexel;
+        cb.shadowP[2] = (float)p->shadowSize; cb.shadowP[3] = 0.0f;
         if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
+        }
+        if (shadowOn && p->shadowSrv) {
+            c->PSSetShaderResources(4, 1, &p->shadowSrv);   // shadow map on t4
+            c->PSSetSamplers(1, 1, &p->sampShadow);         // clamp sampler on s1
         }
         if (srv) c->PSSetShaderResources(0, 1, &srv);
         if (nsrv) c->PSSetShaderResources(1, 1, &nsrv);   // normal/bump map on t1
@@ -597,6 +765,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     for (int y = 0; y < h; ++y)
         std::memcpy(p->pixels.data() + (std::size_t)y * w, src + (std::size_t)y * ms.RowPitch, (std::size_t)w * 4);
     c->Unmap(p->staging, 0);
+    // Release the shadow map from t4 so next frame's depth pass can bind it as a DSV
+    // without a read/write hazard warning.
+    if (shadowOn) { ID3D11ShaderResourceView* nullsrv = nullptr; c->PSSetShaderResources(4, 1, &nullsrv); }
     return p->pixels.data();
 }
 
@@ -606,6 +777,13 @@ void D3D11Renderer::Destroy() {
     p->DestroyTargets();
     for (auto& kv : p->texCache) if (kv.second) kv.second->Release();
     p->texCache.clear();
+    if (p->shadowSrv) p->shadowSrv->Release();
+    if (p->shadowDsv) p->shadowDsv->Release();
+    if (p->shadowTex) p->shadowTex->Release();
+    if (p->vbDepth)   p->vbDepth->Release();
+    if (p->layoutDepth) p->layoutDepth->Release();
+    if (p->vsDepth)   p->vsDepth->Release();
+    if (p->sampShadow) p->sampShadow->Release();
     if (p->vb)     p->vb->Release();
     if (p->samp)   p->samp->Release();
     if (p->sampPoint) p->sampPoint->Release();

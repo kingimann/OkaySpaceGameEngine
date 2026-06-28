@@ -997,6 +997,66 @@ inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye)
     sm.enabled = true;
 }
 
+/// Compute a SINGLE directional-light orthographic view-projection that the GPU
+/// backends (OpenGL / D3D11 / D3D12) render their depth pre-pass into and then
+/// sample for real cast shadows. This reuses the exact ortho/LookAt fit the
+/// software cascades use (so GPU shadows line up with the CPU reference), but
+/// collapses to one camera-focused map: the region is a sphere of radius
+/// ~ShadowDistance centred just in front of the camera (or the whole scene when
+/// ShadowDistance<=0). Returns false when there's nothing to shadow.
+///   `outVP`        light-space view-projection (clip space, GL/D3D both use the
+///                  0.5*xy+0.5 remap on the GPU side).
+///   `outTexelWorld` world size of one shadow texel (for normal-offset bias).
+inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, const Vec3& eye,
+                                       Mat4& outVP, float& outTexelWorld) {
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    bool any = false;
+    for (const auto& go : scene.Objects()) {
+        auto* mr = go->template GetComponent<MeshRenderer>();
+        if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;
+        Mat4 model = go->transform->LocalToWorldMatrix();
+        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+        for (int c = 0; c < 8; ++c) {
+            Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
+            lo.x = std::fmin(lo.x, w.x); lo.y = std::fmin(lo.y, w.y); lo.z = std::fmin(lo.z, w.z);
+            hi.x = std::fmax(hi.x, w.x); hi.y = std::fmax(hi.y, w.y); hi.z = std::fmax(hi.z, w.z);
+            any = true;
+        }
+    }
+    if (!any) return false;
+
+    Vec3 L = SceneLight::Direction(); { float m = L.Magnitude(); L = m > 1e-6f ? L * (1.0f / m) : Vec3{0, -1, 0}; }
+    const int S = ShadowMapResolution();
+    float depthPad = (hi.y - lo.y) + (hi.x - lo.x) + (hi.z - lo.z);
+
+    Vec3 ctr; float R;
+    float dist = ShadowDistance();
+    Vec3 sceneCtr{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+    float sceneR = 0.5f * std::sqrt((hi.x - lo.x) * (hi.x - lo.x) + (hi.y - lo.y) * (hi.y - lo.y) +
+                                    (hi.z - lo.z) * (hi.z - lo.z)) + 0.05f;
+    if (dist <= 0.0f) {
+        ctr = sceneCtr; R = sceneR;
+    } else {
+        // Camera-focused: a sphere of radius ~dist sitting in front of the camera.
+        Mat4 invVp = camVp.Inverse();
+        Vec3 pNear = invVp.MultiplyPoint({0.0f, 0.0f, -1.0f});
+        Vec3 pFar  = invVp.MultiplyPoint({0.0f, 0.0f,  1.0f});
+        Vec3 fwd = pFar - pNear; { float m = fwd.Magnitude(); fwd = m > 1e-6f ? fwd * (1.0f / m) : Vec3{0, 0, -1}; }
+        R = std::fmin(dist, sceneR);
+        if (R < 1.0f) R = 1.0f;
+        ctr = eye + fwd * (R * 0.85f);
+    }
+
+    float texel = (2.0f * R) / (float)S;
+    Vec3 csnap{std::floor(ctr.x / texel) * texel, std::floor(ctr.y / texel) * texel, std::floor(ctr.z / texel) * texel};
+    Vec3 up = std::fabs(L.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    float back = R * 2.0f + depthPad;
+    Vec3 leye = csnap - L * back;
+    outVP = Mat4::Ortho(-R, R, -R, R, 0.05f, back + R * 2.0f + depthPad) * Mat4::LookAt(leye, csnap, up);
+    outTexelWorld = texel;
+    return true;
+}
+
 /// Shadow softness in shadow-map texels (the Poisson disk's radius). Larger =
 /// softer, fuzzier shadow edges; smaller = crisp/hard. ~2.5 reads as soft-ish.
 inline float& ShadowSoftness() { static float v = 2.5f; return v; }

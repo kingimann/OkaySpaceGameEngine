@@ -273,8 +273,9 @@ planet, `A` player ship.)*
   uses the same **GPU 3D renderer** as the editor (Direct3D 11 — or opt-in
   Direct3D 12 — on Windows, OpenGL elsewhere; toggle in Build Game), and falls
   back to the software rasterizer when no GPU is available. All GPU backends
-  shade up to 16 dynamic lights and honour distance fog. See
-  [`docs/editor.md`](docs/editor.md).
+  shade up to 16 dynamic lights, honour distance fog, and render real directional
+  **cast-shadow maps** (opt-in, with PCF); Direct3D 11/12 add MSAA anti-aliasing.
+  See [`docs/editor.md`](docs/editor.md).
 - **Core has no external dependencies** — just a C++17 compiler, CMake, threads.
   Optional backends (Lua, C#/Mono, Steam, PlayFab/libcurl) and the editor
   (SDL2/OpenGL) are opt-in.

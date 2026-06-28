@@ -10333,6 +10333,30 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("+ House##umm")) { Minimap::MapShape s; s.kind = Minimap::MapShape::Kind::Rect; s.color = okay::Color::FromBytes(150,140,120); s.points = {{0,0},{10,10}}; mm->mapShapes.push_back(s); ed.dirty = true; }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("+ Zone##umm")) { Minimap::MapShape s; s.kind = Minimap::MapShape::Kind::Poly; s.color = okay::Color::FromBytes(60,120,80,160); s.points = {{0,0},{10,0},{5,10}}; mm->mapShapes.push_back(s); ed.dirty = true; }
+                ImGui::Separator();
+                // Auto-build footprints from the level: each MeshRenderer becomes a
+                // Rect sized by its world scale, so the map mirrors the actual scene.
+                if (ImGui::SmallButton("Generate from Scene##umm")) {
+                    int added = 0;
+                    for (const auto& go : ed.scene().Objects()) {
+                        if (!go || !go->transform || go.get() == curComp->gameObject) continue;
+                        if (!go->GetComponent<MeshRenderer>()) continue;
+                        okay::Vec3 p = go->transform->Position();
+                        okay::Vec3 ls = go->transform->LossyScale();
+                        float e = p.x, nrt = mm->useXZ ? p.z : p.y;
+                        float he = 0.5f * std::fabs(ls.x), hn = 0.5f * std::fabs(mm->useXZ ? ls.z : ls.y);
+                        if (he < 0.01f) he = 0.5f; if (hn < 0.01f) hn = 0.5f;
+                        Minimap::MapShape s; s.kind = Minimap::MapShape::Kind::Rect;
+                        s.color = okay::Color::FromBytes(150,140,120);
+                        s.points = {{e - he, nrt - hn}, {e + he, nrt + hn}};
+                        mm->mapShapes.push_back(s); ++added;
+                    }
+                    ed.dirty = true;
+                    ConsoleLog(std::string("Minimap: generated ") + std::to_string(added) + " shapes from scene meshes");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a footprint rect for every MeshRenderer in the scene (uses its world position + scale).");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear Shapes##umm")) { mm->mapShapes.clear(); ed.dirty = true; }
                 ImGui::TreePop();
             }
             ImGui::SeparatorText("Labels & Route");

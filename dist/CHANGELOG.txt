@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.275.0  (Minimap: generate map from scene)
+  - New "Generate from Scene" button on the Minimap: auto-creates a footprint
+    rectangle for every MeshRenderer in the level (using its world position +
+    scale), so the map mirrors your actual buildings without hand-drawing each
+    one. Plus a "Clear Shapes" button to start over.
+
 v2.274.0  (Authorable vector map: roads, houses, zones)
   - Draw your own minimap world without an image: add Map Shapes in world
     coordinates — Line (roads/walls, with thickness), Rect (houses/buildings),

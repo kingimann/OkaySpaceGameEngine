@@ -10,6 +10,7 @@
 #include "EditorState.hpp"
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
+#include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -202,6 +203,7 @@ void ConsoleLog(const std::string& msg, int level);
 SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye,
                              int w, int h, int slot = 0, const GameObject* ignore = nullptr) {
     if (!g_sdlRenderer) return nullptr;
+    OKAY_PROFILE("Render3D");
     if (slot < 0 || slot >= kView3DSlots) slot = 0;
     w = w < 1 ? 1 : (w > 4096 ? 4096 : w);
     h = h < 1 ? 1 : (h > 4096 ? 4096 : h);
@@ -226,6 +228,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // the software rasterizer. A self-heal counter disables the GPU path after
     // repeated failures so the viewport is never stuck.
     const std::uint32_t* px = nullptr;
+    Uint64 g_renderT0 = SDL_GetPerformanceCounter();   // GPU/software render time (read-back is synchronous)
     if (g_gpuRender) {
 #if defined(_WIN32)
         if (!px && g_d3dReady && g_d3dRenderer)
@@ -255,6 +258,10 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
                             scene, vp, eye, rw, rh, ss, ignore);
     if (!px) return nullptr;   // every renderer failed — don't feed SDL a null buffer
+    {   // Record the (synchronous) render time as the profiler's GPU proxy.
+        Uint64 r1 = SDL_GetPerformanceCounter();
+        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)SDL_GetPerformanceFrequency() * 1000.0);
+    }
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh) {
         if (g_view3DTex[slot]) SDL_DestroyTexture(g_view3DTex[slot]);
         g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
@@ -533,6 +540,7 @@ std::string g_newProjectTemplate; // template title to preselect (from --templat
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProject = true, g_showServices = true, g_showScriptEditor = true;
 bool g_showGame = true;   // Unity-style Game view (main-camera render)
+bool g_showProfiler = false;   // CPU/GPU profiler window
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
@@ -1471,6 +1479,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Hierarchy", nullptr, &g_showHierarchy);
         ImGui::MenuItem("Game", nullptr, &g_showGame);
+        ImGui::MenuItem("Profiler", nullptr, &g_showProfiler);
         ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
         ImGui::MenuItem("Console", nullptr, &g_showConsole);
         ImGui::MenuItem("Project", nullptr, &g_showProject);
@@ -14458,6 +14467,137 @@ void DrawViewport(EditorState& ed) {
 // Unity-style "Game" view: renders the scene through its main camera with no
 // editor chrome (grid, gizmos, selection) — what the built game shows. 2D or 3D
 // follows the camera's projection. Read-only; press Play to make it live.
+// Advanced Unity-style CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
+// scrub, a stacked CPU-category area (Scripts / Physics / Render / Other), per-section
+// self/total/calls/%-of-frame with min/avg/max over the window, live draw stats, and
+// CSV copy of the selected frame. Data comes from OKAY_PROFILE scopes in the engine +
+// editor; the window only enables timing while it's open.
+void DrawProfiler(EditorState& ed) {
+    okay::Profiler& P = okay::Prof();
+    if (!ImGui::Begin("Profiler", &g_showProfiler)) { ImGui::End(); return; }
+
+    // Live scene draw stats (mirrors Unity's Stats overlay) -> fed into this frame.
+    int objs = 0, tris = 0, parts = 0;
+    for (const auto& up : ed.scene().Objects()) {
+        if (!up || !up->active) continue;
+        if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->mesh.TriangleCount(); }
+        if (auto* ps = up->GetComponent<okay::ParticleSystem>()) parts += ps->AliveCount();
+    }
+    P.Stat3(objs, tris, parts);
+
+    const int n = P.Count();
+    double avg = 0.0, peak = 0.0; P.Range(avg, peak);
+    float top = (float)(peak > 0.0 ? peak * 1.15 : 33.4);
+
+    // ---- Controls row ----
+    ImGui::Checkbox("Pause##prof", &P.paused);
+    ImGui::SameLine();
+    if (!P.paused) P.selected = -1;
+    if (P.paused) {
+        ImGui::SetNextItemWidth(220);
+        if (n > 1) ImGui::SliderInt("Frame##prof", &P.selected, 0, n - 1, "frame %d");
+        if (P.selected < 0) P.selected = n - 1;
+    } else ImGui::TextDisabled("(pause to scrub frames)");
+    ImGui::SameLine(); ImGui::TextDisabled("16.7ms=60FPS  33.3ms=30FPS");
+
+    // ---- Timeline graphs (oldest -> newest) ----
+    static std::vector<float> gTotal, gGpu, gScripts, gPhysics, gRender, gOther;
+    gTotal.resize(n); gGpu.resize(n); gScripts.resize(n); gPhysics.resize(n); gRender.resize(n); gOther.resize(n);
+    for (int i = 0; i < n; ++i) {
+        const okay::Profiler::Frame& f = P.FrameAt(i);
+        gTotal[i] = (float)f.total; gGpu[i] = (float)f.gpu;
+        float sc = (float)okay::Profiler::CategorySelf(f, "Scripts");
+        float ph = (float)okay::Profiler::CategorySelf(f, "Physics");
+        float rd = (float)okay::Profiler::CategorySelf(f, "Render");
+        gScripts[i] = sc; gPhysics[i] = ph; gRender[i] = rd;
+        gOther[i] = (float)f.cpu - sc - ph - rd; if (gOther[i] < 0) gOther[i] = 0;
+    }
+    char ov[96];
+    std::snprintf(ov, sizeof(ov), "%.2f ms   %.0f FPS", P.lastFrameMs, P.lastFrameMs > 0.001 ? 1000.0 / P.lastFrameMs : 0.0);
+    ImGui::PlotLines("##frame", gTotal.empty() ? nullptr : gTotal.data(), n, 0, ov, 0.0f, top, ImVec2(-1, 80));
+    ImGui::PlotLines("##gpu",   gGpu.empty()   ? nullptr : gGpu.data(),   n, 0, "GPU ms", 0.0f, top, ImVec2(-1, 44));
+
+    // ---- Readouts ----
+    const okay::Profiler::Frame& F = P.Displayed();
+    ImGui::Text("Frame %.2f ms (%.0f FPS)", F.total, F.total > 0.001 ? 1000.0 / F.total : 0.0);
+    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f,0.8f,1,1), "CPU %.2f", F.cpu);
+    ImGui::SameLine(); ImGui::TextColored(ImVec4(1,0.78f,0.45f,1), "GPU %.2f", F.gpu);
+    ImGui::SameLine(); ImGui::Text("| avg %.2f  peak %.2f", avg, peak);
+    ImGui::Text("Meshes %d    Triangles %d    Particles %d", F.objects, F.triangles, F.particles);
+
+    // ---- CPU category bars (this frame) ----
+    auto bar = [&](const char* label, double ms, ImVec4 col) {
+        float frac = F.cpu > 0.0001 ? (float)(ms / F.cpu) : 0.0f;
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
+        char t[48]; std::snprintf(t, sizeof(t), "%s %.2f ms (%.0f%%)", label, ms, frac * 100.0f);
+        ImGui::ProgressBar(frac, ImVec2(-1, 0), t);
+        ImGui::PopStyleColor();
+    };
+    double cSc = okay::Profiler::CategorySelf(F, "Scripts");
+    double cPh = okay::Profiler::CategorySelf(F, "Physics");
+    double cRd = okay::Profiler::CategorySelf(F, "Render");
+    double cOt = F.cpu - cSc - cPh - cRd; if (cOt < 0) cOt = 0;
+    bar("Scripts", cSc, ImVec4(0.45f,0.75f,1.0f,1));
+    bar("Physics", cPh, ImVec4(0.55f,0.9f,0.55f,1));
+    bar("Render",  cRd, ImVec4(1.0f,0.75f,0.4f,1));
+    bar("Other",   cOt, ImVec4(0.7f,0.7f,0.75f,1));
+    ImGui::Separator();
+
+    // ---- CSV copy of the displayed frame ----
+    if (ImGui::SmallButton("Copy CSV##prof")) {
+        std::string csv = "Section,Self ms,Total ms,Calls,Avg ms,Min ms,Max ms\n";
+        for (const auto& b : F.buckets) {
+            okay::Profiler::Stat st = P.SectionStat(b.name);
+            char line[256];
+            std::snprintf(line, sizeof(line), "%s,%.4f,%.4f,%d,%.4f,%.4f,%.4f\n",
+                          b.name.c_str(), b.self, b.inclusive, b.calls, st.avg, st.mn, st.mx);
+            csv += line;
+        }
+        ImGui::SetClipboardText(csv.c_str());
+        ConsoleLog("Profiler frame copied as CSV.");
+    }
+    ImGui::SameLine(); ImGui::TextDisabled("section breakdown (self-time, with min/avg/max over the window)");
+
+    // ---- Per-section table: self/total/calls/%, indented by call depth, with stats ----
+    if (ImGui::BeginTable("profrows", 7,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
+            ImGuiTableFlags_ScrollY, ImVec2(0, 220))) {
+        ImGui::TableSetupColumn("Section", ImGuiTableColumnFlags_WidthStretch, 2.2f);
+        ImGui::TableSetupColumn("Self ms");
+        ImGui::TableSetupColumn("Total ms");
+        ImGui::TableSetupColumn("%");
+        ImGui::TableSetupColumn("Calls");
+        ImGui::TableSetupColumn("Avg");
+        ImGui::TableSetupColumn("Max");
+        ImGui::TableHeadersRow();
+        std::vector<okay::Profiler::Bucket> rows(F.buckets.begin(), F.buckets.end());
+        std::sort(rows.begin(), rows.end(),
+                  [](const okay::Profiler::Bucket& a, const okay::Profiler::Bucket& b){ return a.self > b.self; });
+        for (const auto& b : rows) {
+            okay::Profiler::Stat st = P.SectionStat(b.name);
+            float frac = F.cpu > 0.0001 ? (float)(b.self / F.cpu) : 0.0f;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (b.depth > 0) ImGui::Indent(b.depth * 12.0f);
+            // Hot sections (heavy self time) flagged red.
+            if (b.self > F.cpu * 0.30 && F.cpu > 0.5) ImGui::TextColored(ImVec4(1,0.5f,0.45f,1), "%s", b.name.c_str());
+            else ImGui::TextUnformatted(b.name.c_str());
+            if (b.depth > 0) ImGui::Unindent(b.depth * 12.0f);
+            ImGui::TableNextColumn(); ImGui::Text("%.3f", b.self);
+            ImGui::TableNextColumn(); ImGui::Text("%.3f", b.inclusive);
+            ImGui::TableNextColumn(); ImGui::Text("%.0f%%", frac * 100.0f);
+            ImGui::TableNextColumn(); ImGui::Text("%d", b.calls);
+            ImGui::TableNextColumn(); ImGui::Text("%.3f", st.avg);
+            ImGui::TableNextColumn(); ImGui::Text("%.3f", st.mx);
+        }
+        ImGui::EndTable();
+    }
+    if (F.buckets.empty())
+        ImGui::TextDisabled(ed.isPlaying() ? "Collecting samples..."
+                                           : "Press Play to time Scripts/Physics; the editor render is always timed.");
+    ImGui::End();
+}
+
 void DrawGameView(EditorState& ed) {
     // Pressing Play focuses this window so it comes forward if docked as a tab
     // behind the Scene view. SetWindowFocus() must be called before Begin().
@@ -14737,6 +14877,9 @@ int main(int argc, char** argv) {
     std::string lastTitle;
     Uint64 last = SDL_GetPerformanceCounter();
     while (running) {
+        Uint64 g_frameT0 = SDL_GetPerformanceCounter();
+        okay::Prof().enabled = g_showProfiler;   // gate timers; set before BeginFrame/Tick this frame
+        okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&
             g_updateCheck.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -15046,6 +15189,7 @@ int main(int argc, char** argv) {
         DrawDataAssetEditor();
         DrawMaterialEditor(ed);
         if (g_showGame)      DrawGameView(ed);
+        if (g_showProfiler)  DrawProfiler(ed);
         if (g_showInspector) DrawInspector(ed);
         if (g_showConsole)   DrawConsole();
         if (g_showProject)   DrawProject(ed);
@@ -15130,6 +15274,12 @@ int main(int argc, char** argv) {
         if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
 #endif
         SDL_RenderPresent(renderer);
+
+        {   // Close out the profiler frame (total wall time incl. present).
+            Uint64 f1 = SDL_GetPerformanceCounter();
+            double frameMs = (double)(f1 - g_frameT0) / (double)SDL_GetPerformanceFrequency() * 1000.0;
+            okay::Prof().EndFrame(frameMs);
+        }
 
         if (updater::pendingQuit) running = false; // auto-update relaunched
     }

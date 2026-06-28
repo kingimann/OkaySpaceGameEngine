@@ -1,5 +1,20 @@
 OkaySpace Game Engine — Changelog
 
+v2.295.0  (Profiler — CPU/GPU, Unity-style)
+  - New View > Profiler window: a detailed CPU/GPU performance profiler.
+    * Frame-time + GPU-time timelines (last ~4s); Pause and SCRUB back through
+      individual recorded frames.
+    * CPU broken into categories with %-of-frame bars: Scripts, Physics, Render,
+      Other — coloured like Unity.
+    * Per-section table: Self ms / Total ms / % / Calls, plus min/avg/max over the
+      window; nested scopes indented by call depth; "hot" sections (>30% of CPU)
+      flagged red.
+    * Live draw stats: meshes, triangles, particles. FPS / frame-ms / avg / peak.
+    * Copy CSV of the selected frame to the clipboard.
+  - Instrumented hot paths with lightweight scoped timers (Scripts.Update,
+    Scripts.LateUpdate, Physics.2D, Physics.3D, Render3D). Timing only runs while
+    the Profiler window is open, so there's zero cost otherwise.
+
 v2.294.0  (Walkable terrain — dig and fall in)
   - Heightmap terrain is now solid ground for 3D physics: dynamic bodies (the
     player, props) stand on the actual terrain surface — hills, slopes and the

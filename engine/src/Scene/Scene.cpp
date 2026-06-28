@@ -9,6 +9,7 @@
 #include "okay/Physics/ColliderFit.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Renderer.hpp"
+#include "okay/Core/Profiler.hpp"
 #include <algorithm>
 #include <functional>
 #include <limits>
@@ -92,9 +93,12 @@ void Scene::Update(float deltaTime) {
 
     m_scheduler.Update(deltaTime);
 
-    for (Component* c : m_active) {
-        if (c && c->enabled && c->gameObject && c->gameObject->active)
-            c->Update(deltaTime);
+    {
+        OKAY_PROFILE("Scripts.Update");
+        for (Component* c : m_active) {
+            if (c && c->enabled && c->gameObject && c->gameObject->active)
+                c->Update(deltaTime);
+        }
     }
 
     DispatchPointer();   // OnMouseEnter/Exit/Over/Down/Up/Click against the cursor
@@ -103,11 +107,17 @@ void Scene::Update(float deltaTime) {
     for (const auto& go : m_objects)
         if (go->active) FitColliders(go.get(), /*onlyAuto*/ true);
 
-    if (physicsEnabled) { m_physics.Step(*this, deltaTime); m_physics3d.Step(*this, deltaTime); }
+    if (physicsEnabled) {
+        { OKAY_PROFILE("Physics.2D"); m_physics.Step(*this, deltaTime); }
+        { OKAY_PROFILE("Physics.3D"); m_physics3d.Step(*this, deltaTime); }
+    }
 
-    for (Component* c : m_active) {
-        if (c && c->enabled && c->gameObject && c->gameObject->active)
-            c->LateUpdate(deltaTime);
+    {
+        OKAY_PROFILE("Scripts.LateUpdate");
+        for (Component* c : m_active) {
+            if (c && c->enabled && c->gameObject && c->gameObject->active)
+                c->LateUpdate(deltaTime);
+        }
     }
 
     if (!m_destroyQueue.empty()) {

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.294.0  (Walkable terrain — dig and fall in)
+  - Heightmap terrain is now solid ground for 3D physics: dynamic bodies (the
+    player, props) stand on the actual terrain surface — hills, slopes and the
+    craters/trenches carved by the Terrain Digger — instead of a flat bounding box.
+  - So digging is now playable: dig a hole and you fall into it; raise the ground
+    and you ride up with it. Each body samples the terrain height beneath it and
+    rests its feet (collider underside) on the surface, grounding downward motion
+    (jumps still work). Cheap — one height sample per body per terrain.
+
 v2.293.0  (Terrain digging + texturing)
   - NEW Terrain Digger component: aim with the camera and hold a button to reshape
     a heightmap terrain at runtime — Dig (lower), Raise, Smooth or Flatten. Smooth

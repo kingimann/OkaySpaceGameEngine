@@ -1,6 +1,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Components/Terrain.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -312,6 +313,41 @@ void Physics3D::Step(Scene& scene, float dt) {
     }
 
     m_contacts.swap(current);
+
+    // 4) Terrain ground-follow: heightmap terrain isn't a polygon collider, so make
+    // dynamic bodies stand on its surface directly — including craters/hills carved
+    // by the Terrain Digger. Each body samples the terrain height under it and is
+    // lifted to rest its collider's underside on the surface, grounding downward
+    // motion. Cheap (one bilinear height sample per body per terrain it's over).
+    auto terrains = scene.FindObjectsOfType<Terrain>();
+    if (!terrains.empty()) {
+        for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+            if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+            if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
+            Transform* t = rb->transform;
+            if (!t) continue;
+            Vec3 pos = t->Position();
+            // How far the body extends below its origin (so its feet, not its centre,
+            // sit on the ground). From its collider AABB, else a small default.
+            float foot = 0.5f;
+            if (auto* col = rb->gameObject->GetComponent<Collider3D>()) {
+                Vec3 mn, mx; col->WorldAABB(mn, mx); foot = pos.y - mn.y;
+                if (foot < 0.0f) foot = 0.0f;
+            }
+            for (Terrain* terr : terrains) {
+                if (!terr->gameObject || !terr->gameObject->transform) continue;
+                Vec3 tp = terr->gameObject->transform->Position();
+                float lx = pos.x - tp.x, lz = pos.z - tp.z;
+                float half = terr->size * 0.5f;
+                if (lx < -half || lx > half || lz < -half || lz > half) continue;
+                float targetY = tp.y + terr->SampleHeight(lx, lz) + foot;
+                if (pos.y < targetY) {                      // sank into the ground -> lift out
+                    t->localPosition.y += (targetY - pos.y);
+                    if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;   // ground downward motion
+                }
+            }
+        }
+    }
 }
 
 // ===================== Scene queries ===================================

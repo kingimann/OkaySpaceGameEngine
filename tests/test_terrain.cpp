@@ -183,6 +183,30 @@ int main() {
         }
     }
 
+    // Walkable terrain: a dynamic body falls and comes to rest on the terrain
+    // surface, and digging a crater under it lets it settle lower.
+    {
+        Scene s("WALK");
+        auto* tr = s.CreateGameObject("Ground")->AddComponent<Terrain>();
+        tr->Resize(16); tr->size = 40.0f; tr->Flatten(2.0f);   // flat ground at y=2
+        GameObject* body = s.CreateGameObject("Body");
+        body->transform->localPosition = {0, 12, 0};
+        auto* rb = body->AddComponent<Rigidbody3D>();
+        rb->bodyType = Rigidbody3D::BodyType::Dynamic;
+        auto* bc = body->AddComponent<BoxCollider3D>();
+        bc->size = {1.0f, 1.0f, 1.0f};   // half-extent 0.5 -> foot offset ~0.5
+        for (int i = 0; i < 240; ++i) s.Update(1.0f / 60.0f);   // ~4s: fall + settle
+        float restY = body->transform->Position().y;
+        CHECK(restY > 2.0f);                       // sits on top of the ground (surface + foot)
+        CHECK_NEAR(restY, 2.5f, 0.3f);             // ~ surface(2) + foot(0.5)
+
+        // Dig a crater under the body; it should settle lower.
+        tr->RaiseAt(0.0f, 0.0f, 8.0f, -3.0f);      // lower the ground to ~ -1 at the centre
+        for (int i = 0; i < 240; ++i) s.Update(1.0f / 60.0f);
+        float dugY = body->transform->Position().y;
+        CHECK(dugY < restY - 1.0f);                // fell into the dug hole
+    }
+
     // TerrainDigger: Dig lowers the terrain under an aimed crater; fields round-trip.
     {
         Scene s("DIG"); s.physicsEnabled = false;

@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.279.0  (More shaders + richer ambient lighting)
+  - Three new Mesh Renderer shader models: Iridescent (oil-slick hue that shifts
+    with the view angle), Hologram (dark, scan-lined body lit at the edges), and
+    Posterize (retro colour banding). Pick them from the Shader dropdown; they
+    render in the software, OpenGL, and Direct3D 11 paths.
+  - Lighting: the GPU renderers now use hemisphere ambient (a brighter sky tint
+    up-facing, darker ground tint down-facing) like the software renderer, so
+    objects read with more depth instead of a flat ambient wash.
+
 v2.278.0  (Ground contact shadows — objects stop floating)
   - Mesh Renderers now cast a flat "blob" contact shadow projected onto the
     ground plane, so cubes and props sit on the floor instead of looking like

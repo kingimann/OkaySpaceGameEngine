@@ -22,7 +22,7 @@ public:
     /// ramp by surface up-ness (gradientBottom -> gradientTop); Fresnel = a glowing rim
     /// look (base darkened, edges lit by rimColor). New models are honoured by the
     /// software renderer and the GPU (GL / D3D11) renderers.
-    enum class Shader { Standard, Unlit, Toon, Gradient, Fresnel };
+    enum class Shader { Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize };
     Shader shader = Shader::Standard;
     /// Number of cel bands for the Toon shader (2-6 reads best). Ignored otherwise.
     int    toonBands = 3;

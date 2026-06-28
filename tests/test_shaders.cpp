@@ -115,13 +115,31 @@ int main() {
         Raster std0 = renderSphere(MeshRenderer::Shader::Standard);
         Raster grad = renderSphere(MeshRenderer::Shader::Gradient);
         Raster fres = renderSphere(MeshRenderer::Shader::Fresnel);
-        int dGrad = 0, dFres = 0;
+        Raster irid = renderSphere(MeshRenderer::Shader::Iridescent);
+        Raster holo = renderSphere(MeshRenderer::Shader::Hologram);
+        Raster post = renderSphere(MeshRenderer::Shader::Posterize);
+        int dGrad = 0, dFres = 0, dIrid = 0, dHolo = 0, dPost = 0;
         for (int i = 0; i < 64 * 64; ++i) {
-            if (std0.Get(i % 64, i / 64) != grad.Get(i % 64, i / 64)) ++dGrad;
-            if (std0.Get(i % 64, i / 64) != fres.Get(i % 64, i / 64)) ++dFres;
+            std::uint32_t s = std0.Get(i % 64, i / 64);
+            if (s != grad.Get(i % 64, i / 64)) ++dGrad;
+            if (s != fres.Get(i % 64, i / 64)) ++dFres;
+            if (s != irid.Get(i % 64, i / 64)) ++dIrid;
+            if (s != holo.Get(i % 64, i / 64)) ++dHolo;
+            if (s != post.Get(i % 64, i / 64)) ++dPost;
         }
         CHECK(dGrad > 0);   // gradient ramp repaints the sphere
         CHECK(dFres > 0);   // fresnel rim/darkening repaints the sphere
+        CHECK(dIrid > 0);   // iridescent hue-shift repaints the sphere
+        CHECK(dHolo > 0);   // hologram darken + rim repaints the sphere
+        CHECK(dPost > 0);   // posterize banding repaints the sphere
+
+        // Round-trip the new shader models through the scene serializer.
+        Scene s4("IH"); s4.physicsEnabled = false;
+        s4.CreateGameObject("A")->AddComponent<MeshRenderer>()->shader = MeshRenderer::Shader::Iridescent;
+        s4.CreateGameObject("B")->AddComponent<MeshRenderer>()->shader = MeshRenderer::Shader::Hologram;
+        Scene s5("x"); SceneSerializer::Deserialize(s5, SceneSerializer::Serialize(s4));
+        CHECK(s5.Find("A")->GetComponent<MeshRenderer>()->shader == MeshRenderer::Shader::Iridescent);
+        CHECK(s5.Find("B")->GetComponent<MeshRenderer>()->shader == MeshRenderer::Shader::Hologram);
     }
 
     // The Toon shader posterizes shading: a lit sphere shows far fewer distinct

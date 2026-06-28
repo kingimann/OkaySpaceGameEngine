@@ -59,15 +59,25 @@ const char* kHLSL =
     "  float3 N = normalize(i.nrm);\n"
     "  float3 base = uColor * i.col;\n"      // per-vertex/face color (white when unused)
     "  if (uUseTex > 0.5) base *= uTex.Sample(uSamp, i.uv).rgb;\n"
+    "  float3 Vv = normalize(uEye - i.world);\n"
+    "  float fz = 1.0 - max(dot(N, Vv), 0.0);\n"               // Fresnel term (grazing)
     "  if (uShaderMode > 2.5 && uShaderMode < 3.5)\n"           // Gradient
     "    base = lerp(uGradBot, uGradTop, saturate(N.y * 0.5 + 0.5));\n"
-    "  bool fres = uShaderMode > 3.5;\n"                        // Fresnel
+    "  bool fres = uShaderMode > 3.5 && uShaderMode < 4.5;\n"   // Fresnel
     "  if (fres) base *= 0.10;\n"
+    "  if (uShaderMode > 4.5 && uShaderMode < 5.5) {\n"         // Iridescent (oil-slick)
+    "    float ph = fz * 6.2831853;\n"
+    "    base *= float3(0.5+0.5*cos(ph), 0.5+0.5*cos(ph+2.0944), 0.5+0.5*cos(ph+4.1888));\n"
+    "  }\n"
+    "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"   // Hologram
+    "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(i.world.y * 40.0));\n"
+    "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
     "  if (uUnlit > 0.5) return float4(base + uEmissive, 1.0);\n"
     "  float ndl = max(dot(N, uLightDir), 0.0);\n"
     "  if (uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5)\n"   // Toon
     "    ndl = ceil(ndl * uToonBands) / uToonBands;\n"
-    "  float3 diff = base * (uAmbient + uLightColor * ndl);\n"
+    "  float3 amb = uAmbient * lerp(0.55, 1.15, saturate(N.y * 0.5 + 0.5));\n"  // hemisphere ambient
+    "  float3 diff = base * (amb + uLightColor * ndl);\n"
     "  float spec = 0.0;\n"
     "  if (uSpecular > 0.0) {\n"
     "    float3 V = normalize(uEye - i.world);\n"
@@ -75,9 +85,8 @@ const char* kHLSL =
     "    spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular;\n"
     "  }\n"
     "  float3 rim = float3(0,0,0);\n"
-    "  float rs = uRimStr; if (fres && rs < 0.8) rs = 1.6;\n"
-    "  if (rs > 0.0) { float3 V = normalize(uEye - i.world); float f = 1.0 - max(dot(N,V),0.0);\n"
-    "    rim = uRimColor * (f*f*f * rs); }\n"
+    "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
+    "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
     "  return float4(diff + spec.xxx + rim + uEmissive, 1.0);\n"
     "}\n";
 

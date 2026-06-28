@@ -183,25 +183,34 @@ const char* kFrag =
     "  vec3 N = normalize(vN);\n"
     "  vec3 base = uColor * vCol;\n"
     "  if (uUseTex > 0.5) base *= texture2D(uTex, vUV).rgb;\n"
+    "  vec3 Vv = normalize(uEye - vWorld);\n"
+    "  float fz = 1.0 - max(dot(N, Vv), 0.0);\n"                  // Fresnel term (grazing)
     "  if (uShaderMode > 2.5 && uShaderMode < 3.5)\n"             // Gradient
     "    base = mix(uGradBot, uGradTop, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"
-    "  bool fres = uShaderMode > 3.5;\n"                          // Fresnel
+    "  bool fres = uShaderMode > 3.5 && uShaderMode < 4.5;\n"     // Fresnel
     "  if (fres) base *= 0.10;\n"
+    "  if (uShaderMode > 4.5 && uShaderMode < 5.5) {\n"           // Iridescent (oil-slick)
+    "    float ph = fz * 6.2831853;\n"
+    "    base *= vec3(0.5+0.5*cos(ph), 0.5+0.5*cos(ph+2.0944), 0.5+0.5*cos(ph+4.1888));\n"
+    "  }\n"
+    "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"     // Hologram
+    "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(vWorld.y * 40.0));\n"
+    "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
     "  if (uUnlit > 0.5) { gl_FragColor = vec4(base + uEmissive, 1.0); return; }\n"
     "  float ndl = max(dot(N, uLightDir), 0.0);\n"
     "  if (uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5)\n"   // Toon banding
     "    ndl = ceil(ndl * uToonBands) / uToonBands;\n"
-    "  vec3 diff = base * (uAmbient + uLightColor * ndl);\n"
+    "  vec3 amb = uAmbient * mix(0.55, 1.15, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // hemisphere ambient
+    "  vec3 diff = base * (amb + uLightColor * ndl);\n"
     "  float spec = 0.0;\n"
     "  if (uSpecular > 0.0) {\n"
     "    vec3 V = normalize(uEye - vWorld);\n"
     "    vec3 H = normalize(uLightDir + V);\n"
     "    spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular;\n"
     "  }\n"
-    "  vec3 rim = vec3(0.0);\n"                                   // rim glow (Fresnel model or rimStr>0)
-    "  float rs = uRimStr; if (fres && rs < 0.8) rs = 1.6;\n"
-    "  if (rs > 0.0) { vec3 V = normalize(uEye - vWorld); float f = 1.0 - max(dot(N,V),0.0);\n"
-    "    rim = uRimColor * (f*f*f * rs); }\n"
+    "  vec3 rim = vec3(0.0);\n"                                   // rim glow (Fresnel/Hologram or rimStr>0)
+    "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
+    "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
     "  gl_FragColor = vec4(diff + vec3(spec) + rim + uEmissive, 1.0);\n"
     "}\n";
 

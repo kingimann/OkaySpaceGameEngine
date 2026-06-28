@@ -573,6 +573,27 @@ public:
                 }
                 // Fresnel shader: a dark body with a glowing rim (the rim colour does the work).
                 if (shaderMode == 4) { br *= 0.10f; bg *= 0.10f; bb2 *= 0.10f; }
+                // Iridescent shader: an oil-slick / thin-film sheen — the albedo's hue
+                // shifts with the view angle (Fresnel) through a cosine palette.
+                if (shaderMode == 5) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    float fz = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
+                    float ph = fz * 6.2831853f;
+                    br  *= 0.5f + 0.5f * std::cos(ph);
+                    bg  *= 0.5f + 0.5f * std::cos(ph + 2.094395f);
+                    bb2 *= 0.5f + 0.5f * std::cos(ph + 4.188790f);
+                }
+                // Hologram shader: a dark, scan-lined body lit only at the grazing edges
+                // (handled by the rim block below, forced strong like Fresnel).
+                if (shaderMode == 6) {
+                    float band = 0.55f + 0.45f * std::sin(wpos.y * 40.0f);   // horizontal scanlines
+                    br *= 0.18f * band; bg *= 0.18f * band; bb2 *= 0.18f * band;
+                }
+                // Posterize shader: quantise the albedo into a few bands (retro / PSX).
+                if (shaderMode == 7) {
+                    const float lv = 5.0f;
+                    br = std::floor(br * lv) / lv; bg = std::floor(bg * lv) / lv; bb2 = std::floor(bb2 * lv) / lv;
+                }
                 // Metallic workflow: metals have (almost) no diffuse, and they tint
                 // both their specular highlight and their environment reflection by
                 // the albedo color (so gold reflects gold). Dielectrics keep a white
@@ -598,8 +619,8 @@ public:
                 // Per-material Fresnel rim: an additive, colored backlight independent
                 // of the global rim toggle (a first-class shader feature).
                 float mrimR = 0.0f, mrimG = 0.0f, mrimB = 0.0f;
-                float useRim = matRimStr;                      // Fresnel shader forces a strong rim
-                if (shaderMode == 4 && useRim < 0.8f) useRim = 1.6f;
+                float useRim = matRimStr;                      // Fresnel/Hologram force a strong rim
+                if ((shaderMode == 4 || shaderMode == 6) && useRim < 0.8f) useRim = 1.6f;
                 if (useRim > 0.0f) {
                     Vec3 toEye = (eye - wpos).Normalized();
                     float f = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
@@ -1514,6 +1535,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             const bool perPixel = (PerPixelLighting() || mr->shader == MeshRenderer::Shader::Toon
                                    || mr->shader == MeshRenderer::Shader::Gradient
                                    || mr->shader == MeshRenderer::Shader::Fresnel
+                                   || mr->shader == MeshRenderer::Shader::Iridescent
+                                   || mr->shader == MeshRenderer::Shader::Hologram
+                                   || mr->shader == MeshRenderer::Shader::Posterize
                                    || mr->rimStrength > 0.0f || mr->triplanar)
                                   && !unlit && !useMatcap;
             const int  shaderMode = (int)mr->shader;

@@ -60,6 +60,27 @@ int main() {
 
     Game::Reset();
 
+    // --- Eager build: the overlay exists (hidden) after the first tick, and the
+    //     Update loop shows/hides it to match the global pause state -------------
+    {
+        Scene s("PME");
+        GameObject* go = s.CreateGameObject("Pause");
+        go->AddComponent<PauseMenu>();
+        s.Update(0.0f);                              // runs Start() -> Build()
+        GameObject* ui = s.Find("PauseMenu UI");
+        CHECK(ui != nullptr);                        // built up front, no pausing needed
+        CHECK(ui && !ui->active);                    // hidden until paused
+        Game::SetPaused(true);
+        s.Update(0.0f);                              // Update syncs the overlay on
+        CHECK(ui && ui->active);
+        Game::SetPaused(false);
+        s.Update(0.0f);
+        CHECK(ui && !ui->active);                    // and back off
+        Game::Reset();
+    }
+
+    Game::Reset();
+
     // --- Serialization round-trip ---------------------------------------------
     {
         Scene s("PMS"); s.physicsEnabled = false;

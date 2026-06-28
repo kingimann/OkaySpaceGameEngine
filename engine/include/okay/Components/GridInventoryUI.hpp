@@ -8,6 +8,7 @@
 #include "okay/Math/Vec3.hpp"
 #include <string>
 #include <vector>
+#include <cmath>
 
 namespace okay {
 
@@ -68,6 +69,25 @@ public:
         return o ? o->GetComponent<GridInventory>() : nullptr;
     }
 
+    /// A stable, distinct accent colour derived from a container's category/title, so
+    /// each worn bag / clothing reads with its own colour in the multi-container screen
+    /// without any per-game configuration (FNV-1a hash -> hue at a muted S/V).
+    static Color AccentFor(const std::string& key) {
+        if (key.empty()) return Color::FromBytes(120, 140, 180, 255);
+        unsigned h = 2166136261u;
+        for (char c : key) { h ^= (unsigned char)c; h *= 16777619u; }
+        float H = (float)(h % 360), S = 0.45f, V = 0.95f;
+        float C = V * S, X = C * (1.0f - std::fabs(std::fmod(H / 60.0f, 2.0f) - 1.0f)), m = V - C;
+        float r = 0, g = 0, b = 0;
+        if (H < 60)       { r = C; g = X; }
+        else if (H < 120) { r = X; g = C; }
+        else if (H < 180) { g = C; b = X; }
+        else if (H < 240) { g = X; b = C; }
+        else if (H < 300) { r = X; b = C; }
+        else              { r = C; b = X; }
+        return Color{r + m, g + m, b + m, 1.0f};
+    }
+
     /// Collect the containers the multi-container screen should show. `equipped` is the
     /// player's own grid followed by every GridInventory on a descendant object (clothes /
     /// bags); `nearby` is every ground container (worldItem) within `nearbyRange`. Both the
@@ -76,9 +96,13 @@ public:
                            std::vector<GridInventory*>& nearby) const {
         equipped.clear(); nearby.clear();
         GridInventory* primary = Inv();
-        GameObject* root = Owner();
+        // The player is the object this screen sits on (NOT the topmost ancestor), so
+        // the whole rig can be nested under a tidy group without changing who counts as
+        // "worn": worn bags are this object's children; ground loot is anything else
+        // flagged worldItem within range.
+        GameObject* root = gameObject ? gameObject : Owner();
         if (primary) equipped.push_back(primary);
-        Scene* sc = root ? root->scene() : (gameObject ? gameObject->scene() : nullptr);
+        Scene* sc = root ? root->scene() : nullptr;
         if (!sc || !root || !root->transform) return;
         Vec3 pp = root->transform->Position();
         for (const auto& up : sc->Objects()) {
@@ -86,11 +110,12 @@ public:
             if (!go || go == root) continue;
             auto* gi = go->GetComponent<GridInventory>();
             if (!gi || gi == primary) continue;
-            if (IsDescendant(go->transform, root->transform)) {
+            bool worn = IsDescendant(go->transform, root->transform);
+            if (worn && !gi->worldItem) {
                 equipped.push_back(gi);                 // a worn/held container (clothes, bag)
             } else if (gi->worldItem) {
                 Vec3 d = go->transform ? go->transform->Position() - pp : Vec3{1e9f, 1e9f, 1e9f};
-                if (d.Magnitude() <= nearbyRange) nearby.push_back(gi);
+                if (d.Magnitude() <= nearbyRange) nearby.push_back(gi);   // ground loot in range
             }
         }
     }

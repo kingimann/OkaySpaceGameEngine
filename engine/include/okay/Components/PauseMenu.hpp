@@ -39,13 +39,21 @@ public:
     Color dimColor   = Color::FromBytes(8, 10, 16, 180);   ///< backdrop tint
     Color panelColor = Color::FromBytes(28, 32, 44, 235);
 
+    // Build the overlay up front (hidden), so pausing is an instant show/hide instead
+    // of creating UI objects mid-frame (which popped in a frame late and read as a
+    // glitch). Created objects flush next frame; the menu stays hidden until paused.
+    void Start() override { Build(); }
+
     void Update(float) override {
+        if (!m_built) Build();
         if (Input::GetKeyDown(toggleKey)) Toggle();
-        // Keep the overlay synced to the pause state (another source un-pausing
-        // also closes it).
-        if (m_built) SetOverlayActive(Game::Paused());
-        if (Game::Paused()) {
-            Cursor::Capture(false);                       // free the cursor to click
+        // Keep the overlay synced to the pause state (another source un-pausing also
+        // closes it). Only touch it on a change so we don't fight other systems.
+        bool paused = Game::Paused();
+        if (paused != m_shown) { SetOverlayActive(paused); m_shown = paused; }
+        if (paused) {
+            Cursor::Capture(false);            // free the cursor so the buttons are clickable
+            Input::SetUICaptured(true);        // the world ignores clicks/keys behind the menu
             if (m_volume) AudioMixer::masterVolume = m_volume->value;   // live volume
         }
     }
@@ -61,14 +69,15 @@ public:
 
     void OnDestroy() override {
         if (Scene* s = GetScene()) for (GameObject* o : m_objects) if (o) s->Destroy(o);
-        m_objects.clear(); m_built = false;
-        if (Game::Paused()) Game::SetPaused(false);   // never leave the game frozen
+        m_objects.clear(); m_built = false; m_shown = false;
+        if (Game::Paused()) { Game::SetPaused(false); Input::SetUICaptured(false); }   // never leave it frozen
     }
 
     /// Open/close the pause menu programmatically (e.g. from a HUD button).
     void Toggle() { Game::Paused() ? Resume() : Pause(); }
-    void Pause()  { Build(); Game::SetPaused(true);  SetOverlayActive(true);  Cursor::Capture(false); }
-    void Resume() { Game::SetPaused(false); SetOverlayActive(false); }
+    void Pause()  { Build(); Game::SetPaused(true);  SetOverlayActive(true);  m_shown = true;
+                    Cursor::Capture(false); Input::SetUICaptured(true); }
+    void Resume() { Game::SetPaused(false); SetOverlayActive(false); m_shown = false; Input::SetUICaptured(false); }
 
 private:
     std::vector<GameObject*> m_objects;   ///< every overlay object (toggled together)
@@ -78,6 +87,7 @@ private:
     UIButton* m_quit    = nullptr;
     UISlider* m_volume  = nullptr;
     bool      m_built   = false;
+    bool      m_shown   = false;
 
     void LoadScene(const std::string& path) {
         if (!path.empty()) if (Scene* s = GetScene()) s->RequestLoad(path);
@@ -88,25 +98,55 @@ private:
     // toggle every overlay object, not just the root, to show/hide the menu.
     void SetOverlayActive(bool on) { for (GameObject* o : m_objects) if (o) o->active = on; }
 
-    UIButton* AddButton(Scene& s, GameObject* parent, const char* label, float dy, Color col) {
+    // Layout constants (unscaled pixels; the Canvas scales them to the screen).
+    static constexpr float kCardW = 360.0f, kPad = 20.0f;
+    static constexpr float kTitleH = 54.0f, kBtnW = 264.0f, kBtnH = 46.0f, kBtnGap = 10.0f;
+    static constexpr float kVolLblH = 18.0f, kVolBarH = 16.0f, kVolGap = 6.0f;
+    static constexpr float kHintH = 18.0f, kSection = 16.0f;
+
+    UIButton* AddButton(Scene& s, GameObject* parent, const char* label, float y, Color col) {
         GameObject* b = s.CreateGameObject(std::string("Pause_") + label);
         auto* btn = b->AddComponent<UIButton>();
         btn->label = label;
         btn->anchor = UIAnchor::Center;
-        btn->size = {260, 48};
-        btn->position = {-130.0f, dy};      // centred (offset by half width), stacked by dy
+        btn->size = {kBtnW, kBtnH};
+        btn->position = {-kBtnW * 0.5f, y};     // centred horizontally, stacked vertically
         btn->cornerRadius = 10.0f;
-        btn->fontScale = 2.4f;
+        btn->fontScale = 2.2f;
         btn->color = col;
         b->transform->SetParent(parent->transform, false);
         m_objects.push_back(b);
         return btn;
     }
 
+    // A centred screen-space label inside a full-width box (so it never drifts off-centre).
+    void AddLabel(Scene& s, GameObject* parent, const char* name, const std::string& text,
+                  float y, float h, float px, Color colr, bool outline) {
+        GameObject* t = s.CreateGameObject(name);
+        auto* tr = t->AddComponent<TextRenderer>();
+        tr->text = text; tr->screenSpace = true; tr->anchor = UIAnchor::Center;
+        tr->size = {kCardW - kPad * 2, h};
+        tr->screenPos = {-(kCardW - kPad * 2) * 0.5f, y};
+        tr->align = 1; tr->vcenter = true; tr->pixelSize = px; tr->color = colr; tr->outline = outline;
+        t->transform->SetParent(parent->transform, false);
+        m_objects.push_back(t);
+    }
+
     void Build() {
         if (m_built) return;
         Scene* s = GetScene();
         if (!s) return;
+
+        // Count visible buttons so the card hugs its content (no empty space / overflow).
+        bool wantRestart = showRestart && !restartScene.empty();
+        bool wantMenu    = !mainMenuScene.empty();
+        int  nBtn = (showResume ? 1 : 0) + (wantRestart ? 1 : 0) + (wantMenu ? 1 : 0) + (showQuit ? 1 : 0);
+
+        float bodyH = kTitleH;
+        if (nBtn > 0) bodyH += kSection + nBtn * kBtnH + (nBtn - 1) * kBtnGap;
+        if (showVolume) bodyH += kSection + kVolLblH + kVolGap + kVolBarH;
+        if (!hint.empty()) bodyH += kSection + kHintH;
+        float cardH = bodyH + kPad * 2.0f;
 
         // UI root: a Canvas that scales with the screen, sorted on top of the HUD,
         // plus an Event System (button input) if the scene doesn't already have one.
@@ -118,62 +158,55 @@ private:
         if (!s->FindObjectOfType<EventSystem>())
             s->CreateGameObject("EventSystem")->AddComponent<EventSystem>();
 
-        // Full-screen dim backdrop.
+        // Full-screen dim backdrop (created first so it draws behind the card).
         GameObject* dim = s->CreateGameObject("Pause_Dim");
         auto* dp = dim->AddComponent<UIPanel>();
-        dp->anchor = UIAnchor::Center; dp->size = {6000, 6000}; dp->position = {-3000, -3000};
+        dp->anchor = UIAnchor::Center; dp->size = {8000, 8000}; dp->position = {-4000, -4000};
         dp->color = dimColor;
         dim->transform->SetParent(root->transform, false);
         m_objects.push_back(dim);
 
-        // The menu card.
+        // The menu card, centred and sized to its content.
         GameObject* card = s->CreateGameObject("Pause_Card");
         auto* pn = card->AddComponent<UIPanel>();
-        pn->anchor = UIAnchor::Center; pn->size = {340, 380}; pn->position = {-170, -190};
+        pn->anchor = UIAnchor::Center; pn->size = {kCardW, cardH};
+        pn->position = {-kCardW * 0.5f, -cardH * 0.5f};
         pn->color = panelColor; pn->cornerRadius = 14.0f; pn->borderWidth = 1.0f;
         card->transform->SetParent(root->transform, false);
         m_objects.push_back(card);
 
-        GameObject* ttl = s->CreateGameObject("Pause_Title");
-        auto* tr = ttl->AddComponent<TextRenderer>();
-        tr->text = title; tr->screenSpace = true; tr->anchor = UIAnchor::Center;
-        tr->screenPos = {-70, -160}; tr->pixelSize = 4.0f; tr->outline = true;
-        ttl->transform->SetParent(root->transform, false);
-        m_objects.push_back(ttl);
+        // Lay everything out top-down, centred about the screen centre.
+        float y = -bodyH * 0.5f;
+        AddLabel(*s, root, "Pause_Title", title, y, kTitleH, 3.6f, Color::FromBytes(245, 247, 255), true);
+        y += kTitleH;
 
-        float dy = -110.0f;
-        if (showResume) { m_resume = AddButton(*s, root, "Resume", dy, Color::FromBytes(60, 130, 90)); dy += 56.0f; }
-        if (showRestart && !restartScene.empty()) { m_restart = AddButton(*s, root, "Restart", dy, Color::FromBytes(70, 110, 150)); dy += 56.0f; }
-        if (!mainMenuScene.empty()) { m_menu = AddButton(*s, root, "Main Menu", dy, Color::FromBytes(70, 90, 140)); dy += 56.0f; }
-        if (showQuit) { m_quit = AddButton(*s, root, "Quit", dy, Color::FromBytes(150, 70, 70)); dy += 56.0f; }
+        if (nBtn > 0) {
+            y += kSection;
+            if (showResume)  { m_resume  = AddButton(*s, root, "Resume",    y, Color::FromBytes(60, 130, 90));  y += kBtnH + kBtnGap; }
+            if (wantRestart) { m_restart = AddButton(*s, root, "Restart",   y, Color::FromBytes(70, 110, 150)); y += kBtnH + kBtnGap; }
+            if (wantMenu)    { m_menu    = AddButton(*s, root, "Main Menu", y, Color::FromBytes(70, 90, 140));  y += kBtnH + kBtnGap; }
+            if (showQuit)    { m_quit    = AddButton(*s, root, "Quit",      y, Color::FromBytes(150, 70, 70));  y += kBtnH + kBtnGap; }
+            y -= kBtnGap;
+        }
 
         if (showVolume) {
-            GameObject* vlbl = s->CreateGameObject("Pause_VolLabel");
-            auto* vt = vlbl->AddComponent<TextRenderer>();
-            vt->text = "Volume"; vt->screenSpace = true; vt->anchor = UIAnchor::Center;
-            vt->screenPos = {-130, dy + 6.0f}; vt->pixelSize = 1.6f;
-            vlbl->transform->SetParent(root->transform, false);
-            m_objects.push_back(vlbl);
-
+            y += kSection;
+            AddLabel(*s, root, "Pause_VolLabel", "Volume", y, kVolLblH, 1.6f, Color::FromBytes(200, 205, 220), false);
+            y += kVolLblH + kVolGap;
             GameObject* vol = s->CreateGameObject("Pause_Volume");
             m_volume = vol->AddComponent<UISlider>();
             m_volume->anchor = UIAnchor::Center;
-            m_volume->size = {260, 16}; m_volume->position = {-130.0f, dy + 26.0f};
+            m_volume->size = {kBtnW, kVolBarH}; m_volume->position = {-kBtnW * 0.5f, y};
             m_volume->value = AudioMixer::masterVolume;
             m_volume->cornerRadius = 6.0f;
             vol->transform->SetParent(root->transform, false);
             m_objects.push_back(vol);
-            dy += 50.0f;
+            y += kVolBarH;
         }
 
         if (!hint.empty()) {
-            GameObject* h = s->CreateGameObject("Pause_Hint");
-            auto* htr = h->AddComponent<TextRenderer>();
-            htr->text = hint; htr->screenSpace = true; htr->anchor = UIAnchor::Center;
-            htr->screenPos = {-110, dy + 16.0f}; htr->pixelSize = 1.4f;
-            htr->color = Color::FromBytes(170, 175, 190);
-            h->transform->SetParent(root->transform, false);
-            m_objects.push_back(h);
+            y += kSection;
+            AddLabel(*s, root, "Pause_Hint", hint, y, kHintH, 1.4f, Color::FromBytes(170, 175, 190), false);
         }
 
         SetOverlayActive(false);

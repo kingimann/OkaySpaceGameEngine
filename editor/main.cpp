@@ -2000,10 +2000,12 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
             if (ImGui::MenuItem("Unturned Inventory (worn bags + nearby loot)")) {
-                // A full Unturned-style setup: a Player (NOT under the Canvas, so the
-                // screen finds its worn bags) with a body grid + screen UI, child
-                // clothing/bag containers, and a couple of nearby ground crates.
+                // Everything lives under ONE tidy "Unturned Inventory" group so the
+                // hierarchy stays clean: a Player (body grid + screen UI) with a worn
+                // Vest and Backpack as children, and a single Loot Crate beside it.
+                GameObject* group = ed.CreateEmpty("Unturned Inventory");
                 GameObject* player = ed.CreateEmpty("Player");
+                player->transform->SetParent(group->transform, false);
                 auto* body = player->AddComponent<GridInventory>();
                 body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
                 body->toggleKey = 'i';
@@ -2019,29 +2021,23 @@ void DrawMenuAndToolbar(EditorState& ed) {
                     gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
                     return gi;
                 };
-                worn("Shirt", "Shirt", 4, 2)->AddItem("Bandage", 1, 1, 3, 0.1f);
-                worn("Pants", "Pants", 4, 2)->AddItem("Beans", 1, 1, 2, 0.4f);
-                auto* vest = worn("Vest", "Vest", 5, 2);
-                vest->AddItem("Mag", 1, 2, 3, 0.2f);
-                auto* pack = worn("Backpack", "Backpack", 6, 6);
+                worn("Vest", "Vest", 5, 2)->AddItem("Mag", 1, 2, 3, 0.2f);
+                auto* pack = worn("Backpack", "Backpack", 6, 5);
                 pack->weightLimit = 30.0f;
-                pack->AddItem("Rifle", 2, 6, 1, 4.0f);
+                pack->AddItem("Rifle", 2, 5, 1, 4.0f);
                 pack->AddItem("Water", 1, 2, 1, 0.6f);
+                pack->AddItem("Beans", 1, 1, 2, 0.4f);
 
-                auto crate = [&](const char* name, float x, float z) {
-                    GameObject* cobj = ed.CreateEmpty(name);
-                    cobj->transform->localPosition = {x, 0.0f, z};
-                    auto* gi = cobj->AddComponent<GridInventory>();
-                    gi->cols = 5; gi->rows = 4; gi->title = name; gi->worldItem = true; gi->toggleKey = 0;
-                    return gi;
-                };
-                auto* gc = crate("Loot Crate", 2.0f, 0.0f);
-                gc->AddItem("Ammo", 1, 1, 30, 0.5f); gc->AddItem("Scope", 1, 2, 1, 0.3f);
-                crate("Supply Box", 2.5f, 1.5f)->AddItem("Medkit", 2, 2, 1, 1.2f);
+                GameObject* crate = ed.CreateEmpty("Loot Crate");
+                crate->transform->SetParent(group->transform, false);
+                crate->transform->localPosition = {2.0f, 0.0f, 0.0f};   // 2m away → in the Nearby column
+                auto* ci = crate->AddComponent<GridInventory>();
+                ci->cols = 5; ci->rows = 4; ci->title = "Loot Crate"; ci->worldItem = true; ci->toggleKey = 0;
+                ci->AddItem("Ammo", 1, 1, 30, 0.5f); ci->AddItem("Scope", 1, 2, 1, 0.3f); ci->AddItem("Medkit", 2, 2, 1, 1.2f);
 
                 ed.Select(player); ed.dirty = true; created = true;
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Full Unturned screen: a Player with worn Shirt/Pants/Vest/Backpack grids + two nearby ground crates. Press I in Play; drag loot across bags.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One tidy 'Unturned Inventory' group: a Player with a worn Vest + Backpack and a single nearby Loot Crate. Press I in Play; drag loot across bags.");
             if (ImGui::MenuItem("UI Document"))  {
                 GameObject* root = EnsureUIRoot(ed);
                 GameObject* g = ed.CreateEmpty("UIDocument");
@@ -13056,11 +13052,19 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!primary || !primary->open) break;
         float cs = gui->cellSize, gp = gui->gap, cr = gui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
+        auto lighten = [&](okay::Color c, float f) { return okay::Color{c.r+(1-c.r)*f, c.g+(1-c.g)*f, c.b+(1-c.b)*f, c.a}; };
+        auto darken  = [&](okay::Color c, float f) { return okay::Color{c.r*(1-f), c.g*(1-f), c.b*(1-f), c.a}; };
+        auto rectF = [&](float x, float y, float w, float h, const okay::Color& c, float rad) {
+            dl->AddRectFilled(ImVec2(canvasPos.x+x, canvasPos.y+y), ImVec2(canvasPos.x+x+w, canvasPos.y+y+h), col(c), rad); };
+        auto rectS = [&](float x, float y, float w, float h, const okay::Color& c, float rad) {
+            dl->AddRect(ImVec2(canvasPos.x+x, canvasPos.y+y), ImVec2(canvasPos.x+x+w, canvasPos.y+y+h), col(c), rad); };
+        auto shadowE = [&](float x, float y, float w, float h, float rad) {
+            dl->AddRectFilled(ImVec2(canvasPos.x+x+3, canvasPos.y+y+5), ImVec2(canvasPos.x+x+3+w, canvasPos.y+y+5+h), IM_COL32(0,0,0,90), rad); };
 
         std::vector<okay::GridInventory*> equipped, nearby;
         if (gui->multiContainer) gui->CollectContainers(equipped, nearby);
         else equipped.push_back(primary);
-        const float labelH = 18.0f, vspace = 16.0f, colGap = 40.0f, pad = 12.0f;
+        const float labelH = 20.0f, vspace = 16.0f, colGap = 44.0f, pad = 14.0f, headH = 36.0f;
         auto colSize = [&](const std::vector<okay::GridInventory*>& L, float& cw, float& ch) {
             cw = 0; ch = 0;
             for (auto* g : L) { float gw = g->cols*cs + (g->cols-1)*gp; if (gw > cw) cw = gw;
@@ -13071,7 +13075,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         bool hasNear = !nearby.empty();
         float totalW = lw + (hasNear ? colGap + rw : 0.0f), totalH = lh > rh ? lh : rh;
         // Local (canvas-relative) origin so the mouse hit-test matches the fed Input.
-        float startLX = (canvasSize.x - totalW) * 0.5f, startLY = (canvasSize.y - totalH) * 0.5f + 14.0f;
+        float startLX = (canvasSize.x - totalW) * 0.5f, startLY = (canvasSize.y - totalH) * 0.5f + 14.0f + headH;
 
         struct EPanel { okay::GridInventory* inv; float ox, oy, gw, gh; std::string label; };
         std::vector<EPanel> panels;
@@ -13088,13 +13092,37 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (hasNear) placeCol(nearby, startLX + lw + colGap, rw);
 
         if (gui->darkenWhenOpen)
-            dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
-        dl->AddRectFilled(ImVec2(canvasPos.x + startLX - pad, canvasPos.y + startLY - pad),
-                          ImVec2(canvasPos.x + startLX + lw + pad, canvasPos.y + startLY + lh + pad), col(gui->panelColor), cr + 2);
+            dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 160));
+        auto backing = [&](float x, float y, float w, float h) {
+            shadowE(x, y, w, h, cr + 3);
+            rectF(x, y, w, h, gui->panelColor, cr + 3);
+            rectS(x, y, w, h, lighten(gui->panelColor, 0.16f), cr + 3);
+        };
+        backing(startLX - pad, startLY - pad, lw + pad*2, lh + pad*2);
+        if (hasNear) backing(startLX + lw + colGap - pad, startLY - pad, rw + pad*2, rh + pad*2);
+        // Master header: screen title + aggregate weight bar over the equipped column.
+        {
+            float hbX = startLX - pad, hbW = lw + pad*2; if (hbW < 200.0f) hbW = 200.0f;
+            float hbY = startLY - pad - headH - 4;
+            shadowE(hbX, hbY, hbW, headH, cr + 3);
+            rectF(hbX, hbY, hbW, headH, lighten(gui->titleBar, 0.06f), cr + 3);
+            rectF(hbX, hbY, 4, headH, okay::GridInventoryUI::AccentFor(primary->title), 0);
+            dl->AddText(ImVec2(canvasPos.x + hbX + 12, canvasPos.y + hbY + 9), col(gui->textColor), primary->title.c_str());
+            float totW = 0, totL = 0; for (auto* g : equipped) { totW += g->TotalWeight(); totL += g->weightLimit; }
+            if (gui->showWeight && totL > 0.0f) {
+                bool over = totW > totL; float frac = totW / totL; if (frac > 1) frac = 1; if (frac < 0) frac = 0;
+                char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f / %.0f kg", totW, totL);
+                ImVec2 ts = ImGui::CalcTextSize(wb);
+                dl->AddText(ImVec2(canvasPos.x + hbX + hbW - ts.x - 10, canvasPos.y + hbY + 9), col(over ? gui->overweightColor : gui->textColor), wb);
+                rectF(hbX + 10, hbY + headH - 7, hbW - 20, 4, darken(gui->panelColor, 0.35f), 2);
+                okay::Color bc = over ? gui->overweightColor : (frac > 0.85f ? okay::Color::FromBytes(230,190,90,255) : okay::Color::FromBytes(110,200,130,255));
+                rectF(hbX + 10, hbY + headH - 7, (hbW - 20) * frac, 4, bc, 2);
+            }
+        }
         if (hasNear) {
-            dl->AddRectFilled(ImVec2(canvasPos.x + startLX + lw + colGap - pad, canvasPos.y + startLY - pad),
-                              ImVec2(canvasPos.x + startLX + lw + colGap + rw + pad, canvasPos.y + startLY + rh + pad), col(gui->panelColor), cr + 2);
-            dl->AddText(ImVec2(canvasPos.x + startLX + lw + colGap, canvasPos.y + startLY - labelH - 4), col(gui->textColor), gui->nearbyTitle.c_str());
+            float nx = startLX + lw + colGap;
+            rectF(nx, startLY - pad - 20, 4, 16, okay::Color::FromBytes(200,170,110,255), 0);
+            dl->AddText(ImVec2(canvasPos.x + nx + 10, canvasPos.y + startLY - pad - 19), col(gui->textColor), gui->nearbyTitle.c_str());
         }
 
         okay::Vec2 m = okay::Input::MousePosition();   // canvas-local
@@ -13106,27 +13134,46 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 hovPanel = pi; hovCx = cx; hovCy = cy;
             }
         }
-        auto drawOne = [&](const okay::GridItem& it, float lx, float ly, bool ghost) {
-            ImVec2 p0(canvasPos.x + lx, canvasPos.y + ly);
-            ImVec2 p1(p0.x + it.w * cs + (it.w - 1) * gp, p0.y + it.h * cs + (it.h - 1) * gp);
-            SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
-            okay::Color icol = gui->itemColor; if (ghost) icol.a *= 0.6f;
-            dl->AddRectFilled(p0, p1, col(icol), cr);
+        auto drawOne = [&](const okay::GridItem& it, float lx, float ly, bool ghost, bool hover) {
+            float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
             const okay::Color* rar = gui->RarityOf(it.name);
-            dl->AddRect(p0, p1, col(rar ? *rar : gui->itemBorder), cr);
-            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3));
-            else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(gui->textColor), it.name.substr(0, 8).c_str());
+            okay::Color accent = rar ? *rar : okay::GridInventoryUI::AccentFor(it.name);
+            okay::Color base = lighten(gui->itemColor, hover ? 0.12f : 0.0f); if (ghost) base.a *= 0.7f;
+            rectF(lx, ly, w, h, base, cr);
+            rectF(lx + 2, ly + 2, w - 4, 2, okay::Color{1,1,1, ghost ? 0.10f : 0.18f}, 0);   // sheen
+            rectF(lx, ly, 3, h, accent, 0);                                                  // accent bar
+            rectS(lx, ly, w, h, rar ? *rar : gui->itemBorder, cr);
+            if (hover) { rectF(lx, ly, w, h, gui->hoverColor, cr); rectS(lx, ly, w, h, lighten(gui->itemBorder, 0.35f), cr); }
+            ImVec2 p0(canvasPos.x + lx, canvasPos.y + ly);
+            SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
+            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 5, p0.y + 5), ImVec2(p0.x + w - 5, p0.y + h - 5));
+            else dl->AddText(ImVec2(p0.x + 6, p0.y + 6), col(gui->textColor), it.name.substr(0, 8).c_str());
+            if (it.count > 1) {
+                std::string cstr = std::to_string(it.count);
+                ImVec2 ts = ImGui::CalcTextSize(cstr.c_str());
+                rectF(lx + w - ts.x - 9, ly + h - ts.y - 7, ts.x + 7, ts.y + 5, okay::Color::FromBytes(10,12,18,225), 3);
+                dl->AddText(ImVec2(p0.x + w - ts.x - 5, p0.y + h - ts.y - 4), IM_COL32(255,255,255,255), cstr.c_str());
+            }
         };
 
         for (int pi = 0; pi < (int)panels.size(); ++pi) {
             const EPanel& P = panels[pi]; okay::GridInventory* inv = P.inv;
-            dl->AddRectFilled(ImVec2(canvasPos.x + P.ox - 6, canvasPos.y + P.oy - labelH - 2),
-                              ImVec2(canvasPos.x + P.ox + P.gw + 6, canvasPos.y + P.oy - 2), col(gui->titleBar), cr);
-            dl->AddText(ImVec2(canvasPos.x + P.ox, canvasPos.y + P.oy - labelH), col(gui->textColor), P.label.c_str());
+            okay::Color acc = okay::GridInventoryUI::AccentFor(P.label);
+            float hy = P.oy - labelH - 2;
+            rectF(P.ox - 6, hy, P.gw + 12, labelH, lighten(gui->titleBar, 0.06f), cr);
+            rectF(P.ox - 6, hy, 3, labelH, acc, 0);
+            dl->AddText(ImVec2(canvasPos.x + P.ox + 2, canvasPos.y + hy + 4), col(gui->textColor), P.label.c_str());
+            if (gui->showWeight && inv->weightLimit > 0.0f) {
+                char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f/%.0f", inv->TotalWeight(), inv->weightLimit);
+                ImVec2 ts = ImGui::CalcTextSize(wb);
+                dl->AddText(ImVec2(canvasPos.x + P.ox + P.gw - ts.x, canvasPos.y + hy + 4), col(inv->OverWeight() ? gui->overweightColor : gui->textColor), wb);
+            }
             for (int y = 0; y < inv->rows; ++y)
-                for (int x = 0; x < inv->cols; ++x)
-                    dl->AddRectFilled(ImVec2(canvasPos.x + P.ox + x * (cs + gp), canvasPos.y + P.oy + y * (cs + gp)),
-                                      ImVec2(canvasPos.x + P.ox + x * (cs + gp) + cs, canvasPos.y + P.oy + y * (cs + gp) + cs), col(gui->cellColor), cr);
+                for (int x = 0; x < inv->cols; ++x) {
+                    float cxp = P.ox + x * (cs + gp), cyp = P.oy + y * (cs + gp);
+                    rectF(cxp, cyp, cs, cs, darken(gui->cellColor, 0.10f), cr);
+                    rectS(cxp, cyp, cs, cs, darken(gui->cellColor, 0.32f), cr);
+                }
             if (gui->dragInv && hovPanel == pi && gui->dragIndex >= 0 && gui->dragIndex < (int)gui->dragInv->items.size()) {
                 const auto& it = gui->dragInv->items[gui->dragIndex];
                 int tx = hovCx - gui->grabX, ty = hovCy - gui->grabY;
@@ -13141,10 +13188,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                                           col(okp ? gui->dropOk : gui->dropBad), cr);
                     }
             }
+            int hovered = (!gui->dragInv && hovPanel == pi) ? inv->ItemAtCell(hovCx, hovCy) : -1;
             for (int i = 0; i < (int)inv->items.size(); ++i) {
                 if (inv == gui->dragInv && i == gui->dragIndex) continue;
                 const auto& it = inv->items[i];
-                drawOne(it, P.ox + it.x * (cs + gp), P.oy + it.y * (cs + gp), false);
+                drawOne(it, P.ox + it.x * (cs + gp), P.oy + it.y * (cs + gp), false, i == hovered);
             }
         }
 
@@ -13187,7 +13235,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         } else if (!gameView) { /* Scene pass leaves the drag state to the Game pass */ }
         if (gameView && gui->dragInv && gui->dragIndex >= 0 && gui->dragIndex < (int)gui->dragInv->items.size()) {
             const auto& it = gui->dragInv->items[gui->dragIndex];
-            drawOne(it, m.x - gui->grabX * (cs + gp) - cs * 0.5f, m.y - gui->grabY * (cs + gp) - cs * 0.5f, true);
+            float gx = m.x - gui->grabX * (cs + gp) - cs * 0.5f, gy = m.y - gui->grabY * (cs + gp) - cs * 0.5f;
+            shadowE(gx, gy, it.w * cs + (it.w - 1) * gp, it.h * cs + (it.h - 1) * gp, cr);
+            drawOne(it, gx, gy, true, false);
         }
         break;
     }

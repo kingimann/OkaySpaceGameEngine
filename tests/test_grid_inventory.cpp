@@ -71,6 +71,14 @@ int main() {
     auto* farInv = far->AddComponent<GridInventory>();
     farInv->worldItem = true;
 
+    // Nest the whole rig under one tidy group: the player + the crate are SIBLINGS
+    // under "Unturned" (the crate is NOT a child of the player). The screen keys off
+    // the object it sits on, so worn bags (player's children) stay "equipped" and the
+    // sibling crate stays "nearby" — exactly the clean, grouped layout we want.
+    GameObject* group = s2.CreateGameObject("Unturned");
+    player->transform->SetParent(group->transform, false);
+    crate->transform->SetParent(group->transform, false);
+
     std::vector<GridInventory*> equipped, nearby;
     screen->CollectContainers(equipped, nearby);
     CHECK(equipped.size() == 2);            // body + worn backpack

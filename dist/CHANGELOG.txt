@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.313.0  (Inventory UI polish + tidier demo + pause-menu fix)
+  - The Unturned inventory screen got a visual pass. Each column now sits on a
+    drop-shadowed, soft-gradient panel; a master header above your bags shows the
+    screen title with an aggregate weight bar (green → amber → red as you fill up).
+  - Every container has an accent-coloured header (a stable colour derived from its
+    category, so Shirt/Vest/Backpack each read distinctly), with per-bag weight.
+  - Cells are inset with a hairline border; item tiles get a soft gradient, a top
+    sheen, a rarity/category accent bar, a rounded count badge, and a brighter
+    glow + border on hover. The item you're carrying casts a drop shadow.
+  - TIDIER demo: "Add > UI > Unturned Inventory" now drops a single, collapsible
+    "Unturned Inventory" group (Player with a worn Vest + Backpack, and one nearby
+    Loot Crate) instead of scattering a separate player and several crates across
+    the scene. The screen now keys off the object it's on (not the topmost parent),
+    so the whole rig can live tidily under one group.
+  - PAUSE MENU FIX: the menu now builds up front and just shows/hides on Esc
+    (instead of creating its UI mid-frame, which popped in late and looked glitchy).
+    The card is sized to its contents with everything properly centred, and while
+    paused the world ignores clicks/look so input no longer leaks behind the menu.
+
 v2.312.0  (Unturned-style inventory — worn bags, clothes & nearby loot)
   - The grid inventory is now a full UNTURNED-STYLE screen. Opening it shows every
     container you have — your own pockets PLUS each worn clothing/bag's grid (any

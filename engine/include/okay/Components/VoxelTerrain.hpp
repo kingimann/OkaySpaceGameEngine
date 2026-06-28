@@ -71,6 +71,15 @@ public:
     /// Trilinear density at a local-space point (for queries / collision).
     float SampleDensity(const Vec3& local) const;
     bool  SolidAt(const Vec3& local) const { return SampleDensity(local) > iso; }
+    /// Outward surface normal at a local point (unit; points from solid toward air),
+    /// from the density gradient. Used by physics to push bodies out of voxels.
+    Vec3  SurfaceNormal(const Vec3& local) const;
+    /// True if a local point is inside the field's volume (with a small margin).
+    bool  WithinBounds(const Vec3& local, float margin = 0.0f) const {
+        return local.x >= -HalfX() - margin && local.x <= HalfX() + margin &&
+               local.z >= -HalfZ() - margin && local.z <= HalfZ() + margin &&
+               local.y >= -margin && local.y <= SizeY() + margin;
+    }
     /// Highest solid surface Y (local) over a column at local XZ — for walking on
     /// the top. Returns false if the column is entirely air. (Top surface only, so
     /// it doesn't see cave floors beneath an overhang.)

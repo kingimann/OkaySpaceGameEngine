@@ -127,5 +127,36 @@ int main() {
         }
     }
 
+    // --- Voxel collision: a body rests ON the terrain, doesn't fall through -----
+    {
+        Scene s("VCOL");
+        GameObject* go = s.CreateGameObject("Voxel");
+        auto* v = go->AddComponent<VoxelTerrain>();
+        v->Resize(24, 24, 24); v->voxelSize = 1.0f;
+        v->FillSlab(0.5f);                       // solid bottom half
+        v->Apply();
+        float topY = v->SizeY() * 0.5f;
+
+        GameObject* body = s.CreateGameObject("Body");
+        body->transform->localPosition = {0, v->SizeY() + 4.0f, 0};   // start high above
+        auto* rb = body->AddComponent<Rigidbody3D>();
+        rb->bodyType = Rigidbody3D::BodyType::Dynamic;
+        auto* bc = body->AddComponent<BoxCollider3D>();
+        bc->size = {1.0f, 1.8f, 1.0f}; bc->offset = {0, 0.9f, 0};
+
+        for (int i = 0; i < 300; ++i) s.Update(1.0f / 60.0f);   // fall + settle
+        float restY = body->transform->Position().y;
+        CHECK(restY > topY - 1.0f);              // landed ON the surface, not through it
+        CHECK(restY < topY + 3.0f);              // and didn't hover way above
+        CHECK(rb->groundedOnTerrain);            // flagged grounded -> can jump
+
+        // Dig a pit straight down under it; it should drop into the hole.
+        v->Dig(Vec3{0, topY, 0}, 4.0f, 30.0f);   // carve a deep crater
+        v->Dig(Vec3{0, topY - 3.0f, 0}, 4.0f, 30.0f);
+        v->Apply();
+        for (int i = 0; i < 300; ++i) s.Update(1.0f / 60.0f);
+        CHECK(body->transform->Position().y < restY - 1.0f);   // fell into the dug pit
+    }
+
     TEST_MAIN_RESULT();
 }

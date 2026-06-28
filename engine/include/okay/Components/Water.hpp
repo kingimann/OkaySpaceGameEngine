@@ -75,10 +75,12 @@ private:
 
     float WaveAt(float x, float z) const {
         float k = 6.2831853f / (waveLength > 0.01f ? waveLength : 0.01f);
-        // Two crossing waves at an angle give a natural, non-repeating swell.
+        // Crossing swells at angles + a finer, faster ripple on top give a natural,
+        // non-repeating, lively surface rather than one rolling sine.
         float a = std::sin(x * k + m_time);
         float b = std::sin((x * 0.6f + z * 0.8f) * k + m_time * 1.3f);
-        return (a + b) * 0.5f * waveHeight;
+        float c = std::sin((x * 1.7f - z * 1.3f) * k * 2.1f + m_time * 2.2f) * 0.35f;
+        return (a + b + c) * 0.42f * waveHeight;
     }
 
     void Animate() {

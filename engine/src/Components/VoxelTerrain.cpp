@@ -411,6 +411,17 @@ float VoxelTerrain::SampleDensity(const Vec3& local) const {
              L(L(c001, c101, fx), L(c011, c111, fx), fy), fz);
 }
 
+Vec3 VoxelTerrain::SurfaceNormal(const Vec3& local) const {
+    float e = voxelSize * 0.5f;
+    float dx = SampleDensity({local.x + e, local.y, local.z}) - SampleDensity({local.x - e, local.y, local.z});
+    float dy = SampleDensity({local.x, local.y + e, local.z}) - SampleDensity({local.x, local.y - e, local.z});
+    float dz = SampleDensity({local.x, local.y, local.z + e}) - SampleDensity({local.x, local.y, local.z - e});
+    // Density increases INTO solid, so the outward normal is -gradient.
+    Vec3 n{-dx, -dy, -dz};
+    float L = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+    return L > 1e-6f ? Vec3{n.x / L, n.y / L, n.z / L} : Vec3{0, 1, 0};
+}
+
 bool VoxelTerrain::SurfaceY(float lx, float lz, float& outY) const {
     // March from the top down; the first solid sample's top face is the surface.
     for (int y = ny - 1; y >= 0; --y) {

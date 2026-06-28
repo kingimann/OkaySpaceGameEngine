@@ -723,9 +723,22 @@ public:
                     cg = cg * (1.0f - fog) + fg * fog;
                     cb = cb * (1.0f - fog) + fb * fog;
                 }
-                depth[i] = d;
-                color[i] = PackRGB(cr, cg, cb);
-                if (!gvalid.empty()) { gpos[i] = wpos; gnrm[i] = n; gvalid[i] = 1; }
+                // Transparency: a material alpha < 1 (e.g. water) blends over what's
+                // already in the buffer instead of overwriting it, and does NOT write
+                // depth — so geometry behind shows through. (Order transparent meshes
+                // after opaque ones — they draw in scene order.)
+                if (base.a < 0.999f) {
+                    std::uint32_t dst = color[i];
+                    float a = base.a, ia = 1.0f - a;
+                    cr = cr * a + (float)(dst & 0xFF)        / 255.0f * ia;
+                    cg = cg * a + (float)((dst >> 8) & 0xFF) / 255.0f * ia;
+                    cb = cb * a + (float)((dst >> 16) & 0xFF)/ 255.0f * ia;
+                    color[i] = PackRGB(cr, cg, cb);
+                } else {
+                    depth[i] = d;
+                    color[i] = PackRGB(cr, cg, cb);
+                    if (!gvalid.empty()) { gpos[i] = wpos; gnrm[i] = n; gvalid[i] = 1; }
+                }
             }
         }
     }

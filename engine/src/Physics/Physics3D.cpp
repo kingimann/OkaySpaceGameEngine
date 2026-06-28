@@ -2,6 +2,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -319,6 +320,11 @@ void Physics3D::Step(Scene& scene, float dt) {
     // by the Terrain Digger. Each body samples the terrain height under it and is
     // lifted to rest its collider's underside on the surface, grounding downward
     // motion. Cheap (one bilinear height sample per body per terrain it's over).
+    // Clear the per-frame terrain-grounded flag on every body first, so both the
+    // heightmap and the voxel pass below can set it (and it falls back to false
+    // when a body is airborne over either kind of terrain).
+    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) rb->groundedOnTerrain = false;
+
     auto terrains = scene.FindObjectsOfType<Terrain>();
     if (!terrains.empty()) {
         for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
@@ -326,7 +332,6 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
             Transform* t = rb->transform;
             if (!t) continue;
-            rb->groundedOnTerrain = false;   // recomputed below; cleared when airborne
             Vec3 pos = t->Position();
             // How far the body extends below its origin (so its feet, not its centre,
             // sit on the ground). From its collider AABB, else a small default.
@@ -368,6 +373,67 @@ void Physics3D::Step(Scene& scene, float dt) {
                         const float friction = 0.18f;
                         v.x *= (1.0f - friction);
                         v.z *= (1.0f - friction);
+                    }
+                }
+            }
+        }
+    }
+
+    // 5) Voxel terrain collision: heightmap terrain only has a top surface, but a
+    // marching-cubes VoxelTerrain has caves, tunnels and overhangs. Resolve each
+    // dynamic body as a vertical stack of spheres (a capsule) against the density
+    // field, so the player walks through tunnels, stands on cave floors and is
+    // blocked by walls and ceilings. The clamped density reads as an approximate
+    // signed distance (positive inside solid), so a sphere of radius r at centre c
+    // overlaps solid by (r + density(c)); push it out along the surface normal.
+    auto voxels = scene.FindObjectsOfType<VoxelTerrain>();
+    if (!voxels.empty()) {
+        for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+            if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+            if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
+            Transform* t = rb->transform;
+            if (!t) continue;
+
+            // Approximate the body as a capsule from its collider AABB: a vertical
+            // stack of probe spheres from feet to head.
+            float radius = 0.35f, footY = 0.0f, headY = 1.6f;
+            if (auto* col = rb->gameObject->GetComponent<Collider3D>()) {
+                Vec3 mn, mx; col->WorldAABB(mn, mx);
+                Vec3 pos = t->Position();
+                radius = std::min(mx.x - mn.x, mx.z - mn.z) * 0.5f;
+                if (radius < 0.05f) radius = 0.05f;
+                footY = (mn.y + radius) - pos.y;     // sphere centres relative to origin
+                headY = (mx.y - radius) - pos.y;
+            }
+            if (headY < footY) headY = footY;
+            const int SPHERES = 3;
+
+            for (VoxelTerrain* vox : voxels) {
+                if (!vox->gameObject || !vox->gameObject->transform) continue;
+                Vec3 vp = vox->gameObject->transform->Position();
+                for (int si = 0; si < SPHERES; ++si) {
+                    float fy = (SPHERES == 1) ? footY
+                             : footY + (headY - footY) * (float)si / (float)(SPHERES - 1);
+                    for (int it = 0; it < 4; ++it) {     // a few depenetration iterations
+                        Vec3 pos = t->Position();
+                        Vec3 local{pos.x - vp.x, pos.y + fy - vp.y, pos.z - vp.z};
+                        if (!vox->WithinBounds(local, radius)) break;
+                        float d = vox->SampleDensity(local);
+                        float pen = radius + d;          // > 0 -> the sphere is in solid
+                        if (pen <= 0.0f) break;
+                        Vec3 n = vox->SurfaceNormal(local);
+                        t->localPosition.x += n.x * pen; // push the whole body out
+                        t->localPosition.y += n.y * pen;
+                        t->localPosition.z += n.z * pen;
+                        Vec3& v = rb->velocity;
+                        float vn = v.x * n.x + v.y * n.y + v.z * n.z;
+                        if (vn < 0.0f) {                 // remove velocity into the surface
+                            float rest = rb->bounciness;
+                            v.x -= vn * n.x * (1.0f + rest);
+                            v.y -= vn * n.y * (1.0f + rest);
+                            v.z -= vn * n.z * (1.0f + rest);
+                        }
+                        if (n.y > 0.4f) rb->groundedOnTerrain = true;   // standing on a floor
                     }
                 }
             }

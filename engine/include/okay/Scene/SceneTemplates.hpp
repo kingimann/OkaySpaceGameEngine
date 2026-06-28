@@ -965,29 +965,41 @@ inline void TerrainSandbox(Scene& scene) {
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();   // Esc to pause / quit
 }
 
-/// A voxel-digging sandbox: a smooth marching-cubes voxel terrain riddled with
-/// caves you can tunnel through (and add material back) in first person — the
-/// "dig a real hole / mine a cave" sandbox heightmaps can't do. Left mouse digs,
-/// right mouse builds.
+/// The one unified sandbox: a single smooth voxel terrain you walk on AND dig real
+/// caves/tunnels/overhangs into (no separate heightmap terrain), with a lake of
+/// animated water, a first-person player with full voxel collision (you stand on
+/// the ground and in caves, not fall through), and a pause menu. Left mouse digs,
+/// right mouse fills, Space jumps, Esc pauses.
 inline void VoxelSandbox(Scene& scene) {
     scene.Clear();
-    scene.SetName("Voxel Sandbox");
+    scene.SetName("Sandbox");
 
     GameObject* light = scene.CreateGameObject("Directional Light");
     light->AddComponent<Light>();
     light->transform->localRotation = Quat::Euler({50, -30, 0});
 
-    GameObject* ground = scene.CreateGameObject("Voxel Terrain");
+    // The single terrain: a voxel field with rolling hills and a cave network.
+    GameObject* ground = scene.CreateGameObject("Terrain");
     auto* vox = ground->AddComponent<VoxelTerrain>();
-    vox->Resize(64, 40, 64);
+    vox->Resize(72, 44, 72);
     vox->voxelSize = 1.5f;
-    vox->Generate(0.55f, 8.0f, 0.7f, 2024u);   // hills + a cave network
+    vox->Generate(0.55f, 9.0f, 0.6f, 2024u);
     vox->Apply();
     auto* dig = ground->AddComponent<VoxelDigger>();
     dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)
 
+    // A lake of animated water sitting in the low ground.
+    GameObject* lake = scene.CreateGameObject("Water");
+    lake->transform->localPosition = {0, vox->SizeY() * 0.32f, 0};
+    auto* water = lake->AddComponent<Water>();
+    water->size = vox->HalfX() * 2.4f;
+    water->Apply();
+
+    // First-person player. Spawned above a solid column so it drops onto the
+    // surface (voxel collision in Physics3D catches it).
     GameObject* player = scene.CreateGameObject("Player");
-    player->transform->localPosition = {0, vox->SizeY() + 6.0f, 0};
+    float surfY = 0.0f; vox->SurfaceY(0, 0, surfY);
+    player->transform->localPosition = {0, surfY + 3.0f, 0};
     player->AddComponent<Character>()->Apply();
     player->AddComponent<Rigidbody3D>();
     {
@@ -1006,10 +1018,10 @@ inline void VoxelSandbox(Scene& scene) {
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD + mouse    Left Mouse = dig cave / tunnel    Right Mouse = add    Space = jump";
+    ht->text = "WASD + mouse    Left Mouse = dig cave    Right Mouse = fill    Space = jump    Esc = pause";
     ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
 
-    scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();   // Esc to pause / quit
+    scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();
 }
 
 } // namespace Templates

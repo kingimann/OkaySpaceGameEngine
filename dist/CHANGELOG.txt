@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.305.0  (Voxel collision, unified sandbox, see-through water, pause polish)
+  - FIX: voxel terrain collision. Players (and any rigid body) now collide with the
+    voxel terrain — you stand on the ground and on cave floors, walk through tunnels
+    and are blocked by walls/ceilings, instead of falling straight through. Each
+    body is resolved as a capsule of probe spheres against the density field, and
+    standing on a voxel floor counts as grounded (so you can jump on it).
+  - One unified Sandbox. The separate "Terrain Sandbox" and "Voxel Sandbox"
+    templates are merged into a single "Sandbox": one smooth voxel terrain you walk
+    on AND dig real caves into, with a water lake and a pause menu — no more two
+    separate terrains.
+  - SEE-THROUGH water. The software renderer now alpha-blends transparent materials,
+    so water actually reads as water — you see the ground and depth through it
+    instead of a flat opaque plane. Water also got livelier waves (a finer ripple on
+    top of the swell). (Order transparent surfaces after opaque ones.)
+  - Pause menu polish + FIX. The overlay now hides correctly (it toggles every UI
+    object, not just the root — previously the buttons could linger), and gained a
+    master-volume slider, an optional Restart button, a hint line, and a roomier
+    card. Buttons work with mouse and keyboard/gamepad navigation.
+
 v2.304.0  (Voxel caves, real water, pause menu, bigger terrain)
   - VOXEL TERRAIN (real caves). A new smooth marching-cubes voxel terrain you can
     dig actual caves, tunnels and overhangs into — the "dig a real hole, not

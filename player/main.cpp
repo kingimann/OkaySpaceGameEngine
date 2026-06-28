@@ -1301,23 +1301,34 @@ int main(int argc, char** argv) {
                     SDL_UpdateTexture(mesh3DTex, nullptr, px, w * 4);
                     SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
                 }
-                // Particles in 3D: billboards projected with the camera (the 2D quad
-                // path below only runs for orthographic scenes, so 3D games showed no
-                // particles at all). Drawn on top of the composited 3D image.
-                for (const auto& up : scene.Objects()) {
-                    auto* ps = up->GetComponent<ParticleSystem>();
-                    if (!ps || !up->active || UIHidden(up.get())) continue;
-                    for (const auto& p : ps->Particles()) {
-                        if (!p.alive) continue;
-                        Vec4 c = vp * Vec4{p.position, 1.0f};
-                        if (c.w <= 0.05f) continue;
-                        float sx = w * 0.5f + (c.x / c.w) * w * 0.5f;
-                        float sy = h * 0.5f - (c.y / c.w) * h * 0.5f;
-                        float rad = p.size * 0.5f / c.w * w * 0.5f;
-                        if (rad < 1.0f) rad = 1.0f; if (rad > 400.0f) rad = 400.0f;
-                        SDL_Color col{(Uint8)(p.color.r*255), (Uint8)(p.color.g*255),
-                                      (Uint8)(p.color.b*255), (Uint8)(p.color.a*255)};
-                        MMFillCircle(renderer, (int)sx, (int)sy, (int)rad, col);
+                // Particles in 3D: camera-facing billboards projected with the camera
+                // (the 2D quad path below only runs for orthographic scenes, so 3D games
+                // showed no particles at all). Collected, depth-sorted back-to-front, and
+                // drawn as soft volumetric puffs so the 3D particle motion reads as depth.
+                {
+                    struct PP { float depth; int sx, sy, rad; SDL_Color col; };
+                    std::vector<PP> pp;
+                    for (const auto& up : scene.Objects()) {
+                        auto* ps = up->GetComponent<ParticleSystem>();
+                        if (!ps || !up->active || UIHidden(up.get())) continue;
+                        for (const auto& p : ps->Particles()) {
+                            if (!p.alive) continue;
+                            Vec4 c = vp * Vec4{p.position, 1.0f};
+                            if (c.w <= 0.05f) continue;
+                            float sx = w * 0.5f + (c.x / c.w) * w * 0.5f;
+                            float sy = h * 0.5f - (c.y / c.w) * h * 0.5f;
+                            float rad = p.size * 0.5f / c.w * w * 0.5f;
+                            if (rad < 1.0f) rad = 1.0f; if (rad > 400.0f) rad = 400.0f;
+                            SDL_Color col{(Uint8)(p.color.r*255), (Uint8)(p.color.g*255),
+                                          (Uint8)(p.color.b*255), (Uint8)(p.color.a*255)};
+                            pp.push_back({c.w, (int)sx, (int)sy, (int)rad, col});
+                        }
+                    }
+                    std::sort(pp.begin(), pp.end(), [](const PP& a, const PP& b){ return a.depth > b.depth; });
+                    for (const PP& q : pp) {
+                        SDL_Color halo = q.col; halo.a = (Uint8)(q.col.a / 3);   // soft outer glow
+                        MMFillCircle(renderer, q.sx, q.sy, (int)(q.rad * 1.6f), halo);
+                        MMFillCircle(renderer, q.sx, q.sy, q.rad, q.col);          // bright core
                     }
                 }
             }

@@ -7017,8 +7017,8 @@ void DrawInspector(EditorState& ed) {
             if (ps->shape == ParticleSystem::Shape::Cone)
                 if (ImGui::SliderFloat("Cone Angle##ps", &ps->shapeAngle, 0.0f, 180.0f)) ed.dirty = true;
             if (ps->shape == ParticleSystem::Shape::Box) {
-                float bs[2] = {ps->boxSize.x, ps->boxSize.y};
-                if (ImGui::DragFloat2("Box Size##ps", bs, 0.05f, 0.0f, 1000.0f)) { ps->boxSize = {bs[0], bs[1]}; ed.dirty = true; }
+                float bs[3] = {ps->boxSize.x, ps->boxSize.y, ps->boxSize.z};
+                if (ImGui::DragFloat3("Box Size##ps", bs, 0.05f, 0.0f, 1000.0f)) { ps->boxSize = {bs[0], bs[1], bs[2]}; ed.dirty = true; }
             }
 
             // ---- Start values ----
@@ -7029,8 +7029,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Size +/-##ps", &ps->startSizeRandom, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
             float sc[4] = {ps->startColor.r, ps->startColor.g, ps->startColor.b, ps->startColor.a};
             if (ImGui::ColorEdit4("Start Color##ps", sc)) { ps->startColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
-            float sv[2] = {ps->startVelocity.x, ps->startVelocity.y};
-            if (ImGui::DragFloat2("Velocity##ps", sv, 0.05f)) { ps->startVelocity = {sv[0], sv[1]}; ed.dirty = true; }
+            float sv[3] = {ps->startVelocity.x, ps->startVelocity.y, ps->startVelocity.z};
+            if (ImGui::DragFloat3("Velocity##ps", sv, 0.05f)) { ps->startVelocity = {sv[0], sv[1], sv[2]}; ed.dirty = true; }
             if (ImGui::DragFloat("Velocity +/-##ps", &ps->velocityRandom, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Speed +/- %##ps", &ps->speedRandom, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
 
@@ -7048,8 +7048,8 @@ void DrawInspector(EditorState& ed) {
 
             // ---- Forces ----
             ImGui::SeparatorText("Forces");
-            float gv[2] = {ps->gravity.x, ps->gravity.y};
-            if (ImGui::DragFloat2("Gravity##ps", gv, 0.05f)) { ps->gravity = {gv[0], gv[1]}; ed.dirty = true; }
+            float gv[3] = {ps->gravity.x, ps->gravity.y, ps->gravity.z};
+            if (ImGui::DragFloat3("Gravity##ps", gv, 0.05f)) { ps->gravity = {gv[0], gv[1], gv[2]}; ed.dirty = true; }
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
 
@@ -14043,20 +14043,31 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
-    // Particles: billboards projected with the 3D camera (so they show in 3D scenes,
-    // not just the 2D view). Each live particle is a small camera-facing dot.
-    for (const auto& up : objs) {
-        auto* ps = up->GetComponent<ParticleSystem>();
-        if (!ps || !up->active) continue;
-        for (const auto& p : ps->Particles()) {
-            if (!p.alive) continue;
-            Vec4 c = vp * Vec4{p.position, 1.0f};
-            if (c.w <= 0.05f) continue;
-            ImVec2 sp(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
-                      center.y - (c.y / c.w) * canvasSize.y * 0.5f);
-            float rad = p.size * 0.5f / c.w * canvasSize.x * 0.5f;   // perspective size
-            if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
-            dl->AddCircleFilled(sp, rad, ToColor(p.color), 10);
+    // Particles: camera-facing billboards projected with the 3D camera. Collected,
+    // depth-sorted back-to-front, and drawn as soft volumetric puffs (a faint outer
+    // halo + bright core) so the now-3D particle motion reads as real depth.
+    {
+        struct PP { float depth; ImVec2 sp; float rad; ImU32 col; };
+        static std::vector<PP> pp; pp.clear();
+        for (const auto& up : objs) {
+            auto* ps = up->GetComponent<ParticleSystem>();
+            if (!ps || !up->active) continue;
+            for (const auto& p : ps->Particles()) {
+                if (!p.alive) continue;
+                Vec4 c = vp * Vec4{p.position, 1.0f};
+                if (c.w <= 0.05f) continue;
+                ImVec2 sp(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
+                          center.y - (c.y / c.w) * canvasSize.y * 0.5f);
+                float rad = p.size * 0.5f / c.w * canvasSize.x * 0.5f;   // perspective size
+                if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
+                pp.push_back({c.w, sp, rad, ToColor(p.color)});
+            }
+        }
+        std::sort(pp.begin(), pp.end(), [](const PP& a, const PP& b) { return a.depth > b.depth; });
+        for (const PP& q : pp) {
+            ImU32 halo = (q.col & 0x00FFFFFFu) | ((((q.col >> 24) & 0xFF) / 3) << 24);  // 1/3 alpha
+            dl->AddCircleFilled(q.sp, q.rad * 1.6f, halo, 12);   // soft outer glow
+            dl->AddCircleFilled(q.sp, q.rad, q.col, 12);          // bright core
         }
     }
 

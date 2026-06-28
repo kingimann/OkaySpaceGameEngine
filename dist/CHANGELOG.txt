@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.286.0  (Particles are now fully 3D)
+  - Fixes "I can see particles in the Scene view but not the Game tab" and
+    "the particle system is too 2D": both had the same root cause — particles
+    only moved on a flat XY plane (Vec2 velocity/gravity), so a camera looking
+    at that plane edge-on saw almost nothing and from any angle it was a flat
+    sheet.
+  - Particle velocity, gravity, start-velocity and Box size are now full 3D
+    vectors, and particles integrate through 3D space. They're visible from any
+    camera angle and read as real volume.
+  - Emission shapes rebuilt in 3D: Sphere is a true radial ball burst, Circle is
+    a ground-plane (XZ) ring/shockwave, Cone is a real 3D spray cone around the
+    launch direction, Box is a 3D volume. Velocity randomness jitters all three
+    axes.
+  - Rendering: particles are depth-sorted back-to-front and drawn as soft
+    volumetric puffs (outer glow + bright core) in the editor preview AND the
+    exported game, so overlap and depth read correctly.
+  - Inspector gains Z controls for Velocity / Gravity / Box Size. Old scenes load
+    unchanged (the new Z components default to 0 / flat) and re-save as 3D.
+
 v2.285.0  (PBR materials on the GPU + Occlusion maps — Unity/Unreal parity)
   - The metallic + reflective Standard material now renders on the OpenGL +
     Direct3D 11 paths (editor preview AND exported game), not just the software

@@ -15,9 +15,9 @@ int main() {
     ps->startLifetime = 2.5f;
     ps->startSize = 0.4f;
     ps->startColor = Color(0.2f, 0.4f, 0.8f, 0.9f);
-    ps->startVelocity = {1.0f, 5.0f};
+    ps->startVelocity = {1.0f, 5.0f, -2.0f};
     ps->velocityRandom = 2.0f;
-    ps->gravity = {0.0f, -9.8f};
+    ps->gravity = {0.0f, -9.8f, 0.5f};
     ps->fadeOverLife = false;
     ps->seed = 99887766ull;
     // Expanded (v2) fields.
@@ -31,7 +31,7 @@ int main() {
     ps->shape = ParticleSystem::Shape::Cone;
     ps->shapeRadius = 1.75f;
     ps->shapeAngle = 33.0f;
-    ps->boxSize = {2.0f, 0.5f};
+    ps->boxSize = {2.0f, 0.5f, 3.0f};
     ps->gravityModifier = 1.5f;
     ps->damping = 0.8f;
     ps->duration = 4.0f;
@@ -53,8 +53,10 @@ int main() {
     CHECK_NEAR(r->startSize, 0.4f, 0.001f);
     CHECK_NEAR(r->startColor.b, 0.8f, 0.01f);
     CHECK_NEAR(r->startVelocity.y, 5.0f, 0.001f);
+    CHECK_NEAR(r->startVelocity.z, -2.0f, 0.001f);   // 3D z-component round-trips
     CHECK_NEAR(r->velocityRandom, 2.0f, 0.001f);
     CHECK_NEAR(r->gravity.y, -9.8f, 0.001f);
+    CHECK_NEAR(r->gravity.z, 0.5f, 0.001f);
     CHECK(!r->fadeOverLife);
     CHECK(r->seed == 99887766ull);
     // Expanded (v2) fields round-trip.
@@ -69,6 +71,7 @@ int main() {
     CHECK_NEAR(r->shapeRadius, 1.75f, 0.001f);
     CHECK_NEAR(r->shapeAngle, 33.0f, 0.001f);
     CHECK_NEAR(r->boxSize.x, 2.0f, 0.001f);
+    CHECK_NEAR(r->boxSize.z, 3.0f, 0.001f);
     CHECK_NEAR(r->gravityModifier, 1.5f, 0.001f);
     CHECK_NEAR(r->damping, 0.8f, 0.001f);
     CHECK_NEAR(r->duration, 4.0f, 0.001f);
@@ -93,6 +96,22 @@ int main() {
     ps3->Awake();
     ps3->Emit(10);
     CHECK(ps3->AliveCount() == 10);
+
+    // 3D motion: a Sphere emitter flings particles in all directions, so their
+    // positions spread along Z (not just the XY plane the old 2D system used).
+    Scene sim3("S3");
+    auto* ps4 = sim3.CreateGameObject("E4")->AddComponent<ParticleSystem>();
+    ps4->shape = ParticleSystem::Shape::Sphere;
+    ps4->shapeRadius = 1.0f;
+    ps4->startVelocity = {0.0f, 0.0f, 0.0f};   // motion comes purely from the radial burst
+    ps4->gravity = {0.0f, 0.0f, 0.0f};
+    ps4->Awake();
+    ps4->Emit(200);
+    ps4->Update(0.2f);
+    float minZ = 1e9f, maxZ = -1e9f;
+    for (const auto& p : ps4->Particles())
+        if (p.alive) { minZ = Mathf::Min(minZ, p.position.z); maxZ = Mathf::Max(maxZ, p.position.z); }
+    CHECK((maxZ - minZ) > 0.2f);   // particles genuinely occupy 3D space
 
     TEST_MAIN_RESULT();
 }

@@ -28,7 +28,7 @@ public:
 
     struct Particle {
         Vec3  position;
-        Vec2  velocity;
+        Vec3  velocity;        // full 3D velocity (particles move through space, not a flat plane)
         float life = 0.0f;     // remaining seconds
         float maxLife = 1.0f;
         float size = 0.25f;    // current (rendered) size
@@ -54,7 +54,7 @@ public:
     Shape shape = Shape::Point;
     float shapeRadius = 1.0f;     // Circle/Sphere/Edge extent
     float shapeAngle  = 25.0f;    // Cone half-angle, degrees
-    Vec2  boxSize{1.0f, 1.0f};    // Box extents
+    Vec3  boxSize{1.0f, 1.0f, 1.0f};   // Box extents (3D)
 
     // ---- Per-particle start values ----
     float startLifetime = 1.5f;
@@ -62,7 +62,7 @@ public:
     float startSize = 0.25f;
     float startSizeRandom = 0.0f;       // +/- size units
     Color startColor = Color::White;
-    Vec2  startVelocity{0.0f, 3.0f};
+    Vec3  startVelocity{0.0f, 3.0f, 0.0f};   // launch velocity (3D)
     float velocityRandom = 1.5f;        // +/- added to each velocity component
     float speedRandom = 0.0f;           // +/- scale on the launch speed (shapes)
 
@@ -74,7 +74,7 @@ public:
     bool  fadeOverLife = true;          // fade alpha out as the particle dies
 
     // ---- Forces ----
-    Vec2  gravity{0.0f, -2.0f};
+    Vec3  gravity{0.0f, -2.0f, 0.0f};   // 3D gravity/wind acceleration
     float gravityModifier = 1.0f;       // scales gravity (Unity-style)
     float damping = 0.0f;               // linear drag per second (0 = none)
 
@@ -126,7 +126,7 @@ public:
             if (p.life <= 0.0f) { p.alive = false; continue; }
             p.velocity += gravity * (gravityModifier * dt);
             if (drag != 1.0f) p.velocity *= drag;
-            p.position += Vec3{p.velocity * dt};
+            p.position += p.velocity * dt;
             float t = 1.0f - Mathf::Clamp01(p.life / p.maxLife);   // 0 at birth -> 1 at death
             if (sizeOverLife) p.size = p.size0 + (endSize - p.size0) * t;
             if (colorOverLife) {
@@ -164,49 +164,71 @@ private:
             p.color = startColor;
 
             Vec3 origin = transform ? transform->Position() : Vec3::Zero;
-            Vec2 off{0.0f, 0.0f};
-            Vec2 vel = startVelocity;
+            Vec3 off{0.0f, 0.0f, 0.0f};
+            Vec3 vel = startVelocity;
+            const float spd = VLen(startVelocity);
             switch (shape) {
                 case Shape::Point: break;
                 case Shape::Circle: {
+                    // Ring laid flat on the ground (XZ plane), flung outward — reads
+                    // as a 3D ripple/shockwave from any camera angle.
                     float a = m_rng.Range(0.0f, 6.2831853f);
-                    Vec2 dir{std::cos(a), std::sin(a)};
+                    Vec3 dir{std::cos(a), 0.0f, std::sin(a)};
                     off = dir * shapeRadius;
-                    vel = dir * VLen(startVelocity);
+                    vel = dir * spd + Vec3{0.0f, startVelocity.y, 0.0f};
                 } break;
                 case Shape::Sphere: {
-                    float a = m_rng.Range(0.0f, 6.2831853f);
-                    float r = shapeRadius * std::sqrt(m_rng.Range(0.0f, 1.0f));
-                    Vec2 dir{std::cos(a), std::sin(a)};
+                    // Filled 3D ball, pushed radially outward (a real burst, not a disc).
+                    Vec3 dir = RandUnitVec();
+                    float r = shapeRadius * std::cbrt(m_rng.Range(0.0f, 1.0f));
                     off = dir * r;
-                    vel = dir * VLen(startVelocity);
+                    vel = dir * spd;
                 } break;
                 case Shape::Box: {
-                    off = Vec2{m_rng.Range(-boxSize.x * 0.5f, boxSize.x * 0.5f),
-                               m_rng.Range(-boxSize.y * 0.5f, boxSize.y * 0.5f)};
+                    off = Vec3{m_rng.Range(-boxSize.x * 0.5f, boxSize.x * 0.5f),
+                               m_rng.Range(-boxSize.y * 0.5f, boxSize.y * 0.5f),
+                               m_rng.Range(-boxSize.z * 0.5f, boxSize.z * 0.5f)};
                 } break;
                 case Shape::Cone: {
-                    float base = std::atan2(startVelocity.y, startVelocity.x);
+                    // Spray within a 3D cone around the start-velocity axis.
+                    Vec3 axis = spd > 1e-5f ? startVelocity * (1.0f / spd) : Vec3{0, 1, 0};
                     float half = shapeAngle * 0.0174532925f;
-                    float a = base + m_rng.Range(-half, half);
-                    float spd = VLen(startVelocity);
-                    vel = Vec2{std::cos(a) * spd, std::sin(a) * spd};
+                    float cosT = std::cos(half);
+                    float ct = m_rng.Range(cosT, 1.0f);            // cosine of the polar angle
+                    float st = std::sqrt(std::fmax(0.0f, 1.0f - ct * ct));
+                    float phi = m_rng.Range(0.0f, 6.2831853f);
+                    // Build an orthonormal frame around the cone axis.
+                    Vec3 up = std::fabs(axis.y) < 0.99f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+                    Vec3 t1 = Vec3::Cross(up, axis); { float l = VLen(t1); t1 = l > 1e-5f ? t1 * (1.0f / l) : Vec3{1, 0, 0}; }
+                    Vec3 t2 = Vec3::Cross(axis, t1);
+                    Vec3 dir = axis * ct + (t1 * std::cos(phi) + t2 * std::sin(phi)) * st;
+                    vel = dir * (spd > 1e-5f ? spd : 1.0f);
                 } break;
                 case Shape::Edge: {
-                    off = Vec2{m_rng.Range(-shapeRadius, shapeRadius), 0.0f};
+                    off = Vec3{m_rng.Range(-shapeRadius, shapeRadius), 0.0f, 0.0f};
                 } break;
             }
             if (speedRandom > 0.0f) vel *= (1.0f + m_rng.Range(-speedRandom, speedRandom));
-            vel += Vec2{velocityRandom > 0.0f ? m_rng.Range(-velocityRandom, velocityRandom) : 0.0f,
-                        velocityRandom > 0.0f ? m_rng.Range(-velocityRandom, velocityRandom) : 0.0f};
+            if (velocityRandom > 0.0f)
+                vel += Vec3{m_rng.Range(-velocityRandom, velocityRandom),
+                            m_rng.Range(-velocityRandom, velocityRandom),
+                            m_rng.Range(-velocityRandom, velocityRandom)};
 
-            p.position = origin + Vec3{off};
+            p.position = origin + off;
             p.velocity = vel;
             return;
         }
     }
 
-    static float VLen(const Vec2& v) { float l = std::sqrt(v.x * v.x + v.y * v.y); return l; }
+    static float VLen(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
+
+    /// A uniformly-distributed unit vector on the sphere (for 3D burst directions).
+    Vec3 RandUnitVec() {
+        float z = m_rng.Range(-1.0f, 1.0f);
+        float a = m_rng.Range(0.0f, 6.2831853f);
+        float r = std::sqrt(std::fmax(0.0f, 1.0f - z * z));
+        return Vec3{r * std::cos(a), r * std::sin(a), z};
+    }
 
     std::vector<Particle> m_particles;
     float m_accum = 0.0f;

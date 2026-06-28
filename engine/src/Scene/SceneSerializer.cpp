@@ -1209,7 +1209,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ps->boxSize.x << " " << ps->boxSize.y << " "
             << ps->gravityModifier << " " << ps->damping << " "
             << ps->duration << " " << (ps->loop ? 1 : 0) << " "
-            << ps->burstCount << " " << ps->burstTime << "\n";
+            << ps->burstCount << " " << ps->burstTime << " "
+            // --- appended (v3): 3D z-components for the now-3D vectors ---
+            << ps->startVelocity.z << " " << ps->gravity.z << " " << ps->boxSize.z << "\n";
     }
 }
 } // namespace
@@ -3023,6 +3025,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         ps->sizeOverLife = (szLife != 0);
                         ps->loop = (loopI != 0);
                         ps->shape = (ParticleSystem::Shape)shapeI;
+                        // Appended v3 fields: 3D z-components (older v2 scenes stop here,
+                        // leaving z at its 0/1 default so they still load flat-but-valid).
+                        in >> std::ws;
+                        int pk3 = in.peek();
+                        if (std::isdigit(pk3) || pk3 == '-' || pk3 == '+' || pk3 == '.')
+                            in >> ps->startVelocity.z >> ps->gravity.z >> ps->boxSize.z;
                     }
                 } else {
                     if (error) *error = "unknown field '" + field + "'";

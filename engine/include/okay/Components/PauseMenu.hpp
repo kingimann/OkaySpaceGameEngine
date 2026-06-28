@@ -114,6 +114,11 @@ private:
         btn->cornerRadius = 10.0f;
         btn->fontScale = 2.2f;
         btn->color = col;
+        btn->hoverColor = Color{col.r + (1 - col.r) * 0.22f, col.g + (1 - col.g) * 0.22f, col.b + (1 - col.b) * 0.22f, col.a};
+        btn->pressedColor = Color{col.r * 0.8f, col.g * 0.8f, col.b * 0.8f, col.a};
+        btn->hoverScale = 1.03f;
+        btn->shadow = true; btn->shadowOffset = {0.0f, 3.0f}; btn->shadowColor = Color::FromBytes(0, 0, 0, 130);
+        btn->borderWidth = 1.0f; btn->borderColor = Color{1, 1, 1, 0.18f};
         b->transform->SetParent(parent->transform, false);
         m_objects.push_back(b);
         return btn;

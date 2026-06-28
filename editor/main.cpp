@@ -12175,6 +12175,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (svCull(up.get(), o, sz)) continue;
         ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
         ImVec2 pb2(a.x + sz.x, a.y + sz.y);
+        // A backdrop far larger than the canvas (e.g. a pause-menu dim) — clamp it to
+        // the visible game rect so it reliably covers the whole screen.
+        if (sz.x > canvasSize.x * 1.5f && sz.y > canvasSize.y * 1.5f) {
+            a = canvasPos; pb2 = ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+        }
         if (pn->shadow)          // drop shadow behind the panel
             dl->AddRectFilled(ImVec2(a.x + pn->shadowOffset.x, a.y + pn->shadowOffset.y),
                               ImVec2(pb2.x + pn->shadowOffset.x, pb2.y + pn->shadowOffset.y),
@@ -12671,7 +12676,12 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             float gy = sz.y * (btn->hoverScale - 1.0f) * 0.5f;
             a.x -= gx; a.y -= gy; b.x += gx; b.y += gy;
         }
+        if (btn->shadow)         // drop shadow (lifts the button off the card)
+            dl->AddRectFilled(ImVec2(a.x + btn->shadowOffset.x, a.y + btn->shadowOffset.y),
+                              ImVec2(b.x + btn->shadowOffset.x, b.y + btn->shadowOffset.y),
+                              ToColor(btn->shadowColor), btn->cornerRadius);
         dl->AddRectFilled(a, b, ToColor(btn->DisplayColor()), btn->cornerRadius);
+        dl->AddRectFilled(a, ImVec2(b.x, a.y + (b.y - a.y) * 0.45f), IM_COL32(255, 255, 255, 22), btn->cornerRadius);  // top sheen
         if (btn->borderWidth > 0.0f)
             dl->AddRect(a, b, ToColor(btn->borderColor), btn->cornerRadius, 0, btn->borderWidth);
         float shift = btn->PressShift() * s;
@@ -13050,7 +13060,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!gui) continue;
         okay::GridInventory* primary = gui->Inv();
         if (!primary || !primary->open) break;
-        float cs = gui->cellSize, gp = gui->gap, cr = gui->cornerRadius;
+        // Comfortable minimums so an existing tight grid still breathes (kept in sync
+        // with the player so drag hit-testing matches).
+        float cs = gui->cellSize < 54.0f ? 54.0f : gui->cellSize;
+        float gp = gui->gap < 6.0f ? 6.0f : gui->gap;
+        float cr = gui->cornerRadius < 6.0f ? 6.0f : gui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         auto lighten = [&](okay::Color c, float f) { return okay::Color{c.r+(1-c.r)*f, c.g+(1-c.g)*f, c.b+(1-c.b)*f, c.a}; };
         auto darken  = [&](okay::Color c, float f) { return okay::Color{c.r*(1-f), c.g*(1-f), c.b*(1-f), c.a}; };
@@ -13064,7 +13078,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         std::vector<okay::GridInventory*> equipped, nearby;
         if (gui->multiContainer) gui->CollectContainers(equipped, nearby);
         else equipped.push_back(primary);
-        const float labelH = 20.0f, vspace = 16.0f, colGap = 44.0f, pad = 14.0f, headH = 36.0f;
+        const float labelH = 26.0f, vspace = 26.0f, colGap = 60.0f, pad = 20.0f, headH = 30.0f, headGap = 18.0f;
         auto colSize = [&](const std::vector<okay::GridInventory*>& L, float& cw, float& ch) {
             cw = 0; ch = 0;
             for (auto* g : L) { float gw = g->cols*cs + (g->cols-1)*gp; if (gw > cw) cw = gw;
@@ -13075,7 +13089,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         bool hasNear = !nearby.empty();
         float totalW = lw + (hasNear ? colGap + rw : 0.0f), totalH = lh > rh ? lh : rh;
         // Local (canvas-relative) origin so the mouse hit-test matches the fed Input.
-        float startLX = (canvasSize.x - totalW) * 0.5f, startLY = (canvasSize.y - totalH) * 0.5f + 14.0f + headH;
+        float startLX = (canvasSize.x - totalW) * 0.5f, startLY = (canvasSize.y - totalH) * 0.5f + 14.0f + headH + headGap;
 
         struct EPanel { okay::GridInventory* inv; float ox, oy, gw, gh; std::string label; };
         std::vector<EPanel> panels;
@@ -13100,29 +13114,27 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         };
         backing(startLX - pad, startLY - pad, lw + pad*2, lh + pad*2);
         if (hasNear) backing(startLX + lw + colGap - pad, startLY - pad, rw + pad*2, rh + pad*2);
-        // Master header: screen title + aggregate weight bar over the equipped column.
+        // One slim centred "INVENTORY" title over the equipped column (the per-bag
+        // headers below carry the container names), plus an aggregate weight bar.
         {
             float hbX = startLX - pad, hbW = lw + pad*2; if (hbW < 200.0f) hbW = 200.0f;
-            float hbY = startLY - pad - headH - 4;
-            shadowE(hbX, hbY, hbW, headH, cr + 3);
-            rectF(hbX, hbY, hbW, headH, lighten(gui->titleBar, 0.06f), cr + 3);
-            rectF(hbX, hbY, 4, headH, okay::GridInventoryUI::AccentFor(primary->title), 0);
-            dl->AddText(ImVec2(canvasPos.x + hbX + 12, canvasPos.y + hbY + 9), col(gui->textColor), primary->title.c_str());
+            float hbY = startLY - pad - headH - headGap;
+            const char* mt = "INVENTORY";
+            ImVec2 ts = ImGui::CalcTextSize(mt);
+            dl->AddText(ImVec2(canvasPos.x + hbX + (hbW - ts.x) * 0.5f, canvasPos.y + hbY), col(lighten(gui->textColor, 0.0f)), mt);
             float totW = 0, totL = 0; for (auto* g : equipped) { totW += g->TotalWeight(); totL += g->weightLimit; }
             if (gui->showWeight && totL > 0.0f) {
                 bool over = totW > totL; float frac = totW / totL; if (frac > 1) frac = 1; if (frac < 0) frac = 0;
-                char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f / %.0f kg", totW, totL);
-                ImVec2 ts = ImGui::CalcTextSize(wb);
-                dl->AddText(ImVec2(canvasPos.x + hbX + hbW - ts.x - 10, canvasPos.y + hbY + 9), col(over ? gui->overweightColor : gui->textColor), wb);
-                rectF(hbX + 10, hbY + headH - 7, hbW - 20, 4, darken(gui->panelColor, 0.35f), 2);
+                float by = hbY + 18.0f, bw = hbW - 8;
+                rectF(hbX + 4, by, bw, 5, darken(gui->panelColor, 0.4f), 2);
                 okay::Color bc = over ? gui->overweightColor : (frac > 0.85f ? okay::Color::FromBytes(230,190,90,255) : okay::Color::FromBytes(110,200,130,255));
-                rectF(hbX + 10, hbY + headH - 7, (hbW - 20) * frac, 4, bc, 2);
+                rectF(hbX + 4, by, bw * frac, 5, bc, 2);
             }
         }
         if (hasNear) {
             float nx = startLX + lw + colGap;
-            rectF(nx, startLY - pad - 20, 4, 16, okay::Color::FromBytes(200,170,110,255), 0);
-            dl->AddText(ImVec2(canvasPos.x + nx + 10, canvasPos.y + startLY - pad - 19), col(gui->textColor), gui->nearbyTitle.c_str());
+            rectF(nx - 4, startLY - pad - headH - headGap + 2, 4, 14, okay::Color::FromBytes(200,170,110,255), 0);
+            dl->AddText(ImVec2(canvasPos.x + nx + 6, canvasPos.y + startLY - pad - headH - headGap), col(gui->textColor), gui->nearbyTitle.c_str());
         }
 
         okay::Vec2 m = okay::Input::MousePosition();   // canvas-local
@@ -13146,8 +13158,12 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (hover) { rectF(lx, ly, w, h, gui->hoverColor, cr); rectS(lx, ly, w, h, lighten(gui->itemBorder, 0.35f), cr); }
             ImVec2 p0(canvasPos.x + lx, canvasPos.y + ly);
             SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
-            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 5, p0.y + 5), ImVec2(p0.x + w - 5, p0.y + h - 5));
-            else dl->AddText(ImVec2(p0.x + 6, p0.y + 6), col(gui->textColor), it.name.substr(0, 8).c_str());
+            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 6, p0.y + 6), ImVec2(p0.x + w - 6, p0.y + h - 6));
+            else {   // clip the name to the tile width so it never overflows the cell
+                int maxc = (int)((w - 12) / 7.0f); if (maxc < 1) maxc = 1;
+                std::string nm = (int)it.name.size() > maxc ? it.name.substr(0, maxc) : it.name;
+                dl->AddText(ImVec2(p0.x + 6, p0.y + 7), col(gui->textColor), nm.c_str());
+            }
             if (it.count > 1) {
                 std::string cstr = std::to_string(it.count);
                 ImVec2 ts = ImGui::CalcTextSize(cstr.c_str());

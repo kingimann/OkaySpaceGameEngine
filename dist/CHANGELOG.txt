@@ -1,6 +1,18 @@
 OkaySpace Game Engine — Changelog
 
-v2.313.0  (Inventory UI polish + tidier demo + pause-menu fix)
+v2.314.0  (Inventory roominess + pause-menu polish)
+  - Inventory was TOO COMPACT: cells now have comfortable minimum sizes and bigger
+    gaps (existing tight grids breathe too), columns and container headers are more
+    generously spaced, and item names are clipped to their tile so they never spill.
+  - Removed the duplicate header: the screen now shows one slim centred "INVENTORY"
+    title (with the aggregate weight bar); each bag keeps its own accent-coloured
+    header below, so you no longer see e.g. "Backpack" twice.
+  - New inventories default to larger cells; the comfortable minimums also lift
+    older saved layouts without changing your data.
+  - Pause menu: the dim backdrop now reliably covers the WHOLE screen (an oversized
+    full-screen panel is clamped to the viewport in both the editor and the game,
+    fixing the bright area that showed through). Buttons get a drop shadow, a subtle
+    top sheen, a hover tint/grow and a hairline border for a cleaner, lifted look.
   - The Unturned inventory screen got a visual pass. Each column now sits on a
     drop-shadowed, soft-gradient panel; a master header above your bags shows the
     screen title with an aggregate weight bar (green → amber → red as you fill up).

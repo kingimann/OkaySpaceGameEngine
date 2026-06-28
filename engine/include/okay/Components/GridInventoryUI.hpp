@@ -17,8 +17,8 @@ namespace okay {
 /// Drop it next to a GridInventory and open with that inventory's key.
 class GridInventoryUI : public Behaviour {
 public:
-    float cellSize = 46.0f;
-    float gap      = 2.0f;
+    float cellSize = 56.0f;
+    float gap      = 6.0f;
     std::string iconFolder = "textures/items/";   ///< <folder><item>.png icons (else the name)
     Color panelColor  = Color::FromBytes(18, 19, 26, 240);
     Color cellColor   = Color::FromBytes(34, 36, 46, 230);

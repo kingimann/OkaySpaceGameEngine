@@ -1217,7 +1217,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ps->rotationSpeed << " " << ps->rotationSpeedRandom << " "
             // --- appended (v5): ground-plane collision ---
             << (ps->collision ? 1 : 0) << " " << ps->collisionY << " " << ps->bounce << " "
-            << ps->collisionFriction << " " << ps->collisionLifeLoss << "\n";
+            << ps->collisionFriction << " " << ps->collisionLifeLoss << " "
+            // --- appended (v6): render mode (billboard/stretch) ---
+            << (int)ps->renderMode << " " << ps->stretchScale << "\n";
     }
 }
 } // namespace
@@ -3054,6 +3056,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         in >> coll >> ps->collisionY >> ps->bounce
                                            >> ps->collisionFriction >> ps->collisionLifeLoss;
                                         ps->collision = (coll != 0);
+                                        // Appended v6 fields: render mode + stretch scale.
+                                        in >> std::ws;
+                                        int pk6 = in.peek();
+                                        if (std::isdigit(pk6) || pk6 == '-' || pk6 == '+' || pk6 == '.') {
+                                            int rm = 0; in >> rm >> ps->stretchScale;
+                                            ps->renderMode = (ParticleSystem::RenderMode)rm;
+                                        }
                                     }
                                 }
                             }

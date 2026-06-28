@@ -80,6 +80,14 @@ public:
     float rotationSpeed = 0.0f;
     float rotationSpeedRandom = 0.0f;
 
+    /// How particles face the camera. Billboard = an upright camera-facing quad
+    /// (the default). Stretch = elongated along the velocity (Unity's Stretched
+    /// Billboard) for rain, sparks, tracers and speed lines; `stretchScale` sets
+    /// how much speed lengthens the streak.
+    enum class RenderMode { Billboard, Stretch };
+    RenderMode renderMode = RenderMode::Billboard;
+    float stretchScale = 0.15f;   // length added per unit of speed
+
     // ---- Over-lifetime ----
     Color endColor = Color::White;
     bool  colorOverLife = false;        // lerp startColor -> endColor over life

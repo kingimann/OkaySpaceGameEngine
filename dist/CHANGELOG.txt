@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.289.0  (Stretched-billboard particles + Game-view fix)
+  - FIX: particles were invisible in the editor's Game view and during Play (an
+    early-out for the non-interactive Game view returned before the particle
+    pass ran). They now render in the Scene view, the Game view, AND Play —
+    matching the built game.
+  - New particle Render mode: "Stretch" (Unity's Stretched Billboard) elongates
+    each particle along its velocity, so rain, sparks, tracers and speed lines
+    read as fast 3D streaks. "Billboard" (the upright camera-facing quad) stays
+    the default.
+  - A Stretch amount controls how much speed lengthens the streak. Works
+    textured (the sprite stretches + rotates to face its travel) or untextured
+    (a tapered streak), in the editor preview AND the exported game, still
+    depth-sorted.
+  - New Inspector "Render" dropdown + Stretch slider in the Appearance section.
+    Old scenes load unchanged (default Billboard).
+
 v2.288.0  (Particle collision)
   - Particles can now bounce off a horizontal ground plane (Unity's Collision
     module, world-plane mode): sparks skittering off a floor, bouncing debris,

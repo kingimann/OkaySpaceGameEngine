@@ -50,6 +50,9 @@ int main() {
     ps->bounce = 0.7f;
     ps->collisionFriction = 0.25f;
     ps->collisionLifeLoss = 0.1f;
+    // v6: stretched-billboard render mode.
+    ps->renderMode = ParticleSystem::RenderMode::Stretch;
+    ps->stretchScale = 0.4f;
 
     std::string text = SceneSerializer::Serialize(scene);
     Scene loaded("L");
@@ -99,6 +102,8 @@ int main() {
     CHECK_NEAR(r->collisionY, -1.5f, 0.001f);
     CHECK_NEAR(r->bounce, 0.7f, 0.001f);
     CHECK_NEAR(r->collisionFriction, 0.25f, 0.001f);
+    CHECK(r->renderMode == ParticleSystem::RenderMode::Stretch);
+    CHECK_NEAR(r->stretchScale, 0.4f, 0.001f);
 
     // Spin: a particle's billboard rotation advances by rotationSpeed * dt.
     Scene spin("SP");

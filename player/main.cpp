@@ -1306,13 +1306,15 @@ int main(int argc, char** argv) {
                 // showed no particles at all). Collected, depth-sorted back-to-front, and
                 // drawn as soft volumetric puffs so the 3D particle motion reads as depth.
                 {
-                    struct PP { float depth; float sx, sy, rad, rot; SDL_Color col; SDL_Texture* tex; };
+                    // len/wid = half-extents along/across the billboard; ang = long-axis angle (deg).
+                    struct PP { float depth, sx, sy, len, wid, ang; SDL_Color col; SDL_Texture* tex; bool stretch; };
                     std::vector<PP> pp;
                     for (const auto& up : scene.Objects()) {
                         auto* ps = up->GetComponent<ParticleSystem>();
                         if (!ps || !up->active || UIHidden(up.get())) continue;
                         SDL_Texture* ptex = ps->texture.empty() ? nullptr
                                             : GetTexture(renderer, ps->texture, baseDir, textureCache);
+                        const bool stretchMode = ps->renderMode == ParticleSystem::RenderMode::Stretch;
                         for (const auto& p : ps->Particles()) {
                             if (!p.alive) continue;
                             Vec4 c = vp * Vec4{p.position, 1.0f};
@@ -1323,22 +1325,42 @@ int main(int argc, char** argv) {
                             if (rad < 1.0f) rad = 1.0f; if (rad > 400.0f) rad = 400.0f;
                             SDL_Color col{(Uint8)(p.color.r*255), (Uint8)(p.color.g*255),
                                           (Uint8)(p.color.b*255), (Uint8)(p.color.a*255)};
-                            pp.push_back({c.w, sx, sy, rad, p.rotation, col, ptex});
+                            float len = rad, ang = p.rotation; bool stretched = false;
+                            float speed = std::sqrt(p.velocity.x*p.velocity.x + p.velocity.y*p.velocity.y + p.velocity.z*p.velocity.z);
+                            if (stretchMode && speed > 1e-3f) {
+                                Vec3 vn = p.velocity * (1.0f / speed);
+                                Vec4 c2 = vp * Vec4{p.position + vn, 1.0f};
+                                if (c2.w > 0.05f) {
+                                    float s2x = w * 0.5f + (c2.x / c2.w) * w * 0.5f;
+                                    float s2y = h * 0.5f - (c2.y / c2.w) * h * 0.5f;
+                                    float dx = s2x - sx, dy = s2y - sy, dl2 = std::sqrt(dx*dx + dy*dy);
+                                    if (dl2 > 1e-3f) {
+                                        ang = std::atan2(dy, dx) * 57.29578f;
+                                        len = rad * (1.0f + ps->stretchScale * speed);
+                                        stretched = true;
+                                    }
+                                }
+                            }
+                            pp.push_back({c.w, sx, sy, len, rad, ang, col, ptex, stretched});
                         }
                     }
                     std::sort(pp.begin(), pp.end(), [](const PP& a, const PP& b){ return a.depth > b.depth; });
                     for (const PP& q : pp) {
                         if (q.tex) {
-                            // Rotated, tinted sprite (smoke/spark/flare).
+                            // Rotated, tinted sprite — elongated along velocity in stretch mode.
                             SDL_SetTextureColorMod(q.tex, q.col.r, q.col.g, q.col.b);
                             SDL_SetTextureAlphaMod(q.tex, q.col.a);
                             SDL_SetTextureBlendMode(q.tex, SDL_BLENDMODE_BLEND);
-                            SDL_FRect dst{q.sx - q.rad, q.sy - q.rad, q.rad * 2.0f, q.rad * 2.0f};
-                            SDL_RenderCopyExF(renderer, q.tex, nullptr, &dst, q.rot, nullptr, SDL_FLIP_NONE);
+                            SDL_FRect dst{q.sx - q.len, q.sy - q.wid, q.len * 2.0f, q.wid * 2.0f};
+                            SDL_RenderCopyExF(renderer, q.tex, nullptr, &dst, q.ang, nullptr, SDL_FLIP_NONE);
+                        } else if (q.stretch) {
+                            // Untextured streak: a thick line along the velocity.
+                            float a = q.ang * 0.01745329f, cx = std::cos(a) * q.len, cy = std::sin(a) * q.len;
+                            MMThickLine(renderer, q.sx - cx, q.sy - cy, q.sx + cx, q.sy + cy, q.wid * 2.0f, q.col);
                         } else {
                             SDL_Color halo = q.col; halo.a = (Uint8)(q.col.a / 3);   // soft outer glow
-                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)(q.rad * 1.6f), halo);
-                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)q.rad, q.col);  // bright core
+                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)(q.wid * 1.6f), halo);
+                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)q.wid, q.col);  // bright core
                         }
                     }
                 }

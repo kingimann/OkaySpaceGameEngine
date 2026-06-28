@@ -1158,9 +1158,29 @@ inline fs::path SafeRelative(const fs::path& rel) {
     return out;
 }
 
-// Build the game into outDir. Returns a human-readable status string.
+// A per-file size breakdown of the finished build, for the result popup.
+enum BuildCat { CAT_EXE = 0, CAT_LIB = 1, CAT_DATA = 2, CAT_ASSET = 3 };
+struct ReportEntry { std::string name; std::uintmax_t bytes = 0; int cat = CAT_ASSET; };
+struct BuildReport {
+    std::vector<ReportEntry> files;
+    std::uintmax_t total = 0;
+    std::uintmax_t catBytes[4] = {0, 0, 0, 0};
+    int missing = 0;
+    bool valid = false;
+};
+
+inline std::string HumanBytes(std::uintmax_t b) {
+    char s[32]; double v = (double)b; const char* u = "B";
+    if (v >= 1024.0 * 1024 * 1024) { v /= 1024.0 * 1024 * 1024; u = "GB"; }
+    else if (v >= 1024.0 * 1024)   { v /= 1024.0 * 1024;        u = "MB"; }
+    else if (v >= 1024.0)          { v /= 1024.0;               u = "KB"; }
+    std::snprintf(s, sizeof(s), "%.1f %s", v, u); return std::string(s);
+}
+
+// Build the game into outDir. Returns a human-readable status string; if `report`
+// is non-null it's filled with a per-file size breakdown.
 std::string Build(EditorState& ed, const std::string& outDir,
-                  const std::string& gameName, const Options& opt = {}) {
+                  const std::string& gameName, const Options& opt = {}, BuildReport* report = nullptr) {
     std::error_code ec;
     fs::path dir = fs::weakly_canonical(fs::path(outDir), ec);
     if (dir.empty()) dir = fs::path(outDir);
@@ -1361,18 +1381,33 @@ std::string Build(EditorState& ed, const std::string& outDir,
             fs::copy_file(ssrc, data / ssrc.filename(), fs::copy_options::overwrite_existing, se);
     }
 
-    // Total build size on disk (so the user sees a clean, accounted-for output).
+    // Total build size on disk (so the user sees a clean, accounted-for output) +
+    // an optional per-file breakdown for the result popup.
     std::uintmax_t totalBytes = 0;
     { std::error_code te;
-      for (auto& e : fs::recursive_directory_iterator(dir, te))
-          if (e.is_regular_file(te)) { std::error_code se; totalBytes += fs::file_size(e.path(), se); } }
-    auto human = [](std::uintmax_t b) {
-        char s[32]; double v = (double)b;
-        const char* u = "B";
-        if (v >= 1024*1024) { v /= 1024*1024; u = "MB"; }
-        else if (v >= 1024) { v /= 1024; u = "KB"; }
-        std::snprintf(s, sizeof(s), "%.1f %s", v, u); return std::string(s);
-    };
+      for (auto& e : fs::recursive_directory_iterator(dir, te)) {
+          if (!e.is_regular_file(te)) continue;
+          std::error_code se; std::uintmax_t sz = fs::file_size(e.path(), se);
+          totalBytes += sz;
+          if (report) {
+              fs::path rel = fs::relative(e.path(), dir, te);
+              std::string ext = e.path().extension().string();
+              for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+              std::string fn = e.path().filename().string();
+              int cat = CAT_ASSET;
+              if (fn == exeName) cat = CAT_EXE;
+              else if (ext == ".dll" || ext == ".so" || ext == ".dylib" || e.path().filename().string().rfind("libSDL2", 0) == 0) cat = CAT_LIB;
+              else if (ext == ".okayscene" || ext == ".okayconfig") cat = CAT_DATA;
+              report->files.push_back({rel.generic_string(), sz, cat});
+              report->catBytes[cat] += sz;
+          }
+      } }
+    if (report) {
+        report->total = totalBytes; report->missing = missing; report->valid = true;
+        std::sort(report->files.begin(), report->files.end(),
+                  [](const ReportEntry& a, const ReportEntry& b){ return a.bytes > b.bytes; });
+    }
+    auto human = [](std::uintmax_t b) { return HumanBytes(b); };
 
     std::string msg = "Built '" + gameName + "' to " + dir.string() +
                       " — run " + exeName + " to play.  [" + human(totalBytes) + " total";
@@ -1387,6 +1422,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
     return msg;
 }
 } // namespace builder
+
+builder::BuildReport g_buildReport;   // per-file size breakdown of the last build
 
 // ---- Console log -------------------------------------------------------
 // A Unity-style console entry: severity, text, a short timestamp, and a repeat
@@ -5035,7 +5072,8 @@ void DrawFileDialogs(EditorState& ed) {
             o.saveToUserDir = g_build.saveToUserDir;
             o.splashImage = g_build.splash; o.splashTime = g_build.splashTime;
             o.splashBg[0] = g_build.splashBg[0]; o.splashBg[1] = g_build.splashBg[1]; o.splashBg[2] = g_build.splashBg[2];
-            g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
+            g_buildReport = builder::BuildReport{};
+            g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o, &g_buildReport);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);
             ImGui::CloseCurrentPopup();
@@ -5048,9 +5086,53 @@ void DrawFileDialogs(EditorState& ed) {
     if (g_openBuildResult) { ImGui::OpenPopup("Build Result"); g_openBuildResult = false; }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Build Result", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushTextWrapPos(420.0f);
+        ImGui::PushTextWrapPos(460.0f);
         ImGui::TextUnformatted(g_buildStatus.c_str());
         ImGui::PopTextWrapPos();
+        const builder::BuildReport& R = g_buildReport;
+        if (R.valid && !R.files.empty()) {
+            ImGui::Spacing(); ImGui::SeparatorText("Size breakdown");
+            // Category summary bars (share of the total build size).
+            auto catRow = [&](const char* label, int cat, ImVec4 col) {
+                float frac = R.total > 0 ? (float)((double)R.catBytes[cat] / R.total) : 0.0f;
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
+                char t[64]; std::snprintf(t, sizeof(t), "%s  %s (%.0f%%)", label,
+                                          builder::HumanBytes(R.catBytes[cat]).c_str(), frac * 100.0f);
+                ImGui::ProgressBar(frac, ImVec2(-1, 0), t);
+                ImGui::PopStyleColor();
+            };
+            catRow("Executable", builder::CAT_EXE,  ImVec4(0.7f,0.7f,0.75f,1));
+            catRow("Libraries ", builder::CAT_LIB,  ImVec4(0.55f,0.7f,0.95f,1));
+            catRow("Game data ", builder::CAT_DATA, ImVec4(0.55f,0.9f,0.6f,1));
+            catRow("Assets    ", builder::CAT_ASSET,ImVec4(1.0f,0.78f,0.45f,1));
+            ImGui::Text("Total: %s   (%d file%s)", builder::HumanBytes(R.total).c_str(),
+                        (int)R.files.size(), R.files.size() == 1 ? "" : "s");
+            if (R.missing > 0)
+                ImGui::TextColored(ImVec4(1,0.6f,0.4f,1), "%d referenced asset(s) were missing and not bundled.", R.missing);
+
+            // Largest files first; flag big assets so bloat is obvious.
+            if (ImGui::BeginTable("breakdown", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                    ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
+                ImGui::TableSetupColumn("File", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+                ImGui::TableSetupColumn("Size");
+                ImGui::TableHeadersRow();
+                for (const auto& f : R.files) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    bool big = f.cat == builder::CAT_ASSET && f.bytes > 10ull * 1024 * 1024;  // >10 MB asset
+                    if (big) ImGui::TextColored(ImVec4(1,0.65f,0.4f,1), "%s", f.name.c_str());
+                    else ImGui::TextUnformatted(f.name.c_str());
+                    ImGui::TableNextColumn(); ImGui::TextUnformatted(builder::HumanBytes(f.bytes).c_str());
+                }
+                ImGui::EndTable();
+            }
+            if (ImGui::SmallButton("Copy report")) {
+                std::string csv = "File,Bytes\n";
+                for (const auto& f : R.files) csv += f.name + "," + std::to_string(f.bytes) + "\n";
+                ImGui::SetClipboardText(csv.c_str());
+            }
+            ImGui::SameLine(); ImGui::TextDisabled("orange = asset over 10 MB");
+        }
         ImGui::Separator();
         if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();

@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.300.0  (Build size breakdown report)
+  - After a build, the result dialog now shows a size breakdown: category bars
+    (Executable / Libraries / Game data / Assets) with their share of the total,
+    a largest-files-first table (assets over 10 MB flagged so bloat stands out),
+    the total size + file count, a missing-asset warning, and a Copy-report
+    button. Helps you see exactly what is in the build and trim it down.
+
 v2.299.0  (Startup splash screen)
   - Build Settings > Player > Splash screen: show your studio/game logo at startup
     before the game loads. It fades in and out over a solid background colour, is

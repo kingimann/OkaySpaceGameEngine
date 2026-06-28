@@ -1080,6 +1080,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         }
         // --- appended (v8): radar blip range ---
         out << " " << mm->blipRange;
+        // --- appended (v9): user waypoint (click-to-place) ---
+        out << " " << (mm->mapClickWaypoint ? 1 : 0) << " " << (mm->hasUserWaypoint ? 1 : 0)
+            << " " << mm->userWaypoint.x << " " << mm->userWaypoint.y
+            << " " << mm->userWaypointColor.r << " " << mm->userWaypointColor.g
+            << " " << mm->userWaypointColor.b << " " << mm->userWaypointColor.a;
         out << "\n";
     }
     if (auto* bl = go->GetComponent<MinimapBlip>()) {
@@ -2777,8 +2782,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                             // v8: radar blip range.
                                             in >> std::ws;
                                             int pk11 = in.peek();
-                                            if (std::isdigit(pk11) || pk11 == '-' || pk11 == '+' || pk11 == '.')
+                                            if (std::isdigit(pk11) || pk11 == '-' || pk11 == '+' || pk11 == '.') {
                                                 in >> mm->blipRange;
+                                                // v9: user waypoint (click-to-place).
+                                                in >> std::ws;
+                                                int pk12 = in.peek();
+                                                if (std::isdigit(pk12) || pk12 == '-' || pk12 == '+' || pk12 == '.') {
+                                                    int mcw = 1, huw = 0; Color uwc;
+                                                    in >> mcw >> huw >> mm->userWaypoint.x >> mm->userWaypoint.y
+                                                       >> uwc.r >> uwc.g >> uwc.b >> uwc.a;
+                                                    mm->mapClickWaypoint = (mcw != 0);
+                                                    mm->hasUserWaypoint = (huw != 0);
+                                                    mm->userWaypointColor = uwc;
+                                                }
+                                            }
                                         }
                                     }
                                 }

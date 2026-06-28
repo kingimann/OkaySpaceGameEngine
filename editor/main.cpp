@@ -10371,10 +10371,20 @@ void DrawInspector(EditorState& ed) {
             int rmk = mm->routeMarker;
             if (ImGui::DragInt("Route To Marker##umm", &rmk, 0.1f, -1, (int)mm->markers.size()-1)) { mm->routeMarker = rmk; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a GTA-style line from the player to this waypoint index (-1 = off).");
-            if (mm->routeMarker >= 0) {
+            if (mm->routeMarker >= 0 || mm->hasUserWaypoint) {
                 if (ImGui::DragFloat("Route Width##umm", &mm->routeWidth, 0.2f, 1.0f, 16.0f)) ed.dirty = true;
                 float rc[4] = {mm->routeColor.r, mm->routeColor.g, mm->routeColor.b, mm->routeColor.a};
                 if (ImGui::ColorEdit4("Route Color##umm", rc)) { mm->routeColor = {rc[0],rc[1],rc[2],rc[3]}; ed.dirty = true; }
+            }
+            ImGui::SeparatorText("Waypoint (click map)");
+            if (ImGui::Checkbox("Click To Set##umm", &mm->mapClickWaypoint)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Left-click the open (fullscreen) map to drop a waypoint; right-click clears it.");
+            ImGui::SameLine();
+            { float wc[4] = {mm->userWaypointColor.r, mm->userWaypointColor.g, mm->userWaypointColor.b, mm->userWaypointColor.a};
+              if (ImGui::ColorEdit4("##uwc", wc, ImGuiColorEditFlags_NoInputs)) { mm->userWaypointColor = {wc[0],wc[1],wc[2],wc[3]}; ed.dirty = true; } }
+            if (mm->hasUserWaypoint) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear WP##umm")) { mm->hasUserWaypoint = false; ed.dirty = true; }
             }
             ImGui::TextDisabled("add a Minimap Blip to objects to plot them");
             if (ImGui::SmallButton("Remove##umm")) toRemove = mm;
@@ -11680,14 +11690,16 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (mm->showLabels && !bl->label.empty())
                 DrawBitmapText(dl, bl->label, a.x+mx+half+2, a.y+my-half, mm->labelSize, ToColor(mm->labelColor));
         }
-        // Route line (GTA pink line from the player centre to a chosen waypoint).
-        if (mm->routeMarker >= 0 && mm->routeMarker < (int)mm->markers.size()) {
+        // Route lines (to a chosen marker and/or the user-placed waypoint).
+        auto drawRoute = [&](const Vec2& worldEN) {
             float rmx, rmy;
-            Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mm->markers[mm->routeMarker].world),
-                                 sz.x, sz.y, mapHeading, rmx, rmy, mmWpp);
+            Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(worldEN), sz.x, sz.y, mapHeading, rmx, rmy, mmWpp);
             dl->AddLine(ImVec2(cxp, cyp), ImVec2(a.x+rmx, a.y+rmy), ToColor(mm->routeColor),
                         mm->routeWidth > 0.5f ? mm->routeWidth : 1.0f);
-        }
+        };
+        if (mm->routeMarker >= 0 && mm->routeMarker < (int)mm->markers.size())
+            drawRoute(mm->markers[mm->routeMarker].world);
+        if (mm->hasUserWaypoint) drawRoute(mm->userWaypoint);
         // Waypoint markers (GTA POIs): fixed world points drawn as diamonds.
         for (const auto& mk : mm->markers) {
             float mx, my;
@@ -11704,6 +11716,26 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddTriangleFilled(ImVec2(px, py-h), ImVec2(px-h, py), ImVec2(px, py+h), c);
             if (mm->showLabels && !mk.label.empty())
                 DrawBitmapText(dl, mk.label, px+h+2, py-h, mm->labelSize, ToColor(mm->labelColor));
+        }
+        // User-placed waypoint (click-to-set): a bright diamond on the map.
+        if (mm->hasUserWaypoint) {
+            float wmx, wmy;
+            Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mm->userWaypoint), sz.x, sz.y, mapHeading, wmx, wmy, mmWpp);
+            float px = a.x + wmx, py = a.y + wmy, h = mm->blipSize * 1.3f; ImU32 c = ToColor(mm->userWaypointColor);
+            dl->AddTriangleFilled(ImVec2(px, py-h), ImVec2(px+h, py), ImVec2(px, py+h), c);
+            dl->AddTriangleFilled(ImVec2(px, py-h), ImVec2(px-h, py), ImVec2(px, py+h), c);
+        }
+        // Click the open (fullscreen) map preview to drop a waypoint; right-click clears.
+        if (gameView && mm->fullscreen && mm->mapClickWaypoint) {
+            okay::Vec2 cur = okay::Input::MousePosition();
+            bool inBox = cur.x >= o.x && cur.x < o.x + sz.x && cur.y >= o.y && cur.y < o.y + sz.y;
+            if (inBox && okay::Input::GetMouseButtonDown(0)) {
+                mm->userWaypoint = Minimap::MapToWorldPlane(*mm, center, sz.x, sz.y, mapHeading,
+                                                           cur.x - o.x, cur.y - o.y, mmWpp);
+                mm->hasUserWaypoint = true;
+            } else if (inBox && okay::Input::GetMouseButtonDown(1)) {
+                mm->hasUserWaypoint = false;
+            }
         }
         // The target marker at the map center (arrow shows facing; GTA north-up maps
         // spin the arrow instead of the map).
@@ -14616,6 +14648,7 @@ int main(int argc, char** argv) {
                 if (auto* gi = up->GetComponent<GridInventory>()) if (gi->open) gameModal = true;
                 if (auto* cs = up->GetComponent<CraftingStation>()) if (cs->open) gameModal = true;
                 if (auto* ce = up->GetComponent<ChestInventory>()) if (ce->open) gameModal = true;
+                if (auto* mm = up->GetComponent<Minimap>()) if (mm->fullscreen) gameModal = true;
             }
             // Esc releases the manual capture.
             const Uint8* ks2 = SDL_GetKeyboardState(nullptr);
@@ -14714,6 +14747,7 @@ int main(int argc, char** argv) {
                     if (auto* gi = up->GetComponent<okay::GridInventory>()) if (gi->open) { invModal = true; break; }
                     if (auto* cs = up->GetComponent<okay::CraftingStation>()) if (cs->open) { invModal = true; break; }
                     if (auto* ce = up->GetComponent<okay::ChestInventory>()) if (ce->open) { invModal = true; break; }
+                    if (auto* mm = up->GetComponent<okay::Minimap>()) if (mm->fullscreen) { invModal = true; break; }
                 }
             okay::Input::SetUICaptured(invModal);
         }

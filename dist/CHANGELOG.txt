@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.277.0  (Click-to-place waypoints on the map)
+  - Open the fullscreen map (your map key) and LEFT-CLICK anywhere to drop a
+    waypoint; the route line auto-draws from the player to it. Right-click clears
+    it. The fullscreen map now frees the cursor (GTA pause-map style) so it's
+    clickable. Works in the player and the editor Game view; colour configurable.
+
 v2.276.0  (Minimap radar range / fog-of-war)
   - New "Blip Range" on the Minimap: blips farther than this many world units
     from the centre are hidden (0 = show all) — a radar-style sweep / soft

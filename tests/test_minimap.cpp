@@ -67,6 +67,25 @@ int main() {
         CHECK(Minimap::WorldToMapR(rect, center, Vec3{45.0f, 0, -45.0f}, W, H, 0.0f, x, y));
         CHECK(!Minimap::WorldToMapR(circ, center, Vec3{45.0f, 0, -45.0f}, W, H, 0.0f, x, y));
 
+        // MapToWorldPlane is the inverse of WorldToMapR: project a world point to the
+        // map, then unproject it, and recover the original (east, north).
+        {
+            Minimap wm; wm.worldPerPixel = 0.5f; wm.useXZ = true;
+            Vec3 wctr{3, 0, -2};
+            Vec3 world{9.5f, 0, 4.0f};
+            float wx, wy;
+            CHECK(Minimap::WorldToMapR(wm, wctr, world, 200.0f, 160.0f, 0.0f, wx, wy));
+            Vec2 back = Minimap::MapToWorldPlane(wm, wctr, 200.0f, 160.0f, 0.0f, wx, wy);
+            CHECK_NEAR(back.x, 9.5f, 1e-2f);    // east
+            CHECK_NEAR(back.y, 4.0f, 1e-2f);    // north (Z)
+            // Same, with a heading-up rotation in play.
+            float h = 0.7f;
+            CHECK(Minimap::WorldToMapR(wm, wctr, world, 200.0f, 160.0f, h, wx, wy));
+            Vec2 back2 = Minimap::MapToWorldPlane(wm, wctr, 200.0f, 160.0f, h, wx, wy);
+            CHECK_NEAR(back2.x, 9.5f, 1e-2f);
+            CHECK_NEAR(back2.y, 4.0f, 1e-2f);
+        }
+
         // wpp override (used by the fullscreen pause map) doubles the visible range.
         Minimap z; z.worldPerPixel = 1.0f;
         float x2, y2;
@@ -137,6 +156,10 @@ int main() {
             mm->mapShapes.push_back(house);
         }
         mm->blipRange = 42.5f;
+        mm->mapClickWaypoint = false;
+        mm->hasUserWaypoint = true;
+        mm->userWaypoint = {17.0f, -8.0f};
+        mm->userWaypointColor = Color::FromBytes(255, 60, 180);
         mm->showSelf = false;
         mm->viewCone = true; mm->viewConeAngle = 75.0f; mm->viewConeLength = 50.0f;
         mm->viewConeColor = Color::FromBytes(10, 20, 30, 80);
@@ -218,6 +241,10 @@ int main() {
                 CHECK_NEAR(lm->mapShapes[1].points[1].y, 11.0f, 1e-3f);
             }
             CHECK_NEAR(lm->blipRange, 42.5f, 1e-3f);
+            CHECK(!lm->mapClickWaypoint);
+            CHECK(lm->hasUserWaypoint);
+            CHECK_NEAR(lm->userWaypoint.x, 17.0f, 1e-3f);
+            CHECK_NEAR(lm->userWaypoint.y, -8.0f, 1e-3f);
             if (lm->markers.size() == 2) {
                 CHECK(lm->markers[0].label == "Shop");
                 CHECK(lm->markers[1].label == "Boss");

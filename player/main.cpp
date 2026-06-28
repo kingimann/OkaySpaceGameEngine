@@ -1082,6 +1082,9 @@ int main(int argc, char** argv) {
             if (auto* gu = up->GetComponent<GridInventoryUI>()) { if (gu->dragIndex >= 0) itemDragging = true; }
             if (auto* cs = up->GetComponent<CraftingStation>()) { if (cs->open) invModal = true; }
             if (auto* ce = up->GetComponent<ChestInventory>()) { if (ce->open) invModal = true; }
+            // The fullscreen pause-map is modal too: free + show the cursor so it can be
+            // clicked to drop a waypoint (GTA-style), and pause look/move.
+            if (auto* mm = up->GetComponent<Minimap>()) { if (mm->fullscreen) invModal = true; }
         }
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
@@ -1723,6 +1726,18 @@ int main(int argc, char** argv) {
                 }
             }
             float selfAng = targetHeading - mapHeading;   // facing of the player on-map
+            // Click the open (fullscreen) map to drop a waypoint; right-click clears it.
+            if (mm->fullscreen && mm->mapClickWaypoint) {
+                okay::Vec2 cur = Input::MousePosition();
+                bool inBox = cur.x >= o.x && cur.x < o.x + sz.x && cur.y >= o.y && cur.y < o.y + sz.y;
+                if (inBox && Input::GetMouseButtonDown(0)) {
+                    mm->userWaypoint = Minimap::MapToWorldPlane(*mm, center, sz.x, sz.y, mapHeading,
+                                                               cur.x - o.x, cur.y - o.y, wpp);
+                    mm->hasUserWaypoint = true;
+                } else if (inBox && Input::GetMouseButtonDown(1)) {
+                    mm->hasUserWaypoint = false;
+                }
+            }
             // Authorable vector map: roads (lines), houses (rects), zones (polys).
             auto projPlane = [&](const Vec2& en, float& ox, float& oy) {
                 float pmx, pmy;
@@ -1832,17 +1847,20 @@ int main(int argc, char** argv) {
                     DrawText(renderer, bl->label, o.x+mx+half+2, o.y+my-half, mm->labelSize, lc);
                 }
             }
-            // Route line (GTA pink line from the player centre to a chosen waypoint).
-            if (mm->routeMarker >= 0 && mm->routeMarker < (int)mm->markers.size()) {
+            // Route lines (GTA pink line from the player centre to a chosen marker
+            // and/or the user-placed waypoint).
+            auto drawRoute = [&](const Vec2& worldEN) {
                 float rmx, rmy;
-                Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mm->markers[mm->routeMarker].world),
-                                     sz.x, sz.y, mapHeading, rmx, rmy, wpp);
+                Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(worldEN), sz.x, sz.y, mapHeading, rmx, rmy, wpp);
                 SDL_SetRenderDrawColor(renderer, (Uint8)(mm->routeColor.r*255), (Uint8)(mm->routeColor.g*255),
                                        (Uint8)(mm->routeColor.b*255), (Uint8)(mm->routeColor.a*255*op));
                 int rw = (int)mm->routeWidth; if (rw < 1) rw = 1;
                 for (int t = -(rw/2); t <= rw/2; ++t)
                     SDL_RenderDrawLine(renderer, cx, cy+t, (int)(o.x+rmx), (int)(o.y+rmy)+t);
-            }
+            };
+            if (mm->routeMarker >= 0 && mm->routeMarker < (int)mm->markers.size())
+                drawRoute(mm->markers[mm->routeMarker].world);
+            if (mm->hasUserWaypoint) drawRoute(mm->userWaypoint);
             // Waypoint markers (GTA POIs): fixed world points drawn as diamonds.
             for (const auto& mk : mm->markers) {
                 float mx, my;
@@ -1866,6 +1884,18 @@ int main(int argc, char** argv) {
                                  (Uint8)(mm->labelColor.b*255), (Uint8)(mm->labelColor.a*255*op)};
                     DrawText(renderer, mk.label, px+h+2, py-h, mm->labelSize, lc);
                 }
+            }
+            // User-placed waypoint (click-to-set): a bright diamond on the map.
+            if (mm->hasUserWaypoint) {
+                float wmx, wmy;
+                Minimap::WorldToMapR(*mm, center, mm->PlaneToWorld(mm->userWaypoint), sz.x, sz.y, mapHeading, wmx, wmy, wpp);
+                SDL_Color col{(Uint8)(mm->userWaypointColor.r*255), (Uint8)(mm->userWaypointColor.g*255),
+                              (Uint8)(mm->userWaypointColor.b*255), (Uint8)(mm->userWaypointColor.a*255*op)};
+                float px = o.x + wmx, py = o.y + wmy; int h = (int)(mm->blipSize * 1.3f);
+                SDL_Point top{(int)px,(int)(py-h)}, rgt{(int)(px+h),(int)py},
+                          bot{(int)px,(int)(py+h)}, lft{(int)(px-h),(int)py};
+                MMFillTriangle(renderer, top, rgt, bot, col);
+                MMFillTriangle(renderer, top, lft, bot, col);
             }
             // The target marker at the map center (the arrow shows facing; a north-up
             // map spins the arrow GTA-style).

@@ -74,6 +74,12 @@ public:
     Color routeColor  = Color::FromBytes(235, 70, 200, 230);
     float routeWidth  = 2.0f;
 
+    // ---- User waypoint (click the fullscreen map to set it, GTA-style) ----
+    bool  mapClickWaypoint = true;                     // left-click the open map sets it; right-click clears
+    bool  hasUserWaypoint  = false;                    // runtime: a waypoint is placed
+    Vec2  userWaypoint{0.0f, 0.0f};                    // world (east, north) of the placed waypoint
+    Color userWaypointColor = Color::FromBytes(255, 60, 180, 255);
+
     // ---- GTA-style custom world map ----
     std::string mapTexture;                          // image drawn under the blips ("" = none)
     float mapWorldSize = 100.0f;                      // world units the texture spans (square)
@@ -149,6 +155,26 @@ public:
         float de = world.x - center.x;
         float dn = m.useXZ ? (world.z - center.z) : (world.y - center.y);
         return de * de + dn * dn <= m.blipRange * m.blipRange;
+    }
+
+    /// Inverse of WorldToMapR: a pixel offset (px,py) from the map's top-left back to a
+    /// world map-plane point (east, north). Used to turn a click on the map into a
+    /// world waypoint. `wppOverride` mirrors WorldToMapR (0 = use worldPerPixel).
+    static Vec2 MapToWorldPlane(const Minimap& m, const Vec3& center, float mapW, float mapH,
+                                float headingRad, float px, float py, float wppOverride = 0.0f) {
+        float wpp = (wppOverride > 1e-4f ? wppOverride
+                                         : (m.worldPerPixel > 1e-4f ? m.worldPerPixel : 1e-4f));
+        float axp = (px - mapW * 0.5f) * wpp;
+        float ayp = (mapH * 0.5f - py) * wpp;   // screen y grows down; north is up
+        float ax = axp, ay = ayp;
+        if (headingRad != 0.0f) {
+            float c = std::cos(headingRad), s = std::sin(headingRad);
+            ax = axp * c + ayp * s;             // inverse of the +heading rotation
+            ay = -axp * s + ayp * c;
+        }
+        float east  = center.x + ax;
+        float north = (m.useXZ ? center.z : center.y) + ay;
+        return Vec2{east, north};
     }
 
     /// Heading (radians) of a forward vector in the map plane, measured from "north"

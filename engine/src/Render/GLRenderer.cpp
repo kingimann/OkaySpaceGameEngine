@@ -76,6 +76,8 @@ typedef GLint  (*PFNGetUniformLocation)(GLuint, const char*);
 typedef void   (*PFNUniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat*);
 typedef void   (*PFNUniform3f)(GLint, GLfloat, GLfloat, GLfloat);
 typedef void   (*PFNUniform1f)(GLint, GLfloat);
+typedef void   (*PFNUniform3fv)(GLint, GLsizei, const GLfloat*);
+typedef void   (*PFNUniform1fv)(GLint, GLsizei, const GLfloat*);
 typedef void   (*PFNGenBuffers)(GLsizei, GLuint*);
 typedef void   (*PFNBindBuffer)(GLenum, GLuint);
 typedef void   (*PFNBufferData)(GLenum, GLsizeiptrOK, const void*, GLenum);
@@ -130,6 +132,7 @@ struct GL {
     PFNDeleteShader DeleteShader; PFNDeleteProgram DeleteProgram; PFNUseProgram UseProgram;
     PFNGetUniformLocation GetUniformLocation; PFNUniformMatrix4fv UniformMatrix4fv;
     PFNUniform3f Uniform3f; PFNUniform1f Uniform1f;
+    PFNUniform3fv Uniform3fv; PFNUniform1fv Uniform1fv;
     PFNGenBuffers GenBuffers; PFNBindBuffer BindBuffer; PFNBufferData BufferData; PFNDeleteBuffers DeleteBuffers;
     PFNVertexAttribPointer VertexAttribPointer; PFNEnableVertexAttribArray EnableVertexAttribArray;
     PFNGenFramebuffers GenFramebuffers; PFNBindFramebuffer BindFramebuffer; PFNDeleteFramebuffers DeleteFramebuffers;
@@ -177,6 +180,9 @@ const char* kFrag =
     "uniform float uShaderMode; uniform float uToonBands; uniform float uRimStr;\n"
     "uniform vec3 uRimColor; uniform vec3 uGradTop; uniform vec3 uGradBot;\n"
     "uniform float uShadowAlpha;\n"   // >=0: draw a flat translucent black (ground contact shadow)
+    "uniform int uLightCount;\n"      // multi-light: directional + point + spot from the scene
+    "uniform float uLType[8]; uniform vec3 uLPos[8]; uniform vec3 uLDir[8];\n"
+    "uniform vec3 uLCol[8]; uniform float uLRange[8]; uniform float uLCosOut[8]; uniform float uLCosIn[8];\n"
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol;\n"
     "void main(){\n"
     "  if (uShadowAlpha >= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowAlpha); return; }\n"
@@ -197,17 +203,32 @@ const char* kFrag =
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(vWorld.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
     "  if (uUnlit > 0.5) { gl_FragColor = vec4(base + uEmissive, 1.0); return; }\n"
-    "  float ndl = max(dot(N, uLightDir), 0.0);\n"
-    "  if (uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5)\n"   // Toon banding
-    "    ndl = ceil(ndl * uToonBands) / uToonBands;\n"
+    "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  vec3 amb = uAmbient * mix(0.55, 1.15, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // hemisphere ambient
-    "  vec3 diff = base * (amb + uLightColor * ndl);\n"
-    "  float spec = 0.0;\n"
-    "  if (uSpecular > 0.0) {\n"
-    "    vec3 V = normalize(uEye - vWorld);\n"
-    "    vec3 H = normalize(uLightDir + V);\n"
-    "    spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular;\n"
+    "  vec3 lit = amb; float spec = 0.0;\n"
+    "  if (uLightCount < 1) {\n"                                  // fallback: the global directional
+    "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "    lit += uLightColor * ndl;\n"
+    "    if (uSpecular > 0.0) { vec3 H = normalize(uLightDir + Vv);\n"
+    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular; }\n"
+    "  } else {\n"
+    "    for (int i = 0; i < 8; i++) { if (i >= uLightCount) break;\n"   // directional + point + spot
+    "      vec3 ld; float at = 1.0;\n"
+    "      if (uLType[i] < 0.5) { ld = normalize(-uLDir[i]); }\n"        // directional
+    "      else { vec3 toL = uLPos[i] - vWorld; float d = length(toL); ld = toL / max(d, 1e-4);\n"
+    "        at = max(1.0 - d / max(uLRange[i], 1e-4), 0.0); at *= at;\n"
+    "        if (uLType[i] > 1.5) { float cs = dot(normalize(uLDir[i]), -ld);\n"   // spot cone
+    "          float dn = uLCosIn[i] - uLCosOut[i];\n"
+    "          float sp = dn > 1e-4 ? clamp((cs - uLCosOut[i]) / dn, 0.0, 1.0) : (cs >= uLCosOut[i] ? 1.0 : 0.0);\n"
+    "          at *= sp * sp; } }\n"
+    "      float ndl = max(dot(N, ld), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "      lit += uLCol[i] * ndl * at;\n"
+    "      if (uSpecular > 0.0) { vec3 H = normalize(ld + Vv);\n"
+    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at; }\n"
+    "    }\n"
     "  }\n"
+    "  if (uShaderMode > 7.5) lit += fz * fz * (lit) * 0.6;\n"     // Velvet: fuzzy grazing sheen
+    "  vec3 diff = base * lit;\n"
     "  vec3 rim = vec3(0.0);\n"                                   // rim glow (Fresnel/Hologram or rimStr>0)
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
     "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
@@ -247,6 +268,8 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     r &= load(g.UniformMatrix4fv, gp, "glUniformMatrix4fv");
     r &= load(g.Uniform3f, gp, "glUniform3f");
     r &= load(g.Uniform1f, gp, "glUniform1f");
+    r &= load(g.Uniform3fv, gp, "glUniform3fv");
+    r &= load(g.Uniform1fv, gp, "glUniform1fv");
     r &= load(g.GenBuffers, gp, "glGenBuffers");
     r &= load(g.BindBuffer, gp, "glBindBuffer");
     r &= load(g.BufferData, gp, "glBufferData");
@@ -333,6 +356,14 @@ bool GLRenderer::EnsureProgram() {
     m_uGradTop = g.GetUniformLocation(m_prog, "uGradTop");
     m_uGradBot = g.GetUniformLocation(m_prog, "uGradBot");
     m_uShadowAlpha = g.GetUniformLocation(m_prog, "uShadowAlpha");
+    m_uLightCount = g.GetUniformLocation(m_prog, "uLightCount");
+    m_uLType   = g.GetUniformLocation(m_prog, "uLType");
+    m_uLPos    = g.GetUniformLocation(m_prog, "uLPos");
+    m_uLDir    = g.GetUniformLocation(m_prog, "uLDir");
+    m_uLCol    = g.GetUniformLocation(m_prog, "uLCol");
+    m_uLRange  = g.GetUniformLocation(m_prog, "uLRange");
+    m_uLCosOut = g.GetUniformLocation(m_prog, "uLCosOut");
+    m_uLCosIn  = g.GetUniformLocation(m_prog, "uLCosIn");
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
     // crash on the attempt). Create one when available; on a compatibility context
@@ -422,8 +453,39 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     g.Uniform3f(m_uLightDir, toLight.x, toLight.y, toLight.z);
     g.Uniform1f(m_uShadowAlpha, -1.0f);           // normal (lit) draws; flipped on for the shadow pass
     g.Uniform3f(m_uLightColor, 0.85f, 0.85f, 0.85f);
-    g.Uniform3f(m_uAmbient, 0.35f, 0.36f, 0.40f);
+    // Hemisphere/colored ambient from the scene's gathered lights (falls back to grey).
+    Vec3 amb = SceneLights::AmbientColor();
+    if (amb.x + amb.y + amb.z < 1e-4f) amb = Vec3{0.35f, 0.36f, 0.40f};
+    g.Uniform3f(m_uAmbient, amb.x, amb.y, amb.z);
     g.Uniform3f(m_uEye, eye.x, eye.y, eye.z);
+
+    // Upload every gathered scene light (directional + point + spot) so all lights
+    // shade on the GPU exactly like the software renderer — not just the sun.
+    {
+        const auto& L = SceneLights::List();
+        int n = (int)L.size(); if (n > 8) n = 8;
+        float lt[8] = {0}, lr[8] = {0}, lco[8] = {0}, lci[8] = {0};
+        float lp[24] = {0}, ld[24] = {0}, lc[24] = {0};
+        for (int i = 0; i < n; ++i) {
+            const LightSample& s = L[i];
+            lt[i] = (float)s.type;
+            lp[i*3+0] = s.pos.x; lp[i*3+1] = s.pos.y; lp[i*3+2] = s.pos.z;
+            Vec3 d = s.dir.Normalized();
+            ld[i*3+0] = d.x; ld[i*3+1] = d.y; ld[i*3+2] = d.z;
+            lc[i*3+0] = s.color.x; lc[i*3+1] = s.color.y; lc[i*3+2] = s.color.z;
+            lr[i] = s.range; lco[i] = s.cosOuter; lci[i] = s.cosInner;
+        }
+        g.Uniform1i(m_uLightCount, n);
+        if (n > 0) {
+            g.Uniform1fv(m_uLType, n, lt);
+            g.Uniform3fv(m_uLPos, n, lp);
+            g.Uniform3fv(m_uLDir, n, ld);
+            g.Uniform3fv(m_uLCol, n, lc);
+            g.Uniform1fv(m_uLRange, n, lr);
+            g.Uniform1fv(m_uLCosOut, n, lco);
+            g.Uniform1fv(m_uLCosIn, n, lci);
+        }
+    }
 
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();

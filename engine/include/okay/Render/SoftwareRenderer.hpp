@@ -634,6 +634,14 @@ public:
                 float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + mrimR + er;
                 float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + mrimG + eg;
                 float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + mrimB + eb;
+                // Velvet shader: a soft fuzzy sheen that brightens grazing angles
+                // (backscatter), lit by the scene — cloth / peach-skin look.
+                if (shaderMode == 8) {
+                    Vec3 toEye = (eye - wpos).Normalized();
+                    float fz = 1.0f - std::fmax(0.0f, Vec3::Dot(n, toEye));
+                    float s = fz * fz * 0.6f;
+                    cr += br * lit.x * s; cg += bg * lit.y * s; cb += bb2 * lit.z * s;
+                }
                 // Environment reflection: mirror the sky gradient about the normal
                 // and blend it in by a Fresnel-weighted reflectivity (Schlick).
                 // Metals reflect strongly even without an explicit reflectivity, and
@@ -1538,6 +1546,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                    || mr->shader == MeshRenderer::Shader::Iridescent
                                    || mr->shader == MeshRenderer::Shader::Hologram
                                    || mr->shader == MeshRenderer::Shader::Posterize
+                                   || mr->shader == MeshRenderer::Shader::Velvet
                                    || mr->rimStrength > 0.0f || mr->triplanar)
                                   && !unlit && !useMatcap;
             const int  shaderMode = (int)mr->shader;

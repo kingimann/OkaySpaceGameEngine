@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.280.0  (All lights work on the GPU + Velvet shader)
+  - Lighting: the OpenGL and Direct3D 11 renderers now shade with EVERY scene
+    light — point and spot lights (with range falloff + soft spot cones) and
+    multiple directionals — not just the sun, matching the software renderer.
+    Ambient is also taken from the scene now. So your Point/Spot lights finally
+    light objects in the editor preview and exported game.
+  - New Velvet shader: a soft fuzzy sheen that brightens at grazing angles
+    (cloth / peach-skin), across all three renderers.
+
 v2.279.0  (More shaders + richer ambient lighting)
   - Three new Mesh Renderer shader models: Iridescent (oil-slick hue that shifts
     with the view angle), Hologram (dark, scan-lined body lit at the edges), and

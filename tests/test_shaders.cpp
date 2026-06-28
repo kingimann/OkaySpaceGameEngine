@@ -118,7 +118,8 @@ int main() {
         Raster irid = renderSphere(MeshRenderer::Shader::Iridescent);
         Raster holo = renderSphere(MeshRenderer::Shader::Hologram);
         Raster post = renderSphere(MeshRenderer::Shader::Posterize);
-        int dGrad = 0, dFres = 0, dIrid = 0, dHolo = 0, dPost = 0;
+        Raster velv = renderSphere(MeshRenderer::Shader::Velvet);
+        int dGrad = 0, dFres = 0, dIrid = 0, dHolo = 0, dPost = 0, dVelv = 0;
         for (int i = 0; i < 64 * 64; ++i) {
             std::uint32_t s = std0.Get(i % 64, i / 64);
             if (s != grad.Get(i % 64, i / 64)) ++dGrad;
@@ -126,7 +127,9 @@ int main() {
             if (s != irid.Get(i % 64, i / 64)) ++dIrid;
             if (s != holo.Get(i % 64, i / 64)) ++dHolo;
             if (s != post.Get(i % 64, i / 64)) ++dPost;
+            if (s != velv.Get(i % 64, i / 64)) ++dVelv;
         }
+        CHECK(dVelv > 0);   // velvet sheen brightens the grazing edges
         CHECK(dGrad > 0);   // gradient ramp repaints the sphere
         CHECK(dFres > 0);   // fresnel rim/darkening repaints the sphere
         CHECK(dIrid > 0);   // iridescent hue-shift repaints the sphere

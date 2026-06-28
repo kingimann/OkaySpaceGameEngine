@@ -38,6 +38,8 @@ const char* kHLSL =
     "  float3 uRimColor;  float uShaderMode;\n"
     "  float3 uGradTop;   float uToonBands;\n"
     "  float3 uGradBot;   float uRimStr;\n"
+    "  float4 uLightCount;\n"                 // .x = number of scene lights (0 = use uLightDir)
+    "  float4 uLights[32];\n"                 // 8 lights x 4: [dir,type][pos,range][col,cosOut][cosIn,..]
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "SamplerState uSamp : register(s0);\n"
@@ -73,17 +75,34 @@ const char* kHLSL =
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(i.world.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
     "  if (uUnlit > 0.5) return float4(base + uEmissive, 1.0);\n"
-    "  float ndl = max(dot(N, uLightDir), 0.0);\n"
-    "  if (uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5)\n"   // Toon
-    "    ndl = ceil(ndl * uToonBands) / uToonBands;\n"
+    "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = uAmbient * lerp(0.55, 1.15, saturate(N.y * 0.5 + 0.5));\n"  // hemisphere ambient
-    "  float3 diff = base * (amb + uLightColor * ndl);\n"
-    "  float spec = 0.0;\n"
-    "  if (uSpecular > 0.0) {\n"
-    "    float3 V = normalize(uEye - i.world);\n"
-    "    float3 H = normalize(uLightDir + V);\n"
-    "    spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular;\n"
+    "  float3 lit = amb; float spec = 0.0;\n"
+    "  int lc = (int)uLightCount.x;\n"
+    "  if (lc < 1) {\n"                                          // fallback: global directional
+    "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "    lit += uLightColor * ndl;\n"
+    "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
+    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular; }\n"
+    "  } else {\n"
+    "    for (int li = 0; li < 8; li++) { if (li >= lc) break;\n"      // directional + point + spot
+    "      float4 d0 = uLights[li*4+0]; float4 d1 = uLights[li*4+1];\n"
+    "      float4 d2 = uLights[li*4+2]; float4 d3 = uLights[li*4+3];\n"
+    "      float3 ld; float at = 1.0;\n"
+    "      if (d0.w < 0.5) { ld = normalize(-d0.xyz); }\n"             // directional
+    "      else { float3 toL = d1.xyz - i.world; float dist = length(toL); ld = toL / max(dist, 1e-4);\n"
+    "        at = max(1.0 - dist / max(d1.w, 1e-4), 0.0); at *= at;\n"
+    "        if (d0.w > 1.5) { float cs = dot(normalize(d0.xyz), -ld);\n"   // spot cone
+    "          float dn = d3.x - d2.w; float sp = dn > 1e-4 ? saturate((cs - d2.w) / dn) : (cs >= d2.w ? 1.0 : 0.0);\n"
+    "          at *= sp * sp; } }\n"
+    "      float ndl = max(dot(N, ld), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "      lit += d2.xyz * ndl * at;\n"
+    "      if (uSpecular > 0.0) { float3 H = normalize(ld + Vv);\n"
+    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at; }\n"
+    "    }\n"
     "  }\n"
+    "  if (uShaderMode > 7.5) lit += fz * fz * lit * 0.6;\n"      // Velvet: fuzzy grazing sheen
+    "  float3 diff = base * lit;\n"
     "  float3 rim = float3(0,0,0);\n"
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
     "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
@@ -105,6 +124,8 @@ struct CB {
     float rimColor[3];  float shaderMode;
     float gradTop[3];   float toonBands;
     float gradBot[3];   float rimStr;
+    float lightCount[4];       // .x = number of scene lights
+    float lights[128];         // 32 float4: per light [dir,type][pos,range][col,cosOut][cosIn,..]
 };
 
 } // namespace
@@ -308,6 +329,23 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     c->OMSetDepthStencilState(p->depth, 0);
 
     Vec3 toLight = (SceneLight::Direction() * -1.0f).Normalized();
+    // Gather all scene lights once per frame (directional + point + spot) into the
+    // packed cbuffer array so every light shades on the GPU, not just the sun.
+    float frameLights[128]; std::memset(frameLights, 0, sizeof(frameLights));
+    int frameLightCount = 0;
+    {
+        const auto& LS = SceneLights::List();
+        int n = (int)LS.size(); if (n > 8) n = 8; frameLightCount = n;
+        for (int i = 0; i < n; ++i) {
+            const LightSample& s = LS[i]; Vec3 d = s.dir.Normalized(); int b = i * 16;
+            frameLights[b+0] = d.x; frameLights[b+1] = d.y; frameLights[b+2] = d.z; frameLights[b+3] = (float)s.type;
+            frameLights[b+4] = s.pos.x; frameLights[b+5] = s.pos.y; frameLights[b+6] = s.pos.z; frameLights[b+7] = s.range;
+            frameLights[b+8] = s.color.x; frameLights[b+9] = s.color.y; frameLights[b+10] = s.color.z; frameLights[b+11] = s.cosOuter;
+            frameLights[b+12] = s.cosInner;
+        }
+    }
+    Vec3 d3amb = SceneLights::AmbientColor();
+    if (d3amb.x + d3amb.y + d3amb.z < 1e-4f) d3amb = Vec3{0.35f, 0.36f, 0.40f};
 
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
@@ -386,7 +424,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.unlit = unlit ? 1.0f : 0.0f;
         cb.lightColor[0] = cb.lightColor[1] = cb.lightColor[2] = 0.85f;
         cb.useTex = srv ? 1.0f : 0.0f;
-        cb.ambient[0] = 0.35f; cb.ambient[1] = 0.36f; cb.ambient[2] = 0.40f;
+        cb.ambient[0] = d3amb.x; cb.ambient[1] = d3amb.y; cb.ambient[2] = d3amb.z;
         cb.eye[0] = eye.x; cb.eye[1] = eye.y; cb.eye[2] = eye.z;
         cb.tiling[0] = srv ? mr->tiling.x : 1.0f; cb.tiling[1] = srv ? mr->tiling.y : 1.0f;
         cb.shaderMode = (float)(int)mr->shader;
@@ -396,6 +434,8 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.gradTop[0] = mr->gradientTop.r; cb.gradTop[1] = mr->gradientTop.g; cb.gradTop[2] = mr->gradientTop.b;
         cb.gradBot[0] = mr->gradientBottom.r; cb.gradBot[1] = mr->gradientBottom.g; cb.gradBot[2] = mr->gradientBottom.b;
         cb.shadowAlpha = -1.0f;   // lit pass (>=0 would draw the flat shadow — must be off here)
+        cb.lightCount[0] = (float)frameLightCount;
+        std::memcpy(cb.lights, frameLights, sizeof(frameLights));
         if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
         }

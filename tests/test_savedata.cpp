@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <cstdio>
+#include <filesystem>
 
 using namespace okay;
 
@@ -61,6 +62,28 @@ int main() {
         CHECK(Save::GetInt("level", -1, f2) == -1);  // gone -> default
 
         std::remove(f1.c_str());
+    }
+
+    // Base dir (persistentDataPath): a relative save lands in the chosen folder;
+    // absolute paths are never relocated; clearing it restores legacy behaviour.
+    {
+        std::filesystem::create_directories("/tmp/okay_savebase_test");
+        Save::SetBaseDir("/tmp/okay_savebase_test");
+        const std::string rel = "coins.okaysave";
+        Save::DeleteFile(rel);
+        Save::SetInt("n", 42, rel);
+        CHECK(Save::GetInt("n", 0, rel) == 42);
+        CHECK(std::filesystem::exists("/tmp/okay_savebase_test/coins.okaysave"));
+        Save::DeleteFile(rel);
+
+        const std::string abs = "/tmp/okay_abs_save.okaysave";
+        Save::DeleteFile(abs);
+        Save::SetInt("x", 7, abs);
+        CHECK(std::filesystem::exists(abs));   // absolute path bypasses the base dir
+        Save::DeleteFile(abs);
+
+        Save::SetBaseDir("");   // restore for any later tests
+        std::filesystem::remove_all("/tmp/okay_savebase_test");
     }
 
     std::remove(path.c_str());

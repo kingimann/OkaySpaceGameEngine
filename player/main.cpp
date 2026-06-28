@@ -864,6 +864,8 @@ int main(int argc, char** argv) {
         bool muteOnFocusLoss = false;
         bool startMaximized = false;
         int  minWidth = 0, minHeight = 0;
+        std::string company = "OkaySpace";
+        bool saveToUserDir = true; // saves -> per-user app folder (persistentDataPath)
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -905,6 +907,8 @@ int main(int argc, char** argv) {
             else if (k == "start_maximized")cfg.startMaximized = std::atoi(v.c_str()) != 0;
             else if (k == "min_width")      cfg.minWidth = std::atoi(v.c_str());
             else if (k == "min_height")     cfg.minHeight = std::atoi(v.c_str());
+            else if (k == "company")        cfg.company = v;
+            else if (k == "save_userdir")   cfg.saveToUserDir = std::atoi(v.c_str()) != 0;
         }
     }
     // Register the build's scenes so scripts can load_scene_index / load_next.
@@ -917,10 +921,21 @@ int main(int argc, char** argv) {
     else if (!cfg.startup.empty()) scenePath = baseDir + cfg.startup;
     else scenePath = baseDir + "game.okayscene";
 
-    // Persistent prefs (high scores, settings) live beside the scene file.
-    std::string prefsPath = baseDir + "game.okayprefs";
+    // Where the game WRITES saves (Unity's persistentDataPath): a per-user, writable
+    // app folder when enabled — so saving works even from a read-only install (e.g.
+    // Program Files) and two games never clash. Falls back to beside-the-exe.
+    std::string saveDir = baseDir;
+    if (cfg.saveToUserDir) {
+        const char* org = cfg.company.empty() ? "OkaySpace" : cfg.company.c_str();
+        const char* app = cfg.title.empty() ? "Game" : cfg.title.c_str();
+        if (char* pref = SDL_GetPrefPath(org, app)) { saveDir = pref; SDL_free(pref); }
+    }
+    okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
+
+    // Persistent prefs (high scores, settings) live in the save folder.
+    std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
-    DataAsset::SetBaseDir(baseDir);   // resolve .okaydata assets beside the game
+    DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
 
     Scene scene("Game");
     std::string err;

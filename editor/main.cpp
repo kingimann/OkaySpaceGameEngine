@@ -745,6 +745,7 @@ struct BuildSettings {
     bool  muteOnFocusLoss = false;         // silence audio when unfocused
     bool  startMaximized = false;          // open maximized
     int   minWidth = 0, minHeight = 0;     // minimum window size (0 = none)
+    bool  saveToUserDir = true;            // saves to per-user app folder (persistentDataPath)
     // ---- Graphics / quality (applied by the player at startup) ----
     bool  lockCursor = false;              // hide + lock the cursor on launch
     bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
@@ -1121,6 +1122,7 @@ struct Options {
     bool muteOnFocusLoss = false;
     bool startMaximized  = false;
     int  minWidth = 0, minHeight = 0;
+    bool saveToUserDir = true;   // saves -> per-user app folder (persistentDataPath)
 };
 
 // Obfuscate a just-written text file in place (scene/config) so it can't be read
@@ -1246,6 +1248,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "start_maximized=" << (opt.startMaximized ? 1 : 0) << "\n";
         cf << "min_width=" << opt.minWidth << "\n";
         cf << "min_height=" << opt.minHeight << "\n";
+        cf << "save_userdir=" << (opt.saveToUserDir ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
     }
@@ -4890,6 +4893,8 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Development build", &g_build.developmentBuild);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra logging; marks the build as non-final");
                 ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
+                ImGui::Checkbox("Save to user folder", &g_build.saveToUserDir);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write game saves/prefs to a per-user app folder (Unity's persistentDataPath),\nfrom Company + Product name. Saving then works even from a read-only install\n(e.g. Program Files), and two games never overwrite each other.\nOff = save beside the .exe (old behaviour).");
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Display")) {
@@ -5002,6 +5007,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.runInBackground = g_build.runInBackground; o.muteOnFocusLoss = g_build.muteOnFocusLoss;
             o.startMaximized = g_build.startMaximized;
             o.minWidth = g_build.minWidth; o.minHeight = g_build.minHeight;
+            o.saveToUserDir = g_build.saveToUserDir;
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o);
             g_openBuildResult = true;
             ConsoleLog("Build Game: " + g_buildStatus);

@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.298.0  (Per-user save folder — persistentDataPath)
+  - Games now save to a proper per-user app folder (Unity's persistentDataPath),
+    derived from Company + Product name, instead of next to the .exe. So saving
+    works even when the game is installed in a read-only location (e.g. Program
+    Files), and two different games never overwrite each other's saves.
+  - Applies to Prefs (high scores/settings) and the Save system's relative files;
+    absolute save paths are never relocated. Toggle in Build Settings > Player
+    ("Save to user folder"); off keeps the old beside-the-exe behaviour.
+  - Read-only game assets still load from the install/Data folder as before.
+
 v2.297.0  (Encrypted game data + expanded build settings)
   - Encrypt game data (Build Settings > Scenes): optionally obfuscate the shipped
     scenes + config so players can't open them in a text editor to read or

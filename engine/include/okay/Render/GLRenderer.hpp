@@ -77,7 +77,8 @@ private:
         m_uShaderMode = -1, m_uToonBands = -1, m_uRimStr = -1,
         m_uRimColor = -1, m_uGradTop = -1, m_uGradBot = -1, m_uShadowAlpha = -1,
         m_uLightCount = -1, m_uLType = -1, m_uLPos = -1, m_uLDir = -1,
-        m_uLCol = -1, m_uLRange = -1, m_uLCosOut = -1, m_uLCosIn = -1;
+        m_uLCol = -1, m_uLRange = -1, m_uLCosOut = -1, m_uLCosIn = -1,
+        m_uNormalTex = -1, m_uHasNormal = -1, m_uNormalStrength = -1;
     std::vector<float> m_verts;             // interleaved pos(3)+normal(3)+uv(2) scratch
     std::vector<unsigned int> m_indices;    // scratch index buffer
     std::vector<std::uint32_t> m_pixels;    // read-back result

@@ -32,8 +32,8 @@ const char* kHLSL =
     "  float3 uEmissive;  float uShininess;\n"
     "  float3 uLightDir;  float uUnlit;\n"
     "  float3 uLightColor; float uUseTex;\n"
-    "  float3 uAmbient;   float _p0;\n"
-    "  float3 uEye;       float _p1;\n"
+    "  float3 uAmbient;   float uHasNormal;\n"      // _p0 repurposed: 1 = sample normal map
+    "  float3 uEye;       float uNormalStrength;\n" // _p1 repurposed: bump intensity
     "  float2 uTiling;    float uShadowAlpha; float _p2;\n"
     "  float3 uRimColor;  float uShaderMode;\n"
     "  float3 uGradTop;   float uToonBands;\n"
@@ -42,15 +42,17 @@ const char* kHLSL =
     "  float4 uLights[32];\n"                 // 8 lights x 4: [dir,type][pos,range][col,cosOut][cosIn,..]
     "};\n"
     "Texture2D uTex : register(t0);\n"
+    "Texture2D uNormalTex : register(t1);\n"        // bump/normal map (tangent-space)
     "SamplerState uSamp : register(s0);\n"
-    "struct VSIn { float3 pos:POSITION; float3 nrm:NORMAL; float2 uv:TEXCOORD; float3 col:COLOR; };\n"
-    "struct PSIn { float4 pos:SV_POSITION; float3 nrm:NORMAL; float3 world:TEXCOORD1; float2 uv:TEXCOORD0; float3 col:COLOR; };\n"
+    "struct VSIn { float3 pos:POSITION; float3 nrm:NORMAL; float2 uv:TEXCOORD; float3 col:COLOR; float3 tan:TANGENT; };\n"
+    "struct PSIn { float4 pos:SV_POSITION; float3 nrm:NORMAL; float3 world:TEXCOORD1; float2 uv:TEXCOORD0; float3 col:COLOR; float3 tan:TEXCOORD2; };\n"
     "PSIn VSMain(VSIn i){\n"
     "  PSIn o;\n"
     "  float4 cp = mul(uMVP, float4(i.pos,1.0));\n"
     "  cp.z = (cp.z + cp.w) * 0.5;\n"        // GL [-1,1] -> D3D [0,1]
     "  o.pos = cp;\n"
     "  o.nrm = mul((float3x3)uModel, i.nrm);\n"
+    "  o.tan = mul((float3x3)uModel, i.tan);\n"
     "  o.world = mul(uModel, float4(i.pos,1.0)).xyz;\n"
     "  o.uv = i.uv * uTiling;\n"
     "  o.col = i.col;\n"
@@ -59,6 +61,16 @@ const char* kHLSL =
     "float4 PSMain(PSIn i):SV_TARGET {\n"
     "  if (uShadowAlpha >= 0.0) return float4(0,0,0,uShadowAlpha);\n"   // flat ground contact shadow
     "  float3 N = normalize(i.nrm);\n"
+    "  if (uHasNormal > 0.5) {\n"                                       // perturb N by the tangent-space normal map
+    "    float3 tn = uNormalTex.Sample(uSamp, i.uv).rgb * 2.0 - 1.0;\n"
+    "    tn.xy *= uNormalStrength;\n"
+    "    float3 Tn = i.tan - N * dot(N, i.tan);\n"                      // Gram-Schmidt orthonormalize
+    "    if (length(Tn) > 1e-5) {\n"
+    "      Tn = normalize(Tn); float3 Bn = cross(N, Tn);\n"
+    "      float3 pn = Tn * tn.x + Bn * tn.y + N * tn.z;\n"
+    "      if (length(pn) > 1e-5) N = normalize(pn);\n"
+    "    }\n"
+    "  }\n"
     "  float3 base = uColor * i.col;\n"      // per-vertex/face color (white when unused)
     "  if (uUseTex > 0.5) base *= uTex.Sample(uSamp, i.uv).rgb;\n"
     "  float3 Vv = normalize(uEye - i.world);\n"
@@ -118,8 +130,8 @@ struct CB {
     float emissive[3];  float shininess;
     float lightDir[3];  float unlit;
     float lightColor[3]; float useTex;
-    float ambient[3];   float _p0;
-    float eye[3];       float _p1;
+    float ambient[3];   float hasNormal;
+    float eye[3];       float normalStrength;
     float tiling[2];    float shadowAlpha; float _p2;
     float rimColor[3];  float shaderMode;
     float gradTop[3];   float toonBands;
@@ -185,8 +197,9 @@ bool D3D11Renderer::Init() {
         {"NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 44, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
-    p->dev->CreateInputLayout(il, 4, vsb->GetBufferPointer(), vsb->GetBufferSize(), &p->layout);
+    p->dev->CreateInputLayout(il, 5, vsb->GetBufferPointer(), vsb->GetBufferSize(), &p->layout);
     vsb->Release(); psb->Release();
 
     D3D11_BUFFER_DESC cbd; std::memset(&cbd, 0, sizeof(cbd));
@@ -371,7 +384,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         ID3D11ShaderResourceView* srv = p->TextureFor(mr->texture);
 
         const int nv = (int)V.size();
-        p->verts.clear(); p->verts.reserve(T.size() * 11);
+        p->verts.clear(); p->verts.reserve(T.size() * 14);
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             int a = T[i], b = T[i + 1], cc = T[i + 2];
             if (a < 0 || b < 0 || cc < 0 || a >= nv || b >= nv || cc >= nv) continue; // skip bad tris
@@ -381,21 +394,33 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             float cr = 1.0f, cg = 1.0f, cb = 1.0f;  // white = no-op when there are no face colors
             if (faceCols) { const Color& fc = mesh.triColors[i / 3]; cr = fc.r; cg = fc.g; cb = fc.b; }
             const int idx[3] = {a, b, cc};
+            // Per-vertex UVs first, so we can derive the face tangent for normal mapping.
+            float uu[3], vv[3];
+            for (int k = 0; k < 3; ++k) {
+                const Vec3& pos = V[idx[k]];
+                if (hasUV) { uu[k] = mesh.uvs[idx[k]].x; vv[k] = mesh.uvs[idx[k]].y; }
+                else if (ax >= ay && ax >= az) { uu[k] = pos.z + 0.5f; vv[k] = pos.y + 0.5f; }
+                else if (ay >= ax && ay >= az) { uu[k] = pos.x + 0.5f; vv[k] = pos.z + 0.5f; }
+                else                           { uu[k] = pos.x + 0.5f; vv[k] = pos.y + 0.5f; }
+            }
+            // Local-space per-face tangent (edges + UV deltas), transformed to world in VSMain.
+            Vec3 e1 = V[b] - V[a], e2 = V[cc] - V[a];
+            float du1 = uu[1] - uu[0], dv1 = vv[1] - vv[0];
+            float du2 = uu[2] - uu[0], dv2 = vv[2] - vv[0];
+            float det = du1 * dv2 - du2 * dv1;
+            Vec3 tan = std::fabs(det) > 1e-8f ? (e1 * dv2 - e2 * dv1) * (1.0f / det) : e1;
+            { float m = tan.Magnitude(); tan = m > 1e-6f ? tan * (1.0f / m) : Vec3{1, 0, 0}; }
             for (int k = 0; k < 3; ++k) {
                 const Vec3& pos = V[idx[k]];
                 Vec3 nrm = hasN ? mesh.normals[idx[k]] : fn;
-                float u, v;
-                if (hasUV) { u = mesh.uvs[idx[k]].x; v = mesh.uvs[idx[k]].y; }
-                else if (ax >= ay && ax >= az) { u = pos.z + 0.5f; v = pos.y + 0.5f; }
-                else if (ay >= ax && ay >= az) { u = pos.x + 0.5f; v = pos.z + 0.5f; }
-                else                           { u = pos.x + 0.5f; v = pos.y + 0.5f; }
                 p->verts.push_back(pos.x); p->verts.push_back(pos.y); p->verts.push_back(pos.z);
                 p->verts.push_back(nrm.x); p->verts.push_back(nrm.y); p->verts.push_back(nrm.z);
-                p->verts.push_back(u);     p->verts.push_back(v);
+                p->verts.push_back(uu[k]); p->verts.push_back(vv[k]);
                 p->verts.push_back(cr);    p->verts.push_back(cg);    p->verts.push_back(cb);
+                p->verts.push_back(tan.x); p->verts.push_back(tan.y); p->verts.push_back(tan.z);
             }
         }
-        const int vcount = (int)(p->verts.size() / 11);
+        const int vcount = (int)(p->verts.size() / 14);
         if (vcount == 0) continue;
 
         // Grow / upload the dynamic vertex buffer.
@@ -403,7 +428,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             if (p->vb) { p->vb->Release(); p->vb = nullptr; p->vbCap = 0; }
             const int cap = vcount + 1024;
             D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
-            bd.ByteWidth = (UINT)(cap * 11 * sizeof(float)); bd.Usage = D3D11_USAGE_DYNAMIC;
+            bd.ByteWidth = (UINT)(cap * 14 * sizeof(float)); bd.Usage = D3D11_USAGE_DYNAMIC;
             bd.BindFlags = D3D11_BIND_VERTEX_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
             if (FAILED(p->dev->CreateBuffer(&bd, nullptr, &p->vb))) continue;
             p->vbCap = cap;
@@ -431,6 +456,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.useTex = srv ? 1.0f : 0.0f;
         cb.ambient[0] = d3amb.x; cb.ambient[1] = d3amb.y; cb.ambient[2] = d3amb.z;
         cb.eye[0] = eye.x; cb.eye[1] = eye.y; cb.eye[2] = eye.z;
+        ID3D11ShaderResourceView* nsrv = mr->normalMap.empty() ? nullptr : p->TextureFor(mr->normalMap);
+        cb.hasNormal = nsrv ? 1.0f : 0.0f;
+        cb.normalStrength = mr->normalStrength;
         cb.tiling[0] = srv ? mr->tiling.x : 1.0f; cb.tiling[1] = srv ? mr->tiling.y : 1.0f;
         cb.shaderMode = (float)(int)mr->shader;
         cb.toonBands = (float)mr->toonBands;
@@ -445,11 +473,12 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
         }
         if (srv) c->PSSetShaderResources(0, 1, &srv);
+        if (nsrv) c->PSSetShaderResources(1, 1, &nsrv);   // normal/bump map on t1
         // Per-material texture filter (Pixel = nearest, Smooth = aniso/linear).
         ID3D11SamplerState* useSamp = (mr->texFilter == MeshRenderer::TexFilter::Pixel && p->sampPoint) ? p->sampPoint : p->samp;
         c->PSSetSamplers(0, 1, &useSamp);
 
-        UINT stride = 11 * sizeof(float), offset = 0;
+        UINT stride = 14 * sizeof(float), offset = 0;
         c->IASetVertexBuffers(0, 1, &p->vb, &stride, &offset);
         c->Draw((UINT)vcount, 0);
 

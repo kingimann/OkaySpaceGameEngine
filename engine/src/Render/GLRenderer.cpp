@@ -43,6 +43,9 @@
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0            0x84C0
 #endif
+#ifndef GL_TEXTURE1
+#define GL_TEXTURE1            0x84C1
+#endif
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE       0x812F
 #endif
@@ -162,10 +165,12 @@ const char* kVert =
     "#version 120\n"
     "uniform mat4 uMVP; uniform mat4 uModel; uniform vec2 uTiling;\n"
     "attribute vec3 aPos; attribute vec3 aNormal; attribute vec2 aUV; attribute vec3 aColor;\n"
-    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol;\n"
+    "attribute vec3 aTan;\n"
+    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
     "void main(){\n"
     "  gl_Position = uMVP * vec4(aPos,1.0);\n"
     "  vN = mat3(uModel) * aNormal;\n"
+    "  vTan = mat3(uModel) * aTan;\n"
     "  vWorld = (uModel * vec4(aPos,1.0)).xyz;\n"
     "  vUV = aUV * uTiling;\n"
     "  vCol = aColor;\n"
@@ -183,10 +188,21 @@ const char* kFrag =
     "uniform int uLightCount;\n"      // multi-light: directional + point + spot from the scene
     "uniform float uLType[8]; uniform vec3 uLPos[8]; uniform vec3 uLDir[8];\n"
     "uniform vec3 uLCol[8]; uniform float uLRange[8]; uniform float uLCosOut[8]; uniform float uLCosIn[8];\n"
-    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol;\n"
+    "uniform sampler2D uNormalTex; uniform float uHasNormal; uniform float uNormalStrength;\n"  // bump/normal map
+    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
     "void main(){\n"
     "  if (uShadowAlpha >= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowAlpha); return; }\n"
     "  vec3 N = normalize(vN);\n"
+    "  if (uHasNormal > 0.5) {\n"                                  // perturb N by the tangent-space normal map
+    "    vec3 tn = texture2D(uNormalTex, vUV).rgb * 2.0 - 1.0;\n"
+    "    tn.xy *= uNormalStrength;\n"
+    "    vec3 Tn = vTan - N * dot(N, vTan);\n"                     // Gram-Schmidt orthonormalize the tangent
+    "    if (length(Tn) > 1e-5) {\n"
+    "      Tn = normalize(Tn); vec3 Bn = cross(N, Tn);\n"
+    "      vec3 pn = Tn * tn.x + Bn * tn.y + N * tn.z;\n"
+    "      if (length(pn) > 1e-5) N = normalize(pn);\n"
+    "    }\n"
+    "  }\n"
     "  vec3 base = uColor * vCol;\n"
     "  if (uUseTex > 0.5) base *= texture2D(uTex, vUV).rgb;\n"
     "  vec3 Vv = normalize(uEye - vWorld);\n"
@@ -331,6 +347,7 @@ bool GLRenderer::EnsureProgram() {
     g.BindAttribLocation(m_prog, 1, "aNormal");
     g.BindAttribLocation(m_prog, 2, "aUV");
     g.BindAttribLocation(m_prog, 3, "aColor");
+    g.BindAttribLocation(m_prog, 4, "aTan");
     g.LinkProgram(m_prog);
     GLint ok = 0; g.GetProgramiv(m_prog, GL_LINK_STATUS, &ok);
     g.DeleteShader(vs); g.DeleteShader(fs);
@@ -364,6 +381,9 @@ bool GLRenderer::EnsureProgram() {
     m_uLRange  = g.GetUniformLocation(m_prog, "uLRange");
     m_uLCosOut = g.GetUniformLocation(m_prog, "uLCosOut");
     m_uLCosIn  = g.GetUniformLocation(m_prog, "uLCosIn");
+    m_uNormalTex = g.GetUniformLocation(m_prog, "uNormalTex");
+    m_uHasNormal = g.GetUniformLocation(m_prog, "uHasNormal");
+    m_uNormalStrength = g.GetUniformLocation(m_prog, "uNormalStrength");
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
     // crash on the attempt). Create one when available; on a compatibility context
@@ -512,7 +532,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // Expand triangles (non-indexed) into pos(3)+normal(3)+uv(2)+color(3): flat shading via
         // per-face normal when the mesh has none, smooth via per-vertex normals when it does.
         const int nv = (int)V.size();
-        m_verts.clear(); m_verts.reserve(T.size() * 11);
+        m_verts.clear(); m_verts.reserve(T.size() * 14);
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             int a = T[i], b = T[i + 1], c = T[i + 2];
             if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue; // skip bad tris
@@ -523,18 +543,31 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             float cr = 1.0f, cg = 1.0f, cb = 1.0f;  // white = no-op when there are no face colors
             if (faceCols) { const Color& fc = mesh.triColors[i / 3]; cr = fc.r; cg = fc.g; cb = fc.b; }
             const int idx[3] = {a, b, c};
+            // Per-vertex UVs (mesh or box-projected) first, so we can derive the face tangent.
+            float uu[3], vv[3];
+            for (int k = 0; k < 3; ++k) {
+                const Vec3& p = V[idx[k]];
+                if (hasUV) { uu[k] = mesh.uvs[idx[k]].x; vv[k] = mesh.uvs[idx[k]].y; }
+                else if (ax >= ay && ax >= az) { uu[k] = p.z + 0.5f; vv[k] = p.y + 0.5f; }
+                else if (ay >= ax && ay >= az) { uu[k] = p.x + 0.5f; vv[k] = p.z + 0.5f; }
+                else                           { uu[k] = p.x + 0.5f; vv[k] = p.y + 0.5f; }
+            }
+            // Local-space per-face tangent (edges + UV deltas); transformed to world by
+            // mat3(uModel) in the vertex shader. Mirrors the software renderer's TBN.
+            Vec3 e1 = V[b] - V[a], e2 = V[c] - V[a];
+            float du1 = uu[1] - uu[0], dv1 = vv[1] - vv[0];
+            float du2 = uu[2] - uu[0], dv2 = vv[2] - vv[0];
+            float det = du1 * dv2 - du2 * dv1;
+            Vec3 tan = std::fabs(det) > 1e-8f ? (e1 * dv2 - e2 * dv1) * (1.0f / det) : e1;
+            { float m = tan.Magnitude(); tan = m > 1e-6f ? tan * (1.0f / m) : Vec3{1, 0, 0}; }
             for (int k = 0; k < 3; ++k) {
                 const Vec3& p = V[idx[k]];
                 Vec3 n = hasN ? mesh.normals[idx[k]] : fn;
-                float u, v;
-                if (hasUV) { u = mesh.uvs[idx[k]].x; v = mesh.uvs[idx[k]].y; }
-                else if (ax >= ay && ax >= az) { u = p.z + 0.5f; v = p.y + 0.5f; }
-                else if (ay >= ax && ay >= az) { u = p.x + 0.5f; v = p.z + 0.5f; }
-                else                           { u = p.x + 0.5f; v = p.y + 0.5f; }
                 m_verts.push_back(p.x); m_verts.push_back(p.y); m_verts.push_back(p.z);
                 m_verts.push_back(n.x); m_verts.push_back(n.y); m_verts.push_back(n.z);
-                m_verts.push_back(u);   m_verts.push_back(v);
+                m_verts.push_back(uu[k]); m_verts.push_back(vv[k]);
                 m_verts.push_back(cr);  m_verts.push_back(cg);  m_verts.push_back(cb);
+                m_verts.push_back(tan.x); m_verts.push_back(tan.y); m_verts.push_back(tan.z);
             }
         }
         if (m_verts.empty()) continue;
@@ -572,9 +605,23 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.Uniform2f(m_uTiling, 1.0f, 1.0f);
         }
 
+        // Normal/bump map on texture unit 1: perturbs the surface normal per fragment
+        // so flat faces show sculpted detail under lighting, matching the software path.
+        unsigned int ntex = mr->normalMap.empty() ? 0u : TextureFor(mr->normalMap);
+        if (ntex) {
+            g.ActiveTexture(GL_TEXTURE1);
+            g.BindTexture(GL_TEXTURE_2D, ntex);
+            g.Uniform1i(m_uNormalTex, 1);
+            g.Uniform1f(m_uHasNormal, 1.0f);
+            g.Uniform1f(m_uNormalStrength, mr->normalStrength);
+            g.ActiveTexture(GL_TEXTURE0);
+        } else {
+            g.Uniform1f(m_uHasNormal, 0.0f);
+        }
+
         g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
         g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
-        const GLsizei stride = 11 * sizeof(float);
+        const GLsizei stride = 14 * sizeof(float);
         g.EnableVertexAttribArray(0);
         g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (const void*)0);
         g.EnableVertexAttribArray(1);
@@ -583,7 +630,9 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (const void*)(6 * sizeof(float)));
         g.EnableVertexAttribArray(3);
         g.VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(8 * sizeof(float)));
-        g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 11));
+        g.EnableVertexAttribArray(4);
+        g.VertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(11 * sizeof(float)));
+        g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 14));
 
         // Ground contact shadow: re-draw the SAME geometry flattened onto the ground
         // plane (a planar projection along the light) as a flat translucent black, so
@@ -596,7 +645,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.Enable(GL_BLEND);
             g.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             g.DepthMask(GL_FALSE);
-            g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 11));
+            g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 14));
             g.DepthMask(GL_TRUE);
             g.Disable(GL_BLEND);
             g.Uniform1f(m_uShadowAlpha, -1.0f);

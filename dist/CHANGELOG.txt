@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.284.0  (GPU normal/bump maps)
+  - Normal (bump) maps now light up on the OpenGL + Direct3D 11 renderers — the
+    same maps the software renderer already used. Flat faces show sculpted detail
+    (bricks, panels, fabric) under every light in the editor preview AND the
+    exported game, not just the CPU fallback.
+  - Per-face tangents are derived from mesh edges + UV deltas and a per-fragment
+    TBN basis perturbs the surface normal, matching the software path exactly, so
+    a material looks the same whichever renderer draws it.
+  - Honors the existing material Normal Map field + Normal Strength slider; works
+    alongside tiling, the texture filter, multi-light shading and ground shadows.
+
 v2.283.0  (Texture filter: fix up-close blur)
   - New per-material texture Filter: "Smooth" (bilinear, the default) or "Pixel"
     (nearest-neighbour) — pick Pixel for crisp pixel-art with no blur when the

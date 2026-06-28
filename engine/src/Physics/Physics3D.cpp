@@ -126,12 +126,22 @@ void AsSphere(Collider3D* col, const Vec3& ref, Vec3& center, float& radius) {
     }
 }
 
+// Cylinder reuses the capsule's segment+radius collision; Mesh reuses the box AABB.
+// So new shapes plug into the existing resolvers via inheritance (CylinderCollider3D
+// is-a CapsuleCollider3D, MeshCollider3D is-a BoxCollider3D).
+inline bool IsCapsuleLike(Collider3D::Shape s) {
+    return s == Collider3D::Shape::Capsule || s == Collider3D::Shape::Cylinder;
+}
+inline bool IsBoxLike(Collider3D::Shape s) {
+    return s == Collider3D::Shape::Box || s == Collider3D::Shape::Mesh;
+}
+
 Contact TestColliders(Collider3D* a, Collider3D* b) {
     using S = Collider3D::Shape;
     S sa = a->shape(), sb = b->shape();
 
-    // Capsule vs capsule: closest points between the two segments.
-    if (sa == S::Capsule && sb == S::Capsule) {
+    // Capsule/cylinder vs capsule/cylinder: closest points between the two segments.
+    if (IsCapsuleLike(sa) && IsCapsuleLike(sb)) {
         auto* ca = static_cast<CapsuleCollider3D*>(a);
         auto* cb = static_cast<CapsuleCollider3D*>(b);
         Vec3 a0, a1, b0, b1; ca->Segment(a0, a1); cb->Segment(b0, b1);
@@ -139,7 +149,7 @@ Contact TestColliders(Collider3D* a, Collider3D* b) {
         return TestSphereSphere(pa, ca->WorldRadius(), pb, cb->WorldRadius());
     }
 
-    bool aBox = sa == S::Box, bBox = sb == S::Box;
+    bool aBox = IsBoxLike(sa), bBox = IsBoxLike(sb);
     if (aBox && bBox) {
         auto* ba = static_cast<BoxCollider3D*>(a);
         auto* bb = static_cast<BoxCollider3D*>(b);
@@ -382,7 +392,7 @@ std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& cent
     for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
         if (!Alive(c)) continue;
         bool hit = false;
-        if (c->shape() == Collider3D::Shape::Box) {
+        if (IsBoxLike(c->shape())) {
             Vec3 mn, mx; c->WorldAABB(mn, mx);
             hit = (ClampVec(center, mn, mx) - center).Magnitude() <= radius;
         } else {

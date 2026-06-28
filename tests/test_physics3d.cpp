@@ -105,6 +105,42 @@ int main() {
         }
     }
 
+    // ---- Mesh + Cylinder colliders: overlap, resolve, round-trip ----
+    {
+        Scene s("col3d_new");
+        // A mesh collider (box-like) sized 4x1x4 at the origin.
+        GameObject* floor = s.CreateGameObject("MeshFloor");
+        auto* mc = floor->AddComponent<MeshCollider3D>();
+        mc->size = {4.0f, 1.0f, 4.0f};
+        // A cylinder collider standing on it.
+        GameObject* pillar = s.CreateGameObject("Pillar");
+        pillar->transform->localPosition = {0, 2, 0};
+        auto* cy = pillar->AddComponent<CylinderCollider3D>();
+        cy->radius = 0.5f; cy->height = 2.0f; cy->isTrigger = true;
+        s.Start(); s.Update(0.0f);
+
+        // OverlapSphere at the mesh floor centre finds the mesh collider — this used to
+        // invalid-cast a Mesh (box-like) to a capsule.
+        auto hits = s.physics3D().OverlapSphere(s, {0, 0, 0}, 0.5f);
+        bool foundMesh = false;
+        for (auto* c : hits) if (c == mc) foundMesh = true;
+        CHECK(foundMesh);
+
+        // Depenetrate a sphere sitting inside the mesh floor — it gets pushed out (up).
+        Vec3 fixed = s.physics3D().ResolveSphere(s, Vec3{0, 0.2f, 0}, 0.5f, nullptr, 4);
+        CHECK(fixed.y > 0.2f);
+
+        // Round-trip both new collider types.
+        Scene loaded("L");
+        CHECK(SceneSerializer::Deserialize(loaded, SceneSerializer::Serialize(s)));
+        auto* lm = loaded.Find("MeshFloor") ? loaded.Find("MeshFloor")->GetComponent<MeshCollider3D>() : nullptr;
+        auto* lc = loaded.Find("Pillar") ? loaded.Find("Pillar")->GetComponent<CylinderCollider3D>() : nullptr;
+        CHECK(lm != nullptr);
+        CHECK(lc != nullptr);
+        if (lm) CHECK_NEAR(lm->size.x, 4.0f, 1e-4f);
+        if (lc) { CHECK_NEAR(lc->radius, 0.5f, 1e-4f); CHECK(lc->isTrigger); }
+    }
+
     // ---- 2D capsule collider: overlaps a circle, round-trips ----
     {
         Scene s("cap2d");

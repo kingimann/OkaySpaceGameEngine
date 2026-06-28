@@ -290,7 +290,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (rb->freezeX ? 1 : 0) << " " << (rb->freezeY ? 1 : 0) << " "
             << (rb->freezeZ ? 1 : 0) << "\n";
     }
-    if (auto* bc = go->GetComponent<BoxCollider3D>()) {
+    // Mesh + Cylinder colliders derive from Box/Capsule, so write them first and guard
+    // the base records by exact shape() (else GetComponent<BoxCollider3D> matches a mesh).
+    if (auto* mc = go->GetComponent<MeshCollider3D>()) {
+        out << "  meshcollider3d " << mc->size.x << " " << mc->size.y << " " << mc->size.z << " "
+            << mc->offset.x << " " << mc->offset.y << " " << mc->offset.z << " "
+            << (mc->isTrigger ? 1 : 0) << " " << mc->layer << " " << (mc->autoFit ? 1 : 0) << "\n";
+    }
+    if (auto* cy = go->GetComponent<CylinderCollider3D>()) {
+        out << "  cylindercollider3d " << cy->radius << " " << cy->height << " " << cy->axis << " "
+            << cy->offset.x << " " << cy->offset.y << " " << cy->offset.z << " "
+            << (cy->isTrigger ? 1 : 0) << " " << cy->layer << " " << (cy->autoFit ? 1 : 0) << "\n";
+    }
+    if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
         out << "  boxcollider3d " << bc->size.x << " " << bc->size.y << " " << bc->size.z << " "
             << bc->offset.x << " " << bc->offset.y << " " << bc->offset.z << " "
             << (bc->isTrigger ? 1 : 0) << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
@@ -300,7 +312,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sc->offset.x << " " << sc->offset.y << " " << sc->offset.z << " "
             << (sc->isTrigger ? 1 : 0) << " " << sc->layer << " " << (sc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cap = go->GetComponent<CapsuleCollider3D>()) {
+    if (auto* cap = go->GetComponent<CapsuleCollider3D>(); cap && cap->shape() == Collider3D::Shape::Capsule) {
         out << "  capsulecollider3d " << cap->radius << " " << cap->height << " " << cap->axis << " "
             << cap->offset.x << " " << cap->offset.y << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
@@ -1537,6 +1549,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     cap->radius = r; cap->height = h; cap->axis = ax;
                     cap->offset = off; cap->isTrigger = (trig != 0); cap->layer = layer;
                     cap->autoFit = (af != 0);
+                } else if (field == "meshcollider3d") {
+                    Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0, af = 0;
+                    in >> sz.x >> sz.y >> sz.z >> off.x >> off.y >> off.z >> trig;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> layer;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;
+                    auto* mc = go->AddComponent<MeshCollider3D>();
+                    mc->size = sz; mc->offset = off; mc->isTrigger = (trig != 0); mc->layer = layer;
+                    mc->autoFit = (af != 0);
+                } else if (field == "cylindercollider3d") {
+                    float r = 0.5f, h = 2.0f; int ax = 1; Vec3 off; int trig = 0, layer = 0, af = 0;
+                    in >> r >> h >> ax >> off.x >> off.y >> off.z >> trig;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> layer;
+                    in >> std::ws; if (std::isdigit(in.peek())) in >> af;
+                    auto* cy = go->AddComponent<CylinderCollider3D>();
+                    cy->radius = r; cy->height = h; cy->axis = ax;
+                    cy->offset = off; cy->isTrigger = (trig != 0); cy->layer = layer;
+                    cy->autoFit = (af != 0);
                 } else if (field == "script") {
                     std::string lang = ReadQuoted(in);
                     std::string src  = ReadQuoted(in);

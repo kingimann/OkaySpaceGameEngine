@@ -1,4 +1,18 @@
 #include "EditorState.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderFit.hpp"
+
+namespace {
+// Every new 3D primitive ships with a collider fitted to its mesh (Unity-style), so
+// objects block and can be stood on the moment they're created. A box matches most
+// primitives; it's auto-fit so it tracks the mesh.
+void AddFittedBoxCollider(okay::GameObject* go) {
+    if (!go || go->GetComponent<okay::Collider3D>()) return;   // don't double up
+    auto* bc = go->AddComponent<okay::BoxCollider3D>();
+    bc->autoFit = true;
+    okay::FitColliders(go);
+}
+} // namespace
 
 namespace okay::editor {
 
@@ -115,6 +129,7 @@ GameObject* EditorState::CreateCube(const std::string& name) {
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Cube();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -127,6 +142,7 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Pyramid();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -139,6 +155,7 @@ GameObject* EditorState::CreateMesh(const std::string& meshName) {
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::FromName(meshName);
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
     dirty = true;

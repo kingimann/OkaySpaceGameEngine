@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.282.0  (Colliders: auto-add, new shapes, glitch fix)
+  - Every new 3D primitive (Cube/Pyramid/Mesh) now spawns with a Box collider
+    auto-fitted to its mesh, so objects block and can be stood on immediately.
+  - Two new collider shapes: Cylinder (barrels/pillars — resolves like a capsule)
+    and Mesh (fits the model's bounds, resolves as its box). Add them from
+    Add Component > Physics; both serialize.
+  - Fixed a collider glitch: OverlapSphere invalid-cast a mesh/box collider to a
+    capsule (undefined behaviour / wrong overlaps). Shape dispatch now routes
+    box-like and capsule-like shapes correctly everywhere.
+
 v2.281.0  (Particles work in 3D + sharper textures)
   - FIXED: particles were only drawn in the 2D/orthographic path, so in a 3D
     (perspective) scene they were invisible. They now render as camera-projected

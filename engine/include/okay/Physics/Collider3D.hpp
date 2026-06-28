@@ -11,7 +11,7 @@ namespace okay {
 /// 3D collider family). Pair with a Rigidbody3D to be moved by Physics3D.
 class Collider3D : public Component {
 public:
-    enum class Shape { Box, Sphere, Capsule };
+    enum class Shape { Box, Sphere, Capsule, Cylinder, Mesh };
 
     /// Trigger colliders detect overlap but don't push objects apart.
     bool isTrigger = false;
@@ -90,14 +90,14 @@ public:
         return radius * Mathf::Max(a, b);
     }
     /// Half the distance between the two cap centers (segment half-length).
-    float SegmentHalf() const {
+    virtual float SegmentHalf() const {
         Vec3 s = transform ? transform->LossyScale() : Vec3::One;
         float along = axis == 0 ? Mathf::Abs(s.x) : axis == 2 ? Mathf::Abs(s.z) : Mathf::Abs(s.y);
         float half = Mathf::Max(0.0f, (height * along) * 0.5f - WorldRadius());
         return half;
     }
     /// The capsule's inner segment endpoints in world space.
-    void Segment(Vec3& a, Vec3& b) const {
+    virtual void Segment(Vec3& a, Vec3& b) const {
         Vec3 c = WorldCenter();
         Vec3 dir = axis == 0 ? Vec3{1, 0, 0} : axis == 2 ? Vec3{0, 0, 1} : Vec3{0, 1, 0};
         float h = SegmentHalf();
@@ -110,6 +110,35 @@ public:
         mn = {Mathf::Min(a.x, b.x) - r, Mathf::Min(a.y, b.y) - r, Mathf::Min(a.z, b.z) - r};
         mx = {Mathf::Max(a.x, b.x) + r, Mathf::Max(a.y, b.y) + r, Mathf::Max(a.z, b.z) + r};
     }
+};
+
+/// Cylinder collider: a flat-capped tube. It reuses the capsule's segment + radius
+/// for collision (so it behaves like a capsule with slightly rounded ends), which
+/// is plenty for gameplay — barrels, pillars, tree trunks, coins on edge.
+class CylinderCollider3D : public CapsuleCollider3D {
+public:
+    Shape shape() const override { return Shape::Cylinder; }
+    /// A cylinder's straight section spans nearly the full height (no spherical
+    /// caps eating into it), so use a longer inner segment than a capsule.
+    float SegmentHalf() const {
+        Vec3 s = transform ? transform->LossyScale() : Vec3::One;
+        float along = axis == 0 ? Mathf::Abs(s.x) : axis == 2 ? Mathf::Abs(s.z) : Mathf::Abs(s.y);
+        return Mathf::Max(0.0f, (height * along) * 0.5f - WorldRadius() * 0.05f);
+    }
+    void Segment(Vec3& a, Vec3& b) const {
+        Vec3 c = WorldCenter();
+        Vec3 dir = axis == 0 ? Vec3{1, 0, 0} : axis == 2 ? Vec3{0, 0, 1} : Vec3{0, 1, 0};
+        float h = SegmentHalf();
+        a = c - dir * h; b = c + dir * h;
+    }
+};
+
+/// Mesh collider: a convex-ish collider fitted to the object's mesh bounds. It
+/// resolves as an axis-aligned box (its AABB), so an arbitrary model still blocks
+/// and can be stood on without per-triangle cost. Enable autoFit to track the mesh.
+class MeshCollider3D : public BoxCollider3D {
+public:
+    Shape shape() const override { return Shape::Mesh; }
 };
 
 } // namespace okay

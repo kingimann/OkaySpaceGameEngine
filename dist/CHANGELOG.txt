@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.309.0  (Direct3D 12 renderer — opt-in)
+  - NEW Direct3D 12 backend. A full D3D12 scene renderer (isolated device, command
+    queue/list, descriptor heaps, root signature + PSOs, fence sync, offscreen
+    render + read-back) that reuses the exact D3D11 shader, so shading matches
+    (lights, textures, normal/gloss/AO maps, PBR reflections, transparency). It's
+    OPT-IN: enable "Prefer Direct3D 12 (Windows)" in Build Settings (or set
+    d3d12=1 in the game config). When on, the game tries D3D12 first and falls back
+    to D3D11 / OpenGL / software automatically.
+    Note: for this engine's read-back rendering, D3D12 performs like D3D11 (its
+    wins are CPU-driver overhead that a read-back path doesn't expose); it's here
+    for compatibility/choice. Compile- and link-verified via the Windows build;
+    test it on Windows hardware. (No MSAA / ground-shadow pass on this path yet.)
+
 v2.308.0  (Flashlight, dig brush + pause, voxel frame-rate, no jump pose)
   - NEW Flashlight component: a spot light that follows your view so you can SEE
     inside the caves/tunnels you dig. Press F to toggle. The Sandbox player has one;

@@ -8,6 +8,7 @@ add_library(okay_engine
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
     src/Render/D3D11Renderer.cpp
+    src/Render/D3D12Renderer.cpp
     src/Scene/Component.cpp
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp
@@ -76,6 +77,9 @@ if(WIN32)
     # The Direct3D 11 scene renderer (D3D11Renderer.cpp, guarded by _WIN32) needs the
     # D3D runtime + HLSL compiler. Off Windows the file compiles to nothing.
     target_link_libraries(okay_engine PUBLIC d3d11 d3dcompiler)
+    # The Direct3D 12 scene renderer (D3D12Renderer.cpp, guarded by _WIN32) needs the
+    # D3D12 runtime, DXGI and the COM IIDs (dxguid). Off Windows the file is empty.
+    target_link_libraries(okay_engine PUBLIC d3d12 dxgi dxguid)
 endif()
 
 # ---- Optional packet encryption (libsodium) --------------------------

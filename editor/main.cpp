@@ -783,6 +783,7 @@ struct BuildSettings {
     bool  fxaa = true;                     // cheap edge anti-aliasing
     int   antialias = 1;                   // 1 = off, 2 = 2x supersample
     bool  gpuRenderer = true;              // use the GPU (D3D11/OpenGL) 3D renderer; falls back to software
+    bool  preferD3D12 = false;             // opt-in: prefer the Direct3D 12 backend (Windows)
 };
 BuildSettings g_build;
 
@@ -1152,6 +1153,7 @@ struct Options {
     int  shadowCascades = 3, shadowResolution = 1024;
     int  antialias = 1;
     bool gpuRenderer = true;
+    bool preferD3D12 = false;
     bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
     bool dataFolder  = true;   // tuck scenes/config/assets into a "Data/" subfolder (clean root)
     bool encryptData = false;  // obfuscate scenes + config so players can't read/edit them
@@ -1307,6 +1309,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "fxaa=" << (opt.fxaa ? 1 : 0) << "\n";
         cf << "antialias=" << opt.antialias << "\n";
         cf << "gpu=" << (opt.gpuRenderer ? 1 : 0) << "\n";
+        cf << "d3d12=" << (opt.preferD3D12 ? 1 : 0) << "\n";
         // Player presentation (Unity-parity).
         if (!opt.iconPath.empty()) cf << "icon=" << fs::path(opt.iconPath).filename().string() << "\n";
         cf << "bundle_id=" << opt.bundleId << "\n";
@@ -5096,6 +5099,12 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                 ImGui::Checkbox("GPU renderer (Direct3D 11 / OpenGL)", &g_build.gpuRenderer);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU in the shipped game.\nFalls back to the software renderer if no GPU is available.");
+                if (g_build.gpuRenderer) {
+                    ImGui::Indent();
+                    ImGui::Checkbox("Prefer Direct3D 12 (Windows)", &g_build.preferD3D12);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use the Direct3D 12 backend when available (Windows), else fall back to D3D11 / OpenGL / software.\nNewer API; for this read-back renderer it performs like D3D11.");
+                    ImGui::Unindent();
+                }
                 ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
                 ImGui::Checkbox("Shadows", &g_build.shadows);
                 if (g_build.shadows) {
@@ -5164,6 +5173,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.shadowCascades = g_build.shadowCascades; o.shadowResolution = g_build.shadowResolution;
             o.fxaa = g_build.fxaa; o.antialias = g_build.antialias;
             o.gpuRenderer = g_build.gpuRenderer;
+            o.preferD3D12 = g_build.preferD3D12;
             o.cleanOutput = g_build.cleanOutput; o.dataFolder = g_build.dataFolder;
             o.encryptData = g_build.encryptData;
             o.iconPath = g_build.icon; o.bundleId = g_build.bundleId;

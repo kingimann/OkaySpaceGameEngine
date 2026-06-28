@@ -11,6 +11,7 @@
 #include <Okay.hpp>
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
+#include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
 #include "OkayScriptUIBridge.hpp"
@@ -858,6 +859,7 @@ int main(int argc, char** argv) {
         int  shadowCascades = 3, shadowResolution = 1024;
         int  antialias = 1;
         bool gpu = true;   // try the GPU (D3D11/OpenGL) 3D renderer; fall back to software
+        bool d3d12 = false; // opt-in: prefer the Direct3D 12 backend (Windows) over D3D11
         std::string startup;
         std::vector<std::string> scenes;
         // Presentation (Unity-parity).
@@ -908,6 +910,7 @@ int main(int argc, char** argv) {
             else if (k == "fxaa")       cfg.fxaa = std::atoi(v.c_str()) != 0;
             else if (k == "antialias")  cfg.antialias = std::atoi(v.c_str());
             else if (k == "gpu")        cfg.gpu = std::atoi(v.c_str()) != 0;
+            else if (k == "d3d12")      cfg.d3d12 = std::atoi(v.c_str()) != 0;
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
             else if (k == "icon")           cfg.icon = v;
@@ -1003,13 +1006,20 @@ int main(int argc, char** argv) {
     okay::GLRenderer*    glRenderer = nullptr;   // OpenGL backend (any platform)
 #if defined(_WIN32)
     okay::D3D11Renderer* d3dRenderer = nullptr;  // Direct3D 11 backend (Windows)
+    okay::D3D12Renderer* d3d12Renderer = nullptr;// Direct3D 12 backend (Windows, opt-in)
 #endif
     SDL_Window*          glWindow = nullptr;      // hidden context window for the GL path
     SDL_GLContext        glCtx = nullptr;
-    bool                 glReady = false, d3dReady = false;
+    bool                 glReady = false, d3dReady = false, d3d12Ready = false;
 #ifndef __EMSCRIPTEN__
     if (cfg.gpu) {
 #if defined(_WIN32)
+        // Opt-in Direct3D 12 backend, preferred when enabled; otherwise D3D11.
+        if (cfg.d3d12) {
+            d3d12Renderer = new okay::D3D12Renderer();
+            if (d3d12Renderer->Init()) d3d12Ready = true;
+            else { delete d3d12Renderer; d3d12Renderer = nullptr; }
+        }
         d3dRenderer = new okay::D3D11Renderer();
         if (d3dRenderer->Init()) d3dReady = true;
         else { delete d3dRenderer; d3dRenderer = nullptr; }
@@ -1375,8 +1385,11 @@ int main(int argc, char** argv) {
                 // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
                 // offscreen target and reading back RGBA8. A self-heal counter disables
                 // the GPU path after repeated failures so the game is never stuck.
-                if (cfg.gpu && (d3dReady || glReady) && gpuFails < 3) {
+                if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
 #if defined(_WIN32)
+                    if (!px && d3d12Ready && d3d12Renderer)
+                        px = d3d12Renderer->RenderToPixels(scene, vp, camPos, w, h, 4,
+                                                           0.0f, 0.0f, 0.0f, 0.0f, ignore);
                     if (!px && d3dReady && d3dRenderer)
                         px = d3dRenderer->RenderToPixels(scene, vp, camPos, w, h, 4,
                                                          0.0f, 0.0f, 0.0f, 0.0f, ignore);
@@ -2707,6 +2720,7 @@ int main(int argc, char** argv) {
     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
 #if defined(_WIN32)
+    if (d3d12Renderer) { d3d12Renderer->Destroy(); delete d3d12Renderer; }
     if (d3dRenderer) { d3dRenderer->Destroy(); delete d3dRenderer; }
 #endif
     if (glRenderer) {

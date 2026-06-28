@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.281.0  (Particles work in 3D + sharper textures)
+  - FIXED: particles were only drawn in the 2D/orthographic path, so in a 3D
+    (perspective) scene they were invisible. They now render as camera-projected
+    billboards in both the editor 3D view and the exported game.
+  - Textures: anisotropic filtering (8x) on the GPU renderers, so floors and
+    terrain stay sharp at grazing angles instead of blurring into the distance.
+
 v2.280.0  (All lights work on the GPU + Velvet shader)
   - Lighting: the OpenGL and Direct3D 11 renderers now shade with EVERY scene
     light — point and spot lights (with range falloff + soft spot cones) and

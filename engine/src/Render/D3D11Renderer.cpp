@@ -218,7 +218,8 @@ bool D3D11Renderer::Init() {
     p->dev->CreateBlendState(&bd2, &p->blend);
 
     D3D11_SAMPLER_DESC sd; std::memset(&sd, 0, sizeof(sd));
-    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.Filter = D3D11_FILTER_ANISOTROPIC;   // sharp textures at grazing angles (floors/terrain)
+    sd.MaxAnisotropy = 8;
     sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
     sd.MaxLOD = D3D11_FLOAT32_MAX;
     p->dev->CreateSamplerState(&sd, &p->samp);

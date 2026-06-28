@@ -422,6 +422,9 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
         if (g.GenerateMipmap) {
             g.GenerateMipmap(GL_TEXTURE_2D);
             g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            // Anisotropic filtering: keeps textured floors/terrain sharp at grazing
+            // angles instead of blurring into the distance (no-op if unsupported).
+            g.TexParameteri(GL_TEXTURE_2D, 0x84FE /*GL_TEXTURE_MAX_ANISOTROPY_EXT*/, 8);
         } else {
             g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         }

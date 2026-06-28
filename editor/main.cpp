@@ -14022,6 +14022,23 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    // Particles: billboards projected with the 3D camera (so they show in 3D scenes,
+    // not just the 2D view). Each live particle is a small camera-facing dot.
+    for (const auto& up : objs) {
+        auto* ps = up->GetComponent<ParticleSystem>();
+        if (!ps || !up->active) continue;
+        for (const auto& p : ps->Particles()) {
+            if (!p.alive) continue;
+            Vec4 c = vp * Vec4{p.position, 1.0f};
+            if (c.w <= 0.05f) continue;
+            ImVec2 sp(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
+                      center.y - (c.y / c.w) * canvasSize.y * 0.5f);
+            float rad = p.size * 0.5f / c.w * canvasSize.x * 0.5f;   // perspective size
+            if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
+            dl->AddCircleFilled(sp, rad, ToColor(p.color), 10);
+        }
+    }
+
     // Click-select (skipped when a gizmo handle was just grabbed): pick the
     // nearest mesh whose projected bounding box contains the cursor.
     if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {

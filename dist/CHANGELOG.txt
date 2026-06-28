@@ -1,5 +1,20 @@
 OkaySpace Game Engine — Changelog
 
+v2.308.0  (Flashlight, dig brush + pause, voxel frame-rate, no jump pose)
+  - NEW Flashlight component: a spot light that follows your view so you can SEE
+    inside the caves/tunnels you dig. Press F to toggle. The Sandbox player has one;
+    add your own from Add Component > Flashlight (mount it on the player or camera).
+  - FIX: the voxel dig brush (the orange sphere marker) stayed on screen while the
+    game was paused. Both the Voxel Digger and Terrain Digger now hide their aim
+    marker and stop acting while the pause menu is up.
+  - FRAME RATE: the voxel terrain now renders single-sided. Its marching-cubes
+    winding is forced consistently outward, so the editor's software renderer
+    backface-culls the hidden ~half of the terrain's triangles — a big speedup on
+    large terrains — while caves still draw correctly from the inside. (The built
+    game's GPU renderers were already fast; this mainly helps the editor preview.)
+  - Removed the jump / fall character pose (it looked off): while airborne the body
+    now keeps its matching ground pose (idle / walk / run) in first and third person.
+
 v2.307.0  (Pause fix, solid terrain, no-tunnel collision, FPS feel)
   - FIX: pause menu was glitchy in the editor — the game kept simulating behind the
     menu (the editor Play loop ticked at full speed regardless of pause), so the

@@ -209,8 +209,9 @@ public:
         // ---- Animation ----
         if (driveAnimation)
             if (Character* ch = FindCharacter()) {
-                ch->anim = airborne ? 5
-                         : m_stance == Stance::Prone  ? 7
+                // No jump/fall pose (it looked off): airborne keeps the matching
+                // ground pose (idle / walk / run) instead of a special jump anim.
+                ch->anim = m_stance == Stance::Prone  ? 7
                          : m_stance == Stance::Crouch ? 6
                          : (moving ? (running ? 3 : 2) : 1);
                 // The body turns with yaw, so the head only needs to tilt with the

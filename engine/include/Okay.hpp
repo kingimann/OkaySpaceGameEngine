@@ -74,6 +74,7 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/VoxelDigger.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/Flashlight.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/WorldStreamer.hpp"
 #include "okay/Components/Destructible.hpp"

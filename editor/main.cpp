@@ -7979,6 +7979,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##wat")) toRemove = w;
         }
     }
+    if (auto* fl = dynamic_cast<Flashlight*>(curComp)) {
+        if (CompHeader("Flashlight", fl, &toRemove)) {
+            ImGui::TextDisabled("A spot light that follows your view — see inside caves. Toggle in Play.");
+            char kb[2] = {fl->toggleKey, 0};
+            if (ImGui::InputText("Toggle Key##fl", kb, sizeof(kb))) { fl->toggleKey = kb[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to switch the beam on/off (blank = none).");
+            if (ImGui::Checkbox("On##fl", &fl->on)) { fl->SetOn(fl->on); ed.dirty = true; }
+            if (ImGui::DragFloat("Range##fl", &fl->range, 0.5f, 1.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Cone Angle##fl", &fl->angle, 10.0f, 120.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::DragFloat("Intensity##fl", &fl->intensity, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            float c[3] = {fl->color.r, fl->color.g, fl->color.b};
+            if (ImGui::ColorEdit3("Color##fl", c)) { fl->color = {c[0],c[1],c[2],1.0f}; ed.dirty = true; }
+            ImGui::TextDisabled("Mount on the player or its camera; the beam aims where you look.");
+            if (ImGui::SmallButton("Remove##fl")) toRemove = fl;
+        }
+    }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
         if (CompHeader("Pause Menu", pm, &toRemove)) {
             ImGui::TextDisabled("Press the toggle key in Play to pause; Resume / Quit buttons appear.");
@@ -11552,6 +11568,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<VoxelTerrain>(), "Voxel Terrain (diggable)")) { auto* v = go->AddComponent<VoxelTerrain>(); v->Generate(0.5f, 6.0f, 0.0f, 1u); v->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<VoxelDigger>(), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
             if (item(!go->GetComponent<Water>(), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<Flashlight>(), "Flashlight")) { go->AddComponent<Flashlight>(); ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }

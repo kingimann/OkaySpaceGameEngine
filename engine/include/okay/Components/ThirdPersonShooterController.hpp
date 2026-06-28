@@ -170,7 +170,7 @@ public:
 
         if (driveAnimation)
             if (Character* ch = FindCharacter()) {
-                ch->anim = airborne ? 5 : (moving ? (running ? 3 : 2) : 1);
+                ch->anim = (moving ? (running ? 3 : 2) : 1);   // no jump/fall pose
                 // The body already faces the aim yaw, so the head only tilts up/down
                 // with the pitch (12 = resting pitch, so it's level by default). If the
                 // Character is set to look at the camera/target, let it drive the head.

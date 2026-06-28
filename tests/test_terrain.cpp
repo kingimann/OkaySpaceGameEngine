@@ -404,6 +404,34 @@ int main() {
         }
     }
 
+    // --- Flashlight: spawns a child spot light, toggles, round-trips ----------
+    {
+        Scene s("FLASH");
+        GameObject* camObj = s.CreateGameObject("Camera");
+        camObj->AddComponent<Camera>();
+        GameObject* p = s.CreateGameObject("Player");
+        auto* fl = p->AddComponent<Flashlight>();
+        fl->range = 30.0f; fl->angle = 50.0f;
+        s.Start();                                  // runs Flashlight::Start
+        GameObject* lobj = s.Find("Flashlight");
+        CHECK(lobj != nullptr);                      // beam object created
+        auto* lt = lobj ? lobj->GetComponent<Light>() : nullptr;
+        CHECK(lt != nullptr);
+        if (lt) {
+            CHECK(lt->type == Light::Type::Spot);    // it's a spotlight
+            CHECK_NEAR(lt->range, 30.0f, 1e-3f);
+        }
+        fl->SetOn(false);                            // toggling off hides it
+        CHECK(!lobj->active);
+        fl->SetOn(true);
+        CHECK(lobj->active);
+
+        Scene s2("x"); SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s));
+        auto* fl2 = s2.Find("Player") ? s2.Find("Player")->GetComponent<Flashlight>() : nullptr;
+        CHECK(fl2 != nullptr);
+        if (fl2) { CHECK_NEAR(fl2->range, 30.0f, 1e-3f); CHECK(fl2->toggleKey == 'f'); }
+    }
+
     // --- The Terrain Sandbox template builds a playable dig scene -------------
     {
         Scene s("sandbox");

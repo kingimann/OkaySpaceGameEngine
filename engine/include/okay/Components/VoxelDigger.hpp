@@ -8,6 +8,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Game.hpp"
 #include <cmath>
 
 namespace okay {
@@ -69,6 +70,7 @@ public:
     }
 
     void Update(float dt) override {
+        if (Game::Paused()) { HideBrush(); return; }   // no aim marker / digging while paused
         VoxelTerrain* vox = FindVoxel();
         if (!vox) { HideBrush(); return; }
         Vec3 local;

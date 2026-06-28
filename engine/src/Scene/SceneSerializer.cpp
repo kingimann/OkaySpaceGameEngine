@@ -85,6 +85,7 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/VoxelDigger.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/Flashlight.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -311,6 +312,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << pm->dimColor.r << " " << pm->dimColor.g << " " << pm->dimColor.b << " " << pm->dimColor.a
             << " " << pm->panelColor.r << " " << pm->panelColor.g << " " << pm->panelColor.b << " " << pm->panelColor.a
             << " " << Quote(pm->title) << " " << Quote(pm->mainMenuScene) << "\n";
+    }
+    if (auto* fl = go->GetComponent<Flashlight>()) {
+        out << "  flashlight " << (int)(unsigned char)fl->toggleKey << " " << (fl->on ? 1 : 0)
+            << " " << fl->range << " " << fl->angle << " " << fl->intensity
+            << " " << fl->color.r << " " << fl->color.g << " " << fl->color.b << "\n";
     }
     if (auto* w = go->GetComponent<Water>()) {
         out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
@@ -2688,6 +2694,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     pm->toggleKey = (char)tk; pm->showResume = (sr != 0); pm->showQuit = (sq != 0);
                     pm->title = ReadQuoted(in);
                     pm->mainMenuScene = ReadQuoted(in);
+                } else if (field == "flashlight") {
+                    auto* fl = go->AddComponent<Flashlight>();
+                    int tk = 'f', onv = 1;
+                    in >> tk >> onv >> fl->range >> fl->angle >> fl->intensity
+                       >> fl->color.r >> fl->color.g >> fl->color.b;
+                    fl->toggleKey = (char)tk; fl->on = (onv != 0);
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed

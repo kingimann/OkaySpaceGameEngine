@@ -518,9 +518,18 @@ Mesh VoxelTerrain::BuildMesh() const {
                     Vec3 a = vert[kTri[cubeindex][t]];
                     Vec3 b = vert[kTri[cubeindex][t + 1]];
                     Vec3 c = vert[kTri[cubeindex][t + 2]];
+                    Vec3 na = normalAt(a), nb = normalAt(b), nc = normalAt(c);
+                    // Force a consistent OUTWARD winding (geometric normal agrees with
+                    // the gradient normal). This lets the mesh render single-sided —
+                    // backface culling then skips ~half the triangles, a big speedup —
+                    // without the surface ever culling its visible side.
+                    Vec3 g = Vec3::Cross(b - a, c - a);
+                    Vec3 navg{na.x + nb.x + nc.x, na.y + nb.y + nc.y, na.z + nb.z + nc.z};
+                    if (g.x * navg.x + g.y * navg.y + g.z * navg.z < 0.0f) {
+                        std::swap(b, c); std::swap(nb, nc);
+                    }
                     int base = (int)m.vertices.size();
                     m.vertices.push_back(a); m.vertices.push_back(b); m.vertices.push_back(c);
-                    Vec3 na = normalAt(a), nb = normalAt(b), nc = normalAt(c);
                     m.normals.push_back(na); m.normals.push_back(nb); m.normals.push_back(nc);
                     m.uvs.push_back({a.x * 0.25f, a.z * 0.25f});
                     m.uvs.push_back({b.x * 0.25f, b.z * 0.25f});
@@ -542,7 +551,10 @@ void VoxelTerrain::Apply() {
     if (!mr) mr = gameObject->AddComponent<MeshRenderer>();
     mr->mesh = BuildMesh();
     mr->color = color;
-    mr->doubleSided = true;
+    // Single-sided: the winding is forced outward in BuildMesh, so backface culling
+    // safely skips the hidden ~half of the triangles (a real frame-rate win on big
+    // terrains) while caves still render correctly from the inside.
+    mr->doubleSided = false;
     // Triplanar ground texture (tinted by the per-face auto-colours). Triplanar
     // keeps cave walls / overhangs / floors from smearing.
     mr->texture = texture;

@@ -8,6 +8,7 @@
 #include "okay/Render/Mesh.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Game.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -82,6 +83,7 @@ public:
     }
 
     void Update(float dt) override {
+        if (Game::Paused()) { HideBrush(); return; }   // no aim marker / sculpting while paused
         Terrain* terr = FindTerrain();
         if (!terr) { HideBrush(); return; }
 

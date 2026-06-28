@@ -40,6 +40,7 @@
 #include "okay/Components/VoxelDigger.hpp"
 #include "okay/Components/Water.hpp"
 #include "okay/Components/PauseMenu.hpp"
+#include "okay/Components/Flashlight.hpp"
 #include "okay/Components/Light.hpp"
 
 namespace okay {
@@ -1015,10 +1016,11 @@ inline void VoxelSandbox(Scene& scene) {
     cam->main = true;
     camObj->transform->SetParent(player->transform, false);
     camObj->transform->localPosition = {0, 1.62f, 0.0f};
+    camObj->AddComponent<Flashlight>();   // F to toggle — so you can see inside caves
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD + mouse    Left Mouse = dig cave    Right Mouse = fill    Space = jump    Esc = pause";
+    ht->text = "WASD + mouse   Dig: LMB   Fill: RMB   Jump: Space   Light: F   Pause: Esc";
     ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();

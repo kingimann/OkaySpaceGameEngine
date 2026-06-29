@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.332.0  (Smooth animation blending — no more snapping)
+  - Switching animations now CROSSFADES instead of snapping. When idle→walk→run
+    (or any PlayClip) changes the active clip, the character eases from its current
+    pose into the new one over a short blend, so locomotion and clip transitions
+    look smooth instead of popping to frame 0.
+  - New "Blend (s)" slider on the Character (default 0.15s; 0 = instant). Serialized
+    with the scene. Works on both the single mesh and the separated part rig, and
+    blends in both directions (into a clip and back to the built-in animation).
+  - New test_char_blend verifies a switch is partway mid-blend, reaches the new pose
+    once the blend completes, and that the blend time round-trips through save/load.
+
 v2.331.0  (Your animations drive the character — no scripting)
   - NEW "Movement animations" on the Character: bind your authored clips to the
     Idle / Walk / Run states a controller drives. When the character enters that

@@ -126,6 +126,13 @@ public:
     /// True while a state binding (not a manual PlayClip) is driving the current clip.
     bool StateDriven() const { return m_stateDriven; }
 
+    /// Crossfade time (seconds) when switching clips — the character eases from its
+    /// current pose into the new clip instead of snapping. So idle↔walk↔run (and any
+    /// PlayClip) blend smoothly. 0 = instant. Serialized.
+    float blendTime = 0.15f;
+    /// True while a crossfade is in progress (0..1 weight not yet at 1).
+    bool Blending() const { return m_blendT < 1.0f; }
+
     // Head look: layered on top of the current animation so the head turns/tilts
     // toward where the player (or camera) is aiming. Degrees; not serialized — the
     // controllers drive these as TARGETS every frame, and the head eases toward
@@ -244,6 +251,9 @@ private:
     float m_clipTime = 0.0f;
     bool m_stateDriven = false;          // a state binding (not a manual PlayClip) owns the clip
     void SyncStateClips();               // auto-play the clip bound to the current `anim` state
+    std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
+    float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)
+    void BeginBlend();                   // snapshot the current pose and start a crossfade
     void EnsureRest() const;
 };
 

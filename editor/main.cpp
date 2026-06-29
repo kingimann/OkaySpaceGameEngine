@@ -8395,6 +8395,9 @@ void DrawInspector(EditorState& ed) {
                     bindCombo("Walk##charstate", ch->clipWalk);
                     bindCombo("Run##charstate",  ch->clipRun);
                 }
+                ImGui::SetNextItemWidth(150);
+                if (ImGui::SliderFloat("Blend (s)##charblend", &ch->blendTime, 0.0f, 0.6f, "%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crossfade time when switching animations (idle/walk/run or any clip).\n0 = snap instantly.");
             }
 
             ImGui::SeparatorText("Clothing");

@@ -400,6 +400,7 @@ bool Character::PlayClip(const std::string& name) {
     if (name.empty()) { StopClip(); return true; }
     auto it = m_clips.find(name);
     if (it == m_clips.end()) return false;
+    if (m_activeClipName != name) BeginBlend();   // crossfade from the current pose
     m_activeClip = &it->second;
     m_activeClipName = name;
     m_clipTime = 0.0f;
@@ -407,9 +408,16 @@ bool Character::PlayClip(const std::string& name) {
 }
 
 void Character::StopClip() {
+    if (m_activeClip) BeginBlend();               // crossfade back to the built-in animation
     m_activeClip = nullptr;
     m_activeClipName.clear();
     m_clipTime = 0.0f;
+}
+
+void Character::BeginBlend() {
+    if (blendTime <= 1e-4f) { m_blendT = 1.0f; return; }   // instant
+    m_blendFrom = CurrentSourcePose();                     // freeze where we are right now
+    m_blendT = 0.0f;
 }
 
 std::vector<std::string> Character::ClipNames() const {
@@ -442,6 +450,11 @@ void Character::SyncStateClips() {
 
 void Character::Update(float dt) {
     SyncStateClips();
+    // Advance any in-progress crossfade (covers every render path below).
+    if (m_blendT < 1.0f) {
+        m_blendT += (blendTime > 1e-4f ? dt / blendTime : 1.0f);
+        if (m_blendT > 1.0f) m_blendT = 1.0f;
+    }
     // Separate-parts rig: animate the part transforms instead of baking one mesh.
     if (separateParts) {
         if (!m_partsBuilt) BuildParts();
@@ -486,7 +499,7 @@ void Character::Update(float dt) {
         if (!mr) return;
         EnsureRest();
         Mesh m = m_rest;
-        Skin(m, m_bone, m_activeClip->Sample(m_clipTime));
+        Skin(m, m_bone, CurrentSourcePose());   // crossfade-aware (blends into the clip)
         for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }  // face -Z (see Apply)
         m.normals.clear();
         mr->mesh = std::move(m);
@@ -532,7 +545,7 @@ void Character::Update(float dt) {
     if (!mr) return;
     EnsureRest();
     Mesh m = m_rest;
-    std::vector<Vec3> pose = PoseAt(animTime);
+    std::vector<Vec3> pose = CurrentSourcePose();   // built-in anim, crossfade-aware
     // Layer a punch arc over the right arm (swings forward and back), so the
     // character's own arm does the hitting on top of whatever it's already doing.
     if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
@@ -622,9 +635,16 @@ void Character::BuildParts() {
 }
 
 std::vector<Vec3> Character::CurrentSourcePose() const {
-    if (m_editorPosing) { std::vector<Vec3> p = m_editorPose; p.resize(B_COUNT, Vec3{0, 0, 0}); return p; }
-    if (m_activeClip)   { std::vector<Vec3> p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); return p; }
-    return PoseAt(animTime);
+    std::vector<Vec3> p;
+    if (m_editorPosing)    { p = m_editorPose; p.resize(B_COUNT, Vec3{0, 0, 0}); }
+    else if (m_activeClip) { p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); }
+    else                   p = PoseAt(animTime);
+    // Crossfade from the pose captured at the last clip switch (smoothstep weight).
+    if (m_blendT < 1.0f && m_blendFrom.size() == p.size() && !p.empty()) {
+        float w = m_blendT * m_blendT * (3.0f - 2.0f * m_blendT);
+        for (std::size_t i = 0; i < p.size(); ++i) p[i] = m_blendFrom[i] + (p[i] - m_blendFrom[i]) * w;
+    }
+    return p;
 }
 std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
 
@@ -678,7 +698,8 @@ std::string Character::ToText() const {
     // State-clip bindings last (trailing, so older saves still parse). "-" = unbound.
     o << ' ' << (clipIdle.empty() ? "-" : clipIdle)
       << ' ' << (clipWalk.empty() ? "-" : clipWalk)
-      << ' ' << (clipRun.empty()  ? "-" : clipRun);
+      << ' ' << (clipRun.empty()  ? "-" : clipRun)
+      << ' ' << blendTime;
     return o.str();
 }
 
@@ -725,6 +746,8 @@ void Character::FromText(const std::string& text) {
     if (in >> si) clipIdle = (si == "-" ? "" : si);
     if (in >> sw) clipWalk = (sw == "-" ? "" : sw);
     if (in >> sr) clipRun  = (sr == "-" ? "" : sr);
+    float bt = 0.15f;
+    if (in >> bt) blendTime = bt;
     m_built = false;
 }
 

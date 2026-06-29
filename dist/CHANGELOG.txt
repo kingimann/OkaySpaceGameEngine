@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.330.0  (Character animation workflow — pose, key, play)
+  - The Animation window now drives the CHARACTER itself, not just transform
+    tracks. Select a separated character, open View > Animation, and you get a
+    bone picker with rotation sliders: pose any bone (arm up, leg forward, head
+    tilt) and the character previews the pose live in the viewport.
+  - "Key Pose" captures ALL the character's bones at the current time into a
+    keyframe; build a walk cycle or a wave by posing and keying frame by frame.
+    Press Play to preview the clip, then "Apply to Character" to make it the
+    character's clip (auto-plays on load).
+  - Authored character clips are saved with the scene (clip name, loop, every
+    keyframe's full per-bone pose) and replay on the separated part rig at Play —
+    no scripting. New test_char_anim verifies a keyed clip poses the right part
+    and survives a save/load round-trip.
+
 v2.329.0  (Customizable pause menu — real editable UI)
   - The pause menu is no longer generated at Play and no longer un-customizable.
     Adding the Pause Menu component now drops its UI into the scene as REAL,

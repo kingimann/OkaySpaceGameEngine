@@ -96,6 +96,12 @@ public:
     bool PartsBuilt() const { return m_partsBuilt; }
     GameObject* Part(int bone) const { return (bone >= 0 && bone < (int)m_parts.size()) ? m_parts[bone] : nullptr; }
 
+    // ---- Animation authoring (the editor's Animation window uses these) ----
+    std::vector<Vec3> CurrentPose() const;  ///< the pose being shown right now (per-bone euler)
+    /// Force a specific per-bone pose for editor preview (overrides anim/clip until cleared).
+    void PreviewPose(const std::vector<Vec3>& pose) { m_editorPose = pose; m_editorPosing = true; }
+    void StopPreview() { m_editorPosing = false; }
+
     /// The first-person arm as its OWN mesh (just the arm bones), kept for the
     /// non-separated path. Rebuilt each frame while firstPersonArm.
     const Mesh& FpArmMesh() const { return m_fpArm; }
@@ -214,6 +220,9 @@ private:
     GameObject* m_rigRoot = nullptr;
     std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)
     void DriveParts();                   // pose the part transforms from the animation
+    std::vector<Vec3> m_editorPose;      // forced pose for editor preview
+    bool m_editorPosing = false;
+    std::vector<Vec3> CurrentSourcePose() const;   // editorPose / active clip / built-in anim
     std::unordered_map<std::string, AnimClip> m_clips;  // registered custom clips
     const AnimClip* m_activeClip = nullptr;             // currently playing (or null)
     std::string m_activeClipName;

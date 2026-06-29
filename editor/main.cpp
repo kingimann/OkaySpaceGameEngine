@@ -6260,14 +6260,112 @@ static const char* ActionOpLabel(const ActionOpInfo* ops, int n, const std::stri
 // A keyframe animation timeline for the selected object's Animator. Scrub the
 // playhead, "Key" the object's current Transform (position / rotation / scale) at
 // that time, and the Animator plays it back. Saved with the scene.
+// Tracks which Character is being live-previewed so we can clear it when the
+// window closes / selection changes (otherwise it stays frozen in the edited pose).
+static Character* g_animPreview = nullptr;
+static void StopAnimPreview() { if (g_animPreview) { g_animPreview->StopPreview(); g_animPreview = nullptr; } }
+
+// Character animation: pose each bone, Key the whole pose at the playhead to build a
+// clip of keyframes, scrub to preview, Apply to play it (saved with the scene).
+static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch) {
+    static std::unordered_map<void*, AnimClip> clips;
+    static std::unordered_map<void*, std::vector<Vec3>> poses;
+    static std::unordered_map<void*, float> times;
+    static std::unordered_map<void*, int> bones;
+    static std::unordered_map<void*, bool> plays;
+    const int nb = Character::BoneCount();
+    AnimClip& clip = clips[(void*)ch];
+    std::vector<Vec3>& pose = poses[(void*)ch];
+    if ((int)pose.size() != nb) pose.assign(nb, Vec3{0, 0, 0});
+    float& t = times[(void*)ch];
+    int& bone = bones[(void*)ch];
+    bool& playing = plays[(void*)ch];
+    if (clip.name.empty()) clip.name = "MyAnim";
+
+    if (!ch->separateParts)
+        ImGui::TextDisabled("Tip: turn on 'Separate Into Parts' on the Character to see the rig pose.");
+    char cn[48]; std::snprintf(cn, sizeof(cn), "%s", clip.name.c_str());
+    if (ImGui::InputText("Clip Name##ca", cn, sizeof(cn))) {
+        std::string s(cn); for (char& c : s) if (c == ' ') c = '_'; clip.name = s; ed.dirty = true;
+    }
+    ImGui::SameLine(); ImGui::Checkbox("Loop##ca", &clip.loop);
+
+    float dur = clip.Duration();
+    if (ImGui::Button(playing ? "Pause##ca" : "Play##ca")) playing = !playing;
+    ImGui::SameLine(); if (ImGui::Button("Stop##ca")) { playing = false; t = 0.0f; }
+    ImGui::SameLine(); ImGui::Text("len %.2fs  keys %d", dur, (int)clip.keys.size());
+    if (playing && dur > 0.01f) {
+        t += ImGui::GetIO().DeltaTime;
+        if (clip.loop) t = std::fmod(t, dur); else if (t > dur) { t = dur; playing = false; }
+    }
+    ImGui::SliderFloat("Time##ca", &t, 0.0f, dur > 0.5f ? dur : 2.0f);
+
+    // While playing, show the sampled pose; otherwise show the pose being authored.
+    g_animPreview = ch;
+    if (playing && !clip.keys.empty()) ch->PreviewPose(clip.Sample(t));
+    else ch->PreviewPose(pose);
+
+    ImGui::Separator();
+    // Pick a bone and rotate it (euler degrees). The rig updates live.
+    std::vector<const char*> names(nb);
+    for (int i = 0; i < nb; ++i) names[i] = Character::BoneName(i);
+    if (bone < 0 || bone >= nb) bone = 0;
+    ImGui::SetNextItemWidth(160); ImGui::Combo("Bone##ca", &bone, names.data(), nb);
+    ImGui::DragFloat3("Bone Rotation##ca", &pose[bone].x, 0.5f);
+    ImGui::SameLine(); if (ImGui::SmallButton("0##careset")) pose[bone] = Vec3{0, 0, 0};
+
+    if (ImGui::Button("Key Pose##ca")) {
+        // Replace a key at ~this time, else insert in time order.
+        AnimKey k; k.time = t; k.pose = pose;
+        bool replaced = false;
+        for (auto& e : clip.keys) if (std::fabs(e.time - t) < 1e-3f) { e = k; replaced = true; break; }
+        if (!replaced) {
+            clip.keys.push_back(k);
+            std::sort(clip.keys.begin(), clip.keys.end(),
+                      [](const AnimKey& a, const AnimKey& b) { return a.time < b.time; });
+        }
+        ed.dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Apply to Character##ca")) {
+        ch->AddClip(clip);
+        ch->autoPlayClip = clip.name;
+        ch->StopPreview(); g_animPreview = nullptr;
+        ch->PlayClip(clip.name);
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Register + auto-play this clip on the Character (saved with the scene).");
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Keyframes (click to edit)");
+    int del = -1;
+    for (int i = 0; i < (int)clip.keys.size(); ++i) {
+        ImGui::PushID(i);
+        char lbl[32]; std::snprintf(lbl, sizeof(lbl), "%.2fs", clip.keys[i].time);
+        if (ImGui::Button(lbl)) { t = clip.keys[i].time; pose = clip.keys[i].pose; if ((int)pose.size() != nb) pose.resize(nb, Vec3{0,0,0}); playing = false; }
+        ImGui::SameLine(); if (ImGui::SmallButton("x")) del = i;
+        ImGui::PopID();
+    }
+    if (del >= 0) { clip.keys.erase(clip.keys.begin() + del); ed.dirty = true; }
+    if (clip.keys.empty())
+        ImGui::TextDisabled("Pose the bones, set Time, press Key Pose. Repeat, then Apply.");
+}
+
 static void DrawAnimationEditor(EditorState& ed) {
-    if (!g_showAnimation) return;
+    if (!g_showAnimation) { StopAnimPreview(); return; }
     if (!ImGui::Begin("Animation", &g_showAnimation)) { ImGui::End(); return; }
     GameObject* go = ed.selected();
     if (!go || !go->transform) {
+        StopAnimPreview();
         ImGui::TextDisabled("Select an object to animate it.");
         ImGui::End(); return;
     }
+    if (Character* ch = go->GetComponent<Character>()) {
+        if (g_animPreview && g_animPreview != ch) StopAnimPreview();
+        DrawCharacterAnim(ed, go, ch);
+        ImGui::End(); return;
+    }
+    StopAnimPreview();
     Animator* an = go->GetComponent<Animator>();
     if (!an) {
         ImGui::TextDisabled("'%s' has no Animator.", go->name.c_str());

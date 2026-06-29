@@ -420,10 +420,28 @@ void Character::Update(float dt) {
                 m_punchT += (punchDuration > 1e-3f ? dt / punchDuration : 1.0f);
                 if (m_punchT > 1.0f) m_punchT = 1.0f;
             }
-            animTime += dt * animSpeed;
-            if (animateParts) DriveParts();
+            // A playing clip drives the parts; otherwise the built-in animation.
+            if (m_activeClip) {
+                m_clipTime += dt * animSpeed;
+                float dur = m_activeClip->Duration();
+                if (dur > 0.0f) { if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur); else if (m_clipTime > dur) m_clipTime = dur; }
+            } else animTime += dt * animSpeed;
+            if (animateParts || m_editorPosing || m_activeClip) DriveParts();   // preview / clip still drive
             return;
         }
+    }
+    // Editor preview (single mesh): show the forced pose.
+    if (m_editorPosing) {
+        auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
+        if (mr) {
+            EnsureRest();
+            Mesh m = m_rest;
+            std::vector<Vec3> pose = m_editorPose; pose.resize(B_COUNT, Vec3{0, 0, 0});
+            Skin(m, m_bone, pose);
+            for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }
+            m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
+        }
+        return;
     }
     // A custom clip, if one is playing, drives the whole body and overrides the
     // built-in animations.
@@ -573,9 +591,16 @@ void Character::BuildParts() {
     m_partsBuilt = true;
 }
 
+std::vector<Vec3> Character::CurrentSourcePose() const {
+    if (m_editorPosing) { std::vector<Vec3> p = m_editorPose; p.resize(B_COUNT, Vec3{0, 0, 0}); return p; }
+    if (m_activeClip)   { std::vector<Vec3> p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); return p; }
+    return PoseAt(animTime);
+}
+std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
+
 void Character::DriveParts() {
     if (!m_partsBuilt) return;
-    std::vector<Vec3> pose = PoseAt(animTime);
+    std::vector<Vec3> pose = CurrentSourcePose();
     if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
         float arc = std::sin(m_punchT * 3.14159265f);
         Vec3 up = {110.0f, 0.0f, -8.0f}, fore = {-18.0f, 0.0f, 0.0f};
@@ -609,6 +634,17 @@ std::string Character::ToText() const {
       << (clipsFile.empty() ? "-" : clipsFile) << ' '
       << (autoPlayClip.empty() ? "-" : autoPlayClip) << ' '
       << (separateParts ? 1 : 0) << ' ' << (animateParts ? 1 : 0);
+    // Authored animation clips (per-bone euler keyframes) so editor-made animations
+    // persist + auto-play. Names are single tokens (no spaces); poses are by index.
+    o << ' ' << m_clips.size();
+    for (const auto& kv : m_clips) {
+        const AnimClip& c = kv.second;
+        o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << (c.loop ? 1 : 0) << ' ' << c.keys.size();
+        for (const auto& k : c.keys) {
+            o << ' ' << k.time << ' ' << k.pose.size();
+            for (const auto& p : k.pose) o << ' ' << p.x << ' ' << p.y << ' ' << p.z;
+        }
+    }
     return o.str();
 }
 
@@ -633,6 +669,23 @@ void Character::FromText(const std::string& text) {
     int sp = 0, an = 1;
     if (in >> sp) separateParts = (sp != 0);
     if (in >> an) animateParts = (an != 0);
+    // Authored clips (optional; absent in older saves).
+    int nc = 0;
+    if (in >> nc) {
+        for (int ci = 0; ci < nc; ++ci) {
+            std::string cn; int lp = 1; int nk = 0;
+            if (!(in >> cn >> lp >> nk)) break;
+            AnimClip c; c.name = (cn == "-" ? "" : cn); c.loop = (lp != 0);
+            for (int ki = 0; ki < nk; ++ki) {
+                AnimKey key; int np = 0;
+                if (!(in >> key.time >> np)) break;
+                key.pose.resize(np);
+                for (int pi = 0; pi < np; ++pi) in >> key.pose[pi].x >> key.pose[pi].y >> key.pose[pi].z;
+                c.keys.push_back(std::move(key));
+            }
+            if (!c.name.empty()) AddClip(std::move(c));
+        }
+    }
     m_built = false;
 }
 

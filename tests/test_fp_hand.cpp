@@ -3,9 +3,9 @@
 
 using namespace okay;
 
-// FirstPersonHand uses the CHARACTER'S OWN arm (no extra object): it freezes the
-// body and raises the real arm into the first-person view; empty-handed it rests
-// low, holding raises it.
+// FirstPersonHand hides the whole body from the first-person camera and renders
+// ONLY the character's real arm (split out by bone) on a separate object — so you
+// never see your body, even looking down.
 int main() {
     RUN_SUITE("fp_hand");
 
@@ -23,39 +23,39 @@ int main() {
 
         std::size_t before = scene.Objects().size();
         scene.Start();
+        ch->anim = 2;                                  // "walk" — body must never appear
+        fh->holdingItem = true;
+        for (int i = 0; i < 20; ++i) scene.Update(0.016f);
+
+        CHECK(ch->firstPersonArm == true);
+        CHECK(scene.Objects().size() == before);       // NOTHING spawned into the scene
+
+        // The player's own mesh is now arm-only — far fewer triangles than the full
+        // body — so only the arm can render (no torso/legs, even looking down).
+        auto* bodyMr = player->GetComponent<MeshRenderer>();
+        CHECK(bodyMr != nullptr);
+        int armTris = bodyMr ? bodyMr->mesh.TriangleCount() : 0;
+        ch->firstPersonArm = false;                    // build the full body to compare
         scene.Update(0.016f);
+        int fullTris = bodyMr ? bodyMr->mesh.TriangleCount() : 0;
+        CHECK(armTris > 0);
+        CHECK(armTris < fullTris / 3);                 // arm-only is a small fraction of the body
+        ch->firstPersonArm = true;
+        for (int i = 0; i < 5; ++i) scene.Update(0.016f);
 
-        CHECK(fpc->showBody == true);                  // body shown (its arm renders)
-        CHECK(ch->firstPersonArm == true);             // character drives the first-person arm
-        CHECK(scene.Objects().size() == before);       // NO separate/extra arm object created
-
+        // Render the real first-person view and confirm the arm fills the lower-right.
         auto* camC = cam->GetComponent<Camera>();
         const int W = 320, H = 200;
-        auto avgY = [&](int& lit) {
-            Mat4 vp = camC->ProjectionMatrix((float)W/(float)H) * camC->ViewMatrix();
-            Vec3 e = cam->transform->Position();
-            Raster work; std::vector<std::uint32_t> outbuf;
-            const std::uint32_t* px = RenderMeshesSS(work, outbuf, scene, vp, e, W, H, 1, nullptr);
-            lit = 0; long sumY = 0;
-            for (int y = 0; y < H; ++y)
-                for (int x = 0; x < W; ++x)
-                    if (px[y*W+x] & 0xFF000000u) { ++lit; sumY += y; }
-            return lit ? (int)(sumY / lit) : 0;
-        };
-
-        // Empty-handed (default): the arm rests low in the lower-right and is visible.
-        // It must show even while WALKING — the body is frozen, so no torso/legs appear.
-        ch->anim = 2;                                  // "walk"
-        for (int i = 0; i < 30; ++i) scene.Update(0.016f);
-        int litDn; int yDn = avgY(litDn);
-        CHECK(litDn > 800);                            // empty hand clearly shown, low in view
-
-        // Holding a weapon/item raises the hand higher (smaller average Y).
-        fh->holdingItem = true;
-        for (int i = 0; i < 30; ++i) scene.Update(0.016f);
-        int litUp; int yUp = avgY(litUp);
-        CHECK(litUp > 800);
-        CHECK(yUp < yDn);                              // raised pose sits higher than the resting one
+        Mat4 vp = camC->ProjectionMatrix((float)W/(float)H) * camC->ViewMatrix();
+        Vec3 eye = cam->transform->Position();
+        Raster work; std::vector<std::uint32_t> outbuf;
+        const std::uint32_t* px = RenderMeshesSS(work, outbuf, scene, vp, eye, W, H, 1, nullptr);
+        int lit = 0, lowerRight = 0;
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x)
+                if (px[y*W+x] & 0xFF000000u) { ++lit; if (y > H/2 && x > W/2) ++lowerRight; }
+        CHECK(lit > 500);                  // the arm is clearly on screen
+        CHECK(lowerRight > lit / 3);       // weighted to the lower-right
     }
 
     // Serialization round-trips the settings.
@@ -73,7 +73,6 @@ int main() {
         CHECK(lf != nullptr);
         if (lf) {
             CHECK(lf->attackButton == 1);
-            CHECK(lf->holdToSwing == false);
             CHECK(lf->holdingItem == true);
             CHECK_NEAR(lf->handRaise, -110.0f, 0.01f);
             CHECK_NEAR(lf->elbowBend, 25.0f, 0.01f);

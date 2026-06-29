@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.326.0  (First-person hand spawns nothing)
+  - The first-person hand no longer spawns ANY object into the scene. While it's
+    active the Character simply renders only its OWN arm in its existing mesh — the
+    body isn't in the mesh that frame, so you see just your arm and never your
+    torso/legs (even looking straight down), with no extra "FP Arm" object in the
+    hierarchy. It's the real arm geometry + colours, split out by bone.
+  - In the editor (edit mode) the whole character still shows so you can pose/edit
+    it; the arm-only view only happens in Play.
+  - Empty-handed the arm rests low; holdingItem / SetHolding(true) raises it. Hand
+    Raise / Elbow Bend position it live in Play. Click swings the real arm.
+
 v2.325.0  (First-person hand = your real arm, body frozen)
   - No more separate/floating viewmodel arm. The first-person hand is your
     CHARACTER'S OWN arm again — and the body is now FROZEN while it's active, so

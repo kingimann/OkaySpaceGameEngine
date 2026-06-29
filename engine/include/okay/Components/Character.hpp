@@ -189,6 +189,8 @@ private:
     float m_headPitch = 0.0f;      // eased head tilt (toward lookPitch)
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)
     float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
+    Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)
+    void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
     std::unordered_map<std::string, AnimClip> m_clips;  // registered custom clips
     const AnimClip* m_activeClip = nullptr;             // currently playing (or null)
     std::string m_activeClipName;

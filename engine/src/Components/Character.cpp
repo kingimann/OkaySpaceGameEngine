@@ -504,8 +504,38 @@ void Character::Update(float dt) {
     Vec3 so = StanceOffset();
     for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();
-    mr->mesh = std::move(m);
+    // First-person: render ONLY your arm in the character's own mesh (no body, no
+    // extra spawned object). The body simply isn't in the mesh this frame, so you
+    // never see your torso/legs — even looking straight down — and nothing is
+    // spawned into the scene. In edit mode firstPersonArm is off, so the editor
+    // still shows the whole character.
+    if (firstPersonArm) {
+        BuildFpArm(m);
+        mr->mesh = std::move(m_fpArm);
+    } else {
+        mr->mesh = std::move(m);
+    }
     mr->doubleSided = true;
+}
+
+// Copy just the (raised, screen-right) arm bones out of the fully-skinned body mesh,
+// keeping per-face colours, so the real arm geometry can be rendered on its own.
+void Character::BuildFpArm(const Mesh& full) {
+    m_fpArm.vertices.clear(); m_fpArm.triangles.clear();
+    m_fpArm.triColors.clear(); m_fpArm.normals.clear(); m_fpArm.name.clear();
+    const bool cols = full.HasFaceColors();
+    auto isArm = [](int b) { return b == B_LUPARM || b == B_LFORE || b == B_LHAND; };
+    int faces = (int)full.triangles.size() / 3;
+    for (int f = 0; f < faces; ++f) {
+        int a = full.triangles[f * 3], b = full.triangles[f * 3 + 1], c = full.triangles[f * 3 + 2];
+        if (a >= (int)m_bone.size() || b >= (int)m_bone.size() || c >= (int)m_bone.size()) continue;
+        if (!(isArm(m_bone[a]) && isArm(m_bone[b]) && isArm(m_bone[c]))) continue;
+        for (int idx : {a, b, c}) {
+            m_fpArm.triangles.push_back((int)m_fpArm.vertices.size());
+            m_fpArm.vertices.push_back(full.vertices[idx]);
+        }
+        if (cols) m_fpArm.triColors.push_back(full.triColors[f]);
+    }
 }
 
 std::string Character::ToText() const {

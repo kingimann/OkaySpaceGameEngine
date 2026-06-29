@@ -72,6 +72,17 @@ public:
     void  Punch() { if (m_punchT < 0.0f || m_punchT >= 1.0f) m_punchT = 0.0f; }
     bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
 
+    // ---- First-person arm (driven by FirstPersonHand) ----
+    // When firstPersonArm is on, the body is frozen (so walking never brings your
+    // torso/legs into view) and your own arm is raised into the first-person camera —
+    // it's literally your character's arm, not a separate viewmodel. fpArmUp eases
+    // 0 (lowered, empty-handed) .. 1 (raised, holding). fpRaise / fpElbow let the
+    // FirstPersonHand inspector tune where the hand sits.
+    bool  firstPersonArm = false;
+    float fpArmUp = 1.0f;
+    float fpRaise = -96.0f;   // raised upper-arm forward angle
+    float fpElbow = 16.0f;    // raised forearm angle (hand closeness/height)
+
     // ---- No-code custom clips ----
     // Set a clips file and (optionally) a clip name and it loads + plays on Start,
     // no scripting required. clipsFile is a path to a .okayanim text file.

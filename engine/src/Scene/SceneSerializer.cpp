@@ -322,10 +322,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* fh = go->GetComponent<FirstPersonHand>()) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
-            << " " << fh->swingDuration << " " << fh->armScale << " " << fh->armLength
-            << " " << fh->posX << " " << fh->posY << " " << fh->posZ
-            << " " << fh->yaw << " " << fh->pitch << " " << fh->roll
-            << " " << (fh->holdingItem ? 1 : 0) << "\n";
+            << " " << (fh->holdingItem ? 1 : 0)
+            << " " << fh->handRaise << " " << fh->elbowBend << "\n";
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
@@ -2759,17 +2757,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int hs = 1;
                     in >> fh->attackButton >> hs;
                     fh->holdToSwing = (hs != 0);
-                    // Optional placement block (older rows / the retired showBody are tolerated).
+                    // Optional trailing fields (older rows are tolerated): holdingItem,
+                    // handRaise, elbowBend.
                     std::string rest; std::getline(in, rest);
                     std::istringstream rs(rest);
                     std::vector<float> v; float f;
                     while (rs >> f) v.push_back(f);
-                    if (v.size() >= 9) {
-                        fh->swingDuration = v[0]; fh->armScale = v[1]; fh->armLength = v[2];
-                        fh->posX = v[3]; fh->posY = v[4]; fh->posZ = v[5];
-                        fh->yaw = v[6]; fh->pitch = v[7]; fh->roll = v[8];
-                    }
-                    if (v.size() >= 10) fh->holdingItem = (v[9] != 0.0f);
+                    if (v.size() >= 1) fh->holdingItem = (v[0] != 0.0f);
+                    if (v.size() >= 3) { fh->handRaise = v[1]; fh->elbowBend = v[2]; }
                 } else if (field == "netsync") {
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;

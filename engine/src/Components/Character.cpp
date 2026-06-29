@@ -472,13 +472,33 @@ void Character::Update(float dt) {
     EnsureRest();
     Mesh m = m_rest;
     std::vector<Vec3> pose = PoseAt(animTime);
-    // Layer a punch arc over the right arm (swings forward and back), so the
-    // character's own arm does the hitting on top of whatever it's already doing.
+    // First-person arm: freeze the body to rest (so walking never brings your torso
+    // or legs into the first-person view) and raise your OWN arm into the camera.
+    // The body mesh is mirror-built (v.x=-v.x below), so the L-bone arm lands on the
+    // screen's RIGHT — your right hand, where Minecraft puts it.
+    if (firstPersonArm && (int)pose.size() > B_RFORE) {
+        for (Vec3& p : pose) p = Vec3{0.0f, 0.0f, 0.0f};
+        float u = fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp);  // 0 = empty (low) .. 1 = holding (raised)
+        // Empty-handed the arm rests low in the lower-right (this is the normally
+        // shown, tunable pose); holding a weapon/item raises + presents it higher.
+        Vec3 upRest  = {fpRaise, 0.0f, 6.0f},        foreRest  = {fpElbow, 0.0f, 0.0f};
+        Vec3 upRaise = {fpRaise - 22.0f, 0.0f, 6.0f}, foreRaise = {fpElbow - 14.0f, 0.0f, 0.0f};
+        pose[B_LUPARM] = upRest  + (upRaise  - upRest)  * u;
+        pose[B_LFORE]  = foreRest + (foreRaise - foreRest) * u;
+    }
+    // Layer a punch arc over the arm (swings forward and back). In first-person mode
+    // the swing drives the raised (screen-right) arm; otherwise the right arm.
     if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
         float arc = std::sin(m_punchT * 3.14159265f);   // 0..1..0
-        Vec3 up = {110.0f, 0.0f, -8.0f}, fore = {-18.0f, 0.0f, 0.0f};
-        pose[B_RUPARM] = pose[B_RUPARM] + (up   - pose[B_RUPARM]) * arc;
-        pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
+        if (firstPersonArm) {
+            Vec3 up = {-140.0f, 0.0f, 8.0f}, fore = {36.0f, 0.0f, 0.0f};
+            pose[B_LUPARM] = pose[B_LUPARM] + (up   - pose[B_LUPARM]) * arc;
+            pose[B_LFORE]  = pose[B_LFORE]  + (fore - pose[B_LFORE])  * arc;
+        } else {
+            Vec3 up = {110.0f, 0.0f, -8.0f}, fore = {-18.0f, 0.0f, 0.0f};
+            pose[B_RUPARM] = pose[B_RUPARM] + (up   - pose[B_RUPARM]) * arc;
+            pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
+        }
     }
     Skin(m, m_bone, pose);
     Vec3 so = StanceOffset();

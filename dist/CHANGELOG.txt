@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.325.0  (First-person hand = your real arm, body frozen)
+  - No more separate/floating viewmodel arm. The first-person hand is your
+    CHARACTER'S OWN arm again — and the body is now FROZEN while it's active, so
+    walking never brings your torso or legs into view. You only ever see your arm.
+  - Empty-handed, the arm rests low in the lower-right (your real arm, where
+    Minecraft shows it). Equip a weapon/item (holdingItem / SetHolding(true)) to
+    raise + present it higher; it eases between the two.
+  - Adjust it yourself, no back-and-forth: new "Hand Raise" and "Elbow Bend" sliders
+    on the First Person Hand component position the hand live in Play (plus Raise
+    Speed). Saved with the scene.
+  - Click still swings the arm via the real Character punch, so third-person and
+    networked players see the hit.
+
 v2.324.0  (First-person hand = hand only, like Minecraft)
   - First person now hides your body and shows ONLY a hand in the corner (no body
     visible while walking, no second arm). The hand is built from YOUR character's

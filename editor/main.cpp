@@ -6282,8 +6282,16 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch) {
     bool& playing = plays[(void*)ch];
     if (clip.name.empty()) clip.name = "MyAnim";
 
-    if (!ch->separateParts)
-        ImGui::TextDisabled("Tip: turn on 'Separate Into Parts' on the Character to see the rig pose.");
+    if (!ch->separateParts) {
+        ImGui::TextWrapped("This character is one object — separate it into parts to pose and "
+                           "animate it (arms, legs, head move independently).");
+        if (ImGui::Button("Separate Into Parts##caSplit")) {
+            ch->separateParts = true;
+            ch->BuildParts();          // build the editable rig right now
+            ed.dirty = true;
+        }
+        ImGui::Separator();
+    }
     char cn[48]; std::snprintf(cn, sizeof(cn), "%s", clip.name.c_str());
     if (ImGui::InputText("Clip Name##ca", cn, sizeof(cn))) {
         std::string s(cn); for (char& c : s) if (c == ' ') c = '_'; clip.name = s; ed.dirty = true;
@@ -8394,8 +8402,13 @@ void DrawInspector(EditorState& ed) {
             c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
 
             ImGui::SeparatorText("Rig");
-            if (ImGui::Checkbox("Separate Into Parts (editable rig)##char", &ch->separateParts)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Build the character as a hierarchy of part objects (Hips, Torso, Head, arms, legs)\nyou can select, recolour, attach things to, and animate part-by-part. Takes effect in Play.");
+            if (ImGui::Checkbox("Separate Into Parts (editable rig)##char", &ch->separateParts)) {
+                // Build/tear down the rig NOW (in the editor) so the parts are real,
+                // selectable objects in the scene — not spawned when you press Play.
+                if (ch->separateParts) ch->BuildParts(); else ch->RemoveParts();
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Build the character as a hierarchy of part objects (Hips, Torso, Head, arms, legs)\nright here in the editor — select, recolour, attach things to, and animate them part-by-part.\nThe rig is rebuilt from the Character on load (not spawned at Play).");
             if (ch->separateParts) {
                 if (ImGui::Checkbox("Play built-in animation on parts##char", &ch->animateParts)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = the parts hold still so you can pose / keyframe them yourself.");
@@ -16105,10 +16118,21 @@ int main(int argc, char** argv) {
         // normal scene tick drives them, so only do this while stopped.
         if (!ed.isPlaying()) {
             float pdt = dt > 0.05f ? 0.05f : dt;   // clamp so a hitch doesn't burst-spawn
+            std::vector<okay::Character*> chars;
             for (const auto& up : ed.scene().Objects())
-                if (up)
+                if (up) {
                     if (auto* ps = up->GetComponent<okay::ParticleSystem>())
                         if (ps->playing) ps->Update(pdt);
+                    if (auto* ch = up->GetComponent<okay::Character>()) chars.push_back(ch);
+                }
+            // Materialize each separated Character's part rig in the EDITOR (so the
+            // parts are real, selectable objects, not spawned at Play) and drive the
+            // Animation window's preview pose onto the rig (Update() doesn't run while
+            // stopped). Gather first — BuildParts() adds objects to the scene.
+            for (okay::Character* ch : chars) {
+                if (ch->separateParts && !ch->PartsBuilt()) ch->BuildParts();
+                if (ch == g_animPreview) ch->EditorPreviewTick();
+            }
         }
 
         // While Play is active, feed real keyboard/mouse/gamepad into the engine

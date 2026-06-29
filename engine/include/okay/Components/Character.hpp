@@ -93,7 +93,18 @@ public:
     // the non-arm parts. Call BuildParts() (or the editor's "Separate Into Parts").
     bool separateParts = false;   ///< serialized: rebuild the part rig on load
     bool animateParts  = true;    ///< let the built-in animation drive the parts
+    /// Create the part rig as REAL child objects (a "Rig" node with one object per
+    /// bone) so you can select / recolour / animate them. Safe to call any time: if a
+    /// "Rig" child already exists it is ADOPTED (not duplicated) — so building it in
+    /// the editor, saving, and reloading reuses the same objects instead of spawning
+    /// new ones at Play. Call from the editor's "Separate Into Parts" so the parts are
+    /// in the scene to customize, not spawned when you press Play.
     void BuildParts();
+    /// Tear the rig back down (destroy the "Rig" child) and show the baked mesh again.
+    void RemoveParts();
+    /// Edit-time: ensure the rig exists and push the current/preview pose onto it, so
+    /// the Animation window previews in the editor (where Update() doesn't run).
+    void EditorPreviewTick();
     bool PartsBuilt() const { return m_partsBuilt; }
     GameObject* Part(int bone) const { return (bone >= 0 && bone < (int)m_parts.size()) ? m_parts[bone] : nullptr; }
 
@@ -251,6 +262,8 @@ private:
     bool m_partsBuilt = false;
     GameObject* m_rigRoot = nullptr;
     std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)
+    GameObject* FindRig() const;         // an existing "Rig" child, or null
+    bool AdoptParts(GameObject* rig);    // reuse an existing rig instead of rebuilding
     void DriveParts();                   // pose the part transforms from the animation
     std::vector<Vec3> m_editorPose;      // forced pose for editor preview
     bool m_editorPosing = false;

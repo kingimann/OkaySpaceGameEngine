@@ -533,3 +533,7 @@ add_test(NAME char_anim_events COMMAND test_char_anim_events)
 add_executable(test_fp_punch test_fp_punch.cpp)
 target_link_libraries(test_fp_punch PRIVATE okay::engine)
 add_test(NAME fp_punch COMMAND test_fp_punch)
+
+add_executable(test_char_editor_parts test_char_editor_parts.cpp)
+target_link_libraries(test_char_editor_parts PRIVATE okay::engine)
+add_test(NAME char_editor_parts COMMAND test_char_editor_parts)

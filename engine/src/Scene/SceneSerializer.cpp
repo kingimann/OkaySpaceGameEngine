@@ -164,6 +164,21 @@ int IndexOf(const Scene& scene, const GameObject* go) {
     return -1;
 }
 
+// A Character's "Rig" (the separated part objects) is a GENERATED view of the
+// Character — like Terrain's mesh — so it isn't serialized. It's rebuilt from the
+// Character on load (BuildParts), which keeps part colours correct and avoids both
+// file bloat and duplicate rigs. True for the "Rig" node and everything under it.
+static bool IsGeneratedRig(GameObject* go) {
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent()) {
+        GameObject* g = t->gameObject;
+        if (g && g->name == "Rig") {
+            Transform* par = t->Parent();
+            if (par && par->gameObject && par->gameObject->GetComponent<Character>()) return true;
+        }
+    }
+    return false;
+}
+
 // Write a GameObject's Transform + all known components (no header/parent line).
 void WriteComponents(std::ostream& out, GameObject* go) {
     Transform* t = go->transform;
@@ -1348,6 +1363,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
         GameObject* go = objs[i].get();
+        if (IsGeneratedRig(go)) continue;   // a Character's part rig is regenerated on load
         Transform* t = go->transform;
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
@@ -3366,6 +3382,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     out << "okayscene 1\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
+        if (IsGeneratedRig(go)) continue;   // a Character's part rig is regenerated on load
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";

@@ -611,9 +611,62 @@ void Character::BuildFpArm(const Mesh& full) {
 // bone), so it can be selected / recoloured / animated part-by-part instead of being
 // one baked mesh. Geometry is re-centred to each joint; a "Rig" root applies the same
 // 180° face flip + height the single mesh used.
+GameObject* Character::FindRig() const {
+    if (!gameObject || !gameObject->transform) return nullptr;
+    for (Transform* c : gameObject->transform->Children())
+        if (c && c->gameObject && c->gameObject->name == "Rig") return c->gameObject;
+    return nullptr;
+}
+
+bool Character::AdoptParts(GameObject* rig) {
+    if (!rig || !rig->transform) return false;
+    m_rigRoot = rig;
+    m_parts.assign(B_COUNT, nullptr);
+    // Match each bone object by name (recurse — the rig is a hierarchy, not flat).
+    std::function<void(Transform*)> walk = [&](Transform* t) {
+        if (!t) return;
+        for (Transform* c : t->Children()) {
+            if (!c || !c->gameObject) continue;
+            for (int bi = 0; bi < B_COUNT; ++bi)
+                if (c->gameObject->name == BoneName(bi)) { m_parts[bi] = c->gameObject; break; }
+            walk(c);
+        }
+    };
+    walk(rig->transform);
+    if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;
+    m_partsBuilt = true;
+    return true;
+}
+
+void Character::RemoveParts() {
+    if (GameObject* rig = FindRig())
+        if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it
+    m_rigRoot = nullptr;
+    m_parts.clear();
+    m_partsBuilt = false;
+    if (gameObject) if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = true;
+}
+
+void Character::EditorPreviewTick() {
+    if (separateParts) {
+        if (!m_partsBuilt) BuildParts();
+        if (m_partsBuilt) DriveParts();      // push the (preview/rest) pose onto the rig
+        return;
+    }
+    // Single mesh: rebuild from the previewed pose so the editor shows it live.
+    auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
+    if (!mr) return;
+    EnsureRest();
+    Mesh m = m_rest;
+    Skin(m, m_bone, CurrentSourcePose());
+    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }
+    m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
+}
+
 void Character::BuildParts() {
     Scene* s = GetScene();
     if (m_partsBuilt || !s || !gameObject || !gameObject->transform) return;
+    if (GameObject* rig = FindRig()) { AdoptParts(rig); return; }   // reuse, never duplicate
     EnsureRest();   // m_rest (pre-flip/height) + m_bone (per-vertex bone)
     auto sk = Skeleton();
     if ((int)sk.size() < B_COUNT) return;

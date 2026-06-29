@@ -1,5 +1,22 @@
 OkaySpace Game Engine — Changelog
 
+v2.335.0  (The part rig is built in the EDITOR — nothing spawned at Play)
+  - "Separate Into Parts" now builds the rig RIGHT IN THE EDITOR: the moment you
+    tick it, the part objects (Hips, Torso, Head, arms, legs under a "Rig" node)
+    appear in the scene, ready to select, recolour, parent things to, and animate.
+    They are no longer spawned when you press Play — so you can actually customize
+    them. Untick to tear the rig down and show the baked mesh again.
+  - The Animation window now PREVIEWS in the editor. Previously the pose only
+    applied at Play (Update didn't run while stopped), so the tab "did nothing".
+    Posing a bone, scrubbing, and Play preview now drive the rig live in the
+    viewport.
+  - The rig is treated as a generated view of the Character (like Terrain's mesh):
+    it is not written to the scene file and is rebuilt from the Character on load,
+    so there are never duplicate rigs and part colours stay correct. Existing
+    separated characters materialize their rig in the editor automatically.
+  - New test_char_editor_parts: builds once (no duplicate on rebuild), isn't
+    serialized, regenerates on load, and RemoveParts restores the mesh.
+
 v2.334.0  (Fix: the punch swung backward)
   - The first-person/melee punch swung the arm the WRONG way — toward the body's
     back (+Z) instead of where it faces (-Z, where the camera looks). In first

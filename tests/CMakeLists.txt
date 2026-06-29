@@ -505,3 +505,7 @@ endif()
 add_executable(test_character_parts test_character_parts.cpp)
 target_link_libraries(test_character_parts PRIVATE okay::engine)
 add_test(NAME character_parts COMMAND test_character_parts)
+
+add_executable(test_animator_edit test_animator_edit.cpp)
+target_link_libraries(test_animator_edit PRIVATE okay::engine)
+add_test(NAME animator_edit COMMAND test_animator_edit)

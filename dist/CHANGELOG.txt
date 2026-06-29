@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.328.0  (Animation editor — a real timeline)
+  - NEW Animation window (View > Animation): a keyframe timeline for the selected
+    object. Scrub the playhead, pose/move the object, and press Key to record its
+    position / rotation / scale at that time; press Play to preview. Loop, speed,
+    clip name, per-track keyframe view, and delete-track are all there. Saved with
+    the scene (it edits the object's Animator clip).
+  - Pairs with separated characters: separate a Character into parts, select a part
+    (e.g. an arm), open Animation, and keyframe its rotation over time to build a
+    custom animation — no scripting.
+  - The Animator now applies FULL euler rotation (rotation.x / .y / .z), not just a
+    2D spin, so 3D rigs animate correctly. Existing clips still work.
+
 v2.327.0  (The character is now separate, editable parts)
   - NEW "Separate Into Parts" on the Character: instead of one baked mesh, the
     character builds as a HIERARCHY of part objects — Hips, Torso, Head, both arms

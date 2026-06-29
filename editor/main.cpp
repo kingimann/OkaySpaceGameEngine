@@ -546,6 +546,7 @@ bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
 bool g_showFlowGraph = false;    // node/flow-graph view of the selected object's Actions
+bool g_showAnimation = false;    // keyframe animation timeline for the selected object
 bool g_showColliders = true;     // draw collider wireframes in the Scene view
 bool g_showGizmos = true;        // draw selection outlines + camera/light gizmos in the Scene view
 bool g_showGrid = true;          // draw the XZ ground grid in the Scene view
@@ -1722,6 +1723,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
         ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
         ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
+        ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
         ImGui::MenuItem("Stats", nullptr, &g_showStats);
         ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
         ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
@@ -6255,6 +6257,103 @@ static const char* ActionOpLabel(const ActionOpInfo* ops, int n, const std::stri
 // the live ActionList (so it always matches the Inspector and the running game) and
 // reuses the proven execution — this is a visual layer, not a second script system.
 // Nodes are draggable within the window (session layout). Edit values in the Inspector.
+// A keyframe animation timeline for the selected object's Animator. Scrub the
+// playhead, "Key" the object's current Transform (position / rotation / scale) at
+// that time, and the Animator plays it back. Saved with the scene.
+static void DrawAnimationEditor(EditorState& ed) {
+    if (!g_showAnimation) return;
+    if (!ImGui::Begin("Animation", &g_showAnimation)) { ImGui::End(); return; }
+    GameObject* go = ed.selected();
+    if (!go || !go->transform) {
+        ImGui::TextDisabled("Select an object to animate it.");
+        ImGui::End(); return;
+    }
+    Animator* an = go->GetComponent<Animator>();
+    if (!an) {
+        ImGui::TextDisabled("'%s' has no Animator.", go->name.c_str());
+        if (ImGui::Button("Add Animator")) { go->AddComponent<Animator>(); ed.dirty = true; }
+        ImGui::TextDisabled("Tip: separate a Character into parts, then animate each part here.");
+        ImGui::End(); return;
+    }
+
+    // Per-object editor state: the playhead time + the rotation euler we're authoring
+    // (the Transform stores a quaternion, so the editor owns the euler we key).
+    static std::unordered_map<void*, float> playhead;
+    static std::unordered_map<void*, Vec3>  euler;
+    float& t = playhead[(void*)an];
+    Vec3&  rot = euler[(void*)an];
+
+    char nm[64]; std::snprintf(nm, sizeof(nm), "%s", an->clip.name.c_str());
+    if (ImGui::InputText("Clip##anim", nm, sizeof(nm))) { an->clip.name = nm; ed.dirty = true; }
+    ImGui::SameLine(); if (ImGui::Checkbox("Loop##anim", &an->clip.loop)) ed.dirty = true;
+    ImGui::SliderFloat("Speed##anim", &an->speed, 0.1f, 4.0f);
+
+    float len = an->clip.Length();
+    // Edit mode: pause auto-play and drive the pose from the scrubber so you can
+    // see each frame; Play previews it running.
+    if (!an->playing) { an->SetTime(t); }
+    if (ImGui::Button(an->playing ? "Pause##anim" : "Play##anim")) an->playing = !an->playing;
+    ImGui::SameLine(); if (ImGui::Button("Stop##anim")) { an->playing = false; t = 0.0f; an->SetTime(0.0f); }
+    ImGui::SameLine(); ImGui::Text("len %.2fs", len);
+    if (an->playing) t = an->Time();
+    if (ImGui::SliderFloat("Time##anim", &t, 0.0f, len > 0.1f ? len : 2.0f)) { an->playing = false; an->SetTime(t); }
+
+    ImGui::Separator();
+    // Author rotation here (the editor owns euler); position/scale are read live from
+    // the Transform when you Key, so move/scale the object in the viewport first.
+    if (ImGui::DragFloat3("Rotation (deg)##anim", &rot.x, 0.5f)) {
+        go->transform->localRotation = Quat::Euler(rot.x, rot.y, rot.z);
+        ed.dirty = true;
+    }
+    ImGui::TextDisabled("Move/scale the object in the viewport, set rotation above, then Key it.");
+
+    auto keyVec = [&](const char* base, const Vec3& v) {
+        an->clip.AddKey(std::string(base) + ".x", t, v.x);
+        an->clip.AddKey(std::string(base) + ".y", t, v.y);
+        an->clip.AddKey(std::string(base) + ".z", t, v.z);
+    };
+    if (ImGui::Button("Key All##anim")) {
+        keyVec("position", go->transform->localPosition);
+        keyVec("rotation", rot);
+        keyVec("scale", go->transform->localScale);
+        ed.dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Key Pose (rot)##anim")) { keyVec("rotation", rot); ed.dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::Button("Key Position##anim")) { keyVec("position", go->transform->localPosition); ed.dirty = true; }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Tracks");
+    std::string removeTrack;
+    for (const auto& kv : an->clip.Tracks()) {
+        ImGui::PushID(kv.first.c_str());
+        ImGui::Text("%s", kv.first.c_str()); ImGui::SameLine(140);
+        ImGui::TextDisabled("%d keys", (int)kv.second.Count());
+        ImGui::SameLine(); if (ImGui::SmallButton("x")) removeTrack = kv.first;
+        // Mini timeline: a bar with a diamond per key + the playhead.
+        ImVec2 p0 = ImGui::GetCursorScreenPos();
+        float w = ImGui::GetContentRegionAvail().x - 8.0f; if (w < 40.0f) w = 40.0f;
+        float h = 14.0f;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(40, 44, 54, 255), 3.0f);
+        float span = len > 0.1f ? len : 1.0f;
+        for (const auto& k : kv.second.Keys()) {
+            float kx = p0.x + (k.time / span) * w;
+            dl->AddCircleFilled(ImVec2(kx, p0.y + h * 0.5f), 4.0f, IM_COL32(120, 200, 255, 255));
+        }
+        float px = p0.x + (t / span) * w;
+        dl->AddLine(ImVec2(px, p0.y), ImVec2(px, p0.y + h), IM_COL32(255, 210, 0, 255), 1.5f);
+        ImGui::Dummy(ImVec2(w, h + 4.0f));
+        ImGui::PopID();
+    }
+    if (!removeTrack.empty()) { an->clip.RemoveTrack(removeTrack); ed.dirty = true; }
+    if (an->clip.Tracks().empty())
+        ImGui::TextDisabled("No keys yet — scrub the Time, pose the object, and press Key.");
+
+    ImGui::End();
+}
+
 static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
     if (!ImGui::Begin("Flow Graph", &g_showFlowGraph, ImGuiWindowFlags_HorizontalScrollbar)) { ImGui::End(); return; }
@@ -16108,6 +16207,7 @@ int main(int argc, char** argv) {
         if (g_showModeling)  DrawModeling(ed);
         DrawScriptDocs();
         DrawFlowGraph(ed);
+        DrawAnimationEditor(ed);
         if (g_showStats)     DrawStats(ed);
         if (g_showSaveManager) DrawSaveManager(ed);
         if (g_showScenes)    DrawScenes(ed);

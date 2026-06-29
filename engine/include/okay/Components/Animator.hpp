@@ -47,8 +47,13 @@ private:
         transform->localPosition = pos;
         transform->localScale = scl;
 
-        v = clip.Evaluate("rotation.z", t, f);
-        if (f) transform->localRotation = Quat::Euler(0, 0, v);
+        // Rotation: support full euler (x/y/z) so 3D rigs (character parts) animate,
+        // not just 2D spin. Any present axis rebuilds the rotation.
+        bool fx, fy, fz;
+        float rx = clip.Evaluate("rotation.x", t, fx);
+        float ry = clip.Evaluate("rotation.y", t, fy);
+        float rz = clip.Evaluate("rotation.z", t, fz);
+        if (fx || fy || fz) transform->localRotation = Quat::Euler(fx ? rx : 0.0f, fy ? ry : 0.0f, fz ? rz : 0.0f);
     }
 
     float m_time = 0.0f;

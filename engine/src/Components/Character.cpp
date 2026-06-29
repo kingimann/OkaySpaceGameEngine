@@ -412,6 +412,19 @@ void Character::StopClip() {
 }
 
 void Character::Update(float dt) {
+    // Separate-parts rig: animate the part transforms instead of baking one mesh.
+    if (separateParts) {
+        if (!m_partsBuilt) BuildParts();
+        if (m_partsBuilt) {
+            if (m_punchT >= 0.0f && m_punchT < 1.0f) {
+                m_punchT += (punchDuration > 1e-3f ? dt / punchDuration : 1.0f);
+                if (m_punchT > 1.0f) m_punchT = 1.0f;
+            }
+            animTime += dt * animSpeed;
+            if (animateParts) DriveParts();
+            return;
+        }
+    }
     // A custom clip, if one is playing, drives the whole body and overrides the
     // built-in animations.
     if (m_activeClip) {
@@ -472,54 +485,25 @@ void Character::Update(float dt) {
     EnsureRest();
     Mesh m = m_rest;
     std::vector<Vec3> pose = PoseAt(animTime);
-    // First-person arm: freeze the body to rest (so walking never brings your torso
-    // or legs into the first-person view) and raise your OWN arm into the camera.
-    // The body mesh is mirror-built (v.x=-v.x below), so the L-bone arm lands on the
-    // screen's RIGHT — your right hand, where Minecraft puts it.
-    if (firstPersonArm && (int)pose.size() > B_RFORE) {
-        for (Vec3& p : pose) p = Vec3{0.0f, 0.0f, 0.0f};
-        float u = fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp);  // 0 = empty (low) .. 1 = holding (raised)
-        // Empty-handed the arm rests low in the lower-right (this is the normally
-        // shown, tunable pose); holding a weapon/item raises + presents it higher.
-        Vec3 upRest  = {fpRaise, 0.0f, 6.0f},        foreRest  = {fpElbow, 0.0f, 0.0f};
-        Vec3 upRaise = {fpRaise - 22.0f, 0.0f, 6.0f}, foreRaise = {fpElbow - 14.0f, 0.0f, 0.0f};
-        pose[B_LUPARM] = upRest  + (upRaise  - upRest)  * u;
-        pose[B_LFORE]  = foreRest + (foreRaise - foreRest) * u;
-    }
-    // Layer a punch arc over the arm (swings forward and back). In first-person mode
-    // the swing drives the raised (screen-right) arm; otherwise the right arm.
+    // Layer a punch arc over the right arm (swings forward and back), so the
+    // character's own arm does the hitting on top of whatever it's already doing.
     if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
         float arc = std::sin(m_punchT * 3.14159265f);   // 0..1..0
-        if (firstPersonArm) {
-            Vec3 up = {-140.0f, 0.0f, 8.0f}, fore = {36.0f, 0.0f, 0.0f};
-            pose[B_LUPARM] = pose[B_LUPARM] + (up   - pose[B_LUPARM]) * arc;
-            pose[B_LFORE]  = pose[B_LFORE]  + (fore - pose[B_LFORE])  * arc;
-        } else {
-            Vec3 up = {110.0f, 0.0f, -8.0f}, fore = {-18.0f, 0.0f, 0.0f};
-            pose[B_RUPARM] = pose[B_RUPARM] + (up   - pose[B_RUPARM]) * arc;
-            pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
-        }
+        Vec3 up = {110.0f, 0.0f, -8.0f}, fore = {-18.0f, 0.0f, 0.0f};
+        pose[B_RUPARM] = pose[B_RUPARM] + (up   - pose[B_RUPARM]) * arc;
+        pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
     }
     Skin(m, m_bone, pose);
     Vec3 so = StanceOffset();
     for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();
-    // First-person: render ONLY your arm in the character's own mesh (no body, no
-    // extra spawned object). The body simply isn't in the mesh this frame, so you
-    // never see your torso/legs — even looking straight down — and nothing is
-    // spawned into the scene. In edit mode firstPersonArm is off, so the editor
-    // still shows the whole character.
-    if (firstPersonArm) {
-        BuildFpArm(m);
-        mr->mesh = std::move(m_fpArm);
-    } else {
-        mr->mesh = std::move(m);
-    }
+    if (firstPersonArm) { BuildFpArm(m); m_fpArmReady = true; } else m_fpArmReady = false;
+    mr->mesh = std::move(m);
     mr->doubleSided = true;
 }
 
-// Copy just the (raised, screen-right) arm bones out of the fully-skinned body mesh,
-// keeping per-face colours, so the real arm geometry can be rendered on its own.
+// Copy just the arm bones out of the fully-skinned body mesh (per-face colours kept),
+// so a separate first-person arm object can render the real arm geometry.
 void Character::BuildFpArm(const Mesh& full) {
     m_fpArm.vertices.clear(); m_fpArm.triangles.clear();
     m_fpArm.triColors.clear(); m_fpArm.normals.clear(); m_fpArm.name.clear();
@@ -535,6 +519,75 @@ void Character::BuildFpArm(const Mesh& full) {
             m_fpArm.vertices.push_back(full.vertices[idx]);
         }
         if (cols) m_fpArm.triColors.push_back(full.triColors[f]);
+    }
+}
+
+// Build the character as a HIERARCHY of editable part objects (one MeshRenderer per
+// bone), so it can be selected / recoloured / animated part-by-part instead of being
+// one baked mesh. Geometry is re-centred to each joint; a "Rig" root applies the same
+// 180° face flip + height the single mesh used.
+void Character::BuildParts() {
+    Scene* s = GetScene();
+    if (m_partsBuilt || !s || !gameObject || !gameObject->transform) return;
+    EnsureRest();   // m_rest (pre-flip/height) + m_bone (per-vertex bone)
+    auto sk = Skeleton();
+    if ((int)sk.size() < B_COUNT) return;
+    m_parts.assign(B_COUNT, nullptr);
+
+    GameObject* root = s->CreateGameObject("Rig");
+    root->transform->SetParent(gameObject->transform, false);
+    root->transform->localRotation = Quat::Euler(0.0f, 180.0f, 0.0f);   // face -Z, like the baked mesh
+    root->transform->localScale = Vec3{1.0f, height, 1.0f};
+    m_rigRoot = root;
+
+    const bool cols = m_rest.HasFaceColors();
+    const int faces = (int)m_rest.triangles.size() / 3;
+    for (int bi = 0; bi < B_COUNT; ++bi) {
+        Mesh part;
+        for (int f = 0; f < faces; ++f) {
+            int a = m_rest.triangles[f*3], b = m_rest.triangles[f*3+1], c = m_rest.triangles[f*3+2];
+            if (a >= (int)m_bone.size() || b >= (int)m_bone.size() || c >= (int)m_bone.size()) continue;
+            if (m_bone[a] != bi || m_bone[b] != bi || m_bone[c] != bi) continue;
+            for (int idx : {a, b, c}) {
+                part.triangles.push_back((int)part.vertices.size());
+                part.vertices.push_back(m_rest.vertices[idx] - sk[bi].joint);   // re-centre to the joint
+            }
+            if (cols) part.triColors.push_back(m_rest.triColors[f]);
+        }
+        if (part.vertices.empty()) continue;
+        GameObject* po = s->CreateGameObject(BoneName(bi));
+        auto* mr = po->AddComponent<MeshRenderer>();
+        mr->mesh = std::move(part); mr->doubleSided = true;
+        m_parts[bi] = po;
+    }
+    // Parent per the skeleton so rotating a bone moves its children (real rig).
+    for (int bi = 0; bi < B_COUNT; ++bi) {
+        if (!m_parts[bi]) continue;
+        int par = sk[bi].parent;
+        Vec3 parentJoint = (par >= 0) ? sk[par].joint : Vec3{0.0f, 0.0f, 0.0f};
+        GameObject* parentObj = (par >= 0 && m_parts[par]) ? m_parts[par] : root;
+        m_parts[bi]->transform->SetParent(parentObj->transform, false);
+        m_parts[bi]->transform->localPosition = sk[bi].joint - parentJoint;
+    }
+    if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;   // hide the baked mesh
+    m_partsBuilt = true;
+}
+
+void Character::DriveParts() {
+    if (!m_partsBuilt) return;
+    std::vector<Vec3> pose = PoseAt(animTime);
+    if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
+        float arc = std::sin(m_punchT * 3.14159265f);
+        Vec3 up = {110.0f, 0.0f, -8.0f}, fore = {-18.0f, 0.0f, 0.0f};
+        pose[B_RUPARM] = pose[B_RUPARM] + (up - pose[B_RUPARM]) * arc;
+        pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE]) * arc;
+    }
+    for (int bi = 0; bi < B_COUNT && bi < (int)pose.size(); ++bi)
+        if (m_parts[bi] && m_parts[bi]->transform)
+            m_parts[bi]->transform->localRotation = Quat::Euler(pose[bi]);
+    if (m_rigRoot && m_rigRoot->transform) {
+        Vec3 so = StanceOffset();
+        m_rigRoot->transform->localPosition = Vec3{0.0f, so.y, 0.0f};
     }
 }
 
@@ -554,7 +607,8 @@ std::string Character::ToText() const {
       // Custom-clip fields last so older saves (which lack them) still parse; "-"
       // stands in for an empty value (single tokens, no embedded spaces).
       << (clipsFile.empty() ? "-" : clipsFile) << ' '
-      << (autoPlayClip.empty() ? "-" : autoPlayClip);
+      << (autoPlayClip.empty() ? "-" : autoPlayClip) << ' '
+      << (separateParts ? 1 : 0) << ' ' << (animateParts ? 1 : 0);
     return o.str();
 }
 
@@ -576,6 +630,9 @@ void Character::FromText(const std::string& text) {
     std::string cf, ap;
     if (in >> cf && cf != "-") clipsFile = cf;
     if (in >> ap && ap != "-") autoPlayClip = ap;
+    int sp = 0, an = 1;
+    if (in >> sp) separateParts = (sp != 0);
+    if (in >> an) animateParts = (an != 0);
     m_built = false;
 }
 

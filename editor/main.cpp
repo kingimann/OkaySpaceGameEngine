@@ -8050,19 +8050,12 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
         if (CompHeader("First Person Hand", fh, &toRemove)) {
-            ImGui::TextDisabled("Minecraft-style: raises your CHARACTER'S OWN arm into view (no extra arm) and\nfreezes the body so you never see it while walking. Click to swing.");
+            ImGui::TextDisabled("First person: shows ONLY your arm (hides the other body parts).\nNeeds the Character set to 'Separate Into Parts'. Click to punch.");
             if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
             if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
-            if (ImGui::Checkbox("Holding item (raise hand)##fh", &fh->holdingItem)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = empty hand rests low (Minecraft). Turn on when a weapon/item is equipped to raise it. Set from script with SetHolding().");
-            ImGui::TextDisabled("Adjust where the hand sits (live in Play):");
-            if (ImGui::DragFloat("Hand Raise##fh", &fh->handRaise, 0.5f, -140.0f, -20.0f)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How high/forward the arm reaches. More negative = higher in view.");
-            if (ImGui::DragFloat("Elbow Bend##fh", &fh->elbowBend, 0.5f, -40.0f, 90.0f)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bends the forearm — controls how high/close the fist sits.");
-            if (ImGui::DragFloat("Raise Speed##fh", &fh->raiseSpeed, 0.2f, 1.0f, 30.0f)) ed.dirty = true;
-            ImGui::TextDisabled("Swing speed is the Character's Punch Duration.");
+            if (ImGui::Checkbox("Show left arm##fh", &fh->showLeftArm)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the left arm instead of the right.");
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }
@@ -8165,6 +8158,14 @@ void DrawInspector(EditorState& ed) {
             auto coledit = [&](const char* lbl, Color& col){ float v[3]={col.r,col.g,col.b}; if (ImGui::ColorEdit3(lbl, v)) { col={v[0],v[1],v[2],1.0f}; c=true; } };
 
             c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
+
+            ImGui::SeparatorText("Rig");
+            if (ImGui::Checkbox("Separate Into Parts (editable rig)##char", &ch->separateParts)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Build the character as a hierarchy of part objects (Hips, Torso, Head, arms, legs)\nyou can select, recolour, attach things to, and animate part-by-part. Takes effect in Play.");
+            if (ch->separateParts) {
+                if (ImGui::Checkbox("Play built-in animation on parts##char", &ch->animateParts)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = the parts hold still so you can pose / keyframe them yourself.");
+            }
 
             ImGui::SeparatorText("Clothing");
             const char* shirts[] = {"Tank (bare arms)","Short sleeve","Long sleeve"};

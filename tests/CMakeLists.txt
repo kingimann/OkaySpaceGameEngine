@@ -501,3 +501,7 @@ if(TARGET okay_ui)
     target_link_libraries(test_okayui PRIVATE okay_ui)
     add_test(NAME okayui COMMAND test_okayui)
 endif()
+
+add_executable(test_character_parts test_character_parts.cpp)
+target_link_libraries(test_character_parts PRIVATE okay::engine)
+add_test(NAME character_parts COMMAND test_character_parts)

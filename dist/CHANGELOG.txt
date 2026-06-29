@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.327.0  (The character is now separate, editable parts)
+  - NEW "Separate Into Parts" on the Character: instead of one baked mesh, the
+    character builds as a HIERARCHY of part objects — Hips, Torso, Head, both arms
+    (upper/fore/hand) and legs (thigh/shin/foot) — each a real GameObject with its
+    own MeshRenderer. You can select them, recolour them, parent things to them
+    (e.g. a sword under the Hand), and pose/animate them part-by-part. This is the
+    foundation for a proper character + animation workflow (one baked mesh made all
+    of that impossible).
+  - The built-in animations still play (they drive the part transforms). Turn off
+    "Play built-in animation on parts" to hold the parts still and author your own
+    poses/keyframes.
+  - First-person hand now just HIDES every part except your arm — so you see only
+    your real arm, never your body, with nothing spawned. (Set the Character to
+    "Separate Into Parts"; the Voxel Sandbox player already is.) "Show left arm"
+    flips which arm.
+  - Saved with the scene.
+  Next: a visual animation timeline/editor, and making the pause menu + inventory
+  editable pieces the same way.
+
 v2.326.0  (First-person hand spawns nothing)
   - The first-person hand no longer spawns ANY object into the scene. While it's
     active the Character simply renders only its OWN arm in its existing mesh — the

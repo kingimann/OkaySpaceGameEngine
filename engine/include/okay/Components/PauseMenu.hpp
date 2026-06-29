@@ -42,10 +42,10 @@ public:
     // Build the overlay up front (hidden), so pausing is an instant show/hide instead
     // of creating UI objects mid-frame (which popped in a frame late and read as a
     // glitch). Created objects flush next frame; the menu stays hidden until paused.
-    void Start() override { Build(); }
+    void Start() override { EnsureBuilt(); }
 
     void Update(float) override {
-        if (!m_built) Build();
+        if (!m_built) EnsureBuilt();
         if (Input::GetKeyDown(toggleKey)) Toggle();
         // Keep the overlay synced to the pause state (another source un-pausing also
         // closes it). Only touch it on a change so we don't fight other systems.
@@ -68,19 +68,35 @@ public:
     }
 
     void OnDestroy() override {
-        if (Scene* s = GetScene()) for (GameObject* o : m_objects) if (o) s->Destroy(o);
-        m_objects.clear(); m_built = false; m_shown = false;
-        if (Game::Paused()) { Game::SetPaused(false); Input::SetUICaptured(false); }   // never leave it frozen
+        // The UI lives in the scene now (editable + serialized), so DON'T destroy it
+        // here — just drop our references and never leave the game frozen.
+        m_objects.clear(); m_root = nullptr; m_built = false; m_shown = false;
+        m_resume = nullptr; m_restart = nullptr; m_menu = nullptr; m_quit = nullptr; m_volume = nullptr;
+        if (Game::Paused()) { Game::SetPaused(false); Input::SetUICaptured(false); }
     }
 
     /// Open/close the pause menu programmatically (e.g. from a HUD button).
     void Toggle() { Game::Paused() ? Resume() : Pause(); }
-    void Pause()  { Build(); Game::SetPaused(true);  SetOverlayActive(true);  m_shown = true;
+    void Pause()  { EnsureBuilt(); Game::SetPaused(true);  SetOverlayActive(true);  m_shown = true;
                     Cursor::Capture(false); Input::SetUICaptured(true); }
+
+    /// Create the editable pause-menu UI (Canvas, panels, buttons, slider) as real
+    /// child objects if it isn't there yet — call this from the editor when the
+    /// component is added so the UI is in the scene to customize (and saved), instead
+    /// of being spawned at Play. Returns the UI root.
+    GameObject* EnsureBuilt() {
+        if (m_built) return m_root;
+        if (!GetScene()) return nullptr;
+        if (GameObject* r = FindUIRoot()) Adopt(r);   // already in the scene — reuse it
+        else Build();                                 // first time — create the editable UI
+        return m_root;
+    }
+    bool HasUI() const { return FindUIRoot() != nullptr; }
     void Resume() { Game::SetPaused(false); SetOverlayActive(false); m_shown = false; Input::SetUICaptured(false); }
 
 private:
     std::vector<GameObject*> m_objects;   ///< every overlay object (toggled together)
+    GameObject* m_root  = nullptr;
     UIButton* m_resume  = nullptr;
     UIButton* m_restart = nullptr;
     UIButton* m_menu    = nullptr;
@@ -88,6 +104,36 @@ private:
     UISlider* m_volume  = nullptr;
     bool      m_built   = false;
     bool      m_shown   = false;
+
+    // The existing UI root (a child "PauseMenu UI"), if the editable menu is already
+    // in the scene — so Play reuses it instead of spawning a new one.
+    GameObject* FindUIRoot() const {
+        if (!gameObject || !gameObject->transform) return nullptr;
+        for (Transform* c : gameObject->transform->Children())
+            if (c && c->gameObject && c->gameObject->name == "PauseMenu UI") return c->gameObject;
+        return nullptr;
+    }
+    static void Collect(GameObject* o, std::vector<GameObject*>& out) {
+        if (!o) return;
+        out.push_back(o);
+        if (o->transform) for (Transform* c : o->transform->Children()) if (c) Collect(c->gameObject, out);
+    }
+    // Reuse the pre-built editable UI: gather its objects + wire the buttons by name.
+    void Adopt(GameObject* root) {
+        m_root = root;
+        m_objects.clear();
+        Collect(root, m_objects);
+        for (GameObject* o : m_objects) {
+            if (!o) continue;
+            if (o->name == "Pause_Resume")    m_resume  = o->GetComponent<UIButton>();
+            else if (o->name == "Pause_Restart")   m_restart = o->GetComponent<UIButton>();
+            else if (o->name == "Pause_Main Menu") m_menu    = o->GetComponent<UIButton>();
+            else if (o->name == "Pause_Quit")      m_quit    = o->GetComponent<UIButton>();
+            else if (o->name == "Pause_Volume")    m_volume  = o->GetComponent<UISlider>();
+        }
+        SetOverlayActive(false);
+        m_built = true;
+    }
 
     void LoadScene(const std::string& path) {
         if (!path.empty()) if (Scene* s = GetScene()) s->RequestLoad(path);
@@ -159,6 +205,8 @@ private:
         auto* cv = root->AddComponent<Canvas>();
         cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
         cv->sortOrder = 1000;
+        if (gameObject && gameObject->transform) root->transform->SetParent(gameObject->transform, false);
+        m_root = root;
         m_objects.push_back(root);
         if (!s->FindObjectOfType<EventSystem>())
             s->CreateGameObject("EventSystem")->AddComponent<EventSystem>();

@@ -1,14 +1,13 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// FirstPersonHand — a Minecraft-style first-person hand using your CHARACTER'S OWN
-// arm. It does NOT spawn anything: while it's active the Character renders only its
-// arm in its own existing mesh, so you see just your arm (real geometry + colours)
-// and never your body — even looking straight down — with no extra objects in the
-// scene.
+// FirstPersonHand — Minecraft-style first-person hand using your CHARACTER'S OWN
+// arm. When the Character is a separated-parts rig (Character.separateParts), this
+// simply HIDES every part except the right arm, so you see only your real arm and
+// never your body — no spawned objects, no baked viewmodel. (If the character isn't
+// separated, it falls back to showing the whole body so nothing breaks.)
 //
-// Empty-handed the arm rests low; equip a weapon/item (holdingItem / SetHolding) to
-// raise it. Click swings it (the real Character::Punch, so others see the hit). Put
-// it on the player or its FPS camera; tune Hand Raise / Elbow Bend live in Play.
+// Click swings the arm (the real Character::Punch, so others see the hit). Put it on
+// the player or its FPS camera.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -17,7 +16,6 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Core/Game.hpp"
-#include <cmath>
 
 namespace okay {
 
@@ -25,45 +23,36 @@ class FirstPersonHand : public Behaviour {
 public:
     int   attackButton = 0;      ///< mouse button that swings (0 = left)
     bool  holdToSwing  = true;   ///< keep swinging while held (Minecraft mining)
-
-    bool  holdingItem  = false;  ///< empty = arm rests low; true raises it
-    void  SetHolding(bool h) { holdingItem = h; }
-
-    float handRaise = -96.0f;    ///< how far forward/up the arm reaches (more negative = higher)
-    float elbowBend = 16.0f;     ///< forearm bend — the fist's height/closeness
-    float raiseSpeed = 10.0f;    ///< ease speed between lowered and raised
+    bool  showLeftArm  = false;  ///< show the left arm instead of the right
 
     void Punch() { if (Character* c = FindCharacter()) c->Punch(); }
 
     void Start() override { Apply(); }
 
-    void Update(float dt) override {
+    void Update(float) override {
         if (Game::Paused()) return;
         Apply();
-        float k = raiseSpeed > 0.0f ? (1.0f - std::exp(-raiseSpeed * dt)) : 1.0f;
-        m_raise += ((holdingItem ? 1.0f : 0.0f) - m_raise) * k;
-        Character* c = FindCharacter();
-        if (c) c->fpArmUp = m_raise;
         bool fire = holdToSwing ? Input::GetMouseButton(attackButton)
                                 : Input::GetMouseButtonDown(attackButton);
-        if (fire && c && !c->Punching()) c->Punch();
+        if (fire) if (Character* c = FindCharacter()) if (!c->Punching()) c->Punch();
     }
 
     void OnDestroy() override {
-        if (Character* c = FindCharacter()) c->firstPersonArm = false;
+        // Restore the body parts if we hid them.
+        if (Character* c = FindCharacter()) if (c->PartsBuilt())
+            for (int bi = 0; bi < 15; ++bi) if (GameObject* p = c->Part(bi)) p->active = true;
     }
 
 private:
-    float m_raise = 0.0f;
-
+    // Bone indices: L arm 3,4,5 ; R arm 6,7,8.
     void Apply() {
-        // Show the player to its own camera (so the arm-only mesh renders) and tell
-        // the Character to draw just the first-person arm with our tuning.
-        if (auto* fpc = FindController()) { fpc->showBody = true; fpc->ApplyBodyVisibility(); }
-        if (Character* c = FindCharacter()) {
-            c->firstPersonArm = true;
-            c->fpRaise = handRaise;
-            c->fpElbow = elbowBend;
+        Character* c = FindCharacter();
+        if (c && c->PartsBuilt()) {
+            int a0 = showLeftArm ? 3 : 6;             // upper, fore, hand of the chosen arm
+            for (int bi = 0; bi < 15; ++bi)
+                if (GameObject* p = c->Part(bi)) p->active = (bi >= a0 && bi <= a0 + 2);
+        } else if (auto* fpc = FindController()) {
+            fpc->showBody = true; fpc->ApplyBodyVisibility();   // not separated -> show the body
         }
     }
     Character* FindCharacter() const {

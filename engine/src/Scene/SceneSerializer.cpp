@@ -322,8 +322,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* fh = go->GetComponent<FirstPersonHand>()) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
-            << " " << (fh->holdingItem ? 1 : 0)
-            << " " << fh->handRaise << " " << fh->elbowBend << "\n";
+            << " " << (fh->showLeftArm ? 1 : 0) << "\n";
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
@@ -2757,14 +2756,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int hs = 1;
                     in >> fh->attackButton >> hs;
                     fh->holdToSwing = (hs != 0);
-                    // Optional trailing fields (older rows are tolerated): holdingItem,
-                    // handRaise, elbowBend.
+                    // Optional trailing fields (older rows tolerated): showLeftArm.
                     std::string rest; std::getline(in, rest);
                     std::istringstream rs(rest);
                     std::vector<float> v; float f;
                     while (rs >> f) v.push_back(f);
-                    if (v.size() >= 1) fh->holdingItem = (v[0] != 0.0f);
-                    if (v.size() >= 3) { fh->handRaise = v[1]; fh->elbowBend = v[2]; }
+                    if (v.size() >= 1) fh->showLeftArm = (v[0] != 0.0f);
                 } else if (field == "netsync") {
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;

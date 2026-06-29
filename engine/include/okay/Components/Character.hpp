@@ -83,6 +83,24 @@ public:
     float fpRaise = -96.0f;   // raised upper-arm forward angle
     float fpElbow = 16.0f;    // raised forearm angle (hand closeness/height)
 
+    // ---- Separate body parts (a real, editable rig) ----
+    // Instead of one baked mesh, build the character as a HIERARCHY of part
+    // GameObjects (one per bone: Hips, Torso, Head, arms, legs) you can select,
+    // recolour, attach things to (a sword in the Hand), and animate part-by-part.
+    // The built-in animations still play (they drive the part transforms) unless you
+    // turn `animateParts` off to author your own. The first-person hand just hides
+    // the non-arm parts. Call BuildParts() (or the editor's "Separate Into Parts").
+    bool separateParts = false;   ///< serialized: rebuild the part rig on load
+    bool animateParts  = true;    ///< let the built-in animation drive the parts
+    void BuildParts();
+    bool PartsBuilt() const { return m_partsBuilt; }
+    GameObject* Part(int bone) const { return (bone >= 0 && bone < (int)m_parts.size()) ? m_parts[bone] : nullptr; }
+
+    /// The first-person arm as its OWN mesh (just the arm bones), kept for the
+    /// non-separated path. Rebuilt each frame while firstPersonArm.
+    const Mesh& FpArmMesh() const { return m_fpArm; }
+    bool        FpArmReady() const { return m_fpArmReady; }
+
     // ---- No-code custom clips ----
     // Set a clips file and (optionally) a clip name and it loads + plays on Start,
     // no scripting required. clipsFile is a path to a .okayanim text file.
@@ -190,7 +208,12 @@ private:
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)
     float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
     Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)
+    bool m_fpArmReady = false;
     void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
+    bool m_partsBuilt = false;
+    GameObject* m_rigRoot = nullptr;
+    std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)
+    void DriveParts();                   // pose the part transforms from the animation
     std::unordered_map<std::string, AnimClip> m_clips;  // registered custom clips
     const AnimClip* m_activeClip = nullptr;             // currently playing (or null)
     std::string m_activeClipName;

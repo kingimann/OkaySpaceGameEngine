@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 #include <string>
+#include <functional>
 
 namespace okay {
 
@@ -133,6 +134,15 @@ public:
     /// True while a crossfade is in progress (0..1 weight not yet at 1).
     bool Blending() const { return m_blendT < 1.0f; }
 
+    // ---- Animation events ----
+    // Clips can carry named markers (AnimClip::events); as a clip plays past a marker
+    // the character fires it. React either way: set onAnimEvent for a push callback,
+    // or call ConsumeAnimEvents() each frame to drain the names that fired (footstep
+    // sounds, a "hit" window on a punch, "spawn" on a throw — no scripting in the clip).
+    std::function<void(const std::string&)> onAnimEvent;   // not serialized
+    /// Return the event names that fired since the last call, clearing the queue.
+    std::vector<std::string> ConsumeAnimEvents() { auto q = std::move(m_animEvents); m_animEvents.clear(); return q; }
+
     // Head look: layered on top of the current animation so the head turns/tilts
     // toward where the player (or camera) is aiming. Degrees; not serialized — the
     // controllers drive these as TARGETS every frame, and the head eases toward
@@ -254,6 +264,9 @@ private:
     std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
     float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)
     void BeginBlend();                   // snapshot the current pose and start a crossfade
+    std::vector<std::string> m_animEvents;   // event names fired since the last ConsumeAnimEvents()
+    void AdvanceClip(float dt);          // step the active clip's clock and fire its events
+    void FireClipEvents(float from, float to);   // emit events in the (from, to] window (handles loop wrap)
     void EnsureRest() const;
 };
 

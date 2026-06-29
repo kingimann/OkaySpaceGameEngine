@@ -525,3 +525,7 @@ add_test(NAME char_state_anim COMMAND test_char_state_anim)
 add_executable(test_char_blend test_char_blend.cpp)
 target_link_libraries(test_char_blend PRIVATE okay::engine)
 add_test(NAME char_blend COMMAND test_char_blend)
+
+add_executable(test_char_anim_events test_char_anim_events.cpp)
+target_link_libraries(test_char_anim_events PRIVATE okay::engine)
+add_test(NAME char_anim_events COMMAND test_char_anim_events)

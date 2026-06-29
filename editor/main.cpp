@@ -6349,6 +6349,35 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch) {
     if (del >= 0) { clip.keys.erase(clip.keys.begin() + del); ed.dirty = true; }
     if (clip.keys.empty())
         ImGui::TextDisabled("Pose the bones, set Time, press Key Pose. Repeat, then Apply.");
+
+    // ---- Animation events: name a marker at the playhead; gameplay reacts when the
+    //      clip plays past it (footstep sounds, a hit window, etc.). ----
+    ImGui::Separator();
+    ImGui::TextDisabled("Events (fire a named marker as the clip plays)");
+    static std::unordered_map<void*, std::string> evNames;
+    std::string& evName = evNames[(void*)ch];
+    char eb[48]; std::snprintf(eb, sizeof(eb), "%s", evName.c_str());
+    ImGui::SetNextItemWidth(160);
+    if (ImGui::InputText("Event Name##ca", eb, sizeof(eb))) {
+        std::string s(eb); for (char& c : s) if (c == ' ') c = '_'; evName = s;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Add Event at Time##ca") && !evName.empty()) {
+        AnimEvent e; e.time = t; e.name = evName;
+        clip.events.push_back(e);
+        std::sort(clip.events.begin(), clip.events.end(),
+                  [](const AnimEvent& a, const AnimEvent& b) { return a.time < b.time; });
+        ed.dirty = true;
+    }
+    int edel = -1;
+    for (int i = 0; i < (int)clip.events.size(); ++i) {
+        ImGui::PushID(1000 + i);
+        char lbl[64]; std::snprintf(lbl, sizeof(lbl), "%.2fs  %s", clip.events[i].time, clip.events[i].name.c_str());
+        if (ImGui::Button(lbl)) t = clip.events[i].time;
+        ImGui::SameLine(); if (ImGui::SmallButton("x")) edel = i;
+        ImGui::PopID();
+    }
+    if (edel >= 0) { clip.events.erase(clip.events.begin() + edel); ed.dirty = true; }
 }
 
 static void DrawAnimationEditor(EditorState& ed) {

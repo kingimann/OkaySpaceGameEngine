@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.333.0  (Animation events — react when a clip hits a marker)
+  - Clips can now carry named EVENT markers. As a clip plays past a marker the
+    Character fires it, so gameplay can react in time with the animation — a
+    footstep sound on each step of a walk cycle, a "hit" window partway through a
+    punch, "spawn" when a throw releases. Events re-fire every loop.
+  - React two ways: set Character::onAnimEvent for a push callback, or call
+    ConsumeAnimEvents() each frame to drain the names that fired. No code in the
+    clip itself.
+  - Author them in View > Animation: type an event name, scrub to a time, and click
+    "Add Event at Time"; the marker list shows each one (click to jump, x to remove).
+    Events save with the scene (per clip) and survive save/load.
+  - New test_char_anim_events verifies markers fire at the right time via both the
+    queue and the callback, re-fire across loops, and persist through serialization.
+
 v2.332.0  (Smooth animation blending — no more snapping)
   - Switching animations now CROSSFADES instead of snapping. When idle→walk→run
     (or any PlayClip) changes the active clip, the character eases from its current

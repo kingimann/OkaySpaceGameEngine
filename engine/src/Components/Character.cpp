@@ -420,6 +420,37 @@ void Character::BeginBlend() {
     m_blendT = 0.0f;
 }
 
+void Character::FireClipEvents(float from, float to) {
+    if (!m_activeClip || m_activeClip->events.empty() || to <= from) return;
+    auto inRange = [&](float a, float b) {
+        for (const auto& e : m_activeClip->events)
+            if (e.time > a && e.time <= b && !e.name.empty()) {
+                m_animEvents.push_back(e.name);
+                if (onAnimEvent) onAnimEvent(e.name);
+            }
+    };
+    float dur = m_activeClip->Duration();
+    if (m_activeClip->loop && dur > 0.0f && to > dur) {
+        inRange(from, dur);                       // up to the loop point
+        float wrapped = std::fmod(to, dur);
+        inRange(-1e-6f, wrapped);                 // and from the start after wrapping
+    } else {
+        inRange(from, to);
+    }
+}
+
+void Character::AdvanceClip(float dt) {
+    if (!m_activeClip) return;
+    float from = m_clipTime;
+    m_clipTime += dt * animSpeed;
+    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
+    float dur = m_activeClip->Duration();
+    if (dur > 0.0f) {
+        if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur);
+        else if (m_clipTime > dur) m_clipTime = dur;
+    }
+}
+
 std::vector<std::string> Character::ClipNames() const {
     std::vector<std::string> names;
     names.reserve(m_clips.size());
@@ -464,11 +495,8 @@ void Character::Update(float dt) {
                 if (m_punchT > 1.0f) m_punchT = 1.0f;
             }
             // A playing clip drives the parts; otherwise the built-in animation.
-            if (m_activeClip) {
-                m_clipTime += dt * animSpeed;
-                float dur = m_activeClip->Duration();
-                if (dur > 0.0f) { if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur); else if (m_clipTime > dur) m_clipTime = dur; }
-            } else animTime += dt * animSpeed;
+            if (m_activeClip) AdvanceClip(dt);
+            else animTime += dt * animSpeed;
             if (animateParts || m_editorPosing || m_activeClip) DriveParts();   // preview / clip still drive
             return;
         }
@@ -489,12 +517,7 @@ void Character::Update(float dt) {
     // A custom clip, if one is playing, drives the whole body and overrides the
     // built-in animations.
     if (m_activeClip) {
-        m_clipTime += dt * animSpeed;
-        float dur = m_activeClip->Duration();
-        if (dur > 0.0f) {
-            if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur);
-            else if (m_clipTime > dur) m_clipTime = dur;
-        }
+        AdvanceClip(dt);
         auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
         if (!mr) return;
         EnsureRest();
@@ -700,6 +723,17 @@ std::string Character::ToText() const {
       << ' ' << (clipWalk.empty() ? "-" : clipWalk)
       << ' ' << (clipRun.empty()  ? "-" : clipRun)
       << ' ' << blendTime;
+    // Animation events per clip (trailing + count-prefixed, so older saves parse as
+    // "no events"). Only clips that actually have events are written.
+    int withEvents = 0;
+    for (const auto& kv : m_clips) if (!kv.second.events.empty()) ++withEvents;
+    o << ' ' << withEvents;
+    for (const auto& kv : m_clips) {
+        const AnimClip& c = kv.second;
+        if (c.events.empty()) continue;
+        o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << c.events.size();
+        for (const auto& e : c.events) o << ' ' << e.time << ' ' << (e.name.empty() ? "-" : e.name);
+    }
     return o.str();
 }
 
@@ -748,6 +782,24 @@ void Character::FromText(const std::string& text) {
     if (in >> sr) clipRun  = (sr == "-" ? "" : sr);
     float bt = 0.15f;
     if (in >> bt) blendTime = bt;
+    // Optional trailing per-clip animation events (absent in older saves).
+    int we = 0;
+    if (in >> we) {
+        for (int i = 0; i < we; ++i) {
+            std::string cn; int nev = 0;
+            if (!(in >> cn >> nev)) break;
+            std::vector<AnimEvent> evs;
+            for (int j = 0; j < nev; ++j) {
+                AnimEvent e; std::string en;
+                if (!(in >> e.time >> en)) break;
+                e.name = (en == "-" ? "" : en);
+                evs.push_back(std::move(e));
+            }
+            std::string key = (cn == "-" ? "" : cn);
+            auto it = m_clips.find(key);
+            if (it != m_clips.end()) it->second.events = std::move(evs);
+        }
+    }
     m_built = false;
 }
 

@@ -14,6 +14,15 @@ struct AnimKey {
     std::vector<Vec3> pose;   // sized to the rig's bone count
 };
 
+/// A named marker at a point in a clip. As the clip plays past `time`, the Character
+/// fires the event (a callback + a polled queue) so gameplay can react — a footstep
+/// sound on a walk cycle, a "hit" window on a punch, "spawn" on a throw. No payload
+/// beyond the name; keep names single-token (no spaces) so they serialize cleanly.
+struct AnimEvent {
+    float time = 0.0f;
+    std::string name;
+};
+
 /// A keyframed character animation clip — the easy way to make a custom animation:
 /// describe a few poses over time in a tiny text format and play it by name on a
 /// Character. The engine interpolates between keys each frame.
@@ -28,7 +37,8 @@ struct AnimKey {
 struct AnimClip {
     std::string name;
     bool loop = true;
-    std::vector<AnimKey> keys;   // kept in the order written (author them in time order)
+    std::vector<AnimKey> keys;     // kept in the order written (author them in time order)
+    std::vector<AnimEvent> events; // markers fired as the clip plays (footsteps, hit windows)
 
     /// Length of the clip (time of the last keyframe), or 0 if empty.
     float Duration() const { return keys.empty() ? 0.0f : keys.back().time; }

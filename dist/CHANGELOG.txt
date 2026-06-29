@@ -1,5 +1,20 @@
 OkaySpace Game Engine — Changelog
 
+v2.323.0  (First-person hand = your character's OWN arm)
+  - No more separate/added arm. The First Person Hand now raises your CHARACTER'S
+    own arm up into the first-person view (Minecraft-style) and swings THAT arm on
+    a click — it's literally part of your character, not an extra mesh bolted on.
+  - Two real bugs behind the earlier misses, both fixed:
+      * The arm was reaching the wrong way (toward +Z) while the first-person camera
+        looks -Z, so it sat behind you and you saw nothing. It now reaches along the
+        camera's forward, so the hand fills the lower-right of the screen.
+      * It's posed on the bone that lands on the screen's RIGHT (the body mesh is
+        mirror-built), so your hand is where Minecraft puts it.
+    Verified by rendering the actual controller-driven first-person view in a test,
+    not just by checking an object exists.
+  - The punch swing drives the same raised arm. Networked / third-person viewers
+    still see a normal right-arm punch (the first-person hold is local-only).
+
 v2.322.0  (First-person hand: actually visible now)
   - Fixed the First Person Hand so the hand is actually ON SCREEN. With the default
     60° camera it was sitting just off the bottom-right edge, so you saw nothing

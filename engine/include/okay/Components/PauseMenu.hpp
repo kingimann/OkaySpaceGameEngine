@@ -42,7 +42,7 @@ public:
     // Build the overlay up front (hidden), so pausing is an instant show/hide instead
     // of creating UI objects mid-frame (which popped in a frame late and read as a
     // glitch). Created objects flush next frame; the menu stays hidden until paused.
-    void Start() override { EnsureBuilt(); }
+    void Start() override { EnsureBuilt(); SetOverlayActive(false); m_shown = false; }
 
     void Update(float) override {
         if (!m_built) EnsureBuilt();
@@ -131,8 +131,7 @@ private:
             else if (o->name == "Pause_Quit")      m_quit    = o->GetComponent<UIButton>();
             else if (o->name == "Pause_Volume")    m_volume  = o->GetComponent<UISlider>();
         }
-        SetOverlayActive(false);
-        m_built = true;
+        m_built = true;   // adopt visibility as-is; Start() hides at Play
     }
 
     void LoadScene(const std::string& path) {
@@ -262,8 +261,7 @@ private:
             AddLabel(*s, root, "Pause_Hint", hint, y, kHintH, 1.4f, Color::FromBytes(170, 175, 190), false);
         }
 
-        SetOverlayActive(false);
-        m_built = true;
+        m_built = true;   // created visible (for editing); Start() hides it at Play
     }
 };
 

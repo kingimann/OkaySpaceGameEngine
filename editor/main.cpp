@@ -8176,6 +8176,14 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
         if (CompHeader("Pause Menu", pm, &toRemove)) {
+            // The menu UI lives in the scene as editable objects (under "PauseMenu UI")
+            // so you can restyle it — it isn't spawned at Play. Create it if missing.
+            if (!pm->HasUI()) {
+                ImGui::TextDisabled("No menu UI in the scene yet.");
+                if (ImGui::Button("Create Editable Menu UI##pm")) { pm->EnsureBuilt(); ed.dirty = true; }
+            } else {
+                ImGui::TextDisabled("Editable UI is under 'PauseMenu UI' — select its parts to restyle.");
+            }
             ImGui::TextDisabled("Press the toggle key in Play to pause; Resume / Quit buttons appear.");
             char tbuf[128]; std::snprintf(tbuf, sizeof(tbuf), "%s", pm->title.c_str());
             if (ImGui::InputText("Title##pm", tbuf, sizeof(tbuf))) { pm->title = tbuf; ed.dirty = true; }
@@ -11808,7 +11816,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Water>(), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<Flashlight>(), "Flashlight")) { go->AddComponent<Flashlight>(); ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonHand>(), "First Person Hand")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
-            if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>(); ed.dirty = true; }
+            if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }

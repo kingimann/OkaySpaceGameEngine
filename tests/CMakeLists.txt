@@ -509,3 +509,7 @@ add_test(NAME character_parts COMMAND test_character_parts)
 add_executable(test_animator_edit test_animator_edit.cpp)
 target_link_libraries(test_animator_edit PRIVATE okay::engine)
 add_test(NAME animator_edit COMMAND test_animator_edit)
+
+add_executable(test_pause_menu test_pause_menu.cpp)
+target_link_libraries(test_pause_menu PRIVATE okay::engine)
+add_test(NAME pause_menu COMMAND test_pause_menu)

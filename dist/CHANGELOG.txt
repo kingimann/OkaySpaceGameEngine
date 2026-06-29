@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.329.0  (Customizable pause menu — real editable UI)
+  - The pause menu is no longer generated at Play and no longer un-customizable.
+    Adding the Pause Menu component now drops its UI into the scene as REAL,
+    editable objects (under "PauseMenu UI": the dim panel, card, title, Resume /
+    Quit buttons, volume slider). Select and restyle any of them — move, recolour,
+    rename, resize — and it's saved with the scene.
+  - At Play it just shows/hides those objects (hidden until you pause) — nothing is
+    spawned. Existing pause menus: open the component and click "Create Editable
+    Menu UI". New test_pause_menu verifies the UI persists and is adopted (not
+    duplicated) at Play.
+
 v2.328.0  (Animation editor — a real timeline)
   - NEW Animation window (View > Animation): a keyframe timeline for the selected
     object. Scrub the playhead, pose/move the object, and press Key to record its

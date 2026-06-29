@@ -1,5 +1,25 @@
 OkaySpace Game Engine — Changelog
 
+v2.317.0  (Drop-in networked objects)
+  - NEW Network Sync component: drop it on ANY object and its position + rotation
+    replicate to every peer in the session — no networking code at all. One peer
+    is the authority (it broadcasts); everyone else eases their copy toward the
+    latest state at the local frame rate.
+      * Authority "Host" — the server drives it, clients follow (moving platforms,
+        doors, AI, pickups; the common case).
+      * Authority "Mine" — this peer drives it.
+      * Authority "Manual" — you set Owned yourself / from script (ownership
+        transfer via NetworkSync::SetOwned / NetworkManager::SetSyncOwned).
+    Give the matching object the same Net Id on each peer (blank = the object's
+    name). It finds the scene's Network Manager on its own.
+  - Under the hood NetworkManager gained RegisterSync / UnregisterSync /
+    SetSyncOwned and a reserved "__xform" channel, so replication rides the same
+    dispatch (and works over UDP and the relay, encrypted or not). New `syncRate`
+    controls how often owned transforms broadcast (default 15 Hz). New net_sync
+    test covers host->client position + rotation replication and that a
+    non-authority client never pushes state back.
+  - Add it from Add Component > Network Sync, or it loads/saves with the scene.
+
 v2.316.0  (Easy multiplayer + Steam, real first-person arm, more inventory style)
   - MULTIPLAYER is much easier to add. The Network Manager now has a tiny high-level
     API on top of the existing transport:

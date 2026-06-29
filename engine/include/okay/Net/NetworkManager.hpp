@@ -3,6 +3,7 @@
 #include "okay/Net/UdpSocket.hpp"
 #include "okay/Net/SecureChannel.hpp"
 #include "okay/Math/Vec3.hpp"
+#include "okay/Math/Quat.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -201,6 +202,22 @@ public:
     /// it locally now and tells the others to instantiate the same prefab at the
     /// same position — replicated object creation with one call.
     void Spawn(const std::string& prefabPath, const Vec3& position = Vec3::Zero);
+
+    // ---- Networked transforms (drop-in object replication) -------------
+    /// Replicate a Transform across the whole session under a unique `id`. The peer
+    /// that owns it (`owned` = true) broadcasts its position + rotation `syncRate`
+    /// times a second; every other peer eases its local copy toward the latest
+    /// received state (using `interpolationRate`). This is what the NetworkSync
+    /// component is built on, so ANY object can replicate with no networking code —
+    /// just give matching ids on each peer and flag the authority as the owner.
+    void RegisterSync(const std::string& id, Transform* t, bool owned);
+    /// Stop replicating the object registered under `id`.
+    void UnregisterSync(const std::string& id);
+    /// Change who is authoritative for `id` at runtime (ownership transfer).
+    void SetSyncOwned(const std::string& id, bool owned);
+    /// True if a transform is currently registered under `id`.
+    bool HasSync(const std::string& id) const { return m_syncObjs.count(id) != 0; }
+    float syncRate = 15.0f;   ///< networked-transform broadcasts per second (0 = every frame)
 
     // ---- Reliable messaging (guaranteed delivery + de-dup over UDP) ----
     /// Like Send(), but resent until the other end acknowledges it and de-duped
@@ -415,6 +432,18 @@ private:
     std::vector<NetMessage> m_inbox;
     std::function<void(std::uint32_t, const std::string&)> m_peerJoined;
     std::function<void(std::uint32_t)> m_peerLeft;
+
+    // Networked transforms (drop-in object replication via NetworkSync).
+    struct SyncObj {
+        Transform* t = nullptr;
+        bool  owned = false;
+        Vec3  targetPos{};
+        Quat  targetRot{};
+        bool  hasTarget = false;
+    };
+    std::unordered_map<std::string, SyncObj> m_syncObjs;
+    float m_syncTimer = 0.0f;
+    void SyncTick(float dt);
 
     // First-class RPC handlers (by name) + chat log/handler.
     std::unordered_map<std::string, std::function<void(std::uint32_t, const std::string&)>> m_rpcHandlers;

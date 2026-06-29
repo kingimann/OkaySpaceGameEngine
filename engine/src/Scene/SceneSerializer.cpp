@@ -87,6 +87,7 @@
 #include "okay/Components/Water.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
+#include "okay/Components/NetworkSync.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -322,6 +323,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* fh = go->GetComponent<FirstPersonHand>()) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
             << " " << (fh->showBody ? 1 : 0) << "\n";
+    }
+    if (auto* ns = go->GetComponent<NetworkSync>()) {
+        out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
+            << " " << Quote(ns->netId) << "\n";
     }
     if (auto* w = go->GetComponent<Water>()) {
         out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
@@ -2752,6 +2757,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> fh->attackButton >> hs >> sb;
                     fh->holdToSwing = (hs != 0); fh->showBody = (sb != 0);
                     std::string rest; std::getline(in, rest);   // tolerate older, longer fphand rows
+                } else if (field == "netsync") {
+                    auto* ns = go->AddComponent<NetworkSync>();
+                    int au = 0, ow = 1; in >> au >> ow;
+                    ns->authority = (NetworkSync::Authority)au; ns->owned = (ow != 0);
+                    ns->netId = ReadQuoted(in);
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed

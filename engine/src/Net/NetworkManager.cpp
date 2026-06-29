@@ -207,10 +207,54 @@ void NetworkManager::InterpolateRemotes(float dt) {
     }
 }
 
+void NetworkManager::RegisterSync(const std::string& id, Transform* t, bool owned) {
+    if (id.empty()) return;
+    SyncObj o; o.t = t; o.owned = owned;
+    if (t) { o.targetPos = t->localPosition; o.targetRot = t->localRotation; }
+    m_syncObjs[id] = o;
+}
+
+void NetworkManager::UnregisterSync(const std::string& id) { m_syncObjs.erase(id); }
+
+void NetworkManager::SetSyncOwned(const std::string& id, bool owned) {
+    auto it = m_syncObjs.find(id);
+    if (it != m_syncObjs.end()) it->second.owned = owned;
+}
+
+void NetworkManager::SyncTick(float dt) {
+    if (m_syncObjs.empty()) return;
+    // Ease non-owned objects toward their last received state every frame.
+    if (interpolationRate > 0.0f) {
+        float t = interpolationRate * dt;
+        if (t > 1.0f) t = 1.0f;
+        for (auto& [id, o] : m_syncObjs) {
+            if (o.owned || !o.t || !o.hasTarget) continue;
+            o.t->localPosition = o.t->localPosition + (o.targetPos - o.t->localPosition) * t;
+            o.t->localRotation = Quat::Slerp(o.t->localRotation, o.targetRot, t);
+        }
+    }
+    // Broadcast the objects we own at the sync rate.
+    if (!IsConnected()) return;
+    float interval = syncRate > 0.0f ? 1.0f / syncRate : 0.0f;
+    m_syncTimer += dt;
+    if (m_syncTimer < interval) return;
+    m_syncTimer = 0.0f;
+    for (auto& [id, o] : m_syncObjs) {
+        if (!o.owned || !o.t) continue;
+        const Vec3& p = o.t->localPosition;
+        const Quat& q = o.t->localRotation;
+        std::ostringstream os;
+        os << id << '|' << p.x << ' ' << p.y << ' ' << p.z << ' '
+           << q.x << ' ' << q.y << ' ' << q.z << ' ' << q.w;
+        Send("__xform", os.str());
+    }
+}
+
 void NetworkManager::Update(float dt) {
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
     InterpolateRemotes(dt);
+    SyncTick(dt);
 }
 
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
@@ -230,6 +274,31 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
         ss >> x >> sep >> y >> sep >> z;
         if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, path))
             if (g->transform) g->transform->localPosition = {x, y, z};
+        return;
+    }
+    // Networked transform: "__xform" carries "<id>|px py pz qx qy qz qw". The
+    // matching registered object eases toward it (unless we own it — then we're
+    // authoritative and ignore remote state).
+    if (channel == "__xform") {
+        std::string::size_type bar = data.find('|');
+        if (bar != std::string::npos) {
+            std::string id = data.substr(0, bar);
+            auto it = m_syncObjs.find(id);
+            if (it != m_syncObjs.end() && !it->second.owned) {
+                std::stringstream ss(data.substr(bar + 1));
+                Vec3 p; Quat q;
+                ss >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w;
+                it->second.targetPos = p;
+                it->second.targetRot = q;
+                // Snap on the first sample so a freshly seen object doesn't slide
+                // in from wherever it happened to spawn.
+                if (!it->second.hasTarget && it->second.t) {
+                    it->second.t->localPosition = p;
+                    it->second.t->localRotation = q;
+                }
+                it->second.hasTarget = true;
+            }
+        }
         return;
     }
     // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler

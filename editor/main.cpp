@@ -8056,6 +8056,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }
+    if (auto* ns = dynamic_cast<NetworkSync*>(curComp)) {
+        if (CompHeader("Network Sync", ns, &toRemove)) {
+            ImGui::TextDisabled("Replicates this object's position + rotation to every peer. Needs a Network Manager in the scene.");
+            char nid[64]; std::snprintf(nid, sizeof(nid), "%s", ns->netId.c_str());
+            if (ImGui::InputText("Net Id##ns", nid, sizeof(nid))) { ns->netId = nid; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Must match the same object on every peer (blank = use the object's name).");
+            const char* auth[] = {"Host (server drives it)", "Mine (this peer drives it)", "Manual (use Owned)"};
+            int ai = (int)ns->authority;
+            if (ImGui::Combo("Authority##ns", &ai, auth, 3)) { ns->authority = (NetworkSync::Authority)ai; ed.dirty = true; }
+            if (ns->authority == NetworkSync::Authority::Manual)
+                if (ImGui::Checkbox("Owned (this peer broadcasts)##ns", &ns->owned)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
+        }
+    }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
         if (CompHeader("Pause Menu", pm, &toRemove)) {
             ImGui::TextDisabled("Press the toggle key in Play to pause; Resume / Quit buttons appear.");
@@ -11839,6 +11853,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<EventSystem>(), "Event System")) { go->AddComponent<EventSystem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDocument>(), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
+            if (item(!go->GetComponent<NetworkSync>(), "Network Sync (replicate transform)")) { go->AddComponent<NetworkSync>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }

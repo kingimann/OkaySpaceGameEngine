@@ -329,6 +329,10 @@ add_executable(test_net_rpc test_net_rpc.cpp)
 target_link_libraries(test_net_rpc PRIVATE okay::engine)
 add_test(NAME net_rpc COMMAND test_net_rpc)
 
+add_executable(test_net_sync test_net_sync.cpp)
+target_link_libraries(test_net_sync PRIVATE okay::engine)
+add_test(NAME net_sync COMMAND test_net_sync)
+
 add_executable(test_animclip test_animclip.cpp)
 target_link_libraries(test_animclip PRIVATE okay::engine)
 add_test(NAME animclip COMMAND test_animclip)

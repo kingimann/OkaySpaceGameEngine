@@ -326,7 +326,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
-            << " " << Quote(ns->netId) << "\n";
+            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId) << "\n";
     }
     if (auto* w = go->GetComponent<Water>()) {
         out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
@@ -2761,6 +2761,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;
                     ns->authority = (NetworkSync::Authority)au; ns->owned = (ow != 0);
+                    // syncAnimation is optional (added after the first netsync release):
+                    // a leading digit means it's present; a quote means the old form.
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) { int sa = 1; in >> sa; ns->syncAnimation = (sa != 0); }
                     ns->netId = ReadQuoted(in);
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();

@@ -18,7 +18,9 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Components/Character.hpp"
 #include <string>
+#include <sstream>
 
 namespace okay {
 
@@ -29,6 +31,7 @@ public:
     std::string netId;                          ///< shared id (blank = object name)
     Authority   authority = Authority::Host;    ///< who broadcasts this object
     bool        owned = true;                   ///< used when authority == Manual
+    bool        syncAnimation = true;           ///< if a Character is found, replicate its anim + punches
 
     /// Manually (re)assign authority — handy for ownership transfer from script.
     void SetOwned(bool o) { owned = o; if (m_nm && !m_id.empty()) m_nm->SetSyncOwned(m_id, OwnedNow()); }
@@ -38,6 +41,12 @@ public:
     void Update(float) override {
         if (!m_nm) { Register(); return; }           // manager may appear after us
         if (!m_id.empty()) m_nm->SetSyncOwned(m_id, OwnedNow());
+        // Detect the rising edge of our own punch so remotes can replay it once.
+        if (m_char && OwnedNow()) {
+            bool p = m_char->Punching();
+            if (p && !m_wasPunching) ++m_punchSeq;
+            m_wasPunching = p;
+        }
     }
 
     void OnDestroy() override {
@@ -48,6 +57,10 @@ public:
 private:
     NetworkManager* m_nm = nullptr;
     std::string     m_id;
+    Character*      m_char = nullptr;
+    int             m_punchSeq = 0;       // owner: bumped on each new punch
+    int             m_lastPunchSeq = -1;  // remote: last punch replayed
+    bool            m_wasPunching = false;
 
     bool OwnedNow() const {
         switch (authority) {
@@ -62,6 +75,36 @@ private:
         m_id = netId.empty() ? gameObject->name : netId;
         if (m_id.empty()) return;
         m_nm->RegisterSync(m_id, gameObject->transform, OwnedNow());
+        // Replicate Character animation if one is present (here or on a child).
+        m_char = FindCharacter();
+        if (m_char && syncAnimation) {
+            Character* c = m_char; NetworkSync* self = this;
+            m_nm->SetSyncExtra(m_id,
+                [c, self]() { return std::to_string(c->anim) + " " + std::to_string(self->m_punchSeq); },
+                [c, self](const std::string& s) {
+                    std::stringstream ss(s); int a = c->anim, seq = self->m_lastPunchSeq;
+                    ss >> a >> seq;
+                    c->anim = a;
+                    if (self->m_lastPunchSeq >= 0 && seq != self->m_lastPunchSeq) c->Punch();
+                    self->m_lastPunchSeq = seq;   // first sample just syncs the counter
+                });
+        }
+    }
+    Character* FindCharacter() const {
+        if (!gameObject) return nullptr;
+        if (auto* c = gameObject->GetComponent<Character>()) return c;
+        Scene* sc = gameObject->scene();
+        if (sc && gameObject->transform)
+            for (const auto& up : sc->Objects())
+                if (GameObject* go = up.get())
+                    if (go != gameObject && IsDescendant(go->transform, gameObject->transform))
+                        if (auto* c = go->GetComponent<Character>()) return c;
+        return nullptr;
+    }
+    static bool IsDescendant(Transform* t, Transform* root) {
+        for (Transform* p = t ? t->Parent() : nullptr; p; p = p->Parent())
+            if (p == root) return true;
+        return false;
     }
     NetworkManager* FindManager() const {
         Scene* sc = gameObject ? gameObject->scene() : nullptr;

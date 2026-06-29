@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.318.0  (Networked animation)
+  - Network Sync now replicates ANIMATION too. If the synced object (or a child)
+    has a Character, the authority also broadcasts its current animation index and
+    its punches, so remote players actually walk / run / idle / gesture and throw
+    a punch in sync — not just glide around. Toggle it with "Sync animation" on the
+    component (on by default). One-shot punches replay exactly once on each peer.
+  - Under the hood the sync layer gained a generic optional "extra state" payload
+    (NetworkManager::SetSyncExtra) that rides in the same packet as the transform,
+    so the net core stays character-agnostic and other components can piggy-back
+    their own small state later. The net_sync test now also covers animation +
+    punch replication.
+
 v2.317.0  (Drop-in networked objects)
   - NEW Network Sync component: drop it on ANY object and its position + rotation
     replicate to every peer in the session — no networking code at all. One peer

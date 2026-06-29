@@ -221,6 +221,14 @@ void NetworkManager::SetSyncOwned(const std::string& id, bool owned) {
     if (it != m_syncObjs.end()) it->second.owned = owned;
 }
 
+void NetworkManager::SetSyncExtra(const std::string& id, std::function<std::string()> get,
+                                  std::function<void(const std::string&)> set) {
+    auto it = m_syncObjs.find(id);
+    if (it == m_syncObjs.end()) return;
+    it->second.getExtra = std::move(get);
+    it->second.setExtra = std::move(set);
+}
+
 void NetworkManager::SyncTick(float dt) {
     if (m_syncObjs.empty()) return;
     // Ease non-owned objects toward their last received state every frame.
@@ -246,6 +254,7 @@ void NetworkManager::SyncTick(float dt) {
         std::ostringstream os;
         os << id << '|' << p.x << ' ' << p.y << ' ' << p.z << ' '
            << q.x << ' ' << q.y << ' ' << q.z << ' ' << q.w;
+        if (o.getExtra) os << '|' << o.getExtra();   // optional per-object state
         Send("__xform", os.str());
     }
 }
@@ -285,7 +294,12 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
             std::string id = data.substr(0, bar);
             auto it = m_syncObjs.find(id);
             if (it != m_syncObjs.end() && !it->second.owned) {
-                std::stringstream ss(data.substr(bar + 1));
+                // "<floats>[|<extra>]" — the optional extra payload follows a second '|'.
+                std::string rest = data.substr(bar + 1);
+                std::string extra;
+                std::string::size_type bar2 = rest.find('|');
+                if (bar2 != std::string::npos) { extra = rest.substr(bar2 + 1); rest.resize(bar2); }
+                std::stringstream ss(rest);
                 Vec3 p; Quat q;
                 ss >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w;
                 it->second.targetPos = p;
@@ -297,6 +311,7 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                     it->second.t->localRotation = q;
                 }
                 it->second.hasTarget = true;
+                if (it->second.setExtra && bar2 != std::string::npos) it->second.setExtra(extra);
             }
         }
         return;

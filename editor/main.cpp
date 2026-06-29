@@ -8067,6 +8067,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Combo("Authority##ns", &ai, auth, 3)) { ns->authority = (NetworkSync::Authority)ai; ed.dirty = true; }
             if (ns->authority == NetworkSync::Authority::Manual)
                 if (ImGui::Checkbox("Owned (this peer broadcasts)##ns", &ns->owned)) ed.dirty = true;
+            if (ImGui::Checkbox("Sync animation##ns", &ns->syncAnimation)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }

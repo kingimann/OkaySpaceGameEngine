@@ -215,6 +215,13 @@ public:
     void UnregisterSync(const std::string& id);
     /// Change who is authoritative for `id` at runtime (ownership transfer).
     void SetSyncOwned(const std::string& id, bool owned);
+    /// Attach optional EXTRA state to a synced object: on the owner, `get` is called
+    /// each broadcast to pack a small string (e.g. an animation index); on everyone
+    /// else, `set` is called with the received string. Rides alongside the transform
+    /// in the same packet. This is how NetworkSync replicates Character animation
+    /// without the net core knowing anything about characters.
+    void SetSyncExtra(const std::string& id, std::function<std::string()> get,
+                      std::function<void(const std::string&)> set);
     /// True if a transform is currently registered under `id`.
     bool HasSync(const std::string& id) const { return m_syncObjs.count(id) != 0; }
     float syncRate = 15.0f;   ///< networked-transform broadcasts per second (0 = every frame)
@@ -440,6 +447,8 @@ private:
         Vec3  targetPos{};
         Quat  targetRot{};
         bool  hasTarget = false;
+        std::function<std::string()> getExtra;            // owner packs extra state
+        std::function<void(const std::string&)> setExtra; // remote applies it
     };
     std::unordered_map<std::string, SyncObj> m_syncObjs;
     float m_syncTimer = 0.0f;

@@ -333,6 +333,10 @@ add_executable(test_net_sync test_net_sync.cpp)
 target_link_libraries(test_net_sync PRIVATE okay::engine)
 add_test(NAME net_sync COMMAND test_net_sync)
 
+add_executable(test_net_spawn test_net_spawn.cpp)
+target_link_libraries(test_net_spawn PRIVATE okay::engine)
+add_test(NAME net_spawn COMMAND test_net_spawn)
+
 add_executable(test_animclip test_animclip.cpp)
 target_link_libraries(test_animclip PRIVATE okay::engine)
 add_test(NAME animclip COMMAND test_animclip)

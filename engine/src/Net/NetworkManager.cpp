@@ -5,6 +5,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Components/NetworkSync.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
@@ -231,9 +232,10 @@ void NetworkManager::SetSyncExtra(const std::string& id, std::function<std::stri
 
 void NetworkManager::SyncTick(float dt) {
     if (m_syncObjs.empty()) return;
-    // Ease non-owned objects toward their last received state every frame.
-    if (interpolationRate > 0.0f) {
-        float t = interpolationRate * dt;
+    // Move non-owned objects toward their last received state every frame: ease at
+    // interpolationRate, or snap exactly when it's <= 0.
+    {
+        float t = interpolationRate > 0.0f ? interpolationRate * dt : 1.0f;
         if (t > 1.0f) t = 1.0f;
         for (auto& [id, o] : m_syncObjs) {
             if (o.owned || !o.t || !o.hasTarget) continue;
@@ -281,8 +283,22 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
         std::string path; float x = 0, y = 0, z = 0; char sep;
         std::getline(ss, path, '|');
         ss >> x >> sep >> y >> sep >> z;
-        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, path))
+        // Optional "|<netId>" marks a SpawnOwned object: attach a follower
+        // NetworkSync so its transform/animation track the authority that spawned it.
+        std::string netId; char bar;
+        if (ss.get(bar) && bar == '|') std::getline(ss, netId);
+        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, path)) {
             if (g->transform) g->transform->localPosition = {x, y, z};
+            if (!netId.empty()) {
+                auto* ns = g->GetComponent<NetworkSync>();
+                if (!ns) ns = g->AddComponent<NetworkSync>();
+                ns->netId = netId; ns->authority = NetworkSync::Authority::Manual; ns->owned = false;
+            }
+        }
+        return;
+    }
+    if (channel == "__despawn") {   // remove a SpawnOwned object on this peer
+        DestroyLocalSync(data);
         return;
     }
     // Networked transform: "__xform" carries "<id>|px py pz qx qy qz qw". The
@@ -360,6 +376,42 @@ void NetworkManager::Spawn(const std::string& prefabPath, const Vec3& position) 
     std::ostringstream os;
     os << prefabPath << '|' << position.x << '|' << position.y << '|' << position.z;
     Send("__spawn", os.str());
+}
+
+GameObject* NetworkManager::SpawnOwned(const std::string& prefabPath, const Vec3& position) {
+    // A globally-unique id: our peer id namespaces it, so two peers spawning at the
+    // same moment never collide.
+    std::string id = "sp/" + std::to_string(m_localId) + "/" + std::to_string(++m_spawnCounter);
+    GameObject* g = nullptr;
+    if (Scene* s = GetScene()) {
+        g = SceneSerializer::InstantiateFromFile(*s, prefabPath);
+        if (g) {
+            if (g->transform) g->transform->localPosition = position;
+            // We own it: drive its replication. NetworkSync registers on its first
+            // Update (the instance is updated every frame once spawned).
+            auto* ns = g->GetComponent<NetworkSync>();
+            if (!ns) ns = g->AddComponent<NetworkSync>();
+            ns->netId = id; ns->authority = NetworkSync::Authority::Manual; ns->owned = true;
+        }
+    }
+    std::ostringstream os;
+    os << prefabPath << '|' << position.x << '|' << position.y << '|' << position.z << '|' << id;
+    Send("__spawn", os.str());
+    return g;
+}
+
+void NetworkManager::DestroyLocalSync(const std::string& id) {
+    auto it = m_syncObjs.find(id);
+    if (it != m_syncObjs.end()) {
+        GameObject* go = it->second.t ? it->second.t->gameObject : nullptr;
+        if (go) if (Scene* s = GetScene()) s->Destroy(go);
+        m_syncObjs.erase(it);
+    }
+}
+
+void NetworkManager::Despawn(const std::string& netId) {
+    DestroyLocalSync(netId);
+    Send("__despawn", netId);
 }
 
 void NetworkManager::Start() {

@@ -1,5 +1,20 @@
 OkaySpace Game Engine — Changelog
 
+v2.319.0  (Networked spawn + despawn)
+  - NEW NetworkManager::SpawnOwned(prefab, pos): spawn a prefab on every peer AND
+    make THIS peer its network authority — the instance is auto-given a NetworkSync
+    (unique id, owned here, followed everywhere else), so as you move it the
+    transform (and Character animation, if any) replicate with no extra setup.
+    Perfect for bullets, thrown/dropped items, and abilities whose mover lives on
+    the spawner. Returns the local instance.
+  - NEW NetworkManager::Despawn(id): destroy a SpawnOwned object on every peer by
+    its sync id — the matching teardown for replicated bullets / pickups.
+  - Scripting: net_spawn_owned("prefab", x, y[, z]) returns the new object's sync
+    id; net_despawn(id) removes it everywhere. (net_spawn stays the un-owned,
+    fire-and-forget version.)
+  - NetworkSync followers now track the authority even when interpolation is off
+    (interpolationRate <= 0 snaps every frame instead of only on the first sample).
+
 v2.318.0  (Networked animation)
   - Network Sync now replicates ANIMATION too. If the synced object (or a child)
     has a Character, the authority also broadcasts its current animation index and

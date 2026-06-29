@@ -21,6 +21,7 @@
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Components/NetworkSync.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Platform/Account/Account.hpp"
@@ -2173,6 +2174,23 @@ struct OkayScriptVM::Impl {
                 n->Spawn(a[0].AsString(), {a.size() > 1 ? a[1].AsFloat() : 0.0f,
                                            a.size() > 2 ? a[2].AsFloat() : 0.0f,
                                            a.size() > 3 ? a[3].AsFloat() : 0.0f});
+            return Value{};
+        };
+        // Spawn a prefab THIS peer owns + auto-syncs (bullets, items); returns its
+        // sync id for a later net_despawn: net_spawn_owned("file", x, y[, z]).
+        b["net_spawn_owned"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && !a.empty()) {
+                GameObject* g = n->SpawnOwned(a[0].AsString(),
+                                              {a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                               a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                                               a.size() > 3 ? a[3].AsFloat() : 0.0f});
+                if (g) if (auto* ns = g->GetComponent<NetworkSync>()) return Value{ns->netId};
+            }
+            return Value{std::string{}};
+        };
+        // Despawn a net_spawn_owned object on every peer by its sync id.
+        b["net_despawn"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && !a.empty()) n->Despawn(a[0].AsString());
             return Value{};
         };
         b["net_get"] = [this](std::vector<Value>& a) {

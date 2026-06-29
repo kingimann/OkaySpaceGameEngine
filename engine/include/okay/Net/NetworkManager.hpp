@@ -203,6 +203,19 @@ public:
     /// same position — replicated object creation with one call.
     void Spawn(const std::string& prefabPath, const Vec3& position = Vec3::Zero);
 
+    /// Spawn a prefab on every peer AND make THIS peer the network authority for
+    /// it: the new instance is given a NetworkSync (a unique id, owned here and
+    /// followed everywhere else) so its transform — and Character animation, if any
+    /// — replicate automatically as you move it. Use for bullets, thrown/dropped
+    /// items, abilities: the mover lives on the spawner, everyone else just sees it.
+    /// Returns the local instance (or nullptr if it couldn't be created).
+    GameObject* SpawnOwned(const std::string& prefabPath, const Vec3& position = Vec3::Zero);
+
+    /// Destroy a previously SpawnOwned object on every peer by its sync id (the
+    /// NetworkSync netId). Removes it locally and tells the others to do the same —
+    /// the matching despawn for replicated bullets / pickups.
+    void Despawn(const std::string& netId);
+
     // ---- Networked transforms (drop-in object replication) -------------
     /// Replicate a Transform across the whole session under a unique `id`. The peer
     /// that owns it (`owned` = true) broadcasts its position + rotation `syncRate`
@@ -452,7 +465,9 @@ private:
     };
     std::unordered_map<std::string, SyncObj> m_syncObjs;
     float m_syncTimer = 0.0f;
+    std::uint32_t m_spawnCounter = 0;     // unique-id source for SpawnOwned
     void SyncTick(float dt);
+    void DestroyLocalSync(const std::string& id);   // despawn a synced object here
 
     // First-class RPC handlers (by name) + chat log/handler.
     std::unordered_map<std::string, std::function<void(std::uint32_t, const std::string&)>> m_rpcHandlers;

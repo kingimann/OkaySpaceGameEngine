@@ -36,13 +36,13 @@ public:
     bool  bob          = true;    ///< gentle idle sway
 
     // ---- Viewmodel placement (camera-local; tweak live in the inspector) ----
-    float armScale = 1.0f;        ///< overall hand size
-    float posX = 0.34f;           ///< right (+) / left (-) offset
-    float posY = -0.32f;          ///< down (-) / up (+) offset
-    float posZ = -0.55f;          ///< forward is negative (into the screen; clears the near plane)
-    float yaw  = -16.0f;          ///< angle the fist toward screen centre
-    float pitch = 10.0f;          ///< tilt up/down
-    float roll  = 10.0f;          ///< diagonal Minecraft cant
+    float armScale = 1.2f;        ///< overall hand size
+    float posX = 0.32f;           ///< right (+) / left (-) offset
+    float posY = -0.36f;          ///< down (-) / up (+) offset
+    float posZ = -0.62f;          ///< forward is negative (into the screen; clears the near plane)
+    float yaw  = -14.0f;          ///< angle the fist toward screen centre
+    float pitch = -58.0f;         ///< tip the upward forearm forward into the view
+    float roll  = -22.0f;         ///< diagonal Minecraft cant (fist leans toward centre)
 
     /// Trigger a swing from script / other components.
     void Punch() { StartSwing(); if (Character* c = FindCharacter()) c->Punch(); }
@@ -90,6 +90,10 @@ private:
         if (auto* fpc = FindController()) { fpc->showBody = false; fpc->ApplyBodyVisibility(); }
         m_cam = cam;
         GameObject* h = s->CreateGameObject("FP Hand");
+        // Layer 31 is the reserved "first-person viewmodel" layer: cameras render it
+        // (so it shows in the game / player) but the editor Scene view hides it, so it
+        // never appears as a stray box floating next to your character while editing.
+        h->layer = 31;
         auto* mr = h->AddComponent<MeshRenderer>();
         mr->mesh = BuildArmMesh(FindCharacter());
         mr->doubleSided = true;
@@ -112,8 +116,9 @@ private:
         m_hand->transform->localScale = Vec3{armScale, armScale, armScale};
     }
 
-    // A forearm (sleeve-coloured) + fist (skin/glove-coloured) pointing into the
-    // screen, so it reads as the character's own arm. Per-face colours; blocky.
+    // A forearm (sleeve-coloured) + fist (skin/glove-coloured) built pointing UP
+    // (+Y), so that — tipped forward by `pitch` and placed low — it reads as an arm
+    // rising from the bottom corner of the view. Per-face colours; blocky.
     static Mesh BuildArmMesh(Character* c) {
         Color skin   = c ? c->skin : Color::FromBytes(220, 176, 150);
         Color sleeve = (c && c->shirtStyle == 2) ? c->shirt : skin;   // long sleeve covers the forearm
@@ -125,10 +130,10 @@ private:
             for (Vec3& v : m.vertices) { v.x *= w; v.y *= hgt; v.z *= d; v += center; }
             return m;
         };
-        Mesh forearm = box(0.13f, 0.13f, 0.42f, {0.0f, 0.0f, -0.16f});  // wrist near camera -> forward
+        Mesh forearm = box(0.14f, 0.46f, 0.14f, {0.0f, 0.0f, 0.0f});   // rises along +Y
         int  fTris   = forearm.TriangleCount();
         Mesh arm = forearm;
-        arm.Combine(box(0.17f, 0.17f, 0.17f, {0.0f, 0.0f, -0.40f}));    // fist at the forward end
+        arm.Combine(box(0.18f, 0.18f, 0.18f, {0.0f, 0.30f, 0.0f}));    // fist at the top
         arm.triColors.clear();
         for (int i = 0; i < arm.TriangleCount(); ++i) arm.triColors.push_back(i < fTris ? sleeve : hand);
         return arm;

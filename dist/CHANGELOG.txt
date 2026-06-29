@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.322.0  (First-person hand: actually visible now)
+  - Fixed the First Person Hand so the hand is actually ON SCREEN. With the default
+    60° camera it was sitting just off the bottom-right edge, so you saw nothing
+    (just your hidden body) — exactly the "same as before" problem. The forearm +
+    fist now sits prominently in the lower-right corner of the view, tilted like
+    Minecraft, and swings on click. (Verified by a render test, not just by the
+    object existing.)
+  - The viewmodel no longer clutters the editor Scene view. It lives on a reserved
+    "first-person viewmodel" layer (31) that cameras render but the Scene view hides,
+    so you won't see a stray box floating next to your character while editing — only
+    the real hand in the Game view / build.
+  - Placement is fully tunable in the inspector (size, offset, yaw/pitch/roll) if you
+    want it somewhere other than the lower-right.
+
 v2.321.0  (First-person hand, done right)
   - The First Person Hand is now an actual Minecraft-style hand. The previous
     version revealed your WHOLE body in first person (you'd see your torso when

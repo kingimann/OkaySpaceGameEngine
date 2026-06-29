@@ -46,17 +46,17 @@ int main() {
         // actually draws — and sits low on screen (a held-down hand, not centred).
         auto* camC = cam->GetComponent<Camera>();
         if (camC && hg) {
-            const int W = 240, H = 180;
+            const int W = 320, H = 200;   // ~1.6 aspect, like the game view
             Mat4 vp = camC->ProjectionMatrix((float)W / (float)H) * camC->ViewMatrix();
             Vec3 eye = cam->transform->Position();
             Raster work; std::vector<std::uint32_t> outbuf;
             const std::uint32_t* px = RenderMeshesSS(work, outbuf, scene, vp, eye, W, H, 1, player);
-            int lit = 0, lower = 0, upper = 0;
+            int lit = 0, lowerRight = 0;
             for (int y = 0; y < H; ++y)
                 for (int x = 0; x < W; ++x)
-                    if (px[y * W + x] & 0xFF000000u) { ++lit; (y > H / 2 ? lower : upper)++; }
-            CHECK(lit > 50);         // the hand is visibly on screen
-            CHECK(lower > upper);    // concentrated in the lower part of the view
+                    if (px[y * W + x] & 0xFF000000u) { ++lit; if (y > H / 2 && x > W / 2) ++lowerRight; }
+            CHECK(lit > 1000);                  // the hand is clearly, prominently on screen
+            CHECK(lowerRight > lit * 8 / 10);   // and lives in the lower-right corner
         }
     }
 

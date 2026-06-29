@@ -14466,8 +14466,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     float dpi = ImGui::GetIO().DisplayFramebufferScale.x;
     if (dpi < 1.0f || dpi > 4.0f) dpi = 1.0f;
     // The Game view honors the main camera's layer culling mask; the Scene view
-    // always shows every layer so you can edit hidden objects.
-    RenderCullingMask() = (gameView && SceneCamera(ed.scene())) ? SceneCamera(ed.scene())->cullingMask : ~0;
+    // shows every layer EXCEPT 31 (the reserved first-person viewmodel layer, e.g. the
+    // First Person Hand), so a player's hand doesn't clutter the editor scene view.
+    RenderCullingMask() = (gameView && SceneCamera(ed.scene())) ? SceneCamera(ed.scene())->cullingMask
+                                                                : (~0 & ~(1 << 31));
     float v3w = view3dMax.x - view3dMin.x, v3h = view3dMax.y - view3dMin.y;
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)(v3w * dpi), (int)(v3h * dpi),

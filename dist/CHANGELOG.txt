@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.324.0  (First-person hand = hand only, like Minecraft)
+  - First person now hides your body and shows ONLY a hand in the corner (no body
+    visible while walking, no second arm). The hand is built from YOUR character's
+    colours (skin / sleeve / glove) so it still reads as your own.
+  - Empty-handed, the hand rests LOW (out of the way) and only peeks at the bottom,
+    just like Minecraft. When you equip a weapon/item it raises up — drive this with
+    `holdingItem` / SetHolding(true) on the component (weapons/items can hook into
+    it later). It eases smoothly between lowered and raised.
+  - Only the local player sees their own hand — it's created on that player's own
+    camera and lives on a reserved viewmodel layer, so other players and the editor
+    Scene view don't see it.
+  - Make it short: new "Arm Length" control keeps the hand close to the camera.
+    Everything is tunable in the inspector (size, length, offset, yaw/pitch/roll,
+    swing time) and saved with the scene. Click swings it (and fires the real punch
+    so onlookers see the hit).
+
 v2.323.0  (First-person hand = your character's OWN arm)
   - No more separate/added arm. The First Person Hand now raises your CHARACTER'S
     own arm up into the first-person view (Minecraft-style) and swings THAT arm on

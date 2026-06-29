@@ -8050,11 +8050,24 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
         if (CompHeader("First Person Hand", fh, &toRemove)) {
-            ImGui::TextDisabled("Minecraft-style: raises your CHARACTER'S own right arm into first-person view.\nClick to punch/swing it. Put it on the player or its FPS camera.");
+            ImGui::TextDisabled("Minecraft-style: hides your body and shows just a hand in the corner,\ncoloured from your Character. Click to swing. (Hand appears in Play.)");
             if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
             if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
-            ImGui::TextDisabled("Tune the swing speed on the Character (Punch Duration).");
+            if (ImGui::Checkbox("Holding item (hand up)##fh", &fh->holdingItem)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = empty hand rests low (Minecraft). Turn on when a weapon/item is equipped to raise it. Set from script with SetHolding().");
+            if (ImGui::DragFloat("Swing Time##fh", &fh->swingDuration, 0.005f, 0.05f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Arm Length##fh", &fh->armLength, 0.005f, 0.04f, 0.6f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forearm length. Smaller = the hand sits closer to the camera.");
+            if (ImGui::TreeNode("Hand placement##fh")) {
+                if (ImGui::DragFloat("Size##fh", &fh->armScale, 0.01f, 0.3f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat3("Offset (R/Down/Fwd)##fh", &fh->posX, 0.01f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera-local: X = right, Y = up, Z = forward (negative is into the screen).");
+                if (ImGui::DragFloat("Yaw##fh", &fh->yaw, 0.5f, -90.0f, 90.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Pitch##fh", &fh->pitch, 0.5f, -90.0f, 90.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Roll##fh", &fh->roll, 0.5f, -90.0f, 90.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }
@@ -14454,8 +14467,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     float dpi = ImGui::GetIO().DisplayFramebufferScale.x;
     if (dpi < 1.0f || dpi > 4.0f) dpi = 1.0f;
     // The Game view honors the main camera's layer culling mask; the Scene view
-    // always shows every layer so you can edit hidden objects.
-    RenderCullingMask() = (gameView && SceneCamera(ed.scene())) ? SceneCamera(ed.scene())->cullingMask : ~0;
+    // shows every layer EXCEPT 31 (the reserved first-person viewmodel layer, e.g. the
+    // First Person Hand), so a player's hand doesn't clutter the editor scene view.
+    RenderCullingMask() = (gameView && SceneCamera(ed.scene())) ? SceneCamera(ed.scene())->cullingMask
+                                                                : (~0 & ~(1 << 31));
     float v3w = view3dMax.x - view3dMin.x, v3h = view3dMax.y - view3dMin.y;
     if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)(v3w * dpi), (int)(v3h * dpi),

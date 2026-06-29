@@ -72,12 +72,6 @@ public:
     void  Punch() { if (m_punchT < 0.0f || m_punchT >= 1.0f) m_punchT = 0.0f; }
     bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
 
-    // ---- First-person arm hold ----
-    // When true, the RIGHT arm is held raised forward into view (so a first-person
-    // camera at the head sees your own arm, Minecraft-style) — layered over the
-    // current animation, with the punch swing on top. Driven by FirstPersonHand.
-    bool  firstPersonArm = false;
-
     // ---- No-code custom clips ----
     // Set a clips file and (optionally) a clip name and it loads + plays on Start,
     // no scripting required. clipsFile is a path to a .okayanim text file.

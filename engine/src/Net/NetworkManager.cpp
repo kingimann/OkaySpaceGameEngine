@@ -232,9 +232,38 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
             if (g->transform) g->transform->localPosition = {x, y, z};
         return;
     }
+    // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler
+    // (with the sender id + payload) instead of surfacing as a raw message.
+    if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
+        auto it = m_rpcHandlers.find(channel.substr(6));
+        if (it != m_rpcHandlers.end() && it->second) it->second(from, data);
+        return;
+    }
+    // Chat: "__chat" carries "<name>\n<text>"; logged + handed to the chat handler.
+    if (channel == "__chat") {
+        ChatEntry e{from, "", data};
+        std::string::size_type nl = data.find('\n');
+        if (nl != std::string::npos) { e.name = data.substr(0, nl); e.text = data.substr(nl + 1); }
+        m_chatLog.push_back(e);
+        if (chatHistory > 0 && (int)m_chatLog.size() > chatHistory)
+            m_chatLog.erase(m_chatLog.begin(), m_chatLog.begin() + ((int)m_chatLog.size() - chatHistory));
+        if (m_chatHandler) m_chatHandler(e);
+        return;
+    }
     NetMessage m{from, channel, data};
     if (m_msgHandler) m_msgHandler(m);
     m_inbox.push_back(std::move(m));
+}
+
+void NetworkManager::Chat(const std::string& text) {
+    // Show our own line locally first (a broadcast Send never echoes to the sender),
+    // then fan it out to everyone else in the room.
+    ChatEntry e{m_localId, m_localName, text};
+    m_chatLog.push_back(e);
+    if (chatHistory > 0 && (int)m_chatLog.size() > chatHistory)
+        m_chatLog.erase(m_chatLog.begin(), m_chatLog.begin() + ((int)m_chatLog.size() - chatHistory));
+    if (m_chatHandler) m_chatHandler(e);
+    Send("__chat", m_localName + "\n" + text);
 }
 
 void NetworkManager::Spawn(const std::string& prefabPath, const Vec3& position) {

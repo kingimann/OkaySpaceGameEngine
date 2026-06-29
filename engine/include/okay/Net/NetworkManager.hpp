@@ -211,6 +211,40 @@ public:
     /// Reliable message to a single peer id (server routes; 0 = the host).
     void SendReliableTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
 
+    // ---- Remote procedure calls (named events) -------------------------
+    /// A first-class RPC: every peer that registered a handler for `name` runs it
+    /// with the sender id + payload. Built on the message system but dispatched by
+    /// name to a callback (no manual channel parsing). Broadcast to everyone else.
+    void Rpc(const std::string& name, const std::string& data = "") { Send("__rpc/" + name, data); }
+    /// RPC to a single peer id (0 = the server/host).
+    void RpcTo(std::uint32_t targetId, const std::string& name, const std::string& data = "") {
+        SendTo(targetId, "__rpc/" + name, data);
+    }
+    /// RPC that is guaranteed to arrive (resent until acked) — for one-off events
+    /// you can't drop (a death, "round start", a door opening).
+    void RpcReliable(const std::string& name, const std::string& data = "") { SendReliable("__rpc/" + name, data); }
+    /// Register the handler that runs when an RPC named `name` arrives. The callback
+    /// gets (senderId, payload). Replaces any previous handler for that name.
+    void OnRpc(const std::string& name, std::function<void(std::uint32_t, const std::string&)> f) {
+        m_rpcHandlers[name] = std::move(f);
+    }
+    /// Remove a previously registered RPC handler.
+    void ClearRpc(const std::string& name) { m_rpcHandlers.erase(name); }
+
+    // ---- Chat ----------------------------------------------------------
+    /// One chat line: who said it (peer id + the name they joined with) and the text.
+    struct ChatEntry { std::uint32_t from; std::string name; std::string text; };
+    /// Send a chat line to everyone (reliable, so it isn't dropped). It's stamped
+    /// with your name and added to your own log too.
+    void Chat(const std::string& text);
+    /// The rolling chat history (most recent last, capped at `chatHistory`).
+    const std::vector<ChatEntry>& ChatLog() const { return m_chatLog; }
+    /// Clear the local chat history.
+    void ClearChat() { m_chatLog.clear(); }
+    /// Fired the moment a chat line arrives (for live UIs / sounds).
+    void OnChat(std::function<void(const ChatEntry&)> f) { m_chatHandler = std::move(f); }
+    int chatHistory = 100;   ///< how many chat lines to keep
+
     // ---- Moderation ----------------------------------------------------
     /// Server: disconnect a client by id (with an optional reason it's told).
     void Kick(std::uint32_t id, const std::string& reason = "");
@@ -381,6 +415,11 @@ private:
     std::vector<NetMessage> m_inbox;
     std::function<void(std::uint32_t, const std::string&)> m_peerJoined;
     std::function<void(std::uint32_t)> m_peerLeft;
+
+    // First-class RPC handlers (by name) + chat log/handler.
+    std::unordered_map<std::string, std::function<void(std::uint32_t, const std::string&)>> m_rpcHandlers;
+    std::vector<ChatEntry> m_chatLog;
+    std::function<void(const ChatEntry&)> m_chatHandler;
 
     // Server-authoritative synced variables
     std::unordered_map<std::string, std::string> m_syncVars;

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -25,8 +26,11 @@ public:
     bool IsAvailable() const override { return false; }
     const char* BackendName() const override { return "null"; }
 
+    NullSteamService() { static std::uint64_t s_next = 1; m_selfId = s_next++; }
+    ~NullSteamService() override { LeaveLobby(); }
+
     std::string   UserName() const override { return "Player"; }
-    std::uint64_t UserId() const override { return 0; }
+    std::uint64_t UserId() const override { return m_selfId; }
 
     bool UnlockAchievement(const std::string& id) override {
         bool isNew = m_achievements.insert(id).second;
@@ -170,9 +174,84 @@ public:
         return rows;
     }
 
-    int  FriendCount() const override { return 0; }
+    // Integer stats (kills, wins, ...).
+    void SetStatInt(const std::string& name, int value) override { m_statsInt[name] = value; }
+    int  GetStatInt(const std::string& name) const override {
+        auto it = m_statsInt.find(name);
+        return it != m_statsInt.end() ? it->second : 0;
+    }
+    int  IncrementStatInt(const std::string& name, int by) override {
+        m_statsInt[name] += by; return m_statsInt[name];
+    }
+
+    int  FriendCount() const override { return 0; }       // no friends in the bare simulation
+    std::string   FriendName(int) const override { return {}; }
+    std::uint64_t FriendId(int) const override { return 0; }
+    bool InviteFriend(std::uint64_t friendId) override {
+        OKAY_TRACE("Steam(sim): invited friend ", friendId);
+        return true;
+    }
     void ActivateOverlay(const std::string& page) override {
         OKAY_TRACE("Steam(sim): overlay '", page, "' (no-op in simulation)");
+    }
+
+    // ---- Lobbies: a process-wide registry so multiple simulated services (e.g.
+    // two players in one test) can create, browse, join and share data. ---------
+    std::uint64_t CreateLobby(int maxMembers, const std::string& name) override {
+        LeaveLobby();
+        std::uint64_t id = NextLobbyId()++;
+        LobbyRec rec;
+        rec.id = id; rec.name = name; rec.maxMembers = maxMembers < 1 ? 1 : maxMembers;
+        rec.owner = m_selfId; rec.members.insert(m_selfId);
+        Lobbies()[id] = rec;
+        m_currentLobby = id;
+        OKAY_INFO("Steam(sim): created lobby ", id, " '", name, "'");
+        return id;
+    }
+    bool JoinLobby(std::uint64_t lobbyId) override {
+        auto it = Lobbies().find(lobbyId);
+        if (it == Lobbies().end()) return false;
+        if ((int)it->second.members.size() >= it->second.maxMembers && !it->second.members.count(m_selfId))
+            return false;
+        LeaveLobby();
+        it->second.members.insert(m_selfId);
+        m_currentLobby = lobbyId;
+        return true;
+    }
+    void LeaveLobby() override {
+        if (!m_currentLobby) return;
+        auto it = Lobbies().find(m_currentLobby);
+        if (it != Lobbies().end()) {
+            it->second.members.erase(m_selfId);
+            if (it->second.members.empty()) Lobbies().erase(it);
+        }
+        m_currentLobby = 0;
+    }
+    std::uint64_t CurrentLobby() const override { return m_currentLobby; }
+    std::vector<SteamLobby> LobbyList() const override {
+        std::vector<SteamLobby> out;
+        for (const auto& [id, rec] : Lobbies()) {
+            bool full = (int)rec.members.size() >= rec.maxMembers;
+            out.push_back({id, rec.name, (int)rec.members.size(), rec.maxMembers, !full});
+        }
+        return out;
+    }
+    void SetLobbyData(const std::string& key, const std::string& value) override {
+        auto it = Lobbies().find(m_currentLobby);
+        if (it != Lobbies().end() && it->second.owner == m_selfId) it->second.data[key] = value;
+    }
+    std::string GetLobbyData(std::uint64_t lobbyId, const std::string& key) const override {
+        auto it = Lobbies().find(lobbyId);
+        if (it == Lobbies().end()) return {};
+        auto d = it->second.data.find(key);
+        return d != it->second.data.end() ? d->second : std::string{};
+    }
+    std::vector<std::string> LobbyMembers(std::uint64_t lobbyId) const override {
+        std::vector<std::string> out;
+        auto it = Lobbies().find(lobbyId);
+        if (it != Lobbies().end())
+            for (std::uint64_t m : it->second.members) out.push_back("Player" + std::to_string(m));
+        return out;
     }
 
     // The simulation grants ownership so the owned/DLC code paths are testable.
@@ -188,13 +267,34 @@ public:
     std::string Language() const override { return "english"; }
 
     void SetRichPresence(const std::string& key, const std::string& value) override {
+        m_presence[key] = value;
         OKAY_TRACE("Steam(sim): presence ", key, " = ", value);
+    }
+    std::string GetRichPresence(const std::string& key) const override {
+        auto it = m_presence.find(key);
+        return it != m_presence.end() ? it->second : std::string{};
     }
 
 private:
+    struct LobbyRec {
+        std::uint64_t id = 0;
+        std::string   name;
+        int           maxMembers = 0;
+        std::uint64_t owner = 0;
+        std::set<std::uint64_t> members;
+        std::unordered_map<std::string, std::string> data;
+    };
+    // Process-wide so independent simulated services can see each other's lobbies.
+    static std::map<std::uint64_t, LobbyRec>& Lobbies() { static std::map<std::uint64_t, LobbyRec> g; return g; }
+    static std::uint64_t& NextLobbyId() { static std::uint64_t n = 1; return n; }
+
+    std::uint64_t m_selfId = 0;
+    std::uint64_t m_currentLobby = 0;
     std::uint32_t m_appId = 0;
     std::unordered_set<std::string> m_achievements;
     std::unordered_map<std::string, float> m_stats;
+    std::unordered_map<std::string, int> m_statsInt;
+    std::unordered_map<std::string, std::string> m_presence;
     std::map<std::string, std::map<std::string, std::int32_t>> m_leaderboards;
     std::unordered_map<std::string, std::string> m_cloud;
     std::map<std::uint64_t, WorkshopItem> m_workshop;

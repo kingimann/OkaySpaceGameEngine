@@ -665,7 +665,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     if (hasNear) placeCol(nearby, startX + lw + colGap, rw, true);
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, 0.62f}); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+    if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
     // Backing panels (drop shadow + soft vertical gradient + hairline rim) per column.
     auto backing = [&](float x, float y, float w, float h) {
         shadow(x, y, w, h, cr + 3);
@@ -680,7 +680,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     if (ui.showMasterTitle) {
         float hbX = startX - pad, hbW = lw + pad*2, hbY = startY - pad - headH - headGap;
         if (hbW < 200.0f) hbW = 200.0f;
-        const std::string& mt = ui.masterTitle; float px = 1.8f;
+        const std::string& mt = ui.masterTitle; float px = ui.titleScale;
         float tw = (float)mt.size() * (Font8x8::Width + 1) * px;
         DrawText(r, mt, hbX + (hbW - tw) * 0.5f, hbY, px, sc(ui.textColor));
         float totW = 0, totL = 0; for (auto* g : equipped) { totW += g->TotalWeight(); totL += g->weightLimit; }
@@ -723,8 +723,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         if (hover) { fill(px0, py0, w, h, u.hoverColor, cr); stroke(px0, py0, w, h, lighten(u.itemBorder, 0.35f), 255); }
         SDL_Texture* icon = u.iconFolder.empty() ? nullptr : GetTexture(r, u.iconFolder + it.name + ".png", baseDir, cache);
         if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 6, box.y + 6, box.w - 12, box.h - 12}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else {   // clip the name to the tile width so it never overflows the cell
-            float px = 1.3f; int maxc = (int)((w - 12) / ((Font8x8::Width + 1) * px)); if (maxc < 1) maxc = 1;
+        else if (u.showItemNames) {   // clip the name to the tile width so it never overflows the cell
+            float px = u.itemNameScale; int maxc = (int)((w - 12) / ((Font8x8::Width + 1) * px)); if (maxc < 1) maxc = 1;
             std::string nm = (int)it.name.size() > maxc ? it.name.substr(0, maxc) : it.name;
             DrawText(r, nm, box.x + 6, box.y + 7, px, sc(u.textColor));
         }

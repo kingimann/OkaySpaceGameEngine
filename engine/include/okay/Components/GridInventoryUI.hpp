@@ -47,6 +47,10 @@ public:
     float headerHeight  = 26.0f;   ///< height of each container's name header
     bool  showMasterTitle = true;  ///< the big title above the bags
     std::string masterTitle = "INVENTORY";
+    float titleScale  = 1.8f;      ///< master-title font scale
+    float itemNameScale = 1.3f;    ///< item-label font scale (when no icon)
+    bool  showItemNames = true;    ///< draw the item name on each tile (off = icon/colour only)
+    float backdropDim = 0.62f;     ///< how dark the behind-everything backdrop is (0..1)
 
     // ---- Style toggles + extra colours ----
     bool  useGradients = true;     ///< soft top->bottom gradients on panels/tiles

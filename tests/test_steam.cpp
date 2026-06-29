@@ -109,8 +109,45 @@ int main() {
     CHECK(!svc->AchievementName(0).empty());
 
     svc->SetRichPresence("status", "In the asteroid belt");
+    CHECK(svc->GetRichPresence("status") == "In the asteroid belt");
+
+    // Integer stats (kills/wins).
+    svc->SetStatInt("kills", 3);
+    CHECK(svc->GetStatInt("kills") == 3);
+    CHECK(svc->IncrementStatInt("kills", 2) == 5);
+    CHECK(svc->GetStatInt("misses") == 0);
+
     svc->RunCallbacks();
     svc->Shutdown();
+
+    // --- Steam lobbies: two independent simulated services see + join one lobby ---
+    {
+        auto host = CreateSteamService();  auto join = CreateSteamService();
+        host->Initialize(SteamConfig{});   join->Initialize(SteamConfig{});
+
+        std::uint64_t lobby = host->CreateLobby(4, "Dust II");
+        CHECK(lobby != 0);
+        CHECK(host->CurrentLobby() == lobby);
+        host->SetLobbyData("map", "dust2");
+
+        // The other client browses the list and joins.
+        auto list = join->LobbyList();
+        bool found = false;
+        for (const auto& l : list) if (l.id == lobby) { found = true; CHECK(l.memberCount == 1); CHECK(l.maxMembers == 4); }
+        CHECK(found);
+        CHECK(join->JoinLobby(lobby));
+        CHECK(join->CurrentLobby() == lobby);
+        CHECK(join->GetLobbyData(lobby, "map") == "dust2");   // lobby data is visible to members
+        CHECK((int)host->LobbyMembers(lobby).size() == 2);    // host + joiner
+
+        CHECK(host->InviteFriend(123456ULL));                 // sim records the invite
+
+        join->LeaveLobby();
+        CHECK(join->CurrentLobby() == 0);
+        CHECK((int)host->LobbyMembers(lobby).size() == 1);    // joiner left
+        host->LeaveLobby();
+        CHECK(host->LobbyList().empty());                     // empty lobby is cleaned up
+    }
 
     // SteamManager component lifecycle inside a scene.
     {

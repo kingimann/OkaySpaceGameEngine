@@ -63,6 +63,15 @@ public:
     float animSpeed = 1.0f;
     float animTime  = 0.0f;  // runtime clock (not serialized)
 
+    // ---- Punch / swing (a quick right-arm arc layered over the current anim) ----
+    // Trigger a one-shot punch with Punch(); the right arm swings forward and back
+    // over `punchDuration` seconds on top of whatever the body is already doing
+    // (walking, idling). Used by the first-person hand so your OWN character's arm
+    // does the hitting — no separate floating viewmodel.
+    float punchDuration = 0.28f;
+    void  Punch() { if (m_punchT < 0.0f || m_punchT >= 1.0f) m_punchT = 0.0f; }
+    bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
+
     // ---- No-code custom clips ----
     // Set a clips file and (optionally) a clip name and it loads + plays on Start,
     // no scripting required. clipsFile is a path to a .okayanim text file.
@@ -168,6 +177,7 @@ private:
     float m_headYaw = 0.0f;        // eased head turn (toward lookYaw)
     float m_headPitch = 0.0f;      // eased head tilt (toward lookPitch)
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)
+    float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
     std::unordered_map<std::string, AnimClip> m_clips;  // registered custom clips
     const AnimClip* m_activeClip = nullptr;             // currently playing (or null)
     std::string m_activeClipName;

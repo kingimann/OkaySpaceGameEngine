@@ -320,14 +320,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << fl->color.r << " " << fl->color.g << " " << fl->color.b << "\n";
     }
     if (auto* fh = go->GetComponent<FirstPersonHand>()) {
-        out << "  fphand " << (fh->leftHanded ? 1 : 0) << " " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
-            << " " << fh->swingDuration << " " << fh->punchPitch << " " << fh->punchYaw
-            << " " << fh->lungeForward << " " << fh->idleBob
-            << " " << fh->restPosition.x << " " << fh->restPosition.y << " " << fh->restPosition.z
-            << " " << fh->restEuler.x << " " << fh->restEuler.y << " " << fh->restEuler.z
-            << " " << fh->armSize.x << " " << fh->armSize.y << " " << fh->armSize.z
-            << " " << fh->skinColor.r << " " << fh->skinColor.g << " " << fh->skinColor.b
-            << " " << fh->sleeveColor.r << " " << fh->sleeveColor.g << " " << fh->sleeveColor.b << "\n";
+        out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
+            << " " << (fh->showBody ? 1 : 0) << "\n";
     }
     if (auto* w = go->GetComponent<Water>()) {
         out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
@@ -569,6 +563,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (gu->useGradients ? 1 : 0) << " " << (gu->dropShadows ? 1 : 0)
             << " " << (gu->accentBars ? 1 : 0) << " " << (gu->autoAccent ? 1 : 0);
         wc(gu->accentColor); wc(gu->headerColor); wc(gu->weightGood); wc(gu->weightWarn);
+        out << " " << gu->titleScale << " " << gu->itemNameScale
+            << " " << (gu->showItemNames ? 1 : 0) << " " << gu->backdropDim;
         out << "\n";
     }
     if (auto* cs = go->GetComponent<CraftingStation>()) {
@@ -2017,6 +2013,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         gu->showMasterTitle = (sm != 0); gu->useGradients = (ug != 0);
                                         gu->dropShadows = (ds != 0); gu->accentBars = (ab != 0); gu->autoAccent = (aa != 0);
                                         rc(gu->accentColor); rc(gu->headerColor); rc(gu->weightGood); rc(gu->weightWarn);
+                                        in >> std::ws; int gpk6 = in.peek();
+                                        if (std::isdigit(gpk6) || gpk6 == '-' || gpk6 == '.') {
+                                            int sin = 1; in >> gu->titleScale >> gu->itemNameScale >> sin >> gu->backdropDim;
+                                            gu->showItemNames = (sin != 0);
+                                        }
                                     }
                                 }
                             }
@@ -2747,16 +2748,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     fl->toggleKey = (char)tk; fl->on = (onv != 0);
                 } else if (field == "fphand") {
                     auto* fh = go->AddComponent<FirstPersonHand>();
-                    int lh = 0, hs = 1;
-                    in >> lh >> fh->attackButton >> hs
-                       >> fh->swingDuration >> fh->punchPitch >> fh->punchYaw
-                       >> fh->lungeForward >> fh->idleBob
-                       >> fh->restPosition.x >> fh->restPosition.y >> fh->restPosition.z
-                       >> fh->restEuler.x >> fh->restEuler.y >> fh->restEuler.z
-                       >> fh->armSize.x >> fh->armSize.y >> fh->armSize.z
-                       >> fh->skinColor.r >> fh->skinColor.g >> fh->skinColor.b
-                       >> fh->sleeveColor.r >> fh->sleeveColor.g >> fh->sleeveColor.b;
-                    fh->leftHanded = (lh != 0); fh->holdToSwing = (hs != 0);
+                    int hs = 1, sb = 1;
+                    in >> fh->attackButton >> hs >> sb;
+                    fh->holdToSwing = (hs != 0); fh->showBody = (sb != 0);
+                    std::string rest; std::getline(in, rest);   // tolerate older, longer fphand rows
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed

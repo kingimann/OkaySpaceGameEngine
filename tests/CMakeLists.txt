@@ -325,6 +325,10 @@ add_executable(test_net_relay test_net_relay.cpp)
 target_link_libraries(test_net_relay PRIVATE okay::engine)
 add_test(NAME net_relay COMMAND test_net_relay)
 
+add_executable(test_net_rpc test_net_rpc.cpp)
+target_link_libraries(test_net_rpc PRIVATE okay::engine)
+add_test(NAME net_rpc COMMAND test_net_rpc)
+
 add_executable(test_animclip test_animclip.cpp)
 target_link_libraries(test_animclip PRIVATE okay::engine)
 add_test(NAME animclip COMMAND test_animclip)

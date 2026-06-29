@@ -35,6 +35,16 @@ struct WorkshopItem {
     bool                     installed  = false;
 };
 
+/// One Steam lobby in the lobby browser: a matchmaking room players create and
+/// join by id (the Steam-native alternative to the engine's custom relay).
+struct SteamLobby {
+    std::uint64_t id = 0;
+    std::string   name;
+    int           memberCount = 0;
+    int           maxMembers  = 0;
+    bool          joinable    = true;
+};
+
 /// Platform service abstraction for Steam features. The engine always links a
 /// no-op/simulation backend so games build and run without the proprietary
 /// Steamworks SDK; building with -DOKAY_WITH_STEAM=ON and pointing at the SDK
@@ -122,11 +132,47 @@ public:
         (void)search; (void)count; return {};
     }
 
+    // ---- Integer stats (e.g. kills, wins) ------------------------------
+    virtual void SetStatInt(const std::string& name, int value) { (void)name; (void)value; }
+    virtual int  GetStatInt(const std::string& name) const { (void)name; return 0; }
+    /// Add to an int stat and return the new value.
+    virtual int  IncrementStatInt(const std::string& name, int by) {
+        SetStatInt(name, GetStatInt(name) + by); return GetStatInt(name);
+    }
+
     // ---- Friends / overlay ---------------------------------------------
     /// Number of the player's Steam friends (0 in simulation unless seeded).
     virtual int  FriendCount() const { return 0; }
+    /// Persona name of the friend at an index (0..FriendCount-1), or "".
+    virtual std::string   FriendName(int index) const { (void)index; return {}; }
+    /// Steam id of the friend at an index, or 0.
+    virtual std::uint64_t FriendId(int index) const { (void)index; return 0; }
+    /// Invite a friend (by Steam id) to the current game / lobby. Returns true if
+    /// the invite was sent (simulation records it).
+    virtual bool InviteFriend(std::uint64_t friendId) { (void)friendId; return false; }
     /// Open the Steam overlay to a page ("friends", "achievements", ...).
     virtual void ActivateOverlay(const std::string& page) { (void)page; }
+
+    // ---- Lobbies (Steam matchmaking) -----------------------------------
+    /// Create a lobby for up to `maxMembers`, returning its id (0 on failure). You
+    /// become its owner and member; advertise extra info with SetLobbyData.
+    virtual std::uint64_t CreateLobby(int maxMembers, const std::string& name = "") {
+        (void)maxMembers; (void)name; return 0;
+    }
+    /// Join an existing lobby by id. Returns true on success.
+    virtual bool JoinLobby(std::uint64_t lobbyId) { (void)lobbyId; return false; }
+    /// Leave the lobby you're currently in (if any).
+    virtual void LeaveLobby() {}
+    /// The lobby you're currently in, or 0.
+    virtual std::uint64_t CurrentLobby() const { return 0; }
+    /// Browse open, joinable lobbies (the lobby list / server browser).
+    virtual std::vector<SteamLobby> LobbyList() const { return {}; }
+    /// Set a key/value on your current lobby (owner only) — map name, mode, etc.
+    virtual void SetLobbyData(const std::string& key, const std::string& value) { (void)key; (void)value; }
+    /// Read a key set on a lobby (yours or one you can see).
+    virtual std::string GetLobbyData(std::uint64_t lobbyId, const std::string& key) const { (void)lobbyId; (void)key; return {}; }
+    /// Member display names in a lobby.
+    virtual std::vector<std::string> LobbyMembers(std::uint64_t lobbyId) const { (void)lobbyId; return {}; }
 
     // ---- Apps / DLC / locale -------------------------------------------
     /// Whether the player owns/has installed a DLC by its app id.
@@ -142,6 +188,8 @@ public:
 
     // ---- Rich presence -------------------------------------------------
     virtual void SetRichPresence(const std::string& key, const std::string& value) = 0;
+    /// Read back a rich-presence value you set (simulation/testing convenience).
+    virtual std::string GetRichPresence(const std::string& key) const { (void)key; return {}; }
 };
 
 /// Create the best available Steam service for this build: the real Steamworks

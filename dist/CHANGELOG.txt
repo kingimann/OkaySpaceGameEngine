@@ -1,5 +1,34 @@
 OkaySpace Game Engine — Changelog
 
+v2.316.0  (Easy multiplayer + Steam, real first-person arm, more inventory style)
+  - MULTIPLAYER is much easier to add. The Network Manager now has a tiny high-level
+    API on top of the existing transport:
+      * RPCs — Rpc("name", data) / RpcTo(slot, ...) / RpcReliable(...) and
+        OnRpc("name", handler). Call a function on every other peer (or one peer)
+        with no manual channel wiring.
+      * Chat — Chat("text") broadcasts a chat line, ChatLog() is the rolling history,
+        and OnChat(handler) fires on every received line. Your own lines show up
+        locally too (no echo from the server needed).
+    Both ride the same Deliver() dispatch as everything else, so they work over UDP
+    and the relay unchanged.
+  - STEAM is much easier to add. SteamManager grew convenience wrappers so common
+    things are one call: int stats (Set/Get/Increment + StoreStats), rich presence,
+    the friend list (count / name / invite / overlay), and full lobbies
+    (Create / Join / Leave / Current / List / Set+Get lobby data / member list).
+    The Null (no-Steam) backend simulates all of it in-process — including a
+    process-wide lobby registry — so multiplayer/Steam flows are unit-testable with
+    no client running (new net_rpc + extended steam tests cover it).
+  - FIRST-PERSON PUNCH now uses your character's OWN arm. The previous floating
+    view-model box is gone: First Person Hand reveals your real Character to the
+    first-person camera (your head sits inside the near plane, so you see your arms,
+    not your head) and swings the character's actual right arm via Character::Punch()
+    on click. Tunable attack button, hold-to-swing, punch duration, and whether the
+    body is shown. The Sandbox player has one.
+  - INVENTORY gained more style controls in "Layout & Style": master-title scale,
+    per-tile item-name scale, a toggle to hide item names entirely (icon/colour only),
+    and a backdrop-dim slider for how dark the screen behind the open inventory is.
+    All saved with the scene (older scenes load with the new defaults).
+
 v2.315.0  (First-person hand + punch, and a very customizable inventory)
   - NEW First Person Hand: a Minecraft-style arm (forearm + fist + sleeve) drawn in
     the corner of the view, with a quick punch/swing arc when you click. Add it from

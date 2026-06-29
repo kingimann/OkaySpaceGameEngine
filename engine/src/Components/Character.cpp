@@ -432,6 +432,11 @@ void Character::Update(float dt) {
         mr->doubleSided = true;
         return;
     }
+    // Advance the punch arc even when posing manually, so a punch always plays.
+    if (m_punchT >= 0.0f && m_punchT < 1.0f) {
+        m_punchT += (punchDuration > 1e-3f ? dt / punchDuration : 1.0f);
+        if (m_punchT > 1.0f) m_punchT = 1.0f;
+    }
     if (anim == 0) return;
     animTime += dt * animSpeed;
 
@@ -466,7 +471,16 @@ void Character::Update(float dt) {
     if (!mr) return;
     EnsureRest();
     Mesh m = m_rest;
-    Skin(m, m_bone, PoseAt(animTime));
+    std::vector<Vec3> pose = PoseAt(animTime);
+    // Layer a punch arc over the right arm (swings forward and back), so the
+    // character's own arm does the hitting on top of whatever it's already doing.
+    if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
+        float arc = std::sin(m_punchT * 3.14159265f);   // 0..1..0
+        Vec3 up = {110.0f, 0.0f, -8.0f}, fore = {-18.0f, 0.0f, 0.0f};
+        pose[B_RUPARM] = pose[B_RUPARM] + (up   - pose[B_RUPARM]) * arc;
+        pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
+    }
+    Skin(m, m_bone, pose);
     Vec3 so = StanceOffset();
     for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();

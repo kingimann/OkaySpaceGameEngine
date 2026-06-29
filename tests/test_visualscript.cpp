@@ -298,6 +298,50 @@ int main() {
         CHECK_NEAR(vsc->GetVariable("unlocked").AsFloat(), 0.0f, 0.001f); // no Steam -> false
     }
 
+    // --- New multiplayer nodes parse + run safely offline (no session). ---
+    {
+        const char* src = R"OKAYVS(
+            node 0 OnStart
+            node 1 Const hi
+            node 2 NetChat
+            node 3 Const ping
+            node 4 NetRpc shoot
+            node 5 NetSpawnOwned bullet.okayprefab
+            node 6 Const sp/0/1
+            node 7 NetDespawn
+            node 8 Const true
+            node 9 NetReady
+            node 10 NetStartMatch
+            node 11 NetMatchStarted
+            node 12 SetVar started
+            node 13 NetAllReady
+            node 14 SetVar ready
+            data 2 0 1 0
+            data 4 0 3 0
+            data 7 0 6 0
+            data 9 0 8 0
+            data 12 0 11 0
+            data 14 0 13 0
+            exec 0 0 2
+            exec 2 0 4
+            exec 4 0 5
+            exec 5 0 7
+            exec 7 0 9
+            exec 9 0 10
+            exec 10 0 12
+            exec 12 0 14
+            entry OnStart 0
+        )OKAYVS";
+        Scene scene("VSNet2"); scene.physicsEnabled = false;
+        auto* vsc = scene.CreateGameObject("NetNodes")->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(vsc->LoadFromText(src, &err));
+        if (!err.empty()) std::cerr << "  parse: " << err << "\n";
+        scene.Start();   // all exec nodes are no-ops with no NetworkManager; must not crash
+        CHECK_NEAR(vsc->GetVariable("started").AsFloat(), 0.0f, 0.001f);  // not started offline
+        CHECK_NEAR(vsc->GetVariable("ready").AsFloat(), 0.0f, 0.001f);    // not all-ready offline
+    }
+
     // --- Tween easing curves at t=0.5. ---
     {
         const char* src = R"OKAYVS(

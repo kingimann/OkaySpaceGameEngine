@@ -180,6 +180,14 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NetSend")      { if (!need(1)) return nullptr; return std::make_unique<NetSendNode>(args[0]); }
     if (type == "NetSetVar")    { if (!need(1)) return nullptr; return std::make_unique<NetSetVarNode>(args[0]); }
     if (type == "NetDisconnect") return std::make_unique<NetDisconnectNode>();
+    if (type == "NetChat")        return std::make_unique<NetChatNode>();
+    if (type == "NetRpc")         { if (!need(1)) return nullptr; return std::make_unique<NetRpcNode>(args[0]); }
+    if (type == "NetSpawnOwned")  { if (!need(1)) return nullptr; return std::make_unique<NetSpawnOwnedNode>(args[0]); }
+    if (type == "NetDespawn")     return std::make_unique<NetDespawnNode>();
+    if (type == "NetReady")       return std::make_unique<NetReadyNode>();
+    if (type == "NetStartMatch")  return std::make_unique<NetStartMatchNode>();
+    if (type == "NetMatchStarted") return std::make_unique<NetMatchStartedNode>();
+    if (type == "NetAllReady")    return std::make_unique<NetAllReadyNode>();
     // Steam.
     if (type == "SteamName")        return std::make_unique<SteamNameNode>();
     if (type == "SteamIsUnlocked")  { if (!need(1)) return nullptr; return std::make_unique<SteamUnlockedNode>(args[0]); }

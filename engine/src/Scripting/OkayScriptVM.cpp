@@ -2131,6 +2131,16 @@ struct OkayScriptVM::Impl {
             if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
             return Value{};
         };
+        // Broadcast a chat line (stamped with your name, logged everywhere).
+        b["net_chat"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && !a.empty()) n->Chat(a[0].AsString());
+            return Value{};
+        };
+        // Fire a named RPC on every other peer: net_rpc("name"[, data]).
+        b["net_rpc"] = [this](std::vector<Value>& a) {
+            if (NetworkManager* n = Net(); n && !a.empty()) n->Rpc(a[0].AsString(), a.size() > 1 ? a[1].AsString() : std::string{});
+            return Value{};
+        };
         // Reliable (resent until acked) variants for events you can't drop.
         b["net_send_reliable"] = [this](std::vector<Value>& a) {
             if (NetworkManager* n = Net(); n && a.size() >= 2) n->SendReliable(a[0].AsString(), a[1].AsString());

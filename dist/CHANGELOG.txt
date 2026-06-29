@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.320.0  (No-code multiplayer nodes + actions)
+  - The whole multiplayer toolbox is now usable WITHOUT code, in both visual-script
+    systems:
+      * Flow-graph nodes: NetChat, NetRpc <name>, NetSpawnOwned <prefab>, NetDespawn,
+        NetReady, NetStartMatch, plus value nodes NetMatchStarted and NetAllReady —
+        alongside the existing NetHost / NetJoin / NetSend / NetSetVar / NetDisconnect.
+      * Actions palette (the no-code action list): "Send Chat", "Call Event (RPC)",
+        "Spawn Mine (synced)", "Despawn Networked" — so a button or key can fan out
+        chat, fire an RPC, or spawn a replicated bullet with one entry.
+  - New script builtins net_chat("text") and net_rpc("name"[, data]) round out the
+    scripting API (net_spawn_owned / net_despawn arrived in 2.319.0).
+  - So you can build chat, abilities, and a ready-up lobby flow entirely from the
+    node graph or the action list — no C++.
+
 v2.319.0  (Networked spawn + despawn)
   - NEW NetworkManager::SpawnOwned(prefab, pos): spawn a prefab on every peer AND
     make THIS peer its network authority — the instance is auto-given a NetworkSync

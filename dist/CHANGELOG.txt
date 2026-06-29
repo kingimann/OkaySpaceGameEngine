@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.334.0  (Fix: the punch swung backward)
+  - The first-person/melee punch swung the arm the WRONG way — toward the body's
+    back (+Z) instead of where it faces (-Z, where the camera looks). In first
+    person the arm "faced the opposite way". The punch arc now swings forward, so
+    the hand lands in front in both first- and third-person.
+  - New test_fp_punch verifies the right hand reaches in front of the shoulder
+    (forward, -Z) at the peak of the swing.
+
 v2.333.0  (Animation events — react when a clip hits a marker)
   - Clips can now carry named EVENT markers. As a clip plays past a marker the
     Character fires it, so gameplay can react in time with the animation — a

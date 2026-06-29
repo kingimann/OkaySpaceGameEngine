@@ -573,7 +573,8 @@ void Character::Update(float dt) {
     // character's own arm does the hitting on top of whatever it's already doing.
     if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
         float arc = std::sin(m_punchT * 3.14159265f);   // 0..1..0
-        Vec3 up = {110.0f, 0.0f, -8.0f}, fore = {-18.0f, 0.0f, 0.0f};
+        // Swing forward (-Z, the body's facing), so the punch lands in front.
+        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {18.0f, 0.0f, 0.0f};
         pose[B_RUPARM] = pose[B_RUPARM] + (up   - pose[B_RUPARM]) * arc;
         pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
     }
@@ -676,7 +677,9 @@ void Character::DriveParts() {
     std::vector<Vec3> pose = CurrentSourcePose();
     if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
         float arc = std::sin(m_punchT * 3.14159265f);
-        Vec3 up = {110.0f, 0.0f, -8.0f}, fore = {-18.0f, 0.0f, 0.0f};
+        // Swing FORWARD — the way the body faces (-Z), which is also where the
+        // first-person camera looks — so the punch lands in front, not behind.
+        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {18.0f, 0.0f, 0.0f};
         pose[B_RUPARM] = pose[B_RUPARM] + (up - pose[B_RUPARM]) * arc;
         pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE]) * arc;
     }

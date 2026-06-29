@@ -8372,6 +8372,31 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = the parts hold still so you can pose / keyframe them yourself.");
             }
 
+            ImGui::SeparatorText("Movement animations");
+            ImGui::TextDisabled("Play YOUR authored clips as the character moves (no scripting).");
+            {
+                // Build a "(built-in)" + clip-name list for the three locomotion states.
+                std::vector<std::string> clips = ch->ClipNames();
+                std::vector<const char*> opts; opts.push_back("(built-in)");
+                for (const auto& n : clips) opts.push_back(n.c_str());
+                auto bindCombo = [&](const char* label, std::string& field) {
+                    int cur = 0;
+                    for (size_t i = 0; i < clips.size(); ++i) if (clips[i] == field) { cur = (int)i + 1; break; }
+                    ImGui::SetNextItemWidth(150);
+                    if (ImGui::Combo(label, &cur, opts.data(), (int)opts.size())) {
+                        field = (cur == 0) ? std::string() : clips[cur - 1];
+                        ed.dirty = true;
+                    }
+                };
+                if (clips.empty()) {
+                    ImGui::TextDisabled("No clips yet — make one in View > Animation, then Apply to Character.");
+                } else {
+                    bindCombo("Idle##charstate", ch->clipIdle);
+                    bindCombo("Walk##charstate", ch->clipWalk);
+                    bindCombo("Run##charstate",  ch->clipRun);
+                }
+            }
+
             ImGui::SeparatorText("Clothing");
             const char* shirts[] = {"Tank (bare arms)","Short sleeve","Long sleeve"};
             ImGui::SetNextItemWidth(150); c |= ImGui::Combo("Shirt##char", &ch->shirtStyle, shirts, 3);

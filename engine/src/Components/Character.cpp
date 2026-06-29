@@ -6,6 +6,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <fstream>
@@ -411,7 +412,36 @@ void Character::StopClip() {
     m_clipTime = 0.0f;
 }
 
+std::vector<std::string> Character::ClipNames() const {
+    std::vector<std::string> names;
+    names.reserve(m_clips.size());
+    for (const auto& kv : m_clips) names.push_back(kv.first);
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+void Character::SyncStateClips() {
+    // No-code: when the user has bound a clip to a movement state, make that clip the
+    // active one (so YOUR animation plays instead of the built-in for that state).
+    if (clipIdle.empty() && clipWalk.empty() && clipRun.empty()) return;
+    if (m_editorPosing) return;   // editor preview owns the pose
+    const std::string* want = nullptr;
+    if      (anim == 1 && !clipIdle.empty()) want = &clipIdle;
+    else if (anim == 2 && !clipWalk.empty()) want = &clipWalk;
+    else if (anim == 3 && !clipRun.empty())  want = &clipRun;
+    if (want) {
+        if (m_activeClipName != *want && m_clips.count(*want)) { PlayClip(*want); m_stateDriven = true; }
+        else if (m_activeClipName == *want) m_stateDriven = true;
+    } else if (m_stateDriven && m_activeClip) {
+        // Entered a state with no binding: hand back to the built-in animation. (Only
+        // when WE put the clip there — never stomp a manual PlayClip / autoPlayClip.)
+        StopClip();
+        m_stateDriven = false;
+    }
+}
+
 void Character::Update(float dt) {
+    SyncStateClips();
     // Separate-parts rig: animate the part transforms instead of baking one mesh.
     if (separateParts) {
         if (!m_partsBuilt) BuildParts();
@@ -645,6 +675,10 @@ std::string Character::ToText() const {
             for (const auto& p : k.pose) o << ' ' << p.x << ' ' << p.y << ' ' << p.z;
         }
     }
+    // State-clip bindings last (trailing, so older saves still parse). "-" = unbound.
+    o << ' ' << (clipIdle.empty() ? "-" : clipIdle)
+      << ' ' << (clipWalk.empty() ? "-" : clipWalk)
+      << ' ' << (clipRun.empty()  ? "-" : clipRun);
     return o.str();
 }
 
@@ -686,6 +720,11 @@ void Character::FromText(const std::string& text) {
             if (!c.name.empty()) AddClip(std::move(c));
         }
     }
+    // Optional trailing state-clip bindings (absent in older saves -> unbound).
+    std::string si, sw, sr;
+    if (in >> si) clipIdle = (si == "-" ? "" : si);
+    if (in >> sw) clipWalk = (sw == "-" ? "" : sw);
+    if (in >> sr) clipRun  = (sr == "-" ? "" : sr);
     m_built = false;
 }
 

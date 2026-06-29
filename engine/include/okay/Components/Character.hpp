@@ -113,6 +113,19 @@ public:
     std::string clipsFile;
     std::string autoPlayClip;
 
+    // ---- No-code state animations ----
+    // Bind your AUTHORED clips to the movement states a controller drives (`anim`):
+    // when the character enters that state it plays YOUR clip instead of the built-in
+    // procedural animation. Leave a binding empty to keep the built-in for that state.
+    // This is the payoff of authoring — pose+key a walk cycle, drop its name in
+    // `clipWalk`, and the character walks with your animation, no scripting. Works on
+    // both the single mesh and the separated part rig.
+    std::string clipIdle;   ///< plays in the idle state (anim == 1)
+    std::string clipWalk;   ///< plays while walking   (anim == 2)
+    std::string clipRun;    ///< plays while running   (anim == 3)
+    /// True while a state binding (not a manual PlayClip) is driving the current clip.
+    bool StateDriven() const { return m_stateDriven; }
+
     // Head look: layered on top of the current animation so the head turns/tilts
     // toward where the player (or camera) is aiming. Degrees; not serialized — the
     // controllers drive these as TARGETS every frame, and the head eases toward
@@ -171,6 +184,8 @@ public:
     bool PlayClip(const std::string& name);
     void StopClip();
     bool IsPlayingClip() const { return m_activeClip != nullptr; }
+    /// Names of every registered clip (for editor dropdowns), sorted.
+    std::vector<std::string> ClipNames() const;
     /// The clip currently playing, or "" — handy for state checks.
     const std::string& PlayingClip() const { return m_activeClipName; }
     /// Resolve a short bone token ("hips","torso","head","l_uparm","l_fore",
@@ -227,6 +242,8 @@ private:
     const AnimClip* m_activeClip = nullptr;             // currently playing (or null)
     std::string m_activeClipName;
     float m_clipTime = 0.0f;
+    bool m_stateDriven = false;          // a state binding (not a manual PlayClip) owns the clip
+    void SyncStateClips();               // auto-play the clip bound to the current `anim` state
     void EnsureRest() const;
 };
 

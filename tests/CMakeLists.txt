@@ -517,3 +517,7 @@ add_test(NAME pause_menu COMMAND test_pause_menu)
 add_executable(test_char_anim test_char_anim.cpp)
 target_link_libraries(test_char_anim PRIVATE okay::engine)
 add_test(NAME char_anim COMMAND test_char_anim)
+
+add_executable(test_char_state_anim test_char_state_anim.cpp)
+target_link_libraries(test_char_state_anim PRIVATE okay::engine)
+add_test(NAME char_state_anim COMMAND test_char_state_anim)

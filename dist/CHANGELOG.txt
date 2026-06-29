@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.331.0  (Your animations drive the character — no scripting)
+  - NEW "Movement animations" on the Character: bind your authored clips to the
+    Idle / Walk / Run states a controller drives. When the character enters that
+    state it plays YOUR clip instead of the built-in procedural animation — so the
+    walk cycle you posed and keyed actually plays as the player walks, with zero
+    scripting. Leave a state on "(built-in)" to keep the stock animation for it.
+  - The inspector lists your clips in a dropdown per state (make one in
+    View > Animation, Apply to Character, then pick it here). A state with no
+    binding hands smoothly back to the built-in animation. Bindings save with the
+    scene. Works on both the single mesh and the separated part rig.
+  - New test_char_state_anim verifies state changes swap to the bound clip, an
+    unbound state falls back to built-in, and the bindings survive save/load.
+
 v2.330.0  (Character animation workflow — pose, key, play)
   - The Animation window now drives the CHARACTER itself, not just transform
     tracks. Select a separated character, open View > Animation, and you get a

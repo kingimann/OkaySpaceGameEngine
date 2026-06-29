@@ -445,6 +445,10 @@ add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)
 add_test(NAME jump COMMAND test_jump)
 
+add_executable(test_fp_hand test_fp_hand.cpp)
+target_link_libraries(test_fp_hand PRIVATE okay::engine)
+add_test(NAME fp_hand COMMAND test_fp_hand)
+
 # The account service core is header-only, so this test just needs the engine's
 # public include path and C++17 — no engine link required.
 add_executable(test_account test_account.cpp)

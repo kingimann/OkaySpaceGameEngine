@@ -8050,13 +8050,23 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
         if (CompHeader("First Person Hand", fh, &toRemove)) {
-            ImGui::TextDisabled("Punches with your CHARACTER'S own right arm and shows the body in first person.");
+            ImGui::TextDisabled("Minecraft-style hand: hides your body and draws a forearm + fist in the corner,\ncoloured from your Character. Click to swing. (Hand appears in Play.)");
             if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that punches: 0 = left, 1 = right, 2 = middle.");
-            if (ImGui::Checkbox("Punch while held##fh", &fh->holdToSwing)) ed.dirty = true;
-            if (ImGui::Checkbox("Show body (see your arm)##fh", &fh->showBody)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reveal your character to the first-person camera so you see your own arm swing. Your head sits in the near clip plane, so it doesn't block the view.");
-            ImGui::TextDisabled("Put this on the player or its FPS camera. Tune the swing speed on the Character (Punch Duration).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
+            if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
+            if (ImGui::Checkbox("Left handed##fh", &fh->leftHanded)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Idle sway##fh", &fh->bob)) ed.dirty = true;
+            if (ImGui::DragFloat("Swing Time##fh", &fh->swingDuration, 0.005f, 0.05f, 1.0f)) ed.dirty = true;
+            if (ImGui::TreeNode("Hand placement##fh")) {
+                if (ImGui::DragFloat("Size##fh", &fh->armScale, 0.01f, 0.3f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat3("Offset (R/Down/Fwd)##fh", &fh->posX, 0.01f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera-local: X = right, Y = up, Z = forward (negative is into the screen).");
+                if (ImGui::DragFloat("Yaw##fh", &fh->yaw, 0.5f, -90.0f, 90.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Pitch##fh", &fh->pitch, 0.5f, -90.0f, 90.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Roll##fh", &fh->roll, 0.5f, -90.0f, 90.0f)) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            ImGui::TextDisabled("Put this on the player or its FPS camera. Weapons/held items can come later.");
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }

@@ -322,7 +322,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* fh = go->GetComponent<FirstPersonHand>()) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
-            << " " << (fh->showBody ? 1 : 0) << "\n";
+            << " " << (fh->leftHanded ? 1 : 0) << " " << (fh->bob ? 1 : 0)
+            << " " << fh->swingDuration << " " << fh->armScale
+            << " " << fh->posX << " " << fh->posY << " " << fh->posZ
+            << " " << fh->yaw << " " << fh->pitch << " " << fh->roll << "\n";
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
@@ -2753,10 +2756,21 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     fl->toggleKey = (char)tk; fl->on = (onv != 0);
                 } else if (field == "fphand") {
                     auto* fh = go->AddComponent<FirstPersonHand>();
-                    int hs = 1, sb = 1;
-                    in >> fh->attackButton >> hs >> sb;
-                    fh->holdToSwing = (hs != 0); fh->showBody = (sb != 0);
-                    std::string rest; std::getline(in, rest);   // tolerate older, longer fphand rows
+                    int hs = 1;
+                    in >> fh->attackButton >> hs;
+                    fh->holdToSwing = (hs != 0);
+                    // The rest of the row is optional; old rows had one trailing int
+                    // (the retired showBody), new rows carry the viewmodel tuning.
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream rs(rest);
+                    std::vector<float> v; float f;
+                    while (rs >> f) v.push_back(f);
+                    if (v.size() >= 10) {
+                        fh->leftHanded = (v[0] != 0.0f); fh->bob = (v[1] != 0.0f);
+                        fh->swingDuration = v[2]; fh->armScale = v[3];
+                        fh->posX = v[4]; fh->posY = v[5]; fh->posZ = v[6];
+                        fh->yaw = v[7]; fh->pitch = v[8]; fh->roll = v[9];
+                    }
                 } else if (field == "netsync") {
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;

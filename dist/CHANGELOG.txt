@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.321.0  (First-person hand, done right)
+  - The First Person Hand is now an actual Minecraft-style hand. The previous
+    version revealed your WHOLE body in first person (you'd see your torso when
+    walking) — that's gone. Now it:
+      * hides your body, and
+      * draws ONLY a forearm + fist in the lower corner of the view, coloured from
+        your Character (skin, sleeve = shirt/jacket, glove), so it clearly reads as
+        YOUR arm — not a stray floating box,
+      * swings on click (and still triggers the real Character punch, so third-person
+        and networked players see the swing too).
+    The viewmodel is built when you press Play and is parented to the camera, so it
+    never shows up as a loose object in the editor Scene view.
+  - Fully tunable in the inspector: attack button, swing-while-held, left/right hand,
+    idle sway, swing time, hand size, and the hand's offset + yaw/pitch/roll so you
+    can place it exactly where you like. Held weapons/items can be layered on later.
+  - All of it saves with the scene. (Existing scenes load fine; the old "show body"
+    flag is simply dropped.)
+
 v2.320.0  (No-code multiplayer nodes + actions)
   - The whole multiplayer toolbox is now usable WITHOUT code, in both visual-script
     systems:

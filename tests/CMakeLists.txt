@@ -609,3 +609,7 @@ add_test(NAME math_extra COMMAND test_math_extra)
 add_executable(test_2d_expand test_2d_expand.cpp)
 target_link_libraries(test_2d_expand PRIVATE okay::engine)
 add_test(NAME 2d_expand COMMAND test_2d_expand)
+
+add_executable(test_phys_math test_phys_math.cpp)
+target_link_libraries(test_phys_math PRIVATE okay::engine)
+add_test(NAME phys_math COMMAND test_phys_math)

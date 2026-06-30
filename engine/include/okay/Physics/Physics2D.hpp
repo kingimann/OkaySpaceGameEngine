@@ -62,6 +62,12 @@ public:
     /// Cast a ray and return the nearest collider hit (within maxDistance).
     RaycastHit2D Raycast(Scene& scene, const Vec2& origin, const Vec2& direction,
                          float maxDistance = 1e9f);
+    /// Cast between two points (Unity's Linecast): the nearest hit on segment a→b.
+    RaycastHit2D Linecast(Scene& scene, const Vec2& a, const Vec2& b) {
+        Vec2 d = b - a; float len = d.Magnitude();
+        if (len < 1e-6f) return RaycastHit2D{};
+        return Raycast(scene, a, d / len, len);
+    }
     /// The first collider containing the point, or nullptr.
     Collider2D* OverlapPoint(Scene& scene, const Vec2& point);
     /// All colliders overlapping a circle.

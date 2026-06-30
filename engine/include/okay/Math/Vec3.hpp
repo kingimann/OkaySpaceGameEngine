@@ -112,6 +112,30 @@ struct Vec3 {
         Vec3 dir = (na * (std::sin((1.0f - t) * theta) / s)) + (nb * (std::sin(t * theta) / s));
         return dir * mag;
     }
+    /// Critically-damped spring toward `target` (Unity's Vector3.SmoothDamp).
+    /// `velocity` is carried between calls. Great for smooth camera/object follow.
+    static Vec3 SmoothDamp(const Vec3& current, Vec3 target, Vec3& velocity,
+                           float smoothTime, float deltaTime,
+                           float maxSpeed = Mathf::Infinity) {
+        smoothTime = Mathf::Max(0.0001f, smoothTime);
+        float omega = 2.0f / smoothTime;
+        float x = omega * deltaTime;
+        float exp = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+        Vec3 change = current - target;
+        float maxChange = maxSpeed * smoothTime;
+        float mag = change.Magnitude();
+        if (mag > maxChange && mag > Mathf::Epsilon) change *= (maxChange / mag);
+        Vec3 origTarget = target;
+        target = current - change;
+        Vec3 temp = (velocity + change * omega) * deltaTime;
+        velocity = (velocity - temp * omega) * exp;
+        Vec3 output = target + (change + temp) * exp;
+        if (Dot(origTarget - current, output - origTarget) > 0.0f) {
+            output = origTarget;
+            velocity = (output - origTarget) / deltaTime;
+        }
+        return output;
+    }
     static Vec3 Scale(const Vec3& a, const Vec3& b) { return {a.x*b.x, a.y*b.y, a.z*b.z}; }
     static Vec3 Min(const Vec3& a, const Vec3& b) { return {Mathf::Min(a.x,b.x), Mathf::Min(a.y,b.y), Mathf::Min(a.z,b.z)}; }
     static Vec3 Max(const Vec3& a, const Vec3& b) { return {Mathf::Max(a.x,b.x), Mathf::Max(a.y,b.y), Mathf::Max(a.z,b.z)}; }

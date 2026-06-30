@@ -85,6 +85,16 @@ struct Quat {
                 a.z * s0 + b.z * s1, a.w * s0 + b.w * s1};
     }
 
+    /// Normalized lerp between two rotations (cheaper than Slerp, Unity's Lerp).
+    /// Takes the shortest path and renormalizes; good for small steps / blending.
+    static Quat Lerp(const Quat& a, Quat b, float t) {
+        t = Mathf::Clamp01(t);
+        float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+        if (dot < 0.0f) b = {-b.x, -b.y, -b.z, -b.w};   // shortest arc
+        return Quat{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                    a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t}.Normalized();
+    }
+
     /// Rotation that orients +Z along `forward` with the given `up` (Unity-style).
     static Quat LookRotation(Vec3 forward, Vec3 up = Vec3::Up) {
         forward = forward.Normalized();

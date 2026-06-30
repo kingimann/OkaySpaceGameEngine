@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec3.hpp"
+#include "okay/Physics/ForceMode.hpp"
 #include <cmath>
 
 namespace okay {
@@ -47,6 +48,15 @@ public:
 
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; }
+    /// Apply a force with an explicit Unity-style ForceMode.
+    void AddForce(const Vec3& force, ForceMode mode) {
+        switch (mode) {
+            case ForceMode::Force:          m_forceAccum = m_forceAccum + force; break;
+            case ForceMode::Acceleration:   m_forceAccum = m_forceAccum + force * mass; break;
+            case ForceMode::Impulse:        velocity = velocity + force * InvMass(); break;
+            case ForceMode::VelocityChange: velocity = velocity + force; break;
+        }
+    }
     /// Apply an instantaneous change in momentum (immediate velocity change).
     void AddImpulse(const Vec3& impulse) { velocity = velocity + impulse * InvMass(); }
 

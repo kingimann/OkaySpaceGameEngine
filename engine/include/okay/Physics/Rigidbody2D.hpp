@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Math/Vec2.hpp"
+#include "okay/Physics/ForceMode.hpp"
 
 namespace okay {
 
@@ -22,6 +23,15 @@ public:
 
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec2& force) { m_forceAccum += force; }
+    /// Apply a force with an explicit Unity-style ForceMode.
+    void AddForce(const Vec2& force, ForceMode mode) {
+        switch (mode) {
+            case ForceMode::Force:          m_forceAccum += force; break;
+            case ForceMode::Acceleration:   m_forceAccum += force * mass; break;
+            case ForceMode::Impulse:        velocity += force * InvMass(); break;
+            case ForceMode::VelocityChange: velocity += force; break;
+        }
+    }
     /// Apply an instantaneous change in momentum (immediate velocity change).
     void AddImpulse(const Vec2& impulse) { velocity += impulse * InvMass(); }
 

@@ -91,6 +91,30 @@ struct Vec2 {
         float r = degrees * Mathf::Deg2Rad, c = Mathf::Cos(r), s = Mathf::Sin(r);
         return {v.x * c - v.y * s, v.x * s + v.y * c};
     }
+    /// Critically-damped spring toward `target` (Unity's Vector2.SmoothDamp).
+    /// `velocity` is carried between calls. Great for smooth camera/object follow.
+    static Vec2 SmoothDamp(const Vec2& current, Vec2 target, Vec2& velocity,
+                           float smoothTime, float deltaTime,
+                           float maxSpeed = Mathf::Infinity) {
+        smoothTime = Mathf::Max(0.0001f, smoothTime);
+        float omega = 2.0f / smoothTime;
+        float x = omega * deltaTime;
+        float exp = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+        Vec2 change = current - target;
+        float maxChange = maxSpeed * smoothTime;
+        float mag = change.Magnitude();
+        if (mag > maxChange && mag > Mathf::Epsilon) change *= (maxChange / mag);
+        Vec2 origTarget = target;
+        target = current - change;
+        Vec2 temp = (velocity + change * omega) * deltaTime;
+        velocity = (velocity - temp * omega) * exp;
+        Vec2 output = target + (change + temp) * exp;
+        if (Dot(origTarget - current, output - origTarget) > 0.0f) {
+            output = origTarget;
+            velocity = (output - origTarget) / deltaTime;
+        }
+        return output;
+    }
     static Vec2 Scale(const Vec2& a, const Vec2& b) { return {a.x * b.x, a.y * b.y}; }
     static Vec2 Min(const Vec2& a, const Vec2& b) { return {Mathf::Min(a.x, b.x), Mathf::Min(a.y, b.y)}; }
     static Vec2 Max(const Vec2& a, const Vec2& b) { return {Mathf::Max(a.x, b.x), Mathf::Max(a.y, b.y)}; }

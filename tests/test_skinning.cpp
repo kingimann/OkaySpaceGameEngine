@@ -62,5 +62,41 @@ int main() {
         CHECK(std::fabs(mr->mesh.vertices[0].y - 5.0f) < 1e-3f);
     }
 
+    // ---- Skin data survives save/reload (joints re-resolved by name) ----
+    {
+        Scene a("save");
+        GameObject* m = a.CreateGameObject("M");
+        m->AddComponent<MeshRenderer>();
+        auto* save = m->AddComponent<SkinnedMesh>();
+        a.CreateGameObject("Bone");
+        save->bind.vertices = { Vec3{1, 0, 0} };
+        save->bind.triangles = { 0, 0, 0 };
+        save->jointIdx = { {0, 0, 0, 0} };
+        save->jointWt  = { {1.0f, 0.0f, 0.0f, 0.0f} };
+        save->jointNames = { "Bone" };
+        save->inverseBind = { Mat4::Identity() };
+
+        std::string text = SceneSerializer::Serialize(a);
+        Scene b("load");
+        CHECK(SceneSerializer::Deserialize(b, text));
+
+        GameObject* lm = b.Find("M");
+        GameObject* lb = b.Find("Bone");
+        auto* lsm = lm ? lm->GetComponent<SkinnedMesh>() : nullptr;
+        CHECK(lsm != nullptr && lb != nullptr);
+        if (lsm && lb) {
+            CHECK(lsm->bind.vertices.size() == 1);
+            CHECK(lsm->jointNames.size() == 1 && lsm->jointNames[0] == "Bone");
+            CHECK(lsm->inverseBind.size() == 1);
+            lsm->ResolveJoints();                         // happens in Start() at runtime
+            CHECK(lsm->joints.size() == 1 && lsm->joints[0] == lb->transform);
+            lb->transform->localRotation = Quat::Euler(0, 0, 90);
+            lsm->Skin();
+            auto* lmr = lm->GetComponent<MeshRenderer>();
+            CHECK(std::fabs(lmr->mesh.vertices[0].x - 0.0f) < 1e-3f);
+            CHECK(std::fabs(lmr->mesh.vertices[0].y - 1.0f) < 1e-3f);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

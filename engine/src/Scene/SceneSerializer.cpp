@@ -89,6 +89,7 @@
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Components/NetworkPlayerSpawner.hpp"
+#include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -234,7 +235,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // .OBJ path is hand-edited, so its vertices/triangles can't be regenerated
         // from a name — write them verbatim. This record follows the `mesh` line
         // and overwrites the placeholder geometry on load.
-        if (mr->mesh.name.empty() && mr->meshPath.empty() && !mr->mesh.vertices.empty()) {
+        // (Skip when a SkinnedMesh owns this renderer — it serializes the BIND mesh via
+        // `skinmesh` below and rebuilds the deformed mesh at runtime; storing the live
+        // deformed pose here would be wrong and redundant.)
+        if (mr->mesh.name.empty() && mr->meshPath.empty() && !mr->mesh.vertices.empty()
+            && !go->GetComponent<SkinnedMesh>()) {
             out << "  meshgeo " << mr->mesh.vertices.size();
             for (const Vec3& v : mr->mesh.vertices)
                 out << " " << v.x << " " << v.y << " " << v.z;
@@ -287,6 +292,31 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (!mr->groundShadow || mr->groundShadowY != 0.0f || mr->groundShadowStrength != 0.5f)
             out << "  groundshadow " << (mr->groundShadow ? 1 : 0) << " "
                 << mr->groundShadowY << " " << mr->groundShadowStrength << "\n";
+    }
+    // Skinned mesh: the bind-pose geometry + per-vertex bone weights + joint names +
+    // inverse-bind matrices, so an imported rigged character survives save/reload
+    // (the joints are re-resolved by name and the mesh re-skins at runtime).
+    if (auto* sm = go->GetComponent<SkinnedMesh>()) {
+        const Mesh& bm = sm->bind;
+        out << "  skinmesh " << bm.vertices.size();
+        for (const Vec3& v : bm.vertices) out << " " << v.x << " " << v.y << " " << v.z;
+        out << " " << bm.normals.size();
+        for (const Vec3& n : bm.normals) out << " " << n.x << " " << n.y << " " << n.z;
+        out << " " << bm.uvs.size();
+        for (const Vec2& u : bm.uvs) out << " " << u.x << " " << u.y;
+        out << " " << bm.triangles.size();
+        for (int t : bm.triangles) out << " " << t;
+        out << " " << sm->jointIdx.size();
+        for (std::size_t i = 0; i < sm->jointIdx.size(); ++i) {
+            const auto& ji = sm->jointIdx[i]; const auto& jw = sm->jointWt[i];
+            out << " " << ji[0] << " " << ji[1] << " " << ji[2] << " " << ji[3]
+                << " " << jw[0] << " " << jw[1] << " " << jw[2] << " " << jw[3];
+        }
+        out << " " << sm->jointNames.size();
+        for (const std::string& nm : sm->jointNames) out << " " << Quote(nm);
+        out << " " << sm->inverseBind.size();
+        for (const Mat4& M : sm->inverseBind) for (int e = 0; e < 16; ++e) out << " " << M.m[e];
+        out << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -1580,6 +1610,37 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // force smooth normals, or an edited box/ground reloads looking like
                     // a soft rounded blob instead of clean flat faces.
                     mr->mesh.normals.clear();
+                } else if (field == "skinmesh") {
+                    // Rebuild a SkinnedMesh from its bind geometry + weights + joint
+                    // names + inverse-bind matrices. Joints are re-resolved by name at
+                    // runtime (SkinnedMesh::Start); show the bind mesh now for the editor.
+                    auto* sm = go->GetComponent<SkinnedMesh>();
+                    if (!sm) sm = go->AddComponent<SkinnedMesh>();
+                    Mesh bm;
+                    long vc = 0; in >> vc;
+                    for (long i = 0; i < vc; ++i) { Vec3 v; in >> v.x >> v.y >> v.z; bm.vertices.push_back(v); }
+                    long nc = 0; in >> nc;
+                    for (long i = 0; i < nc; ++i) { Vec3 n; in >> n.x >> n.y >> n.z; bm.normals.push_back(n); }
+                    long uc = 0; in >> uc;
+                    for (long i = 0; i < uc; ++i) { Vec2 u; in >> u.x >> u.y; bm.uvs.push_back(u); }
+                    long tc = 0; in >> tc;
+                    for (long i = 0; i < tc; ++i) { int t = 0; in >> t; bm.triangles.push_back(t); }
+                    long wc = 0; in >> wc;
+                    sm->jointIdx.clear(); sm->jointWt.clear();
+                    for (long i = 0; i < wc; ++i) {
+                        std::array<int, 4> ji{}; std::array<float, 4> jw{};
+                        in >> ji[0] >> ji[1] >> ji[2] >> ji[3] >> jw[0] >> jw[1] >> jw[2] >> jw[3];
+                        sm->jointIdx.push_back(ji); sm->jointWt.push_back(jw);
+                    }
+                    long jc = 0; in >> jc;
+                    sm->jointNames.clear();
+                    for (long i = 0; i < jc; ++i) sm->jointNames.push_back(ReadQuoted(in));
+                    long bc = 0; in >> bc;
+                    sm->inverseBind.clear();
+                    for (long i = 0; i < bc; ++i) { Mat4 M; for (int e = 0; e < 16; ++e) in >> M.m[e]; sm->inverseBind.push_back(M); }
+                    sm->bind = bm;
+                    sm->joints.clear();   // re-resolved from names in Start()
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) mr->mesh = bm;   // show bind pose until skinned
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         Color e; float spec = 0, shin = 16; int unlit = 0;

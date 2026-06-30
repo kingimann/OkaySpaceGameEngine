@@ -15,10 +15,12 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Mat4.hpp"
 #include <array>
+#include <string>
 #include <vector>
 
 namespace okay {
@@ -28,11 +30,25 @@ public:
     Mesh bind;                                   ///< bind-pose mesh (positions/normals/uvs/triangles)
     std::vector<std::array<int, 4>>   jointIdx;  ///< per-vertex joint indices (into `joints`)
     std::vector<std::array<float, 4>> jointWt;   ///< per-vertex blend weights (sum ~1)
-    std::vector<Transform*> joints;              ///< bone transforms (runtime; not serialized)
-    std::vector<Mat4>       inverseBind;          ///< per-joint inverse bind matrix
+    std::vector<Transform*>  joints;             ///< bone transforms (runtime; resolved from jointNames)
+    std::vector<std::string> jointNames;         ///< bone object names (serialized; resolved on load)
+    std::vector<Mat4>        inverseBind;         ///< per-joint inverse bind matrix
 
-    void Start() override  { Skin(); }
+    void Start() override  { ResolveJoints(); Skin(); }
     void Update(float) override { Skin(); }
+
+    /// Resolve joint Transforms by name from the scene (after a load, when the pointers
+    /// are empty but the names round-tripped). No-op once joints are populated.
+    void ResolveJoints() {
+        if (!joints.empty() || jointNames.empty() || !gameObject) return;
+        Scene* sc = gameObject->scene();
+        if (!sc) return;
+        joints.clear();
+        for (const std::string& nm : jointNames) {
+            GameObject* g = sc->Find(nm);
+            joints.push_back(g ? g->transform : nullptr);
+        }
+    }
 
     /// True once it has joints + a bind mesh to deform.
     bool Ready() const { return !joints.empty() && !bind.vertices.empty(); }

@@ -238,7 +238,9 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
 
         for (const JVal& jn : jts->arr) {
             int jnode = jn.Int(-1);
-            sm->joints.push_back((jnode >= 0 && jnode < nodeCount && go[jnode]) ? go[jnode]->transform : nullptr);
+            GameObject* jg = (jnode >= 0 && jnode < nodeCount) ? go[jnode] : nullptr;
+            sm->joints.push_back(jg ? jg->transform : nullptr);
+            sm->jointNames.push_back(jg ? jg->name : std::string{});   // for save/reload
         }
         if (const JVal* IB = skin.Find("inverseBindMatrices")) {
             int c = 0, cnt = 0; auto fv = ReadAccessor(doc, IB->Int(-1), c, cnt);

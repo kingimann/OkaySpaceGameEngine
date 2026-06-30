@@ -83,6 +83,11 @@ public:
     float fpArmUp = 1.0f;
     float fpRaise = -96.0f;   // raised upper-arm forward angle
     float fpElbow = 16.0f;    // raised forearm angle (hand closeness/height)
+    /// Which 3-bone arm the first-person view raises into frame (the base bone index,
+    /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand; the
+    /// separated-rig DriveParts poses these bones up like a Minecraft hand and routes
+    /// the punch onto them so the VISIBLE arm is the one that swings. Not serialized.
+    int   fpArmBase = -1;
 
     // ---- Separate body parts (a real, editable rig) ----
     // Instead of one baked mesh, build the character as a HIERARCHY of part
@@ -153,6 +158,14 @@ public:
     std::function<void(const std::string&)> onAnimEvent;   // not serialized
     /// Return the event names that fired since the last call, clearing the queue.
     std::vector<std::string> ConsumeAnimEvents() { auto q = std::move(m_animEvents); m_animEvents.clear(); return q; }
+    /// Pop the oldest fired event name (or "" if none) — convenient for polling one
+    /// per frame from a script: `let e = anim_event(); if e == "step" { ... }`.
+    std::string NextAnimEvent() {
+        if (m_animEvents.empty()) return {};
+        std::string s = m_animEvents.front();
+        m_animEvents.erase(m_animEvents.begin());
+        return s;
+    }
 
     // Head look: layered on top of the current animation so the head turns/tilts
     // toward where the player (or camera) is aiming. Degrees; not serialized — the
@@ -214,6 +227,29 @@ public:
     bool IsPlayingClip() const { return m_activeClip != nullptr; }
     /// Names of every registered clip (for editor dropdowns), sorted.
     std::vector<std::string> ClipNames() const;
+    /// Is a clip with this name registered?
+    bool HasClip(const std::string& name) const { return m_clips.find(name) != m_clips.end(); }
+    /// How many clips are registered.
+    int ClipCount() const { return (int)m_clips.size(); }
+    /// Length (seconds) of a registered clip, or 0 if there's no such clip.
+    float ClipDuration(const std::string& name) const {
+        auto it = m_clips.find(name);
+        return it == m_clips.end() ? 0.0f : it->second.Duration();
+    }
+    /// The active clip's playhead in seconds (0 if nothing is playing).
+    float ClipTime() const { return m_activeClip ? m_clipTime : 0.0f; }
+    /// The active clip's progress in [0,1] (0 if nothing is playing or zero-length).
+    float ClipNormalizedTime() const {
+        if (!m_activeClip) return 0.0f;
+        float d = m_activeClip->Duration();
+        if (d <= 0.0f) return 0.0f;
+        float t = m_clipTime / d;
+        return t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    }
+    /// True when a non-looping clip has played through to its end.
+    bool ClipFinished() const {
+        return m_activeClip && !m_activeClip->loop && m_clipTime >= m_activeClip->Duration();
+    }
     /// The clip currently playing, or "" — handy for state checks.
     const std::string& PlayingClip() const { return m_activeClipName; }
     /// Resolve a short bone token ("hips","torso","head","l_uparm","l_fore",

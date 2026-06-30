@@ -559,6 +559,143 @@ struct Mesh {
     }
     static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
 
+    /// Mirror the mesh across an axis plane through the origin (0 = X / yz-plane,
+    /// 1 = Y, 2 = Z), appending a flipped copy so the model becomes symmetric —
+    /// model one half, mirror the rest. When `weld` is on, vertices on the mirror
+    /// plane are merged so there's no seam down the middle.
+    void Mirror(int axis = 0, bool weld = true) {
+        if (axis < 0 || axis > 2 || vertices.empty()) return;
+        const bool faceCols = HasFaceColors();
+        Mesh copy = *this;
+        for (Vec3& v : copy.vertices) (&v.x)[axis] = -(&v.x)[axis];   // reflect
+        copy.FlipWinding();                                          // keep faces outward
+        int base = (int)vertices.size();
+        vertices.insert(vertices.end(), copy.vertices.begin(), copy.vertices.end());
+        for (int t : copy.triangles) triangles.push_back(t + base);
+        if (faceCols && copy.HasFaceColors())
+            triColors.insert(triColors.end(), copy.triColors.begin(), copy.triColors.end());
+        normals.clear();
+        name = "";
+        if (weld) WeldVertices();
+    }
+    Mesh Mirrored(int axis = 0, bool weld = true) const { Mesh m = *this; m.Mirror(axis, weld); return m; }
+
+    /// Push every vertex toward a sphere centred on the mesh, by `amount` in [0,1]
+    /// (0 = unchanged, 1 = fully spherical) — round off a cube into a ball, or just
+    /// soften a blocky shape. The sphere radius is the average vertex distance.
+    void Spherify(float amount = 1.0f) {
+        if (vertices.empty()) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        Vec3 c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+        float rsum = 0.0f;
+        for (const Vec3& v : vertices) {
+            Vec3 d{v.x - c.x, v.y - c.y, v.z - c.z};
+            rsum += std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        }
+        float r = rsum / (float)vertices.size();
+        for (Vec3& v : vertices) {
+            Vec3 d{v.x - c.x, v.y - c.y, v.z - c.z};
+            float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+            if (len < 1e-6f) continue;
+            Vec3 onSphere{c.x + d.x / len * r, c.y + d.y / len * r, c.z + d.z / len * r};
+            v.x += (onSphere.x - v.x) * amount;
+            v.y += (onSphere.y - v.y) * amount;
+            v.z += (onSphere.z - v.z) * amount;
+        }
+        normals.clear();
+        name = "";
+    }
+
+    /// Twist the mesh around an axis: each vertex rotates about that axis by
+    /// `degreesPerUnit` × (its distance along the axis from the mesh centre) — the
+    /// classic "wring the model" deformer. axis: 0 = X, 1 = Y, 2 = Z.
+    void Twist(float degreesPerUnit, int axis = 1) {
+        if (vertices.empty() || axis < 0 || axis > 2) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        float mid = ((&lo.x)[axis] + (&hi.x)[axis]) * 0.5f;
+        const float deg2rad = 3.14159265358979323846f / 180.0f;
+        int a = (axis + 1) % 3, b = (axis + 2) % 3;   // the two perpendicular axes
+        for (Vec3& v : vertices) {
+            float along = (&v.x)[axis] - mid;
+            float ang = degreesPerUnit * along * deg2rad;
+            float ca = std::cos(ang), sa = std::sin(ang);
+            float pa = (&v.x)[a], pb = (&v.x)[b];
+            (&v.x)[a] = pa * ca - pb * sa;
+            (&v.x)[b] = pa * sa + pb * ca;
+        }
+        normals.clear();
+        name = "";
+    }
+
+    /// Taper along an axis: scale the two perpendicular axes from full size at the
+    /// bottom (min of `axis`) to `endScale` at the top — turn a cylinder into a cone
+    /// or a box into a frustum/wedge. axis: 0 = X, 1 = Y, 2 = Z.
+    void Taper(int axis = 1, float endScale = 0.5f) {
+        if (vertices.empty() || axis < 0 || axis > 2) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis], range = a1 - a0;
+        if (range < 1e-6f) return;
+        Vec3 c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+        int b = (axis + 1) % 3, d = (axis + 2) % 3;
+        for (Vec3& v : vertices) {
+            float t = ((&v.x)[axis] - a0) / range;       // 0 at bottom .. 1 at top
+            float s = 1.0f + (endScale - 1.0f) * t;
+            (&v.x)[b] = (&c.x)[b] + ((&v.x)[b] - (&c.x)[b]) * s;
+            (&v.x)[d] = (&c.x)[d] + ((&v.x)[d] - (&c.x)[d]) * s;
+        }
+        normals.clear();
+        name = "";
+    }
+
+    /// Bend the mesh into an arc: sweep it around a circle so a straight bar curves by
+    /// `degrees` total over its length along `axis` (0 = X, 1 = Y, 2 = Z). The bend
+    /// happens in the plane of `axis` and the next axis. 0 leaves it straight.
+    void Bend(float degrees, int axis = 0) {
+        if (vertices.empty() || axis < 0 || axis > 2 || std::fabs(degrees) < 1e-4f) return;
+        Vec3 lo, hi; Bounds(lo, hi);
+        float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis], len = a1 - a0;
+        if (len < 1e-6f) return;
+        const float kPi = 3.14159265358979323846f;
+        float total = degrees * kPi / 180.0f;            // total bend angle
+        float radius = len / total;                       // arc radius so the ends meet the angle
+        float mid = (a0 + a1) * 0.5f;
+        int up = (axis + 1) % 3;                          // the axis we curl toward
+        for (Vec3& v : vertices) {
+            float s = (&v.x)[axis] - mid;                 // distance along the bar from centre
+            float h = (&v.x)[up];                         // offset from the neutral fibre
+            float ang = s / radius;
+            float r = radius + h;                         // outer fibres travel a larger arc
+            (&v.x)[axis] = std::sin(ang) * r;
+            (&v.x)[up]   = radius - std::cos(ang) * r;
+        }
+        normals.clear();
+        name = "";
+    }
+
+    /// Give a thin surface real thickness: duplicate it, push the copy inward along
+    /// the (smooth) vertex normals by `thickness`, and flip it so the shell reads
+    /// solid from both sides — turn a plane/curved sheet into a slab/bowl wall.
+    void Solidify(float thickness = 0.1f) {
+        if (vertices.empty() || triangles.empty()) return;
+        Mesh src = *this;
+        if (!src.HasNormals()) src.ComputeSmoothNormals();
+        Mesh inner = src;
+        for (std::size_t i = 0; i < inner.vertices.size(); ++i) {
+            const Vec3& n = src.normals[i];
+            inner.vertices[i].x -= n.x * thickness;
+            inner.vertices[i].y -= n.y * thickness;
+            inner.vertices[i].z -= n.z * thickness;
+        }
+        inner.FlipWinding();
+        std::vector<Color> innerCols = HasFaceColors() ? triColors : std::vector<Color>{};   // copy before growing
+        int base = (int)vertices.size();
+        vertices.insert(vertices.end(), inner.vertices.begin(), inner.vertices.end());
+        for (int t : inner.triangles) triangles.push_back(t + base);
+        if (!innerCols.empty()) triColors.insert(triColors.end(), innerCols.begin(), innerCols.end());
+        normals.clear();
+        name = "";
+    }
+
     /// Extrude a 2D outline (XY, convex, counter-clockwise) into a 3D prism of
     /// the given depth along Z — custom signs, logos, blocky props. Builds a
     /// front and back cap (fan-triangulated) plus side walls.

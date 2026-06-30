@@ -1,6 +1,9 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec3.hpp"
+#include <cmath>
 
 namespace okay {
 
@@ -38,6 +41,22 @@ public:
     void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; }
     /// Apply an instantaneous change in momentum (immediate velocity change).
     void AddImpulse(const Vec3& impulse) { velocity = velocity + impulse * InvMass(); }
+
+    /// Unity-style explosion: shove this body away from `center` with `force`, falling
+    /// off linearly to zero at `radius` (bodies past the radius are untouched).
+    /// `upModifier` biases the push upward (so debris pops up, not just outward).
+    /// No effect on kinematic/static bodies (infinite mass).
+    void AddExplosionForce(float force, const Vec3& center, float radius, float upModifier = 0.0f) {
+        if (!gameObject || !gameObject->transform || radius <= 0.0f) return;
+        Vec3 p = gameObject->transform->Position();
+        Vec3 d{p.x - center.x, p.y - center.y, p.z - center.z};
+        float dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        if (dist > radius) return;
+        float falloff = 1.0f - dist / radius;
+        Vec3 dir = dist > 1e-5f ? Vec3{d.x / dist, d.y / dist, d.z / dist} : Vec3{0.0f, 1.0f, 0.0f};
+        dir.y += upModifier;
+        AddImpulse(dir * (force * falloff));
+    }
 
     /// 1/mass for dynamic bodies, 0 for kinematic/static (treated as infinite).
     float InvMass() const {

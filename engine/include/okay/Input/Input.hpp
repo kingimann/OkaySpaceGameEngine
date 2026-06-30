@@ -28,9 +28,17 @@ public:
     /// Composite WASD / arrow axis in the range [-1, 1] per component.
     static Vec2 AxisWASD();
 
+    /// True if ANY key is held this frame (Unity's Input.anyKey) — "press any key".
+    static bool AnyKey();
+    /// True only on the frame a new key was first pressed (Input.anyKeyDown).
+    static bool AnyKeyDown();
+
     // ---- Mouse (driven by FeedMouse from the windowed runtime) ----------
     /// Cursor position in pixels (origin top-left of the window).
     static Vec2 MousePosition();
+    /// How far the cursor moved since the last frame, in pixels — for mouse-look /
+    /// drag without tracking the previous position yourself.
+    static Vec2 MouseDelta();
     /// True while a mouse button is held (0 = left, 1 = right, 2 = middle).
     static bool GetMouseButton(int button);
     /// True only on the frame the button was first pressed.
@@ -46,6 +54,8 @@ public:
     static bool GetGamepadButton(int button);
     /// True only on the frame the button was first pressed.
     static bool GetGamepadButtonDown(int button);
+    /// True only on the frame the button was released.
+    static bool GetGamepadButtonUp(int button);
 
     /// Drive input from a non-terminal source (SDL window): pass the set of keys
     /// currently held this frame. Advances the down/up edge state.
@@ -93,6 +103,7 @@ private:
     static bool s_interactive;
 
     static Vec2     s_mousePos;
+    static Vec2     s_mousePrevPos;   // cursor position last frame (for MouseDelta)
     static unsigned s_mouseCurrent;   // bitmask of held buttons this frame
     static unsigned s_mousePrevious;  // bitmask from last frame
 

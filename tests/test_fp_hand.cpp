@@ -26,12 +26,14 @@ int main() {
         for (int i = 0; i < 3; ++i) scene.Update(0.016f);
 
         CHECK(ch->PartsBuilt());
-        // Only the right-arm parts (6,7,8) are active; the rest are hidden.
-        CHECK(ch->Part(6) && ch->Part(6)->active == true);     // R upper arm shown
-        CHECK(ch->Part(7) && ch->Part(7)->active == true);     // R forearm shown
-        CHECK(ch->Part(2) && ch->Part(2)->active == false);    // head hidden
-        CHECK(ch->Part(1) && ch->Part(1)->active == false);    // torso hidden
-        CHECK(ch->Part(12) && ch->Part(12)->active == false);  // R thigh hidden
+        // The first-person arm view is DISABLED for now: the hand hides nothing and
+        // doesn't raise an arm, so the whole character stays visible and normal.
+        CHECK(ch->Part(1) && ch->Part(1)->active == true);     // torso visible
+        CHECK(ch->Part(2) && ch->Part(2)->active == true);     // head visible
+        CHECK(ch->Part(6) && ch->Part(6)->active == true);     // arms visible
+        CHECK(ch->Part(12) && ch->Part(12)->active == true);   // legs visible
+        CHECK(!ch->firstPersonArm);                            // no first-person raise
+        CHECK(ch->fpArmBase == -1);
 
         // The only objects added were the part rig (Rig + parts), created by the
         // Character's own BuildParts — the hand component itself spawns nothing extra.

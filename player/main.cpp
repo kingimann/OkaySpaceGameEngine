@@ -1506,6 +1506,7 @@ int main(int argc, char** argv) {
             if (w > 0 && h > 0) {
                 ApplySceneLight(scene);                 // a Light object aims the shading
                 const GameObject* ignore = cam ? cam->ignoreObject : nullptr;
+                okay::RenderCullingMask() = cam ? cam->cullingMask : ~0;   // honor the camera's layer mask (software + GPU)
                 const std::uint32_t* px = nullptr;
                 // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
                 // offscreen target and reading back RGBA8. A self-heal counter disables
@@ -1726,7 +1727,7 @@ int main(int argc, char** argv) {
                 SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
                              (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
                 SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
-                float px = tr->pixelSize * scale;
+                float px = tr->EffectivePixelSize() * scale;
                 okay::TtfFont* fnt = tr->Font();
                 if (tr->shadow)
                     DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
@@ -2560,7 +2561,7 @@ int main(int argc, char** argv) {
             // text). UIResolveOrigin/UIScaleFor are world-aware; pixelSize scales by k.
             Canvas* tcv = OwningCanvas(up.get());
             bool tWorld = (tcv && tcv->worldSpace) || WorldUIRoot(up.get()) != nullptr;
-            float p = tr->pixelSize, ls = tr->letterSpacing, lp = tr->lineSpacing;
+            float p = tr->EffectivePixelSize(), ls = tr->letterSpacing, lp = tr->lineSpacing;
             float tk = 1.0f;
             if (tWorld) {
                 tk = UIScaleFor(up.get(), (float)w, (float)h);

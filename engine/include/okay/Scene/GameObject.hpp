@@ -54,6 +54,11 @@ public:
     /// Iterate the attached components in their stored order.
     const std::vector<std::unique_ptr<Component>>& Components() const { return m_components; }
 
+    /// True if `other` is this object or any ancestor of it — used by cameras to skip
+    /// a whole subtree (e.g. hiding the local player's body, rig parts included, from
+    /// the first-person view without affecting other cameras).
+    bool IsSelfOrDescendantOf(const GameObject* other) const;
+
     /// Move `component` by `delta` positions within the stored order. Transform
     /// is pinned to index 0: the valid target range is [1, size-1], so neither the
     /// Transform itself nor any other component can be moved to index 0. Out-of-range

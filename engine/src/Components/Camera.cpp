@@ -12,6 +12,41 @@ void Camera::Awake() {
     }
 }
 
+void Camera::ScreenPointToRay(float screenX, float screenY, float screenW, float screenH,
+                              Vec3& outOrigin, Vec3& outDir) const {
+    float aspect = screenH > 0.0f ? screenW / screenH : 1.0f;
+    float ndcX = screenW > 0.0f ? (2.0f * screenX / screenW - 1.0f) : 0.0f;
+    float ndcY = screenH > 0.0f ? (1.0f - 2.0f * screenY / screenH) : 0.0f;   // +Y up
+    Quat rot = transform ? transform->Rotation() : Quat::Identity;
+    outOrigin = transform ? transform->Position() : Vec3::Zero;
+    Vec3 right = rot * Vec3::Right, up = rot * Vec3::Up;
+    Vec3 fwd = rot * Vec3{0.0f, 0.0f, -1.0f};                 // cameras look down -Z
+    if (projection == Projection::Perspective) {
+        float tanV = std::tan(VerticalFovDegrees(aspect) * Mathf::Deg2Rad * 0.5f);
+        float tanH = tanV * aspect;
+        outDir = (fwd + right * (ndcX * tanH) + up * (ndcY * tanV)).Normalized();
+    } else {
+        // Orthographic: parallel rays; the origin slides across the view rectangle.
+        outOrigin = outOrigin + right * (ndcX * orthographicSize * aspect)
+                              + up * (ndcY * orthographicSize);
+        outDir = fwd.Normalized();
+    }
+}
+
+Vec3 Camera::ScreenToWorldPoint(float screenX, float screenY, float viewDepth,
+                                float screenW, float screenH) const {
+    Vec3 o, d;
+    ScreenPointToRay(screenX, screenY, screenW, screenH, o, d);
+    if (projection == Projection::Perspective) {
+        Quat rot = transform ? transform->Rotation() : Quat::Identity;
+        Vec3 fwd = rot * Vec3{0.0f, 0.0f, -1.0f};
+        float along = Vec3::Dot(d, fwd);                      // ray foreshortening
+        float t = (std::fabs(along) > 1e-5f) ? viewDepth / along : viewDepth;
+        return o + d * t;                                     // hits the plane viewDepth in front
+    }
+    return o + d * viewDepth;
+}
+
 Mat4 Camera::ViewMatrix() const {
     if (!transform) return Mat4{};
     return transform->LocalToWorldMatrix().Inverse();

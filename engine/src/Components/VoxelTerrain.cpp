@@ -367,7 +367,7 @@ void VoxelTerrain::Generate(float surfaceFrac, float amplitude, float caveAmount
         }
 }
 
-void VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
+bool VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
     float gx = (local.x + HalfX()) / voxelSize;
     float gy = local.y / voxelSize;
     float gz = (local.z + HalfZ()) / voxelSize;
@@ -375,6 +375,7 @@ void VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
     int x0 = std::max(0, (int)std::floor(gx - gr)), x1 = std::min(nx - 1, (int)std::ceil(gx + gr));
     int y0 = std::max(0, (int)std::floor(gy - gr)), y1 = std::min(ny - 1, (int)std::ceil(gy + gr));
     int z0 = std::max(0, (int)std::floor(gz - gr)), z1 = std::min(nz - 1, (int)std::ceil(gz + gr));
+    bool changed = false;
     for (int z = z0; z <= z1; ++z)
         for (int y = y0; y <= y1; ++y)
             for (int x = x0; x <= x1; ++x) {
@@ -384,16 +385,18 @@ void VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
                 float t = 1.0f - d / gr;
                 float fall = t * t * (3.0f - 2.0f * t);    // smoothstep sphere (softer edge)
                 float& cell = density[Index(x, y, z)];
-                cell = ClampTo(cell - amount * fall, Clamp());   // subtract = carve air
+                float nv = ClampTo(cell - amount * fall, Clamp());   // subtract = carve air
+                if (nv != cell) { cell = nv; changed = true; }
             }
+    return changed;
 }
 
-void VoxelTerrain::Add(const Vec3& local, float radius, float amount) {
-    Dig(local, radius, -amount);   // adding is digging with negative amount
+bool VoxelTerrain::Add(const Vec3& local, float radius, float amount) {
+    return Dig(local, radius, -amount);   // adding is digging with negative amount
 }
 
-void VoxelTerrain::SmoothAt(const Vec3& local, float radius, float amount) {
-    if (amount <= 0.0f) return;
+bool VoxelTerrain::SmoothAt(const Vec3& local, float radius, float amount) {
+    if (amount <= 0.0f) return false;
     if (amount > 1.0f) amount = 1.0f;
     float gx = (local.x + HalfX()) / voxelSize;
     float gy = local.y / voxelSize;
@@ -403,6 +406,7 @@ void VoxelTerrain::SmoothAt(const Vec3& local, float radius, float amount) {
     int y0 = std::max(1, (int)std::floor(gy - gr)), y1 = std::min(ny - 2, (int)std::ceil(gy + gr));
     int z0 = std::max(1, (int)std::floor(gz - gr)), z1 = std::min(nz - 2, (int)std::ceil(gz + gr));
     std::vector<float> src = density;   // read from a snapshot so it relaxes evenly
+    bool changed = false;
     for (int z = z0; z <= z1; ++z)
         for (int y = y0; y <= y1; ++y)
             for (int x = x0; x <= x1; ++x) {
@@ -415,8 +419,63 @@ void VoxelTerrain::SmoothAt(const Vec3& local, float radius, float amount) {
                              src[Index(x, y, z - 1)] + src[Index(x, y, z + 1)]) * (1.0f / 6.0f);
                 float w = (1.0f - d / gr) * amount;
                 float& cell = density[Index(x, y, z)];
-                cell = ClampTo(cell + (avg - cell) * w, Clamp());
+                float nv = ClampTo(cell + (avg - cell) * w, Clamp());
+                if (nv != cell) { cell = nv; changed = true; }
             }
+    return changed;
+}
+
+bool VoxelTerrain::DigBox(const Vec3& a, const Vec3& b, float amount) {
+    Vec3 lo{std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z)};
+    Vec3 hi{std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z)};
+    int x0 = std::max(0, (int)std::floor((lo.x + HalfX()) / voxelSize));
+    int x1 = std::min(nx - 1, (int)std::ceil((hi.x + HalfX()) / voxelSize));
+    int y0 = std::max(0, (int)std::floor(lo.y / voxelSize));
+    int y1 = std::min(ny - 1, (int)std::ceil(hi.y / voxelSize));
+    int z0 = std::max(0, (int)std::floor((lo.z + HalfZ()) / voxelSize));
+    int z1 = std::min(nz - 1, (int)std::ceil((hi.z + HalfZ()) / voxelSize));
+    bool changed = false;
+    for (int z = z0; z <= z1; ++z)
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) {
+                float& cell = density[Index(x, y, z)];
+                float nv = ClampTo(cell - amount, Clamp());
+                if (nv != cell) { cell = nv; changed = true; }
+            }
+    return changed;
+}
+
+int VoxelTerrain::RemoveFloaters(int minVoxels) {
+    if (minVoxels <= 1) return 0;
+    const int n = Count();
+    std::vector<char> visited(n, 0);
+    std::vector<int> stack, comp;
+    float air = iso - Clamp();          // a firmly-air density value
+    int cleared = 0;
+    for (int start = 0; start < n; ++start) {
+        if (visited[start] || density[start] <= iso) continue;   // only unvisited solid
+        // Flood-fill this solid component (6-connectivity).
+        comp.clear();
+        stack.clear(); stack.push_back(start); visited[start] = 1;
+        while (!stack.empty()) {
+            int idx = stack.back(); stack.pop_back();
+            comp.push_back(idx);
+            int x = idx % nx, y = (idx / nx) % ny, z = idx / (nx * ny);
+            const int dxs[6] = {1,-1,0,0,0,0}, dys[6] = {0,0,1,-1,0,0}, dzs[6] = {0,0,0,0,1,-1};
+            for (int k = 0; k < 6; ++k) {
+                int xx = x + dxs[k], yy = y + dys[k], zz = z + dzs[k];
+                if (!InBounds(xx, yy, zz)) continue;
+                int ni = Index(xx, yy, zz);
+                if (visited[ni] || density[ni] <= iso) continue;
+                visited[ni] = 1; stack.push_back(ni);
+            }
+        }
+        if ((int)comp.size() < minVoxels) {                      // a crumb — clear it
+            for (int idx : comp) density[idx] = air;
+            cleared += (int)comp.size();
+        }
+    }
+    return cleared;
 }
 
 float VoxelTerrain::SampleDensity(const Vec3& local) const {

@@ -53,6 +53,15 @@ public:
 
     /// Lens: the field of view (deg) the brain applies to the real camera when live.
     float fieldOfView = 60.0f;
+    /// Dutch angle (Cinemachine): a constant roll of the shot around the view axis,
+    /// in degrees. 0 = level horizon. Tilt for tension / stylised framing.
+    float dutch = 0.0f;
+
+    /// Confiner (Cinemachine): clamp the solved camera position to an axis-aligned
+    /// box so the shot never leaves a region (keep the camera inside the level).
+    bool confine = false;
+    Vec3 confineMin{-1e9f, -1e9f, -1e9f};
+    Vec3 confineMax{ 1e9f,  1e9f,  1e9f};
 
     /// Handheld noise: peak positional shake (world units) and its speed.
     float shakeAmplitude = 0.0f;
@@ -141,6 +150,12 @@ public:
             float tp = (positionDamping <= 0.0f) ? 1.0f : (1.0f - std::exp(-positionDamping * dt));
             m_pos = Vec3::Lerp(m_pos, desiredPos, tp);
         }
+        // Confiner: keep the body inside the allowed box.
+        if (confine) {
+            m_pos.x = Mathf::Clamp(m_pos.x, confineMin.x, confineMax.x);
+            m_pos.y = Mathf::Clamp(m_pos.y, confineMin.y, confineMax.y);
+            m_pos.z = Mathf::Clamp(m_pos.z, confineMin.z, confineMax.z);
+        }
 
         // Aim from the (damped) body position so the shot stays framed while easing.
         Quat desiredRot = m_rot;
@@ -163,6 +178,8 @@ public:
         } else if (f && f->transform) {
             desiredRot = f->transform->Rotation();
         }
+        // Dutch: add a constant roll around the view axis to the framed orientation.
+        if (std::fabs(dutch) > 1e-4f) desiredRot = desiredRot * Quat::Euler(0.0f, 0.0f, dutch);
         if (!m_init) m_rot = desiredRot;
         else {
             float tr = (rotationDamping <= 0.0f) ? 1.0f : (1.0f - std::exp(-rotationDamping * dt));

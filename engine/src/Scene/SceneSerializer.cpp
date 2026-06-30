@@ -911,7 +911,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (vc->orbitInput ? 1 : 0) << " " << vc->orbitButton << " " << vc->mouseSensitivity
             // dolly block (back-compatible trailing fields)
             << " " << (vc->dolly ? 1 : 0) << " " << Quote(vc->dollyPath)
-            << " " << vc->dollyPosition << " " << (vc->autoDolly ? 1 : 0) << "\n";
+            << " " << vc->dollyPosition << " " << (vc->autoDolly ? 1 : 0)
+            // dutch + confiner (back-compatible trailing fields)
+            << " " << vc->dutch << " " << (vc->confine ? 1 : 0)
+            << " " << vc->confineMin.x << " " << vc->confineMin.y << " " << vc->confineMin.z
+            << " " << vc->confineMax.x << " " << vc->confineMax.y << " " << vc->confineMax.z << "\n";
     }
     if (auto* cb = go->GetComponent<CinemachineBrain>()) {
         out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
@@ -947,7 +951,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (tr->italic ? 1 : 0) << " " << (tr->gradient ? 1 : 0) << " "
             << tr->colorBottom.r << " " << tr->colorBottom.g << " " << tr->colorBottom.b << " " << tr->colorBottom.a
             << " " << tr->visibleChars << " " << tr->typeSpeed << " " << (tr->alignBottom ? 1 : 0)
-            << " " << Quote(tr->fontPath) << "\n";   // optional TTF font path (newest)
+            << " " << Quote(tr->fontPath)            // optional TTF font path
+            << " " << (tr->autoSize ? 1 : 0) << " " << tr->autoSizeMin << " " << tr->autoSizeMax
+            << "\n";   // best-fit auto-size (newest)
     }
     if (auto* an = go->GetComponent<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
@@ -2470,6 +2476,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         vc->dolly = (dl != 0);
                         vc->autoDolly = (ad != 0);
                     }
+                    in >> std::ws;   // optional dutch + confiner (back-compatible)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int cf = 0;
+                        in >> vc->dutch >> cf
+                           >> vc->confineMin.x >> vc->confineMin.y >> vc->confineMin.z
+                           >> vc->confineMax.x >> vc->confineMax.y >> vc->confineMax.z;
+                        vc->confine = (cf != 0);
+                    }
                 } else if (field == "dollypath") {
                     auto* dp = go->AddComponent<DollyPath>();
                     int lp = 0; std::size_t cnt = 0;
@@ -2537,6 +2551,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     in >> std::ws; // optional TTF font path (newest)
                     if (in.peek() == '"') tr->fontPath = ReadQuoted(in);
+                    in >> std::ws; // optional best-fit auto-size (newest)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        int as = 0;
+                        in >> as >> tr->autoSizeMin >> tr->autoSizeMax;
+                        tr->autoSize = (as != 0);
+                    }
                 } else if (field == "spriteanim") {
                     float fps = 8.0f; int loop = 1, playing = 1, count = 0;
                     in >> fps >> loop >> playing >> count;

@@ -43,6 +43,14 @@ struct AnimClip {
     /// Length of the clip (time of the last keyframe), or 0 if empty.
     float Duration() const { return keys.empty() ? 0.0f : keys.back().time; }
 
+    /// Register an event marker at `time` seconds (kept sorted by time).
+    void AddEvent(float time, const std::string& name) {
+        AnimEvent e; e.time = time; e.name = name;
+        auto it = events.begin();
+        while (it != events.end() && it->time < time) ++it;
+        events.insert(it, e);
+    }
+
     /// The interpolated pose at time `t` (component-wise lerp between the
     /// surrounding keyframes; clamped to the ends). Empty if the clip has no keys.
     std::vector<Vec3> Sample(float t) const;

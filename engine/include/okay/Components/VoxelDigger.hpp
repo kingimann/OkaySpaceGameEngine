@@ -22,7 +22,7 @@ namespace okay {
 /// (it finds the first VoxelTerrain). The main Camera supplies the aim ray.
 class VoxelDigger : public Behaviour {
 public:
-    enum class Mode { Dig, Add, Smooth };
+    enum class Mode { Dig, Add, Smooth, Box };
     Mode  mode     = Mode::Dig;
     int   button   = 0;        ///< mouse button held for the primary action (mode); <0 = none
     /// Secondary button for the OPPOSITE action, so one digger both digs AND
@@ -34,6 +34,10 @@ public:
     float range    = 80.0f;    ///< how far the aim ray reaches
     bool  showBrush  = true;
     Color brushColor = Color::FromBytes(255, 180, 70, 200);
+    /// When you finish a dig (release the button), delete any disconnected solid
+    /// "crumbs" smaller than this many voxels — the little floating bits a dig leaves
+    /// that you can't reach. 0 disables the cleanup.
+    int   removeFloaters = 8;
 
     VoxelTerrain* FindVoxel() const {
         if (gameObject)
@@ -82,18 +86,31 @@ public:
         // the player can both dig and raise (add) terrain with one component.
         bool primary = (button >= 0 && Input::GetMouseButton(button)) || (key && Input::GetKey(key));
         bool secondary = (addButton >= 0 && Input::GetMouseButton(addButton));
-        if ((!primary && !secondary) || dt <= 0.0f || !aiming) return;
+        bool acting = (primary || secondary) && dt > 0.0f && aiming;
 
-        Mode m = mode;
-        // The secondary button does the opposite carve/fill action; for the Smooth
-        // mode it stays a smooth (there's no "opposite" of smoothing).
-        if (secondary && !primary && m != Mode::Smooth) m = (mode == Mode::Add) ? Mode::Dig : Mode::Add;
-
-        float amt = strength * dt;
-        if      (m == Mode::Dig)    vox->Dig(local, radius, amt);
-        else if (m == Mode::Add)    vox->Add(local, radius, amt);
-        else                        vox->SmoothAt(local, radius, std::min(1.0f, amt));
-        vox->Apply();   // re-skin the surface immediately
+        if (acting) {
+            Mode m = mode;
+            // The secondary button does the opposite carve/fill action; for Smooth it
+            // stays a smooth (there's no "opposite" of smoothing).
+            if (secondary && !primary && m != Mode::Smooth && m != Mode::Box) m = (mode == Mode::Add) ? Mode::Dig : Mode::Add;
+            float amt = strength * dt;
+            bool changed = false;
+            if      (m == Mode::Dig)    changed = vox->Dig(local, radius, amt);
+            else if (m == Mode::Add)    changed = vox->Add(local, radius, amt);
+            else if (m == Mode::Box) {
+                Vec3 r{radius, radius, radius};
+                changed = vox->DigBox({local.x - r.x, local.y - r.y, local.z - r.z},
+                                      {local.x + r.x, local.y + r.y, local.z + r.z},
+                                      (secondary && !primary) ? -amt : amt);   // 2nd button fills
+            }
+            else                        changed = vox->SmoothAt(local, radius, std::min(1.0f, amt));
+            if (changed) vox->Apply();   // re-skin only when something actually moved
+        } else if (m_wasActing) {
+            // Just released: sweep up any floating crumbs the dig left behind, then
+            // re-skin once. (Done on release, not every frame, so it stays cheap.)
+            if (removeFloaters > 1 && vox->RemoveFloaters(removeFloaters) > 0) vox->Apply();
+        }
+        m_wasActing = acting;
     }
 
     void OnDestroy() override {
@@ -102,6 +119,7 @@ public:
 
 private:
     GameObject* brush_ = nullptr;
+    bool m_wasActing = false;   ///< were we digging last frame? (to clean up crumbs on release)
 
     void ShowBrushAt(VoxelTerrain& vox, const Vec3& local) {
         Scene* s = GetScene();

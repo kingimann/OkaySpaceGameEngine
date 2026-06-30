@@ -39,6 +39,10 @@ public:
 
     /// Mark a GameObject for destruction; removed at the end of the frame.
     void Destroy(GameObject* go);
+    /// Process the pending-destroy queue now (runs OnDestroy + frees the objects).
+    /// Update() calls this each frame; the editor calls it in edit mode so deferred
+    /// destroys (e.g. removing a rig) take effect without a full simulation tick.
+    void FlushDestroyed();
 
     /// Request loading a .okayscene file at the end of the current frame
     /// (safe to call from a script/Update). Replaces this scene's contents.

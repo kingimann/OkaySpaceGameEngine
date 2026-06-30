@@ -1998,6 +1998,28 @@ struct OkayScriptVM::Impl {
         b["get_anim"] = [charSelf](std::vector<Value>&) {
             Character* c = charSelf(); return Value{c ? (float)c->anim : 0.0f};
         };
+        // Clip queries: timing + existence, so scripts can react to where a clip is.
+        b["clip_time"] = [charSelf](std::vector<Value>&) {
+            Character* c = charSelf(); return Value{c ? c->ClipTime() : 0.0f};
+        };
+        b["clip_normalized"] = [charSelf](std::vector<Value>&) {
+            Character* c = charSelf(); return Value{c ? c->ClipNormalizedTime() : 0.0f};
+        };
+        b["clip_finished"] = [charSelf](std::vector<Value>&) {
+            Character* c = charSelf(); return Value{(c && c->ClipFinished()) ? 1.0f : 0.0f};
+        };
+        b["clip_duration"] = [charSelf](std::vector<Value>& a) {
+            Character* c = charSelf();
+            return Value{(c && !a.empty()) ? c->ClipDuration(a[0].AsString()) : 0.0f};
+        };
+        b["has_clip"] = [charSelf](std::vector<Value>& a) {
+            Character* c = charSelf();
+            return Value{(c && !a.empty() && c->HasClip(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        // Pop the next fired animation event name ("" if none) — footsteps, hit windows.
+        b["anim_event"] = [charSelf](std::vector<Value>&) {
+            Character* c = charSelf(); return Value{c ? c->NextAnimEvent() : std::string{}};
+        };
 
         b["net_host"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();

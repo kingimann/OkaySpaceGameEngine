@@ -17,8 +17,8 @@ namespace okay {
 /// crossing. Digging subtracts density (opens air); adding deposits it.
 class VoxelTerrain : public Component {
 public:
-    int   nx = 48, ny = 28, nz = 48;   ///< sample grid dimensions
-    float voxelSize = 1.0f;            ///< world units between samples
+    int   nx = 64, ny = 36, nz = 64;   ///< sample grid dimensions (denser = smoother, less low-poly)
+    float voxelSize = 0.8f;            ///< world units between samples
     float iso = 0.0f;                  ///< surface threshold
     Color color = Color::FromBytes(120, 110, 96);
     bool  autoColor = true;            ///< tint faces by height & slope (grass/rock/snow)
@@ -69,14 +69,27 @@ public:
 
     // ---- Runtime editing (local-space point, relative to the object) ---
     /// Carve material away inside a sphere (open a hole/cave). `amount` scales how
-    /// much density is removed per call.
-    void Dig(const Vec3& local, float radius, float amount);
-    /// Deposit material inside a sphere (build up terrain).
-    void Add(const Vec3& local, float radius, float amount);
+    /// much density is removed per call. Returns true if any voxel actually changed
+    /// (false when the brush only touched already-empty air), so callers can skip the
+    /// expensive surface rebuild when nothing moved.
+    bool Dig(const Vec3& local, float radius, float amount);
+    /// Deposit material inside a sphere (build up terrain). Returns true if changed.
+    bool Add(const Vec3& local, float radius, float amount);
     /// Relax (average) the density field inside a sphere — smooths the jagged faces
     /// a freshly dug hole can leave, and rounds off lumps from filling. `amount` in
-    /// [0,1] per call.
-    void SmoothAt(const Vec3& local, float radius, float amount);
+    /// [0,1] per call. Returns true if any voxel actually changed.
+    bool SmoothAt(const Vec3& local, float radius, float amount);
+
+    /// Carve (or fill, with a negative amount) an axis-aligned BOX of voxels between
+    /// two local-space corners — sharp rectangular digs (rooms, corridors, trenches),
+    /// unlike the round sphere brush. Returns true if any voxel actually changed.
+    bool DigBox(const Vec3& localMin, const Vec3& localMax, float amount);
+
+    /// Delete disconnected solid "crumbs": label connected components of solid voxels
+    /// (6-connectivity, solid = density > iso) and clear every component with fewer
+    /// than `minVoxels` voxels to air. Fixes the little floating chunks a dig leaves
+    /// behind that the player can't reach. Returns the number of voxels cleared.
+    int RemoveFloaters(int minVoxels = 8);
 
     /// Trilinear density at a local-space point (for queries / collision).
     float SampleDensity(const Vec3& local) const;

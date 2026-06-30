@@ -80,6 +80,26 @@ public:
     /// Word-wrap the text to the box width (screen space). Long words overflow.
     bool  wrap = false;
 
+    /// Best Fit (Unity-style): auto-scale the text so it fills its `size` box — big
+    /// when there's room, shrinking to fit when the string is long. Overrides
+    /// `pixelSize` for drawing (the fitted size is clamped to [autoSizeMin,
+    /// autoSizeMax], same font-pixel units as pixelSize). Ignored when `wrap` is on.
+    bool  autoSize = false;
+    float autoSizeMin = 0.02f;
+    float autoSizeMax = 4.0f;
+
+    /// The pixel size actually used to draw: the best-fit size when `autoSize` is on,
+    /// else `pixelSize`. Hosts call this instead of reading `pixelSize` directly.
+    float EffectivePixelSize() const {
+        if (!autoSize || wrap || size.x <= 0.0f || size.y <= 0.0f) return pixelSize;
+        float w = (float)PixelWidth(), h = (float)PixelHeight();   // font px (pixelSize-independent when !wrap)
+        if (w <= 0.0f || h <= 0.0f) return pixelSize;
+        float fit = std::min(size.x / w, size.y / h);
+        if (fit < autoSizeMin) fit = autoSizeMin;
+        if (fit > autoSizeMax) fit = autoSizeMax;
+        return fit;
+    }
+
     /// Horizontal advance per glyph / vertical advance per line, in font pixels.
     float Advance() const { return (float)Font8x8::Width + 1.0f + letterSpacing; }
     float LineAdvance() const { return (float)Font8x8::Height + 1.0f + lineSpacing; }
@@ -182,7 +202,8 @@ public:
     /// scale; the returned point is in canvas pixels (relative to the canvas).
     Vec2 ResolvedScreenPos(float canvasW, float canvasH, float scale = 1.0f) const {
         Vec2 box = BoxTopLeft(canvasW, canvasH, scale);
-        float tw = PixelWidth() * pixelSize * scale, th = PixelHeight() * pixelSize * scale;
+        float eps = EffectivePixelSize();
+        float tw = PixelWidth() * eps * scale, th = PixelHeight() * eps * scale;
         float x = box.x;
         if (align == 1)      x += (size.x * scale - tw) * 0.5f;
         else if (align == 2) x +=  size.x * scale - tw;

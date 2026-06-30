@@ -630,7 +630,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
             for (const auto& up : scene.Objects()) {
                 GameObject* go = up.get();
-                if (!go || !go->active || go == ignore) continue;
+                if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore))) continue;
                 auto* mr = go->GetComponent<MeshRenderer>();
                 if (!mr || mr->wireframe || !mr->enabled) continue;
                 if (mr->color.a < 0.999f) continue;   // transparent meshes don't cast
@@ -749,7 +749,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
 
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
-        if (!go || !go->active || go == ignore) continue;
+        if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore))) continue;
+        if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled) continue;
         const Mesh& mesh = mr->mesh;

@@ -497,6 +497,13 @@ void Character::Update(float dt) {
             // A playing clip drives the parts; otherwise the built-in animation.
             if (m_activeClip) AdvanceClip(dt);
             else animTime += dt * animSpeed;
+            // Ease the head turn / tilt and the body lean toward their targets, just
+            // like the single-mesh path — otherwise a separated character never leans
+            // or head-tracks ("the camera leans but not the player").
+            float k = headTurnSpeed > 0.0f ? (1.0f - std::exp(-headTurnSpeed * dt)) : 1.0f;
+            m_headYaw   += (lookYaw   - m_headYaw)   * k;
+            m_headPitch += (lookPitch - m_headPitch) * k;
+            m_bodyLean  += (bodyLean  - m_bodyLean)  * k;
             if (animateParts || m_editorPosing || m_activeClip) DriveParts();   // preview / clip still drive
             return;
         }
@@ -665,8 +672,18 @@ void Character::EditorPreviewTick() {
 
 void Character::BuildParts() {
     Scene* s = GetScene();
-    if (m_partsBuilt || !s || !gameObject || !gameObject->transform) return;
-    if (GameObject* rig = FindRig()) { AdoptParts(rig); return; }   // reuse, never duplicate
+    if (!s || !gameObject || !gameObject->transform) return;
+    // Collapse to a SINGLE rig: adopt the first existing "Rig" child and destroy any
+    // extras, so clicking "Separate Into Parts" (or replaying) never stacks up rigs.
+    std::vector<GameObject*> rigs;
+    for (Transform* c : gameObject->transform->Children())
+        if (c && c->gameObject && c->gameObject->name == "Rig") rigs.push_back(c->gameObject);
+    if (!rigs.empty()) {
+        for (std::size_t i = 1; i < rigs.size(); ++i) s->Destroy(rigs[i]);
+        AdoptParts(rigs[0]);
+        return;
+    }
+    m_partsBuilt = false;   // no rig present — (re)build one even if the flag was stale
     EnsureRest();   // m_rest (pre-flip/height) + m_bone (per-vertex bone)
     auto sk = Skeleton();
     if ((int)sk.size() < B_COUNT) return;
@@ -728,13 +745,22 @@ std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
 void Character::DriveParts() {
     if (!m_partsBuilt) return;
     std::vector<Vec3> pose = CurrentSourcePose();
-    if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
+    // First-person: raise the visible arm into the lower corner of the view like a
+    // Minecraft hand (overriding the walk pose for those three bones).
+    int fpb = (firstPersonArm && fpArmBase >= 0 && fpArmBase + 2 < (int)pose.size()) ? fpArmBase : -1;
+    if (fpb >= 0) {
+        pose[fpb]     = {fpRaise, 0.0f, 0.0f};   // upper arm forward/down into frame
+        pose[fpb + 1] = {fpElbow, 0.0f, 0.0f};   // forearm bend (hand height)
+        pose[fpb + 2] = {0.0f, 0.0f, 0.0f};
+    }
+    // Punch swings the VISIBLE arm: the first-person arm if we're in first person,
+    // otherwise the right arm. Forward (-Z, the body's facing) so it lands in front.
+    int pb = (fpb >= 0) ? fpb : B_RUPARM;
+    if (m_punchT >= 0.0f && m_punchT < 1.0f && pb + 1 < (int)pose.size()) {
         float arc = std::sin(m_punchT * 3.14159265f);
-        // Swing FORWARD — the way the body faces (-Z), which is also where the
-        // first-person camera looks — so the punch lands in front, not behind.
         Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {18.0f, 0.0f, 0.0f};
-        pose[B_RUPARM] = pose[B_RUPARM] + (up - pose[B_RUPARM]) * arc;
-        pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE]) * arc;
+        pose[pb]     = pose[pb]     + (up   - pose[pb])     * arc;
+        pose[pb + 1] = pose[pb + 1] + (fore - pose[pb + 1]) * arc;
     }
     for (int bi = 0; bi < B_COUNT && bi < (int)pose.size(); ++bi)
         if (m_parts[bi] && m_parts[bi]->transform)

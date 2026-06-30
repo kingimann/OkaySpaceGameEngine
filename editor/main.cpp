@@ -578,13 +578,18 @@ int  g_accent = 0;               // accent colour preset (see kAccents)
 // checks, tabs, etc.). Index persists in settings.
 struct AccentPreset { const char* name; float r, g, b; };
 static const AccentPreset kAccents[] = {
-    {"Blue",   0.26f, 0.59f, 0.98f},
-    {"Teal",   0.18f, 0.78f, 0.74f},
-    {"Violet", 0.56f, 0.46f, 0.96f},
-    {"Green",  0.36f, 0.80f, 0.46f},
-    {"Amber",  0.95f, 0.66f, 0.26f},
-    {"Rose",   0.96f, 0.42f, 0.56f},
-    {"Slate",  0.52f, 0.58f, 0.68f},
+    {"Blue",    0.26f, 0.59f, 0.98f},
+    {"Teal",    0.18f, 0.78f, 0.74f},
+    {"Violet",  0.56f, 0.46f, 0.96f},
+    {"Green",   0.36f, 0.80f, 0.46f},
+    {"Amber",   0.95f, 0.66f, 0.26f},
+    {"Rose",    0.96f, 0.42f, 0.56f},
+    {"Slate",   0.52f, 0.58f, 0.68f},
+    {"Cyan",    0.30f, 0.80f, 0.92f},
+    {"Orange",  0.96f, 0.55f, 0.22f},
+    {"Crimson", 0.92f, 0.34f, 0.40f},
+    {"Mint",    0.40f, 0.86f, 0.66f},
+    {"Indigo",  0.42f, 0.40f, 0.92f},
 };
 static const int kAccentCount = (int)(sizeof(kAccents) / sizeof(kAccents[0]));
 bool g_autosave = true;          // periodically write a crash-recovery sidecar
@@ -1523,9 +1528,12 @@ void ApplyTheme() {
     s.CellPadding     = ImVec2(6, 4);   s.IndentSpacing = 18.0f;
     s.ScrollbarSize   = 12.0f;          s.GrabMinSize = 10.0f;
     s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 1.0f;   // thin frame borders for definition (Unity-like)
-    s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 2.0f;
+    s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 1.0f;   // subtler section rules
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
+    s.SeparatorTextAlign = ImVec2(0.0f, 0.5f);   // left-align section headers like Unity
+    s.SeparatorTextPadding = ImVec2(18.0f, 4.0f);
     s.WindowMenuButtonPosition = ImGuiDir_None;
+    s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     s.DockingSeparatorSize = 1.5f;
     // Apply the global UI scale LAST so every metric above is scaled together.
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
@@ -4911,6 +4919,38 @@ void DrawScriptEditor(EditorState& ed) {
     ImGui::End();
 }
 
+// Frame the current selection in the editor view (Unity's F): centre the camera on
+// the selection and pull back far enough to fit it, using each object's mesh bounds.
+static void FocusSelected(EditorState& ed) {
+    const auto& sel = ed.MultiSelection();
+    std::vector<GameObject*> objs = sel.empty()
+        ? (ed.selected() ? std::vector<GameObject*>{ed.selected()} : std::vector<GameObject*>{})
+        : sel;
+    Vec3 center{0, 0, 0}; int n = 0;
+    for (GameObject* g : objs) if (g && g->transform) { center = center + g->transform->Position(); ++n; }
+    if (n == 0) return;
+    center = center * (1.0f / n);
+    float radius = 0.0f;
+    for (GameObject* g : objs) {
+        if (!g || !g->transform) continue;
+        Vec3 p = g->transform->Position();
+        float r = 0.8f;   // default for empties / cameras / lights
+        if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty()) {
+            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            Vec3 sz = hi - lo;
+            Vec3 sc = g->transform->localScale;
+            float ms = std::max({std::fabs(sc.x), std::fabs(sc.y), std::fabs(sc.z)});
+            r = 0.5f * std::sqrt(sz.x * sz.x + sz.y * sz.y + sz.z * sz.z) * ms;
+        }
+        Vec3 d = p - center;
+        radius = std::max(radius, std::sqrt(Vec3::Dot(d, d)) + r);
+    }
+    if (radius < 0.5f) radius = 0.5f;
+    ed.camTarget  = center;
+    ed.camDist    = Mathf::Clamp(radius * 2.5f, 2.0f, 400.0f);   // ~45deg framing margin
+    ed.cameraPos  = {center.x, center.y};                       // also recentre the 2D view
+}
+
 // Global keyboard shortcuts (ignored while typing in a field).
 void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
@@ -4930,8 +4970,12 @@ void HandleShortcuts(EditorState& ed) {
         if (ed.Save(p)) { ConsoleLog("Saved " + p); ed.Achievement("FIRST_SAVE");
             std::error_code rc; std::filesystem::remove(p + ".autosave", rc); }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
+    if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
         ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
+    }
+    // Ctrl+Shift+G: group the selection under a new empty parent (Unity-style).
+    if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false) && ed.selected()) {
+        ed.GroupSelected(); ConsoleLog("Grouped selection");
     }
     // Copy / paste a GameObject via a serialized clipboard.
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && ed.selected()) {
@@ -4955,6 +4999,8 @@ void HandleShortcuts(EditorState& ed) {
     if (ctrl && ed.selected() && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
         ed.PushUndo(); ed.scene().MoveSibling(ed.selected(), +1); ed.dirty = true;
     }
+    // F focuses (frames) the selection in the view, like Unity.
+    if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) FocusSelected(ed);
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
         ed.DeleteSelected(); ConsoleLog("Deleted selection");
     }
@@ -5615,6 +5661,23 @@ static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
     }
 }
 
+// Set a GameObject and its whole subtree active/inactive, so toggling a parent in
+// the Hierarchy takes its children with it (Unity's active-in-hierarchy feel).
+static void SetActiveRecursive(GameObject* go, bool on) {
+    if (!go) return;
+    go->active = on;
+    if (go->transform)
+        for (Transform* c : go->transform->Children())
+            if (c) SetActiveRecursive(c->gameObject, on);
+}
+
+// The objects a Hierarchy action should affect: the whole multi-selection when the
+// clicked node is part of it, otherwise just that node.
+static std::vector<GameObject*> HierTargets(EditorState& ed, GameObject* node) {
+    if (ed.IsSelected(node) && ed.MultiSelection().size() > 1) return ed.MultiSelection();
+    return {node};
+}
+
 void DrawHierarchy(EditorState& ed) {
     ImGui::Begin("Hierarchy", &g_showHierarchy);
     ImGui::TextDisabled("Scene: %s%s", ed.scene().Name().c_str(), ed.dirty ? " *" : "");
@@ -5626,6 +5689,9 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Sprite")) ed.Select(ed.CreateSprite());
         if (ImGui::MenuItem("Camera")) ed.Select(ed.CreateCamera());
         if (ImGui::MenuItem("Cube"))   ed.Select(ed.CreateCube());
+        if (ImGui::MenuItem("Group Selected", "Ctrl+Shift+G", false, ed.selected() != nullptr)) {
+            if (ed.GroupSelected()) ConsoleLog("Grouped selection under an empty parent");
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); MakeButtonTextChild(ed, g); ed.Select(g); }
         if (ImGui::MenuItem("UI Text"))   { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Text"); auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
@@ -5694,7 +5760,7 @@ void DrawHierarchy(EditorState& ed) {
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
                                        ImGuiTreeNodeFlags_DefaultOpen |
                                        ImGuiTreeNodeFlags_SpanAvailWidth;
-            if (node == ed.selected()) flags |= ImGuiTreeNodeFlags_Selected;
+            if (ed.IsSelected(node)) flags |= ImGuiTreeNodeFlags_Selected;
             int childCount = node->transform->ChildCount();
             if (childCount == 0) flags |= ImGuiTreeNodeFlags_Leaf;
             // Expand All / Collapse All applies to nodes that actually have children.
@@ -5709,7 +5775,10 @@ void DrawHierarchy(EditorState& ed) {
             if (dim) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
             HierComponentBadges(node, rowMin, rowMax);
-            if (ImGui::IsItemClicked()) ed.Select(node);
+            if (ImGui::IsItemClicked()) {
+                if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set
+                else ed.Select(node);                                // single select
+            }
             // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
             // it as a sibling (above/below), or onto the middle to RE-PARENT it.
             if (ImGui::BeginDragDropSource()) {
@@ -5800,14 +5869,18 @@ void DrawHierarchy(EditorState& ed) {
             }
             // Right-click context menu per item.
             if (ImGui::BeginPopupContextItem()) {
-                ed.Select(node);
+                if (!ed.IsSelected(node)) ed.Select(node);   // keep a multi-selection intact
                 if (ImGui::MenuItem("Rename", "F2")) {
                     g_hierRename = node; g_hierRenameOpen = true;
                     std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
                     g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
                 }
-                if (ImGui::MenuItem(node->active ? "Deactivate" : "Activate"))
-                    { node->active = !node->active; ed.dirty = true; }
+                if (ImGui::MenuItem(node->active ? "Deactivate" : "Activate")) {
+                    bool on = !node->active;
+                    // Take the whole subtree (and the whole selection) with it.
+                    for (GameObject* g : HierTargets(ed, node)) SetActiveRecursive(g, on);
+                    ed.dirty = true;
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Copy", "Ctrl+C"))
                     g_clipboard = SceneSerializer::SerializeObject(*node);
@@ -5826,6 +5899,8 @@ void DrawHierarchy(EditorState& ed) {
                     }
                 }
                 if (ImGui::MenuItem("Duplicate", "Ctrl+D")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
+                if (ImGui::MenuItem("Group Selected", "Ctrl+Shift+G")) { ed.GroupSelected(); ConsoleLog("Grouped selection"); }
+                if (ImGui::MenuItem("Focus", "F")) FocusSelected(ed);
                 if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Move Up", "Ctrl+Up"))     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
@@ -7233,6 +7308,29 @@ void DrawModeling(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::Button("Fit 1u##model")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
 
+        // Whole-mesh modeling ops (symmetry / deform / shell).
+        if (ImGui::Button("Mirror X##model")) { ed.PushUndo(); mr->mesh.Mirror(0); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Mirror Y##model")) { ed.PushUndo(); mr->mesh.Mirror(1); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Mirror Z##model")) { ed.PushUndo(); mr->mesh.Mirror(2); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Append a flipped copy across the axis plane so the model is symmetric (seam welded).");
+        static float s_spherify = 1.0f, s_twist = 90.0f, s_solid = 0.1f;
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##sph", &s_spherify, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine(); if (ImGui::Button("Spherify##model")) { ed.PushUndo(); mr->mesh.Spherify(s_spherify); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Round the shape toward a sphere (0 = none, 1 = full).");
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##tw", &s_twist, -360.0f, 360.0f, "%.0f");
+        ImGui::SameLine(); if (ImGui::Button("Twist Y##model")) { ed.PushUndo(); mr->mesh.Twist(s_twist, 1); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wring the mesh around Y (degrees per world unit of height).");
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##sol", &s_solid, 0.01f, 1.0f, "%.2f");
+        ImGui::SameLine(); if (ImGui::Button("Solidify##model")) { ed.PushUndo(); mr->mesh.Solidify(s_solid); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Give a flat/curved surface thickness (adds an inner shell).");
+        static float s_taper = 0.4f, s_bend = 90.0f;
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##tp", &s_taper, 0.0f, 2.0f, "%.2f");
+        ImGui::SameLine(); if (ImGui::Button("Taper Y##model")) { ed.PushUndo(); mr->mesh.Taper(1, s_taper); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale the top toward the centre (cylinder->cone). 1 = no change, 0 = point.");
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##bn", &s_bend, -180.0f, 180.0f, "%.0f");
+        ImGui::SameLine(); if (ImGui::Button("Bend X##model")) { ed.PushUndo(); mr->mesh.Bend(s_bend, 0); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Curve the mesh into an arc along X (degrees over its length).");
+
         // ---- Interactive edit mode (vertex/face select + move + ops + sculpt) ----
         ImGui::SeparatorText("Edit Mode");
         bool editing = g_meshEdit && g_meshEditObj == go;
@@ -7383,8 +7481,16 @@ void DrawInspector(EditorState& ed) {
                       ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
 
     // Row 1: active toggle · type chip · editable name (fills the rest).
-    ImGui::Checkbox("##active", &go->active);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active in scene");
+    // Toggling an object takes its whole subtree with it (Unity active-in-hierarchy),
+    // so disabling a parent disables its children and re-enabling brings them back.
+    bool act = go->active;
+    if (ImGui::Checkbox("##active", &act)) {
+        const auto& sel = ed.MultiSelection();
+        if (sel.size() > 1) for (GameObject* g : sel) SetActiveRecursive(g, act);  // whole multi-selection
+        else SetActiveRecursive(go, act);
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active in scene (also toggles children + the whole selection)");
     ImGui::SameLine();
     const char* kind = ObjectKind(go);
     if (kind && *kind) {
@@ -8231,9 +8337,9 @@ void DrawInspector(EditorState& ed) {
     if (auto* vd = dynamic_cast<VoxelDigger*>(curComp)) {
         if (CompHeader("Voxel Digger", vd, &toRemove)) {
             ImGui::TextDisabled("Aim with the camera and hold to carve caves/tunnels (or add material).");
-            const char* modes[] = {"Dig (remove)", "Add (build)", "Smooth"};
+            const char* modes[] = {"Dig (remove)", "Add (build)", "Smooth", "Box (rectangular)"};
             int md = (int)vd->mode;
-            if (ImGui::Combo("Primary##vdg", &md, modes, 3)) { vd->mode = (VoxelDigger::Mode)md; ed.dirty = true; }
+            if (ImGui::Combo("Primary##vdg", &md, modes, 4)) { vd->mode = (VoxelDigger::Mode)md; ed.dirty = true; }
             const char* btns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
             int bi = (vd->button < 0 || vd->button > 2) ? 3 : vd->button;
             if (ImGui::Combo("Primary Button##vdg", &bi, btns, 4)) { vd->button = (bi == 3) ? -1 : bi; ed.dirty = true; }
@@ -10503,6 +10609,17 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Rotation##vcd", &vc->rotationDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             ImGui::SeparatorText("Lens");
             if (ImGui::SliderFloat("Field of View##vc", &vc->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::SliderFloat("Dutch (roll)##vc", &vc->dutch, -45.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roll the shot around the view axis (tilted horizon).");
+            ImGui::SeparatorText("Confiner");
+            if (ImGui::Checkbox("Confine to box##vc", &vc->confine)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clamp the camera position inside an axis-aligned box so the shot can't leave the level.");
+            if (vc->confine) {
+                float mn[3] = {vc->confineMin.x, vc->confineMin.y, vc->confineMin.z};
+                float mx[3] = {vc->confineMax.x, vc->confineMax.y, vc->confineMax.z};
+                if (ImGui::DragFloat3("Min##vccf", mn, 0.1f)) { vc->confineMin = {mn[0], mn[1], mn[2]}; ed.dirty = true; }
+                if (ImGui::DragFloat3("Max##vccf", mx, 0.1f)) { vc->confineMax = {mx[0], mx[1], mx[2]}; ed.dirty = true; }
+            }
             ImGui::SeparatorText("Noise / Impulse");
             if (ImGui::DragFloat("Amplitude##vcn", &vc->shakeAmplitude, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Frequency##vcn", &vc->shakeFrequency, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
@@ -10570,6 +10687,14 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr->screenSpace ? "Window pixels per font pixel (screen UI: try 2-6)"
                                                                           : "World units per font pixel");
+            if (ImGui::Checkbox("Best Fit (auto-size to box)##txt", &tr->autoSize)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-scale the text to fill its box — grows when there's room,\nshrinks to fit a long string. Overrides Font Size. (Not used with Wrap.)");
+            if (tr->autoSize) {
+                float mm[2] = {tr->autoSizeMin, tr->autoSizeMax};
+                if (ImGui::DragFloat2("Fit Min/Max##txt", mm, 0.05f, 0.001f, 100.0f)) {
+                    tr->autoSizeMin = mm[0]; tr->autoSizeMax = mm[1]; ed.dirty = true;
+                }
+            }
             if (ImGui::Checkbox("Screen Space (UI)##txt", &tr->screenSpace)) ed.dirty = true;
             if (tr->screenSpace) {
                 float bs[2] = {tr->size.x, tr->size.y};
@@ -13126,7 +13251,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                               ImVec2(canvasPos.x + box.x + boxSz.x, canvasPos.y + box.y + boxSz.y),
                               ToColor(tr->backgroundColor), 4.0f);
         Vec2 o = box + alignOff;   // text inside the (parent-relative) box
-        float px = tr->pixelSize * s, ls = tr->letterSpacing, lp = tr->lineSpacing;
+        float px = tr->EffectivePixelSize() * s, ls = tr->letterSpacing, lp = tr->lineSpacing;
         std::string disp = tr->DisplayText();
         float bx = canvasPos.x + o.x, by = canvasPos.y + o.y;
         bool it = tr->italic; ImU32 c2 = ToColor(tr->colorBottom);
@@ -14279,7 +14404,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImU32 col = ToColor(tr->color);
         ImU32 sh = ToColor(tr->shadowColor);
         ImVec2 o = worldToScreen(up->transform->Position());
-        float px = tr->pixelSize * scale;
+        float px = tr->EffectivePixelSize() * scale;
         okay::TtfFont* fnt = tr->Font();
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
@@ -16119,11 +16244,13 @@ int main(int argc, char** argv) {
         if (!ed.isPlaying()) {
             float pdt = dt > 0.05f ? 0.05f : dt;   // clamp so a hitch doesn't burst-spawn
             std::vector<okay::Character*> chars;
+            std::vector<okay::PauseMenu*> pauseMenus;
             for (const auto& up : ed.scene().Objects())
                 if (up) {
                     if (auto* ps = up->GetComponent<okay::ParticleSystem>())
                         if (ps->playing) ps->Update(pdt);
                     if (auto* ch = up->GetComponent<okay::Character>()) chars.push_back(ch);
+                    if (auto* pm = up->GetComponent<okay::PauseMenu>()) pauseMenus.push_back(pm);
                 }
             // Materialize each separated Character's part rig in the EDITOR (so the
             // parts are real, selectable objects, not spawned at Play) and drive the
@@ -16133,6 +16260,13 @@ int main(int argc, char** argv) {
                 if (ch->separateParts && !ch->PartsBuilt()) ch->BuildParts();
                 if (ch == g_animPreview) ch->EditorPreviewTick();
             }
+            // Same idea for the Pause Menu: build its editable UI in the editor so it's
+            // there to customize and is ADOPTED (not spawned) at Play.
+            for (okay::PauseMenu* pm : pauseMenus)
+                if (!pm->HasUI()) pm->EnsureBuilt();
+            // Apply any deferred destroys (e.g. RemoveParts / rig dedup) now, so the
+            // hierarchy reflects removals immediately in edit mode.
+            ed.scene().FlushDestroyed();
         }
 
         // While Play is active, feed real keyboard/mouse/gamepad into the engine

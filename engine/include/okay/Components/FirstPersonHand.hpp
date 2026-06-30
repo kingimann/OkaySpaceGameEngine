@@ -27,32 +27,29 @@ public:
 
     void Punch() { if (Character* c = FindCharacter()) c->Punch(); }
 
-    void Start() override { Apply(); }
+    void Start() override { ClearArm(); }
 
     void Update(float) override {
         if (Game::Paused()) return;
-        Apply();
+        // First-person arm view is DISABLED for now (parked while we focus elsewhere):
+        // the component no longer hides the body or raises an arm — the whole character
+        // shows normally. Click still triggers the punch, so attacks keep working.
+        ClearArm();
         bool fire = holdToSwing ? Input::GetMouseButton(attackButton)
                                 : Input::GetMouseButtonDown(attackButton);
         if (fire) if (Character* c = FindCharacter()) if (!c->Punching()) c->Punch();
     }
 
-    void OnDestroy() override {
-        // Restore the body parts if we hid them.
-        if (Character* c = FindCharacter()) if (c->PartsBuilt())
-            for (int bi = 0; bi < 15; ++bi) if (GameObject* p = c->Part(bi)) p->active = true;
-    }
+    void OnDestroy() override { ClearArm(); }
 
 private:
-    // Bone indices: L arm 3,4,5 ; R arm 6,7,8.
-    void Apply() {
-        Character* c = FindCharacter();
-        if (c && c->PartsBuilt()) {
-            int a0 = showLeftArm ? 3 : 6;             // upper, fore, hand of the chosen arm
-            for (int bi = 0; bi < 15; ++bi)
-                if (GameObject* p = c->Part(bi)) p->active = (bi >= a0 && bi <= a0 + 2);
-        } else if (auto* fpc = FindController()) {
-            fpc->showBody = true; fpc->ApplyBodyVisibility();   // not separated -> show the body
+    // Make sure the first-person arm pose is off and every body part is visible, so a
+    // disabled hand never leaves the character half-hidden.
+    void ClearArm() {
+        if (Character* c = FindCharacter()) {
+            c->firstPersonArm = false; c->fpArmBase = -1;
+            if (c->PartsBuilt())
+                for (int bi = 0; bi < 15; ++bi) if (GameObject* p = c->Part(bi)) p->active = true;
         }
     }
     Character* FindCharacter() const {

@@ -1,6 +1,8 @@
 #pragma once
 #include <Okay.hpp>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 namespace okay::editor {
 
@@ -15,8 +17,34 @@ public:
     const Scene& scene() const { return m_scene; }
 
     // ---- Selection -----------------------------------------------------
+    // m_selected is the PRIMARY selection (what the Inspector shows). m_multi holds
+    // every selected object for bulk ops (activate/delete/duplicate). Select() picks
+    // a single object; ToggleSelect() (Ctrl-click) adds/removes one from the set.
     GameObject* selected() const { return m_selected; }
-    void Select(GameObject* go) { m_selected = go; }
+    void Select(GameObject* go) {
+        m_selected = go; m_multi.clear();
+        if (go) m_multi.push_back(go);
+    }
+    void ToggleSelect(GameObject* go) {
+        if (!go) return;
+        auto it = std::find(m_multi.begin(), m_multi.end(), go);
+        if (it != m_multi.end()) {
+            m_multi.erase(it);
+            m_selected = m_multi.empty() ? nullptr : m_multi.back();
+        } else {
+            m_multi.push_back(go);
+            m_selected = go;
+        }
+    }
+    const std::vector<GameObject*>& MultiSelection() const { return m_multi; }
+    bool IsSelected(GameObject* go) const {
+        return go && std::find(m_multi.begin(), m_multi.end(), go) != m_multi.end();
+    }
+    /// Drop a destroyed object from the selection so nothing dangles.
+    void Deselect(GameObject* go) {
+        m_multi.erase(std::remove(m_multi.begin(), m_multi.end(), go), m_multi.end());
+        if (m_selected == go) m_selected = m_multi.empty() ? nullptr : m_multi.back();
+    }
 
     // ---- Authoring -----------------------------------------------------
     GameObject* CreateEmpty(const std::string& name = "GameObject");
@@ -28,8 +56,12 @@ public:
     /// ("Cube"/"Pyramid"/"Plane"/"Sphere"/"Cylinder").
     GameObject* CreateMesh(const std::string& meshName);
     void DeleteSelected();
-    /// Clone the selected object (and its children); selects the clone.
+    /// Clone the selected object(s) (and their children); selects the clones.
     GameObject* DuplicateSelected();
+    /// Wrap the current selection in a new empty parent (Unity's Ctrl+Shift+G group),
+    /// keeping each object's world position. Returns the new group (selected), or null
+    /// if nothing is selected. Only top-level selected objects are reparented.
+    GameObject* GroupSelected(const std::string& name = "Group");
     void NewScene();
     /// New project templates: a 2D scene (ortho camera + sprite) or a 3D scene
     /// (perspective camera + ground + cube).
@@ -110,6 +142,7 @@ public:
 private:
     Scene m_scene;
     GameObject* m_selected = nullptr;
+    std::vector<GameObject*> m_multi;   // full selection set (includes m_selected)
     std::string m_path;
     std::string m_projectDir;   // root folder of the open project (with /Assets)
     bool  m_playing = false;

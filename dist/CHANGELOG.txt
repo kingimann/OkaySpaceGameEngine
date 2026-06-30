@@ -1,5 +1,38 @@
 OkaySpace Game Engine — Changelog
 
+v2.336.0  (Camera/Cinemachine, modeling, terrain, editor UX + duplicate fixes)
+  Fixes
+  - Player lean now follows the camera on a separated character (the lean/head
+    easing never ran on the part rig — "the camera leans but the player doesn't").
+  - No more duplicate spawns: the Flashlight adopts an existing beam (and clears
+    strays), "Separate Into Parts" collapses to a SINGLE rig, and the editor flushes
+    deferred deletes in edit mode — so Play→Stop no longer stacks up players/cameras.
+    Scene::Destroy also guards against double-queueing the same object.
+  - First-person body hides LOCALLY: a camera's ignore now skips the whole subtree,
+    so a separated player's rig parts (children) are hidden from its own view but
+    still seen by other cameras/players. The first-person arm view is parked for now
+    (the character shows normally; click still punches).
+  - Layers honored on the GPU: the D3D11/D3D12/GL renderers now respect the camera's
+    cullingMask, and the player sets it from its camera (previously layer culling only
+    worked in the software renderer).
+  Camera & Cinemachine
+  - Camera: ScreenPointToRay / ScreenToWorldPoint / WorldToViewportPoint /
+    IsPointVisible / ViewportPointToRay — Unity-style picking & on-screen tests.
+  - VirtualCamera: Dutch (roll) and Confiner (clamp the shot to a box).
+  Editor
+  - F focuses (frames) the selection like Unity (also right-click > Focus).
+  - Hierarchy multi-select (Ctrl-click), Group Selected (Ctrl+Shift+G), and
+    activating/deactivating a parent (or a multi-selection) now takes the children
+    with it. More accent colours; left-aligned section headers.
+  Content tools & APIs
+  - Mesh modeling: Mirror, Spherify, Twist, Solidify, Taper, Bend.
+  - Voxel terrain: denser default mesh, floater cleanup on the digger, and a new
+    Box dig mode (sharp rectangular rooms/tunnels).
+  - Input: AnyKey/AnyKeyDown, MouseDelta, gamepad button-up.
+  - Animation: clip queries (HasClip/ClipDuration/ClipTime/ClipNormalizedTime/
+    ClipFinished) and events, in C++ and OkayScript; UI text Best Fit (auto-size).
+  - Physics: Rigidbody3D::AddExplosionForce (Unity-style blast).
+
 v2.335.0  (The part rig is built in the EDITOR — nothing spawned at Play)
   - "Separate Into Parts" now builds the rig RIGHT IN THE EDITOR: the moment you
     tick it, the part objects (Hips, Torso, Head, arms, legs under a "Rig" node)

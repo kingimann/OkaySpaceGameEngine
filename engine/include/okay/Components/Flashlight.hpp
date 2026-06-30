@@ -6,6 +6,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Input/Input.hpp"
+#include <vector>
 
 namespace okay {
 
@@ -59,6 +60,19 @@ private:
         Scene* s = GetScene();
         Camera* cam = FindCamera();
         if (!s || !cam || !cam->gameObject || !cam->gameObject->transform) return;
+        // Adopt an existing "Flashlight" beam under the camera instead of spawning a
+        // new one (Play→Stop→Play, a reloaded scene, or two Flashlight components would
+        // otherwise stack up duplicates). Keep the first; clean up any extras.
+        std::vector<GameObject*> existing;
+        for (Transform* c : cam->gameObject->transform->Children())
+            if (c && c->gameObject && c->gameObject->name == "Flashlight"
+                && c->gameObject->GetComponent<Light>())
+                existing.push_back(c->gameObject);
+        for (std::size_t i = 0; i < existing.size(); ++i) {
+            if (i == 0) { m_obj = existing[0]; m_light = existing[0]->GetComponent<Light>(); }
+            else s->Destroy(existing[i]);     // stray duplicate from a previous run
+        }
+        if (m_light) return;
         m_obj = s->CreateGameObject("Flashlight");
         m_obj->transform->SetParent(cam->gameObject->transform, false);
         // Cameras look down -Z (their Forward is +Z, i.e. behind the view), so spin

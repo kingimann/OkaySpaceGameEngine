@@ -15,6 +15,7 @@ std::unordered_map<char, bool> Input::s_previous;
 bool Input::s_interactive = false;
 
 Vec2     Input::s_mousePos;
+Vec2     Input::s_mousePrevPos;
 unsigned Input::s_mouseCurrent = 0;
 Vec2     Input::s_padAxis;
 unsigned Input::s_padCurrent = 0;
@@ -88,12 +89,14 @@ void Input::FeedKeys(const std::vector<char>& downKeys) {
 }
 
 void Input::FeedMouse(const Vec2& position, unsigned buttonMask) {
+    s_mousePrevPos = s_mousePos;
     s_mousePos = position;
     s_mousePrevious = s_mouseCurrent;
     s_mouseCurrent = buttonMask;
 }
 
 Vec2 Input::MousePosition() { return s_mousePos; }
+Vec2 Input::MouseDelta() { return {s_mousePos.x - s_mousePrevPos.x, s_mousePos.y - s_mousePrevPos.y}; }
 
 bool Input::GetMouseButton(int button) {
     if (button < 0 || button > 2) return false;
@@ -129,6 +132,23 @@ Vec2 Input::GamepadAxis() { return s_padAxis; }
 bool Input::GetGamepadButton(int button) {
     if (button < 0 || button > 31) return false;
     return (s_padCurrent & (1u << button)) != 0;
+}
+bool Input::AnyKey() {
+    for (const auto& kv : s_current) if (kv.second) return true;
+    return (s_mouseCurrent != 0) || (s_padCurrent != 0);
+}
+bool Input::AnyKeyDown() {
+    for (const auto& kv : s_current)        // a key held now that wasn't held last frame
+        if (kv.second) { auto it = s_previous.find(kv.first); if (it == s_previous.end() || !it->second) return true; }
+    if (s_mouseCurrent & ~s_mousePrevious) return true;
+    if (s_padCurrent & ~s_padPrevious) return true;
+    return false;
+}
+
+bool Input::GetGamepadButtonUp(int button) {
+    if (button < 0 || button > 31) return false;
+    unsigned bit = 1u << button;
+    return !(s_padCurrent & bit) && (s_padPrevious & bit);
 }
 bool Input::GetGamepadButtonDown(int button) {
     if (button < 0 || button > 31) return false;

@@ -34,6 +34,23 @@ int main() {
         CHECK(steps == 2);
     }
 
+    // NextAnimEvent pops one fired event at a time, then "" when drained.
+    {
+        Scene s("A");
+        auto* ch = s.CreateGameObject("Hero")->AddComponent<Character>();
+        ch->Apply(); ch->separateParts = true;
+        ch->AddClip(walkWithSteps());
+        ch->PlayClip("walk");
+        s.Start();
+        int steps = 0; std::string e;
+        for (int i = 0; i < 20; ++i) {
+            s.Update(0.05f);
+            while (!(e = ch->NextAnimEvent()).empty()) if (e == "step") ++steps;
+        }
+        CHECK(steps == 2);
+        CHECK(ch->NextAnimEvent().empty());   // queue drained
+    }
+
     // Callback + loop: over two full loops the markers fire four times.
     {
         Scene s("A");

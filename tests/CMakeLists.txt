@@ -537,3 +537,31 @@ add_test(NAME fp_punch COMMAND test_fp_punch)
 add_executable(test_char_editor_parts test_char_editor_parts.cpp)
 target_link_libraries(test_char_editor_parts PRIVATE okay::engine)
 add_test(NAME char_editor_parts COMMAND test_char_editor_parts)
+
+add_executable(test_voxel_dig test_voxel_dig.cpp)
+target_link_libraries(test_voxel_dig PRIVATE okay::engine)
+add_test(NAME voxel_dig COMMAND test_voxel_dig)
+
+add_executable(test_api_expand test_api_expand.cpp)
+target_link_libraries(test_api_expand PRIVATE okay::engine)
+add_test(NAME api_expand COMMAND test_api_expand)
+
+add_executable(test_modeling test_modeling.cpp)
+target_link_libraries(test_modeling PRIVATE okay::engine)
+add_test(NAME modeling COMMAND test_modeling)
+
+add_executable(test_physics_explode test_physics_explode.cpp)
+target_link_libraries(test_physics_explode PRIVATE okay::engine)
+add_test(NAME physics_explode COMMAND test_physics_explode)
+
+add_executable(test_subtree test_subtree.cpp)
+target_link_libraries(test_subtree PRIVATE okay::engine)
+add_test(NAME subtree COMMAND test_subtree)
+
+add_executable(test_camera_cine test_camera_cine.cpp)
+target_link_libraries(test_camera_cine PRIVATE okay::engine)
+add_test(NAME camera_cine COMMAND test_camera_cine)
+
+add_executable(test_player_fixes test_player_fixes.cpp)
+target_link_libraries(test_player_fixes PRIVATE okay::engine)
+add_test(NAME player_fixes COMMAND test_player_fixes)

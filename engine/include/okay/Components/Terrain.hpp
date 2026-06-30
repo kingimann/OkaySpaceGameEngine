@@ -13,7 +13,7 @@ namespace okay {
 /// pipeline (editor view + player) draws it for free.
 class Terrain : public Component {
 public:
-    int   resolution = 32;     // cells per side; (resolution+1)^2 vertices
+    int   resolution = 64;     // cells per side; (resolution+1)^2 vertices (higher = smoother)
     float size = 50.0f;        // world width & depth (centered on the object)
     Color color = Color::FromBytes(96, 140, 80);
     std::vector<float> heights; // row-major, Dim()*Dim()

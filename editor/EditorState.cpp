@@ -162,24 +162,59 @@ GameObject* EditorState::CreateMesh(const std::string& meshName) {
     return go;
 }
 
+// True if any ANCESTOR of `go` is also in `set` (so we only act on top-level picks).
+static bool AncestorInSet(GameObject* go, const std::vector<GameObject*>& set) {
+    if (!go || !go->transform) return false;
+    for (Transform* t = go->transform->Parent(); t; t = t->Parent())
+        if (t->gameObject && std::find(set.begin(), set.end(), t->gameObject) != set.end()) return true;
+    return false;
+}
+
 GameObject* EditorState::DuplicateSelected() {
+    if (m_multi.empty() && !m_selected) return nullptr;
     PushUndo();
-    if (!m_selected) return nullptr;
-    GameObject* clone = m_scene.Instantiate(*m_selected);
-    if (clone) {
-        clone->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f}; // offset so it's visible
-        m_selected = clone;
-        dirty = true;
+    std::vector<GameObject*> targets = m_multi.empty() ? std::vector<GameObject*>{m_selected} : m_multi;
+    std::vector<GameObject*> clones;
+    for (GameObject* g : targets) {
+        if (!g || AncestorInSet(g, targets)) continue;   // a parent clone already brings its children
+        GameObject* clone = m_scene.Instantiate(*g);
+        if (clone) { clone->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f}; clones.push_back(clone); }
     }
-    return clone;
+    if (clones.empty()) return nullptr;
+    m_multi = clones;
+    m_selected = clones.back();
+    dirty = true;
+    return m_selected;
+}
+
+GameObject* EditorState::GroupSelected(const std::string& name) {
+    std::vector<GameObject*> targets = m_multi.empty()
+        ? (m_selected ? std::vector<GameObject*>{m_selected} : std::vector<GameObject*>{})
+        : m_multi;
+    if (targets.empty()) return nullptr;
+    PushUndo();
+    // The group sits under the first pick's parent; children keep their world place.
+    Transform* parent = targets[0]->transform ? targets[0]->transform->Parent() : nullptr;
+    GameObject* group = m_scene.CreateGameObject(name);
+    if (parent) group->transform->SetParent(parent, false);
+    for (GameObject* g : targets) {
+        if (!g || g == group || AncestorInSet(g, targets)) continue;
+        g->transform->SetParent(group->transform, /*worldPositionStays=*/true);
+    }
+    Select(group);
+    dirty = true;
+    return group;
 }
 
 void EditorState::DeleteSelected() {
+    if (m_multi.empty() && !m_selected) return;
     PushUndo();
-    if (!m_selected) return;
-    m_scene.Destroy(m_selected);
+    // Delete the whole selection (multi-select), not just the primary object.
+    std::vector<GameObject*> targets = m_multi.empty() ? std::vector<GameObject*>{m_selected} : m_multi;
+    for (GameObject* g : targets) if (g) m_scene.Destroy(g);
     m_scene.Update(0.0f); // flush the destroy queue immediately
     m_selected = nullptr;
+    m_multi.clear();
     dirty = true;
 }
 

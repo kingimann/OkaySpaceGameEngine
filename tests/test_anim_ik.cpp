@@ -163,5 +163,75 @@ int main() {
         CHECK(V3(b3->transform->Position(), {2.0f, 1.0f, 0.0f}, 3e-2f)); // tip reaches
     }
 
+    // ---- CCD: reaches the target, root fixed, bone lengths preserved ----
+    {
+        std::vector<Vec3> joints = {{0,0,0}, {0,1,0}, {0,2,0}, {0,3,0}};
+        SolveCCD(joints, {2.0f, 1.0f, 0.0f}, 40);
+        CHECK(V3(joints[0], {0, 0, 0}));                       // root never moves in CCD
+        CHECK(V3(joints[3], {2.0f, 1.0f, 0.0f}, 5e-2f));       // tip reached
+        for (int i = 0; i < 3; ++i)
+            CHECK(std::fabs((joints[i+1] - joints[i]).Magnitude() - 1.0f) < 1e-3f);  // rigid bones
+
+        // ChainIK with the CCD solver selected drives a real chain.
+        Scene s("ccd");
+        auto* root = s.CreateGameObject("R");
+        auto* b0 = s.CreateGameObject("B0"); b0->transform->SetPosition({0, 0, 0});
+        auto* b1 = s.CreateGameObject("B1"); b1->transform->SetPosition({0, 1, 0});
+        auto* b2 = s.CreateGameObject("B2"); b2->transform->SetPosition({0, 2, 0});
+        auto* ik = root->AddComponent<ChainIK>();
+        ik->bones = {b0->transform, b1->transform, b2->transform};
+        ik->target = {1.5f, 0.5f, 0.0f}; ik->iterations = 40;
+        ik->solver = (int)ChainIK::Solver::CCD;
+        s.Start(); s.Update(1.0f / 60.0f);
+        CHECK(V3(b0->transform->Position(), {0, 0, 0}));
+        CHECK(V3(b2->transform->Position(), {1.5f, 0.5f, 0.0f}, 6e-2f));
+    }
+
+    // ---- AimIK: a bone's aim axis points at the target ----
+    {
+        Scene s("aim");
+        auto* turret = s.CreateGameObject("Turret");
+        turret->transform->SetPosition({0, 1, 0});
+        auto* ik = turret->AddComponent<AimIK>();
+        ik->bone = turret->transform;
+        ik->aimAxis = Vec3::Forward;             // +Z barrel
+        ik->target = {10, 1, 0};                 // dead to the right
+        ik->weight = 1.0f; ik->maxAngle = 180.0f;
+        s.Start();
+        for (int i = 0; i < 5; ++i) s.Update(1.0f / 60.0f);
+        Vec3 aim = (turret->transform->Rotation() * Vec3::Forward).Normalized();
+        Vec3 want = (Vec3{10, 1, 0} - turret->transform->Position()).Normalized();
+        CHECK(Vec3::Dot(aim, want) > 0.99f);
+    }
+
+    // ---- FootIK pelvis adjustment: hips drop so a foot on lower ground reaches ----
+    {
+        Scene s("pelvis");
+        auto* body  = s.CreateGameObject("Body");
+        // A real leg hierarchy: hips -> hip -> knee -> foot, so lowering the pelvis
+        // lowers the leg roots (and feet) with it.
+        auto* hips  = s.CreateGameObject("Hips"); hips->transform->SetPosition({0, 1.0f, 0});
+        auto* lHip  = s.CreateGameObject("LHip");  lHip->transform->SetPosition({-0.2f, 1.0f, 0});
+        auto* lKnee = s.CreateGameObject("LKnee"); lKnee->transform->SetPosition({-0.2f, 0.55f, 0});
+        auto* lFoot = s.CreateGameObject("LFoot"); lFoot->transform->SetPosition({-0.2f, 0.1f, 0});
+        auto* rHip  = s.CreateGameObject("RHip");  rHip->transform->SetPosition({0.2f, 1.0f, 0});
+        auto* rKnee = s.CreateGameObject("RKnee"); rKnee->transform->SetPosition({0.2f, 0.55f, 0});
+        auto* rFoot = s.CreateGameObject("RFoot"); rFoot->transform->SetPosition({0.2f, 0.1f, 0});
+        lHip->transform->SetParent(hips->transform, true);  lKnee->transform->SetParent(lHip->transform, true);  lFoot->transform->SetParent(lKnee->transform, true);
+        rHip->transform->SetParent(hips->transform, true);  rKnee->transform->SetParent(rHip->transform, true);  rFoot->transform->SetParent(rKnee->transform, true);
+
+        auto* ik = body->AddComponent<FootIK>();
+        ik->leftHip = lHip->transform;  ik->leftKnee = lKnee->transform;  ik->leftFoot = lFoot->transform;
+        ik->rightHip = rHip->transform; ik->rightKnee = rKnee->transform; ik->rightFoot = rFoot->transform;
+        ik->useRaycast = false; ik->groundY = -0.3f;   // ground BELOW the animated feet
+        ik->footOffset = 0.0f; ik->weight = 1.0f;
+        ik->pelvis = hips->transform; ik->adjustPelvis = true; ik->plantDown = true;
+        ik->maxRayDown = 2.0f;
+        s.Start();
+        s.Update(1.0f / 60.0f);
+        CHECK(hips->transform->Position().y < 1.0f);          // pelvis lowered toward the ground
+        CHECK(std::fabs(lFoot->transform->Position().y - (-0.3f)) < 0.1f);   // feet planted on it
+    }
+
     TEST_MAIN_RESULT();
 }

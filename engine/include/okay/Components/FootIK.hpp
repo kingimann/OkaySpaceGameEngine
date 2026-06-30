@@ -33,11 +33,18 @@ public:
     float maxRayUp   = 0.6f;   ///< how far above the foot to start the ray
     float maxRayDown = 0.8f;   ///< how far below the foot the ground may be
 
+    // ---- Pelvis adjustment (plant on uneven ground) ----
+    Transform* pelvis = nullptr;   ///< the hips/root bone to shift
+    bool  adjustPelvis = false;    ///< lower the pelvis so a foot on lower ground reaches
+    bool  plantDown    = false;    ///< also press feet DOWN onto lower ground (not just lift)
+    float maxPelvisShift = 0.5f;   ///< clamp on how far the pelvis can move
+
     void Update(float) override {
         if (weight <= 0.0f) return;
         if (!m_init) { Learn(); m_init = true; }
         Vec3 pole = (transform ? transform->Rotation() : Quat::Identity) * Vec3::Forward;
         Scene* s = GetScene();
+        if (adjustPelvis && pelvis) AdjustPelvis(s);
         SolveLeg(leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s);
         SolveLeg(rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s);
     }
@@ -65,15 +72,35 @@ private:
         return groundY;
     }
 
+    // Lower the pelvis so the foot wanting to go lowest can still reach the ground;
+    // the other foot drops with the body and the per-leg IK re-plants it.
+    void AdjustPelvis(Scene* s) {
+        float off = 0.0f; bool any = false;
+        auto consider = [&](Transform* foot) {
+            if (!foot) return;
+            Vec3 p = foot->Position();
+            float g = GroundAt(s, p);
+            if (g < p.y - maxRayDown) return;          // no ground in range
+            float d = (g + footOffset) - p.y;          // + lift, - drop
+            off = any ? Mathf::Min(off, d) : d; any = true;
+        };
+        consider(leftFoot); consider(rightFoot);
+        if (!any) return;
+        off = Mathf::Clamp(off, -maxPelvisShift, maxPelvisShift) * weight;
+        if (Mathf::Abs(off) < 1e-5f) return;
+        pelvis->SetPosition(pelvis->Position() + Vec3{0, off, 0});
+    }
+
     void SolveLeg(Transform* hip, Transform* knee, Transform* foot,
                   float upLen, float loLen, const Vec3& pole, Scene* s) {
         if (!hip || !knee || !foot || upLen <= 0.0f || loLen <= 0.0f) return;
         Vec3 animFoot = foot->Position();
         float g = GroundAt(s, animFoot);
         float targetY = g + footOffset;
-        // Only lift the foot UP to meet ground; never push it below its animated pose,
-        // and ignore ground that's out of reach below.
-        if (targetY <= animFoot.y || g < animFoot.y - maxRayDown) return;
+        // Lift the foot UP to meet ground (and, when plantDown/pelvis adjust is on,
+        // also press it DOWN onto lower ground). Ignore ground out of reach below.
+        bool down = plantDown || adjustPelvis;
+        if ((!down && targetY <= animFoot.y) || g < animFoot.y - maxRayDown) return;
 
         Vec3 target{animFoot.x, targetY, animFoot.z};
         Vec3 mid, end;

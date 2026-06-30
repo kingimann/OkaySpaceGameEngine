@@ -13,6 +13,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Fabrik.hpp"
+#include "okay/Math/CCD.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include <vector>
@@ -21,11 +22,14 @@ namespace okay {
 
 class ChainIK : public Component {
 public:
+    enum class Solver { FABRIK, CCD };
+
     std::vector<Transform*> bones;     ///< root..tip
     Transform* targetObject = nullptr;
     Vec3  target{0, 0, 0};
     float weight = 1.0f;               ///< blend IK over the animated pose
     int   iterations = 10;
+    int   solver = (int)Solver::FABRIK; ///< FABRIK (position) or CCD (rotation-from-tip)
     bool  orient = false;              ///< point each bone's forward down the chain
     Vec3  forwardAxis = Vec3::Forward;
 
@@ -45,7 +49,8 @@ public:
         for (int i = 0; i < n; ++i) p[i] = orig[i] = bones[i]->Position();
 
         Vec3 tgt = targetObject ? targetObject->Position() : target;
-        SolveFabrik(p, m_len, tgt, iterations);
+        if (solver == (int)Solver::CCD) SolveCCD(p, tgt, iterations);
+        else                            SolveFabrik(p, m_len, tgt, iterations);
 
         // Write positions root-to-tip so each child sees its parent's new pose.
         for (int i = 0; i < n; ++i)

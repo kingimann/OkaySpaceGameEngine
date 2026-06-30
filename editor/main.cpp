@@ -8427,6 +8427,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view (Minecraft-style).");
             if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let the walk/run cycle bob the arm. Off = rock-steady.\nCrouch & prone always keep the arm in view regardless.");
+            if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fully decouple the arm from the body so it stays put in view no matter what the body does (lean, crouch, prone).");
+            ImGui::SeparatorText("Manual adjust");
+            if (ImGui::DragFloat("Raise##fh", &fh->armRaise, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Upper-arm angle: how high the hand sits in view.");
+            if (ImGui::DragFloat("Elbow##fh", &fh->armElbow, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forearm bend: hand closeness / height.");
+            if (ImGui::SmallButton("Reset arm pose##fh")) { fh->armRaise = -96.0f; fh->armElbow = 16.0f; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }

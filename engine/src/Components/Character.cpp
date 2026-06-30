@@ -775,7 +775,7 @@ void Character::DriveParts() {
         // On the owner's client only the arm is visible (body culled), so others are
         // unaffected.
         bool stanceLaysArm = (anim == 6 || anim == 7 || anim == 17);
-        if (!fpArmBob || stanceLaysArm) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
+        if (fpSteady || !fpArmBob || stanceLaysArm) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
         // Raise the arm; subtract the camera pitch so the arm follows the view up/down
         // (the rig's 180° flip maps the bone's local X to a world rotation such that
         // subtracting pitch tilts the arm the same way the camera tilts).
@@ -797,7 +797,10 @@ void Character::DriveParts() {
             m_parts[bi]->transform->localRotation = Quat::Euler(pose[bi]);
     if (m_rigRoot && m_rigRoot->transform) {
         Vec3 so = StanceOffset();
-        m_rigRoot->transform->localPosition = Vec3{0.0f, so.y, 0.0f};
+        // A steady first-person arm ignores the crouch/prone height drop so it stays in
+        // view (the owner only sees the arm, so the body's true height is irrelevant).
+        float y = (firstPersonArm && fpSteady) ? 0.0f : so.y;
+        m_rigRoot->transform->localPosition = Vec3{0.0f, y, 0.0f};
     }
 }
 

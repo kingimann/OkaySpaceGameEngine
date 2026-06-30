@@ -29,6 +29,9 @@ public:
     bool  showLeftArm  = false;  ///< false = right arm (default), true = left
     bool  followPitch  = true;   ///< arm tilts up/down with the camera look (Minecraft-style)
     bool  bobbing      = true;   ///< let the walk/run cycle bob the arm (off = rock-steady)
+    bool  steadyArm    = false;  ///< fully decouple from the body: ignore lean / crouch / prone
+    float armRaise     = -96.0f; ///< manual: upper-arm angle (how high the hand sits)
+    float armElbow     = 16.0f;  ///< manual: forearm bend (hand closeness/height)
 
     void Punch() { if (Character* c = FindCharacter()) c->Punch(); }
 
@@ -66,6 +69,9 @@ private:
                 }
             c->firstPersonArm = true; c->fpArmBase = a0;   // raise it + aim the punch here
             c->fpArmBob = bobbing;
+            c->fpSteady = steadyArm;
+            c->fpRaise  = armRaise;    // manual tuning
+            c->fpElbow  = armElbow;
         }
         if (auto* fpc = FindController()) {
             c->fpPitch = followPitch ? fpc->pitch : 0.0f;   // arm follows the camera up/down

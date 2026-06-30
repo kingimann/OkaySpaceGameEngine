@@ -347,7 +347,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* fh = go->GetComponent<FirstPersonHand>()) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
             << " " << (fh->showLeftArm ? 1 : 0)
-            << " " << (fh->followPitch ? 1 : 0) << " " << (fh->bobbing ? 1 : 0) << "\n";
+            << " " << (fh->followPitch ? 1 : 0) << " " << (fh->bobbing ? 1 : 0)
+            << " " << (fh->steadyArm ? 1 : 0) << " " << fh->armRaise << " " << fh->armElbow << "\n";
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
@@ -2858,6 +2859,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (v.size() >= 1) fh->showLeftArm = (v[0] != 0.0f);
                     if (v.size() >= 2) fh->followPitch = (v[1] != 0.0f);
                     if (v.size() >= 3) fh->bobbing     = (v[2] != 0.0f);
+                    if (v.size() >= 4) fh->steadyArm   = (v[3] != 0.0f);
+                    if (v.size() >= 5) fh->armRaise    = v[4];
+                    if (v.size() >= 6) fh->armElbow    = v[5];
                 } else if (field == "netsync") {
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;

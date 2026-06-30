@@ -94,6 +94,10 @@ public:
     /// Let the walk/run cycle bob the first-person arm (the arm inherits the body's
     /// sway). Turn off for a rock-steady arm. Set by FirstPersonHand. Not serialized.
     bool  fpArmBob = true;
+    /// Fully decouple the first-person arm from the body: ignore lean, crouch and prone
+    /// (zero the hips/torso the arm hangs from and skip the stance height drop) so the
+    /// arm stays put in view no matter what the body does. Set by FirstPersonHand.
+    bool  fpSteady = false;
 
     // ---- Separate body parts (a real, editable rig) ----
     // Instead of one baked mesh, build the character as a HIERARCHY of part

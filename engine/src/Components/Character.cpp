@@ -768,14 +768,12 @@ void Character::DriveParts() {
     // Minecraft hand (overriding the walk pose for those three bones).
     int fpb = (firstPersonArm && fpArmBase >= 0 && fpArmBase + 2 < (int)pose.size()) ? fpArmBase : -1;
     if (fpb >= 0) {
-        // Keep the first-person arm reading correctly regardless of the body. Its parents
-        // (hips, torso) carry both the walk bob and the crouch/prone lean, which would
-        // otherwise drag the arm down/sideways. Zero them when bobbing is off, and ALWAYS
-        // in crouch (6 / 17) and prone (7) so the arm stays in view instead of laying flat.
-        // On the owner's client only the arm is visible (body culled), so others are
-        // unaffected.
-        bool stanceLaysArm = (anim == 6 || anim == 7 || anim == 17);
-        if (fpSteady || !fpArmBob || stanceLaysArm) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
+        // The arm hangs off the hips/torso, which also carry the walk bob and the
+        // crouch/prone pose. We can only steady the arm by zeroing those SHARED bones,
+        // which would distort the BODY if it's visible — so we do it ONLY for the opt-in
+        // "Steady arm" / "no bob" cases (meant for first person, where the body is culled
+        // from the owner's own camera). The body's own crouch/prone pose is left intact.
+        if (fpSteady || !fpArmBob) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
         // Raise the arm; subtract the camera pitch so the arm follows the view up/down
         // (the rig's 180° flip maps the bone's local X to a world rotation such that
         // subtracting pitch tilts the arm the same way the camera tilts).

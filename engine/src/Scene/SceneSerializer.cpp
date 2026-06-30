@@ -88,6 +88,7 @@
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -349,6 +350,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (fh->showLeftArm ? 1 : 0)
             << " " << (fh->followPitch ? 1 : 0) << " " << (fh->bobbing ? 1 : 0)
             << " " << (fh->steadyArm ? 1 : 0) << " " << fh->armRaise << " " << fh->armElbow << "\n";
+    }
+    if (auto* ps = go->GetComponent<NetworkPlayerSpawner>()) {
+        out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
+            << " " << ps->spawnPoint.x << " " << ps->spawnPoint.y << " " << ps->spawnPoint.z
+            << " " << ps->spawnSpread << " " << (ps->spawnLocalPlayer ? 1 : 0)
+            << " " << (int)(unsigned char)ps->glyph << "\n";
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
@@ -2862,6 +2869,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (v.size() >= 4) fh->steadyArm   = (v[3] != 0.0f);
                     if (v.size() >= 5) fh->armRaise    = v[4];
                     if (v.size() >= 6) fh->armElbow    = v[5];
+                } else if (field == "npspawner") {
+                    auto* ps = go->AddComponent<NetworkPlayerSpawner>();
+                    ps->playerTemplate = ReadQuoted(in);
+                    ps->prefabFile = ReadQuoted(in);
+                    int slp = 1, g = '@';
+                    in >> ps->spawnPoint.x >> ps->spawnPoint.y >> ps->spawnPoint.z
+                       >> ps->spawnSpread >> slp >> g;
+                    ps->spawnLocalPlayer = (slp != 0); ps->glyph = (char)g;
                 } else if (field == "netsync") {
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;

@@ -8426,7 +8426,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Follow camera look##fh", &fh->followPitch)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view (Minecraft-style).");
             if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let the walk/run cycle bob the arm. Off = rock-steady.\nCrouch & prone always keep the arm in view regardless.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let the walk/run cycle bob the arm. Off = rock-steady.\n(Steadying zeroes the shared hips/torso, so use it in first person where the body is hidden.)");
             if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fully decouple the arm from the body so it stays put in view no matter what the body does (lean, crouch, prone).");
             ImGui::SeparatorText("Manual adjust");
@@ -8452,6 +8452,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Sync animation##ns", &ns->syncAnimation)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
+        }
+    }
+    if (auto* ps = dynamic_cast<NetworkPlayerSpawner*>(curComp)) {
+        if (CompHeader("Network Player Spawner", ps, &toRemove)) {
+            ImGui::TextDisabled("Spawns a player copy for you (driveable) and for each peer\n"
+                                "(stripped to a moving/animating avatar). Needs a Network Manager.");
+            char tn[64]; std::snprintf(tn, sizeof(tn), "%s", ps->playerTemplate.c_str());
+            if (ImGui::InputText("Template object##nps", tn, sizeof(tn))) { ps->playerTemplate = tn; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of an INACTIVE object in the scene to clone for each player.");
+            char pf[128]; std::snprintf(pf, sizeof(pf), "%s", ps->prefabFile.c_str());
+            if (ImGui::InputText("Prefab file##nps", pf, sizeof(pf))) { ps->prefabFile = pf; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayprefab to spawn instead of the template (takes priority).");
+            float sp[3] = { ps->spawnPoint.x, ps->spawnPoint.y, ps->spawnPoint.z };
+            if (ImGui::DragFloat3("Spawn point##nps", sp, 0.1f)) { ps->spawnPoint = { sp[0], sp[1], sp[2] }; ed.dirty = true; }
+            if (ImGui::DragFloat("Spawn spread##nps", &ps->spawnSpread, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stagger remote players so they don't spawn on top of each other.");
+            if (ImGui::Checkbox("Spawn local player##nps", &ps->spawnLocalPlayer)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##nps")) toRemove = ps;
         }
     }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
@@ -12375,6 +12393,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIDocument>(), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkSync>(), "Network Sync (replicate transform)")) { go->AddComponent<NetworkSync>(); ed.dirty = true; }
+            if (item(!go->GetComponent<NetworkPlayerSpawner>(), "Network Player Spawner")) { go->AddComponent<NetworkPlayerSpawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }

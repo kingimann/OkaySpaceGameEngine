@@ -577,3 +577,7 @@ add_test(NAME npc_ai COMMAND test_npc_ai)
 add_executable(test_mp_controllers test_mp_controllers.cpp)
 target_link_libraries(test_mp_controllers PRIVATE okay::engine)
 add_test(NAME mp_controllers COMMAND test_mp_controllers)
+
+add_executable(test_net_player_spawn test_net_player_spawn.cpp)
+target_link_libraries(test_net_player_spawn PRIVATE okay::engine)
+add_test(NAME net_player_spawn COMMAND test_net_player_spawn)

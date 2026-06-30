@@ -22,6 +22,7 @@ option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
+option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
 if(MSVC)

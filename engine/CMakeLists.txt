@@ -49,6 +49,7 @@ add_library(okay_engine
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
+    src/Render/ModelImport.cpp
 )
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
@@ -188,6 +189,39 @@ if(OKAY_WITH_CSHARP)
     else()
         message(WARNING "OKAY_WITH_CSHARP set but Mono not found; skipping C# backend")
     endif()
+endif()
+
+# ---- Optional model import via Assimp (FBX / DAE / STL / PLY / 3DS / ...) ----
+# The built-in loaders already cover OBJ + glTF with no dependency; Assimp adds the
+# long tail of formats. FetchContent DOWNLOADS Assimp at configure time, so this is
+# OFF by default to keep the default build self-contained (no network needed). Turn it
+# on with -DOKAY_USE_ASSIMP=ON; ModelImport.cpp then routes those formats through it.
+if(OKAY_USE_ASSIMP)
+    include(FetchContent)
+    # Build only what we need — keep it lean and quiet.
+    set(ASSIMP_BUILD_TESTS                       OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_INSTALL                           OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ASSIMP_TOOLS                OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT    OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT    OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_NO_EXPORT                         ON  CACHE BOOL "" FORCE)
+    set(ASSIMP_WARNINGS_AS_ERRORS                OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_FBX_IMPORTER       ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_OBJ_IMPORTER       ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_GLTF_IMPORTER      ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_COLLADA_IMPORTER   ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_STL_IMPORTER       ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_PLY_IMPORTER       ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_3DS_IMPORTER       ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_BLEND_IMPORTER     ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(assimp
+        GIT_REPOSITORY https://github.com/assimp/assimp.git
+        GIT_TAG        v5.4.3
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(assimp)
+    target_link_libraries(okay_engine PUBLIC assimp)
+    target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
+    message(STATUS "OkaySpace: Assimp model import ENABLED (FBX/DAE/STL/PLY/3DS/Blend)")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

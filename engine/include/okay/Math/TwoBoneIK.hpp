@@ -12,15 +12,33 @@ namespace okay {
 ///
 /// This is the math Unity's IK / "foot IK" hides — a closed-form law-of-cosines
 /// solve, no iteration. Returns the mid-joint and the (clamped) end position.
+///
+/// `minBendDeg`/`maxBendDeg` limit the interior angle at the mid joint (knee/elbow):
+/// the defaults (0..180) impose no limit, but e.g. maxBendDeg=175 stops a knee from
+/// hyperextending/locking straight, and a higher minBendDeg keeps a minimum bend.
+/// When a limit binds the end stays short of the target (it can't reach without
+/// breaking the limit), which is the correct, natural behavior.
 inline void SolveTwoBoneIK(const Vec3& root, float upperLen, float lowerLen,
                            const Vec3& target, const Vec3& pole,
-                           Vec3& outMid, Vec3& outEnd) {
+                           Vec3& outMid, Vec3& outEnd,
+                           float minBendDeg = 0.0f, float maxBendDeg = 180.0f) {
     Vec3 toTarget = target - root;
     float dist = toTarget.Magnitude();
     float maxReach = upperLen + lowerLen;
     float minReach = Mathf::Abs(upperLen - lowerLen);
+    // Bend-angle limits map to a reachable-distance window (law of cosines: a larger
+    // interior angle = a straighter limb = a longer root->end distance).
+    float lo = minReach + 1e-4f, hi = maxReach - 1e-4f;
+    auto distForAngle = [&](float deg) {
+        float c = Mathf::Cos(Mathf::Clamp(deg, 0.0f, 180.0f) * Mathf::Deg2Rad);
+        float d2 = upperLen * upperLen + lowerLen * lowerLen - 2.0f * upperLen * lowerLen * c;
+        return d2 > 0.0f ? Mathf::Sqrt(d2) : 0.0f;
+    };
+    if (minBendDeg > 0.0f)   lo = Mathf::Max(lo, distForAngle(minBendDeg));
+    if (maxBendDeg < 180.0f) hi = Mathf::Min(hi, distForAngle(maxBendDeg));
+    if (lo > hi) lo = hi;
     // Clamp into the reachable shell (leave a hair of slack so it never fully locks).
-    float clamped = Mathf::Clamp(dist, minReach + 1e-4f, maxReach - 1e-4f);
+    float clamped = Mathf::Clamp(dist, lo, hi);
     Vec3 axis = dist > Mathf::Epsilon ? toTarget / dist : Vec3{0, -1, 0};
     Vec3 end = root + axis * clamped;
 

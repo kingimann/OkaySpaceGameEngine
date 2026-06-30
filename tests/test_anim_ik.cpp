@@ -233,5 +233,50 @@ int main() {
         CHECK(std::fabs(lFoot->transform->Position().y - (-0.3f)) < 0.1f);   // feet planted on it
     }
 
+    // ---- Two-bone bend limit: a max knee angle stops the limb hyperextending ----
+    {
+        Vec3 root{0, 2, 0};
+        float up = 1.0f, lo = 1.0f;
+        Vec3 mid, end;
+        // Target far below (would fully straighten the limb to reach 2.0 down).
+        // Limit the knee to 90° interior: reach is sqrt(1+1)=~1.414, not 2.0.
+        SolveTwoBoneIK(root, up, lo, {0, -1.0f, 0}, {0, 0, 1}, mid, end, 0.0f, 90.0f);
+        float reach = (end - root).Magnitude();
+        CHECK(reach < 1.6f);                                   // didn't straighten out
+        CHECK(std::fabs(reach - 1.4142f) < 0.05f);             // capped at the 90° distance
+        CHECK(std::fabs((mid - root).Magnitude() - up) < 1e-3f);   // lengths still exact
+        CHECK(std::fabs((end - mid).Magnitude() - lo) < 1e-3f);
+
+        // No limit (default): same target reaches farther (closer to straight).
+        Vec3 mid2, end2;
+        SolveTwoBoneIK(root, up, lo, {0, -1.0f, 0}, {0, 0, 1}, mid2, end2);
+        CHECK((end2 - root).Magnitude() > reach + 0.3f);
+    }
+
+    // ---- FootIK ground-normal tilt: the planted foot rotates to match a slope ----
+    {
+        Scene s("foottilt");
+        auto* body = s.CreateGameObject("Body");
+        auto* hip  = s.CreateGameObject("Hip");  hip->transform->SetPosition({0, 1.0f, 0});
+        auto* knee = s.CreateGameObject("Knee"); knee->transform->SetPosition({0, 0.55f, 0});
+        auto* foot = s.CreateGameObject("Foot"); foot->transform->SetPosition({0, 0.2f, 0});
+        auto* ik = body->AddComponent<FootIK>();
+        ik->leftHip = hip->transform; ik->leftKnee = knee->transform; ik->leftFoot = foot->transform;
+        ik->useRaycast = false; ik->groundY = 0.3f; ik->footOffset = 0.0f; ik->weight = 1.0f;
+        // (No raycast -> normal defaults to Up, so the foot stays level here.)
+        ik->alignToGround = true; ik->footUpAxis = Vec3::Up;
+        s.Start(); s.Update(1.0f / 60.0f);
+        Vec3 footUp = (foot->transform->Rotation() * Vec3::Up).Normalized();
+        CHECK(Vec3::Dot(footUp, Vec3::Up) > 0.99f);            // level ground -> foot stays flat
+
+        // The solver itself tilts the foot toward a given slope normal.
+        Quat r = Quat::Identity;
+        Vec3 up0 = r * Vec3::Up;
+        Vec3 slope = Vec3{0.3f, 1.0f, 0.0f}.Normalized();
+        Quat tilt = Quat::FromToRotation(up0, slope);
+        Vec3 tilted = (tilt * up0).Normalized();
+        CHECK(Vec3::Dot(tilted, slope) > 0.99f);               // FromToRotation aligns up to the slope
+    }
+
     TEST_MAIN_RESULT();
 }

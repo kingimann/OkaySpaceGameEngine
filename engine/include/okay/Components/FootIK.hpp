@@ -39,6 +39,12 @@ public:
     bool  plantDown    = false;    ///< also press feet DOWN onto lower ground (not just lift)
     float maxPelvisShift = 0.5f;   ///< clamp on how far the pelvis can move
 
+    // ---- Knee limits + foot tilt ----
+    float minKneeBend = 0.0f;      ///< min interior knee angle (deg); 0 = no limit
+    float maxKneeBend = 178.0f;    ///< max knee angle (deg) — keeps knees from locking straight
+    bool  alignToGround = false;   ///< tilt the planted foot to match the ground slope
+    Vec3  footUpAxis = Vec3::Up;   ///< the foot bone's local "up" (sole normal)
+
     void Update(float) override {
         if (weight <= 0.0f) return;
         if (!m_init) { Learn(); m_init = true; }
@@ -61,12 +67,13 @@ private:
         }
     }
 
-    float GroundAt(Scene* s, const Vec3& foot) {
+    float GroundAt(Scene* s, const Vec3& foot, Vec3* outNormal = nullptr) {
+        if (outNormal) *outNormal = Vec3::Up;
         if (useRaycast && s) {
             Vec3 origin{foot.x, foot.y + maxRayUp, foot.z};
             RaycastHit3D hit = s->physics3D().Raycast(*s, origin, Vec3{0, -1, 0},
                                                       maxRayUp + maxRayDown, gameObject);
-            if (hit.hit) return hit.point.y;
+            if (hit.hit) { if (outNormal) *outNormal = hit.normal; return hit.point.y; }
             return foot.y - 1e6f;       // nothing under the foot -> don't lift
         }
         return groundY;
@@ -95,7 +102,8 @@ private:
                   float upLen, float loLen, const Vec3& pole, Scene* s) {
         if (!hip || !knee || !foot || upLen <= 0.0f || loLen <= 0.0f) return;
         Vec3 animFoot = foot->Position();
-        float g = GroundAt(s, animFoot);
+        Vec3 normal;
+        float g = GroundAt(s, animFoot, &normal);
         float targetY = g + footOffset;
         // Lift the foot UP to meet ground (and, when plantDown/pelvis adjust is on,
         // also press it DOWN onto lower ground). Ignore ground out of reach below.
@@ -104,9 +112,18 @@ private:
 
         Vec3 target{animFoot.x, targetY, animFoot.z};
         Vec3 mid, end;
-        SolveTwoBoneIK(hip->Position(), upLen, loLen, target, pole, mid, end);
+        SolveTwoBoneIK(hip->Position(), upLen, loLen, target, pole, mid, end,
+                       minKneeBend, maxKneeBend);
         knee->SetPosition(Vec3::Lerp(knee->Position(), mid, weight));
         foot->SetPosition(Vec3::Lerp(foot->Position(), end, weight));
+
+        // Tilt the foot so its sole follows the ground slope.
+        if (alignToGround && normal.SqrMagnitude() > 1e-6f) {
+            Vec3 up = (foot->Rotation() * footUpAxis).Normalized();
+            Quat tilt = Quat::FromToRotation(up, normal.Normalized());
+            Quat desired = (tilt * foot->Rotation()).Normalized();
+            foot->SetRotation(Quat::Slerp(foot->Rotation(), desired, weight));
+        }
     }
 
     bool  m_init = false;

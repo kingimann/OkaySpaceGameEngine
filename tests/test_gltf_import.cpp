@@ -124,5 +124,61 @@ int main() {
         }
     }
 
+    // ---- Skinned import: a vertex bound to a bone deforms when the bone rotates ----
+    {
+        std::vector<std::uint8_t> b;
+        putF(b,1); putF(b,0); putF(b,0);                 // POSITION (off 0): one vertex at (1,0,0)
+        putU16(b,0); putU16(b,0); putU16(b,0);           // indices  (off 12): degenerate tri
+        putU16(b,0); putU16(b,0); putU16(b,0); putU16(b,0); // JOINTS_0 (off 18): joint 0
+        putF(b,1); putF(b,0); putF(b,0); putF(b,0);      // WEIGHTS_0 (off 26): full weight to joint 0
+        // inverseBindMatrices (off 42): identity 4x4 (column-major)
+        float I[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        for (int i = 0; i < 16; ++i) putF(b, I[i]);
+        std::string e = B64(b);
+        std::string j =
+            "{\"asset\":{\"version\":\"2.0\"},"
+            "\"buffers\":[{\"byteLength\":" + std::to_string(b.size()) +
+                ",\"uri\":\"data:application/octet-stream;base64," + e + "\"}],"
+            "\"bufferViews\":["
+                "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":12},"
+                "{\"buffer\":0,\"byteOffset\":12,\"byteLength\":6},"
+                "{\"buffer\":0,\"byteOffset\":18,\"byteLength\":8},"
+                "{\"buffer\":0,\"byteOffset\":26,\"byteLength\":16},"
+                "{\"buffer\":0,\"byteOffset\":42,\"byteLength\":64}],"
+            "\"accessors\":["
+                "{\"bufferView\":0,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"},"
+                "{\"bufferView\":1,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+                "{\"bufferView\":2,\"componentType\":5123,\"count\":1,\"type\":\"VEC4\"},"
+                "{\"bufferView\":3,\"componentType\":5126,\"count\":1,\"type\":\"VEC4\"},"
+                "{\"bufferView\":4,\"componentType\":5126,\"count\":1,\"type\":\"MAT4\"}],"
+            "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":1}]}],"
+            "\"nodes\":[{\"name\":\"SkinMesh\",\"mesh\":0,\"skin\":0},{\"name\":\"Bone\"}],"
+            "\"skins\":[{\"joints\":[1],\"inverseBindMatrices\":4}]}";
+        const char* sp = "/tmp/okay_test_skin.gltf";
+        { std::ofstream o(sp); o << j; }
+
+        Scene s("skin");
+        bool ok3 = false;
+        GameObject* root = ImportModelScene(s, sp, &ok3);
+        CHECK(ok3 && root);
+        GameObject* sk = s.Find("SkinMesh");
+        GameObject* bone = s.Find("Bone");
+        CHECK(sk && bone);
+        if (sk && bone) {
+            auto* sm = sk->GetComponent<SkinnedMesh>();
+            CHECK(sm != nullptr);
+            CHECK(sk->GetComponent<MeshRenderer>() != nullptr);
+            if (sm) {
+                CHECK(sm->joints.size() == 1 && sm->joints[0] == bone->transform);
+                // Rotate the bone 90 deg about Z: the bound vertex (1,0,0) -> (0,1,0).
+                bone->transform->localRotation = Quat::Euler(0, 0, 90);
+                sm->Skin();
+                auto* mr = sk->GetComponent<MeshRenderer>();
+                CHECK(std::fabs(mr->mesh.vertices[0].x - 0.0f) < 1e-3f);
+                CHECK(std::fabs(mr->mesh.vertices[0].y - 1.0f) < 1e-3f);
+            }
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

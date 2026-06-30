@@ -593,3 +593,7 @@ add_test(NAME obj_import COMMAND test_obj_import)
 add_executable(test_gltf_import test_gltf_import.cpp)
 target_link_libraries(test_gltf_import PRIVATE okay::engine)
 add_test(NAME gltf_import COMMAND test_gltf_import)
+
+add_executable(test_skinning test_skinning.cpp)
+target_link_libraries(test_skinning PRIVATE okay::engine)
+add_test(NAME skinning COMMAND test_skinning)

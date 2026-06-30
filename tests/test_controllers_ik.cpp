@@ -82,5 +82,28 @@ int main() {
         CHECK(l && std::fabs(l->runSpeed - 9.5f) < 1e-3f);
     }
 
+    // ---- Bug fixes: TPS sprint enabled by default; ClickToMove keeps the cursor ----
+    {
+        // ThirdPersonShooter: sprint key defaults to Shift (was 0 = disabled).
+        ThirdPersonShooterController tps;
+        CHECK(tps.sprintKey == Input::KeyShift);
+
+        // ClickToMove: with showCursor on, Start releases any cursor lock (you click).
+        Scene s("ctm_cursor");
+        Cursor::Capture(true);                       // simulate the runtime's default lock
+        auto* go = s.CreateGameObject("Player");
+        auto* cm = go->AddComponent<ClickToMoveController>();
+        CHECK(cm->showCursor);                        // default on
+        s.Start();
+        CHECK(!Cursor::IsLocked());                   // cursor freed so the pointer shows
+
+        // Round-trips.
+        std::string text = SceneSerializer::Serialize(s);
+        Scene s2("s2");
+        CHECK(SceneSerializer::Deserialize(s2, text));
+        auto* l = s2.Find("Player")->GetComponent<ClickToMoveController>();
+        CHECK(l && l->showCursor);
+    }
+
     TEST_MAIN_RESULT();
 }

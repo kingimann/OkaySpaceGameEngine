@@ -32,7 +32,7 @@ public:
     float walkSpeed = 4.5f;
     float runSpeed  = 7.5f;
     float jumpForce = 6.0f;
-    char  sprintKey = 0;
+    char  sprintKey = Input::KeyShift;   // hold to run (matches the other controllers)
     bool  canJump = true;
     int   maxJumps = 1;                  // 1 = single jump, 2 = double jump, etc.
     bool  driveAnimation = true;
@@ -236,7 +236,18 @@ public:
 
     bool IsAiming() const { return m_aiming; }
 
+    // Ground contact refills the jump count (so you can jump again after landing —
+    // without this, m_jumpsUsed never reset and only the first jump ever worked).
+    void OnCollisionEnter3D(const Collision3D& c) override { NoteGround(c); }
+    void OnCollisionStay3D(const Collision3D& c)  override { NoteGround(c); }
+
 private:
+    void NoteGround(const Collision3D& c) {
+        bool vertical = Mathf::Abs(c.normal.y) > 0.5f;
+        bool below = c.gameObject && c.gameObject->transform && transform &&
+                     c.gameObject->transform->Position().y < transform->Position().y;
+        if (vertical && below) m_groundContact = 0.10f;
+    }
     void Fire() {
         if (gameObject)
             if (auto* sc = gameObject->GetComponent<ScriptComponent>())

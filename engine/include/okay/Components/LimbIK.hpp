@@ -10,10 +10,13 @@
 // Bone lengths are learned from the rig on the first solve.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Math/TwoBoneIK.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
+#include <string>
 
 namespace okay {
 
@@ -29,10 +32,23 @@ public:
     Transform* poleObject = nullptr;   ///< bend the elbow/knee toward this object
     Vec3  pole = Vec3::Forward;        ///< or a world bend direction when no poleObject
 
+    // Editor/serialized: resolve the references above by object name at Start.
+    std::string upperName, lowerName, endName, targetName, poleName;
+
     float weight   = 1.0f;
     float minBend  = 0.0f;             ///< joint limits (interior angle, degrees)
     float maxBend  = 180.0f;
     bool  matchTargetRotation = false; ///< align the end bone to the target's rotation (grab)
+
+    void Start() override {
+        Scene* s = GetScene();
+        if (!s) return;
+        auto R = [&](Transform*& t, const std::string& n) {
+            if (!t && !n.empty()) if (GameObject* g = s->Find(n)) t = g->transform;
+        };
+        R(upper, upperName); R(lower, lowerName); R(end, endName);
+        R(targetObject, targetName); R(poleObject, poleName);
+    }
 
     void Update(float) override {
         if (weight <= 0.0f || !upper || !lower || !end) return;

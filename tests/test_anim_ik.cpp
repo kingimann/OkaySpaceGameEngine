@@ -345,5 +345,36 @@ int main() {
         CHECK(lk2 && lk2->targetName == "Player");
     }
 
+    // ---- FootIK / LimbIK / ChainIK / RootMotion round-trip through the scene file ----
+    {
+        Scene s("ikser");
+        auto* go = s.CreateGameObject("Rig");
+        auto* f = go->AddComponent<FootIK>();
+        f->leftFootName = "LFoot"; f->rightFootName = "RFoot"; f->pelvisName = "Hips";
+        f->adjustPelvis = true; f->alignToGround = true; f->maxKneeBend = 175.0f;
+        auto* lb = go->AddComponent<LimbIK>();
+        lb->upperName = "Sh"; lb->endName = "Hand"; lb->targetName = "Grip";
+        lb->matchTargetRotation = true; lb->maxBend = 160.0f;
+        auto* ci = go->AddComponent<ChainIK>();
+        ci->boneNames = {"B0", "B1", "B2"}; ci->targetName = "Tip"; ci->solver = (int)ChainIK::Solver::CCD; ci->iterations = 15;
+        auto* rm = go->AddComponent<RootMotion>();
+        rm->rootNodeName = "Hips"; rm->mode = (int)RootMotion::Mode::PhysicsDrivesAnim;
+
+        std::string text = SceneSerializer::Serialize(s);
+        Scene s2("s2");
+        CHECK(SceneSerializer::Deserialize(s2, text));
+        auto* g2 = s2.Find("Rig");
+        auto* lf = g2->GetComponent<FootIK>();
+        CHECK(lf && lf->leftFootName == "LFoot" && lf->pelvisName == "Hips" && lf->adjustPelvis && lf->alignToGround);
+        CHECK(lf && std::fabs(lf->maxKneeBend - 175.0f) < 1e-3f);
+        auto* ll = g2->GetComponent<LimbIK>();
+        CHECK(ll && ll->upperName == "Sh" && ll->targetName == "Grip" && ll->matchTargetRotation);
+        auto* lc = g2->GetComponent<ChainIK>();
+        CHECK(lc && lc->boneNames.size() == 3 && lc->boneNames[2] == "B2");
+        CHECK(lc && lc->solver == (int)ChainIK::Solver::CCD && lc->iterations == 15);
+        auto* lr = g2->GetComponent<RootMotion>();
+        CHECK(lr && lr->rootNodeName == "Hips" && lr->mode == (int)RootMotion::Mode::PhysicsDrivesAnim);
+    }
+
     TEST_MAIN_RESULT();
 }

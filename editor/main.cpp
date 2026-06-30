@@ -9196,6 +9196,80 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##look")) toRemove = l;
         }
     }
+    {
+        // Shared name-field helper for the IK component inspectors.
+        auto NameField = [&](const char* label, std::string& s) {
+            char buf[64]; std::strncpy(buf, s.c_str(), sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+            if (ImGui::InputText(label, buf, sizeof(buf))) { s = buf; ed.dirty = true; }
+        };
+        if (auto* f = dynamic_cast<FootIK*>(curComp)) {
+            if (CompHeader("Foot IK", f, &toRemove)) {
+                ImGui::TextDisabled("Plant a biped's feet on the ground. Name the leg bones.");
+                NameField("L Hip##fik", f->leftHipName);   NameField("L Knee##fik", f->leftKneeName);   NameField("L Foot##fik", f->leftFootName);
+                NameField("R Hip##fik", f->rightHipName);  NameField("R Knee##fik", f->rightKneeName);  NameField("R Foot##fik", f->rightFootName);
+                NameField("Pelvis##fik", f->pelvisName);
+                ImGui::DragFloat("Weight##fik", &f->weight, 0.01f, 0.0f, 1.0f);
+                ImGui::DragFloat("Foot Offset##fik", &f->footOffset, 0.005f, 0.0f, 1.0f);
+                ImGui::Checkbox("Raycast Ground##fik", &f->useRaycast);
+                if (!f->useRaycast) ImGui::DragFloat("Ground Y##fik", &f->groundY, 0.05f);
+                ImGui::Checkbox("Adjust Pelvis##fik", &f->adjustPelvis); ImGui::SameLine();
+                ImGui::Checkbox("Plant Down##fik", &f->plantDown);
+                ImGui::Checkbox("Align To Slope##fik", &f->alignToGround);
+                ImGui::DragFloat("Max Knee Bend##fik", &f->maxKneeBend, 1.0f, 0.0f, 180.0f);
+                if (ImGui::SmallButton("Remove##fik")) toRemove = f;
+            }
+        }
+        if (auto* lb = dynamic_cast<LimbIK*>(curComp)) {
+            if (CompHeader("Limb IK", lb, &toRemove)) {
+                ImGui::TextDisabled("Two-bone arm/leg reach (grab). Name the three bones.");
+                NameField("Upper##lik", lb->upperName); NameField("Lower##lik", lb->lowerName); NameField("End##lik", lb->endName);
+                NameField("Target##lik", lb->targetName); NameField("Pole##lik", lb->poleName);
+                float t[3] = {lb->target.x, lb->target.y, lb->target.z};
+                if (ImGui::DragFloat3("Target point##lik", t, 0.1f)) { lb->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+                ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
+                ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
+                ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
+                ImGui::Checkbox("Match Target Rotation##lik", &lb->matchTargetRotation);
+                if (ImGui::SmallButton("Remove##lik")) toRemove = lb;
+            }
+        }
+        if (auto* ci = dynamic_cast<ChainIK*>(curComp)) {
+            if (CompHeader("Chain IK", ci, &toRemove)) {
+                ImGui::TextDisabled("Long-chain IK (spider legs, tentacles). Bones root->tip.");
+                NameField("Target##cik", ci->targetName);
+                float t[3] = {ci->target.x, ci->target.y, ci->target.z};
+                if (ImGui::DragFloat3("Target point##cik", t, 0.1f)) { ci->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+                const char* solvers[] = {"FABRIK", "CCD"};
+                ImGui::Combo("Solver##cik", &ci->solver, solvers, 2);
+                ImGui::DragInt("Iterations##cik", &ci->iterations, 0.2f, 1, 50);
+                ImGui::DragFloat("Weight##cik", &ci->weight, 0.01f, 0.0f, 1.0f);
+                ImGui::Checkbox("Orient Bones##cik", &ci->orient);
+                ImGui::Separator();
+                ImGui::Text("Bones root->tip (%d)", (int)ci->boneNames.size());
+                for (std::size_t i = 0; i < ci->boneNames.size(); ++i) {
+                    ImGui::PushID((int)i);
+                    char nb[64]; std::strncpy(nb, ci->boneNames[i].c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+                    if (ImGui::InputText("##cb", nb, sizeof(nb))) { ci->boneNames[i] = nb; ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("x")) { ci->boneNames.erase(ci->boneNames.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                    ImGui::PopID();
+                }
+                if (ImGui::SmallButton("+ Bone##cik")) { ci->boneNames.push_back(""); ed.dirty = true; }
+                if (ImGui::SmallButton("Remove##cik")) toRemove = ci;
+            }
+        }
+        if (auto* rm = dynamic_cast<RootMotion*>(curComp)) {
+            if (CompHeader("Root Motion", rm, &toRemove)) {
+                ImGui::TextDisabled("Drive the body from the animation's root bone movement.");
+                NameField("Root Bone##rm", rm->rootNodeName);
+                const char* modes[] = {"Anim Drives Motion", "Physics Drives Anim", "Disabled"};
+                ImGui::Combo("Mode##rm", &rm->mode, modes, 3);
+                ImGui::Checkbox("Lock Height##rm", &rm->lockHeight);
+                ImGui::Checkbox("Apply To Rigidbody##rm", &rm->applyToRigidbody);
+                if (ImGui::SmallButton("Remove##rm")) toRemove = rm;
+            }
+        }
+    }
     if (auto* bc = dynamic_cast<BoxCollider3D*>(curComp)) {
         if (CompHeader("Box Collider 3D", bc, &toRemove)) {
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
@@ -12583,6 +12657,10 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<LookAtIK>(), "Look-At IK (head/eye tracking)")) { go->AddComponent<LookAtIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<FootIK>(), "Foot IK (plant feet on ground)")) { go->AddComponent<FootIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LimbIK>(), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ChainIK>(), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<RootMotion>(), "Root Motion (anim drives the body)")) { go->AddComponent<RootMotion>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Physics 2D");

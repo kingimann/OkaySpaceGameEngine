@@ -95,6 +95,10 @@
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
+#include "okay/Components/FootIK.hpp"
+#include "okay/Components/LimbIK.hpp"
+#include "okay/Components/ChainIK.hpp"
+#include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -528,6 +532,34 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << l->chainNames.size();
         for (const std::string& n : l->chainNames) out << " " << Quote(n);
         out << "\n";
+    }
+    if (auto* f = go->GetComponent<FootIK>()) {
+        out << "  footik " << Quote(f->leftHipName) << " " << Quote(f->leftKneeName) << " " << Quote(f->leftFootName)
+            << " " << Quote(f->rightHipName) << " " << Quote(f->rightKneeName) << " " << Quote(f->rightFootName)
+            << " " << Quote(f->pelvisName)
+            << " " << f->weight << " " << f->footOffset << " " << (f->useRaycast ? 1 : 0) << " " << f->groundY
+            << " " << (f->adjustPelvis ? 1 : 0) << " " << (f->plantDown ? 1 : 0) << " " << (f->alignToGround ? 1 : 0)
+            << " " << f->minKneeBend << " " << f->maxKneeBend << "\n";
+    }
+    if (auto* lb = go->GetComponent<LimbIK>()) {
+        out << "  limbik " << Quote(lb->upperName) << " " << Quote(lb->lowerName) << " " << Quote(lb->endName)
+            << " " << Quote(lb->targetName) << " " << Quote(lb->poleName)
+            << " " << lb->weight << " " << lb->minBend << " " << lb->maxBend << " " << (lb->matchTargetRotation ? 1 : 0)
+            << " " << lb->target.x << " " << lb->target.y << " " << lb->target.z
+            << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z << "\n";
+    }
+    if (auto* ci = go->GetComponent<ChainIK>()) {
+        out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
+            << " " << ci->solver << " " << (ci->orient ? 1 : 0)
+            << " " << ci->target.x << " " << ci->target.y << " " << ci->target.z
+            << " " << ci->boneNames.size();
+        for (const std::string& n : ci->boneNames) out << " " << Quote(n);
+        out << "\n";
+    }
+    if (auto* rm = go->GetComponent<RootMotion>()) {
+        out << "  rootmotion " << Quote(rm->rootNodeName) << " " << rm->mode
+            << " " << (rm->lockHeight ? 1 : 0) << " " << (rm->applyToRigidbody ? 1 : 0)
+            << " " << rm->loopThreshold << "\n";
     }
     // Mesh + Cylinder colliders derive from Box/Capsule, so write them first and guard
     // the base records by exact shape() (else GetComponent<BoxCollider3D> matches a mesh).
@@ -1012,7 +1044,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cm->rotateRightKey ? cm->rotateRightKey : '-')
             << " " << cm->cameraDamping
             << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
-            << " " << (cm->footIK ? 1 : 0) << "\n";
+            << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0) << "\n";
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -1966,6 +1998,39 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> l->target.x >> l->target.y >> l->target.z;
                     std::size_t n = 0; in >> n;
                     for (std::size_t k = 0; k < n; ++k) l->chainNames.push_back(ReadQuoted(in));
+                } else if (field == "footik") {
+                    auto* f = go->AddComponent<FootIK>();
+                    f->leftHipName = ReadQuoted(in); f->leftKneeName = ReadQuoted(in); f->leftFootName = ReadQuoted(in);
+                    f->rightHipName = ReadQuoted(in); f->rightKneeName = ReadQuoted(in); f->rightFootName = ReadQuoted(in);
+                    f->pelvisName = ReadQuoted(in);
+                    int ur = 1, ap = 0, pd = 0, ag = 0;
+                    in >> f->weight >> f->footOffset >> ur >> f->groundY >> ap >> pd >> ag
+                       >> f->minKneeBend >> f->maxKneeBend;
+                    f->useRaycast = (ur != 0); f->adjustPelvis = (ap != 0); f->plantDown = (pd != 0); f->alignToGround = (ag != 0);
+                } else if (field == "limbik") {
+                    auto* lb = go->AddComponent<LimbIK>();
+                    lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
+                    lb->targetName = ReadQuoted(in); lb->poleName = ReadQuoted(in);
+                    int mr = 0;
+                    in >> lb->weight >> lb->minBend >> lb->maxBend >> mr
+                       >> lb->target.x >> lb->target.y >> lb->target.z
+                       >> lb->pole.x >> lb->pole.y >> lb->pole.z;
+                    lb->matchTargetRotation = (mr != 0);
+                } else if (field == "chainik") {
+                    auto* ci = go->AddComponent<ChainIK>();
+                    ci->targetName = ReadQuoted(in);
+                    int orient = 0;
+                    in >> ci->weight >> ci->iterations >> ci->solver >> orient
+                       >> ci->target.x >> ci->target.y >> ci->target.z;
+                    ci->orient = (orient != 0);
+                    std::size_t bn = 0; in >> bn;
+                    for (std::size_t k = 0; k < bn; ++k) ci->boneNames.push_back(ReadQuoted(in));
+                } else if (field == "rootmotion") {
+                    auto* rm = go->AddComponent<RootMotion>();
+                    rm->rootNodeName = ReadQuoted(in);
+                    int lh = 1, ar = 0;
+                    in >> rm->mode >> lh >> ar >> rm->loopThreshold;
+                    rm->lockHeight = (lh != 0); rm->applyToRigidbody = (ar != 0);
                 } else if (field == "boxcollider3d") {
                     Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> sz.z >> off.x >> off.y >> off.z >> trig;
@@ -2091,6 +2156,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> std::ws; // optional arrival radius (added later)
                         if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->arriveRadius;
                         in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; cm->footIK = (fik != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek())) { int sc = 1; in >> sc; cm->showCursor = (sc != 0); }
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);

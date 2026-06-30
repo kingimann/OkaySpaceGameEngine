@@ -16,6 +16,7 @@
 #include "okay/Math/TwoBoneIK.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <string>
 
 namespace okay {
 
@@ -25,6 +26,9 @@ public:
     Transform* leftHip = nullptr;  Transform* leftKnee = nullptr;  Transform* leftFoot = nullptr;
     // Right leg chain.
     Transform* rightHip = nullptr; Transform* rightKnee = nullptr; Transform* rightFoot = nullptr;
+    // Editor/serialized: resolve the bones above by object name at Start (when unset).
+    std::string leftHipName, leftKneeName, leftFootName;
+    std::string rightHipName, rightKneeName, rightFootName, pelvisName;
 
     float weight     = 1.0f;   ///< 0 = off (pure animation), 1 = fully planted
     float footOffset = 0.05f;  ///< ankle height to keep above the ground surface
@@ -44,6 +48,17 @@ public:
     float maxKneeBend = 178.0f;    ///< max knee angle (deg) — keeps knees from locking straight
     bool  alignToGround = false;   ///< tilt the planted foot to match the ground slope
     Vec3  footUpAxis = Vec3::Up;   ///< the foot bone's local "up" (sole normal)
+
+    void Start() override {
+        Scene* s = GetScene();
+        if (!s) return;
+        auto R = [&](Transform*& t, const std::string& n) {
+            if (!t && !n.empty()) if (GameObject* g = s->Find(n)) t = g->transform;
+        };
+        R(leftHip, leftHipName);   R(leftKnee, leftKneeName);   R(leftFoot, leftFootName);
+        R(rightHip, rightHipName); R(rightKnee, rightKneeName); R(rightFoot, rightFootName);
+        R(pelvis, pelvisName);
+    }
 
     void Update(float) override {
         if (weight <= 0.0f) return;

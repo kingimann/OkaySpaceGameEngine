@@ -13,9 +13,11 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <string>
 
 namespace okay {
 
@@ -29,10 +31,17 @@ public:
 
     /// The animated bone whose translation is the root motion (e.g. the hips).
     Transform* rootNode = nullptr;
+    std::string rootNodeName;    ///< editor/serialized: resolve `rootNode` by object name at Start
     int   mode = (int)Mode::AnimDrivesMotion;
     bool  lockHeight = true;     ///< keep root motion on the ground plane (ignore Y)
     bool  applyToRigidbody = false;  ///< write the motion as Rigidbody3D velocity (anim -> physics)
     float loopThreshold = 0.5f;  ///< ignore root jumps bigger than this (clip-loop seam)
+
+    void Start() override {
+        if (!rootNode && !rootNodeName.empty())
+            if (Scene* s = GetScene())
+                if (GameObject* g = s->Find(rootNodeName)) rootNode = g->transform;
+    }
 
     void Update(float dt) override {
         if (!rootNode || mode == (int)Mode::Disabled || dt <= 0.0f) return;

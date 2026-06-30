@@ -10,6 +10,7 @@
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
+#include "okay/Input/Cursor.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -40,6 +41,7 @@ public:
     bool  holdToMove  = false;      // hold the button to keep retargeting (else single clicks)
     bool  driveAnimation = true;    // animate a sibling Character from movement
     bool  footIK = false;           // plant the Character's feet on the ground
+    bool  showCursor = true;        // keep the mouse pointer visible (you click to move!)
     float groundY     = 0.0f;       // ground plane height when usePlayerHeight is off
     bool  usePlayerHeight = true;   // pick on the plane at the player's current Y
 
@@ -63,11 +65,17 @@ public:
     /// Send the player to a world point directly (for scripts / waypoints).
     void MoveTo(const Vec3& worldPoint) { m_dest = worldPoint; m_hasDest = true; }
 
-    void Start() override { if (footIK) AttachCharacterFootIK(gameObject); }
+    void Start() override {
+        if (footIK) AttachCharacterFootIK(gameObject);
+        if (showCursor) Cursor::Capture(false);   // a point-and-click game needs the pointer
+    }
 
     void Update(float dt) override {
         if (!transform || !gameObject || !gameObject->scene()) return;
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        // Keep the pointer visible — something else (the runtime's default lock, a
+        // previously-active FPS controller) may have captured it; you click to move.
+        if (showCursor && Cursor::IsLocked()) Cursor::Capture(false);
         Scene& scene = *gameObject->scene();
 
         // ---- Set a destination from a click on the ground plane ----

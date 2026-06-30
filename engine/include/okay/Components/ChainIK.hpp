@@ -11,12 +11,15 @@
 // chain so attached meshes follow.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Math/Fabrik.hpp"
 #include "okay/Math/CCD.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include <vector>
+#include <string>
 
 namespace okay {
 
@@ -26,12 +29,24 @@ public:
 
     std::vector<Transform*> bones;     ///< root..tip
     Transform* targetObject = nullptr;
+    std::vector<std::string> boneNames; ///< editor/serialized: resolve `bones` by object names
+    std::string targetName;            ///< editor/serialized: resolve `targetObject` by name
     Vec3  target{0, 0, 0};
     float weight = 1.0f;               ///< blend IK over the animated pose
     int   iterations = 10;
     int   solver = (int)Solver::FABRIK; ///< FABRIK (position) or CCD (rotation-from-tip)
     bool  orient = false;              ///< point each bone's forward down the chain
     Vec3  forwardAxis = Vec3::Forward;
+
+    void Start() override {
+        Scene* s = GetScene();
+        if (!s) return;
+        if (bones.empty() && !boneNames.empty())
+            for (const std::string& nm : boneNames)
+                if (GameObject* g = s->Find(nm)) bones.push_back(g->transform);
+        if (!targetObject && !targetName.empty())
+            if (GameObject* g = s->Find(targetName)) targetObject = g->transform;
+    }
 
     void Update(float) override {
         const int n = static_cast<int>(bones.size());

@@ -5034,20 +5034,13 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::TextDisabled("Tip: export from Blender / Mixamo / Sketchfab as glTF or OBJ.");
         ImGui::InputText("Path##obj", g_objPathBuf, sizeof(g_objPathBuf));
         if (ImGui::Button("Import", ImVec2(120, 0))) {
-            bool okl = false; std::string tex;
-            Mesh im = okay::ImportModel(g_objPathBuf, &okl, &tex);
-            if (okl && im.TriangleCount() > 0) {
-                std::string nm = g_objPathBuf;
-                std::size_t sl = nm.find_last_of("/\\"); if (sl != std::string::npos) nm = nm.substr(sl + 1);
-                std::size_t dot = nm.find_last_of('.'); if (dot != std::string::npos) nm = nm.substr(0, dot);
-                GameObject* go = ed.CreateEmpty(nm.empty() ? "Model" : nm);
-                auto* mr = go->AddComponent<MeshRenderer>();
-                mr->mesh = im; mr->meshPath = g_objPathBuf; mr->doubleSided = true;
-                if (!tex.empty()) mr->texture = tex;
-                ed.Select(go); ed.view3D = true; ed.dirty = true;
-                ConsoleLog("Imported " + std::string(g_objPathBuf) + " (" +
-                           std::to_string(im.TriangleCount()) + " tris" +
-                           (tex.empty() ? ")" : ", textured)"));
+            // Scene import: a glTF brings in its node hierarchy + meshes + animation;
+            // OBJ/Assimp come in as a single mesh object.
+            bool okl = false;
+            GameObject* root = okay::ImportModelScene(ed.scene(), g_objPathBuf, &okl);
+            if (okl && root) {
+                ed.Select(root); ed.view3D = true; ed.dirty = true;
+                ConsoleLog("Imported " + std::string(g_objPathBuf));
             } else ConsoleLog("Import failed: couldn't read " + std::string(g_objPathBuf), 2);
             ImGui::CloseCurrentPopup();
         }

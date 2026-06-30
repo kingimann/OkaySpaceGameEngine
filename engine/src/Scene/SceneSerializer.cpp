@@ -451,7 +451,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness
-            << " " << rb->friction << "\n";   // trailing (back-compatible)
+            << " " << rb->friction                                    // trailing (back-compatible)
+            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0) << "\n";
     }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -1836,6 +1837,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rb->bodyType = (Rigidbody2D::BodyType)bt;
                     rb->gravityScale = gs; rb->mass = mass; rb->drag = drag; rb->bounciness = bounce;
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
+                    in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                 } else if (field == "boxcollider2d") {
                     Vec2 sz, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;

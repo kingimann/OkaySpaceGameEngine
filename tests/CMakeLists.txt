@@ -613,3 +613,7 @@ add_test(NAME 2d_expand COMMAND test_2d_expand)
 add_executable(test_phys_math test_phys_math.cpp)
 target_link_libraries(test_phys_math PRIVATE okay::engine)
 add_test(NAME phys_math COMMAND test_phys_math)
+
+add_executable(test_angular2d test_angular2d.cpp)
+target_link_libraries(test_angular2d PRIVATE okay::engine)
+add_test(NAME angular2d COMMAND test_angular2d)

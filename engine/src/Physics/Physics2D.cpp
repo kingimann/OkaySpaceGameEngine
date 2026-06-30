@@ -18,7 +18,30 @@ struct Contact {
     bool  hit = false;
     Vec2  normal{0, 0};   // points from A toward B
     float penetration = 0.0f;
+    Vec2  point{0, 0};    // approximate world contact point (for angular response)
 };
+
+// Inverse moment of inertia about Z for a body+collider. 0 when rotation is
+// locked, mass is infinite, or there's no collider to size the inertia from.
+float InvInertia(Rigidbody2D* rb, Collider2D* col) {
+    if (!rb || rb->freezeRotation || !col) return 0.0f;
+    float im = rb->InvMass();
+    if (im <= 0.0f) return 0.0f;
+    float mass = rb->mass, I;
+    if (col->shape() == Collider2D::Shape::Box) {
+        Vec2 he = static_cast<BoxCollider2D*>(col)->HalfExtents();
+        float w = he.x * 2.0f, h = he.y * 2.0f;
+        I = mass * (w * w + h * h) / 12.0f;
+    } else if (col->shape() == Collider2D::Shape::Circle) {
+        float r = static_cast<CircleCollider2D*>(col)->WorldRadius();
+        I = mass * r * r * 0.5f;
+    } else {
+        Vec2 mn, mx; col->WorldAABB(mn, mx);
+        float w = mx.x - mn.x, h = mx.y - mn.y;
+        I = mass * (w * w + h * h) / 12.0f;
+    }
+    return I > 1e-8f ? 1.0f / I : 0.0f;
+}
 
 Vec2 ClampVec(const Vec2& v, const Vec2& lo, const Vec2& hi) {
     return {Mathf::Clamp(v.x, lo.x, hi.x), Mathf::Clamp(v.y, lo.y, hi.y)};
@@ -34,6 +57,10 @@ Contact TestBoxBox(const Vec2& ca, const Vec2& ha, const Vec2& cb, const Vec2& h
     c.hit = true;
     if (ox < oy) { c.normal = {d.x < 0 ? -1.0f : 1.0f, 0.0f}; c.penetration = ox; }
     else         { c.normal = {0.0f, d.y < 0 ? -1.0f : 1.0f}; c.penetration = oy; }
+    // Contact point: clamp each center into the other box and split the difference.
+    Vec2 pA = ClampVec(cb, {ca.x - ha.x, ca.y - ha.y}, {ca.x + ha.x, ca.y + ha.y});
+    Vec2 pB = ClampVec(ca, {cb.x - hb.x, cb.y - hb.y}, {cb.x + hb.x, cb.y + hb.y});
+    c.point = (pA + pB) * 0.5f;
     return c;
 }
 
@@ -47,6 +74,7 @@ Contact TestCircleCircle(const Vec2& ca, float ra, const Vec2& cb, float rb) {
     c.hit = true;
     c.normal = dist > Mathf::Epsilon ? d / dist : Vec2{0, 1};
     c.penetration = r - dist;
+    c.point = ca + c.normal * ra;        // on A's surface toward B
     return c;
 }
 
@@ -70,6 +98,7 @@ Contact TestBoxCircle(const Vec2& cBox, const Vec2& hBox, const Vec2& cCir, floa
         if (dx < dy) { c.normal = {(cCir.x < cBox.x) ? -1.0f : 1.0f, 0.0f}; c.penetration = dx + r; }
         else         { c.normal = {0.0f, (cCir.y < cBox.y) ? -1.0f : 1.0f}; c.penetration = dy + r; }
     }
+    c.point = closest;        // closest point on the box surface
     return c;
 }
 
@@ -216,9 +245,22 @@ void Physics2D::Step(Scene& scene, float dt) {
             Vec2 accel = gravity * rb->gravityScale + rb->ConsumeForce() * rb->InvMass();
             rb->velocity += accel * dt;
             if (rb->drag > 0.0f) rb->velocity *= 1.0f / (1.0f + rb->drag * dt);
+            // Angular: apply accumulated torque (scaled by inverse inertia) and damp.
+            if (!rb->freezeRotation) {
+                float invI = InvInertia(rb, rb->gameObject->GetComponent<Collider2D>());
+                rb->angularVelocity += rb->ConsumeTorque() * invI * dt * Mathf::Rad2Deg;
+                if (rb->angularDrag > 0.0f) rb->angularVelocity *= 1.0f / (1.0f + rb->angularDrag * dt);
+            } else {
+                rb->ConsumeTorque();   // discard so it doesn't accumulate while frozen
+            }
         }
         if (rb->bodyType != Rigidbody2D::BodyType::Static) {
             t->localPosition += Vec3{rb->velocity * dt};
+            if (!rb->freezeRotation && rb->angularVelocity != 0.0f) {
+                Vec3 e = t->localRotation.ToEuler();
+                e.z += rb->angularVelocity * dt;
+                t->localRotation = Quat::Euler(e);
+            }
         }
     }
 
@@ -271,40 +313,63 @@ void Physics2D::Step(Scene& scene, float dt) {
                     a->transform->localPosition -= Vec3{correction * ima};
                     b->transform->localPosition += Vec3{correction * imb};
 
-                    // Impulse along the normal.
+                    // Angular terms: lever arms from each body's center to the contact
+                    // point, and inverse inertia. When rotation is locked these are 0,
+                    // so the math collapses to the old linear-only impulse exactly.
+                    float iia = InvInertia(ra, a);
+                    float iib = InvInertia(rb, b);
+                    Vec2 cenA = a->WorldCenter(), cenB = b->WorldCenter();
+                    Vec2 rA = c.point - cenA, rB = c.point - cenB;
+                    auto pointVel = [](const Vec2& v, float wDeg, const Vec2& r) {
+                        float w = wDeg * Mathf::Deg2Rad;            // ω×r in 2D
+                        return v + Vec2{-w * r.y, w * r.x};
+                    };
+                    float rnA = rA.x * c.normal.y - rA.y * c.normal.x;   // cross(r, n)
+                    float rnB = rB.x * c.normal.y - rB.y * c.normal.x;
+                    float denom = imSum + rnA * rnA * iia + rnB * rnB * iib;
+
                     Vec2 va = ra ? ra->velocity : Vec2::Zero;
                     Vec2 vb = rb ? rb->velocity : Vec2::Zero;
-                    float velAlongNormal = Vec2::Dot(vb - va, c.normal);
+                    float wa = ra ? ra->angularVelocity : 0.0f;
+                    float wb = rb ? rb->angularVelocity : 0.0f;
+                    Vec2 rvel = pointVel(vb, wb, rB) - pointVel(va, wa, rA);
+                    float velAlongNormal = Vec2::Dot(rvel, c.normal);
                     float jImp = 0.0f;
-                    if (velAlongNormal < 0.0f) {
+                    if (velAlongNormal < 0.0f && denom > 0.0f) {
                         float e = Mathf::Max(ra ? ra->bounciness : 0.0f,
                                              rb ? rb->bounciness : 0.0f);
-                        jImp = -(1.0f + e) * velAlongNormal / imSum;
+                        jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec2 impulse = c.normal * jImp;
-                        if (ra) ra->velocity -= impulse * ima;
-                        if (rb) rb->velocity += impulse * imb;
+                        if (ra) { ra->velocity -= impulse * ima; ra->angularVelocity -= rnA * jImp * iia * Mathf::Rad2Deg; }
+                        if (rb) { rb->velocity += impulse * imb; rb->angularVelocity += rnB * jImp * iib * Mathf::Rad2Deg; }
                     }
-                    // Coulomb friction on the tangential relative velocity, clamped
-                    // to friction x the normal impulse. With gravity re-pressing each
-                    // step this also gives resting bodies static-like friction, so a
-                    // box thrown along the floor slides to a stop instead of forever.
+                    // Coulomb friction on the tangential relative velocity at the
+                    // contact point, clamped to friction x the normal impulse. With
+                    // gravity re-pressing each step this also gives resting bodies
+                    // static-like friction, and the lever arm makes off-center drag
+                    // spin the body (so a box thrown along the floor tumbles to rest).
                     if (jImp > 0.0f) {
-                        Vec2 rva = ra ? ra->velocity : Vec2::Zero;   // post-normal-impulse
-                        Vec2 rvb = rb ? rb->velocity : Vec2::Zero;
-                        Vec2 rvel = rvb - rva;
-                        Vec2 tang = rvel - c.normal * Vec2::Dot(rvel, c.normal);
+                        wa = ra ? ra->angularVelocity : 0.0f;        // post-normal-impulse
+                        wb = rb ? rb->angularVelocity : 0.0f;
+                        va = ra ? ra->velocity : Vec2::Zero;
+                        vb = rb ? rb->velocity : Vec2::Zero;
+                        Vec2 rv = pointVel(vb, wb, rB) - pointVel(va, wa, rA);
+                        Vec2 tang = rv - c.normal * Vec2::Dot(rv, c.normal);
                         float tlen = tang.Magnitude();
                         if (tlen > 1e-4f) {
                             Vec2 t = tang / tlen;
-                            float jt = -Vec2::Dot(rvel, t) / imSum;
+                            float rtA = rA.x * t.y - rA.y * t.x;
+                            float rtB = rB.x * t.y - rB.y * t.x;
+                            float denomT = imSum + rtA * rtA * iia + rtB * rtB * iib;
+                            float jt = denomT > 0.0f ? -Vec2::Dot(rv, t) / denomT : 0.0f;
                             float fa = ra ? ra->friction : 0.4f;
                             float fb = rb ? rb->friction : 0.4f;
                             float mu = Mathf::Sqrt((fa < 0 ? 0 : fa) * (fb < 0 ? 0 : fb));
                             float maxF = mu * jImp;
                             jt = Mathf::Clamp(jt, -maxF, maxF);
                             Vec2 fimp = t * jt;
-                            if (ra) ra->velocity -= fimp * ima;
-                            if (rb) rb->velocity += fimp * imb;
+                            if (ra) { ra->velocity -= fimp * ima; ra->angularVelocity -= rtA * jt * iia * Mathf::Rad2Deg; }
+                            if (rb) { rb->velocity += fimp * imb; rb->angularVelocity += rtB * jt * iib * Mathf::Rad2Deg; }
                         }
                     }
                 }

@@ -8939,6 +8939,9 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Bounciness", &rb->bounciness, 0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Friction", &rb->friction, 0.01f, 0.0f, 2.0f);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Coulomb friction at contacts (0 = ice). Combined with the other body as sqrt(a*b).");
+            if (ImGui::Checkbox("Freeze Rotation (Z)", &rb->freezeRotation)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = classic no-spin body. Off = torque and off-center hits rotate it (tipping, tumbling, wheels).");
+            if (!rb->freezeRotation) ImGui::DragFloat("Angular Drag", &rb->angularDrag, 0.01f, 0.0f, 10.0f);
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {

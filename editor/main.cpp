@@ -8524,6 +8524,26 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto-play on start##ma", &ma->autoPlay)) ed.dirty = true;
             if (ImGui::Checkbox("Loop##ma", &ma->loop)) ed.dirty = true;
             if (ImGui::DragFloat("Speed##ma", &ma->speed, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+
+            ImGui::SeparatorText("Locomotion (auto idle/walk/run)");
+            if (ImGui::Checkbox("Drive by movement##ma", &ma->driveByMovement)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-switch clips based on how fast this object moves.");
+            if (ma->driveByMovement) {
+                auto clipCombo = [&](const char* label, std::string& target) {
+                    std::vector<std::string> nm = ma->ClipNames();
+                    int cur = 0; for (int i = 0; i < (int)nm.size(); ++i) if (nm[i] == target) cur = i + 1;
+                    std::vector<const char*> items; items.push_back("(none)");
+                    for (auto& n : nm) items.push_back(n.c_str());
+                    if (ImGui::Combo(label, &cur, items.data(), (int)items.size())) {
+                        target = (cur == 0) ? std::string{} : nm[cur - 1]; ed.dirty = true;
+                    }
+                };
+                clipCombo("Idle clip##ma", ma->idleClip);
+                clipCombo("Walk clip##ma", ma->walkClip);
+                clipCombo("Run clip##ma",  ma->runClip);
+                if (ImGui::DragFloat("Walk threshold##ma", &ma->walkThreshold, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Run threshold##ma",  &ma->runThreshold,  0.1f,  0.0f, 50.0f)) ed.dirty = true;
+            }
             ImGui::TextDisabled("%d clip(s)", ma->ClipCount());
             if (ImGui::SmallButton("Remove##ma")) toRemove = ma;
         }

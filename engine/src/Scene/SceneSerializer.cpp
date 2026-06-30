@@ -335,6 +335,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             }
         }
         out << "\n";
+        // Locomotion (auto idle/walk/run) — separate record so it's optional.
+        if (ma->driveByMovement || !ma->idleClip.empty() || !ma->walkClip.empty() || !ma->runClip.empty())
+            out << "  modelanimdrive " << (ma->driveByMovement ? 1 : 0)
+                << " " << ma->walkThreshold << " " << ma->runThreshold
+                << " " << Quote(ma->idleClip) << " " << Quote(ma->walkClip) << " " << Quote(ma->runClip) << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -1686,6 +1691,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         }
                         ma->clips.push_back(std::move(clip));
                     }
+                } else if (field == "modelanimdrive") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int dm = 0; in >> dm >> ma->walkThreshold >> ma->runThreshold;
+                    ma->driveByMovement = (dm != 0);
+                    ma->idleClip = ReadQuoted(in);
+                    ma->walkClip = ReadQuoted(in);
+                    ma->runClip  = ReadQuoted(in);
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         Color e; float spec = 0, shin = 16; int unlit = 0;

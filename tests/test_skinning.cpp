@@ -146,5 +146,40 @@ int main() {
         }
     }
 
+    // ---- Locomotion: ModelAnimator auto-switches idle/walk/run from movement ----
+    {
+        Scene s("loco");
+        GameObject* model = s.CreateGameObject("Model");
+        auto* ma = model->AddComponent<ModelAnimator>();
+        auto mk = [](const char* name) {
+            ModelAnimator::Clip c; c.name = name;
+            ModelAnimator::NodeClip nc; nc.node = "Model";
+            nc.clip.AddKey("scale.x", 0, 1); nc.clip.AddKey("scale.x", 1, 1);
+            c.nodes.push_back(nc); return c;
+        };
+        ma->clips = { mk("idle"), mk("walk"), mk("run") };
+        ma->autoPlay = false;
+        ma->driveByMovement = true;
+        ma->idleClip = "idle"; ma->walkClip = "walk"; ma->runClip = "run";
+        ma->walkThreshold = 0.3f; ma->runThreshold = 3.0f;
+        s.Start();
+
+        // Standing still -> idle.
+        s.Update(0.1f); s.Update(0.1f);
+        CHECK(ma->CurrentName() == "idle");
+
+        // Move slowly (~1 unit/s) -> walk.
+        for (int i = 0; i < 3; ++i) { model->transform->localPosition.x += 0.1f; s.Update(0.1f); }
+        CHECK(ma->CurrentName() == "walk");
+
+        // Move fast (~5 unit/s) -> run.
+        for (int i = 0; i < 3; ++i) { model->transform->localPosition.x += 0.5f; s.Update(0.1f); }
+        CHECK(ma->CurrentName() == "run");
+
+        // Stop -> back to idle.
+        for (int i = 0; i < 3; ++i) s.Update(0.1f);
+        CHECK(ma->CurrentName() == "idle");
+    }
+
     TEST_MAIN_RESULT();
 }

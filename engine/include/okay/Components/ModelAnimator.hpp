@@ -14,8 +14,10 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/Animator.hpp"
 #include "okay/Animation/AnimationClip.hpp"
+#include "okay/Scene/Transform.hpp"
 #include <string>
 #include <vector>
+#include <cmath>
 
 namespace okay {
 
@@ -30,7 +32,29 @@ public:
     float speed    = 1.0f;
     bool  loop     = true;
 
-    void Start() override { if (autoPlay && !clips.empty()) PlayIndex(active); }
+    // ---- Locomotion: auto-switch idle/walk/run from how fast this object moves ----
+    bool        driveByMovement = false;
+    std::string idleClip, walkClip, runClip;   ///< clip names for each state ("" = skip)
+    float       walkThreshold = 0.3f;          ///< speed above which it's "walking"
+    float       runThreshold  = 3.0f;          ///< speed at/above which it's "running"
+
+    void Start() override {
+        if (transform) { m_lastPos = transform->Position(); m_haveLast = true; }
+        if (autoPlay && !clips.empty()) PlayIndex(active);
+    }
+
+    void Update(float dt) override {
+        if (!driveByMovement || dt <= 0.0f || !transform) return;
+        Vec3 p = transform->Position();
+        if (!m_haveLast) { m_lastPos = p; m_haveLast = true; return; }
+        float dx = p.x - m_lastPos.x, dz = p.z - m_lastPos.z;
+        m_lastPos = p;
+        float spd = std::sqrt(dx*dx + dz*dz) / dt;
+        const std::string* want = &idleClip;
+        if (spd >= runThreshold && !runClip.empty())        want = &runClip;
+        else if (spd > walkThreshold && !walkClip.empty())  want = &walkClip;
+        if (!want->empty() && *want != CurrentName()) Play(*want);   // switch only on change
+    }
 
     int ClipCount() const { return (int)clips.size(); }
     std::vector<std::string> ClipNames() const {
@@ -70,6 +94,8 @@ public:
     }
 
 private:
+    Vec3 m_lastPos{0, 0, 0};
+    bool m_haveLast = false;
 };
 
 } // namespace okay

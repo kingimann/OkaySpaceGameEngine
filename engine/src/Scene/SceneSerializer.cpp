@@ -490,7 +490,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (rb->freezeX ? 1 : 0) << " " << (rb->freezeY ? 1 : 0) << " "
             << (rb->freezeZ ? 1 : 0)
             << " " << rb->maxFallSpeed
-            << " " << rb->friction << "\n";   // trailing (back-compatible)
+            << " " << rb->friction                                    // trailing (back-compatible)
+            << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0) << "\n";
     }
     if (auto* j = go->GetComponent<Joint3D>()) {
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
@@ -1889,6 +1890,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rb->freezeX = (fx != 0); rb->freezeY = (fy != 0); rb->freezeZ = (fz != 0);
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->maxFallSpeed;
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->angularDrag;
+                    in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                 } else if (field == "joint3d") {
                     auto* j = go->AddComponent<Joint3D>();
                     int bk = 0, ac = 1;

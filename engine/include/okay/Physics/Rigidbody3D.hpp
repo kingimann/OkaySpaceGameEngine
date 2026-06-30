@@ -33,6 +33,15 @@ public:
     /// Freeze movement on selected world axes (e.g. lock Y for a top-down game).
     bool     freezeX = false, freezeY = false, freezeZ = false;
 
+    // ---- Angular dynamics ----
+    /// Angular velocity in RADIANS per second about each world axis (Unity 3D units).
+    Vec3     angularVelocity = Vec3::Zero;
+    /// Angular damping per second (bleeds off spin like `drag` does for velocity).
+    float    angularDrag = 0.05f;
+    /// Lock rotation. Defaults TRUE so bodies behave exactly as before (no spin)
+    /// until you opt in — uncheck it to let torque and off-center hits rotate the body.
+    bool     freezeRotation = true;
+
     /// True for the frames this body is resting on heightmap Terrain. Set by
     /// Physics3D's terrain ground-follow (heightmap terrain has no polygon
     /// collider, so it produces no collision contacts). Controllers read it as a
@@ -60,6 +69,17 @@ public:
     /// Apply an instantaneous change in momentum (immediate velocity change).
     void AddImpulse(const Vec3& impulse) { velocity = velocity + impulse * InvMass(); }
 
+    /// Apply a torque (continuous, integrated next step, scaled by inverse inertia).
+    void AddTorque(const Vec3& torque) { m_torqueAccum = m_torqueAccum + torque; }
+
+    /// Apply a force at a world point, producing both linear force and a torque from
+    /// the lever arm (Unity's AddForceAtPosition). Off-center hits spin the body.
+    void AddForceAtPosition(const Vec3& force, const Vec3& point) {
+        m_forceAccum = m_forceAccum + force;
+        Vec3 c = transform ? transform->Position() : Vec3::Zero;
+        m_torqueAccum = m_torqueAccum + Vec3::Cross(point - c, force);
+    }
+
     /// Unity-style explosion: shove this body away from `center` with `force`, falling
     /// off linearly to zero at `radius` (bodies past the radius are untouched).
     /// `upModifier` biases the push upward (so debris pops up, not just outward).
@@ -83,8 +103,10 @@ public:
 
 private:
     friend class Physics3D;
-    Vec3 m_forceAccum = Vec3::Zero;
-    Vec3 ConsumeForce() { Vec3 f = m_forceAccum; m_forceAccum = Vec3::Zero; return f; }
+    Vec3 m_forceAccum  = Vec3::Zero;
+    Vec3 m_torqueAccum = Vec3::Zero;
+    Vec3 ConsumeForce()  { Vec3 f = m_forceAccum; m_forceAccum = Vec3::Zero; return f; }
+    Vec3 ConsumeTorque() { Vec3 t = m_torqueAccum; m_torqueAccum = Vec3::Zero; return t; }
 };
 
 } // namespace okay

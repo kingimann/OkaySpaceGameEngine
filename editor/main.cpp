@@ -9068,6 +9068,9 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine(); ImGui::Checkbox("X##fz", &rb->freezeX);
             ImGui::SameLine(); ImGui::Checkbox("Y##fz", &rb->freezeY);
             ImGui::SameLine(); ImGui::Checkbox("Z##fz", &rb->freezeZ);
+            if (ImGui::Checkbox("Freeze Rotation##rb3", &rb->freezeRotation)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = classic no-spin body. Off = torque and off-center hits rotate it (tipping, tumbling).");
+            if (!rb->freezeRotation) ImGui::DragFloat("Angular Drag##rb3", &rb->angularDrag, 0.01f, 0.0f, 10.0f);
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {

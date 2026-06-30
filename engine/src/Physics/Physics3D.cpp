@@ -21,6 +21,7 @@ struct Contact {
     bool  hit = false;
     Vec3  normal{0, 0, 0};   // points from A toward B
     float penetration = 0.0f;
+    Vec3  point{0, 0, 0};    // approximate world contact point (for angular response)
 };
 
 Vec3 ClampVec(const Vec3& v, const Vec3& lo, const Vec3& hi) {
@@ -72,6 +73,7 @@ Contact TestSphereSphere(const Vec3& ca, float ra, const Vec3& cb, float rb) {
     c.hit = true;
     c.normal = dist > Mathf::Epsilon ? d / dist : Vec3{0, 1, 0};
     c.penetration = r - dist;
+    c.point = ca + c.normal * ra;        // on A's surface toward B
     return c;
 }
 
@@ -86,6 +88,10 @@ Contact TestBoxBox(const Vec3& ca, const Vec3& ha, const Vec3& cb, const Vec3& h
     if (ox <= oy && ox <= oz)      { c.normal = {d.x < 0 ? -1.0f : 1.0f, 0, 0}; c.penetration = ox; }
     else if (oy <= ox && oy <= oz) { c.normal = {0, d.y < 0 ? -1.0f : 1.0f, 0}; c.penetration = oy; }
     else                           { c.normal = {0, 0, d.z < 0 ? -1.0f : 1.0f}; c.penetration = oz; }
+    // Contact point: clamp each center into the other box and split the difference.
+    Vec3 pA = ClampVec(cb, ca - ha, ca + ha);
+    Vec3 pB = ClampVec(ca, cb - hb, cb + hb);
+    c.point = (pA + pB) * 0.5f;
     return c;
 }
 
@@ -111,6 +117,7 @@ Contact TestBoxSphere(const Vec3& cBox, const Vec3& hBox, const Vec3& cSph, floa
         else if (dy <= dx && dy <= dz) { c.normal = {0, cSph.y < cBox.y ? -1.0f : 1.0f, 0}; c.penetration = dy + r; }
         else                           { c.normal = {0, 0, cSph.z < cBox.z ? -1.0f : 1.0f}; c.penetration = dz + r; }
     }
+    c.point = closest;        // closest point on the box surface
     return c;
 }
 
@@ -178,6 +185,24 @@ Contact TestColliders(Collider3D* a, Collider3D* b) {
     return TestSphereSphere(ac, ar, bc, br);
 }
 
+// Inverse moment of inertia about the center, as an isotropic scalar (exact for
+// spheres; a good stable approximation for boxes/capsules). 0 when rotation is
+// locked, mass is infinite, or there's no collider to size the inertia from.
+float InvInertia(Rigidbody3D* rb, Collider3D* col) {
+    if (!rb || rb->freezeRotation || !col) return 0.0f;
+    if (rb->InvMass() <= 0.0f) return 0.0f;
+    float mass = rb->mass, I;
+    if (col->shape() == Collider3D::Shape::Sphere) {
+        float r = static_cast<SphereCollider3D*>(col)->WorldRadius();
+        I = 0.4f * mass * r * r;
+    } else {
+        Vec3 mn, mx; col->WorldAABB(mn, mx);
+        float w = mx.x - mn.x, h = mx.y - mn.y, d = mx.z - mn.z;
+        I = mass * (w * w + h * h + d * d) / 12.0f;   // isotropic box approximation
+    }
+    return I > 1e-8f ? 1.0f / I : 0.0f;
+}
+
 void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision3D&),
                        const Collision3D& info) {
     for (Component* c : go->GetComponents<Component>()) (c->*fn)(info);
@@ -207,8 +232,27 @@ void Physics3D::Step(Scene& scene, float dt) {
         if (rb->freezeX) rb->velocity.x = 0.0f;
         if (rb->freezeY) rb->velocity.y = 0.0f;
         if (rb->freezeZ) rb->velocity.z = 0.0f;
-        if (rb->bodyType != Rigidbody3D::BodyType::Static)
+        // Angular: apply accumulated torque (scaled by inverse inertia) and damp.
+        if (rb->bodyType == Rigidbody3D::BodyType::Dynamic && !rb->freezeRotation) {
+            float invI = InvInertia(rb, rb->gameObject->GetComponent<Collider3D>());
+            rb->angularVelocity = rb->angularVelocity + rb->ConsumeTorque() * (invI * dt);
+            if (rb->angularDrag > 0.0f) rb->angularVelocity = rb->angularVelocity * (1.0f / (1.0f + rb->angularDrag * dt));
+        } else {
+            rb->ConsumeTorque();   // discard so it doesn't accumulate while frozen
+        }
+        if (rb->bodyType != Rigidbody3D::BodyType::Static) {
             t->localPosition = t->localPosition + rb->velocity * dt;
+            // Integrate orientation: q += 0.5 * (ω as quat) * q * dt, renormalized.
+            if (!rb->freezeRotation && rb->angularVelocity.SqrMagnitude() > 1e-12f) {
+                const Vec3& w = rb->angularVelocity;
+                Quat q = t->localRotation;
+                Quat wq{w.x, w.y, w.z, 0.0f};
+                Quat dq = wq * q;
+                float h = 0.5f * dt;
+                t->localRotation = Quat{q.x + dq.x * h, q.y + dq.y * h,
+                                        q.z + dq.z * h, q.w + dq.w * h}.Normalized();
+            }
+        }
     }
 
     // 2) Broad + narrow phase over every collider pair.
@@ -261,39 +305,59 @@ void Physics3D::Step(Scene& scene, float dt) {
                     a->transform->localPosition = a->transform->localPosition - correction * ima;
                     b->transform->localPosition = b->transform->localPosition + correction * imb;
 
+                    // Angular terms: lever arms from each body's center to the contact
+                    // point and inverse inertia. When rotation is locked these are 0, so
+                    // the math collapses to the old linear-only impulse exactly.
+                    float iia = InvInertia(ra, a);
+                    float iib = InvInertia(rb, b);
+                    Vec3 cenA = a->WorldCenter(), cenB = b->WorldCenter();
+                    Vec3 rA = c.point - cenA, rB = c.point - cenB;
+                    auto pointVel = [](const Vec3& v, const Vec3& w, const Vec3& r) {
+                        return v + Vec3::Cross(w, r);
+                    };
+                    Vec3 wa0 = ra ? ra->angularVelocity : Vec3::Zero;
+                    Vec3 wb0 = rb ? rb->angularVelocity : Vec3::Zero;
                     Vec3 va = ra ? ra->velocity : Vec3::Zero;
                     Vec3 vb = rb ? rb->velocity : Vec3::Zero;
-                    float velAlongNormal = Vec3::Dot(vb - va, c.normal);
+                    Vec3 rvel = pointVel(vb, wb0, rB) - pointVel(va, wa0, rA);
+                    float velAlongNormal = Vec3::Dot(rvel, c.normal);
+                    // Effective mass along n includes the angular term invI*|r×n|².
+                    Vec3 rnA = Vec3::Cross(rA, c.normal), rnB = Vec3::Cross(rB, c.normal);
+                    float denom = imSum + rnA.SqrMagnitude() * iia + rnB.SqrMagnitude() * iib;
                     float jImp = 0.0f;
-                    if (velAlongNormal < 0.0f) {
+                    if (velAlongNormal < 0.0f && denom > 0.0f) {
                         float e = Mathf::Max(ra ? ra->bounciness : 0.0f,
                                              rb ? rb->bounciness : 0.0f);
-                        jImp = -(1.0f + e) * velAlongNormal / imSum;
+                        jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec3 impulse = c.normal * jImp;
-                        if (ra) ra->velocity = ra->velocity - impulse * ima;
-                        if (rb) rb->velocity = rb->velocity + impulse * imb;
+                        if (ra) { ra->velocity = ra->velocity - impulse * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
+                        if (rb) { rb->velocity = rb->velocity + impulse * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, impulse) * iib; }
                     }
-                    // Coulomb friction: damp the tangential relative velocity, clamped to
-                    // friction x the normal impulse. With gravity re-pressing each step
-                    // this also gives resting bodies static-like friction (they stop /
-                    // stack / hold on slopes instead of sliding forever).
+                    // Coulomb friction at the contact point, clamped to friction x the
+                    // normal impulse. With gravity re-pressing each step this also gives
+                    // resting bodies static-like friction (they stop / stack / hold on
+                    // slopes), and the lever arm makes off-center drag spin the body.
                     if (jImp > 0.0f) {
-                        Vec3 rva = ra ? ra->velocity : Vec3::Zero;   // post-normal-impulse
-                        Vec3 rvb = rb ? rb->velocity : Vec3::Zero;
-                        Vec3 rvel = rvb - rva;
-                        Vec3 tang = rvel - c.normal * Vec3::Dot(rvel, c.normal);
+                        Vec3 wa = ra ? ra->angularVelocity : Vec3::Zero;   // post-normal-impulse
+                        Vec3 wb = rb ? rb->angularVelocity : Vec3::Zero;
+                        va = ra ? ra->velocity : Vec3::Zero;
+                        vb = rb ? rb->velocity : Vec3::Zero;
+                        Vec3 rv = pointVel(vb, wb, rB) - pointVel(va, wa, rA);
+                        Vec3 tang = rv - c.normal * Vec3::Dot(rv, c.normal);
                         float tlen = std::sqrt(Vec3::Dot(tang, tang));
                         if (tlen > 1e-4f) {
                             Vec3 t = tang * (1.0f / tlen);
-                            float jt = -Vec3::Dot(rvel, t) / imSum;
+                            Vec3 rtA = Vec3::Cross(rA, t), rtB = Vec3::Cross(rB, t);
+                            float denomT = imSum + rtA.SqrMagnitude() * iia + rtB.SqrMagnitude() * iib;
+                            float jt = denomT > 0.0f ? -Vec3::Dot(rv, t) / denomT : 0.0f;
                             float fa = ra ? ra->friction : 0.6f;
                             float fb = rb ? rb->friction : 0.6f;
                             float mu = std::sqrt((fa < 0 ? 0 : fa) * (fb < 0 ? 0 : fb));
                             float maxF = mu * jImp;
                             if (jt > maxF) jt = maxF; else if (jt < -maxF) jt = -maxF;
                             Vec3 fimp = t * jt;
-                            if (ra) ra->velocity = ra->velocity - fimp * ima;
-                            if (rb) rb->velocity = rb->velocity + fimp * imb;
+                            if (ra) { ra->velocity = ra->velocity - fimp * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, fimp) * iia; }
+                            if (rb) { rb->velocity = rb->velocity + fimp * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, fimp) * iib; }
                         }
                     }
                 }

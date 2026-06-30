@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <cstdint>
 
 namespace okay {
 
@@ -262,6 +263,47 @@ public:
     }
     /// The clip currently playing, or "" — handy for state checks.
     const std::string& PlayingClip() const { return m_activeClipName; }
+    // ---- Animation layers (play a clip on PART of the body) ----
+    // Overlay a clip on a chosen set of bones on top of whatever the body is doing —
+    // e.g. wave with the upper body while the legs keep walking, or aim the arms while
+    // running. The masked bones take the layer clip's pose; the rest keep the base
+    // animation. Runs on its own clock and loops; call StopLayer to clear it.
+    /// Play `clip` on the bones whose bit is set in `boneMask` (bit i = bone i). Returns
+    /// false if there's no such clip. Pass UpperBodyMask()/ArmsMask() or build your own.
+    /// `additive` ADDS the layer onto the base pose (Unity additive layers — good for
+    /// aim offsets / recoil) instead of replacing it; `weight` (0..1) blends the layer in.
+    bool PlayLayer(const std::string& clip, std::uint32_t boneMask,
+                   bool additive = false, float weight = 1.0f);
+    void StopLayer();
+    void SetLayerWeight(float w) { m_layerWeight = w < 0.0f ? 0.0f : (w > 1.0f ? 1.0f : w); }
+    float LayerWeight() const { return m_layerWeight; }
+    bool IsLayering() const { return m_layerClip != nullptr; }
+    const std::string& LayerClip() const { return m_layerName; }
+
+    /// Mirror a pose left<->right in place: swaps the L/R limb bones and flips the
+    /// yaw/roll of the spine so a right-handed pose becomes its left-handed twin
+    /// (Blender's symmetrize / "paste flipped"). Author one side, mirror for the other.
+    static void MirrorPose(std::vector<Vec3>& pose);
+    /// Handy bone masks for layering.
+    static std::uint32_t ArmsMask();        ///< both upper arms, forearms, hands
+    static std::uint32_t UpperBodyMask();   ///< torso, head, arms (everything above the hips)
+    static std::uint32_t BoneBit(int bone) { return (bone >= 0 && bone < 32) ? (1u << bone) : 0u; }
+
+    // ---- 1D blend tree (Unity-style) ----
+    // Blend smoothly between clips by a single parameter — the classic locomotion setup:
+    // idle at speed 0, walk at ~2, run at ~5; drive the parameter from the controller's
+    // speed and the body morphs between them. Clips play on a shared, looping clock so
+    // their cycles stay in phase. A blend tree overrides the state/`anim` base pose; a
+    // manual PlayClip still takes priority, and layers still overlay on top.
+    struct BlendStop { float at; std::string clip; };
+    /// Define the tree: pairs of (parameter value, clip name), any order (sorted here).
+    void SetBlendTree(const std::vector<BlendStop>& stops);
+    /// Set the blend parameter (e.g. the player's speed) — call each frame.
+    void SetBlendParam(float v) { m_blendParam = v; }
+    void ClearBlendTree() { m_blendTreeOn = false; m_blendStops.clear(); }
+    bool HasBlendTree() const { return m_blendTreeOn; }
+    float BlendParam() const { return m_blendParam; }
+
     /// Resolve a short bone token ("hips","torso","head","l_uparm","l_fore",
     /// "l_hand","r_uparm","r_fore","r_hand","l_thigh","l_shin","l_foot","r_thigh",
     /// "r_shin","r_foot") to a rig index, or -1. Case-insensitive.
@@ -319,6 +361,20 @@ private:
     std::string m_activeClipName;
     float m_clipTime = 0.0f;
     bool m_stateDriven = false;          // a state binding (not a manual PlayClip) owns the clip
+    const AnimClip* m_layerClip = nullptr;   // overlay clip (or null)
+    std::string m_layerName;
+    float m_layerTime = 0.0f;
+    std::uint32_t m_layerMask = 0;       // which bones the layer overrides (bit i = bone i)
+    bool  m_layerAdditive = false;       // add the layer onto the base instead of replacing
+    float m_layerWeight = 1.0f;          // 0..1 blend of the layer
+    void AdvanceLayer(float dt);         // step the layer's clock (loops)
+    void ApplyLayer(std::vector<Vec3>& pose) const;   // overlay the layer onto masked bones
+    std::vector<BlendStop> m_blendStops; // 1D blend tree stops, sorted by `at`
+    float m_blendParam = 0.0f;           // the driving parameter (e.g. speed)
+    float m_blendTreeTime = 0.0f;        // shared looping clock for the tree's clips
+    bool  m_blendTreeOn = false;
+    void AdvanceBlendTree(float dt);
+    std::vector<Vec3> SampleBlendTree() const;   // blended pose at the current parameter
     void SyncStateClips();               // auto-play the clip bound to the current `anim` state
     std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
     float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)

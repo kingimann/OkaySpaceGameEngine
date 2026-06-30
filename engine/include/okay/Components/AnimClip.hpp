@@ -34,14 +34,32 @@ struct AnimEvent {
 ///   key 0.4
 ///     r_uparm 0 0 -150
 ///     r_fore  0 0 -30
+/// How a clip eases between keyframes:
+///  - Linear: straight component-wise lerp (the default).
+///  - Smooth: ease in/out (smoothstep) for a softer, more natural motion.
+///  - Step:   hold each key until the next (no interpolation — snappy / robotic).
+enum class AnimInterp { Linear, Smooth, Step };
+
 struct AnimClip {
     std::string name;
     bool loop = true;
+    AnimInterp interp = AnimInterp::Linear;   ///< easing between keys
+    float speed = 1.0f;                        ///< playback rate multiplier (2 = twice as fast)
     std::vector<AnimKey> keys;     // kept in the order written (author them in time order)
     std::vector<AnimEvent> events; // markers fired as the clip plays (footsteps, hit windows)
 
     /// Length of the clip (time of the last keyframe), or 0 if empty.
     float Duration() const { return keys.empty() ? 0.0f : keys.back().time; }
+
+    /// Shape a 0..1 interpolation fraction by this clip's easing mode.
+    float Ease(float u) const {
+        if (u < 0.0f) u = 0.0f; else if (u > 1.0f) u = 1.0f;
+        switch (interp) {
+            case AnimInterp::Smooth: return u * u * (3.0f - 2.0f * u);
+            case AnimInterp::Step:   return 0.0f;   // hold the earlier key until the next
+            case AnimInterp::Linear: default: return u;
+        }
+    }
 
     /// Register an event marker at `time` seconds (kept sorted by time).
     void AddEvent(float time, const std::string& name) {

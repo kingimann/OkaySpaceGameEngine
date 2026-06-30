@@ -14,6 +14,7 @@ std::vector<Vec3> AnimClip::Sample(float t) const {
         if (t < a.time || t > b.time) continue;
         float span = b.time - a.time;
         float u = span > 1e-6f ? (t - a.time) / span : 0.0f;
+        u = Ease(u);   // shape by the clip's easing mode (linear / smooth / step)
         std::size_t n = a.pose.size() > b.pose.size() ? a.pose.size() : b.pose.size();
         std::vector<Vec3> out(n, Vec3{0, 0, 0});
         for (std::size_t k = 0; k < n; ++k) {
@@ -49,9 +50,26 @@ std::vector<AnimClip> AnimClip::ParseAll(const std::string& text,
         if (tok == "clip") {
             AnimClip c;
             if (!(ls >> c.name)) return fail("clip needs a name");
-            std::string mode;
-            if (ls >> mode) c.loop = (mode != "once");
+            // Optional trailing words in any order: loop|once, linear|smooth|step.
+            std::string w;
+            while (ls >> w) {
+                if (w == "once") c.loop = false;
+                else if (w == "loop") c.loop = true;
+                else if (w == "smooth") c.interp = AnimInterp::Smooth;
+                else if (w == "step")   c.interp = AnimInterp::Step;
+                else if (w == "linear") c.interp = AnimInterp::Linear;
+            }
             clips.push_back(std::move(c));
+        } else if (tok == "speed") {
+            if (clips.empty()) return fail("speed before any clip");
+            float s = 1.0f;
+            if (!(ls >> s)) return fail("speed needs a value");
+            clips.back().speed = (s > 1e-4f) ? s : 1.0f;
+        } else if (tok == "event") {
+            if (clips.empty()) return fail("event before any clip");
+            float et = 0.0f; std::string en;
+            if (!(ls >> et >> en)) return fail("event needs a time and a name");
+            clips.back().AddEvent(et, en);   // footstep / hit / spawn marker (fires as the clip plays)
         } else if (tok == "key") {
             if (clips.empty()) return fail("key before any clip");
             AnimKey k;

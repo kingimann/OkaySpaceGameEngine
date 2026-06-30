@@ -1990,6 +1990,37 @@ struct OkayScriptVM::Impl {
             Character* c = charSelf();
             return Value{(c && !a.empty()) ? (float)c->LoadClips(a[0].AsString()) : 0.0f};
         };
+        // Partial-body layer: play_layer("wave", "arms"|"upper"|<bone>); stop_layer().
+        b["play_layer"] = [charSelf](std::vector<Value>& a) {
+            Character* c = charSelf();
+            if (!c || a.empty()) return Value{0.0f};
+            std::string m = a.size() > 1 ? a[1].AsString() : "arms";
+            std::uint32_t mask = (m == "upper" || m == "upper_body") ? Character::UpperBodyMask()
+                               : (m == "arms" || m.empty())          ? Character::ArmsMask()
+                               : Character::BoneBit(Character::BoneIndex(m));
+            if (mask == 0) mask = Character::ArmsMask();
+            return Value{c->PlayLayer(a[0].AsString(), mask) ? 1.0f : 0.0f};
+        };
+        b["stop_layer"] = [charSelf](std::vector<Value>&) { if (Character* c = charSelf()) c->StopLayer(); return Value{}; };
+        // 1D blend tree: blend_tree("idle",0, "walk",2, "run",5); blend_param(speed).
+        b["blend_tree"] = [charSelf](std::vector<Value>& a) {
+            Character* c = charSelf();
+            if (!c) return Value{0.0f};
+            std::vector<Character::BlendStop> stops;
+            for (std::size_t i = 0; i + 1 < a.size(); i += 2)
+                stops.push_back({a[i + 1].AsFloat(), a[i].AsString()});
+            c->SetBlendTree(stops);
+            return Value{(float)stops.size()};
+        };
+        b["blend_param"] = [charSelf](std::vector<Value>& a) {
+            if (Character* c = charSelf(); c && !a.empty()) c->SetBlendParam(a[0].AsFloat());
+            return Value{};
+        };
+        b["clear_blend_tree"] = [charSelf](std::vector<Value>&) { if (Character* c = charSelf()) c->ClearBlendTree(); return Value{}; };
+        b["clip_speed"] = [charSelf](std::vector<Value>& a) {
+            if (Character* c = charSelf(); c && !a.empty()) c->animSpeed = a[0].AsFloat();
+            return Value{};
+        };
         // Set/get the built-in animation index (0 none,1 idle,2 walk,3 run,...).
         b["set_anim"] = [charSelf](std::vector<Value>& a) {
             if (Character* c = charSelf(); c && !a.empty()) c->anim = (int)a[0].AsFloat();

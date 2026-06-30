@@ -454,7 +454,7 @@ void Character::FireClipEvents(float from, float to) {
 void Character::AdvanceClip(float dt) {
     if (!m_activeClip) return;
     float from = m_clipTime;
-    m_clipTime += dt * animSpeed;
+    m_clipTime += dt * animSpeed * m_activeClip->speed;   // per-clip playback rate
     FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
     float dur = m_activeClip->Duration();
     if (dur > 0.0f) {
@@ -475,6 +475,7 @@ void Character::SyncStateClips() {
     // No-code: when the user has bound a clip to a movement state, make that clip the
     // active one (so YOUR animation plays instead of the built-in for that state).
     if (clipIdle.empty() && clipWalk.empty() && clipRun.empty()) return;
+    if (m_blendTreeOn) return;    // the locomotion blend tree owns the base pose
     if (m_editorPosing) return;   // editor preview owns the pose
     const std::string* want = nullptr;
     if      (anim == 1 && !clipIdle.empty()) want = &clipIdle;
@@ -498,6 +499,8 @@ void Character::Update(float dt) {
         m_blendT += (blendTime > 1e-4f ? dt / blendTime : 1.0f);
         if (m_blendT > 1.0f) m_blendT = 1.0f;
     }
+    AdvanceLayer(dt);   // tick the partial-body layer clip (if any), every path below uses it
+    AdvanceBlendTree(dt);   // tick the locomotion blend tree's shared clock
     // Separate-parts rig: animate the part transforms instead of baking one mesh.
     if (separateParts) {
         if (!m_partsBuilt) BuildParts();
@@ -749,15 +752,125 @@ void Character::BuildParts() {
 
 std::vector<Vec3> Character::CurrentSourcePose() const {
     std::vector<Vec3> p;
-    if (m_editorPosing)    { p = m_editorPose; p.resize(B_COUNT, Vec3{0, 0, 0}); }
-    else if (m_activeClip) { p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); }
-    else                   p = PoseAt(animTime);
+    if (m_editorPosing)                       { p = m_editorPose; p.resize(B_COUNT, Vec3{0, 0, 0}); }
+    else if (m_activeClip && !m_stateDriven)  { p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); }  // manual clip wins
+    else if (m_blendTreeOn)                   p = SampleBlendTree();          // locomotion blend tree
+    else if (m_activeClip)                    { p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); }  // state clip
+    else                                      p = PoseAt(animTime);
     // Crossfade from the pose captured at the last clip switch (smoothstep weight).
     if (m_blendT < 1.0f && m_blendFrom.size() == p.size() && !p.empty()) {
         float w = m_blendT * m_blendT * (3.0f - 2.0f * m_blendT);
         for (std::size_t i = 0; i < p.size(); ++i) p[i] = m_blendFrom[i] + (p[i] - m_blendFrom[i]) * w;
     }
+    ApplyLayer(p);   // overlay a partial-body layer clip (e.g. wave while walking) on top
     return p;
+}
+
+void Character::ApplyLayer(std::vector<Vec3>& pose) const {
+    if (!m_layerClip || m_layerMask == 0 || m_layerWeight <= 0.0f) return;
+    std::vector<Vec3> lp = m_layerClip->Sample(m_layerTime);
+    if (lp.empty()) return;
+    if ((int)pose.size() < B_COUNT) pose.resize(B_COUNT, Vec3{0, 0, 0});
+    float w = m_layerWeight;
+    for (int b = 0; b < B_COUNT && b < (int)lp.size(); ++b) {
+        if (!(m_layerMask & (1u << b))) continue;
+        if (m_layerAdditive) pose[b] = pose[b] + lp[b] * w;            // add (aim offset / recoil)
+        else                 pose[b] = pose[b] + (lp[b] - pose[b]) * w; // weighted override
+    }
+}
+
+void Character::AdvanceLayer(float dt) {
+    if (!m_layerClip) return;
+    m_layerTime += dt * animSpeed * m_layerClip->speed;
+    float dur = m_layerClip->Duration();
+    if (dur > 0.0f) {
+        if (m_layerClip->loop) m_layerTime = std::fmod(m_layerTime, dur);
+        else if (m_layerTime > dur) m_layerTime = dur;   // hold the final pose
+    }
+}
+
+bool Character::PlayLayer(const std::string& clip, std::uint32_t boneMask, bool additive, float weight) {
+    auto it = m_clips.find(clip);
+    if (it == m_clips.end()) return false;
+    m_layerClip = &it->second;
+    m_layerName = clip;
+    m_layerTime = 0.0f;
+    m_layerMask = boneMask;
+    m_layerAdditive = additive;
+    m_layerWeight = weight < 0.0f ? 0.0f : (weight > 1.0f ? 1.0f : weight);
+    return true;
+}
+
+void Character::MirrorPose(std::vector<Vec3>& pose) {
+    if ((int)pose.size() < B_COUNT) pose.resize(B_COUNT, Vec3{0, 0, 0});
+    // Swap the symmetric limb bones (and flip their yaw/roll so the motion mirrors).
+    const int pairs[][2] = {
+        {B_LUPARM, B_RUPARM}, {B_LFORE, B_RFORE}, {B_LHAND, B_RHAND},
+        {B_LTHIGH, B_RTHIGH}, {B_LSHIN, B_RSHIN}, {B_LFOOT, B_RFOOT},
+    };
+    for (auto& pr : pairs) {
+        Vec3 l = pose[pr[0]], r = pose[pr[1]];
+        // mirror across the body's sagittal plane: keep pitch (x), flip yaw (y) & roll (z)
+        pose[pr[0]] = Vec3{r.x, -r.y, -r.z};
+        pose[pr[1]] = Vec3{l.x, -l.y, -l.z};
+    }
+    // Centre bones just flip yaw/roll in place.
+    for (int b : {B_HIPS, B_TORSO, B_HEAD}) pose[b] = Vec3{pose[b].x, -pose[b].y, -pose[b].z};
+}
+
+void Character::StopLayer() {
+    m_layerClip = nullptr;
+    m_layerName.clear();
+    m_layerTime = 0.0f;
+    m_layerMask = 0;
+}
+
+void Character::SetBlendTree(const std::vector<BlendStop>& stops) {
+    m_blendStops = stops;
+    std::sort(m_blendStops.begin(), m_blendStops.end(),
+              [](const BlendStop& a, const BlendStop& b) { return a.at < b.at; });
+    m_blendTreeOn = !m_blendStops.empty();
+    m_blendTreeTime = 0.0f;
+}
+
+void Character::AdvanceBlendTree(float dt) {
+    if (m_blendTreeOn) m_blendTreeTime += dt * animSpeed;
+}
+
+std::vector<Vec3> Character::SampleBlendTree() const {
+    // Sample one clip at the shared (looping) phase.
+    auto sampleClip = [&](const std::string& name) -> std::vector<Vec3> {
+        auto it = m_clips.find(name);
+        if (it == m_clips.end()) return std::vector<Vec3>(B_COUNT, Vec3{0, 0, 0});
+        float dur = it->second.Duration();
+        float t = dur > 0.0f ? std::fmod(m_blendTreeTime, dur) : 0.0f;
+        std::vector<Vec3> p = it->second.Sample(t);
+        p.resize(B_COUNT, Vec3{0, 0, 0});
+        return p;
+    };
+    if (m_blendStops.empty()) return std::vector<Vec3>(B_COUNT, Vec3{0, 0, 0});
+    if (m_blendParam <= m_blendStops.front().at) return sampleClip(m_blendStops.front().clip);
+    if (m_blendParam >= m_blendStops.back().at)  return sampleClip(m_blendStops.back().clip);
+    for (std::size_t i = 0; i + 1 < m_blendStops.size(); ++i) {
+        const BlendStop& a = m_blendStops[i];
+        const BlendStop& b = m_blendStops[i + 1];
+        if (m_blendParam < a.at || m_blendParam > b.at) continue;
+        float span = b.at - a.at;
+        float w = span > 1e-6f ? (m_blendParam - a.at) / span : 0.0f;
+        std::vector<Vec3> pa = sampleClip(a.clip), pb = sampleClip(b.clip);
+        std::vector<Vec3> out(B_COUNT, Vec3{0, 0, 0});
+        for (int k = 0; k < B_COUNT; ++k) out[k] = pa[k] + (pb[k] - pa[k]) * w;
+        return out;
+    }
+    return sampleClip(m_blendStops.back().clip);
+}
+
+std::uint32_t Character::ArmsMask() {
+    return BoneBit(B_LUPARM) | BoneBit(B_LFORE) | BoneBit(B_LHAND) |
+           BoneBit(B_RUPARM) | BoneBit(B_RFORE) | BoneBit(B_RHAND);
+}
+std::uint32_t Character::UpperBodyMask() {
+    return ArmsMask() | BoneBit(B_TORSO) | BoneBit(B_HEAD);
 }
 std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
 

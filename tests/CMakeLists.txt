@@ -581,3 +581,7 @@ add_test(NAME mp_controllers COMMAND test_mp_controllers)
 add_executable(test_net_player_spawn test_net_player_spawn.cpp)
 target_link_libraries(test_net_player_spawn PRIVATE okay::engine)
 add_test(NAME net_player_spawn COMMAND test_net_player_spawn)
+
+add_executable(test_anim_layers test_anim_layers.cpp)
+target_link_libraries(test_anim_layers PRIVATE okay::engine)
+add_test(NAME anim_layers COMMAND test_anim_layers)

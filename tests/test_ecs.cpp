@@ -195,5 +195,49 @@ int main() {
         server->Stop(); client->Stop();
     }
 
+    // ---- SceneBridge: ECS entities become GameObjects that render/update ----
+    {
+        Scene scene("bridged");
+        NetWorld nw; nw.replicate<EcsTransform>(1);   // same struct drives net + render
+        int created = 0;
+        SceneBridge bridge(nw.world, scene, [&](Scene& s, Entity) {
+            ++created;
+            return s.CreateGameObject("Unit");        // a real game would add a MeshRenderer here
+        });
+
+        Entity a = nw.world.create();
+        EcsTransform ta; ta.position = {2, 0, -3};
+        nw.world.add<EcsTransform>(a, ta);
+        Entity b = nw.world.create();
+        nw.world.add<EcsTransform>(b, {});
+
+        bridge.sync();
+        CHECK(created == 2 && bridge.mappedCount() == 2);
+        GameObject* goA = bridge.gameObjectFor(a);
+        CHECK(goA && std::fabs(goA->transform->Position().x - 2.0f) < 1e-5f
+                  && std::fabs(goA->transform->Position().z + 3.0f) < 1e-5f);
+
+        // Move the entity; sync pushes the new transform onto the GameObject.
+        nw.world.get<EcsTransform>(a)->position = {5, 1, 0};
+        bridge.sync();
+        CHECK(created == 2);                            // no new GameObject, just updated
+        CHECK(std::fabs(bridge.gameObjectFor(a)->transform->Position().x - 5.0f) < 1e-5f);
+
+        // Despawn the entity; sync drops its GameObject mapping.
+        nw.world.destroy(b);
+        bridge.sync();
+        CHECK(bridge.mappedCount() == 1 && bridge.gameObjectFor(b) == nullptr);
+
+        // The whole pipeline: a snapshot from elsewhere, applied + bridged, renders.
+        NetWorld src; src.replicate<EcsTransform>(1);
+        Entity s1 = src.world.create();
+        EcsTransform st; st.position = {9, 9, 9};
+        src.world.add<EcsTransform>(s1, st);
+        nw.apply(src.snapshot());                      // replaces nw's world with src's
+        bridge.sync();
+        CHECK(bridge.gameObjectFor(s1) != nullptr);
+        CHECK(std::fabs(bridge.gameObjectFor(s1)->transform->Position().y - 9.0f) < 1e-5f);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -571,6 +571,8 @@ void Physics3D::Step(Scene& scene, float dt) {
         if (!j->initialized) {
             j->pinOffset = pa - pb;
             j->restLen = j->autoConfigure ? std::sqrt(Vec3::Dot(pa - pb, pa - pb)) : j->distance;
+            j->hingeLever = pb - pa;                     // world lever COM_A -> pivot, at init
+            j->refRot = ta->localRotation;
             j->initialized = true;
         }
         float imA = ra->InvMass();
@@ -586,6 +588,40 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (tb && rbB) tb->localPosition = tb->localPosition - err * (imB / imSum);
             ra->velocity = rbB ? rbB->velocity : Vec3::Zero;   // weld: follow B (anchor -> freeze)
             if (j->breakable && std::sqrt(Vec3::Dot(err, err)) > j->breakForce) j->broken = true;
+        } else if (m == Joint3D::Mode::Hinge) {
+            // Revolute joint: pin a material point of A to the pivot and lock rotation
+            // to `axis`, free to spin about it. (B supplies the pivot reference.)
+            if (imA <= 0.0f) continue;
+            Quat qDelta = ta->localRotation * j->refRot.Inverse();
+            Vec3 rA = qDelta * j->hingeLever;            // lever rotated with the body
+            Vec3 anchorWorld = pa + rA;
+            float iiA = InvInertia(ra, ra->gameObject->GetComponent<Collider3D>());
+            Vec3 axis = j->axis.Normalized();
+            Vec3 vB = rbB ? rbB->velocity : Vec3::Zero;
+
+            // 1) Point velocity constraint: cancel A's anchor-point velocity (vs B).
+            // K = (imA + iiA|rA|²)I - iiA (rA⊗rA); inverted via Sherman-Morrison.
+            Vec3 vAnchor = ra->velocity + Vec3::Cross(ra->angularVelocity, rA) - vB;
+            float a = imA + iiA * rA.SqrMagnitude();
+            if (a > 1e-9f) {
+                Vec3 P = (vAnchor + rA * (iiA / imA * Vec3::Dot(rA, vAnchor))) * (-1.0f / a);
+                ra->velocity = ra->velocity + P * imA;
+                ra->angularVelocity = ra->angularVelocity + Vec3::Cross(rA, P) * iiA;
+            }
+            // 2) Axis lock: keep only the spin component along the hinge axis.
+            Vec3 w = ra->angularVelocity;
+            ra->angularVelocity = axis * Vec3::Dot(w, axis);
+            // 3) Motor: drive the spin about the axis toward motorSpeed.
+            if (j->useMotor && iiA > 0.0f) {
+                float cur = Vec3::Dot(ra->angularVelocity, axis);
+                float Cdot = cur - j->motorSpeed * Mathf::Deg2Rad;
+                float imp = Mathf::Clamp(-Cdot / iiA, -j->maxMotorTorque * dt, j->maxMotorTorque * dt);
+                ra->angularVelocity = ra->angularVelocity + axis * (imp * iiA);
+            }
+            // 4) Positional correction: pull A's anchor point back onto the pivot.
+            Vec3 Cpos = anchorWorld - pb;
+            ta->localPosition = ta->localPosition - Cpos;
+            if (j->breakable && std::sqrt(Vec3::Dot(Cpos, Cpos)) > j->breakForce) j->broken = true;
         } else {
             Vec3 d = pb - pa; float len = std::sqrt(Vec3::Dot(d, d));
             Vec3 n = len > 1e-5f ? d * (1.0f / len) : Vec3{0, 1, 0};

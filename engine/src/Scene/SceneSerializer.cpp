@@ -498,7 +498,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << j->anchor.x << " " << j->anchor.y << " " << j->anchor.z
             << " " << j->distance << " " << (j->autoConfigure ? 1 : 0)
             << " " << j->spring << " " << j->damper
-            << " " << (j->breakable ? 1 : 0) << " " << j->breakForce << "\n";
+            << " " << (j->breakable ? 1 : 0) << " " << j->breakForce
+            << " " << j->axis.x << " " << j->axis.y << " " << j->axis.z     // hinge (trailing)
+            << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque << "\n";
     }
     if (auto* j = go->GetComponent<Joint2D>()) {
         out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)
@@ -1902,6 +1904,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> j->anchor.x >> j->anchor.y >> j->anchor.z
                        >> j->distance >> ac >> j->spring >> j->damper >> bk >> j->breakForce;
                     j->autoConfigure = (ac != 0); j->breakable = (bk != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {   // hinge fields (trailing)
+                        int um = 0;
+                        in >> j->axis.x >> j->axis.y >> j->axis.z >> um >> j->motorSpeed >> j->maxMotorTorque;
+                        j->useMotor = (um != 0);
+                    }
                 } else if (field == "joint2d") {
                     auto* j = go->AddComponent<Joint2D>();
                     int bk = 0, ac = 1;

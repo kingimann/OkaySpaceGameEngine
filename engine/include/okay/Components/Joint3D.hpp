@@ -12,13 +12,14 @@
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Math/Vec3.hpp"
+#include "okay/Math/Quat.hpp"
 #include <string>
 
 namespace okay {
 
 class Joint3D : public Component {
 public:
-    enum class Mode { Distance, Spring, Pin };
+    enum class Mode { Distance, Spring, Pin, Hinge };
 
     int   mode = (int)Mode::Distance;
     std::string connectedBody;        ///< name of the other body (empty = world anchor)
@@ -31,10 +32,18 @@ public:
     float breakForce = 50.0f;         ///< stretch (length error) at which it breaks
     bool  broken = false;             ///< runtime: set when broken (stops constraining)
 
+    // ---- Hinge (revolute): pins a point and locks rotation to `axis` ----
+    Vec3  axis{0, 0, 1};              ///< world hinge axis the body may spin about
+    bool  useMotor = false;           ///< drive the spin about the axis toward motorSpeed
+    float motorSpeed = 0.0f;          ///< target angular speed about the axis (deg/s)
+    float maxMotorTorque = 1000.0f;   ///< torque the motor can apply to reach it
+
     // ---- runtime (set by Physics3D on the first solve) ----
     bool  initialized = false;
     Vec3  pinOffset{0, 0, 0};         ///< A_pos - B_pos captured at init (Pin)
     float restLen = 1.0f;             ///< resolved rest length used by the solver
+    Vec3  hingeLever{0, 0, 0};        ///< world lever COM_A -> pivot at init (Hinge)
+    Quat  refRot{0, 0, 0, 1};         ///< A's orientation at init (Hinge)
 };
 
 } // namespace okay

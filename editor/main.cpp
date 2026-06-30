@@ -1515,18 +1515,18 @@ void ApplyTheme() {
     else if (g_theme == 2) ImGui::StyleColorsClassic();
     else                   ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Flatter, more professional rounding (closer to Unity's crisp panels) while
-    // keeping a hint of softness on windows/popups.
-    s.WindowRounding    = 5.0f;  s.ChildRounding    = 4.0f;
-    s.FrameRounding     = 3.0f;  s.GrabRounding     = 2.0f;
-    s.PopupRounding     = 5.0f;  s.TabRounding      = 4.0f;
-    s.ScrollbarRounding = 8.0f;
+    // Modern, consistent rounding — soft cards like s&box / Unity 6 (a touch more
+    // generous than before, unified across widgets so nothing looks mismatched).
+    s.WindowRounding    = 6.0f;  s.ChildRounding    = 6.0f;
+    s.FrameRounding     = 5.0f;  s.GrabRounding     = 4.0f;
+    s.PopupRounding     = 6.0f;  s.TabRounding      = 6.0f;
+    s.ScrollbarRounding = 6.0f;
     // Balanced spacing: comfortable but not bloated (slightly roomier than the
     // ImGui defaults). View > UI Scale scales everything for bigger displays.
-    s.WindowPadding   = ImVec2(10, 9);  s.FramePadding = ImVec2(8, 5);
-    s.ItemSpacing     = ImVec2(8, 6);   s.ItemInnerSpacing = ImVec2(7, 5);
+    s.WindowPadding   = ImVec2(10, 9);  s.FramePadding = ImVec2(8, 6);
+    s.ItemSpacing     = ImVec2(8, 7);   s.ItemInnerSpacing = ImVec2(7, 5);
     s.CellPadding     = ImVec2(6, 4);   s.IndentSpacing = 18.0f;
-    s.ScrollbarSize   = 12.0f;          s.GrabMinSize = 10.0f;
+    s.ScrollbarSize   = 11.0f;          s.GrabMinSize = 11.0f;
     s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 1.0f;   // thin frame borders for definition (Unity-like)
     s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 1.0f;   // subtler section rules
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
@@ -1548,6 +1548,11 @@ void ApplyTheme() {
     const ImVec4 accent      = ImVec4(ap.r, ap.g, ap.b, 1.00f);
     const ImVec4 accentDim   = ImVec4(ap.r, ap.g, ap.b, 0.55f);
     const ImVec4 accentHover = ImVec4(lighten(ap.r), lighten(ap.g), lighten(ap.b), 1.00f);
+    // Blend a base gray a little toward the accent — for hovers/tabs/title, the
+    // subtle accent wash that makes modern editors (s&box) feel cohesive, not gray.
+    auto tint = [&](float gray, float amt, float a) {
+        return ImVec4(gray + (ap.r - gray) * amt, gray + (ap.g - gray) * amt, gray + (ap.b - gray) * amt, a);
+    };
     // Neutral medium-gray base (Unity Pro dark) instead of a blue-tinted near-black:
     // panels read as professional gray, with the chosen accent only on interactive
     // states (selection, buttons, checks, tabs, slider grabs).
@@ -1557,17 +1562,17 @@ void ApplyTheme() {
     c[ImGuiCol_PopupBg]          = ImVec4(0.145f, 0.145f, 0.155f, 0.99f);
     c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
     c[ImGuiCol_FrameBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);  // sunken input fields
-    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.175f, 0.175f, 0.190f, 1.00f);
-    c[ImGuiCol_FrameBgActive]    = ImVec4(0.215f, 0.215f, 0.235f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]   = tint(0.185f, 0.18f, 1.00f);             // subtle accent wash on hover
+    c[ImGuiCol_FrameBgActive]    = tint(0.225f, 0.25f, 1.00f);
     c[ImGuiCol_TitleBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);
-    c[ImGuiCol_TitleBgActive]    = ImVec4(0.165f, 0.165f, 0.180f, 1.00f);
+    c[ImGuiCol_TitleBgActive]    = tint(0.165f, 0.16f, 1.00f);            // active panel title gets a hint of accent
     c[ImGuiCol_MenuBarBg]        = ImVec4(0.155f, 0.155f, 0.165f, 1.00f);
     c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.42f);  // selection (muted)
     c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.55f);
     c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.70f);
     c[ImGuiCol_Button]           = ImVec4(0.255f, 0.255f, 0.275f, 1.00f);  // raised buttons
-    c[ImGuiCol_ButtonHovered]    = ImVec4(0.305f, 0.305f, 0.330f, 1.00f);
-    c[ImGuiCol_ButtonActive]     = ImVec4(accent.x, accent.y, accent.z, 0.80f);
+    c[ImGuiCol_ButtonHovered]    = tint(0.320f, 0.22f, 1.00f);             // hover leans toward the accent
+    c[ImGuiCol_ButtonActive]     = ImVec4(accent.x, accent.y, accent.z, 0.85f);
     c[ImGuiCol_CheckMark]        = accentHover;
     c[ImGuiCol_SliderGrab]       = accent;
     c[ImGuiCol_SliderGrabActive] = accentHover;
@@ -1578,7 +1583,7 @@ void ApplyTheme() {
     c[ImGuiCol_ResizeGripActive] = accent;
     c[ImGuiCol_Tab]              = ImVec4(0.150f, 0.150f, 0.160f, 1.00f);
     c[ImGuiCol_TabHovered]       = ImVec4(accent.x, accent.y, accent.z, 0.55f);
-    c[ImGuiCol_TabActive]        = ImVec4(0.235f, 0.235f, 0.255f, 1.00f);   // active tab = raised panel
+    c[ImGuiCol_TabActive]        = tint(0.245f, 0.14f, 1.00f);   // active tab = raised panel with an accent hint
     c[ImGuiCol_TabUnfocused]     = ImVec4(0.135f, 0.135f, 0.145f, 1.00f);
     c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.190f, 0.190f, 0.205f, 1.00f);
     c[ImGuiCol_DockingPreview]   = accentDim;

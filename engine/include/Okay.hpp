@@ -191,6 +191,8 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/NetTransport.hpp"
 #include "okay/Net/NetBackend.hpp"
+#include "okay/ECS/World.hpp"
+#include "okay/ECS/NetWorld.hpp"
 
 // Visual scripting (node graphs)
 #include "okay/VisualScript/VsValue.hpp"

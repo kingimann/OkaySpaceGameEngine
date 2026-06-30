@@ -645,3 +645,7 @@ add_test(NAME humanoid_template COMMAND test_humanoid_template)
 add_executable(test_controllers_ik test_controllers_ik.cpp)
 target_link_libraries(test_controllers_ik PRIVATE okay::engine)
 add_test(NAME controllers_ik COMMAND test_controllers_ik)
+
+add_executable(test_ecs test_ecs.cpp)
+target_link_libraries(test_ecs PRIVATE okay::engine)
+add_test(NAME ecs COMMAND test_ecs)

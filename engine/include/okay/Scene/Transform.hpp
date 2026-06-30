@@ -22,6 +22,7 @@ public:
     Vec3 LossyScale() const;
 
     void SetPosition(const Vec3& worldPos);
+    void SetRotation(const Quat& worldRot);
     void Translate(const Vec3& delta) { localPosition += delta; }
     void Rotate(const Vec3& eulerDegrees) {
         localRotation = (localRotation * Quat::Euler(eulerDegrees)).Normalized();

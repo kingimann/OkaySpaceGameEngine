@@ -38,6 +38,12 @@ void Transform::SetPosition(const Vec3& worldPos) {
         parentScale.z != 0 ? rel.z / parentScale.z : rel.z};
 }
 
+void Transform::SetRotation(const Quat& worldRot) {
+    if (!m_parent) { localRotation = worldRot.Normalized(); return; }
+    // Convert world rotation into the parent's local space.
+    localRotation = (m_parent->Rotation().Conjugate() * worldRot).Normalized();
+}
+
 void Transform::SetParent(Transform* parent, bool worldPositionStays) {
     if (parent == m_parent) return;
     Vec3 world = Position();

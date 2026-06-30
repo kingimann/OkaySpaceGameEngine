@@ -77,6 +77,7 @@
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NetworkAvatarMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/WorldStreamer.hpp"
 #include "okay/Components/Destructible.hpp"

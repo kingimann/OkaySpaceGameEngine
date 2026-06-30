@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <cmath>
+#include <chrono>
+#include <thread>
 
 using namespace okay;
 using namespace okay::ecs;
@@ -116,6 +118,81 @@ int main() {
         server.world.remove<Health>(e);                   // drop the component (entity stays)
         client.apply(server.snapshot());
         CHECK(client.world.alive(e) && !client.world.has<Health>(e));
+    }
+
+    // ---- System scheduler: systems run in order, with dt, and toggle ----
+    {
+        World w;
+        Entity e = w.create();
+        w.add<Position>(e, {0, 0, 0});
+        w.add<Velocity>(e, {2, 0, 0});
+
+        SystemScheduler sched;
+        sched.add("gravity", [](World& wd, float dt) {
+            wd.each<Velocity>([&](Entity, Velocity& v) { v.y -= 10.0f * dt; });
+        });
+        sched.add("move", [](World& wd, float dt) {
+            wd.each<Position, Velocity>([&](Entity, Position& p, Velocity& v) {
+                p.x += v.x * dt; p.y += v.y * dt;
+            });
+        });
+        CHECK(sched.count() == 2);
+
+        for (int i = 0; i < 60; ++i) sched.run(w, 1.0f / 60.0f);   // 1 second
+        Position* p = w.get<Position>(e);
+        CHECK(std::fabs(p->x - 2.0f) < 1e-3f);     // 2 u/s for 1s
+        CHECK(p->y < -4.0f);                        // gravity pulled it down
+
+        // Disable a system and it stops running.
+        sched.setEnabled("gravity", false);
+        CHECK(!sched.enabled("gravity"));
+        float vyBefore = w.get<Velocity>(e)->y;
+        for (int i = 0; i < 30; ++i) sched.run(w, 1.0f / 60.0f);
+        CHECK(std::fabs(w.get<Velocity>(e)->y - vyBefore) < 1e-4f);   // gravity off: vy unchanged
+    }
+
+    // ---- Over the wire: server broadcasts its ECS world, client mirrors it ----
+    {
+        // Server NetworkManager.
+        Scene srvScene("Srv");
+        auto* server = srvScene.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        CHECK(server->StartServer(0));
+        srvScene.Start();
+        std::uint16_t port = server->ServerPort();
+
+        // Client NetworkManager.
+        Scene cliScene("Cli");
+        auto* client = cliScene.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        CHECK(client->StartClient("127.0.0.1", port));
+        cliScene.Start();
+
+        // ECS worlds + replicators.
+        NetWorld sw; sw.replicate<Position>(1); sw.replicate<Health>(2);
+        NetWorld cw; cw.replicate<Position>(1); cw.replicate<Health>(2);
+        WorldReplicator srvRep(sw, *server);
+        WorldReplicator cliRep(cw, *client);
+        cliRep.listen();
+
+        Entity e = sw.world.create();
+        sw.world.add<Position>(e, {3, 4, 5});
+        sw.world.add<Health>(e, {88});
+
+        // Pump until the client joins, broadcasting the world each tick.
+        bool mirrored = false;
+        for (int i = 0; i < 400; ++i) {
+            if (server->PeerCount() >= 1) srvRep.broadcast();
+            srvScene.Update(0.02f);
+            cliScene.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (cw.world.alive(e) && cw.world.get<Position>(e)) { mirrored = true; break; }
+        }
+        CHECK(mirrored);
+        if (mirrored) {
+            Position* p = cw.world.get<Position>(e);
+            CHECK(p && std::fabs(p->x - 3.0f) < 1e-4f && std::fabs(p->z - 5.0f) < 1e-4f);
+            CHECK(cw.world.get<Health>(e) && cw.world.get<Health>(e)->hp == 88);
+        }
+        server->Stop(); client->Stop();
     }
 
     TEST_MAIN_RESULT();

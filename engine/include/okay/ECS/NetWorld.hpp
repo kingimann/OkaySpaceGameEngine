@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <string>
 #include <functional>
 #include <type_traits>
 
@@ -63,6 +64,17 @@ public:
             }
         };
         m_handlers.push_back(std::move(h));
+    }
+
+    /// Snapshot as a string (handy for transports whose payload is a std::string,
+    /// like NetworkManager's RPC/Send).
+    std::string snapshotStr() const {
+        std::vector<std::uint8_t> b = snapshot();
+        return std::string(b.begin(), b.end());
+    }
+    /// Apply a snapshot delivered as a string.
+    void applyStr(const std::string& s) {
+        apply(std::vector<std::uint8_t>(s.begin(), s.end()));
     }
 
     /// Serialize the whole world (live entities + every replicated component).

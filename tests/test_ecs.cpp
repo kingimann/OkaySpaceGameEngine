@@ -239,5 +239,35 @@ int main() {
         CHECK(std::fabs(bridge.gameObjectFor(s1)->transform->Position().y - 9.0f) < 1e-5f);
     }
 
+    // ---- SceneBridge interpolation: GameObjects ease toward the ECS target ----
+    {
+        Scene scene("interp");
+        World w;
+        SceneBridge bridge(w, scene);
+        bridge.interpolate = true; bridge.interpRate = 12.0f;
+
+        Entity e = w.create();
+        w.add<EcsTransform>(e, {});                    // at origin
+        bridge.sync(1.0f / 60.0f);                     // fresh -> snaps to origin
+        GameObject* go = bridge.gameObjectFor(e);
+        CHECK(go && go->transform->Position().x == 0.0f);
+
+        // New target far away; one step should move PART of the way, not snap.
+        w.get<EcsTransform>(e)->position = {10, 0, 0};
+        bridge.sync(1.0f / 60.0f);
+        float after1 = go->transform->Position().x;
+        CHECK(after1 > 0.0f && after1 < 5.0f);         // eased a little, not teleported
+
+        // Keep ticking — it converges on the target.
+        for (int i = 0; i < 120; ++i) bridge.sync(1.0f / 60.0f);
+        CHECK(std::fabs(go->transform->Position().x - 10.0f) < 0.05f);
+
+        // With interpolation off (dt ignored), it snaps immediately.
+        bridge.interpolate = false;
+        w.get<EcsTransform>(e)->position = {-7, 0, 0};
+        bridge.sync(1.0f / 60.0f);
+        CHECK(std::fabs(go->transform->Position().x + 7.0f) < 1e-5f);
+    }
+
     TEST_MAIN_RESULT();
 }

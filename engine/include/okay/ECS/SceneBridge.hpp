@@ -21,9 +21,11 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Math/Mathf.hpp"
 #include <functional>
 #include <unordered_map>
 #include <vector>
+#include <cmath>
 
 namespace okay {
 namespace ecs {
@@ -43,27 +45,39 @@ public:
 
     /// `factory` builds the GameObject (and attaches whatever renderers/colliders)
     /// for a newly-seen entity. If null, a bare GameObject is created.
+    /// Smoothly ease GameObjects toward their entity's transform instead of
+    /// snapping — for networked worlds where snapshots arrive at a low rate, this
+    /// hides the steps. Pass a real dt to sync(); newly-spawned objects always snap.
+    bool  interpolate = false;
+    float interpRate  = 12.0f;   // higher = snappier
+
     SceneBridge(World& world, Scene& scene, Factory factory = {})
         : m_world(world), m_scene(scene), m_factory(std::move(factory)) {}
 
     /// Reconcile the scene with the ECS: spawn GameObjects for new entities, push
-    /// each entity's EcsTransform onto its GameObject, and destroy orphans.
-    void sync() {
+    /// each entity's EcsTransform onto its GameObject (snapping or easing per
+    /// `interpolate`), and destroy orphans. Pass the frame dt for interpolation.
+    void sync(float dt = 0.0f) {
+        float a = (interpolate && dt > 0.0f) ? (1.0f - std::exp(-interpRate * dt)) : 1.0f;
         // Push transforms; spawn GameObjects for entities seen for the first time.
         m_world.each<EcsTransform>([&](Entity e, EcsTransform& t) {
             GameObject* go = nullptr;
+            bool fresh = false;
             auto it = m_map.find(e);
             if (it == m_map.end()) {
                 go = m_factory ? m_factory(m_scene, e) : m_scene.CreateGameObject("Entity");
                 if (!go) return;
                 m_map[e] = go;
+                fresh = true;   // a new object snaps to its spawn pose
             } else {
                 go = it->second;
             }
             if (go && go->transform) {
-                go->transform->localPosition = t.position;
-                go->transform->localRotation = t.rotation;
-                go->transform->localScale    = t.scale;
+                Transform* tr = go->transform;
+                float w = fresh ? 1.0f : a;
+                tr->localPosition = Vec3::Lerp(tr->localPosition, t.position, w);
+                tr->localRotation = Quat::Slerp(tr->localRotation, t.rotation, w);
+                tr->localScale    = Vec3::Lerp(tr->localScale, t.scale, w);
             }
         });
 

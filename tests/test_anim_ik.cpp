@@ -278,5 +278,33 @@ int main() {
         CHECK(Vec3::Dot(tilted, slope) > 0.99f);               // FromToRotation aligns up to the slope
     }
 
+    // ---- LimbIK: an arm reaches a target, bends toward a pole, can match grip ----
+    {
+        Scene s("limb");
+        auto* body  = s.CreateGameObject("Body");
+        auto* sh    = s.CreateGameObject("Shoulder"); sh->transform->SetPosition({0, 1.5f, 0});
+        auto* el    = s.CreateGameObject("Elbow");    el->transform->SetPosition({0.4f, 1.3f, 0});
+        auto* hand  = s.CreateGameObject("Hand");     hand->transform->SetPosition({0.8f, 1.1f, 0});
+        auto* pole  = s.CreateGameObject("Pole");     pole->transform->SetPosition({1.0f, 1.4f, 1.0f}); // bend toward +Z
+        auto* grab  = s.CreateGameObject("Handle");   grab->transform->SetPosition({0.4f, 0.9f, 0.25f}); // reachable
+        grab->transform->SetRotation(Quat::Euler({0, 40, 0}));
+
+        auto* ik = body->AddComponent<LimbIK>();
+        ik->upper = sh->transform; ik->lower = el->transform; ik->end = hand->transform;
+        ik->targetObject = grab->transform; ik->poleObject = pole->transform;
+        ik->matchTargetRotation = true; ik->weight = 1.0f;
+        s.Start();
+        s.Update(1.0f / 60.0f);
+
+        float up = (el->transform->Position() - sh->transform->Position()).Magnitude();
+        float lo = (hand->transform->Position() - el->transform->Position()).Magnitude();
+        CHECK(std::fabs(up - 0.4472f) < 3e-2f);                       // shoulder->elbow length kept
+        CHECK(V3(hand->transform->Position(), grab->transform->Position(), 5e-2f)); // hand reached the handle
+        CHECK(el->transform->Position().z > 0.05f);                   // elbow bent toward the +Z pole
+        // Hand took the handle's orientation (grab).
+        CHECK(Quat::Angle(hand->transform->Rotation(), grab->transform->Rotation()) < 2.0f);
+        (void)lo;
+    }
+
     TEST_MAIN_RESULT();
 }

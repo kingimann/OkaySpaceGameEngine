@@ -115,11 +115,18 @@ int main() {
         if (arm) {
             CHECK(arm->GetComponent<MeshRenderer>() != nullptr);   // mesh attached
             CHECK(arm->transform->Parent() && arm->transform->Parent()->gameObject == s.Find("Root"));  // parented
-            auto* an = arm->GetComponent<Animator>();
-            CHECK(an != nullptr);                                  // animation imported
-            if (an) {
-                an->SetTime(0.5f);                                 // mid clip: lerp 0 -> 5
-                CHECK(std::fabs(arm->transform->localPosition.x - 2.5f) < 0.05f);
+            // Animation lives in a ModelAnimator clip library on the root; playing it
+            // pushes the clip onto an Animator on the targeted node.
+            auto* ma = root->GetComponent<ModelAnimator>();
+            CHECK(ma != nullptr && ma->ClipCount() >= 1);
+            if (ma) {
+                ma->PlayIndex(0);
+                auto* an = arm->GetComponent<Animator>();
+                CHECK(an != nullptr);
+                if (an) {
+                    an->SetTime(0.5f);                             // mid clip: lerp 0 -> 5
+                    CHECK(std::fabs(arm->transform->localPosition.x - 2.5f) < 0.05f);
+                }
             }
         }
     }

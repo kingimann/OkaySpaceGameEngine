@@ -5,6 +5,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Animator.hpp"
+#include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
@@ -253,48 +254,62 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
         }
     }
 
-    // First animation -> an Animator per targeted node (TRS tracks; rotation as a
-    // quaternion so it plays back exactly, no euler conversion).
+    // ALL animations -> a ModelAnimator clip library on the root (idle/walk/run...).
+    // Each clip holds per-node TRS tracks (rotation as a quaternion so it plays back
+    // exactly). At runtime PlayIndex pushes a clip's tracks onto an Animator per node.
     if (const JVal* anims = doc.root.Find("animations")) {
         if (!anims->arr.empty()) {
-            const JVal& anim = anims->arr[0];
-            const JVal* chans = anim.Find("channels");
-            const JVal* samps = anim.Find("samplers");
-            if (chans && samps) {
-                for (const JVal& ch : chans->arr) {
-                    const JVal* tgt = ch.Find("target"); if (!tgt) continue;
-                    int node = tgt->Find("node") ? tgt->Find("node")->Int(-1) : -1;
-                    std::string tpath = tgt->Find("path") ? tgt->Find("path")->Text() : "";
-                    int si = ch.Find("sampler") ? ch.Find("sampler")->Int(-1) : -1;
-                    if (node < 0 || node >= nodeCount || !go[node] || si < 0 || si >= (int)samps->arr.size()) continue;
-                    const JVal& s = samps->arr[si];
-                    int inAcc = s.Find("input") ? s.Find("input")->Int(-1) : -1;
-                    int outAcc = s.Find("output") ? s.Find("output")->Int(-1) : -1;
-                    int tc = 0, tn = 0; auto times = ReadAccessor(doc, inAcc, tc, tn);
-                    int oc = 0, on = 0; auto vals = ReadAccessor(doc, outAcc, oc, on);
-                    if (times.empty() || vals.empty()) continue;
-                    Animator* an = go[node]->GetComponent<Animator>();
-                    if (!an) { an = go[node]->AddComponent<Animator>(); an->clip.loop = true; an->playing = true; }
-                    int keys = tn < on ? tn : on;
-                    for (int k = 0; k < keys; ++k) {
-                        float t = times[k];
-                        if (tpath == "translation" && oc >= 3) {
-                            an->clip.AddKey("position.x", t, vals[k*oc+0]);
-                            an->clip.AddKey("position.y", t, vals[k*oc+1]);
-                            an->clip.AddKey("position.z", t, vals[k*oc+2]);
-                        } else if (tpath == "scale" && oc >= 3) {
-                            an->clip.AddKey("scale.x", t, vals[k*oc+0]);
-                            an->clip.AddKey("scale.y", t, vals[k*oc+1]);
-                            an->clip.AddKey("scale.z", t, vals[k*oc+2]);
-                        } else if (tpath == "rotation" && oc >= 4) {
-                            an->clip.AddKey("rotation.qx", t, vals[k*oc+0]);
-                            an->clip.AddKey("rotation.qy", t, vals[k*oc+1]);
-                            an->clip.AddKey("rotation.qz", t, vals[k*oc+2]);
-                            an->clip.AddKey("rotation.qw", t, vals[k*oc+3]);
+            auto* ma = root->AddComponent<ModelAnimator>();
+            int ai = 0;
+            for (const JVal& anim : anims->arr) {
+                ModelAnimator::Clip clip;
+                const JVal* nmv = anim.Find("name");
+                clip.name = (nmv && nmv->type == JVal::Str && !nmv->str.empty()) ? nmv->str : ("clip" + std::to_string(ai));
+                const JVal* chans = anim.Find("channels");
+                const JVal* samps = anim.Find("samplers");
+                if (chans && samps) {
+                    for (const JVal& ch : chans->arr) {
+                        const JVal* tgt = ch.Find("target"); if (!tgt) continue;
+                        int node = tgt->Find("node") ? tgt->Find("node")->Int(-1) : -1;
+                        std::string tpath = tgt->Find("path") ? tgt->Find("path")->Text() : "";
+                        int si = ch.Find("sampler") ? ch.Find("sampler")->Int(-1) : -1;
+                        if (node < 0 || node >= nodeCount || !go[node] || si < 0 || si >= (int)samps->arr.size()) continue;
+                        const JVal& s = samps->arr[si];
+                        int inAcc = s.Find("input") ? s.Find("input")->Int(-1) : -1;
+                        int outAcc = s.Find("output") ? s.Find("output")->Int(-1) : -1;
+                        int tc = 0, tn = 0; auto times = ReadAccessor(doc, inAcc, tc, tn);
+                        int oc = 0, on = 0; auto vals = ReadAccessor(doc, outAcc, oc, on);
+                        if (times.empty() || vals.empty()) continue;
+
+                        const std::string& nodeName = go[node]->name;
+                        ModelAnimator::NodeClip* ncp = nullptr;
+                        for (auto& ncx : clip.nodes) if (ncx.node == nodeName) { ncp = &ncx; break; }
+                        if (!ncp) { clip.nodes.push_back({nodeName, AnimationClip{}}); ncp = &clip.nodes.back(); }
+                        AnimationClip& ac = ncp->clip;
+                        int keys = tn < on ? tn : on;
+                        for (int k = 0; k < keys; ++k) {
+                            float t = times[k];
+                            if (tpath == "translation" && oc >= 3) {
+                                ac.AddKey("position.x", t, vals[k*oc+0]);
+                                ac.AddKey("position.y", t, vals[k*oc+1]);
+                                ac.AddKey("position.z", t, vals[k*oc+2]);
+                            } else if (tpath == "scale" && oc >= 3) {
+                                ac.AddKey("scale.x", t, vals[k*oc+0]);
+                                ac.AddKey("scale.y", t, vals[k*oc+1]);
+                                ac.AddKey("scale.z", t, vals[k*oc+2]);
+                            } else if (tpath == "rotation" && oc >= 4) {
+                                ac.AddKey("rotation.qx", t, vals[k*oc+0]);
+                                ac.AddKey("rotation.qy", t, vals[k*oc+1]);
+                                ac.AddKey("rotation.qz", t, vals[k*oc+2]);
+                                ac.AddKey("rotation.qw", t, vals[k*oc+3]);
+                            }
                         }
                     }
                 }
+                ma->clips.push_back(std::move(clip));
+                ++ai;
             }
+            ma->active = 0; ma->autoPlay = true;
         }
     }
     if (ok) *ok = true;

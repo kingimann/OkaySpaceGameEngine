@@ -8506,6 +8506,28 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##fl")) toRemove = fl;
         }
     }
+    if (auto* ma = dynamic_cast<ModelAnimator*>(curComp)) {
+        if (CompHeader("Model Animator", ma, &toRemove)) {
+            ImGui::TextDisabled("Animation clips imported with this model. Pick one to play.");
+            std::vector<std::string> names = ma->ClipNames();
+            if (names.empty()) {
+                ImGui::TextDisabled("No clips.");
+            } else {
+                std::vector<const char*> cstr; for (auto& n : names) cstr.push_back(n.c_str());
+                int sel = ma->active < 0 ? 0 : ma->active;
+                if (ImGui::Combo("Clip##ma", &sel, cstr.data(), (int)cstr.size())) {
+                    ma->active = sel; ma->PlayIndex(sel); ed.dirty = true;   // previews live in Play
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Play##ma")) ma->PlayIndex(ma->active);
+            }
+            if (ImGui::Checkbox("Auto-play on start##ma", &ma->autoPlay)) ed.dirty = true;
+            if (ImGui::Checkbox("Loop##ma", &ma->loop)) ed.dirty = true;
+            if (ImGui::DragFloat("Speed##ma", &ma->speed, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            ImGui::TextDisabled("%d clip(s)", ma->ClipCount());
+            if (ImGui::SmallButton("Remove##ma")) toRemove = ma;
+        }
+    }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
         if (CompHeader("First Person Hand", fh, &toRemove)) {
             ImGui::TextDisabled("Shows your character's OWN arm in first person. Your body is\n"

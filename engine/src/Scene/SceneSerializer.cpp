@@ -90,6 +90,7 @@
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
+#include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -316,6 +317,23 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const std::string& nm : sm->jointNames) out << " " << Quote(nm);
         out << " " << sm->inverseBind.size();
         for (const Mat4& M : sm->inverseBind) for (int e = 0; e < 16; ++e) out << " " << M.m[e];
+        out << "\n";
+    }
+    // Model animation library: every imported clip (idle/walk/run) as per-node tracks,
+    // so a saved model keeps all its animations and the picker still works on reload.
+    if (auto* ma = go->GetComponent<ModelAnimator>()) {
+        out << "  modelanim " << ma->active << " " << (ma->autoPlay ? 1 : 0)
+            << " " << ma->speed << " " << (ma->loop ? 1 : 0) << " " << ma->clips.size();
+        for (const auto& clip : ma->clips) {
+            out << " " << Quote(clip.name) << " " << clip.nodes.size();
+            for (const auto& nc : clip.nodes) {
+                out << " " << Quote(nc.node) << " " << nc.clip.Tracks().size();
+                for (const auto& tr : nc.clip.Tracks()) {
+                    out << " " << Quote(tr.first) << " " << tr.second.Keys().size();
+                    for (const auto& key : tr.second.Keys()) out << " " << key.time << " " << key.value;
+                }
+            }
+        }
         out << "\n";
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
@@ -1641,6 +1659,33 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sm->bind = bm;
                     sm->joints.clear();   // re-resolved from names in Start()
                     if (auto* mr = go->GetComponent<MeshRenderer>()) mr->mesh = bm;   // show bind pose until skinned
+                } else if (field == "modelanim") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int autop = 1, lp = 1; long clipCount = 0;
+                    in >> ma->active >> autop >> ma->speed >> lp >> clipCount;
+                    ma->autoPlay = (autop != 0); ma->loop = (lp != 0);
+                    ma->clips.clear();
+                    for (long c = 0; c < clipCount; ++c) {
+                        ModelAnimator::Clip clip;
+                        clip.name = ReadQuoted(in);
+                        long nodeCnt = 0; in >> nodeCnt;
+                        for (long n = 0; n < nodeCnt; ++n) {
+                            ModelAnimator::NodeClip nc;
+                            nc.node = ReadQuoted(in);
+                            long trackCnt = 0; in >> trackCnt;
+                            for (long tk = 0; tk < trackCnt; ++tk) {
+                                std::string trackName = ReadQuoted(in);
+                                long keyCnt = 0; in >> keyCnt;
+                                for (long k = 0; k < keyCnt; ++k) {
+                                    float tm = 0, val = 0; in >> tm >> val;
+                                    nc.clip.AddKey(trackName, tm, val);
+                                }
+                            }
+                            clip.nodes.push_back(std::move(nc));
+                        }
+                        ma->clips.push_back(std::move(clip));
+                    }
                 } else if (field == "material") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         Color e; float spec = 0, shin = 16; int unlit = 0;

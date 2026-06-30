@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -47,6 +48,7 @@ public:
     void Update(float dt) override {
         if (!transform) return;
         if (Game::Paused()) return;
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
 
         // ---- Look ----
         bool uiBlocked = Input::UICaptured();         // a modal UI (open inventory/chest) pauses look

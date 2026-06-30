@@ -4,6 +4,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 
 namespace okay {
@@ -19,6 +20,7 @@ public:
 
     void Update(float dt) override {
         if (!transform) return;
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         Vec2 axis = Input::AxisWASD();               // x = strafe, y = forward
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         float vx = axis.x * speed, vz = axis.y * speed;

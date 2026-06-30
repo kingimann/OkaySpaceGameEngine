@@ -5,6 +5,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include <cmath>
 
 namespace okay {
@@ -26,6 +27,7 @@ public:
 
     void Update(float dt) override {
         if (m_timer > 0.0f) m_timer -= dt;
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: don't read local input
         bool pressed = (attackKey && Input::GetKeyDown(attackKey)) ||
                        (useMouse && Input::GetMouseButtonDown(0));
         if (!pressed || m_timer > 0.0f || !transform) return;

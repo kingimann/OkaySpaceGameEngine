@@ -9,6 +9,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -104,6 +105,7 @@ public:
     void Update(float dt) override {
         if (!transform) return;
         if (Game::Paused()) return;   // frozen while the pause menu is up
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         // Optionally hide + lock the cursor while playing (re-assert if freed).
         if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
 

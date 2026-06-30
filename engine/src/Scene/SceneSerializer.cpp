@@ -346,12 +346,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* fh = go->GetComponent<FirstPersonHand>()) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
-            << " " << (fh->showLeftArm ? 1 : 0)
-            << " " << (fh->viewmodelArm ? 1 : 0) << " " << (fh->matchSkin ? 1 : 0)
-            << " " << fh->armWidth << " " << fh->armLength << " " << fh->armReach
-            << " " << fh->armSpread << " " << fh->armDrop << " " << fh->armPitch
-            << " " << fh->armYaw << " " << fh->swingAmount
-            << " " << fh->armColor.r << " " << fh->armColor.g << " " << fh->armColor.b << "\n";
+            << " " << (fh->showLeftArm ? 1 : 0) << "\n";
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
@@ -2852,25 +2847,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int hs = 1;
                     in >> fh->attackButton >> hs;
                     fh->holdToSwing = (hs != 0);
-                    // Optional trailing fields (older rows tolerated): showLeftArm,
-                    // viewmodelArm, matchSkin, armWidth, armLength, armReach, armSpread,
-                    // armDrop, armPitch, armYaw, swingAmount, armColor rgb.
+                    // Optional trailing field (older rows tolerated): showLeftArm.
+                    // (Some builds wrote extra arm-styling tokens here; they're ignored.)
                     std::string rest; std::getline(in, rest);
                     std::istringstream rs(rest);
                     std::vector<float> v; float f;
                     while (rs >> f) v.push_back(f);
-                    if (v.size() >= 1)  fh->showLeftArm  = (v[0] != 0.0f);
-                    if (v.size() >= 2)  fh->viewmodelArm = (v[1] != 0.0f);
-                    if (v.size() >= 3)  fh->matchSkin    = (v[2] != 0.0f);
-                    if (v.size() >= 4)  fh->armWidth     = v[3];
-                    if (v.size() >= 5)  fh->armLength    = v[4];
-                    if (v.size() >= 6)  fh->armReach     = v[5];
-                    if (v.size() >= 7)  fh->armSpread    = v[6];
-                    if (v.size() >= 8)  fh->armDrop      = v[7];
-                    if (v.size() >= 9)  fh->armPitch     = v[8];
-                    if (v.size() >= 10) fh->armYaw       = v[9];
-                    if (v.size() >= 11) fh->swingAmount  = v[10];
-                    if (v.size() >= 14) fh->armColor     = Color(v[11], v[12], v[13], 1.0f);
+                    if (v.size() >= 1) fh->showLeftArm = (v[0] != 0.0f);
                 } else if (field == "netsync") {
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;

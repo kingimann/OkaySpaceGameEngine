@@ -4,6 +4,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -37,6 +38,7 @@ public:
 
     void Update(float dt) override {
         if (!transform || dt <= 0.0f) return;
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         Vec2 axis = Input::AxisWASD();
         bool handbrake = handbrakeKey && Input::GetKey(handbrakeKey);
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr;

@@ -8413,39 +8413,16 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
         if (CompHeader("First Person Hand", fh, &toRemove)) {
-            ImGui::TextDisabled("Minecraft/Unturned style: your body is hidden from your OWN\n"
-                                "camera (others still see it) and an arm viewmodel is shown\n"
-                                "only to you. No rig needed. Click to punch.");
+            ImGui::TextDisabled("Shows your character's OWN arm in first person. Your body is\n"
+                                "hidden from your camera only (others see all of it) and never\n"
+                                "duplicated. Click to punch.");
             if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
             if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep swinging while the button is held (Minecraft mining).");
-
             const char* sides[] = {"Right arm", "Left arm"};
             int si = fh->showLeftArm ? 1 : 0;
             if (ImGui::Combo("Arm side##fh", &si, sides, 2)) { fh->showLeftArm = (si == 1); ed.dirty = true; }
-
-            if (ImGui::Checkbox("Viewmodel arm (recommended)##fh", &fh->viewmodelArm)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("ON  = a dedicated arm viewmodel (Minecraft/Unturned). Works without a rig and never duplicates the body.\n"
-                                                          "OFF = raise the character's separated-rig arm instead (advanced; needs 'Separate Into Parts').");
-
-            if (fh->viewmodelArm) {
-                ImGui::SeparatorText("Arm Viewmodel");
-                if (ImGui::Checkbox("Match skin colour##fh", &fh->matchSkin)) ed.dirty = true;
-                if (!fh->matchSkin) {
-                    float col[3] = {fh->armColor.r, fh->armColor.g, fh->armColor.b};
-                    if (ImGui::ColorEdit3("Arm colour##fh", col)) { fh->armColor = Color(col[0], col[1], col[2], 1.0f); ed.dirty = true; }
-                }
-                if (ImGui::DragFloat("Width##fh",  &fh->armWidth,  0.005f, 0.02f, 0.6f, "%.3f")) ed.dirty = true;
-                if (ImGui::DragFloat("Length##fh", &fh->armLength, 0.01f,  0.05f, 2.0f, "%.3f")) ed.dirty = true;
-                if (ImGui::DragFloat("Reach (forward)##fh", &fh->armReach,  0.01f, 0.2f, 2.0f, "%.3f")) ed.dirty = true;
-                if (ImGui::DragFloat("Spread (side)##fh",   &fh->armSpread, 0.01f, 0.0f, 1.5f, "%.3f")) ed.dirty = true;
-                if (ImGui::DragFloat("Drop (down)##fh",     &fh->armDrop,   0.01f, 0.0f, 1.5f, "%.3f")) ed.dirty = true;
-                if (ImGui::DragFloat("Pitch##fh", &fh->armPitch, 0.5f, -90.0f, 90.0f, "%.1f")) ed.dirty = true;
-                if (ImGui::DragFloat("Yaw inward##fh", &fh->armYaw, 0.5f, -90.0f, 90.0f, "%.1f")) ed.dirty = true;
-                if (ImGui::DragFloat("Swing amount##fh", &fh->swingAmount, 0.02f, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the arm jabs forward when you punch (0 = stay still).");
-            }
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }

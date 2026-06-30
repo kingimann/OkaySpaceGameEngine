@@ -8,6 +8,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -45,6 +46,7 @@ public:
 
     void Update(float dt) override {
         if (!transform) return;
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
 
         Vec2 axis = Input::AxisWASD();
         Vec2 pad  = Input::GamepadAxis();

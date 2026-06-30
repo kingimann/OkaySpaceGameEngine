@@ -36,6 +36,11 @@ public:
     /// Manually (re)assign authority — handy for ownership transfer from script.
     void SetOwned(bool o) { owned = o; if (m_nm && !m_id.empty()) m_nm->SetSyncOwned(m_id, OwnedNow()); }
 
+    /// True if THIS peer controls this object (so local input / controllers should
+    /// drive it). A remote proxy returns false, leaving the network to move it. With
+    /// no NetworkManager in the scene (single-player) it's always true.
+    bool IsLocallyOwned() const { return !m_nm || OwnedNow(); }
+
     void Start() override { Register(); }
 
     void Update(float) override {

@@ -7,6 +7,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
+#include "okay/Net/NetOwnership.hpp"                  // IsLocallyControlled (MP-safe AI)
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <string>
@@ -126,6 +127,7 @@ public:
 
     void Update(float dt) override {
         if (!transform || dt <= 0.0f || m_dead) return;
+        if (!IsLocallyControlled(gameObject)) return;   // MP: only the authority runs AI; others follow via NetworkSync
         Vec3 pos = transform->Position();
         if (m_atkTimer > 0.0f) m_atkTimer -= dt;
         if (m_windup  > 0.0f) m_windup  -= dt;

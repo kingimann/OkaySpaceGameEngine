@@ -9,6 +9,7 @@
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
@@ -62,6 +63,7 @@ public:
 
     void Update(float dt) override {
         if (!transform || !gameObject || !gameObject->scene()) return;
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         Scene& scene = *gameObject->scene();
 
         // ---- Set a destination from a click on the ground plane ----

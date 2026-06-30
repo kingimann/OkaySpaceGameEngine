@@ -72,6 +72,7 @@ public:
     void NewPlatformer3D();
     void NewFPS();
     void NewThirdPerson();
+    void NewHumanoid();
     void NewThirdPersonShooter();
     void NewPointAndClick();
     void NewMultiplayer();

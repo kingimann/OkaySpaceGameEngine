@@ -637,3 +637,7 @@ add_test(NAME net_backend COMMAND test_net_backend)
 add_executable(test_anim_ik test_anim_ik.cpp)
 target_link_libraries(test_anim_ik PRIVATE okay::engine)
 add_test(NAME anim_ik COMMAND test_anim_ik)
+
+add_executable(test_humanoid_template test_humanoid_template.cpp)
+target_link_libraries(test_humanoid_template PRIVATE okay::engine)
+add_test(NAME humanoid_template COMMAND test_humanoid_template)

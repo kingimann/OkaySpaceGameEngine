@@ -1814,6 +1814,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(okay::Templates::AddThirdPersonPlayer(ed.scene()));
                 ConsoleLog("Added Third-Person player"); ed.dirty = true; created = true;
             }
+            if (ImGui::MenuItem("Humanoid (foot IK)")) {
+                ed.PushUndo();
+                ed.Select(okay::Templates::AddHumanoidPlayer(ed.scene()));
+                ConsoleLog("Added Humanoid player (rig + capsule + foot IK)"); ed.dirty = true; created = true;
+            }
             if (ImGui::MenuItem("First Person")) {
                 ed.PushUndo();
                 ed.Select(okay::Templates::AddFirstPersonPlayer(ed.scene()));
@@ -5353,6 +5358,7 @@ void DrawNewProjectPopup(EditorState& ed) {
             {C_BLANK, "Empty",      "Nothing at all",     "A totally empty scene (no camera or light). Build it up yourself.", &EditorState::NewScene},
             {C_3D,    "First Person","Character + FPS",    "A blocky Character you control in first person: mouse-look, WASD, jump. Camera at eye height, with crates to walk around.", &EditorState::NewFPS},
             {C_3D,    "Third Person","Orbit camera",       "Your blocky Character with an orbit camera behind it: WASD relative to the camera, Space to jump, with walk/run animation. You see and control the character.", &EditorState::NewThirdPerson},
+            {C_3D,    "Humanoid",    "Rig + capsule + foot IK", "A fully-wired humanoid in one click (Unity's 'drop in a character'): the part-rigged Character, a physics capsule, foot IK that plants the feet on uneven ground, and root motion hooked to the hips. Stepped ground so the foot planting is visible.", &EditorState::NewHumanoid},
             {C_3D,    "Third Person Shooter","Over-the-shoulder aim", "An over-the-shoulder shooter: the body faces where you aim, right mouse aims (camera zooms in), left mouse fires, cursor locked. Ground with cover crates and a row of targets to shoot.", &EditorState::NewThirdPersonShooter},
             {C_3D,    "Point & Click","Click to move",     "RuneScape / Diablo style: click the ground and your Character walks there, under a high angled camera. Powered by the Click To Move controller.", &EditorState::NewPointAndClick},
             {C_3D,    "Sandbox",     "Dig caves + water",  "A first-person sandbox on a single smooth voxel terrain you walk on AND dig real caves / tunnels / overhangs into (Left Mouse digs, Right Mouse fills), with full voxel collision (no falling through), a lake of animated water, and a pause menu. Space jumps, Esc pauses. A base for survival / mining / building games.", &EditorState::NewVoxelSandbox},

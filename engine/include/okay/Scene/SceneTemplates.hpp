@@ -16,6 +16,8 @@
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/FootIK.hpp"
+#include "okay/Components/RootMotion.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
@@ -122,6 +124,50 @@ inline GameObject* AddTopDownPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
 inline GameObject* AddThirdPersonShooterPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<ThirdPersonShooterController>();
+    EnsureMainCamera(scene);
+    return player;
+}
+
+/// Wire foot IK + root motion onto a part-rigged Character — the "humanoid setup"
+/// a Unity import gives you for free. Foot IK plants the feet on the ground; root
+/// motion is wired to the hips and left Disabled (the procedural anims bob the
+/// hips, so it's only meaningful for imported clips with real root translation —
+/// flip its mode to AnimDrivesMotion for those).
+inline void WireCharacterIK(GameObject* player, Character* pc) {
+    if (!pc) return;
+    pc->separateParts = true;
+    if (!pc->PartsBuilt()) pc->BuildParts();
+    // Bone indices (see Character.cpp): hips=0; L thigh/shin/foot = 9/10/11; R = 12/13/14.
+    auto T = [&](int b) -> Transform* { GameObject* g = pc->Part(b); return g ? g->transform : nullptr; };
+    auto* fik = player->AddComponent<FootIK>();
+    fik->leftHip  = T(9);  fik->leftKnee  = T(10); fik->leftFoot  = T(11);
+    fik->rightHip = T(12); fik->rightKnee = T(13); fik->rightFoot = T(14);
+    fik->useRaycast = true; fik->weight = 1.0f;
+    auto* rm = player->AddComponent<RootMotion>();
+    rm->rootNode = T(0);
+    rm->mode = (int)RootMotion::Mode::Disabled;
+}
+
+/// Build a fully-wired humanoid body: the part-rigged Character, a physics capsule,
+/// and foot IK + root motion already hooked to the right bones — Unity's "drop in a
+/// humanoid" in one call. Add a controller + camera to drive it.
+inline GameObject* BuildHumanoidBody(Scene& scene, const Vec3& pos, const char* name) {
+    GameObject* player = scene.CreateGameObject(name);
+    player->transform->localPosition = pos;
+    auto* pc = player->AddComponent<Character>();
+    pc->Apply();
+    player->AddComponent<Rigidbody3D>();
+    auto* col = player->AddComponent<CapsuleCollider3D>();   // physics capsule, feet->head
+    col->radius = 0.3f; col->height = 1.8f; col->offset = {0.0f, 0.9f, 0.0f};
+    WireCharacterIK(player, pc);                             // foot IK + root motion
+    return player;
+}
+
+/// Add a one-click humanoid third-person player: rig + capsule + camera + foot IK,
+/// all wired. This is the "model.transform just works" row made real.
+inline GameObject* AddHumanoidPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildHumanoidBody(scene, pos, "Player");
+    player->AddComponent<ThirdPersonController>();
     EnsureMainCamera(scene);
     return player;
 }
@@ -270,6 +316,43 @@ inline void ThirdPerson(Scene& scene) {
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
     camObj->transform->localPosition = {0, 3, 6};
+}
+
+/// A "drop-in humanoid" starter: the same third-person scene, but the player is a
+/// fully-wired humanoid (part rig + physics capsule + foot IK that plants the feet
+/// on uneven ground + root motion hooked to the hips). Shows the one-call setup
+/// AddHumanoidPlayer() gives you. Stepped ground so the foot IK is visible.
+inline void Humanoid(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Humanoid");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {40, 1, 40};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube();
+    gmr->color = Color::FromBytes(95, 110, 95);
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    // A couple of low steps so foot IK has uneven ground to plant on.
+    const Vec3 steps[2] = {{2.0f, 0.1f, 0}, {3.0f, 0.25f, 0}};
+    for (int i = 0; i < 2; ++i) {
+        GameObject* s = scene.CreateGameObject("Step");
+        s->transform->localPosition = steps[i];
+        s->transform->localScale = {1.5f, 0.2f + 0.3f * i, 1.5f};
+        auto* mr = s->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = Color::FromBytes(120, 120, 130);
+        s->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        s->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+
+    AddHumanoidPlayer(scene, {0, 1.0f, 0});   // rig + capsule + camera + foot IK, wired
 }
 
 /// A third-person SHOOTER starter: the blocky Character driven by a

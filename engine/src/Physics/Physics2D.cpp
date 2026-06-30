@@ -104,18 +104,55 @@ void ClosestSegSeg(const Vec2& p1, const Vec2& q1, const Vec2& p2, const Vec2& q
     c2 = p2 + d2 * t;
 }
 
+// Closest point on a vertex chain (open polyline or closed loop) to `ref`.
+Vec2 ClosestOnPoly(const std::vector<Vec2>& pts, bool closed, const Vec2& ref) {
+    const std::size_t n = pts.size();
+    if (n == 0) return ref;
+    if (n == 1) return pts[0];
+    float best = 1e30f; Vec2 bp = pts[0];
+    std::size_t segs = closed ? n : n - 1;
+    for (std::size_t i = 0; i < segs; ++i) {
+        Vec2 cp = ClosestOnSegment(ref, pts[i], pts[(i + 1) % n]);
+        float d = (cp - ref).SqrMagnitude();
+        if (d < best) { best = d; bp = cp; }
+    }
+    return bp;
+}
+
 // Reduce a collider to a circle (center + radius) as seen from `ref`. Capsules
-// collapse to a circle at the segment point nearest `ref`.
+// collapse to a circle at the segment point nearest `ref`; edges/polygons to the
+// nearest point on their segment chain (radius 0).
 void AsCircle(Collider2D* col, const Vec2& ref, Vec2& center, float& radius) {
     if (col->shape() == Collider2D::Shape::Circle) {
         auto* c = static_cast<CircleCollider2D*>(col);
         center = c->WorldCenter(); radius = c->WorldRadius();
-    } else { // Capsule
+    } else if (col->shape() == Collider2D::Shape::Capsule) {
         auto* cap = static_cast<CapsuleCollider2D*>(col);
         Vec2 a, b; cap->Segment(a, b);
         center = ClosestOnSegment(ref, a, b);
         radius = cap->WorldRadius();
+    } else { // Edge or Polygon
+        auto* poly = static_cast<PolyShapeCollider2D*>(col);
+        center = ClosestOnPoly(poly->WorldPoints(), poly->closedLoop(), ref);
+        radius = 0.0f;
     }
+}
+
+// Should this contact be skipped because it's a one-way edge and the other body
+// is approaching from the pass-through side? Returns true to let it pass.
+bool OneWayPassThrough(Collider2D* a, Collider2D* b) {
+    for (int k = 0; k < 2; ++k) {
+        Collider2D* ec = k == 0 ? a : b;
+        Collider2D* other = k == 0 ? b : a;
+        if (ec->shape() != Collider2D::Shape::Edge) continue;
+        auto* e = static_cast<EdgeCollider2D*>(ec);
+        if (!e->oneWay) continue;
+        Vec2 oc = other->WorldCenter();
+        Vec2 cp = ClosestOnPoly(e->WorldPoints(), false, oc);
+        Vec2 n = e->oneWayNormal.Normalized();
+        if (Vec2::Dot(oc - cp, n) < 0.0f) return true;   // body is below the platform
+    }
+    return false;
 }
 
 Contact TestColliders(Collider2D* a, Collider2D* b) {
@@ -224,7 +261,7 @@ void Physics2D::Step(Scene& scene, float dt) {
             bool trigger = a->isTrigger || b->isTrigger;
 
             // 3) Resolve solids (skip triggers and pairs without dynamics).
-            if (!trigger) {
+            if (!trigger && !OneWayPassThrough(a, b)) {
                 float ima = ra ? ra->InvMass() : 0.0f;
                 float imb = rb ? rb->InvMass() : 0.0f;
                 float imSum = ima + imb;

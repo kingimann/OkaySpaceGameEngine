@@ -161,5 +161,94 @@ int main() {
         CHECK(l && std::fabs(l->bounciness - 0.25f) < 1e-3f);
     }
 
+    // ---- Edge collider: a ball falls and rests on a flat polyline ground ----
+    {
+        Scene s("edgeground");
+        auto* ground = s.CreateGameObject("Ground");
+        auto* ec = ground->AddComponent<EdgeCollider2D>();
+        ec->points = {{-10, 0}, {10, 0}};           // flat line at y=0, no rigidbody (static)
+
+        auto* ball = s.CreateGameObject("Ball");
+        ball->transform->localPosition = {0, 3, 0};
+        auto* rb = ball->AddComponent<Rigidbody2D>(); rb->friction = 0.5f;
+        auto* cc = ball->AddComponent<CircleCollider2D>(); cc->radius = 0.5f;
+
+        s.Start();
+        for (int i = 0; i < 240; ++i) s.Update(1.0f / 60.0f);   // ~4s
+        Vec3 p = ball->transform->localPosition;
+        CHECK(p.y > 0.3f && p.y < 0.7f);            // resting ~one radius above the edge
+        CHECK(std::fabs(rb->velocity.y) < 1.0f);    // settled, not still falling
+    }
+
+    // ---- One-way platform: land on top, pass through from below ----
+    {
+        // From above: lands on the platform.
+        Scene s("oneway_top");
+        auto* plat = s.CreateGameObject("Plat");
+        auto* ec = plat->AddComponent<EdgeCollider2D>();
+        ec->points = {{-10, 0}, {10, 0}};
+        ec->oneWay = true; ec->oneWayNormal = {0, 1};
+        auto* ball = s.CreateGameObject("Ball");
+        ball->transform->localPosition = {0, 3, 0};
+        auto* rb = ball->AddComponent<Rigidbody2D>();
+        auto* cc = ball->AddComponent<CircleCollider2D>(); cc->radius = 0.5f;
+        s.Start();
+        for (int i = 0; i < 240; ++i) s.Update(1.0f / 60.0f);
+        CHECK(ball->transform->localPosition.y > 0.3f);   // caught on top
+
+        // From below, moving up: passes straight through.
+        Scene s2("oneway_below");
+        auto* plat2 = s2.CreateGameObject("Plat");
+        auto* ec2 = plat2->AddComponent<EdgeCollider2D>();
+        ec2->points = {{-10, 0}, {10, 0}};
+        ec2->oneWay = true; ec2->oneWayNormal = {0, 1};
+        auto* up = s2.CreateGameObject("Up");
+        up->transform->localPosition = {0, -2, 0};
+        auto* urb = up->AddComponent<Rigidbody2D>(); urb->gravityScale = 0.0f;
+        urb->velocity = {0, 6};                            // launch upward through it
+        auto* ucc = up->AddComponent<CircleCollider2D>(); ucc->radius = 0.5f;
+        s2.Start();
+        for (int i = 0; i < 120; ++i) s2.Update(1.0f / 60.0f);
+        CHECK(up->transform->localPosition.y > 1.0f);      // sailed past the platform
+    }
+
+    // ---- Polygon collider: a ball rests on a triangle's apex ----
+    {
+        Scene s("polyground");
+        auto* tri = s.CreateGameObject("Tri");
+        auto* pc = tri->AddComponent<PolygonCollider2D>();
+        pc->points = {{-1, -1}, {1, -1}, {0, 1}};   // apex at (0,1)
+        auto* ball = s.CreateGameObject("Ball");
+        ball->transform->localPosition = {0, 4, 0};
+        auto* rb = ball->AddComponent<Rigidbody2D>();
+        auto* cc = ball->AddComponent<CircleCollider2D>(); cc->radius = 0.5f;
+        s.Start();
+        for (int i = 0; i < 240; ++i) s.Update(1.0f / 60.0f);
+        Vec3 p = ball->transform->localPosition;
+        CHECK(p.y > 1.3f && p.y < 1.7f);            // resting ~one radius above the apex
+    }
+
+    // ---- Edge & polygon round-trip through the scene file ----
+    {
+        Scene s("collser");
+        auto* e = s.CreateGameObject("E");
+        auto* ec = e->AddComponent<EdgeCollider2D>();
+        ec->points = {{-2, 0}, {0, 1}, {2, 0}};
+        ec->oneWay = true; ec->oneWayNormal = {0, 1}; ec->layer = 3;
+        auto* g = s.CreateGameObject("G");
+        auto* pc = g->AddComponent<PolygonCollider2D>();
+        pc->points = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+
+        std::string text = SceneSerializer::Serialize(s);
+        Scene s2("s2");
+        CHECK(SceneSerializer::Deserialize(s2, text));
+        auto* le = s2.Find("E")->GetComponent<EdgeCollider2D>();
+        CHECK(le && le->points.size() == 3 && le->oneWay && le->layer == 3);
+        CHECK(le && V2(le->points[1], {0, 1}));
+        auto* lp = s2.Find("G")->GetComponent<PolygonCollider2D>();
+        CHECK(lp && lp->points.size() == 4);
+        CHECK(lp && V2(lp->points[2], {1, 1}));
+    }
+
     TEST_MAIN_RESULT();
 }

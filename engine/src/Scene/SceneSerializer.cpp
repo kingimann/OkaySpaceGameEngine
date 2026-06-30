@@ -468,6 +468,21 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (int)cap->direction << " " << cap->offset.x << " " << cap->offset.y << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
+    if (auto* ec = go->GetComponent<EdgeCollider2D>()) {
+        out << "  edgecollider2d " << ec->offset.x << " " << ec->offset.y << " "
+            << (ec->isTrigger ? 1 : 0) << " " << ec->layer << " "
+            << (ec->oneWay ? 1 : 0) << " " << ec->oneWayNormal.x << " " << ec->oneWayNormal.y
+            << " " << ec->points.size();
+        for (const Vec2& p : ec->points) out << " " << p.x << " " << p.y;
+        out << "\n";
+    }
+    if (auto* pc = go->GetComponent<PolygonCollider2D>()) {
+        out << "  polygoncollider2d " << pc->offset.x << " " << pc->offset.y << " "
+            << (pc->isTrigger ? 1 : 0) << " " << pc->layer
+            << " " << pc->points.size();
+        for (const Vec2& p : pc->points) out << " " << p.x << " " << p.y;
+        out << "\n";
+    }
     if (auto* rb = go->GetComponent<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
@@ -1846,6 +1861,21 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     cap->size = sz; cap->direction = (CapsuleCollider2D::Direction)dir;
                     cap->offset = off; cap->isTrigger = (trig != 0); cap->layer = layer;
                     cap->autoFit = (af != 0);
+                } else if (field == "edgecollider2d") {
+                    Vec2 off, n{0, 1}; int trig = 0, layer = 0, ow = 0; std::size_t count = 0;
+                    in >> off.x >> off.y >> trig >> layer >> ow >> n.x >> n.y >> count;
+                    auto* ec = go->AddComponent<EdgeCollider2D>();
+                    ec->offset = off; ec->isTrigger = (trig != 0); ec->layer = layer;
+                    ec->oneWay = (ow != 0); ec->oneWayNormal = n;
+                    ec->points.clear();
+                    for (std::size_t k = 0; k < count; ++k) { Vec2 p; in >> p.x >> p.y; ec->points.push_back(p); }
+                } else if (field == "polygoncollider2d") {
+                    Vec2 off; int trig = 0, layer = 0; std::size_t count = 0;
+                    in >> off.x >> off.y >> trig >> layer >> count;
+                    auto* pc = go->AddComponent<PolygonCollider2D>();
+                    pc->offset = off; pc->isTrigger = (trig != 0); pc->layer = layer;
+                    pc->points.clear();
+                    for (std::size_t k = 0; k < count; ++k) { Vec2 p; in >> p.x >> p.y; pc->points.push_back(p); }
                 } else if (field == "rigidbody3d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;
                     int fx = 0, fy = 0, fz = 0;

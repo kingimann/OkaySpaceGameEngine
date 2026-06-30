@@ -8991,6 +8991,62 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cap2")) toRemove = cap;
         }
     }
+    if (auto* ec = dynamic_cast<EdgeCollider2D*>(curComp)) {
+        if (CompHeader("Edge Collider 2D", ec, &toRemove)) {
+            ImGui::TextDisabled("Open polyline: ground, slopes, walls. Local-space points.");
+            float off[2] = {ec->offset.x, ec->offset.y};
+            if (ImGui::DragFloat2("Offset##ec2", off, 0.05f)) { ec->offset = {off[0], off[1]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##ec2", &ec->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##ec2", &ec->layer, 0.1f, 0, 31);
+            if (ImGui::Checkbox("One-Way##ec2", &ec->oneWay)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only blocks bodies from the normal side — jump up through it, land on top.");
+            if (ec->oneWay) {
+                float n[2] = {ec->oneWayNormal.x, ec->oneWayNormal.y};
+                if (ImGui::DragFloat2("Block Normal##ec2", n, 0.05f)) { ec->oneWayNormal = {n[0], n[1]}; ed.dirty = true; }
+            }
+            ImGui::Separator();
+            ImGui::Text("Points (%d)", (int)ec->points.size());
+            for (std::size_t i = 0; i < ec->points.size(); ++i) {
+                ImGui::PushID((int)i);
+                float p[2] = {ec->points[i].x, ec->points[i].y};
+                if (ImGui::DragFloat2("##pt", p, 0.05f)) { ec->points[i] = {p[0], p[1]}; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x") && ec->points.size() > 2) { ec->points.erase(ec->points.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("+ Point##ec2")) {
+                Vec2 last = ec->points.empty() ? Vec2{0, 0} : ec->points.back();
+                ec->points.push_back({last.x + 1.0f, last.y}); ed.dirty = true;
+            }
+            if (ImGui::SmallButton("Remove##ec2")) toRemove = ec;
+        }
+    }
+    if (auto* pc = dynamic_cast<PolygonCollider2D*>(curComp)) {
+        if (CompHeader("Polygon Collider 2D", pc, &toRemove)) {
+            ImGui::TextDisabled("Closed loop (convex works best). Local-space vertices.");
+            float off[2] = {pc->offset.x, pc->offset.y};
+            if (ImGui::DragFloat2("Offset##pc2", off, 0.05f)) { pc->offset = {off[0], off[1]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##pc2", &pc->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##pc2", &pc->layer, 0.1f, 0, 31);
+            ImGui::Separator();
+            ImGui::Text("Vertices (%d)", (int)pc->points.size());
+            for (std::size_t i = 0; i < pc->points.size(); ++i) {
+                ImGui::PushID((int)i);
+                float p[2] = {pc->points[i].x, pc->points[i].y};
+                if (ImGui::DragFloat2("##v", p, 0.05f)) { pc->points[i] = {p[0], p[1]}; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x") && pc->points.size() > 3) { pc->points.erase(pc->points.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("+ Vertex##pc2")) {
+                Vec2 last = pc->points.empty() ? Vec2{0, 0} : pc->points.back();
+                pc->points.push_back({last.x, last.y + 0.5f}); ed.dirty = true;
+            }
+            if (ImGui::SmallButton("Remove##pc2")) toRemove = pc;
+        }
+    }
     if (auto* rb3 = dynamic_cast<Rigidbody3D*>(curComp))
         if (CompHeader("Rigidbody3D", rb3, &toRemove)) {
             auto* rb = go->GetComponent<Rigidbody3D>();
@@ -12448,6 +12504,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<BoxCollider2D>(), "Box Collider 2D")) { go->AddComponent<BoxCollider2D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CircleCollider2D>(), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider2D>(), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<EdgeCollider2D>(), "Edge Collider 2D (polyline/one-way)")) { go->AddComponent<EdgeCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<PolygonCollider2D>(), "Polygon Collider 2D")) { go->AddComponent<PolygonCollider2D>(); ed.dirty = true; }
             if (item(go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>(), "Tilemap Collider 2D")) { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
           } EndCat(o); }
 
@@ -14757,6 +14815,17 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                        ? Vec2{r, 0} : Vec2{0, r};
                 dl->AddLine(worldToScreen(Vec3{s0 + n, 0}), worldToScreen(Vec3{s1 + n, 0}), cg, 1.5f);
                 dl->AddLine(worldToScreen(Vec3{s0 - n, 0}), worldToScreen(Vec3{s1 - n, 0}), cg, 1.5f);
+            }
+            if (auto* poly = dynamic_cast<PolyShapeCollider2D*>(up->GetComponent<EdgeCollider2D>()
+                                ? (Collider2D*)up->GetComponent<EdgeCollider2D>()
+                                : (Collider2D*)up->GetComponent<PolygonCollider2D>())) {
+                std::vector<Vec2> wp = poly->WorldPoints();
+                std::size_t segs = poly->closedLoop() ? wp.size() : (wp.size() > 0 ? wp.size() - 1 : 0);
+                for (std::size_t i = 0; i < segs; ++i)
+                    dl->AddLine(worldToScreen(Vec3{wp[i], 0}),
+                                worldToScreen(Vec3{wp[(i + 1) % wp.size()], 0}), cg, 1.5f);
+                for (const Vec2& v : wp)
+                    dl->AddCircleFilled(worldToScreen(Vec3{v, 0}), 2.5f, cg);
             }
         }
     }

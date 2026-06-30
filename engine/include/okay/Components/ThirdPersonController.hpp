@@ -178,7 +178,7 @@ public:
             rb->velocity.x = cur.x + dv.x;
             rb->velocity.z = cur.z + dv.z;
             // Jump: first jump needs ground/coyote; extra jumps (double-jump) up to maxJumps.
-            if (canJump && m_jumpBuf > 0.0f) {
+            if (canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched/prone
                 bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
@@ -217,7 +217,7 @@ public:
                 // No jump/fall pose (it looked off): airborne keeps the matching
                 // ground pose (idle / walk / run).
                 ch->anim = m_stance == Stance::Prone  ? 7
-                         : m_stance == Stance::Crouch ? 6
+                         : m_stance == Stance::Crouch ? (moving ? 17 : 6)   // crouch-walk vs sneak-idle
                          : (moving ? (running ? 3 : 2) : 1);
                 // The head turns to keep looking where the camera points (relative to
                 // the body's current facing) AND tilts up/down with the orbit pitch,

@@ -200,6 +200,8 @@ void Physics3D::Step(Scene& scene, float dt) {
             Vec3 accel = gravity * rb->gravityScale + rb->ConsumeForce() * rb->InvMass();
             rb->velocity = rb->velocity + accel * dt;
             if (rb->drag > 0.0f) rb->velocity = rb->velocity * (1.0f / (1.0f + rb->drag * dt));
+            if (rb->maxFallSpeed > 0.0f && rb->velocity.y < -rb->maxFallSpeed)
+                rb->velocity.y = -rb->maxFallSpeed;   // clamp terminal fall speed
         }
         if (rb->freezeX) rb->velocity.x = 0.0f;
         if (rb->freezeY) rb->velocity.y = 0.0f;

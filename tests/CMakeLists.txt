@@ -565,3 +565,11 @@ add_test(NAME camera_cine COMMAND test_camera_cine)
 add_executable(test_player_fixes test_player_fixes.cpp)
 target_link_libraries(test_player_fixes PRIVATE okay::engine)
 add_test(NAME player_fixes COMMAND test_player_fixes)
+
+add_executable(test_terrain_ops test_terrain_ops.cpp)
+target_link_libraries(test_terrain_ops PRIVATE okay::engine)
+add_test(NAME terrain_ops COMMAND test_terrain_ops)
+
+add_executable(test_npc_ai test_npc_ai.cpp)
+target_link_libraries(test_npc_ai PRIVATE okay::engine)
+add_test(NAME npc_ai COMMAND test_npc_ai)

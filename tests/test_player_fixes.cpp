@@ -48,5 +48,16 @@ int main() {
         CHECK(n == 1);    // adopted one, removed the rest, created none
     }
 
+    // ---- Crouch-walk (anim 17): the legs actually cycle, unlike static crouch (6). ----
+    {
+        Scene s("CW");
+        auto* ch = s.CreateGameObject("Hero")->AddComponent<Character>();
+        const int LTHIGH = 9;
+        ch->anim = 6;                                    // crouch idle: legs are static
+        CHECK(std::fabs(ch->PoseAt(0.0f)[LTHIGH].x - ch->PoseAt(0.4f)[LTHIGH].x) < 1e-3f);
+        ch->anim = 17;                                   // crouch-walk: legs swing over time
+        CHECK(std::fabs(ch->PoseAt(0.0f)[LTHIGH].x - ch->PoseAt(0.4f)[LTHIGH].x) > 1.0f);
+    }
+
     TEST_MAIN_RESULT();
 }

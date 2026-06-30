@@ -443,6 +443,41 @@ void Terrain::HeightRange(float& lo, float& hi) const {
     for (float h : heights) { if (h < lo) lo = h; if (h > hi) hi = h; }
 }
 
+void Terrain::Terrace(int steps) {
+    if (steps < 2 || heights.empty()) return;
+    float lo, hi; HeightRange(lo, hi);
+    float range = hi - lo;
+    if (range < 1e-5f) return;
+    float n = (float)(steps - 1);
+    for (float& h : heights) {
+        float t = (h - lo) / range;                  // 0..1
+        h = lo + (std::round(t * n) / n) * range;     // snap to the nearest band
+    }
+}
+
+float Terrain::SlopeAt(float localX, float localZ) const {
+    Vec3 nrm = NormalAt(localX, localZ);
+    float c = nrm.y;                                  // cos(angle from straight up)
+    if (c > 1.0f) c = 1.0f; if (c < -1.0f) c = -1.0f;
+    return std::acos(c) * 57.29577951308232f;         // radians -> degrees
+}
+
+void Terrain::Normalize(float lowY, float highY) {
+    if (heights.empty()) return;
+    float lo, hi; HeightRange(lo, hi);
+    float range = hi - lo;
+    if (range < 1e-6f) { for (float& h : heights) h = lowY; return; }
+    float scale = (highY - lowY) / range;
+    for (float& h : heights) h = lowY + (h - lo) * scale;
+}
+
+void Terrain::Invert() {
+    if (heights.empty()) return;
+    float lo, hi; HeightRange(lo, hi);
+    float mid = (lo + hi) * 0.5f;
+    for (float& h : heights) h = 2.0f * mid - h;       // reflect about the mid elevation
+}
+
 bool Terrain::ExportHeightmap(const std::string& path) const {
     const int dim = Dim();
     if (dim < 1) return false;

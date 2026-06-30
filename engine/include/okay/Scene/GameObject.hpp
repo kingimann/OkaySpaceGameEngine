@@ -31,6 +31,16 @@ public:
     /// non-UI objects. Hierarchy pre-order breaks ties.
     int uiDrawOrder = 0;
 
+    /// First-person viewmodel flag. A camera that is told to IGNORE this object's
+    /// owner (the local player, via Camera::ignoreObject) normally skips the whole
+    /// player subtree — that's how you don't see your own body in first person.
+    /// Objects flagged here are the EXCEPTION: they render for the owner's own camera
+    /// even though they live inside the ignored subtree — exactly the Minecraft/Unturned
+    /// "viewmodel": the body is hidden from the owner only, while the arm (this flag)
+    /// stays visible to the owner. Other cameras (remote players) don't ignore this
+    /// player at all, so they see the full body regardless of this flag.
+    bool firstPersonViewmodel = false;
+
     /// Every GameObject has a Transform from birth.
     Transform* transform = nullptr;
 

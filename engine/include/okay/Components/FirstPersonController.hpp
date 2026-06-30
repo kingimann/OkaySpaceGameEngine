@@ -93,7 +93,14 @@ public:
     // tell the child camera to skip this object. showBody=true clears that.
     void ApplyBodyVisibility() {
         if (gameObject)
-            if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = true;  // never hide globally
+            if (auto* mr = gameObject->GetComponent<MeshRenderer>()) {
+                // Normally keep the baked body mesh enabled (hidden from your own view
+                // via the camera's ignore, still seen by other cameras). BUT when the
+                // Character is a separated rig, the rig renders the body instead — so
+                // leave the baked mesh hidden, or you'd see TWO characters overlapping.
+                auto* ch = gameObject->GetComponent<Character>();
+                mr->enabled = !(ch && ch->separateParts);
+            }
         if (Transform* camT = FindCameraChild())
             if (auto* cam = camT->gameObject->GetComponent<Camera>())
                 cam->ignoreObject = showBody ? nullptr : gameObject;
@@ -183,7 +190,7 @@ public:
             if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
             rb->velocity.x = cur.x + dv.x;
             rb->velocity.z = cur.z + dv.z;
-            if (canJump && m_jumpBuf > 0.0f) {
+            if (canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched/prone
                 bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
@@ -212,7 +219,7 @@ public:
                 // No jump/fall pose (it looked off): airborne keeps the matching
                 // ground pose (idle / walk / run) instead of a special jump anim.
                 ch->anim = m_stance == Stance::Prone  ? 7
-                         : m_stance == Stance::Crouch ? 6
+                         : m_stance == Stance::Crouch ? (moving ? 17 : 6)   // crouch-walk vs sneak-idle
                          : (moving ? (running ? 3 : 2) : 1);
                 // The body turns with yaw, so the head only needs to tilt with the
                 // look pitch (visible to other players / shadows in first person).

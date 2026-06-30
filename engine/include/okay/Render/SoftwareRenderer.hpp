@@ -1500,7 +1500,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Vertex transforms are repeated per band, but pixel fill dominates.
     auto renderBand = [&](int bandY0, int bandY1) {
     for (const auto& go : scene.Objects()) {
-        if (ignore && go->IsSelfOrDescendantOf(ignore)) continue;   // skip this object + its whole subtree (1st-person body, rig parts included)
+        if (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel) continue;   // skip the owner's subtree (1st-person body) — except viewmodel parts (the arm)
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines

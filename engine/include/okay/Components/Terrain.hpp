@@ -81,6 +81,26 @@ public:
     /// cliffs into scree slopes. `iterations` passes, `strength` in [0,1].
     void ThermalErode(int iterations, float talus, float strength = 0.5f);
 
+    /// Terrace the terrain into `steps` flat elevation bands (rice-paddy / mesa
+    /// look): quantize every height to the nearest of `steps` levels between the
+    /// lowest and highest point. `steps` < 2 is a no-op.
+    void Terrace(int steps);
+
+    /// Steepness of the surface at a local XZ point, in DEGREES (0 = flat ground,
+    /// 90 = a vertical cliff) — from the surface normal. Handy for placing rocks on
+    /// cliffs, blocking the player on steep ground, or gating buildable area.
+    float SlopeAt(float localX, float localZ) const;
+
+    /// Linearly remap every height so the lowest point becomes `lowY` and the highest
+    /// `highY` — fit a noisy heightmap into a desired elevation range (sea level to
+    /// peak). A flat map is set to `lowY`.
+    void Normalize(float lowY, float highY);
+
+    /// Flip the terrain about its mid elevation: peaks become valleys and vice-versa
+    /// (the overall height range is preserved). Great for carving a lake/cave-bed from
+    /// a mountain, or just exploring a generated shape's inverse.
+    void Invert();
+
     // ---- Heightmap I/O (interop with World Machine / Gaea / Photoshop) --
     /// Lowest and highest height in the map (for normalizing exports / UI).
     void HeightRange(float& lo, float& hi) const;

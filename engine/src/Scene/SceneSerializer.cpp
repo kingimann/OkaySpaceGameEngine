@@ -179,6 +179,15 @@ static bool IsGeneratedRig(GameObject* go) {
     return false;
 }
 
+// The first-person arm VIEWMODEL is spawned at runtime by FirstPersonHand (a "FP_Arm"
+// child of the camera). Like the rig, it's regenerated each run, so it must not be
+// written to the scene file — otherwise it would reload as a stale duplicate.
+static bool IsGeneratedViewmodel(GameObject* go) {
+    if (!go || go->name != "FP_Arm" || !go->transform) return false;
+    Transform* par = go->transform->Parent();
+    return par && par->gameObject && par->gameObject->GetComponent<FirstPersonHand>();
+}
+
 // Write a GameObject's Transform + all known components (no header/parent line).
 void WriteComponents(std::ostream& out, GameObject* go) {
     Transform* t = go->transform;
@@ -337,7 +346,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* fh = go->GetComponent<FirstPersonHand>()) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
-            << " " << (fh->showLeftArm ? 1 : 0) << "\n";
+            << " " << (fh->showLeftArm ? 1 : 0)
+            << " " << (fh->viewmodelArm ? 1 : 0) << " " << (fh->matchSkin ? 1 : 0)
+            << " " << fh->armWidth << " " << fh->armLength << " " << fh->armReach
+            << " " << fh->armSpread << " " << fh->armDrop << " " << fh->armPitch
+            << " " << fh->armYaw << " " << fh->swingAmount
+            << " " << fh->armColor.r << " " << fh->armColor.g << " " << fh->armColor.b << "\n";
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
@@ -397,7 +411,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
             << (rb->freezeX ? 1 : 0) << " " << (rb->freezeY ? 1 : 0) << " "
-            << (rb->freezeZ ? 1 : 0) << "\n";
+            << (rb->freezeZ ? 1 : 0)
+            << " " << rb->maxFallSpeed << "\n";   // trailing (back-compatible)
     }
     // Mesh + Cylinder colliders derive from Box/Capsule, so write them first and guard
     // the base records by exact shape() (else GetComponent<BoxCollider3D> matches a mesh).
@@ -745,7 +760,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  npc " << c->behavior << " " << c->moveSpeed << " " << c->sightRange << " "
             << c->wanderRadius << " " << c->attackRange << " " << c->attackDamage << " "
             << c->attackInterval << " " << (c->faceMovement ? 1 : 0) << " " << Quote(c->targetName)
-            << " " << c->maxHealth << " " << (c->invulnerable ? 1 : 0) << "\n";
+            << " " << c->maxHealth << " " << (c->invulnerable ? 1 : 0)
+            // smarter-AI trailing fields (older files stop after invulnerable):
+            << " " << c->runSpeed << " " << c->turnSpeed << " " << c->acceleration
+            << " " << c->stopDistance << " " << c->fieldOfView << " " << (c->lineOfSight ? 1 : 0)
+            << " " << c->eyeHeight << " " << c->hearingRange << " " << c->detectionTime
+            << " " << c->loseSightTime << " " << c->searchTime << " " << (c->aggressive ? 1 : 0)
+            << " " << (c->provokable ? 1 : 0) << " " << (c->returnsHome ? 1 : 0)
+            << " " << c->leashRange << " " << c->wanderPause << " " << (c->patrolLoop ? 1 : 0)
+            << " " << c->waypointWait << " " << c->attackWindup << " " << c->fleeHealthPct
+            << " " << c->separationRadius << " " << (c->driveAnimation ? 1 : 0)
+            << " " << (c->lookAtTarget ? 1 : 0) << "\n";
+        for (const Vec3& w : c->waypoints)
+            out << "  npcwp " << w.x << " " << w.y << " " << w.z << "\n";
     }
     if (auto* c = go->GetComponent<MeleeAttacker>()) {
         out << "  melee " << c->damage << " " << c->range << " " << c->arc << " " << c->cooldown
@@ -1369,7 +1396,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
         GameObject* go = objs[i].get();
-        if (IsGeneratedRig(go)) continue;   // a Character's part rig is regenerated on load
+        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
         Transform* t = go->transform;
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
@@ -1681,6 +1708,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rb->bodyType = (Rigidbody3D::BodyType)bt;
                     rb->gravityScale = gs; rb->mass = mass; rb->drag = drag; rb->bounciness = bounce;
                     rb->freezeX = (fx != 0); rb->freezeY = (fy != 0); rb->freezeZ = (fz != 0);
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->maxFallSpeed;
                 } else if (field == "boxcollider3d") {
                     Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> sz.z >> off.x >> off.y >> off.z >> trig;
@@ -2232,6 +2260,38 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
                         in >> c->maxHealth; c->health = c->maxHealth;
                         int iv = 0; in >> iv; c->invulnerable = (iv != 0);
+                        // Smarter-AI trailing fields: read whatever remains (old files stop here).
+                        std::string rest; std::getline(in, rest);
+                        std::istringstream rs(rest); std::vector<float> v; float f;
+                        while (rs >> f) v.push_back(f);
+                        auto g = [&](std::size_t i, float d) { return i < v.size() ? v[i] : d; };
+                        c->runSpeed       = g(0,  c->runSpeed);
+                        c->turnSpeed      = g(1,  c->turnSpeed);
+                        c->acceleration   = g(2,  c->acceleration);
+                        c->stopDistance   = g(3,  c->stopDistance);
+                        c->fieldOfView    = g(4,  c->fieldOfView);
+                        c->lineOfSight    = g(5,  c->lineOfSight ? 1.f : 0.f) != 0.0f;
+                        c->eyeHeight      = g(6,  c->eyeHeight);
+                        c->hearingRange   = g(7,  c->hearingRange);
+                        c->detectionTime  = g(8,  c->detectionTime);
+                        c->loseSightTime  = g(9,  c->loseSightTime);
+                        c->searchTime     = g(10, c->searchTime);
+                        c->aggressive     = g(11, c->aggressive ? 1.f : 0.f) != 0.0f;
+                        c->provokable     = g(12, c->provokable ? 1.f : 0.f) != 0.0f;
+                        c->returnsHome    = g(13, c->returnsHome ? 1.f : 0.f) != 0.0f;
+                        c->leashRange     = g(14, c->leashRange);
+                        c->wanderPause    = g(15, c->wanderPause);
+                        c->patrolLoop     = g(16, c->patrolLoop ? 1.f : 0.f) != 0.0f;
+                        c->waypointWait   = g(17, c->waypointWait);
+                        c->attackWindup   = g(18, c->attackWindup);
+                        c->fleeHealthPct  = g(19, c->fleeHealthPct);
+                        c->separationRadius = g(20, c->separationRadius);
+                        c->driveAnimation = g(21, c->driveAnimation ? 1.f : 0.f) != 0.0f;
+                        c->lookAtTarget   = g(22, c->lookAtTarget ? 1.f : 0.f) != 0.0f;
+                    }
+                } else if (field == "npcwp") {
+                    if (auto* c = go->GetComponent<NPCController>()) {
+                        Vec3 w; in >> w.x >> w.y >> w.z; c->waypoints.push_back(w);
                     }
                 } else if (field == "melee") {
                     auto* c = go->AddComponent<MeleeAttacker>();
@@ -2792,12 +2852,25 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int hs = 1;
                     in >> fh->attackButton >> hs;
                     fh->holdToSwing = (hs != 0);
-                    // Optional trailing fields (older rows tolerated): showLeftArm.
+                    // Optional trailing fields (older rows tolerated): showLeftArm,
+                    // viewmodelArm, matchSkin, armWidth, armLength, armReach, armSpread,
+                    // armDrop, armPitch, armYaw, swingAmount, armColor rgb.
                     std::string rest; std::getline(in, rest);
                     std::istringstream rs(rest);
                     std::vector<float> v; float f;
                     while (rs >> f) v.push_back(f);
-                    if (v.size() >= 1) fh->showLeftArm = (v[0] != 0.0f);
+                    if (v.size() >= 1)  fh->showLeftArm  = (v[0] != 0.0f);
+                    if (v.size() >= 2)  fh->viewmodelArm = (v[1] != 0.0f);
+                    if (v.size() >= 3)  fh->matchSkin    = (v[2] != 0.0f);
+                    if (v.size() >= 4)  fh->armWidth     = v[3];
+                    if (v.size() >= 5)  fh->armLength    = v[4];
+                    if (v.size() >= 6)  fh->armReach     = v[5];
+                    if (v.size() >= 7)  fh->armSpread    = v[6];
+                    if (v.size() >= 8)  fh->armDrop      = v[7];
+                    if (v.size() >= 9)  fh->armPitch     = v[8];
+                    if (v.size() >= 10) fh->armYaw       = v[9];
+                    if (v.size() >= 11) fh->swingAmount  = v[10];
+                    if (v.size() >= 14) fh->armColor     = Color(v[11], v[12], v[13], 1.0f);
                 } else if (field == "netsync") {
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;
@@ -3402,7 +3475,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     out << "okayscene 1\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
-        if (IsGeneratedRig(go)) continue;   // a Character's part rig is regenerated on load
+        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";

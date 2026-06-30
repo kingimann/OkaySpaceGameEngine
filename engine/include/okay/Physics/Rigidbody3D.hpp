@@ -21,6 +21,10 @@ public:
     float    mass         = 1.0f;
     float    drag         = 0.0f;     // linear damping per second
     float    bounciness   = 0.0f;     // restitution [0,1]
+    /// Terminal fall speed (world units/s). The downward velocity is clamped to this
+    /// so a long fall can't accelerate without bound (more stable, no tunnelling
+    /// through thin floors at high frame-step). 0 = no clamp.
+    float    maxFallSpeed = 0.0f;
     /// Freeze movement on selected world axes (e.g. lock Y for a top-down game).
     bool     freezeX = false, freezeY = false, freezeZ = false;
 

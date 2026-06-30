@@ -24,5 +24,18 @@ int main() {
     CHECK(!other->IsSelfOrDescendantOf(root));    // unrelated
     CHECK(!root->IsSelfOrDescendantOf(nullptr));  // null ancestor
 
+    // Viewmodel exemption: the same predicate gates the owner-camera cull, but a part
+    // flagged firstPersonViewmodel (the first-person arm) is rendered even though it
+    // lives inside the ignored subtree. This mirrors the renderer's skip condition.
+    auto culled = [](GameObject* go, GameObject* ignore) {
+        return ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel;
+    };
+    CHECK(!grand->firstPersonViewmodel);          // default: ordinary body part
+    CHECK(culled(grand, root));                   // so it IS hidden from the owner camera
+    grand->firstPersonViewmodel = true;           // make it the arm/viewmodel
+    CHECK(!culled(grand, root));                  // now it renders for the owner
+    CHECK(!culled(grand, nullptr));               // and other cameras never cull it
+    CHECK(culled(child, root));                   // a sibling body part is still hidden
+
     TEST_MAIN_RESULT();
 }

@@ -1009,7 +1009,7 @@ inline void VoxelSandbox(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     float surfY = 0.0f; vox->SurfaceY(0, 0, surfY);
     player->transform->localPosition = {0, surfY + 3.0f, 0};
-    { auto* pc = player->AddComponent<Character>(); pc->Apply(); pc->separateParts = true; }   // editable part rig (FP hand hides all but the arm)
+    { auto* pc = player->AddComponent<Character>(); pc->Apply(); }   // single mesh; the FP hand hides it from your own camera and shows a viewmodel arm (Minecraft/Unturned style)
     player->AddComponent<Rigidbody3D>();
     {
         auto* col = player->AddComponent<BoxCollider3D>();

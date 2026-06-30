@@ -256,6 +256,18 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LFOOT]  = {12, 0, 0};    r[B_RFOOT]  = {12, 0, 0};   // soles stay flat
         r[B_LUPARM] = {16, 0, 8};    r[B_RUPARM] = {16, 0, -8};  // arms hang slightly forward
         r[B_LFORE]  = {20, 0, 0};    r[B_RFORE]  = {20, 0, 0};
+    } else if (anim == 17) {               // crouch-walk (sneak while moving: legs cycle)
+        float amp = 16.0f;                 // a shorter, lower stride than the upright walk
+        float ss = std::sin(t * 6.0f);
+        r[B_HIPS]   = {10, 0, 0};                            // keep the crouch upper body
+        r[B_TORSO]  = {34, 0, 0};
+        r[B_HEAD]   = {-24, 0, 0};
+        r[B_LTHIGH] = {18 + amp * ss, 0, 0};   r[B_RTHIGH] = {18 - amp * ss, 0, 0};   // legs swing
+        r[B_LSHIN]  = {-30 + std::fmax(0.0f, -1.2f * amp * ss), 0, 0};
+        r[B_RSHIN]  = {-30 + std::fmax(0.0f,  1.2f * amp * ss), 0, 0};
+        r[B_LFOOT]  = {12, 0, 0};    r[B_RFOOT]  = {12, 0, 0};
+        r[B_LUPARM] = {16 - 0.6f * amp * ss, 0, 8};   r[B_RUPARM] = {16 + 0.6f * amp * ss, 0, -8};
+        r[B_LFORE]  = {20, 0, 0};    r[B_RFORE]  = {20, 0, 0};
     } else if (anim == 7) {                // prone (whole body flat on the ground)
         // Rotate ONLY the hips 90° so the body lies flat: the torso/head swing
         // forward along the ground and the legs swing straight back — no counter
@@ -337,7 +349,7 @@ std::vector<Vec3> Character::PoseAt(float t) const {
 }
 
 Vec3 Character::StanceOffset() const {
-    if (anim == 6) return {0.0f, -0.12f, 0.0f};   // crouch: light knee bend, feet stay planted (forward-hunch sneak)
+    if (anim == 6 || anim == 17) return {0.0f, -0.12f, 0.0f};   // crouch / crouch-walk: light knee bend
     if (anim == 7) return {0.0f, -0.78f, 0.0f};   // prone: lay the body on the ground
     return {0.0f, 0.0f, 0.0f};
 }
@@ -490,6 +502,13 @@ void Character::Update(float dt) {
     if (separateParts) {
         if (!m_partsBuilt) BuildParts();
         if (m_partsBuilt) {
+            // Keep the baked single mesh hidden EVERY frame while the rig drives the
+            // body — otherwise the original character renders on top of the rig and you
+            // see "two characters" (most obvious when leaning). (BuildParts disables it
+            // once, but anything that re-enables it, e.g. a re-Apply, would bring it
+            // back; this makes it stick.)
+            if (auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr)
+                mr->enabled = false;
             if (m_punchT >= 0.0f && m_punchT < 1.0f) {
                 m_punchT += (punchDuration > 1e-3f ? dt / punchDuration : 1.0f);
                 if (m_punchT > 1.0f) m_punchT = 1.0f;

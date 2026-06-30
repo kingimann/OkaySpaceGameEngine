@@ -8173,6 +8173,29 @@ void DrawInspector(EditorState& ed) {
                 tr->Apply(); ed.dirty = true;
                 ConsoleLog("Thermal erosion: " + std::to_string(g_terrainThermalIters) + " passes");
             }
+            static int s_terraceSteps = 5;
+            ImGui::SliderInt("Terrace bands##tero", &s_terraceSteps, 2, 20);
+            ImGui::SameLine();
+            if (ImGui::Button("Terrace##tero")) {
+                tr->Terrace(s_terraceSteps); tr->Apply(); ed.dirty = true;
+                ConsoleLog("Terraced into " + std::to_string(s_terraceSteps) + " bands");
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flatten the terrain into stepped elevation bands (mesas / rice paddies).");
+
+            static float s_normLow = 0.0f, s_normHigh = 12.0f;
+            ImGui::DragFloatRange2("Range##ternorm", &s_normLow, &s_normHigh, 0.1f, -100.0f, 100.0f, "Low %.1f", "High %.1f");
+            ImGui::SameLine();
+            if (ImGui::Button("Normalize##ternorm")) {
+                tr->Normalize(s_normLow, s_normHigh); tr->Apply(); ed.dirty = true;
+                ConsoleLog("Normalized heights to [" + std::to_string(s_normLow) + ", " + std::to_string(s_normHigh) + "]");
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Linearly remap every height so the lowest point becomes Low and the highest becomes High.");
+            ImGui::SameLine();
+            if (ImGui::Button("Invert##terinv")) {
+                tr->Invert(); tr->Apply(); ed.dirty = true;
+                ConsoleLog("Inverted terrain (peaks <-> valleys)");
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip the terrain about its mid elevation: peaks become valleys and vice-versa.");
 
             ImGui::SeparatorText("Heightmap (World Machine / Gaea / Photoshop)");
             if (ImGui::Button("Import PNG...##terhm")) {
@@ -8390,12 +8413,39 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
         if (CompHeader("First Person Hand", fh, &toRemove)) {
-            ImGui::TextDisabled("First person: shows ONLY your arm (hides the other body parts).\nNeeds the Character set to 'Separate Into Parts'. Click to punch.");
+            ImGui::TextDisabled("Minecraft/Unturned style: your body is hidden from your OWN\n"
+                                "camera (others still see it) and an arm viewmodel is shown\n"
+                                "only to you. No rig needed. Click to punch.");
             if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
             if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
-            if (ImGui::Checkbox("Show left arm##fh", &fh->showLeftArm)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the left arm instead of the right.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep swinging while the button is held (Minecraft mining).");
+
+            const char* sides[] = {"Right arm", "Left arm"};
+            int si = fh->showLeftArm ? 1 : 0;
+            if (ImGui::Combo("Arm side##fh", &si, sides, 2)) { fh->showLeftArm = (si == 1); ed.dirty = true; }
+
+            if (ImGui::Checkbox("Viewmodel arm (recommended)##fh", &fh->viewmodelArm)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("ON  = a dedicated arm viewmodel (Minecraft/Unturned). Works without a rig and never duplicates the body.\n"
+                                                          "OFF = raise the character's separated-rig arm instead (advanced; needs 'Separate Into Parts').");
+
+            if (fh->viewmodelArm) {
+                ImGui::SeparatorText("Arm Viewmodel");
+                if (ImGui::Checkbox("Match skin colour##fh", &fh->matchSkin)) ed.dirty = true;
+                if (!fh->matchSkin) {
+                    float col[3] = {fh->armColor.r, fh->armColor.g, fh->armColor.b};
+                    if (ImGui::ColorEdit3("Arm colour##fh", col)) { fh->armColor = Color(col[0], col[1], col[2], 1.0f); ed.dirty = true; }
+                }
+                if (ImGui::DragFloat("Width##fh",  &fh->armWidth,  0.005f, 0.02f, 0.6f, "%.3f")) ed.dirty = true;
+                if (ImGui::DragFloat("Length##fh", &fh->armLength, 0.01f,  0.05f, 2.0f, "%.3f")) ed.dirty = true;
+                if (ImGui::DragFloat("Reach (forward)##fh", &fh->armReach,  0.01f, 0.2f, 2.0f, "%.3f")) ed.dirty = true;
+                if (ImGui::DragFloat("Spread (side)##fh",   &fh->armSpread, 0.01f, 0.0f, 1.5f, "%.3f")) ed.dirty = true;
+                if (ImGui::DragFloat("Drop (down)##fh",     &fh->armDrop,   0.01f, 0.0f, 1.5f, "%.3f")) ed.dirty = true;
+                if (ImGui::DragFloat("Pitch##fh", &fh->armPitch, 0.5f, -90.0f, 90.0f, "%.1f")) ed.dirty = true;
+                if (ImGui::DragFloat("Yaw inward##fh", &fh->armYaw, 0.5f, -90.0f, 90.0f, "%.1f")) ed.dirty = true;
+                if (ImGui::DragFloat("Swing amount##fh", &fh->swingAmount, 0.02f, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the arm jabs forward when you punch (0 = stay still).");
+            }
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }
@@ -8803,6 +8853,8 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Mass##rb3", &rb->mass, 0.05f, 0.01f, 1000.0f);
             ImGui::DragFloat("Drag##rb3", &rb->drag, 0.01f, 0.0f, 100.0f);
             ImGui::DragFloat("Bounciness##rb3", &rb->bounciness, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Max Fall Speed##rb3", &rb->maxFallSpeed, 0.1f, 0.0f, 200.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Terminal fall speed (0 = unlimited). Caps downward velocity for stable long falls.");
             ImGui::TextDisabled("Freeze position");
             ImGui::SameLine(); ImGui::Checkbox("X##fz", &rb->freezeX);
             ImGui::SameLine(); ImGui::Checkbox("Y##fz", &rb->freezeY);
@@ -10007,26 +10059,93 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* c = dynamic_cast<NPCController*>(curComp)) {
         if (CompHeader("NPC Controller", c, &toRemove)) {
-            const char* bs[] = { "Idle", "Wander", "Follow", "Flee", "Chase (attack)" };
+            const char* bs[] = { "Idle", "Wander", "Follow", "Flee", "Chase (attack)", "Patrol", "Guard" };
             if (ImGui::Combo("Behavior##npc", &c->behavior, bs, IM_ARRAYSIZE(bs))) ed.dirty = true;
             char tn[48]; std::strncpy(tn, c->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target##npc", tn, sizeof(tn))) { c->targetName = tn; ed.dirty = true; }
-            if (ImGui::DragFloat("Move Speed##npc", &c->moveSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Sight Range##npc", &c->sightRange, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Wander Radius##npc", &c->wanderRadius, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ed.isPlaying()) ImGui::TextDisabled("State: %s%s", c->StateName(), c->IsDead() ? " (dead)" : "");
             auto bh = (NPCController::Behavior)c->behavior;
-            if (bh == NPCController::Behavior::Chase || bh == NPCController::Behavior::Follow) {
-                if (ImGui::DragFloat("Attack/Stop Range##npc", &c->attackRange, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            }
-            if (bh == NPCController::Behavior::Chase) {
-                if (ImGui::DragFloat("Attack Damage##npc", &c->attackDamage, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
-                if (ImGui::DragFloat("Attack Interval##npc", &c->attackInterval, 0.05f, 0.05f, 10.0f, "%.2f s")) ed.dirty = true;
-            }
+
+            ImGui::SeparatorText("Movement");
+            if (ImGui::DragFloat("Walk Speed##npc", &c->moveSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Speed##npc", &c->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used when chasing, fleeing or searching.");
+            if (ImGui::DragFloat("Turn Speed##npc", &c->turnSpeed, 5.0f, 0.0f, 1440.0f, "%.0f deg/s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast it rotates toward its heading (0 = snap instantly).");
+            if (ImGui::DragFloat("Acceleration##npc", &c->acceleration, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Stop Distance##npc", &c->stopDistance, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Face Movement##npc", &c->faceMovement)) ed.dirty = true;
+
+            ImGui::SeparatorText("Perception");
+            if (ImGui::DragFloat("Sight Range##npc", &c->sightRange, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Field of View##npc", &c->fieldOfView, 1.0f, 10.0f, 360.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vision cone width. 360 = sees in every direction.");
+            if (ImGui::Checkbox("Line of Sight (walls block)##npc", &c->lineOfSight)) ed.dirty = true;
+            if (c->lineOfSight) if (ImGui::DragFloat("Eye Height##npc", &c->eyeHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Hearing Range##npc", &c->hearingRange, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Senses the target within this radius even out of sight (0 = deaf).");
+            if (ImGui::DragFloat("Detection Time##npc", &c->detectionTime, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Continuous sight needed before reacting (0 = instant; >0 = stealth meter).");
+            if (ImGui::DragFloat("Lose Sight Time##npc", &c->loseSightTime, 0.1f, 0.0f, 30.0f, "%.1f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Search Time##npc", &c->searchTime, 0.1f, 0.0f, 30.0f, "%.1f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long it investigates the last-known spot before giving up.");
+
+            ImGui::SeparatorText("Aggression");
+            if (ImGui::Checkbox("Aggressive (hunt on sight)##npc", &c->aggressive)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle/Wander/Patrol/Guard NPCs chase a perceived target.");
+            if (ImGui::Checkbox("Provokable (fights back)##npc", &c->provokable)) ed.dirty = true;
+            if (ImGui::Checkbox("Returns Home##npc", &c->returnsHome)) ed.dirty = true;
+            if (ImGui::DragFloat("Leash Range##npc", &c->leashRange, 0.5f, 0.0f, 500.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gives up the chase past this distance from spawn (0 = unlimited).");
+
+            if (bh == NPCController::Behavior::Wander || bh == NPCController::Behavior::Idle) {
+                ImGui::SeparatorText("Wander");
+                if (ImGui::DragFloat("Wander Radius##npc", &c->wanderRadius, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Wander Pause##npc", &c->wanderPause, 0.1f, 0.0f, 20.0f, "%.1f s")) ed.dirty = true;
+            }
+            if (bh == NPCController::Behavior::Patrol) {
+                ImGui::SeparatorText("Patrol Route");
+                if (ImGui::Checkbox("Loop##npc", &c->patrolLoop)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = A->B->C->A. Off = ping-pong A->B->C->B->A.");
+                if (ImGui::DragFloat("Wait at Waypoint##npc", &c->waypointWait, 0.1f, 0.0f, 20.0f, "%.1f s")) ed.dirty = true;
+                int removeWp = -1;
+                for (int i = 0; i < (int)c->waypoints.size(); ++i) {
+                    ImGui::PushID(i);
+                    float p[3] = { c->waypoints[i].x, c->waypoints[i].y, c->waypoints[i].z };
+                    ImGui::SetNextItemWidth(180);
+                    if (ImGui::DragFloat3("##wp", p, 0.1f)) { c->waypoints[i] = { p[0], p[1], p[2] }; ed.dirty = true; }
+                    ImGui::SameLine(); if (ImGui::SmallButton("X")) removeWp = i;
+                    ImGui::PopID();
+                }
+                if (removeWp >= 0) { c->waypoints.erase(c->waypoints.begin() + removeWp); ed.dirty = true; }
+                if (ImGui::SmallButton("Add Waypoint (here)##npc")) {
+                    Vec3 at = c->transform ? c->transform->Position() : Vec3{0, 0, 0};
+                    c->waypoints.push_back(at); ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds a point at the NPC's current position — move the NPC, then add again.");
+            }
+
+            ImGui::SeparatorText("Combat");
+            if (ImGui::DragFloat("Attack/Stop Range##npc", &c->attackRange, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Attack Damage##npc", &c->attackDamage, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Attack Interval##npc", &c->attackInterval, 0.05f, 0.05f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::DragFloat("Attack Windup##npc", &c->attackWindup, 0.05f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Telegraph delay before a hit lands (0 = instant).");
+            if (ImGui::SliderFloat("Flee at Health %##npc", &c->fleeHealthPct, 0.0f, 1.0f, "%.0f%%", ImGuiSliderFlags_None)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs away when health drops to this fraction of max (0 = never).");
+
+            ImGui::SeparatorText("Group & Presentation");
+            if (ImGui::DragFloat("Separation Radius##npc", &c->separationRadius, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steer away from other NPCs within this radius so they don't pile up (0 = off).");
+            if (ImGui::Checkbox("Drive Character Animation##npc", &c->driveAnimation)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets a sibling Character's idle/walk/run animation from movement.");
+            if (ImGui::Checkbox("Look At Target##npc", &c->lookAtTarget)) ed.dirty = true;
+
+            ImGui::SeparatorText("Health");
             if (ImGui::DragFloat("Max Health##npc", &c->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Damage() kills it at 0 (a MeleeAttacker can fight it).");
             if (ImGui::Checkbox("Invulnerable##npc", &c->invulnerable)) ed.dirty = true;
-            ImGui::TextDisabled("Moves a sibling Rigidbody3D toward/from the target.");
+            ImGui::TextDisabled("Moves a sibling Rigidbody3D (or the Transform).");
             if (ImGui::SmallButton("Remove##npc")) toRemove = c;
         }
     }

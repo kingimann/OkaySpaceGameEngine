@@ -21,6 +21,10 @@ public:
     float    mass         = 1.0f;
     float    drag         = 0.0f;     // linear damping per second
     float    bounciness   = 0.0f;     // restitution [0,1]
+    /// Coulomb friction coefficient [0..~1]. Contacts lose tangential speed up to
+    /// `friction` x the normal impulse, so boxes slow, stack and rest on slopes instead
+    /// of sliding forever. Combined between the two bodies (geometric mean). 0 = ice.
+    float    friction     = 0.5f;
     /// Terminal fall speed (world units/s). The downward velocity is clamped to this
     /// so a long fall can't accelerate without bound (more stable, no tunnelling
     /// through thin floors at high frame-step). 0 = no clamp.

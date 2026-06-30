@@ -91,6 +91,7 @@
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/Joint3D.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -469,7 +470,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
             << (rb->freezeX ? 1 : 0) << " " << (rb->freezeY ? 1 : 0) << " "
             << (rb->freezeZ ? 1 : 0)
-            << " " << rb->maxFallSpeed << "\n";   // trailing (back-compatible)
+            << " " << rb->maxFallSpeed
+            << " " << rb->friction << "\n";   // trailing (back-compatible)
+    }
+    if (auto* j = go->GetComponent<Joint3D>()) {
+        out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
+            << " " << j->anchor.x << " " << j->anchor.y << " " << j->anchor.z
+            << " " << j->distance << " " << (j->autoConfigure ? 1 : 0)
+            << " " << j->spring << " " << j->damper
+            << " " << (j->breakable ? 1 : 0) << " " << j->breakForce << "\n";
     }
     // Mesh + Cylinder colliders derive from Box/Capsule, so write them first and guard
     // the base records by exact shape() (else GetComponent<BoxCollider3D> matches a mesh).
@@ -1832,6 +1841,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rb->gravityScale = gs; rb->mass = mass; rb->drag = drag; rb->bounciness = bounce;
                     rb->freezeX = (fx != 0); rb->freezeY = (fy != 0); rb->freezeZ = (fz != 0);
                     in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->maxFallSpeed;
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
+                } else if (field == "joint3d") {
+                    auto* j = go->AddComponent<Joint3D>();
+                    int bk = 0, ac = 1;
+                    in >> j->mode;
+                    j->connectedBody = ReadQuoted(in);
+                    in >> j->anchor.x >> j->anchor.y >> j->anchor.z
+                       >> j->distance >> ac >> j->spring >> j->damper >> bk >> j->breakForce;
+                    j->autoConfigure = (ac != 0); j->breakable = (bk != 0);
                 } else if (field == "boxcollider3d") {
                     Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> sz.z >> off.x >> off.y >> off.z >> trig;

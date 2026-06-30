@@ -1,6 +1,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Components/Joint3D.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -263,13 +264,37 @@ void Physics3D::Step(Scene& scene, float dt) {
                     Vec3 va = ra ? ra->velocity : Vec3::Zero;
                     Vec3 vb = rb ? rb->velocity : Vec3::Zero;
                     float velAlongNormal = Vec3::Dot(vb - va, c.normal);
+                    float jImp = 0.0f;
                     if (velAlongNormal < 0.0f) {
                         float e = Mathf::Max(ra ? ra->bounciness : 0.0f,
                                              rb ? rb->bounciness : 0.0f);
-                        float jImp = -(1.0f + e) * velAlongNormal / imSum;
+                        jImp = -(1.0f + e) * velAlongNormal / imSum;
                         Vec3 impulse = c.normal * jImp;
                         if (ra) ra->velocity = ra->velocity - impulse * ima;
                         if (rb) rb->velocity = rb->velocity + impulse * imb;
+                    }
+                    // Coulomb friction: damp the tangential relative velocity, clamped to
+                    // friction x the normal impulse. With gravity re-pressing each step
+                    // this also gives resting bodies static-like friction (they stop /
+                    // stack / hold on slopes instead of sliding forever).
+                    if (jImp > 0.0f) {
+                        Vec3 rva = ra ? ra->velocity : Vec3::Zero;   // post-normal-impulse
+                        Vec3 rvb = rb ? rb->velocity : Vec3::Zero;
+                        Vec3 rvel = rvb - rva;
+                        Vec3 tang = rvel - c.normal * Vec3::Dot(rvel, c.normal);
+                        float tlen = std::sqrt(Vec3::Dot(tang, tang));
+                        if (tlen > 1e-4f) {
+                            Vec3 t = tang * (1.0f / tlen);
+                            float jt = -Vec3::Dot(rvel, t) / imSum;
+                            float fa = ra ? ra->friction : 0.6f;
+                            float fb = rb ? rb->friction : 0.6f;
+                            float mu = std::sqrt((fa < 0 ? 0 : fa) * (fb < 0 ? 0 : fb));
+                            float maxF = mu * jImp;
+                            if (jt > maxF) jt = maxF; else if (jt < -maxF) jt = -maxF;
+                            Vec3 fimp = t * jt;
+                            if (ra) ra->velocity = ra->velocity - fimp * ima;
+                            if (rb) rb->velocity = rb->velocity + fimp * imb;
+                        }
                     }
                 }
             }
@@ -465,6 +490,59 @@ void Physics3D::Step(Scene& scene, float dt) {
                     }
                 }
             }
+        }
+    }
+
+    // ---- Joints: positional constraints (after collisions) ----
+    for (Joint3D* j : scene.FindObjectsOfType<Joint3D>()) {
+        if (j->broken || !j->gameObject || !j->transform) continue;
+        Rigidbody3D* ra = j->gameObject->GetComponent<Rigidbody3D>();
+        if (!ra) continue;                          // the joint moves THIS body
+        Transform* ta = j->transform;
+        Rigidbody3D* rbB = nullptr; Transform* tb = nullptr;
+        if (!j->connectedBody.empty())
+            if (GameObject* g = scene.Find(j->connectedBody)) { tb = g->transform; rbB = g->GetComponent<Rigidbody3D>(); }
+        Vec3 pa = ta->Position();
+        Vec3 pb = tb ? tb->Position() : j->anchor;
+        if (!j->initialized) {
+            j->pinOffset = pa - pb;
+            j->restLen = j->autoConfigure ? std::sqrt(Vec3::Dot(pa - pb, pa - pb)) : j->distance;
+            j->initialized = true;
+        }
+        float imA = ra->InvMass();
+        float imB = rbB ? rbB->InvMass() : 0.0f;
+        float imSum = imA + imB;
+        if (imSum <= 0.0f) continue;
+        Joint3D::Mode m = (Joint3D::Mode)j->mode;
+
+        if (m == Joint3D::Mode::Pin) {
+            Vec3 target = pb + j->pinOffset;
+            Vec3 err = target - pa;
+            ta->localPosition = ta->localPosition + err * (imA / imSum);
+            if (tb && rbB) tb->localPosition = tb->localPosition - err * (imB / imSum);
+            ra->velocity = rbB ? rbB->velocity : Vec3::Zero;   // weld: follow B (anchor -> freeze)
+            if (j->breakable && std::sqrt(Vec3::Dot(err, err)) > j->breakForce) j->broken = true;
+        } else {
+            Vec3 d = pb - pa; float len = std::sqrt(Vec3::Dot(d, d));
+            Vec3 n = len > 1e-5f ? d * (1.0f / len) : Vec3{0, 1, 0};
+            float C = len - j->restLen;                 // +stretched / -compressed
+            Vec3 va = ra->velocity, vb = rbB ? rbB->velocity : Vec3::Zero;
+            float vrelN = Vec3::Dot(vb - va, n);
+            if (m == Joint3D::Mode::Spring) {
+                float f = j->spring * C + j->damper * vrelN;   // restore + damp, along n (A->B)
+                Vec3 imp = n * (f * dt);
+                ra->velocity = ra->velocity + imp * imA;
+                if (rbB) rbB->velocity = rbB->velocity - imp * imB;
+            } else {                                    // Distance (rigid rod)
+                float jImp = -vrelN / imSum;
+                Vec3 imp = n * jImp;
+                ra->velocity = ra->velocity - imp * imA;
+                if (rbB) rbB->velocity = rbB->velocity + imp * imB;
+                Vec3 corr = n * C;                       // restore the rest length
+                ta->localPosition = ta->localPosition + corr * (imA / imSum);
+                if (tb && rbB) tb->localPosition = tb->localPosition - corr * (imB / imSum);
+            }
+            if (j->breakable && std::fabs(C) > j->breakForce) j->broken = true;
         }
     }
 

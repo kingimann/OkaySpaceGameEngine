@@ -597,3 +597,7 @@ add_test(NAME gltf_import COMMAND test_gltf_import)
 add_executable(test_skinning test_skinning.cpp)
 target_link_libraries(test_skinning PRIVATE okay::engine)
 add_test(NAME skinning COMMAND test_skinning)
+
+add_executable(test_physics_joints test_physics_joints.cpp)
+target_link_libraries(test_physics_joints PRIVATE okay::engine)
+add_test(NAME physics_joints COMMAND test_physics_joints)

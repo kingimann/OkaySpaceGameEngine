@@ -8997,6 +8997,8 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Mass##rb3", &rb->mass, 0.05f, 0.01f, 1000.0f);
             ImGui::DragFloat("Drag##rb3", &rb->drag, 0.01f, 0.0f, 100.0f);
             ImGui::DragFloat("Bounciness##rb3", &rb->bounciness, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Friction##rb3", &rb->friction, 0.01f, 0.0f, 2.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Coulomb friction (0 = ice). Combined between contacting bodies so things slow, stack and hold on slopes.");
             ImGui::DragFloat("Max Fall Speed##rb3", &rb->maxFallSpeed, 0.1f, 0.0f, 200.0f);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Terminal fall speed (0 = unlimited). Caps downward velocity for stable long falls.");
             ImGui::TextDisabled("Freeze position");
@@ -9005,6 +9007,31 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine(); ImGui::Checkbox("Z##fz", &rb->freezeZ);
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
         }
+    if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
+        if (CompHeader("Joint 3D", jt, &toRemove)) {
+            ImGui::TextDisabled("Constrains this body to an anchor or another body.");
+            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)"};
+            ImGui::Combo("Mode##jt", &jt->mode, modes, 3);
+            char cb[48]; std::strncpy(cb, jt->connectedBody.c_str(), sizeof(cb) - 1); cb[sizeof(cb) - 1] = '\0';
+            if (ImGui::InputText("Connected Body##jt", cb, sizeof(cb))) { jt->connectedBody = cb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of another object with a Rigidbody3D. Leave blank to anchor to a fixed world point below.");
+            if (jt->connectedBody.empty()) {
+                float a[3] = {jt->anchor.x, jt->anchor.y, jt->anchor.z};
+                if (ImGui::DragFloat3("Anchor##jt", a, 0.1f)) { jt->anchor = {a[0], a[1], a[2]}; ed.dirty = true; }
+            }
+            if (jt->mode != (int)Joint3D::Mode::Pin) {
+                ImGui::Checkbox("Auto distance##jt", &jt->autoConfigure);
+                if (!jt->autoConfigure) ImGui::DragFloat("Distance##jt", &jt->distance, 0.05f, 0.0f, 1000.0f);
+            }
+            if (jt->mode == (int)Joint3D::Mode::Spring) {
+                ImGui::DragFloat("Spring##jt", &jt->spring, 0.5f, 0.0f, 5000.0f);
+                ImGui::DragFloat("Damper##jt", &jt->damper, 0.1f, 0.0f, 500.0f);
+            }
+            ImGui::Checkbox("Breakable##jt", &jt->breakable);
+            if (jt->breakable) ImGui::DragFloat("Break at (stretch)##jt", &jt->breakForce, 0.1f, 0.0f, 1000.0f);
+            if (ImGui::SmallButton("Remove##jt")) toRemove = jt;
+        }
+    }
     if (auto* bc = dynamic_cast<BoxCollider3D*>(curComp)) {
         if (CompHeader("Box Collider 3D", bc, &toRemove)) {
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
@@ -12397,6 +12424,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 3D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }

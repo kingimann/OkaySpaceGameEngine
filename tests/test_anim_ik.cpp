@@ -306,5 +306,44 @@ int main() {
         (void)lo;
     }
 
+    // ---- AimIK / LookAtIK: name-based refs resolve at Start, and round-trip ----
+    {
+        Scene s("aimnames");
+        auto* turret = s.CreateGameObject("Turret"); turret->transform->SetPosition({0, 1, 0});
+        s.CreateGameObject("Enemy")->transform->SetPosition({10, 1, 0});
+        auto* ik = turret->AddComponent<AimIK>();
+        ik->targetName = "Enemy"; ik->aimAxis = Vec3::Forward; ik->weight = 1.0f; ik->maxAngle = 180.0f;
+        s.Start();                                          // resolves targetName -> Enemy
+        CHECK(ik->targetObject != nullptr);
+        for (int i = 0; i < 5; ++i) s.Update(1.0f / 60.0f);
+        Vec3 aim = (turret->transform->Rotation() * Vec3::Forward).Normalized();
+        CHECK(aim.x > 0.99f);                               // aimed at the enemy on +X
+
+        // Round-trip the AimIK refs through the scene file.
+        std::string text = SceneSerializer::Serialize(s);
+        Scene s2("s2");
+        CHECK(SceneSerializer::Deserialize(s2, text));
+        auto* la = s2.Find("Turret")->GetComponent<AimIK>();
+        CHECK(la && la->targetName == "Enemy");
+        CHECK(la && std::fabs(la->maxAngle - 180.0f) < 1e-3f);
+
+        // LookAtIK chain by names.
+        Scene s3("looknames");
+        auto* npc  = s3.CreateGameObject("NPC");
+        s3.CreateGameObject("Neck")->transform->SetPosition({0, 1.5f, 0});
+        s3.CreateGameObject("Head")->transform->SetPosition({0, 1.7f, 0});
+        s3.CreateGameObject("Player")->transform->SetPosition({5, 1.7f, 0});
+        auto* lk = npc->AddComponent<LookAtIK>();
+        lk->chainNames = {"Neck", "Head"}; lk->targetName = "Player"; lk->maxAngle = 180.0f;
+        s3.Start();
+        CHECK(lk->chain.size() == 2 && lk->targetObject != nullptr);
+        std::string t3 = SceneSerializer::Serialize(s3);
+        Scene s4("s4");
+        CHECK(SceneSerializer::Deserialize(s4, t3));
+        auto* lk2 = s4.Find("NPC")->GetComponent<LookAtIK>();
+        CHECK(lk2 && lk2->chainNames.size() == 2 && lk2->chainNames[1] == "Head");
+        CHECK(lk2 && lk2->targetName == "Player");
+    }
+
     TEST_MAIN_RESULT();
 }

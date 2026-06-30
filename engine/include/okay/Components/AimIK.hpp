@@ -6,10 +6,13 @@
 // axis to stop the bone rolling, a weight to blend, and an angle clamp.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <string>
 
 namespace okay {
 
@@ -17,11 +20,22 @@ class AimIK : public Component {
 public:
     Transform* bone = nullptr;         ///< the bone to aim (defaults to this object's transform)
     Transform* targetObject = nullptr;
+    std::string boneName;              ///< editor/serialized: resolve `bone` by object name at Start
+    std::string targetName;            ///< editor/serialized: resolve `targetObject` by object name
     Vec3  target{0, 0, 0};
     Vec3  aimAxis = Vec3::Forward;     ///< the bone-local axis that should point at the target
     Vec3  upAxis  = Vec3::Up;          ///< keeps the bone from rolling around the aim axis
     float weight  = 1.0f;
     float maxAngle = 180.0f;           ///< clamp the turn from the rest pose (degrees)
+
+    void Start() override {
+        Scene* s = GetScene();
+        if (!s) return;
+        if (!bone && !boneName.empty())
+            if (GameObject* g = s->Find(boneName)) bone = g->transform;
+        if (!targetObject && !targetName.empty())
+            if (GameObject* g = s->Find(targetName)) targetObject = g->transform;
+    }
 
     void Update(float) override {
         if (weight <= 0.0f) return;

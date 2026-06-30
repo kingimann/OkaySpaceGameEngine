@@ -93,6 +93,8 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Components/Joint2D.hpp"
+#include "okay/Components/AimIK.hpp"
+#include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -510,6 +512,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (j->breakable ? 1 : 0) << " " << j->breakForce
             << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque   // hinge (trailing)
             << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle << "\n";
+    }
+    if (auto* a = go->GetComponent<AimIK>()) {
+        out << "  aimik " << Quote(a->boneName) << " " << Quote(a->targetName)
+            << " " << a->aimAxis.x << " " << a->aimAxis.y << " " << a->aimAxis.z
+            << " " << a->upAxis.x << " " << a->upAxis.y << " " << a->upAxis.z
+            << " " << a->weight << " " << a->maxAngle
+            << " " << a->target.x << " " << a->target.y << " " << a->target.z << "\n";
+    }
+    if (auto* l = go->GetComponent<LookAtIK>()) {
+        out << "  lookatik " << Quote(l->targetName)
+            << " " << l->forwardAxis.x << " " << l->forwardAxis.y << " " << l->forwardAxis.z
+            << " " << l->weight << " " << l->maxAngle
+            << " " << l->target.x << " " << l->target.y << " " << l->target.z
+            << " " << l->chainNames.size();
+        for (const std::string& n : l->chainNames) out << " " << Quote(n);
+        out << "\n";
     }
     // Mesh + Cylinder colliders derive from Box/Capsule, so write them first and guard
     // the base records by exact shape() (else GetComponent<BoxCollider3D> matches a mesh).
@@ -1933,6 +1951,21 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> um >> j->motorSpeed >> j->maxMotorTorque >> ul >> j->minAngle >> j->maxAngle;
                         j->useMotor = (um != 0); j->useLimits = (ul != 0);
                     }
+                } else if (field == "aimik") {
+                    auto* a = go->AddComponent<AimIK>();
+                    a->boneName = ReadQuoted(in); a->targetName = ReadQuoted(in);
+                    in >> a->aimAxis.x >> a->aimAxis.y >> a->aimAxis.z
+                       >> a->upAxis.x >> a->upAxis.y >> a->upAxis.z
+                       >> a->weight >> a->maxAngle
+                       >> a->target.x >> a->target.y >> a->target.z;
+                } else if (field == "lookatik") {
+                    auto* l = go->AddComponent<LookAtIK>();
+                    l->targetName = ReadQuoted(in);
+                    in >> l->forwardAxis.x >> l->forwardAxis.y >> l->forwardAxis.z
+                       >> l->weight >> l->maxAngle
+                       >> l->target.x >> l->target.y >> l->target.z;
+                    std::size_t n = 0; in >> n;
+                    for (std::size_t k = 0; k < n; ++k) l->chainNames.push_back(ReadQuoted(in));
                 } else if (field == "boxcollider3d") {
                     Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> sz.z >> off.x >> off.y >> off.z >> trig;

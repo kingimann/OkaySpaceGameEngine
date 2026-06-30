@@ -9152,6 +9152,50 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##jt2")) toRemove = jt;
         }
     }
+    if (auto* a = dynamic_cast<AimIK*>(curComp)) {
+        if (CompHeader("Aim IK", a, &toRemove)) {
+            ImGui::TextDisabled("Point a bone's aim axis at a target (turret, weapon, head).");
+            char bn[64]; std::strncpy(bn, a->boneName.c_str(), sizeof(bn) - 1); bn[sizeof(bn) - 1] = '\0';
+            if (ImGui::InputText("Bone (blank = self)##aim", bn, sizeof(bn))) { a->boneName = bn; ed.dirty = true; }
+            char tn[64]; std::strncpy(tn, a->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
+            if (ImGui::InputText("Target object##aim", tn, sizeof(tn))) { a->targetName = tn; ed.dirty = true; }
+            float t[3] = {a->target.x, a->target.y, a->target.z};
+            if (ImGui::DragFloat3("Target point##aim", t, 0.1f)) { a->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used when no Target object is set.");
+            float ax[3] = {a->aimAxis.x, a->aimAxis.y, a->aimAxis.z};
+            if (ImGui::DragFloat3("Aim Axis##aim", ax, 0.05f)) { a->aimAxis = {ax[0], ax[1], ax[2]}; ed.dirty = true; }
+            float up[3] = {a->upAxis.x, a->upAxis.y, a->upAxis.z};
+            if (ImGui::DragFloat3("Up Axis##aim", up, 0.05f)) { a->upAxis = {up[0], up[1], up[2]}; ed.dirty = true; }
+            ImGui::DragFloat("Weight##aim", &a->weight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Max Angle##aim", &a->maxAngle, 1.0f, 0.0f, 180.0f);
+            if (ImGui::SmallButton("Remove##aim")) toRemove = a;
+        }
+    }
+    if (auto* l = dynamic_cast<LookAtIK*>(curComp)) {
+        if (CompHeader("Look-At IK", l, &toRemove)) {
+            ImGui::TextDisabled("Aim a spine/neck/head chain at a target (head tracking).");
+            char tn[64]; std::strncpy(tn, l->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
+            if (ImGui::InputText("Target object##look", tn, sizeof(tn))) { l->targetName = tn; ed.dirty = true; }
+            float t[3] = {l->target.x, l->target.y, l->target.z};
+            if (ImGui::DragFloat3("Target point##look", t, 0.1f)) { l->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+            float fa[3] = {l->forwardAxis.x, l->forwardAxis.y, l->forwardAxis.z};
+            if (ImGui::DragFloat3("Forward Axis##look", fa, 0.05f)) { l->forwardAxis = {fa[0], fa[1], fa[2]}; ed.dirty = true; }
+            ImGui::DragFloat("Weight##look", &l->weight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Max Angle / bone##look", &l->maxAngle, 1.0f, 0.0f, 180.0f);
+            ImGui::Separator();
+            ImGui::Text("Chain bones root->tip (%d)", (int)l->chainNames.size());
+            for (std::size_t i = 0; i < l->chainNames.size(); ++i) {
+                ImGui::PushID((int)i);
+                char nb[64]; std::strncpy(nb, l->chainNames[i].c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+                if (ImGui::InputText("##cb", nb, sizeof(nb))) { l->chainNames[i] = nb; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) { l->chainNames.erase(l->chainNames.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("+ Bone##look")) { l->chainNames.push_back(""); ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##look")) toRemove = l;
+        }
+    }
     if (auto* bc = dynamic_cast<BoxCollider3D*>(curComp)) {
         if (CompHeader("Box Collider 3D", bc, &toRemove)) {
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
@@ -12537,6 +12581,8 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<Animator>(), "Animator (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
+            if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LookAtIK>(), "Look-At IK (head/eye tracking)")) { go->AddComponent<LookAtIK>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Physics 2D");

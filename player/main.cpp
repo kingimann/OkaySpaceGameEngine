@@ -1633,14 +1633,15 @@ int main(int argc, char** argv) {
             float ortho = cam ? cam->orthographicSize : 5.0f;
             Vec3 camPos = (cam && cam->transform) ? cam->transform->Position() : Vec3::Zero;
             float scale = h / (2.0f * ortho);
-            // Gather active sprites and draw back-to-front by sortOrder (stable,
-            // so same-order sprites keep scene order). Enables layered 2D scenes.
+            // Gather active sprites and draw back-to-front by sort key — sorting
+            // layer first, then order-in-layer (stable, so same-key sprites keep
+            // scene order). Enables layered 2D scenes.
             std::vector<GameObject*> sprites;
             for (const auto& up : scene.Objects())
                 if (up->active && up->GetComponent<SpriteRenderer>()) sprites.push_back(up.get());
             std::stable_sort(sprites.begin(), sprites.end(), [](GameObject* a, GameObject* b) {
-                return a->GetComponent<SpriteRenderer>()->sortOrder <
-                       b->GetComponent<SpriteRenderer>()->sortOrder;
+                return a->GetComponent<SpriteRenderer>()->SortKey() <
+                       b->GetComponent<SpriteRenderer>()->SortKey();
             });
             for (GameObject* obj : sprites) {
                 auto* sr = obj->GetComponent<SpriteRenderer>();

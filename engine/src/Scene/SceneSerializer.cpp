@@ -92,6 +92,7 @@
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/Joint3D.hpp"
+#include "okay/Components/Joint2D.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -209,7 +210,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << sr->uvMin.x << " " << sr->uvMin.y
             << " " << sr->uvMax.x << " " << sr->uvMax.y
             << " " << sr->sortOrder
-            << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0) << "\n";
+            << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0)
+            << " " << sr->sortingLayer << "\n";   // trailing (back-compatible)
     }
     if (auto* cam = go->GetComponent<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
@@ -448,7 +450,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
-            << rb->mass << " " << rb->drag << " " << rb->bounciness << "\n";
+            << rb->mass << " " << rb->drag << " " << rb->bounciness
+            << " " << rb->friction << "\n";   // trailing (back-compatible)
     }
     if (auto* bc = go->GetComponent<BoxCollider2D>()) {
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -476,6 +479,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* j = go->GetComponent<Joint3D>()) {
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
             << " " << j->anchor.x << " " << j->anchor.y << " " << j->anchor.z
+            << " " << j->distance << " " << (j->autoConfigure ? 1 : 0)
+            << " " << j->spring << " " << j->damper
+            << " " << (j->breakable ? 1 : 0) << " " << j->breakForce << "\n";
+    }
+    if (auto* j = go->GetComponent<Joint2D>()) {
+        out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)
+            << " " << j->anchor.x << " " << j->anchor.y
             << " " << j->distance << " " << (j->autoConfigure ? 1 : 0)
             << " " << j->spring << " " << j->damper
             << " " << (j->breakable ? 1 : 0) << " " << j->breakForce << "\n";
@@ -1568,6 +1578,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (std::isdigit(in.peek())) {
                                 int fx = 0, fy = 0; in >> fx >> fy;
                                 sr->flipX = (fx != 0); sr->flipY = (fy != 0);
+                                in >> std::ws; // optional sortingLayer follows flips
+                                if (in.peek() == '-' || std::isdigit(in.peek()))
+                                    in >> sr->sortingLayer;
                             }
                         }
                     }
@@ -1807,6 +1820,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* rb = go->AddComponent<Rigidbody2D>();
                     rb->bodyType = (Rigidbody2D::BodyType)bt;
                     rb->gravityScale = gs; rb->mass = mass; rb->drag = drag; rb->bounciness = bounce;
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->friction;  // trailing
                 } else if (field == "boxcollider2d") {
                     Vec2 sz, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;
@@ -1848,6 +1862,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> j->mode;
                     j->connectedBody = ReadQuoted(in);
                     in >> j->anchor.x >> j->anchor.y >> j->anchor.z
+                       >> j->distance >> ac >> j->spring >> j->damper >> bk >> j->breakForce;
+                    j->autoConfigure = (ac != 0); j->breakable = (bk != 0);
+                } else if (field == "joint2d") {
+                    auto* j = go->AddComponent<Joint2D>();
+                    int bk = 0, ac = 1;
+                    in >> j->mode;
+                    j->connectedBody = ReadQuoted(in);
+                    in >> j->anchor.x >> j->anchor.y
                        >> j->distance >> ac >> j->spring >> j->damper >> bk >> j->breakForce;
                     j->autoConfigure = (ac != 0); j->breakable = (bk != 0);
                 } else if (field == "boxcollider3d") {

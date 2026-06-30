@@ -1,6 +1,7 @@
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
+#include "okay/Components/Joint2D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -237,13 +238,37 @@ void Physics2D::Step(Scene& scene, float dt) {
                     Vec2 va = ra ? ra->velocity : Vec2::Zero;
                     Vec2 vb = rb ? rb->velocity : Vec2::Zero;
                     float velAlongNormal = Vec2::Dot(vb - va, c.normal);
+                    float jImp = 0.0f;
                     if (velAlongNormal < 0.0f) {
                         float e = Mathf::Max(ra ? ra->bounciness : 0.0f,
                                              rb ? rb->bounciness : 0.0f);
-                        float jImp = -(1.0f + e) * velAlongNormal / imSum;
+                        jImp = -(1.0f + e) * velAlongNormal / imSum;
                         Vec2 impulse = c.normal * jImp;
                         if (ra) ra->velocity -= impulse * ima;
                         if (rb) rb->velocity += impulse * imb;
+                    }
+                    // Coulomb friction on the tangential relative velocity, clamped
+                    // to friction x the normal impulse. With gravity re-pressing each
+                    // step this also gives resting bodies static-like friction, so a
+                    // box thrown along the floor slides to a stop instead of forever.
+                    if (jImp > 0.0f) {
+                        Vec2 rva = ra ? ra->velocity : Vec2::Zero;   // post-normal-impulse
+                        Vec2 rvb = rb ? rb->velocity : Vec2::Zero;
+                        Vec2 rvel = rvb - rva;
+                        Vec2 tang = rvel - c.normal * Vec2::Dot(rvel, c.normal);
+                        float tlen = tang.Magnitude();
+                        if (tlen > 1e-4f) {
+                            Vec2 t = tang / tlen;
+                            float jt = -Vec2::Dot(rvel, t) / imSum;
+                            float fa = ra ? ra->friction : 0.4f;
+                            float fb = rb ? rb->friction : 0.4f;
+                            float mu = Mathf::Sqrt((fa < 0 ? 0 : fa) * (fb < 0 ? 0 : fb));
+                            float maxF = mu * jImp;
+                            jt = Mathf::Clamp(jt, -maxF, maxF);
+                            Vec2 fimp = t * jt;
+                            if (ra) ra->velocity -= fimp * ima;
+                            if (rb) rb->velocity += fimp * imb;
+                        }
                     }
                 }
             }
@@ -269,6 +294,61 @@ void Physics2D::Step(Scene& scene, float dt) {
                     DispatchCollision(b->gameObject, &Component::OnCollisionStay2D, forB);
                 }
             }
+        }
+    }
+
+    // 4.5) Joints: positional constraints (after collisions, mirrors Physics3D).
+    for (Joint2D* j : scene.FindObjectsOfType<Joint2D>()) {
+        if (j->broken || !j->gameObject || !j->transform) continue;
+        Rigidbody2D* ra = j->gameObject->GetComponent<Rigidbody2D>();
+        if (!ra) continue;                          // the joint moves THIS body
+        Transform* ta = j->transform;
+        Rigidbody2D* rbB = nullptr; Transform* tb = nullptr;
+        if (!j->connectedBody.empty())
+            if (GameObject* g = scene.Find(j->connectedBody)) { tb = g->transform; rbB = g->GetComponent<Rigidbody2D>(); }
+        Vec3 pa3 = ta->Position();
+        Vec2 pa{pa3.x, pa3.y};
+        Vec2 pb = j->anchor;
+        if (tb) { Vec3 p = tb->Position(); pb = {p.x, p.y}; }
+        if (!j->initialized) {
+            j->pinOffset = pa - pb;
+            j->restLen = j->autoConfigure ? (pa - pb).Magnitude() : j->distance;
+            j->initialized = true;
+        }
+        float imA = ra->InvMass();
+        float imB = rbB ? rbB->InvMass() : 0.0f;
+        float imSum = imA + imB;
+        if (imSum <= 0.0f) continue;
+        Joint2D::Mode m = (Joint2D::Mode)j->mode;
+
+        if (m == Joint2D::Mode::Pin) {
+            Vec2 target = pb + j->pinOffset;
+            Vec2 err = target - pa;
+            ta->localPosition += Vec3{err * (imA / imSum)};
+            if (tb && rbB) tb->localPosition -= Vec3{err * (imB / imSum)};
+            ra->velocity = rbB ? rbB->velocity : Vec2::Zero;   // weld: follow B (anchor -> freeze)
+            if (j->breakable && err.Magnitude() > j->breakForce) j->broken = true;
+        } else {
+            Vec2 d = pb - pa; float len = d.Magnitude();
+            Vec2 n = len > 1e-5f ? d / len : Vec2{0, 1};
+            float C = len - j->restLen;                 // +stretched / -compressed
+            Vec2 va = ra->velocity, vb = rbB ? rbB->velocity : Vec2::Zero;
+            float vrelN = Vec2::Dot(vb - va, n);
+            if (m == Joint2D::Mode::Spring) {
+                float f = j->spring * C + j->damper * vrelN;   // restore + damp, along n (A->B)
+                Vec2 imp = n * (f * dt);
+                ra->velocity += imp * imA;
+                if (rbB) rbB->velocity -= imp * imB;
+            } else {                                    // Distance (rigid rod)
+                float jImp = -vrelN / imSum;
+                Vec2 imp = n * jImp;
+                ra->velocity -= imp * imA;
+                if (rbB) rbB->velocity += imp * imB;
+                Vec2 corr = n * C;                       // restore the rest length
+                ta->localPosition += Vec3{corr * (imA / imSum)};
+                if (tb && rbB) tb->localPosition -= Vec3{corr * (imB / imSum)};
+            }
+            if (j->breakable && Mathf::Abs(C) > j->breakForce) j->broken = true;
         }
     }
 

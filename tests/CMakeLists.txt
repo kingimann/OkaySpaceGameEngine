@@ -605,3 +605,7 @@ add_test(NAME physics_joints COMMAND test_physics_joints)
 add_executable(test_math_extra test_math_extra.cpp)
 target_link_libraries(test_math_extra PRIVATE okay::engine)
 add_test(NAME math_extra COMMAND test_math_extra)
+
+add_executable(test_2d_expand test_2d_expand.cpp)
+target_link_libraries(test_2d_expand PRIVATE okay::engine)
+add_test(NAME 2d_expand COMMAND test_2d_expand)

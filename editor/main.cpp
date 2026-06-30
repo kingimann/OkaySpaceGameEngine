@@ -7859,11 +7859,12 @@ void DrawInspector(EditorState& ed) {
             tex[sizeof(tex) - 1] = '\0';
             if (ImGui::InputText("Texture##sprite", tex, sizeof(tex))) { sr->texture = tex; ed.dirty = true; }
             if (AcceptAssetPathField(sr->texture)) ed.dirty = true;   // drop from Project
+            if (ImGui::DragInt("Sorting Layer##sprite", &sr->sortingLayer, 0.05f, -100, 100)) ed.dirty = true;
             if (ImGui::DragInt("Sort Order##sprite", &sr->sortOrder, 0.1f, -1000, 1000)) ed.dirty = true;
             if (ImGui::Checkbox("Flip X##sprite", &sr->flipX)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Flip Y##sprite", &sr->flipY)) ed.dirty = true;
-            ImGui::TextDisabled("image file (PNG/JPG); higher Sort Order draws on top");
+            ImGui::TextDisabled("image file (PNG/JPG); higher Sorting Layer always on top, then Sort Order");
             if (ImGui::SmallButton("Remove##sprite")) toRemove = sr;
         }
     }
@@ -8934,7 +8935,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Combo("Body Type", &bt, types, 3)) rb->bodyType = (Rigidbody2D::BodyType)bt;
             ImGui::DragFloat("Gravity Scale", &rb->gravityScale, 0.05f);
             ImGui::DragFloat("Mass", &rb->mass, 0.05f, 0.01f, 1000.0f);
+            ImGui::DragFloat("Drag", &rb->drag, 0.01f, 0.0f, 100.0f);
             ImGui::DragFloat("Bounciness", &rb->bounciness, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Friction", &rb->friction, 0.01f, 0.0f, 2.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Coulomb friction at contacts (0 = ice). Combined with the other body as sqrt(a*b).");
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
@@ -9030,6 +9034,31 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Breakable##jt", &jt->breakable);
             if (jt->breakable) ImGui::DragFloat("Break at (stretch)##jt", &jt->breakForce, 0.1f, 0.0f, 1000.0f);
             if (ImGui::SmallButton("Remove##jt")) toRemove = jt;
+        }
+    }
+    if (auto* jt = dynamic_cast<Joint2D*>(curComp)) {
+        if (CompHeader("Joint 2D", jt, &toRemove)) {
+            ImGui::TextDisabled("Constrains this 2D body to an anchor or another body.");
+            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)"};
+            ImGui::Combo("Mode##jt2", &jt->mode, modes, 3);
+            char cb[48]; std::strncpy(cb, jt->connectedBody.c_str(), sizeof(cb) - 1); cb[sizeof(cb) - 1] = '\0';
+            if (ImGui::InputText("Connected Body##jt2", cb, sizeof(cb))) { jt->connectedBody = cb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of another object with a Rigidbody2D. Leave blank to anchor to a fixed world point below.");
+            if (jt->connectedBody.empty()) {
+                float a[2] = {jt->anchor.x, jt->anchor.y};
+                if (ImGui::DragFloat2("Anchor##jt2", a, 0.1f)) { jt->anchor = {a[0], a[1]}; ed.dirty = true; }
+            }
+            if (jt->mode != (int)Joint2D::Mode::Pin) {
+                ImGui::Checkbox("Auto distance##jt2", &jt->autoConfigure);
+                if (!jt->autoConfigure) ImGui::DragFloat("Distance##jt2", &jt->distance, 0.05f, 0.0f, 1000.0f);
+            }
+            if (jt->mode == (int)Joint2D::Mode::Spring) {
+                ImGui::DragFloat("Spring##jt2", &jt->spring, 0.5f, 0.0f, 5000.0f);
+                ImGui::DragFloat("Damper##jt2", &jt->damper, 0.1f, 0.0f, 500.0f);
+            }
+            ImGui::Checkbox("Breakable##jt2", &jt->breakable);
+            if (jt->breakable) ImGui::DragFloat("Break at (stretch)##jt2", &jt->breakForce, 0.1f, 0.0f, 1000.0f);
+            if (ImGui::SmallButton("Remove##jt2")) toRemove = jt;
         }
     }
     if (auto* bc = dynamic_cast<BoxCollider3D*>(curComp)) {
@@ -12415,6 +12444,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 2D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody2D>(), "Rigidbody2D")) { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint2D>(), "Joint 2D (distance/spring/pin)")) { go->AddComponent<Joint2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider2D>(), "Box Collider 2D")) { go->AddComponent<BoxCollider2D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CircleCollider2D>(), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider2D>(), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); FitColliders(go); ed.dirty = true; }
@@ -14643,8 +14673,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         for (const auto& up : objs)
             if (up->active && up->GetComponent<SpriteRenderer>()) sprites.push_back(up.get());
         std::stable_sort(sprites.begin(), sprites.end(), [](GameObject* x, GameObject* y) {
-            return x->GetComponent<SpriteRenderer>()->sortOrder <
-                   y->GetComponent<SpriteRenderer>()->sortOrder;
+            return x->GetComponent<SpriteRenderer>()->SortKey() <
+                   y->GetComponent<SpriteRenderer>()->SortKey();
         });
         for (GameObject* go : sprites) {
             auto* sr = go->GetComponent<SpriteRenderer>();

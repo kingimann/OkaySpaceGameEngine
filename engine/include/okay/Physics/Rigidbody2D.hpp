@@ -18,6 +18,7 @@ public:
     float    mass       = 1.0f;
     float    drag       = 0.0f;     // linear damping per second
     float    bounciness = 0.0f;     // restitution [0,1]
+    float    friction   = 0.4f;     // Coulomb friction coefficient (0 = ice)
 
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec2& force) { m_forceAccum += force; }

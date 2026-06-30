@@ -629,3 +629,7 @@ add_test(NAME hinge2d COMMAND test_hinge2d)
 add_executable(test_hinge3d test_hinge3d.cpp)
 target_link_libraries(test_hinge3d PRIVATE okay::engine)
 add_test(NAME hinge3d COMMAND test_hinge3d)
+
+add_executable(test_net_backend test_net_backend.cpp)
+target_link_libraries(test_net_backend PRIVATE okay::engine)
+add_test(NAME net_backend COMMAND test_net_backend)

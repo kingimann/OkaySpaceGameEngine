@@ -20,6 +20,8 @@ add_library(okay_engine
     src/Net/UdpSocket.cpp
     src/Net/NetworkManager.cpp
     src/Net/RelayServer.cpp
+    src/Net/NetBackend.cpp
+    src/Net/NetTransport.cpp
     src/VisualScript/NodeGraph.cpp
     src/Components/VisualScriptComponent.cpp
     src/Scripting/OkayScriptVM.cpp

@@ -29,6 +29,7 @@
 #include "okay/Render/Renderer.hpp"
 #include "okay/Render/ConsoleRenderer.hpp"
 #include "okay/Render/Mesh.hpp"
+#include "okay/Render/Gltf.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Components/Light.hpp"

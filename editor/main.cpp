@@ -5028,12 +5028,17 @@ void DrawFileDialogs(EditorState& ed) {
 
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Import Model", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Import a Wavefront .OBJ (with its .mtl + texture next to it).");
-        ImGui::TextDisabled("Tip: export from MakeHuman / Mixamo / Blender as OBJ.");
+        ImGui::TextUnformatted("Import a model: Wavefront .OBJ (+ .mtl/texture) or glTF 2.0 (.gltf / .glb).");
+        ImGui::TextDisabled("Tip: export from Blender / Mixamo / Sketchfab as glTF or OBJ.");
         ImGui::InputText("Path##obj", g_objPathBuf, sizeof(g_objPathBuf));
         if (ImGui::Button("Import", ImVec2(120, 0))) {
             bool okl = false; std::string tex;
-            Mesh im = Mesh::LoadOBJ(g_objPathBuf, &okl, &tex);
+            std::string lower = g_objPathBuf;
+            for (char& c : lower) c = (char)std::tolower((unsigned char)c);
+            bool isGltf = lower.size() >= 4 && (lower.substr(lower.size()-4) == ".glb" ||
+                          (lower.size() >= 5 && lower.substr(lower.size()-5) == ".gltf"));
+            Mesh im = isGltf ? okay::LoadGLTF(g_objPathBuf, &okl)
+                             : Mesh::LoadOBJ(g_objPathBuf, &okl, &tex);
             if (okl && im.TriangleCount() > 0) {
                 std::string nm = g_objPathBuf;
                 std::size_t sl = nm.find_last_of("/\\"); if (sl != std::string::npos) nm = nm.substr(sl + 1);

@@ -589,3 +589,7 @@ add_test(NAME anim_layers COMMAND test_anim_layers)
 add_executable(test_obj_import test_obj_import.cpp)
 target_link_libraries(test_obj_import PRIVATE okay::engine)
 add_test(NAME obj_import COMMAND test_obj_import)
+
+add_executable(test_gltf_import test_gltf_import.cpp)
+target_link_libraries(test_gltf_import PRIVATE okay::engine)
+add_test(NAME gltf_import COMMAND test_gltf_import)

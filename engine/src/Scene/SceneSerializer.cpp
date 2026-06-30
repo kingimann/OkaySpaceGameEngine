@@ -567,7 +567,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << cc->maxFallSpeed << " " << cc->extraFallGravity << "\n";
     }
     if (auto* cc = go->GetComponent<CharacterController3D>()) {
-        out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0) << "\n";
+        out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0)
+            << " " << cc->runSpeed << " " << (int)(unsigned char)cc->sprintKey         // trailing (back-compatible)
+            << " " << cc->acceleration << " " << cc->deceleration << " " << cc->airControl
+            << " " << (cc->driveAnimation ? 1 : 0) << " " << (cc->footIK ? 1 : 0) << "\n";
     }
     if (auto* v = go->GetComponent<VehicleController>()) {
         out << "  vehicle " << v->acceleration << " " << v->maxSpeed << " " << v->reverseSpeed
@@ -867,7 +870,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << c->leashRange << " " << c->wanderPause << " " << (c->patrolLoop ? 1 : 0)
             << " " << c->waypointWait << " " << c->attackWindup << " " << c->fleeHealthPct
             << " " << c->separationRadius << " " << (c->driveAnimation ? 1 : 0)
-            << " " << (c->lookAtTarget ? 1 : 0) << "\n";
+            << " " << (c->lookAtTarget ? 1 : 0)
+            << " " << (c->footIK ? 1 : 0) << "\n";
         for (const Vec3& w : c->waypoints)
             out << "  npcwp " << w.x << " " << w.y << " " << w.z << "\n";
     }
@@ -910,7 +914,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: lean (peek with Q/E)
             << " " << (int)(unsigned char)fp->leanLeftKey << " " << (int)(unsigned char)fp->leanRightKey
             << " " << fp->leanAngle << " " << fp->leanOffset << " " << fp->leanSpeed
-            << " " << fp->maxJumps << "\n";
+            << " " << fp->maxJumps
+            << " " << (fp->footIK ? 1 : 0) << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
@@ -936,7 +941,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: lean (peek with Q/E)
             << " " << (int)(unsigned char)tp->leanLeftKey << " " << (int)(unsigned char)tp->leanRightKey
             << " " << tp->leanAngle << " " << tp->leanOffset << " " << tp->leanSpeed
-            << " " << tp->maxJumps << "\n";
+            << " " << tp->maxJumps
+            << " " << (tp->footIK ? 1 : 0) << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
@@ -944,7 +950,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (td->driveAnimation ? 1 : 0) << " " << (td->rotateToFace ? 1 : 0) << " " << td->turnSpeed << " "
             << td->acceleration << " " << td->deceleration << " " << (td->cameraRelative ? 1 : 0) << " "
             << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
-            << td->lookHeight << " " << td->cameraDamping << "\n";
+            << td->lookHeight << " " << td->cameraDamping
+            << " " << (td->footIK ? 1 : 0) << "\n";
     }
     if (auto* fr = go->GetComponent<FreeRoamController>()) {
         out << "  frctrl " << fr->moveSpeed << " " << fr->boostMultiplier << " "
@@ -969,7 +976,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: lean (peek with Q/E)
             << " " << (int)(unsigned char)ts->leanLeftKey << " " << (int)(unsigned char)ts->leanRightKey
             << " " << ts->leanAngle << " " << ts->leanOffset << " " << ts->leanSpeed
-            << " " << ts->maxJumps << "\n";
+            << " " << ts->maxJumps
+            << " " << (ts->footIK ? 1 : 0) << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -985,7 +993,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cm->rotateLeftKey ? cm->rotateLeftKey : '-')
             << " " << (cm->rotateRightKey ? cm->rotateRightKey : '-')
             << " " << cm->cameraDamping
-            << " " << cm->arriveRadius << "\n";   // extended (back-compatible trailing field)
+            << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
+            << " " << (cm->footIK ? 1 : 0) << "\n";
     }
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -2048,6 +2057,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cm->cameraDamping = cdamp;
                         in >> std::ws; // optional arrival radius (added later)
                         if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->arriveRadius;
+                        in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; cm->footIK = (fik != 0); }
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -2059,6 +2069,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> sp >> jf >> cj;
                     auto* cc = go->AddComponent<CharacterController3D>();
                     cc->speed = sp; cc->jumpForce = jf; cc->canJump = (cj != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {   // trailing extras
+                        int sk = 0, da = 1, fik = 0;
+                        in >> cc->runSpeed >> sk >> cc->acceleration >> cc->deceleration
+                           >> cc->airControl >> da >> fik;
+                        cc->sprintKey = (char)sk; cc->driveAnimation = (da != 0); cc->footIK = (fik != 0);
+                    }
                 } else if (field == "vehicle") {
                     auto* v = go->AddComponent<VehicleController>();
                     in >> v->acceleration >> v->maxSpeed >> v->reverseSpeed >> v->brakeForce
@@ -2503,6 +2520,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         c->separationRadius = g(20, c->separationRadius);
                         c->driveAnimation = g(21, c->driveAnimation ? 1.f : 0.f) != 0.0f;
                         c->lookAtTarget   = g(22, c->lookAtTarget ? 1.f : 0.f) != 0.0f;
+                        c->footIK         = g(23, c->footIK ? 1.f : 0.f) != 0.0f;
                     }
                 } else if (field == "npcwp") {
                     if (auto* c = go->GetComponent<NPCController>()) {
@@ -2578,7 +2596,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 fp->leanLeftKey = (char)ll; fp->leanRightKey = (char)lr;
                                 fp->leanAngle = la; fp->leanOffset = lo; fp->leanSpeed = lsp;
                                 in >> std::ws;
-                                if (std::isdigit(in.peek())) { int mj = fp->maxJumps; in >> mj; fp->maxJumps = mj; }
+                                if (std::isdigit(in.peek())) { int mj = fp->maxJumps; in >> mj; fp->maxJumps = mj;
+                                    in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; fp->footIK = (fik != 0); } }
                             }
                         }
                     }
@@ -2632,7 +2651,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         tp->leanLeftKey = (char)ll; tp->leanRightKey = (char)lr;
                                         tp->leanAngle = la; tp->leanOffset = lo; tp->leanSpeed = lsp;
                                         in >> std::ws;
-                                        if (std::isdigit(in.peek())) { int mj = tp->maxJumps; in >> mj; tp->maxJumps = mj; }
+                                        if (std::isdigit(in.peek())) { int mj = tp->maxJumps; in >> mj; tp->maxJumps = mj;
+                                            in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; tp->footIK = (fik != 0); } }
                                     }
                                 }
                             }
@@ -2647,6 +2667,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> td->lookHeight >> td->cameraDamping;
                     td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
+                    in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; td->footIK = (fik != 0); }
                 } else if (field == "frctrl") {
                     auto* fr = go->AddComponent<FreeRoamController>();
                     int sk = (unsigned char)fr->sprintKey, uk = (unsigned char)fr->upKey,
@@ -2678,7 +2699,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         ts->leanLeftKey = (char)ll; ts->leanRightKey = (char)lr;
                         ts->leanAngle = la; ts->leanOffset = lo; ts->leanSpeed = lsp;
                         in >> std::ws;
-                        if (std::isdigit(in.peek())) { int mj = ts->maxJumps; in >> mj; ts->maxJumps = mj; }
+                        if (std::isdigit(in.peek())) { int mj = ts->maxJumps; in >> mj; ts->maxJumps = mj;
+                            in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; ts->footIK = (fik != 0); } }
                     }
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;

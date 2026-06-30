@@ -6,6 +6,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
 #include "okay/Net/NetOwnership.hpp"                  // IsLocallyControlled (MP-safe AI)
 #include "okay/Math/Quat.hpp"
@@ -85,6 +86,7 @@ public:
 
     // ---- Presentation (sibling Character, if any) ----
     bool  driveAnimation = true;   ///< set the Character's anim to idle/walk/run from movement
+    bool  footIK         = false;  ///< plant the Character's feet on the ground (foot IK)
     bool  lookAtTarget   = true;   ///< head-track the target while alert (uses Character look-at)
 
     // ---- Combat target (so the player can fight back) ----
@@ -123,6 +125,7 @@ public:
         m_seed = (uint32_t)(std::fabs(m_home.x) * 73856093.0f + std::fabs(m_home.z) * 19349663.0f) + 1u;
         m_state = State::Idle; m_wp = 0; m_wpDir = 1;
         PickWander();
+        if (footIK) AttachCharacterFootIK(gameObject);
     }
 
     void Update(float dt) override {

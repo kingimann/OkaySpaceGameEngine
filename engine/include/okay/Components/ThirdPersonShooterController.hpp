@@ -7,6 +7,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
@@ -35,6 +36,7 @@ public:
     bool  canJump = true;
     int   maxJumps = 1;                  // 1 = single jump, 2 = double jump, etc.
     bool  driveAnimation = true;
+    bool  footIK = false;                // plant the Character's feet on the ground
     float acceleration = 60.0f, deceleration = 55.0f, airControl = 0.4f;
     float coyoteTime = 0.12f, jumpBufferTime = 0.12f;
     float turnSpeed = 18.0f;             // body snaps to the aim direction
@@ -77,6 +79,7 @@ public:
 
     void Start() override {
         if (lockCursor) Cursor::Capture(true);
+        if (footIK) AttachCharacterFootIK(gameObject);
     }
 
     void Update(float dt) override {

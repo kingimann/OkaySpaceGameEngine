@@ -7,6 +7,7 @@
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
@@ -53,6 +54,7 @@ public:
     bool  toggleRun = false;            // tap sprint to keep running instead of holding
     bool  canJump = true;
     bool  driveAnimation = true;        // set a sibling Character's anim from movement
+    bool  footIK = false;               // plant the Character's feet on the ground (foot IK)
     bool  showBody = false;             // first person: hide your own body (no head clipping)
     bool  lockCursor = true;            // hide + lock the cursor to the window while playing
 
@@ -86,6 +88,7 @@ public:
     void Start() override {
         ApplyBodyVisibility();
         if (lockCursor) Cursor::Capture(true);   // hide + lock for mouse-look
+        if (footIK) AttachCharacterFootIK(gameObject);
     }
 
     // First person: the player's own camera should IGNORE the body (so you don't

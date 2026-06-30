@@ -7,6 +7,7 @@
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -29,6 +30,7 @@ public:
     float runSpeed  = 8.0f;
     char  sprintKey = 0;                // hold to run (0 = disabled)
     bool  driveAnimation = true;
+    bool  footIK = false;               // plant the Character's feet on the ground
     bool  rotateToFace = true;          // turn the body toward travel
     float turnSpeed = 14.0f;
     // Momentum: ramp horizontal velocity toward the target (units/s^2).
@@ -43,6 +45,8 @@ public:
     float cameraYaw = 0.0f;             // fixed orbit yaw (deg)
     float lookHeight = 0.6f;            // look target height above the player origin
     float cameraDamping = 12.0f;        // 0 = instant follow; higher = snappier
+
+    void Start() override { if (footIK) AttachCharacterFootIK(gameObject); }
 
     void Update(float dt) override {
         if (!transform) return;

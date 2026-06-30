@@ -8,6 +8,7 @@
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
@@ -37,6 +38,7 @@ public:
     bool  toggleRun = false;            // tap sprint to keep running instead of holding
     bool  canJump = true;
     bool  driveAnimation = true;
+    bool  footIK = false;               // plant the Character's feet on the ground
 
     // ---- Stance: crouch & prone ----
     // Lower the character to crouch or go prone, each with its own speed; the
@@ -101,6 +103,8 @@ public:
     FaceMode faceMode = FaceMode::Movement;
 
     float yaw = 0.0f, pitch = 18.0f;    // camera orbit angles (degrees)
+
+    void Start() override { if (footIK) AttachCharacterFootIK(gameObject); }
 
     void Update(float dt) override {
         if (!transform) return;

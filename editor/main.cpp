@@ -10429,6 +10429,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Separation Radius##npc", &c->separationRadius, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steer away from other NPCs within this radius so they don't pile up (0 = off).");
             if (ImGui::Checkbox("Drive Character Animation##npc", &c->driveAnimation)) ed.dirty = true;
+            if (ImGui::Checkbox("Foot IK##npc", &c->footIK)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets a sibling Character's idle/walk/run animation from movement.");
             if (ImGui::Checkbox("Look At Target##npc", &c->lookAtTarget)) ed.dirty = true;
 
@@ -10547,6 +10548,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragInt("Max Jumps##fp", &fp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }
             if (ImGui::Checkbox("Drive Animation##fp", &fp->driveAnimation)) ed.dirty = true;
+            if (ImGui::Checkbox("Foot IK##fp", &fp->footIK)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plant the Character's feet on the ground (foot IK) at Play.");
             if (ImGui::Checkbox("Lock + Hide Cursor##fp", &fp->lockCursor)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing (mouse-look). Off keeps a normal pointer for clicking UI.");
 
@@ -10593,6 +10596,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Jump##tp", &tp->canJump)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##tp", &tp->driveAnimation)) ed.dirty = true;
+            if (ImGui::Checkbox("Foot IK##tp", &tp->footIK)) ed.dirty = true;
             if (ImGui::Checkbox("Lock + Hide Cursor##tp", &tp->lockCursor)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing. Off keeps a normal pointer for clicking UI.");
             if (tp->canJump) { ImGui::SetNextItemWidth(90);
@@ -10661,6 +10665,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Camera-Relative Move##td", &td->cameraRelative)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("WASD relative to the camera yaw instead of world axes");
             if (ImGui::Checkbox("Drive Animation##td", &td->driveAnimation)) ed.dirty = true;
+            if (ImGui::Checkbox("Foot IK##td", &td->footIK)) ed.dirty = true;
             ImGui::SeparatorText("Camera");
             if (ImGui::DragFloat("Distance##td", &td->cameraDistance, 0.1f, 1.0f, 60.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Pitch##td", &td->cameraPitch, 0.5f, 10.0f, 89.0f, "%.0f deg")) ed.dirty = true;
@@ -10703,6 +10708,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ...");
             if (ImGui::DragFloat("Acceleration##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Air Control##tps", &ts->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Foot IK##tps", &ts->footIK)) ed.dirty = true;
             ImGui::SeparatorText("Look / Camera");
             if (ImGui::DragFloat("Sensitivity##tps", &ts->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Invert Y##tps", &ts->invertY)) ed.dirty = true;
@@ -10742,6 +10748,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Hold To Move##ctm", &cm->holdToMove)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##ctm", &cm->driveAnimation)) ed.dirty = true;
+            if (ImGui::Checkbox("Foot IK##ctm", &cm->footIK)) ed.dirty = true;
             if (ImGui::Checkbox("Use Player Height##ctm", &cm->usePlayerHeight)) ed.dirty = true;
             if (!cm->usePlayerHeight)
                 if (ImGui::DragFloat("Ground Y##ctm", &cm->groundY, 0.05f)) ed.dirty = true;

@@ -5,6 +5,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/CharacterIK.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
@@ -38,6 +39,7 @@ public:
     int   mouseButton = 0;          // which button sets the destination (0=left)
     bool  holdToMove  = false;      // hold the button to keep retargeting (else single clicks)
     bool  driveAnimation = true;    // animate a sibling Character from movement
+    bool  footIK = false;           // plant the Character's feet on the ground
     float groundY     = 0.0f;       // ground plane height when usePlayerHeight is off
     bool  usePlayerHeight = true;   // pick on the plane at the player's current Y
 
@@ -60,6 +62,8 @@ public:
     void ClearDestination() { m_hasDest = false; }
     /// Send the player to a world point directly (for scripts / waypoints).
     void MoveTo(const Vec3& worldPoint) { m_dest = worldPoint; m_hasDest = true; }
+
+    void Start() override { if (footIK) AttachCharacterFootIK(gameObject); }
 
     void Update(float dt) override {
         if (!transform || !gameObject || !gameObject->scene()) return;

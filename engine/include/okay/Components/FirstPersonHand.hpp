@@ -27,6 +27,8 @@ public:
     int   attackButton = 0;      ///< mouse button that swings (0 = left)
     bool  holdToSwing  = true;   ///< keep swinging while held (Minecraft mining)
     bool  showLeftArm  = false;  ///< false = right arm (default), true = left
+    bool  followPitch  = true;   ///< arm tilts up/down with the camera look (Minecraft-style)
+    bool  bobbing      = true;   ///< let the walk/run cycle bob the arm (off = rock-steady)
 
     void Punch() { if (Character* c = FindCharacter()) c->Punch(); }
 
@@ -63,8 +65,12 @@ private:
                     p->firstPersonViewmodel = (bi >= a0 && bi <= a0 + 2);
                 }
             c->firstPersonArm = true; c->fpArmBase = a0;   // raise it + aim the punch here
+            c->fpArmBob = bobbing;
         }
-        if (auto* fpc = FindController()) { fpc->showBody = false; fpc->ApplyBodyVisibility(); }
+        if (auto* fpc = FindController()) {
+            c->fpPitch = followPitch ? fpc->pitch : 0.0f;   // arm follows the camera up/down
+            fpc->showBody = false; fpc->ApplyBodyVisibility();
+        }
     }
 
     // Clear the first-person pose + viewmodel flags (when the hand is removed).

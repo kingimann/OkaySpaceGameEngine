@@ -8423,6 +8423,10 @@ void DrawInspector(EditorState& ed) {
             const char* sides[] = {"Right arm", "Left arm"};
             int si = fh->showLeftArm ? 1 : 0;
             if (ImGui::Combo("Arm side##fh", &si, sides, 2)) { fh->showLeftArm = (si == 1); ed.dirty = true; }
+            if (ImGui::Checkbox("Follow camera look##fh", &fh->followPitch)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view (Minecraft-style).");
+            if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let the walk/run cycle bob the arm. Off = rock-steady.\nCrouch & prone always keep the arm in view regardless.");
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }

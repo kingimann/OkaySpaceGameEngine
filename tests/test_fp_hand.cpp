@@ -68,6 +68,7 @@ int main() {
         go->AddComponent<Camera>();
         auto* fh = go->AddComponent<FirstPersonHand>();
         fh->attackButton = 1; fh->holdToSwing = false; fh->showLeftArm = true;
+        fh->followPitch = false; fh->bobbing = false;
         std::string text = SceneSerializer::Serialize(a);
         Scene b("B");
         CHECK(SceneSerializer::Deserialize(b, text));
@@ -77,6 +78,8 @@ int main() {
             CHECK(lf->attackButton == 1);
             CHECK(lf->holdToSwing == false);
             CHECK(lf->showLeftArm == true);
+            CHECK(lf->followPitch == false);
+            CHECK(lf->bobbing == false);
         }
     }
 

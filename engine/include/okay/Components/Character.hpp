@@ -88,6 +88,12 @@ public:
     /// separated-rig DriveParts poses these bones up like a Minecraft hand and routes
     /// the punch onto them so the VISIBLE arm is the one that swings. Not serialized.
     int   fpArmBase = -1;
+    /// Camera pitch (degrees) fed in by FirstPersonHand so the first-person arm tilts
+    /// up/down with your view (Minecraft-style). 0 = level. Not serialized.
+    float fpPitch = 0.0f;
+    /// Let the walk/run cycle bob the first-person arm (the arm inherits the body's
+    /// sway). Turn off for a rock-steady arm. Set by FirstPersonHand. Not serialized.
+    bool  fpArmBob = true;
 
     // ---- Separate body parts (a real, editable rig) ----
     // Instead of one baked mesh, build the character as a HIERARCHY of part

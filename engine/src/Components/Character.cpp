@@ -768,8 +768,19 @@ void Character::DriveParts() {
     // Minecraft hand (overriding the walk pose for those three bones).
     int fpb = (firstPersonArm && fpArmBase >= 0 && fpArmBase + 2 < (int)pose.size()) ? fpArmBase : -1;
     if (fpb >= 0) {
-        pose[fpb]     = {fpRaise, 0.0f, 0.0f};   // upper arm forward/down into frame
-        pose[fpb + 1] = {fpElbow, 0.0f, 0.0f};   // forearm bend (hand height)
+        // Keep the first-person arm reading correctly regardless of the body. Its parents
+        // (hips, torso) carry both the walk bob and the crouch/prone lean, which would
+        // otherwise drag the arm down/sideways. Zero them when bobbing is off, and ALWAYS
+        // in crouch (6 / 17) and prone (7) so the arm stays in view instead of laying flat.
+        // On the owner's client only the arm is visible (body culled), so others are
+        // unaffected.
+        bool stanceLaysArm = (anim == 6 || anim == 7 || anim == 17);
+        if (!fpArmBob || stanceLaysArm) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
+        // Raise the arm; subtract the camera pitch so the arm follows the view up/down
+        // (the rig's 180° flip maps the bone's local X to a world rotation such that
+        // subtracting pitch tilts the arm the same way the camera tilts).
+        pose[fpb]     = {fpRaise - fpPitch, 0.0f, 0.0f};   // upper arm: into frame + follow look
+        pose[fpb + 1] = {fpElbow, 0.0f, 0.0f};             // forearm bend (hand height)
         pose[fpb + 2] = {0.0f, 0.0f, 0.0f};
     }
     // Punch swings the VISIBLE arm: the first-person arm if we're in first person,

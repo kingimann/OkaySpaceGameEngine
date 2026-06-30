@@ -166,7 +166,7 @@ bool          g_okayUIBack = false;      // Backspace pressed this frame (for Ok
 // time — if the Scene and Game views shared one texture, whichever drew last
 // would overwrite it and BOTH panels would show that content (the flicker seen
 // when splitting Scene + Game). A texture per slot keeps them independent.
-static const int kView3DSlots = 3;   // 0=Scene view, 1=Game view, 2=Camera preview
+static const int kView3DSlots = 4;   // 0=Scene view, 1=Game view, 2=Camera preview, 3=Animation preview
 SDL_Texture* g_view3DTex[kView3DSlots] = {};
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
 Raster g_view3DRaster[kView3DSlots];
@@ -6348,11 +6348,12 @@ static void StopAnimPreview() { if (g_animPreview) { g_animPreview->StopPreview(
 
 // Character animation: pose each bone, Key the whole pose at the playhead to build a
 // clip of keyframes, scrub to preview, Apply to play it (saved with the scene).
-static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch) {
+static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, int focusBone = -1) {
     static std::unordered_map<void*, AnimClip> clips;
     static std::unordered_map<void*, std::vector<Vec3>> poses;
     static std::unordered_map<void*, float> times;
     static std::unordered_map<void*, int> bones;
+    static std::unordered_map<void*, int> lastFocus;   // jump the bone dropdown when a new part is selected
     static std::unordered_map<void*, bool> plays;
     const int nb = Character::BoneCount();
     AnimClip& clip = clips[(void*)ch];
@@ -6361,6 +6362,13 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch) {
     float& t = times[(void*)ch];
     int& bone = bones[(void*)ch];
     bool& playing = plays[(void*)ch];
+    // When the user selects a different rig part in the hierarchy, jump the bone
+    // dropdown to it (so you edit the part you clicked). Only on change, so the manual
+    // dropdown still works while the same part stays selected.
+    if (focusBone >= 0 && focusBone < nb && lastFocus[(void*)ch] != focusBone) {
+        bone = focusBone; lastFocus[(void*)ch] = focusBone;
+    }
+    if (focusBone < 0) lastFocus[(void*)ch] = -1;   // reset when the Character itself is selected
     if (clip.name.empty()) clip.name = "MyAnim";
 
     if (!ch->separateParts) {
@@ -6469,6 +6477,75 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch) {
     if (edel >= 0) { clip.events.erase(clip.events.begin() + edel); ed.dirty = true; }
 }
 
+// Frame an object (and its whole subtree — a rig's parts) for the preview camera:
+// the centroid of every node + a radius that encloses their mesh bounds.
+static void AnimFocusBounds(GameObject* go, Vec3& center, float& radius) {
+    std::vector<GameObject*> all;
+    std::function<void(GameObject*)> collect = [&](GameObject* g) {
+        if (!g) return;
+        all.push_back(g);
+        if (g->transform) for (Transform* c : g->transform->Children()) if (c) collect(c->gameObject);
+    };
+    collect(go);
+    center = Vec3{0, 0, 0}; int n = 0;
+    for (GameObject* g : all) if (g->transform) { center = center + g->transform->Position(); ++n; }
+    if (n == 0) { center = go && go->transform ? go->transform->Position() : Vec3{0, 0, 0}; radius = 1.0f; return; }
+    center = center * (1.0f / n);
+    radius = 0.0f;
+    for (GameObject* g : all) {
+        if (!g->transform) continue;
+        Vec3 p = g->transform->Position();
+        float r = 0.3f;
+        if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty()) {
+            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            Vec3 sz = hi - lo, sc = g->transform->localScale;
+            float ms = std::max({std::fabs(sc.x), std::fabs(sc.y), std::fabs(sc.z)});
+            r = 0.5f * std::sqrt(sz.x * sz.x + sz.y * sz.y + sz.z * sz.z) * ms;
+        }
+        Vec3 d = p - center;
+        radius = std::max(radius, std::sqrt(Vec3::Dot(d, d)) + r);
+    }
+    if (radius < 0.5f) radius = 0.5f;
+}
+
+// A live, auto-framed 3D preview of the object being animated, embedded right in the
+// Animation tab (drag to orbit, wheel to zoom). It renders the live scene — so it
+// reflects whatever pose the editor below is authoring this frame.
+static void DrawAnimPreview(EditorState& ed, GameObject* go) {
+    if (!go || !go->transform) return;
+    static std::unordered_map<void*, ImVec2> orbit;   // (yaw, pitch) degrees
+    static std::unordered_map<void*, float>  zoomMul;
+    ImVec2& yp = orbit[(void*)go];
+    float&  zm = zoomMul[(void*)go]; if (zm < 0.05f) zm = 1.0f;
+
+    Vec3 center; float radius; AnimFocusBounds(go, center, radius);
+    float dist = radius * 2.6f * zm;
+    float yaw = yp.x * 0.01745329f, pitch = yp.y * 0.01745329f;
+    Vec3 dir{ std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw) };
+    Vec3 eye = center + dir * dist;
+
+    float w = ImGui::GetContentRegionAvail().x;
+    if (w > 420.0f) w = 420.0f; if (w < 80.0f) w = 80.0f;
+    float h = w * 0.6f;
+    Mat4 view = Mat4::LookAt(eye, center, Vec3::Up);
+    Mat4 proj = Mat4::Perspective(45.0f, w / h, 0.05f, 4000.0f);
+    SDL_Texture* tex = Render3DTexture(ed.scene(), proj * view, eye, (int)w, (int)h, /*slot=*/3);
+    if (tex) {
+        ImGui::Image((ImTextureID)tex, ImVec2(w, h));
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            ImVec2 d = ImGui::GetIO().MouseDelta;
+            yp.x += d.x * 0.5f;
+            yp.y = Mathf::Clamp(yp.y - d.y * 0.5f, -85.0f, 85.0f);
+        }
+        if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f)
+            zm = Mathf::Clamp(zm - ImGui::GetIO().MouseWheel * 0.1f, 0.3f, 5.0f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag to orbit  •  wheel to zoom");
+    } else {
+        ImGui::TextDisabled("(preview unavailable)");
+    }
+    ImGui::Separator();
+}
+
 static void DrawAnimationEditor(EditorState& ed) {
     if (!g_showAnimation) { StopAnimPreview(); return; }
     if (!ImGui::Begin("Animation", &g_showAnimation)) { ImGui::End(); return; }
@@ -6478,9 +6555,25 @@ static void DrawAnimationEditor(EditorState& ed) {
         ImGui::TextDisabled("Select an object to animate it.");
         ImGui::End(); return;
     }
-    if (Character* ch = go->GetComponent<Character>()) {
+    // A Character on the selection — or on an ancestor, if a rig PART is selected. In
+    // the latter case we animate the parent Character with that bone pre-focused, so
+    // clicking "R Upper Arm" in the hierarchy keys that bone directly.
+    Character* ch = go->GetComponent<Character>();
+    GameObject* charObj = ch ? go : nullptr;
+    int focusBone = -1;
+    if (!ch) {
+        for (Transform* t = go->transform->Parent(); t; t = t->Parent())
+            if (t->gameObject) if (auto* c = t->gameObject->GetComponent<Character>()) {
+                ch = c; charObj = t->gameObject;
+                for (int i = 0; i < Character::BoneCount(); ++i)
+                    if (go->name == Character::BoneName(i)) { focusBone = i; break; }
+                break;
+            }
+    }
+    if (ch) {
         if (g_animPreview && g_animPreview != ch) StopAnimPreview();
-        DrawCharacterAnim(ed, go, ch);
+        DrawAnimPreview(ed, charObj ? charObj : go);
+        DrawCharacterAnim(ed, charObj ? charObj : go, ch, focusBone);
         ImGui::End(); return;
     }
     StopAnimPreview();
@@ -6491,6 +6584,7 @@ static void DrawAnimationEditor(EditorState& ed) {
         ImGui::TextDisabled("Tip: separate a Character into parts, then animate each part here.");
         ImGui::End(); return;
     }
+    DrawAnimPreview(ed, go);   // live, auto-framed preview of this object
 
     // Per-object editor state: the playhead time + the rotation euler we're authoring
     // (the Transform stores a quaternion, so the editor owns the euler we key).

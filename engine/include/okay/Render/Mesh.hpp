@@ -457,38 +457,49 @@ struct Mesh {
         if (!f) { if (ok) *ok = false; return m; }
         std::string dir;
         { std::size_t s = path.find_last_of("/\\"); if (s != std::string::npos) dir = path.substr(0, s + 1); }
-        std::vector<Vec3> pos; std::vector<Vec2> uv;
-        std::vector<std::vector<std::pair<int, int>>> faces;   // per-corner (posIdx, uvIdx), 0-based
+        std::vector<Vec3> pos, nrm; std::vector<Vec2> uv;
+        struct Corner { int p, t, n; };                        // 0-based pos / uv / normal (-1 = none)
+        std::vector<std::vector<Corner>> faces;
         std::string mtllib, line;
         while (std::getline(f, line)) {
             std::istringstream ss(line); std::string tag; ss >> tag;
             if (tag == "v") { Vec3 v; ss >> v.x >> v.y >> v.z; pos.push_back(v); }
             else if (tag == "vt") { Vec2 t; ss >> t.x >> t.y; uv.push_back(t); }
+            else if (tag == "vn") { Vec3 n; ss >> n.x >> n.y >> n.z; nrm.push_back(n); }
             else if (tag == "mtllib") { ss >> mtllib; }
             else if (tag == "f") {
-                std::vector<std::pair<int, int>> face; std::string tok;
+                std::vector<Corner> face; std::string tok;
                 while (ss >> tok) {
-                    int vi = 0, ti = 0; std::sscanf(tok.c_str(), "%d/%d", &vi, &ti);
+                    // Accept v, v/vt, v//vn and v/vt/vn (the OBJ corner forms).
+                    int vi = 0, ti = 0, ni = 0;
+                    if (std::sscanf(tok.c_str(), "%d/%d/%d", &vi, &ti, &ni) == 3) {}
+                    else if (std::sscanf(tok.c_str(), "%d//%d", &vi, &ni) == 2) ti = 0;
+                    else if (std::sscanf(tok.c_str(), "%d/%d", &vi, &ti) == 2) ni = 0;
+                    else { std::sscanf(tok.c_str(), "%d", &vi); ti = ni = 0; }
                     if (vi < 0) vi = (int)pos.size() + vi + 1;
                     if (ti < 0) ti = (int)uv.size() + ti + 1;
-                    face.push_back({vi - 1, ti - 1});
+                    if (ni < 0) ni = (int)nrm.size() + ni + 1;
+                    face.push_back({vi - 1, ti - 1, ni - 1});
                 }
                 if (face.size() >= 3) faces.push_back(std::move(face));
             }
         }
         auto tri = [&](int a, int b, int cc) { m.triangles.insert(m.triangles.end(), {a, b, cc}); };
-        if (uv.empty()) {                              // no texcoords: 1:1 with v lines
+        if (uv.empty() && nrm.empty()) {               // simplest case: 1:1 with v lines
             m.vertices = pos;
             for (auto& fc : faces)
-                for (std::size_t i = 2; i < fc.size(); ++i) tri(fc[0].first, fc[i - 1].first, fc[i].first);
-        } else {                                       // de-index per (pos,uv) so UVs map right
-            std::map<std::pair<int, int>, int> remap;
-            auto corner = [&](std::pair<int, int> c) {
-                auto it = remap.find(c); if (it != remap.end()) return it->second;
+                for (std::size_t i = 2; i < fc.size(); ++i) tri(fc[0].p, fc[i - 1].p, fc[i].p);
+        } else {                                       // de-index per (pos,uv,normal) so attributes map right
+            const bool haveUV = !uv.empty(), haveN = !nrm.empty();
+            std::map<std::tuple<int, int, int>, int> remap;
+            auto corner = [&](const Corner& c) {
+                auto key = std::make_tuple(c.p, c.t, c.n);
+                auto it = remap.find(key); if (it != remap.end()) return it->second;
                 int ni = (int)m.vertices.size();
-                m.vertices.push_back((c.first >= 0 && c.first < (int)pos.size()) ? pos[c.first] : Vec3{0, 0, 0});
-                m.uvs.push_back((c.second >= 0 && c.second < (int)uv.size()) ? uv[c.second] : Vec2{0, 0});
-                remap[c] = ni; return ni;
+                m.vertices.push_back((c.p >= 0 && c.p < (int)pos.size()) ? pos[c.p] : Vec3{0, 0, 0});
+                if (haveUV) m.uvs.push_back((c.t >= 0 && c.t < (int)uv.size()) ? uv[c.t] : Vec2{0, 0});
+                if (haveN)  m.normals.push_back((c.n >= 0 && c.n < (int)nrm.size()) ? nrm[c.n] : Vec3{0, 1, 0});
+                remap[key] = ni; return ni;
             };
             for (auto& fc : faces) {
                 std::vector<int> idx; for (auto& c : fc) idx.push_back(corner(c));

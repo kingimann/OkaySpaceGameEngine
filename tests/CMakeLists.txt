@@ -585,3 +585,7 @@ add_test(NAME net_player_spawn COMMAND test_net_player_spawn)
 add_executable(test_anim_layers test_anim_layers.cpp)
 target_link_libraries(test_anim_layers PRIVATE okay::engine)
 add_test(NAME anim_layers COMMAND test_anim_layers)
+
+add_executable(test_obj_import test_obj_import.cpp)
+target_link_libraries(test_obj_import PRIVATE okay::engine)
+add_test(NAME obj_import COMMAND test_obj_import)

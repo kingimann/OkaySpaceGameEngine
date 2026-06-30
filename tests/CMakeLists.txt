@@ -601,3 +601,7 @@ add_test(NAME skinning COMMAND test_skinning)
 add_executable(test_physics_joints test_physics_joints.cpp)
 target_link_libraries(test_physics_joints PRIVATE okay::engine)
 add_test(NAME physics_joints COMMAND test_physics_joints)
+
+add_executable(test_math_extra test_math_extra.cpp)
+target_link_libraries(test_math_extra PRIVATE okay::engine)
+add_test(NAME math_extra COMMAND test_math_extra)

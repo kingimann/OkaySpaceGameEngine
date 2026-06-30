@@ -621,3 +621,7 @@ add_test(NAME angular2d COMMAND test_angular2d)
 add_executable(test_angular3d test_angular3d.cpp)
 target_link_libraries(test_angular3d PRIVATE okay::engine)
 add_test(NAME angular3d COMMAND test_angular3d)
+
+add_executable(test_hinge2d test_hinge2d.cpp)
+target_link_libraries(test_hinge2d PRIVATE okay::engine)
+add_test(NAME hinge2d COMMAND test_hinge2d)

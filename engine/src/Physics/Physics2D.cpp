@@ -415,6 +415,8 @@ void Physics2D::Step(Scene& scene, float dt) {
         if (!j->initialized) {
             j->pinOffset = pa - pb;
             j->restLen = j->autoConfigure ? (pa - pb).Magnitude() : j->distance;
+            j->hingeLocalA = pb - pa;                            // lever COM_A -> pivot, at init
+            j->refAngleA = ta->localRotation.ToEuler().z;
             j->initialized = true;
         }
         float imA = ra->InvMass();
@@ -430,6 +432,51 @@ void Physics2D::Step(Scene& scene, float dt) {
             if (tb && rbB) tb->localPosition -= Vec3{err * (imB / imSum)};
             ra->velocity = rbB ? rbB->velocity : Vec2::Zero;   // weld: follow B (anchor -> freeze)
             if (j->breakable && err.Magnitude() > j->breakForce) j->broken = true;
+        } else if (m == Joint2D::Mode::Hinge) {
+            // Revolute joint: pin a material point of A to the pivot, free to spin.
+            // (B supplies the pivot/linear reference; the reaction is applied to A.)
+            float angleA = ta->localRotation.ToEuler().z;
+            Vec2  rA = Vec2::Rotate(j->hingeLocalA, angleA - j->refAngleA);
+            Vec2  anchorWorld = pa + rA;
+            float iiA = InvInertia(ra, ra->gameObject->GetComponent<Collider2D>());
+            Vec2  vB = rbB ? rbB->velocity : Vec2::Zero;
+
+            // Velocity constraint: cancel the velocity of A's anchor point (vs B).
+            float wA = ra->angularVelocity * Mathf::Deg2Rad;
+            Vec2  vAnchor = ra->velocity + Vec2{-wA * rA.y, wA * rA.x} - vB;
+            float k00 = imA + iiA * rA.y * rA.y;
+            float k01 = -iiA * rA.x * rA.y;
+            float k11 = imA + iiA * rA.x * rA.x;
+            float det = k00 * k11 - k01 * k01;
+            if (Mathf::Abs(det) > 1e-9f) {
+                Vec2 P{ -( k11 * vAnchor.x - k01 * vAnchor.y) / det,
+                        -(-k01 * vAnchor.x + k00 * vAnchor.y) / det };
+                ra->velocity += P * imA;
+                ra->angularVelocity += (rA.x * P.y - rA.y * P.x) * iiA * Mathf::Rad2Deg;
+            }
+            // Motor: drive the spin toward motorSpeed, torque-limited.
+            if (j->useMotor && iiA > 0.0f) {
+                float Cdot = (ra->angularVelocity - j->motorSpeed) * Mathf::Deg2Rad;
+                float imp = Mathf::Clamp(-Cdot / iiA, -j->maxMotorTorque * dt, j->maxMotorTorque * dt);
+                ra->angularVelocity += imp * iiA * Mathf::Rad2Deg;
+            }
+            // Angle limits: clamp the relative angle and kill the outward spin.
+            if (j->useLimits) {
+                float rel = angleA - j->refAngleA;
+                float cl = Mathf::Clamp(rel, j->minAngle, j->maxAngle);
+                if (cl != rel) {
+                    Vec3 e = ta->localRotation.ToEuler();
+                    e.z += (cl - rel);
+                    ta->localRotation = Quat::Euler(e);
+                    if ((rel > j->maxAngle && ra->angularVelocity > 0.0f) ||
+                        (rel < j->minAngle && ra->angularVelocity < 0.0f))
+                        ra->angularVelocity = 0.0f;
+                }
+            }
+            // Positional correction: pull A's anchor point back onto the pivot.
+            Vec2 Cpos = anchorWorld - pb;
+            ta->localPosition -= Vec3{Cpos};
+            if (j->breakable && Cpos.Magnitude() > j->breakForce) j->broken = true;
         } else {
             Vec2 d = pb - pa; float len = d.Magnitude();
             Vec2 n = len > 1e-5f ? d / len : Vec2{0, 1};

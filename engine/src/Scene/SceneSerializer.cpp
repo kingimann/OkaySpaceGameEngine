@@ -505,7 +505,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << j->anchor.x << " " << j->anchor.y
             << " " << j->distance << " " << (j->autoConfigure ? 1 : 0)
             << " " << j->spring << " " << j->damper
-            << " " << (j->breakable ? 1 : 0) << " " << j->breakForce << "\n";
+            << " " << (j->breakable ? 1 : 0) << " " << j->breakForce
+            << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque   // hinge (trailing)
+            << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle << "\n";
     }
     // Mesh + Cylinder colliders derive from Box/Capsule, so write them first and guard
     // the base records by exact shape() (else GetComponent<BoxCollider3D> matches a mesh).
@@ -1908,6 +1910,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> j->anchor.x >> j->anchor.y
                        >> j->distance >> ac >> j->spring >> j->damper >> bk >> j->breakForce;
                     j->autoConfigure = (ac != 0); j->breakable = (bk != 0);
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {           // hinge fields (trailing)
+                        int um = 0, ul = 0;
+                        in >> um >> j->motorSpeed >> j->maxMotorTorque >> ul >> j->minAngle >> j->maxAngle;
+                        j->useMotor = (um != 0); j->useLimits = (ul != 0);
+                    }
                 } else if (field == "boxcollider3d") {
                     Vec3 sz{1, 1, 1}, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> sz.z >> off.x >> off.y >> off.z >> trig;

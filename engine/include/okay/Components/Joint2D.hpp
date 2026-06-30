@@ -20,7 +20,7 @@ namespace okay {
 
 class Joint2D : public Component {
 public:
-    enum class Mode { Distance, Spring, Pin };
+    enum class Mode { Distance, Spring, Pin, Hinge };
 
     int   mode = (int)Mode::Distance;
     std::string connectedBody;        ///< name of the other body (empty = world anchor)
@@ -33,10 +33,20 @@ public:
     float breakForce = 50.0f;         ///< stretch (length error) at which it breaks
     bool  broken = false;             ///< runtime: set when broken (stops constraining)
 
+    // ---- Hinge (revolute): pins a point but lets the body spin about it ----
+    bool  useMotor = false;           ///< drive the spin toward `motorSpeed`
+    float motorSpeed = 0.0f;          ///< target angular speed (deg/s)
+    float maxMotorTorque = 1000.0f;   ///< torque the motor can apply to reach it
+    bool  useLimits = false;          ///< clamp the hinge angle to [minAngle, maxAngle]
+    float minAngle = -45.0f;          ///< lower limit (deg, relative to the start angle)
+    float maxAngle = 45.0f;           ///< upper limit (deg, relative to the start angle)
+
     // ---- runtime (set by Physics2D on the first solve) ----
     bool  initialized = false;
     Vec2  pinOffset{0, 0};            ///< A_pos - B_pos captured at init (Pin)
     float restLen = 1.0f;             ///< resolved rest length used by the solver
+    Vec2  hingeLocalA{0, 0};          ///< lever from A's center to the pivot, at init
+    float refAngleA = 0.0f;           ///< A's Z angle (deg) at init (Hinge limits/lever)
 };
 
 } // namespace okay

@@ -9101,8 +9101,8 @@ void DrawInspector(EditorState& ed) {
     if (auto* jt = dynamic_cast<Joint2D*>(curComp)) {
         if (CompHeader("Joint 2D", jt, &toRemove)) {
             ImGui::TextDisabled("Constrains this 2D body to an anchor or another body.");
-            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)"};
-            ImGui::Combo("Mode##jt2", &jt->mode, modes, 3);
+            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)"};
+            ImGui::Combo("Mode##jt2", &jt->mode, modes, 4);
             char cb[48]; std::strncpy(cb, jt->connectedBody.c_str(), sizeof(cb) - 1); cb[sizeof(cb) - 1] = '\0';
             if (ImGui::InputText("Connected Body##jt2", cb, sizeof(cb))) { jt->connectedBody = cb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of another object with a Rigidbody2D. Leave blank to anchor to a fixed world point below.");
@@ -9110,13 +9110,26 @@ void DrawInspector(EditorState& ed) {
                 float a[2] = {jt->anchor.x, jt->anchor.y};
                 if (ImGui::DragFloat2("Anchor##jt2", a, 0.1f)) { jt->anchor = {a[0], a[1]}; ed.dirty = true; }
             }
-            if (jt->mode != (int)Joint2D::Mode::Pin) {
+            if (jt->mode != (int)Joint2D::Mode::Pin && jt->mode != (int)Joint2D::Mode::Hinge) {
                 ImGui::Checkbox("Auto distance##jt2", &jt->autoConfigure);
                 if (!jt->autoConfigure) ImGui::DragFloat("Distance##jt2", &jt->distance, 0.05f, 0.0f, 1000.0f);
             }
             if (jt->mode == (int)Joint2D::Mode::Spring) {
                 ImGui::DragFloat("Spring##jt2", &jt->spring, 0.5f, 0.0f, 5000.0f);
                 ImGui::DragFloat("Damper##jt2", &jt->damper, 0.1f, 0.0f, 500.0f);
+            }
+            if (jt->mode == (int)Joint2D::Mode::Hinge) {
+                ImGui::TextDisabled("Pins a point, free to spin. Needs Freeze Rotation OFF on the body.");
+                if (ImGui::Checkbox("Use Motor##jt2", &jt->useMotor)) ed.dirty = true;
+                if (jt->useMotor) {
+                    ImGui::DragFloat("Motor Speed (deg/s)##jt2", &jt->motorSpeed, 1.0f);
+                    ImGui::DragFloat("Max Motor Torque##jt2", &jt->maxMotorTorque, 1.0f, 0.0f, 100000.0f);
+                }
+                if (ImGui::Checkbox("Use Limits##jt2", &jt->useLimits)) ed.dirty = true;
+                if (jt->useLimits) {
+                    ImGui::DragFloat("Min Angle##jt2", &jt->minAngle, 1.0f, -360.0f, 360.0f);
+                    ImGui::DragFloat("Max Angle##jt2", &jt->maxAngle, 1.0f, -360.0f, 360.0f);
+                }
             }
             ImGui::Checkbox("Breakable##jt2", &jt->breakable);
             if (jt->breakable) ImGui::DragFloat("Break at (stretch)##jt2", &jt->breakForce, 0.1f, 0.0f, 1000.0f);

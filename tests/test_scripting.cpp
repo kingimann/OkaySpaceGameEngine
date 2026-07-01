@@ -198,5 +198,96 @@ int main() {
         CHECK_NEAR(go->transform->localPosition.x, 10.0f, 0.001f);
     }
 
+    // --- New array/map/string/type builtins ---
+    {
+        const char* src = R"SCRIPT(
+            var xs = array(3, 1, 2);
+            var f = first(xs);          // 3
+            var l = last(xs);           // 2
+            sort_num(xs);               // [1,2,3]
+            var lo = first(xs);         // 1
+            var sl = slice(xs, 1, 3);   // [2,3]
+            var sln = count(sl);        // 2
+            var r = range(5);           // [0,1,2,3,4]
+            var rn = count(r);          // 5
+            var rsum = sum(range(1, 5)); // 1+2+3+4 = 10
+            insert_at(xs, 0, 99);       // [99,1,2,3]
+            var head = first(xs);       // 99
+            clear(xs);
+            var empty = count(xs);      // 0
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("f").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("l").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("lo").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("sln").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("rn").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("rsum").AsFloat(), 10.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("head").AsFloat(), 99.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("empty").AsFloat(), 0.0f, 0.001f);
+    }
+    {
+        const char* src = R"SCRIPT(
+            var m = map();
+            map_set(m, "a", 1);
+            map_set(m, "b", 2);
+            var vs = map_values(m);
+            var vc = count(vs);         // 2
+            var vsum = sum(vs);         // 3
+            var n = map();
+            map_set(n, "b", 20);
+            map_set(n, "c", 3);
+            map_merge(m, n);            // a=1, b=20, c=3
+            var bb = map_get(m, "b");   // 20 (src wins)
+            var cc = map_get(m, "c");   // 3
+            map_clear(m);
+            var mc = map_count(m);      // 0
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("vc").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("vsum").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("bb").AsFloat(), 20.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("cc").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("mc").AsFloat(), 0.0f, 0.001f);
+    }
+    {
+        const char* src = R"SCRIPT(
+            var a = capitalize("hello");        // "Hello"
+            var b = title_case("hi there world"); // "Hi There World"
+            var c = str_reverse("abc");         // "cba"
+            var d = trim_start("  x");          // "x"
+            var e = trim_end("y  ");            // "y"
+            var t1 = typeof(array(1));          // "array"
+            var t2 = typeof("s");               // "string"
+            var t3 = typeof(3);                 // "number"
+            var t4 = typeof(true);              // "bool"
+            var isa = is_array(array(1));       // true
+            var isn = is_num(5);                // true
+            var fr = fract(2.75);               // 0.75
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK(vm->GetGlobal("a").AsString() == "Hello");
+        CHECK(vm->GetGlobal("b").AsString() == "Hi There World");
+        CHECK(vm->GetGlobal("c").AsString() == "cba");
+        CHECK(vm->GetGlobal("d").AsString() == "x");
+        CHECK(vm->GetGlobal("e").AsString() == "y");
+        CHECK(vm->GetGlobal("t1").AsString() == "array");
+        CHECK(vm->GetGlobal("t2").AsString() == "string");
+        CHECK(vm->GetGlobal("t3").AsString() == "number");
+        CHECK(vm->GetGlobal("t4").AsString() == "bool");
+        CHECK(vm->GetGlobal("isa").AsBool());
+        CHECK(vm->GetGlobal("isn").AsBool());
+        CHECK_NEAR(vm->GetGlobal("fr").AsFloat(), 0.75f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

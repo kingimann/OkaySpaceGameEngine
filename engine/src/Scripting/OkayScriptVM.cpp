@@ -2754,6 +2754,95 @@ struct OkayScriptVM::Impl {
             if (Mathf::Abs(tgt - cur) <= maxD) return Value{tgt};
             return Value{cur + (tgt > cur ? maxD : -maxD)};
         };
+        // More array helpers.
+        b["first"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray()) if (!arr->empty()) return arr->front();
+            return Value{};
+        };
+        b["last"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray()) if (!arr->empty()) return arr->back();
+            return Value{};
+        };
+        b["clear"] = [](std::vector<Value>& a) {
+            if (!a.empty()) { if (auto arr = a[0].AsArray()) arr->clear(); else if (auto m = a[0].AsMap()) m->clear(); }
+            return a.empty() ? Value{} : a[0];
+        };
+        b["insert_at"] = [](std::vector<Value>& a) {
+            if (a.size() >= 3) if (auto arr = a[0].AsArray()) {
+                int i = (int)a[1].AsFloat();
+                if (i < 0) i = 0; if (i > (int)arr->size()) i = (int)arr->size();
+                arr->insert(arr->begin() + i, a[2]);
+            }
+            return a.empty() ? Value{} : a[0];
+        };
+        b["slice"] = [](std::vector<Value>& a) {
+            Value out = Value::MakeArray(); auto res = out.AsArray();
+            if (!a.empty()) if (auto arr = a[0].AsArray()) {
+                int n = (int)arr->size();
+                int start = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+                int end   = a.size() > 2 ? (int)a[2].AsFloat() : n;
+                if (start < 0) start += n; if (end < 0) end += n;
+                start = start < 0 ? 0 : (start > n ? n : start);
+                end   = end   < 0 ? 0 : (end   > n ? n : end);
+                for (int i = start; i < end; ++i) res->push_back((*arr)[i]);
+            }
+            return out;
+        };
+        b["range"] = [](std::vector<Value>& a) {
+            // range(n) -> [0..n), range(lo, hi) -> [lo..hi), range(lo, hi, step).
+            Value out = Value::MakeArray(); auto res = out.AsArray();
+            float lo = 0, hi = 0, step = 1;
+            if (a.size() == 1) hi = a[0].AsFloat();
+            else if (a.size() >= 2) { lo = a[0].AsFloat(); hi = a[1].AsFloat(); if (a.size() >= 3) step = a[2].AsFloat(); }
+            if (step == 0) step = 1;
+            int guard = 0;
+            if (step > 0) for (float v = lo; v < hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
+            else          for (float v = lo; v > hi && guard < 1000000; v += step, ++guard) res->push_back(Value{v});
+            return out;
+        };
+        b["sort_str"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto arr = a[0].AsArray())
+                std::sort(arr->begin(), arr->end(),
+                          [](const Value& x, const Value& y) { return x.AsString() < y.AsString(); });
+            return a.empty() ? Value{} : a[0];
+        };
+        // More map helpers.
+        b["map_values"] = [](std::vector<Value>& a) {
+            Value out = Value::MakeArray(); auto res = out.AsArray();
+            if (!a.empty()) if (auto m = a[0].AsMap()) for (auto& kv : *m) res->push_back(kv.second);
+            return out;
+        };
+        b["map_clear"] = [](std::vector<Value>& a) {
+            if (!a.empty()) if (auto m = a[0].AsMap()) m->clear();
+            return a.empty() ? Value{} : a[0];
+        };
+        b["map_merge"] = [](std::vector<Value>& a) {
+            // map_merge(dst, src): copy src's entries into dst (src wins on conflict).
+            if (a.size() >= 2) if (auto d = a[0].AsMap()) if (auto s = a[1].AsMap())
+                for (auto& kv : *s) (*d)[kv.first] = kv.second;
+            return a.empty() ? Value{} : a[0];
+        };
+        // Type introspection: what kind of value is this?
+        b["typeof"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string("null")};
+            const Value& v = a[0];
+            if (v.IsArray())  return Value{std::string("array")};
+            if (v.IsMap())    return Value{std::string("map")};
+            if (v.IsString()) return Value{std::string("string")};
+            if (v.IsBool())   return Value{std::string("bool")};
+            if (v.IsVec3())   return Value{std::string("vec3")};
+            return Value{std::string("number")};
+        };
+        b["is_array"] = [](std::vector<Value>& a) { return Value{!a.empty() && a[0].IsArray()}; };
+        b["is_map"]   = [](std::vector<Value>& a) { return Value{!a.empty() && a[0].IsMap()}; };
+        b["is_str"]   = [](std::vector<Value>& a) { return Value{!a.empty() && a[0].IsString()}; };
+        b["is_bool"]  = [](std::vector<Value>& a) { return Value{!a.empty() && a[0].IsBool()}; };
+        b["is_num"]   = [](std::vector<Value>& a) { return Value{!a.empty() && a[0].IsNumber()}; };
+        // fract(x): the fractional part of x (x - floor(x)).
+        b["fract"] = [](std::vector<Value>& a) {
+            float x = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{x - Mathf::Floor(x)};
+        };
         // String helpers.
         b["str_len"] = [](std::vector<Value>& a) { return Value{a.empty() ? 0.0f : (float)a[0].AsString().size()}; };
         b["upper"] = [](std::vector<Value>& a) {
@@ -2821,6 +2910,41 @@ struct OkayScriptVM::Impl {
             auto notspace = [](unsigned char c) { return !std::isspace(c); };
             s.erase(s.begin(), std::find_if(s.begin(), s.end(), notspace));
             s.erase(std::find_if(s.rbegin(), s.rend(), notspace).base(), s.end());
+            return Value{s};
+        };
+        // Trim only the leading / only the trailing whitespace.
+        b["trim_start"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString();
+            s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char c){ return !std::isspace(c); }));
+            return Value{s};
+        };
+        b["trim_end"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            std::string s = a[0].AsString();
+            s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char c){ return !std::isspace(c); }).base(), s.end());
+            return Value{s};
+        };
+        // Reverse the characters of a string.
+        b["str_reverse"] = [](std::vector<Value>& a) {
+            std::string s = a.empty() ? "" : a[0].AsString();
+            std::reverse(s.begin(), s.end());
+            return Value{s};
+        };
+        // capitalize("hello") -> "Hello" (first letter up, rest untouched).
+        b["capitalize"] = [](std::vector<Value>& a) {
+            std::string s = a.empty() ? "" : a[0].AsString();
+            if (!s.empty()) s[0] = (char)std::toupper((unsigned char)s[0]);
+            return Value{s};
+        };
+        // title_case("hello world") -> "Hello World" (capitalize each word).
+        b["title_case"] = [](std::vector<Value>& a) {
+            std::string s = a.empty() ? "" : a[0].AsString();
+            bool start = true;
+            for (auto& c : s) {
+                if (std::isspace((unsigned char)c)) { start = true; }
+                else { c = start ? (char)std::toupper((unsigned char)c) : (char)std::tolower((unsigned char)c); start = false; }
+            }
             return Value{s};
         };
         // Repeat a string n times ("=" * 10 style separators/bars).

@@ -4226,9 +4226,30 @@ static const std::string* ScriptSignature(const std::string& name) {
         // arrays / lists
         {"array","array(v1, v2, ...)"}, {"count","count(arr)"}, {"push","push(arr, value)"}, {"pop","pop(arr)"},
         {"contains","contains(arr, value)"}, {"len","len(x, y)"},
+        {"first","first(arr)"}, {"last","last(arr)"}, {"clear","clear(arr_or_map)"},
+        {"insert_at","insert_at(arr, index, value)"}, {"slice","slice(arr, start, end)"},
+        {"range","range(n)  |  range(lo, hi[, step])"}, {"sort_str","sort_str(arr)"},
+        {"remove_at","remove_at(arr, index)"}, {"index_of","index_of(arr, value)"},
+        {"sum","sum(arr)"}, {"min_of","min_of(arr)"}, {"max_of","max_of(arr)"},
+        {"reverse","reverse(arr)"}, {"sort_num","sort_num(arr)"}, {"shuffle","shuffle(arr)"}, {"choose","choose(arr)"},
+        // maps / dictionaries
+        {"map","map()"}, {"map_set","map_set(m, \"key\", value)"}, {"map_get","map_get(m, \"key\")"},
+        {"map_has","map_has(m, \"key\")"}, {"map_remove","map_remove(m, \"key\")"}, {"map_keys","map_keys(m)"},
+        {"map_values","map_values(m)"}, {"map_count","map_count(m)"}, {"map_clear","map_clear(m)"},
+        {"map_merge","map_merge(dst, src)"},
+        // type introspection
+        {"typeof","typeof(v) -> \"number|string|bool|array|map|vec3|null\""},
+        {"is_array","is_array(v)"}, {"is_map","is_map(v)"}, {"is_str","is_str(v)"},
+        {"is_num","is_num(v)"}, {"is_bool","is_bool(v)"}, {"fract","fract(x)"},
         // strings
         {"str_len","str_len(s)"}, {"str_find","str_find(s, sub)"}, {"str_contains","str_contains(s, sub)"},
-        {"str_repeat","str_repeat(s, n)"}, {"starts_with","starts_with(s, prefix)"},
+        {"str_repeat","str_repeat(s, n)"}, {"starts_with","starts_with(s, prefix)"}, {"ends_with","ends_with(s, suffix)"},
+        {"upper","upper(s)"}, {"lower","lower(s)"}, {"substr","substr(s, start[, n])"}, {"char_at","char_at(s, i)"},
+        {"replace","replace(s, find, repl)"}, {"trim","trim(s)"}, {"trim_start","trim_start(s)"}, {"trim_end","trim_end(s)"},
+        {"capitalize","capitalize(s)"}, {"title_case","title_case(s)"}, {"str_reverse","str_reverse(s)"},
+        {"repeat","repeat(s, n)"}, {"split","split(s, sep)"}, {"join","join(arr, sep)"},
+        {"pad_left","pad_left(s, width[, fill])"}, {"pad_right","pad_right(s, width[, fill])"},
+        {"to_num","to_num(s)"}, {"to_str","to_str(v)"}, {"format","format(\"{} {}\", a, b)"},
         // ui widgets
         {"set_slider","set_slider(v)"}, {"set_toggle","set_toggle(on)"}, {"set_progress","set_progress(t)"},
         // math checks

@@ -248,4 +248,16 @@ const Font* FontBold();
 /// The active theme (mutable — tweak colors/sizes in place).
 Theme& Style();
 
+// ---- Scoped style overrides (ImGui-style) --------------------------------------
+// Which theme color a PushStyleColor call overrides.
+enum Col {
+    Col_Bg, Col_BgHover, Col_BgDown, Col_Border,
+    Col_Text, Col_Panel, Col_Track, Col_Accent,
+    Col_COUNT
+};
+/// Temporarily override a theme color (RGBA 0..255). Every PushStyleColor must be
+/// matched by a PopStyleColor. Nestable — great for coloring one widget or section.
+void PushStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a = 255);
+void PopStyleColor(int count = 1);
+
 } // namespace OkayUI

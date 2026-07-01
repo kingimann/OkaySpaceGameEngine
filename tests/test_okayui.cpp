@@ -403,6 +403,33 @@ int main(int argc, char** argv) {
         CHECK(c);
     }
 
+    // --- PushStyleColor: overrides a color for a widget, then restores it. ---
+    {
+        // Draw a Text in a pushed red, sample its pixels; then draw again after the
+        // pop and confirm the theme color returned (so the push was scoped).
+        auto redCount = [&](bool pushed) {
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 255); SDL_RenderClear(r);
+            OkayUI::BeginFrame(OkayUI::Input{});
+            OkayUI::Begin("PSCW", 4, 4, 220, 80);
+            if (pushed) OkayUI::PushStyleColor(OkayUI::Col_Text, 255, 0, 0);
+            OkayUI::Text("HELLO");
+            if (pushed) OkayUI::PopStyleColor();
+            OkayUI::End(); OkayUI::EndFrame(r);
+            SDL_LockSurface(surf);
+            int red = 0;
+            for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x) {
+                Uint32 px = pixelAt(surf, x, y);
+                Uint8 rr = (px >> 16) & 0xFF, gg = (px >> 8) & 0xFF, bb = px & 0xFF;
+                if (rr > 180 && gg < 80 && bb < 80) ++red;   // strong red pixels
+            }
+            SDL_UnlockSurface(surf);
+            return red;
+        };
+        CHECK(redCount(true) > 20);    // pushed color drew red body text
+        // After a matched pop the default (light) text returns -> no red run.
+        CHECK(redCount(false) < 5);
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

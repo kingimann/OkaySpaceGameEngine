@@ -52,6 +52,22 @@ struct CurMenu {
 CurMenu g_curMenu;
 Theme g_theme;
 
+// Scoped color-override stack: each entry remembers a theme color slot and its prior
+// value, so PopStyleColor can restore it. Reset every BeginFrame to survive imbalance.
+struct ColorSave { unsigned char* field; unsigned char prev[4]; };
+ColorSave g_colStack[64];
+int       g_colTop = 0;
+// Map a Col enum to the theme's 4-byte color field.
+inline unsigned char* themeColor(int which) {
+    switch (which) {
+        case 0: return g_theme.bg;      case 1: return g_theme.bgHover;
+        case 2: return g_theme.bgDown;  case 3: return g_theme.border;
+        case 4: return g_theme.text;    case 5: return g_theme.panel;
+        case 6: return g_theme.track;   case 7: return g_theme.accent;
+        default: return g_theme.text;
+    }
+}
+
 // Length of a C string without pulling in <cstring> (keeps the toolkit STL/libc-light).
 inline int cstrlen(const char* s) { int n = 0; if (s) while (s[n]) ++n; return n; }
 
@@ -216,6 +232,9 @@ void BeginFrame(const Input& in) {
     g_onv = 0; g_oni = 0; g_toOverlay = false;
     g_inMenuBar = false; g_curMenu.active = false;
     g_idSeed = 0; g_idTop = 0;        // reset the ID stack each frame
+    // Restore any colors left pushed by an imbalanced previous frame, then clear.
+    PopStyleColor(g_colTop);
+    g_colTop = 0;
 }
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
@@ -487,6 +506,22 @@ void EndFrame(SDL_Renderer* r) {
 }
 
 Theme& Style() { return g_theme; }
+
+void PushStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    if (g_colTop >= 64) return;
+    unsigned char* f = themeColor((int)which);
+    ColorSave& s = g_colStack[g_colTop++];
+    s.field = f;
+    s.prev[0] = f[0]; s.prev[1] = f[1]; s.prev[2] = f[2]; s.prev[3] = f[3];
+    f[0] = r; f[1] = g; f[2] = b; f[3] = a;
+}
+
+void PopStyleColor(int count) {
+    while (count-- > 0 && g_colTop > 0) {
+        ColorSave& s = g_colStack[--g_colTop];
+        s.field[0] = s.prev[0]; s.field[1] = s.prev[1]; s.field[2] = s.prev[2]; s.field[3] = s.prev[3];
+    }
+}
 
 void SetFont(const Font* f) { g_font = f ? f : &kFontDefault; }
 const Font* GetFont()       { return g_font; }

@@ -661,7 +661,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (bm->parentToModel ? 1 : 0) << " " << (bm->brushHotkeys ? 1 : 0)
             << " " << (bm->showPreview ? 1 : 0) << " " << (bm->showCrosshair ? 1 : 0)
             << " " << Quote(bm->buildTag) << " " << Quote(bm->partTexture)
-            << " " << Quote(bm->prefabPath) << " " << Quote(bm->modelName) << "\n";
+            << " " << Quote(bm->prefabPath) << " " << Quote(bm->modelName)
+            << " " << Quote(bm->mapPath) << "\n";
     }
     if (auto* bp = go->GetComponent<BuildPiece>()) {
         out << "  buildpiece " << bp->tier << " " << bp->health << " " << bp->maxHealth
@@ -2252,6 +2253,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     bm->partTexture = ReadQuoted(in);
                     bm->prefabPath = ReadQuoted(in);
                     bm->modelName = ReadQuoted(in);
+                    // Optional trailing token (added later): the map-save path.
+                    in >> std::ws;
+                    if (in.peek() == '"') bm->mapPath = ReadQuoted(in);
                 } else if (field == "buildpiece") {
                     auto* bp = go->AddComponent<BuildPiece>();
                     in >> bp->tier >> bp->health >> bp->maxHealth >> bp->cost;

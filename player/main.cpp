@@ -1423,6 +1423,30 @@ int main(int argc, char** argv) {
         // when the window isn't focused.
         if (cfg.muteOnFocusLoss) AudioMixer::masterVolume = windowFocused ? cfg.volume : 0.0f;
         const bool tick = windowFocused || cfg.runInBackground;
+
+        // --- Built-in Builder Mode (an engine feature, not a component to add): F2
+        // toggles in-game modeling on the main camera's player. Left-click places the
+        // current brush, right-click removes, R rotates, +/- scales, G grabs, P saves
+        // the model as a prefab, O saves the whole map — so any game lets players
+        // build and save with zero setup. ---
+        {
+            static bool s_bmPrev = false, s_bmOn = false;
+            static BuilderMode* s_bm = nullptr;
+            const Uint8* kb = SDL_GetKeyboardState(nullptr);
+            bool f2 = kb && kb[SDL_SCANCODE_F2] != 0;
+            if (f2 && !s_bmPrev) {
+                s_bmOn = !s_bmOn;
+                if (s_bmOn && !s_bm && scene.mainCamera && scene.mainCamera->gameObject) {
+                    Transform* t = scene.mainCamera->gameObject->transform;
+                    while (t->Parent()) t = t->Parent();          // attach to the player root
+                    GameObject* host = t->gameObject ? t->gameObject : scene.mainCamera->gameObject;
+                    s_bm = host->AddComponent<BuilderMode>();
+                }
+                if (s_bm) s_bm->enabled = s_bmOn;
+            }
+            s_bmPrev = f2;
+        }
+
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
         Time::Step(tick ? dt : 0.0f);

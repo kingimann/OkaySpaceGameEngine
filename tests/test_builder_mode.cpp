@@ -167,5 +167,26 @@ int main() {
         CHECK(hidden == 1);
     }
 
+    // ---- SaveMap: persist the whole built scene (build-in-play, then save) ----
+    {
+        Scene s("map2");
+        GameObject* ground = s.CreateGameObject("Ground");
+        ground->transform->localScale = {50, 1, 50};
+        ground->AddComponent<BoxCollider3D>();
+        auto* bm = s.CreateGameObject("Builder")->AddComponent<BuilderMode>();
+        bm->reach = 20.0f; bm->parentToModel = false;
+        GameObject* piece = bm->PlaceAt(s, {0.0f, 6.0f, 0.0f}, {0, -1, 0});
+        CHECK(piece != nullptr);
+        const char* mp = "test_buildermode_map.okayscene";
+        CHECK(bm->SaveMap(mp));                          // write the whole scene
+        Scene s2("loaded"); std::string err;
+        CHECK(SceneSerializer::LoadFromFile(s2, mp, &err));
+        CHECK(s2.Find("Builder") != nullptr);            // scene (incl. the build) round-tripped
+        int parts = 0;
+        for (const auto& up : s2.Objects()) if (up && up->tag == "BuildPart") ++parts;
+        CHECK(parts >= 1);                               // the placed piece persisted
+        std::remove(mp);
+    }
+
     TEST_MAIN_RESULT();
 }

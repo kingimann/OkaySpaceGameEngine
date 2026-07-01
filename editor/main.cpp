@@ -9928,8 +9928,12 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Text("Prefab"); ImGui::SameLine(120);
                 if (AssetSlot("bmprefab", bm->prefabPath, "Prefab", {".okayprefab"})) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Prefab brush stamps this file; Save (P) writes the model here if set.");
+                char mp[160]; std::snprintf(mp, sizeof(mp), "%s", bm->mapPath.c_str());
+                if (ImGui::InputTextWithHint("Map file##bm", "built_map.okayscene", mp, sizeof(mp))) { bm->mapPath = mp; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Map (O key, also in Play) writes the WHOLE scene here so a map you build in-game persists.");
                 ImGui::TreePop();
             }
+            ImGui::TextDisabled("Play controls: click place / right-click remove / R rotate / +- scale / G grab / P save model / O save map");
             if (ImGui::Checkbox("Brush hotkeys (1-9)##bm", &bm->brushHotkeys)) ed.dirty = true;
             if (ImGui::Checkbox("Placement preview##bm", &bm->showPreview)) ed.dirty = true;
             ImGui::SameLine();
@@ -13079,7 +13083,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BlockBuilder>(), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }
             if (item(!go->GetComponent<StructureBuilder>(), "Structure Builder (Rust-style)")) { go->AddComponent<StructureBuilder>(); ed.dirty = true; }
-            if (item(!go->GetComponent<BuilderMode>(), "Builder Mode (in-game editor)")) { go->AddComponent<BuilderMode>(); ed.dirty = true; }
+            // Builder Mode is a built-in engine feature (press F2 in Play) — not a
+            // component you add — so it's intentionally not listed here.
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
@@ -17359,6 +17364,25 @@ int main(int argc, char** argv) {
         // still updates (button clicks) but physics/gravity don't run (otherwise the
         // player keeps falling at full speed behind the menu and tunnels through the
         // terrain). The built player already ticks with the scaled Time::DeltaTime().
+        // Built-in Builder Mode (an engine feature, not a component to add): while
+        // playing, F2 toggles in-game modeling on the main camera's player, matching
+        // the shipped player runtime. Reset when play stops (the scene is restored).
+        {
+            static bool s_bmOn = false;
+            static BuilderMode* s_bm = nullptr;
+            if (!ed.isPlaying()) { s_bm = nullptr; s_bmOn = false; }
+            else if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+                s_bmOn = !s_bmOn;
+                Scene& sc = ed.scene();
+                if (s_bmOn && !s_bm && sc.mainCamera && sc.mainCamera->gameObject) {
+                    Transform* t = sc.mainCamera->gameObject->transform;
+                    while (t->Parent()) t = t->Parent();
+                    GameObject* host = t->gameObject ? t->gameObject : sc.mainCamera->gameObject;
+                    s_bm = host->AddComponent<BuilderMode>();
+                }
+                if (s_bm) s_bm->enabled = s_bmOn;
+            }
+        }
         if (!g_paused) ed.Tick(okay::Game::Paused() ? 0.0f : dt);
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).
         if (ed.isPlaying() && okay::Game::QuitRequested()) { ed.Stop(); g_paused = false; ConsoleLog("Quit (game requested exit)"); }

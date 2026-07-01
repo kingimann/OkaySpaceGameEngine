@@ -64,6 +64,8 @@ public:
     char scaleDownKey = '-';
     char grabKey      = 'g';                 ///< pick up / drop the piece you're aiming at
     char saveKey      = 'p';                 ///< save the assembled model as a prefab
+    char saveMapKey   = 'o';                 ///< save the whole scene (the built map) to disk
+    std::string mapPath;                     ///< where SaveMap writes (default "built_map.okayscene")
     bool brushHotkeys = true;                ///< keys 1–9 select primitive brushes
     bool showPreview   = true;               ///< ghost of the next placement
     bool showCrosshair = true;               ///< auto-add an aim reticle
@@ -91,6 +93,7 @@ public:
         if (scaleUpKey   && Input::GetKeyDown(scaleUpKey))   scale_ = Clampf(scale_ + scaleStep, minScale, maxScale);
         if (scaleDownKey && Input::GetKeyDown(scaleDownKey)) scale_ = Clampf(scale_ - scaleStep, minScale, maxScale);
         if (saveKey      && Input::GetKeyDown(saveKey))      SaveModel();
+        if (saveMapKey   && Input::GetKeyDown(saveMapKey))   SaveMap();
 
         // ---- Grab: pick up the aimed piece, it tracks the aim until dropped ----
         if (grabKey && Input::GetKeyDown(grabKey)) ToggleGrab(*s, origin, dir, r);
@@ -156,6 +159,19 @@ public:
         std::string out = !path.empty() ? path
                         : (!prefabPath.empty() ? prefabPath : modelName + ".okayprefab");
         return SceneSerializer::SaveObjectToFile(*model_, out);
+    }
+
+    /// Save the WHOLE current scene (the built map + everything in it) to a
+    /// `.okayscene` file, so a map you build while playing persists and can be
+    /// reloaded. Runs in Play too (BuilderMode updates like any component), so a
+    /// shipped game can let players build and save. With no `path`, uses `mapPath`,
+    /// falling back to "built_map.okayscene".
+    bool SaveMap(const std::string& path = "") {
+        Scene* s = GetScene();
+        if (!s) return false;
+        std::string out = !path.empty() ? path
+                        : (!mapPath.empty() ? mapPath : "built_map.okayscene");
+        return SceneSerializer::SaveToFile(*s, out);
     }
 
     /// Grid-snap a world point to the nearest grid node (no snap if snapToGrid off

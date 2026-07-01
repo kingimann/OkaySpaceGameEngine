@@ -635,7 +635,7 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
         ImGui::PopItemWidth();
     }
     ImGui::SameLine(0, st.ItemInnerSpacing.x);
-    ImGui::TextUnformatted(label);
+    ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));   // hide the ##id suffix
     ImGui::PopID();
     return changed;
 }
@@ -9560,9 +9560,9 @@ void DrawInspector(EditorState& ed) {
     if (auto* bc = dynamic_cast<BoxCollider3D*>(curComp)) {
         if (CompHeader("Box Collider 3D", bc, &toRemove)) {
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
-            if (ImGui::DragFloat3("Size##bc3", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
+            if (DragVec3Axis("Size##bc3", sz, 0.05f)) { bc->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
             float off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
-            if (ImGui::DragFloat3("Offset##bc3", off, 0.05f)) { bc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            if (DragVec3Axis("Offset##bc3", off, 0.05f)) { bc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
             ImGui::Checkbox("Trigger##bc3", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc3", &bc->layer, 0.1f, 0, 31);
@@ -9579,7 +9579,7 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Sphere Collider 3D", sc, &toRemove)) {
             ImGui::DragFloat("Radius##sc3", &sc->radius, 0.05f, 0.0f, 1000.0f);
             float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
-            if (ImGui::DragFloat3("Offset##sc3", off, 0.05f)) { sc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            if (DragVec3Axis("Offset##sc3", off, 0.05f)) { sc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
             ImGui::Checkbox("Trigger##sc3", &sc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##sc3", &sc->layer, 0.1f, 0, 31);
@@ -9599,7 +9599,7 @@ void DrawInspector(EditorState& ed) {
             const char* axes[] = {"X", "Y", "Z"};
             ImGui::Combo("Axis##cap3", &cap->axis, axes, 3);
             float off[3] = {cap->offset.x, cap->offset.y, cap->offset.z};
-            if (ImGui::DragFloat3("Offset##cap3", off, 0.05f)) { cap->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            if (DragVec3Axis("Offset##cap3", off, 0.05f)) { cap->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
             ImGui::Checkbox("Trigger##cap3", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap3", &cap->layer, 0.1f, 0, 31);
@@ -11409,7 +11409,7 @@ void DrawInspector(EditorState& ed) {
             buf[sizeof(buf) - 1] = '\0';
             if (ImGui::InputText("Target##cf", buf, sizeof(buf))) { cf->targetName = buf; ed.dirty = true; }
             float off[3] = {cf->offset.x, cf->offset.y, cf->offset.z};
-            if (ImGui::DragFloat3("Offset##cf", off, 0.05f)) { cf->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            if (DragVec3Axis("Offset##cf", off, 0.05f)) { cf->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
             if (ImGui::DragFloat("Smoothing##cf", &cf->smoothing, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             ImGui::TextDisabled("follows the named GameObject (0 = instant snap)");
             if (ImGui::SmallButton("Remove##cf")) toRemove = cf;
@@ -11425,7 +11425,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Follow##vc", fb, sizeof(fb))) { vc->follow = fb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject to position relative to (the body).");
             float off[3] = {vc->followOffset.x, vc->followOffset.y, vc->followOffset.z};
-            if (ImGui::DragFloat3("Follow Offset##vc", off, 0.05f)) { vc->followOffset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            if (DragVec3Axis("Follow Offset##vc", off, 0.05f)) { vc->followOffset = {off[0], off[1], off[2]}; ed.dirty = true; }
             int bm = (int)vc->bindingMode;
             const char* bms[] = {"World Space", "Lock To Target (orbital)"};
             if (ImGui::Combo("Binding Mode##vc", &bm, bms, 2)) { vc->bindingMode = (VirtualCamera::BindingMode)bm; ed.dirty = true; }
@@ -11466,7 +11466,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Look At##vc", lb, sizeof(lb))) { vc->lookAt = lb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject to aim at (the aim).");
             float lo[3] = {vc->lookAtOffset.x, vc->lookAtOffset.y, vc->lookAtOffset.z};
-            if (ImGui::DragFloat3("Look Offset##vc", lo, 0.05f)) { vc->lookAtOffset = {lo[0], lo[1], lo[2]}; ed.dirty = true; }
+            if (DragVec3Axis("Look Offset##vc", lo, 0.05f)) { vc->lookAtOffset = {lo[0], lo[1], lo[2]}; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Added to the LookAt target before aiming (e.g. aim at the head).");
             if (ImGui::DragFloat("Dead Zone##vc", &vc->aimDeadZone, 0.1f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Don't re-aim until the target drifts beyond this angle (reduces jitter).");
@@ -11483,8 +11483,8 @@ void DrawInspector(EditorState& ed) {
             if (vc->confine) {
                 float mn[3] = {vc->confineMin.x, vc->confineMin.y, vc->confineMin.z};
                 float mx[3] = {vc->confineMax.x, vc->confineMax.y, vc->confineMax.z};
-                if (ImGui::DragFloat3("Min##vccf", mn, 0.1f)) { vc->confineMin = {mn[0], mn[1], mn[2]}; ed.dirty = true; }
-                if (ImGui::DragFloat3("Max##vccf", mx, 0.1f)) { vc->confineMax = {mx[0], mx[1], mx[2]}; ed.dirty = true; }
+                if (DragVec3Axis("Min##vccf", mn, 0.1f)) { vc->confineMin = {mn[0], mn[1], mn[2]}; ed.dirty = true; }
+                if (DragVec3Axis("Max##vccf", mx, 0.1f)) { vc->confineMax = {mx[0], mx[1], mx[2]}; ed.dirty = true; }
             }
             ImGui::SeparatorText("Noise / Impulse");
             if (ImGui::DragFloat("Amplitude##vcn", &vc->shakeAmplitude, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
@@ -11826,7 +11826,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##wu", bg)) { wu->background = {bg[0],bg[1],bg[2],bg[3]}; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Panel behind the text. Set alpha to 0 for no panel.");
             float off[3] = {wu->worldOffset.x, wu->worldOffset.y, wu->worldOffset.z};
-            if (ImGui::DragFloat3("World Offset##wu", off, 0.05f)) { wu->worldOffset = {off[0],off[1],off[2]}; ed.dirty = true; }
+            if (DragVec3Axis("World Offset##wu", off, 0.05f)) { wu->worldOffset = {off[0],off[1],off[2]}; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Offset from the object in world units (default: 2 above it).");
             if (ImGui::DragFloat("Size##wu", &wu->pixelSize, 0.05f, 0.2f, 16.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Scale With Distance##wu", &wu->scaleWithDistance)) ed.dirty = true;

@@ -373,6 +373,36 @@ int main(int argc, char** argv) {
         CHECK(!open);   // close button cleared it
     }
 
+    // --- TabBar: clicking a tab sets *current to its index. ---
+    {
+        release();
+        int cur = 0;
+        const char* tabs[] = {"One", "Two", "Three"};
+        auto frame = [&](float mx, bool down) {
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = 60; a.mouseDown = down;  // content row (below title)
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("TBW", 10, 10, 260, 160);
+            OkayUI::TabBar(tabs, 3, &cur);
+            OkayUI::End();
+            OkayUI::EndFrame(r);
+        };
+        // "One" ~ 20+? First tab starts at content x=20; "One" width = 3*8*2 + 20 = 68,
+        // so "Two" begins ~ x=90. Click within the second tab.
+        frame(110, false);           // draw once (no click)
+        frame(110, true); frame(110, false);
+        CHECK(cur == 1);             // selected the second tab
+    }
+
+    // --- SmallButton: reports a click like Button, in a tighter rect. ---
+    {
+        release();
+        OkayUI::Input a; a.mouseX = 30; a.mouseY = 56; a.mouseDown = true;   // content row
+        OkayUI::BeginFrame(a); OkayUI::Begin("SBW", 10, 10, 200, 120); OkayUI::SmallButton("Go"); OkayUI::End(); OkayUI::EndFrame(r);
+        a.mouseDown = false;
+        OkayUI::BeginFrame(a); OkayUI::Begin("SBW", 10, 10, 200, 120); bool c = OkayUI::SmallButton("Go"); OkayUI::End(); OkayUI::EndFrame(r);
+        CHECK(c);
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

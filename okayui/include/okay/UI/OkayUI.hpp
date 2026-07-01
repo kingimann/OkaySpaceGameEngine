@@ -145,11 +145,22 @@ void Bullet();
 void BulletText(const char* s);
 /// A line of text at the layout cursor.
 void Text(const char* s);
+/// Text in an explicit RGB color (0..255) — for labels, warnings, headings.
+void TextColored(unsigned char r, unsigned char g, unsigned char b, const char* s);
+/// Dimmed text (hints, secondary info).
+void TextDisabled(const char* s);
+/// A labeled divider: a line with `label` at the left (ImGui's SeparatorText).
+void SeparatorText(const char* label);
 
 // ImGui-style widget overloads that auto-place inside the current window (id is
 // hashed from the label). The explicit-coordinate versions above still work for
 // free-form placement.
 bool Button(const char* label);
+/// A compact button (tight padding, no full-line height) — for inline actions.
+bool SmallButton(const char* label);
+/// A row of tabs: clicking a tab sets *current to its index. Draw the selected
+/// tab's contents below based on *current. `labels` and `current` required.
+void TabBar(const char* const* labels, int count, int* current);
 bool Checkbox(const char* label, bool* value);
 bool RadioButton(const char* label, int* value, int option);
 bool SliderFloat(const char* label, float* value, float minV, float maxV);

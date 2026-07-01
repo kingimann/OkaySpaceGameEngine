@@ -595,6 +595,34 @@ void Text(const char* s) {
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, g_theme.text);
 }
 
+void TextColored(unsigned char r, unsigned char g, unsigned char b, const char* s) {
+    if (!g_lay.active) return;
+    const float h = rowH();
+    float x, y; place(s && *s ? labelW(s) : 1.0f, h, x, y);
+    const unsigned char col[4] = { r, g, b, 255 };
+    if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
+}
+
+void TextDisabled(const char* s) {
+    // Blend the theme text toward the panel color for a muted look.
+    const unsigned char* t = g_theme.text; const unsigned char* p = g_theme.panel;
+    TextColored((unsigned char)((t[0] + p[0]) / 2), (unsigned char)((t[1] + p[1]) / 2),
+                (unsigned char)((t[2] + p[2]) / 2), s);
+}
+
+void SeparatorText(const char* label) {
+    if (!g_lay.active) return;
+    const float h = rowH();
+    float x, y; place(fullW(), h, x, y);
+    const float ty = y + (h - textH()) * 0.5f;
+    const float lw = label && *label ? labelW(label) : 0.0f;
+    if (lw > 0.0f) drawText(x, ty, label, g_theme.textScale, g_theme.text);
+    // A line filling the space to the right of the label.
+    const float lineX = x + (lw > 0.0f ? lw + 8.0f : 0.0f);
+    const float lineW = (x + fullW()) - lineX;
+    if (lineW > 2.0f) quad(lineX, y + h * 0.5f, lineW, 1.0f, g_theme.border);
+}
+
 void Dummy(float w, float h) {
     if (!g_lay.active) return;
     float x, y; place(w, h, x, y);
@@ -642,6 +670,30 @@ bool Button(const char* label) {
     return Button(hashLabel(label), x, y, w, h, label);
 }
 
+bool SmallButton(const char* label) {
+    if (!g_lay.active) return false;
+    const float w = labelW(label) + 12.0f, h = textH() + 6.0f;   // tight padding
+    float x, y; place(w, h, x, y);
+    return Button(hashLabel(label), x, y, w, h, label);
+}
+
+void TabBar(const char* const* labels, int count, int* current) {
+    if (!g_lay.active || !labels || !current || count <= 0) return;
+    const float h = rowH();
+    // Reserve the full row; lay tabs left-to-right within it.
+    float x, y; place(fullW(), h, x, y);
+    float tx = x;
+    for (int i = 0; i < count; ++i) {
+        const char* lbl = labels[i] ? labels[i] : "";
+        const float tw = labelW(lbl) + 20.0f;
+        const unsigned uid = ((unsigned)hashLabel(lbl) ^ ((unsigned)i * 2654435761u)) & 0x7fffffffu;
+        Tab((int)uid, tx, y, tw, h, lbl, current, i);
+        tx += tw + 2.0f;
+    }
+    // A baseline under the whole tab row.
+    quad(x, y + h - 2.0f, fullW(), 2.0f, g_theme.border);
+}
+
 bool Checkbox(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const float h = rowH(), sz = textH() + 6.0f;
@@ -676,7 +728,8 @@ bool SliderInt(const char* label, int* value, int minV, int maxV) {
     // Reuse the float slider, then snap to the nearest integer.
     bool ch = SliderFloat(label, &f, (float)minV, (float)maxV);
     int iv = (int)(f + (f >= 0.0f ? 0.5f : -0.5f));
-    if (iv < minV) iv = minV; if (iv > maxV) iv = maxV;
+    if (iv < minV) iv = minV;
+    if (iv > maxV) iv = maxV;
     if (iv != *value) { *value = iv; return true; }
     return ch && false;   // value unchanged after snapping
 }

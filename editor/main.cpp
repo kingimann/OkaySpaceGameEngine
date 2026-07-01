@@ -4034,6 +4034,15 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         d->InsertChars(le, dup.c_str());
         d->CursorPos = d->SelectionStart = d->SelectionEnd = d->CursorPos + (int)dup.size();
     }
+    // Ctrl+Shift+K: delete the caret's whole line (Rider/VS Code "delete line").
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_K, false)) {
+        int ls, le; lineBounds(d->CursorPos, ls, le);
+        int from = ls, to = le;
+        if (to < d->BufTextLen && d->Buf[to] == '\n') ++to;       // take the trailing newline
+        else if (from > 0 && d->Buf[from - 1] == '\n') --from;    // last line: take the leading one
+        d->DeleteChars(from, to - from);
+        d->CursorPos = d->SelectionStart = d->SelectionEnd = from > d->BufTextLen ? d->BufTextLen : from;
+    }
     // Alt+Up / Alt+Down: move the caret's line up or down (swap with neighbor).
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) {
         int ls, le; lineBounds(d->CursorPos, ls, le);
@@ -5244,6 +5253,39 @@ void DrawScriptEditor(EditorState& ed) {
                 ++i; ++col;
             }
         }
+        // Highlight every whole-word occurrence of the identifier under the caret
+        // (Rider's "highlight usages in file"). Only when it appears more than once.
+        {
+            const char* t = buf.data(); int len = (int)std::strlen(t);
+            int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
+            auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+            int ws = cp; while (ws > 0 && isW(t[ws - 1])) --ws;
+            int we = cp; while (we < len && isW(t[we])) ++we;
+            if (we - ws >= 2 && !std::isdigit((unsigned char)t[ws])) {
+                std::string word(t + ws, t + we);
+                std::size_t wl = word.size();
+                auto matchAt = [&](int i){
+                    return (i == 0 || !isW(t[i - 1])) &&
+                           std::strncmp(t + i, word.c_str(), wl) == 0 && !isW(t[i + wl]);
+                };
+                int count = 0;
+                for (int i = 0; t[i]; ++i) if (matchAt(i)) { ++count; if (count > 1) break; }
+                if (count > 1) {
+                    int ln = 0, col = 0;
+                    for (int i = 0; t[i]; ) {
+                        if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
+                        if (matchAt(i)) {
+                            ImVec2 a(origin.x + col * charW, origin.y + ln * lineH);
+                            ImU32 hc = (i == ws) ? IM_COL32(95, 120, 165, 120) : IM_COL32(80, 95, 120, 95);
+                            edl->AddRectFilled(a, ImVec2(a.x + wl * charW, a.y + lineH), hc);
+                            edl->AddRect(a, ImVec2(a.x + wl * charW, a.y + lineH), IM_COL32(120, 150, 200, 90));
+                            i += (int)wl; col += (int)wl; continue;
+                        }
+                        ++i; ++col;
+                    }
+                }
+            }
+        }
         if (s_highlight) {
             DrawCodeHighlight(edl, buf.data(), origin, charW, lineH);
             // The InputText's own caret is hidden (transparent text), so draw ours.
@@ -5560,6 +5602,38 @@ void DrawScriptEditor(EditorState& ed) {
         if (caret.selLen > 0) std::snprintf(selInfo, sizeof(selInfo), " (%d sel)", caret.selLen);
         ImGui::TextDisabled("%s   Ln %d, Col %d%s   %d lines   %d chars   Spaces", langLbl,
                             caret.line, caret.col, selInfo, lines, (int)std::strlen(buf.data()));
+        // Breadcrumb: the function enclosing the caret (Rider's location bar). Scan back
+        // for the nearest `function name(` / `void Name(` at a shallower brace depth.
+        {
+            const char* t = buf.data();
+            int cp = caret.pos < 0 ? 0 : caret.pos;
+            std::string enclosing;
+            int depth = 0;
+            for (int i = cp - 1; i >= 0; --i) {
+                if (t[i] == '}') ++depth;
+                else if (t[i] == '{') {
+                    if (depth == 0) {
+                        // Header is the text on the line before this brace; pull an identifier
+                        // immediately preceding a '('.
+                        int ls = i; while (ls > 0 && t[ls - 1] != '\n') --ls;
+                        std::string line(t + ls, t + i);
+                        std::size_t par = line.rfind('(');
+                        if (par != std::string::npos && par > 0) {
+                            int e = (int)par; while (e > 0 && (line[e-1]==' '||line[e-1]=='\t')) --e;
+                            int s = e; while (s > 0 && (std::isalnum((unsigned char)line[s-1])||line[s-1]=='_')) --s;
+                            if (e > s && line.find("if")!=0 && line.find("for")==std::string::npos &&
+                                line.find("while")==std::string::npos)
+                                enclosing = line.substr(s, e - s);
+                        }
+                        if (!enclosing.empty()) break;
+                    } else --depth;
+                }
+            }
+            if (!enclosing.empty()) {
+                ImGui::SameLine();
+                ImGui::TextColored(AccentCol(0.9f), "  \xe2\x9d\xaf %s()", enclosing.c_str());
+            }
+        }
         if (ScriptTabDirty(sc)) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "  \xe2\x97\x8f modified");

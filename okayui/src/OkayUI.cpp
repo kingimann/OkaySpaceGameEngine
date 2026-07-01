@@ -118,6 +118,15 @@ ChildSave g_childStack[8];
 int       g_childTop = 0;
 constexpr float kScrollbarW = 10.0f;
 
+// Multi-column layout state (Columns/NextColumn/EndColumns).
+struct ColumnState {
+    bool  active = false;
+    int   count = 1, index = 0;
+    float x0 = 0, fullW = 0;   // content origin + full width when Columns() began
+    float rowTop = 0, rowBottom = 0;
+};
+ColumnState g_col;
+
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; };
 WinSlot g_wins[16];
@@ -321,6 +330,7 @@ void BeginFrame(const Input& in) {
     g_nextItemW = -1.0f; g_itemWTop = 0;   // reset item-width overrides
     g_nspans = 0; g_clipTop = 0;           // reset clip spans/stack
     g_childTop = 0;                        // reset child-region stack
+    g_col.active = false;                  // reset column layout
 }
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
@@ -1361,6 +1371,63 @@ bool Selectable(const char* label, bool selected) {
     else if (inside)   quad(x, y, w, h, g_theme.bgHover);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return clicked;
+}
+
+bool ListBox(const char* label, int* current, const char* const* items, int count, int visibleRows) {
+    if (!g_lay.active || !current || !items) return false;
+    if (visibleRows < 1) visibleRows = 1;
+    bool changed = false;
+    const float h = rowH() * visibleRows;
+    if (BeginChild(label, 0.0f, h, true)) {
+        for (int i = 0; i < count; ++i) {
+            PushID(i);
+            if (Selectable(items[i] ? items[i] : "", *current == i)) { *current = i; changed = true; }
+            PopID();
+        }
+    }
+    EndChild();
+    // Draw the visible part of the label (before any "##") to the right of the box.
+    if (label && *label && !(label[0] == '#' && label[1] == '#')) {
+        SameLine();
+        Text(label);
+    }
+    return changed;
+}
+
+// ---- Columns -------------------------------------------------------------------
+void Columns(int count) {
+    if (!g_lay.active || count < 1) return;
+    if (count > 16) count = 16;
+    g_col.active = true; g_col.count = count; g_col.index = 0;
+    g_col.x0 = g_lay.ox; g_col.fullW = g_lay.contentW;
+    g_col.rowTop = g_lay.cy; g_col.rowBottom = g_lay.cy;
+    g_lay.ox = g_col.x0;
+    g_lay.contentW = g_col.fullW / count - 6.0f;   // small gutter between columns
+    g_lay.cy = g_col.rowTop;
+}
+
+void NextColumn() {
+    if (!g_lay.active || !g_col.active) return;
+    if (g_lay.cy > g_col.rowBottom) g_col.rowBottom = g_lay.cy;   // track the tallest column
+    ++g_col.index;
+    if (g_col.index >= g_col.count) {          // past the last column: start a new row
+        g_col.index = 0;
+        g_col.rowTop = g_col.rowBottom;
+    }
+    const float colW = g_col.fullW / g_col.count;
+    g_lay.ox = g_col.x0 + g_col.index * colW;
+    g_lay.contentW = colW - 6.0f;
+    g_lay.cy = g_col.rowTop;
+    g_lay.pendingSameLine = false;
+}
+
+void EndColumns() {
+    if (!g_lay.active || !g_col.active) return;
+    if (g_lay.cy > g_col.rowBottom) g_col.rowBottom = g_lay.cy;
+    g_lay.ox = g_col.x0;
+    g_lay.contentW = g_col.fullW;
+    g_lay.cy = g_col.rowBottom;
+    g_col.active = false;
 }
 
 } // namespace OkayUI

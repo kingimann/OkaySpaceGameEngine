@@ -516,6 +516,48 @@ int main(int argc, char** argv) {
         CHECK(redIn(83, H) < 5);           // and clipping keeps it from spilling below the region
     }
 
+    // --- ListBox: clicking a row selects that item. ---
+    {
+        release();
+        int sel = 0;
+        const char* items[] = {"Alpha", "Beta", "Gamma", "Delta"};
+        auto frame = [&](float my, bool down) {
+            OkayUI::Input a; a.mouseX = 40; a.mouseY = my; a.mouseDown = down;
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("LBW", 10, 10, 220, 180);
+            OkayUI::ListBox("##list", &sel, items, 4, 3);
+            OkayUI::End();
+            OkayUI::EndFrame(r);
+        };
+        // Rows start ~ y=54 with a 34px pitch; the second row ("Beta") is ~ [88,116].
+        frame(100, false);
+        frame(100, true); frame(100, false);
+        CHECK(sel == 1);
+    }
+
+    // --- Columns: two buttons land in separate columns and are independently clickable. ---
+    {
+        release();
+        int aHits = 0, bHits = 0;
+        auto frame = [&](float mx, bool down) {
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = 56; a.mouseDown = down;   // content row
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("ColW", 10, 10, 240, 140);
+            OkayUI::Columns(2);
+            if (OkayUI::Button("A")) aHits++;
+            OkayUI::NextColumn();
+            if (OkayUI::Button("B")) bHits++;
+            OkayUI::EndColumns();
+            OkayUI::End();
+            OkayUI::EndFrame(r);
+        };
+        // "A" is at the left (~x 20..60); "B" is in the second column (~x 130..170).
+        frame(30, false); frame(30, true); frame(30, false);    // click A
+        frame(140, false); frame(140, true); frame(140, false); // click B
+        CHECK(aHits == 1);
+        CHECK(bHits == 1);
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

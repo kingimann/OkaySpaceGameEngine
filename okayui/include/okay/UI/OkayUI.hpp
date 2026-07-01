@@ -250,6 +250,20 @@ bool MenuItem(const char* label);
 /// returns true the frame it is clicked.
 bool Selectable(const char* label, bool selected);
 
+/// A scrolling list box: `visibleRows` tall, one selectable row per item. Clicking a
+/// row sets *current to its index. Returns true the frame the selection changed.
+/// `items` and `current` required. Built on BeginChild, so it scrolls when it overflows.
+bool ListBox(const char* label, int* current, const char* const* items, int count,
+             int visibleRows = 4);
+
+// ---- Columns -------------------------------------------------------------------
+// Split the layout into `count` equal columns. Widgets flow into the current column;
+// NextColumn() moves to the next (wrapping to a new row after the last). EndColumns()
+// restores single-column flow below the widest column.
+void Columns(int count);
+void NextColumn();
+void EndColumns();
+
 // ---- ID stack ------------------------------------------------------------------
 // Widget ids are hashed from their label, so two widgets with the same label in a
 // loop would collide. Push a per-iteration id (an int index or a string) to keep

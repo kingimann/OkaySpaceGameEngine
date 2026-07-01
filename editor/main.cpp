@@ -15967,6 +15967,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                  if (f >= 0 && f < mesh.TriangleCount()) affSet.insert(mesh.triangles[f * 3 + k]);
         std::vector<int> affected(affSet.begin(), affSet.end());
 
+        // Quad-aware wireframe: draw real edges but hide flat triangulation diagonals,
+        // so the mesh reads as quads/squares while editing (not a field of triangles).
+        for (const auto& e : mesh.VisibleEdges()) {
+            ImVec2 a, b;
+            if (vScreen(e.first, a) && vScreen(e.second, b))
+                dl->AddLine(a, b, IM_COL32(150, 172, 205, 150), 1.0f);
+        }
         // Draw all vertices; selected verts/faces highlighted.
         for (int i = 0; i < (int)mesh.vertices.size(); ++i) {
             ImVec2 sp; if (vScreen(i, sp)) dl->AddCircleFilled(sp, 2.5f, IM_COL32(120, 180, 255, 170));
@@ -15974,13 +15981,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (g_meshSelMode == 0) {
             for (int vi : g_meshSelVerts) { ImVec2 sp; if (vi >= 0 && vi < (int)mesh.vertices.size() && vScreen(vi, sp)) dl->AddCircleFilled(sp, 4.5f, IM_COL32(255, 170, 40, 255)); }
         } else {
+            // Highlight selected faces as a translucent fill only — no per-triangle
+            // outline, which would draw the diagonal across a quad and make it look
+            // triangulated. The quad wireframe above already shows the edges.
             for (int f : g_meshSelFaces) {
                 if (f < 0 || f >= mesh.TriangleCount()) continue;
                 ImVec2 a, b, c;
-                if (vScreen(mesh.triangles[f*3], a) && vScreen(mesh.triangles[f*3+1], b) && vScreen(mesh.triangles[f*3+2], c)) {
-                    dl->AddTriangleFilled(a, b, c, IM_COL32(255, 170, 40, 70));
-                    dl->AddTriangle(a, b, c, IM_COL32(255, 190, 70, 200), 1.0f);
-                }
+                if (vScreen(mesh.triangles[f*3], a) && vScreen(mesh.triangles[f*3+1], b) && vScreen(mesh.triangles[f*3+2], c))
+                    dl->AddTriangleFilled(a, b, c, IM_COL32(255, 170, 40, 80));
             }
         }
 
@@ -16071,11 +16079,40 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         float depth = (vWorld(mesh.triangles[f*3]) - eye).SqrMagnitude();
                         if (depth < nearest) { nearest = depth; pf = f; }
                     }
+                    // The coplanar triangle sharing this one's longest edge (its
+                    // diagonal) — selecting both makes a "face" a whole quad, so the
+                    // highlight is a square and Extrude/Subdivide act on the quad.
+                    auto quadSibling = [&](int f) -> int {
+                        if (f < 0 || f >= mesh.TriangleCount()) return -1;
+                        int v[3] = {mesh.triangles[f*3], mesh.triangles[f*3+1], mesh.triangles[f*3+2]};
+                        auto el = [&](int a, int b) { return (mesh.vertices[a] - mesh.vertices[b]).SqrMagnitude(); };
+                        int ea = v[0], eb = v[1]; float bl = el(v[0], v[1]);
+                        if (el(v[1], v[2]) > bl) { bl = el(v[1], v[2]); ea = v[1]; eb = v[2]; }
+                        if (el(v[2], v[0]) > bl) { bl = el(v[2], v[0]); ea = v[2]; eb = v[0]; }
+                        Vec3 pa = mesh.vertices[ea], pb = mesh.vertices[eb];
+                        Vec3 nf = Vec3::Cross(mesh.vertices[v[1]]-mesh.vertices[v[0]], mesh.vertices[v[2]]-mesh.vertices[v[0]]);
+                        float nm = nf.Magnitude(); if (nm > 1e-8f) nf = nf * (1.0f/nm);
+                        for (int g = 0; g < mesh.TriangleCount(); ++g) {
+                            if (g == f) continue;
+                            int w[3] = {mesh.triangles[g*3], mesh.triangles[g*3+1], mesh.triangles[g*3+2]};
+                            auto has = [&](const Vec3& p) { return (mesh.vertices[w[0]]-p).SqrMagnitude()<1e-8f || (mesh.vertices[w[1]]-p).SqrMagnitude()<1e-8f || (mesh.vertices[w[2]]-p).SqrMagnitude()<1e-8f; };
+                            if (!has(pa) || !has(pb)) continue;
+                            Vec3 ng = Vec3::Cross(mesh.vertices[w[1]]-mesh.vertices[w[0]], mesh.vertices[w[2]]-mesh.vertices[w[0]]);
+                            float gm = ng.Magnitude(); if (gm > 1e-8f) ng = ng * (1.0f/gm);
+                            if (nf.x*ng.x + nf.y*ng.y + nf.z*ng.z > 0.95f) return g;   // coplanar sibling
+                        }
+                        return -1;
+                    };
                     if (!add) g_meshSelFaces.clear();
                     if (pf >= 0) {
-                        auto it = std::find(g_meshSelFaces.begin(), g_meshSelFaces.end(), pf);
-                        if (it != g_meshSelFaces.end()) { if (add) g_meshSelFaces.erase(it); }
-                        else g_meshSelFaces.push_back(pf);
+                        auto toggleFace = [&](int fc) {
+                            if (fc < 0 || fc >= mesh.TriangleCount()) return;
+                            auto it = std::find(g_meshSelFaces.begin(), g_meshSelFaces.end(), fc);
+                            if (it != g_meshSelFaces.end()) { if (add) g_meshSelFaces.erase(it); }
+                            else g_meshSelFaces.push_back(fc);
+                        };
+                        toggleFace(pf);
+                        toggleFace(quadSibling(pf));       // grab the rest of the quad
                     }
                 }
                 g_uiHandled = true;

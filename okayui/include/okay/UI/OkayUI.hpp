@@ -186,6 +186,12 @@ bool RadioButton(const char* label, int* value, int option);
 bool SliderFloat(const char* label, float* value, float minV, float maxV);
 /// An integer slider over [minV, maxV]. Edits *value in place; true on change.
 bool SliderInt(const char* label, int* value, int minV, int maxV);
+/// A vertical slider `w`*`h` tall — drag the handle up/down over [minV, maxV].
+/// Edits *value in place; returns true on change. Great for mixers/levels.
+bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV);
+/// A rotary knob of diameter `size`. Drag up/down (or left/right) to change *value
+/// over [minV, maxV]; an indicator points to the current value. True on change.
+bool Knob(const char* label, float* value, float minV, float maxV, float size = 0.0f);
 void ProgressBar(float fraction, const char* overlay = nullptr);
 /// A line graph of `values[0..count)`. If scaleMin >= scaleMax the range is taken
 /// from the data. `height` <= 0 uses a default. Great for FPS/telemetry HUDs.

@@ -558,6 +558,41 @@ int main(int argc, char** argv) {
         CHECK(bHits == 1);
     }
 
+    // --- VSliderFloat: dragging to the top gives max, to the bottom gives min. ---
+    {
+        release();
+        float val = 50.0f;
+        auto drag = [&](float my, bool down) {
+            OkayUI::Input a; a.mouseX = 30; a.mouseY = my; a.mouseDown = down;
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("VSW", 10, 10, 120, 160);
+            OkayUI::VSliderFloat("v", 20, 80, &val, 0.0f, 100.0f);
+            OkayUI::End(); OkayUI::EndFrame(r);
+        };
+        drag(50, true); drag(50, true);      // grab near the top of the groove (y~48..128)
+        CHECK(val > 80.0f);
+        drag(126, true); drag(126, true);    // drag to the bottom
+        CHECK(val < 20.0f);
+        drag(126, false);
+    }
+
+    // --- Knob: dragging up increases the value. ---
+    {
+        release();
+        float k = 50.0f;
+        auto dragK = [&](float my, bool down) {
+            OkayUI::Input a; a.mouseX = 40; a.mouseY = my; a.mouseDown = down;
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("KW", 10, 10, 160, 140);
+            OkayUI::Knob("k", &k, 0.0f, 100.0f);
+            OkayUI::End(); OkayUI::EndFrame(r);
+        };
+        dragK(80, true);    // press on the dial
+        dragK(40, true);    // move the cursor up ~40px -> value rises
+        CHECK(k > 55.0f);
+        dragK(40, false);
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

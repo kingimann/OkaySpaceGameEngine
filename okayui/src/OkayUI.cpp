@@ -285,6 +285,36 @@ void line(float x0, float y0, float x1, float y1, float th, const unsigned char 
     quadPts(x0 + px, y0 + py, x1 + px, y1 + py, x1 - px, y1 - py, x0 - px, y0 - py, c);
 }
 
+// A single filled triangle.
+void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]) {
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) return;
+    const SDL_Color sc = toColor(c);
+    const int base = nv;
+    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_Vertex v; v.color = sc; v.tex_coord = uv;
+    v.position.x = ax; v.position.y = ay; V[nv++] = v;
+    v.position.x = bx; v.position.y = by; V[nv++] = v;
+    v.position.x = cx; v.position.y = cy; V[nv++] = v;
+    I[ni++] = base + 0; I[ni++] = base + 1; I[ni++] = base + 2;
+}
+
+// A filled circle as a triangle fan of `segments` wedges.
+void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments = 24) {
+    if (segments < 3) segments = 3;
+    const float step = 6.2831853f / segments;
+    float px = cx + radius, py = cy;
+    for (int i = 1; i <= segments; ++i) {
+        float a = step * i;
+        float nx = cx + radius * SDL_cosf(a), ny = cy + radius * SDL_sinf(a);
+        tri(cx, cy, px, py, nx, ny, c);
+        px = nx; py = ny;
+    }
+}
+
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str) return;
@@ -987,6 +1017,65 @@ bool SliderInt(const char* label, int* value, int minV, int maxV) {
     if (iv > maxV) iv = maxV;
     if (iv != *value) { *value = iv; return true; }
     return ch && false;   // value unchanged after snapping
+}
+
+bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV) {
+    if (!g_lay.active || !value) return false;
+    const int id = hashLabel(label);
+    if (w <= 0.0f) w = rowH();
+    if (h <= 0.0f) h = rowH() * 3.0f;
+    float x, y; place(w, h, x, y);
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
+    if (inside) g_hot = id;
+    bool changed = false;
+    if (g_active == id) {
+        if (!g_in.mouseDown) g_active = 0;
+        else {
+            // Top = maxV, bottom = minV (natural for a level fader).
+            float t = 1.0f - clamp01((g_in.mouseY - y) / (h > 0 ? h : 1));
+            float nv = minV + t * (maxV - minV);
+            if (nv != *value) { *value = nv; changed = true; }
+        }
+    } else if (inside && g_pressed) { g_active = id; g_focusClaimed = true; }
+    // Groove + fill from the bottom up to the value.
+    quad(x, y, w, h, g_theme.track);
+    float span = maxV - minV; float t = span != 0.0f ? clamp01((*value - minV) / span) : 0.0f;
+    float fillH = t * h;
+    quad(x, y + h - fillH, w, fillH, g_theme.accent);
+    // Handle.
+    float hy = y + h - fillH - 3.0f;
+    quad(x, hy < y ? y : hy, w, 6.0f, (g_active == id || inside) ? g_theme.text : g_theme.bgHover);
+    return changed;
+}
+
+bool Knob(const char* label, float* value, float minV, float maxV, float size) {
+    if (!g_lay.active || !value) return false;
+    const int id = hashLabel(label);
+    const float d = size > 0.0f ? size : rowH() * 2.0f;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    float x, y; place(d + lw, d, x, y);
+    const float cx = x + d * 0.5f, cy = y + d * 0.5f, rad = d * 0.5f - 2.0f;
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, d, d);
+    if (inside) g_hot = id;
+    bool changed = false;
+    if (g_active == id) {
+        if (!g_in.mouseDown) g_active = 0;
+        else {
+            // Drag up to increase (vertical drag is the common knob gesture).
+            float span = maxV - minV;
+            float nv = *value - g_mouseDY * span / 120.0f;   // 120px = full sweep
+            nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+            if (nv != *value) { *value = nv; changed = true; }
+        }
+    } else if (inside && g_pressed) { g_active = id; g_focusClaimed = true; }
+    // Dial + indicator sweeping ~270 degrees (from 135 to 405 deg).
+    fillCircle(cx, cy, rad, (g_active == id || inside) ? g_theme.bgHover : g_theme.track);
+    fillCircle(cx, cy, rad * 0.82f, g_theme.panel);
+    float span = maxV - minV; float t = span != 0.0f ? clamp01((*value - minV) / span) : 0.0f;
+    const float a = 2.35619f + t * 4.71239f;   // 135deg + t*270deg (radians)
+    line(cx, cy, cx + SDL_cosf(a) * rad, cy + SDL_sinf(a) * rad, 2.5f, g_theme.accent);
+    if (lw > 0.0f) drawText(x + d + 8.0f, y + (d - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    return changed;
 }
 
 void ProgressBar(float fraction, const char* overlay) {

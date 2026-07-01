@@ -83,6 +83,11 @@ Recent additions (v2.12–2.14):
   OkaySpace. If you also have unsaved edits in-app when the file changes, a banner
   lets you pick which version to keep. The editor can also **Float** into its own
   window or **Dock** back as a tab.
+- **UI Editor tab** (View ▸ UI Editor) — a dedicated dockable **UI** window: the
+  Scene view locked to UI-only, so you can edit the Canvas on a flat screen while
+  keeping the 3D Scene view open in another tab. Dragging a UI child now **snaps
+  stickily to its parent** (edges, center and thirds), Unity-style, in addition to
+  the canvas and sibling smart-guides.
 - **Flow Graph** (Window ▸ Flow Graph) — a node view of the selected object's
   **Actions** (visual scripting): the trigger wires to its conditions and a chain
   of instructions. **Add** a condition/instruction and **click any node to edit it

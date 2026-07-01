@@ -197,7 +197,7 @@ static long SceneTriangleLoad(const Scene& scene) {
 // Forward decls: Render3DTexture (below) uses these for the GPU-renderer self-heal,
 // but their definitions live further down the file.
 void SaveSettings();
-void ConsoleLog(const std::string& msg, int level);
+void ConsoleLog(const std::string& msg, int level = 0);   // default here so any call site can pass just a message
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
@@ -579,6 +579,7 @@ int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
 bool g_showUIOverlay = true;     // Scene view: draw the screen-space UI (Canvas) overlay
 bool g_uiOnlyMode = false;       // Scene view: show ONLY the UI on a flat screen canvas
+bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view locked to UI-only)
 bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
 bool g_uiShowGuides = true;      // UI-Only: draw the thirds/center alignment guides
 bool g_uiShowSafeArea = false;   // UI-Only: draw a ~5% safe-area inset (TV/notch margin)
@@ -1067,7 +1068,7 @@ static void MergeSceneIntoCurrent(EditorState& ed, const std::string& path) {
         for (GameObject* r : roots) TagSubtreeScene(r, label);
         if (!roots.empty()) ed.Select(roots.front());
         ed.dirty = true;
-        ConsoleLog("Merged " + std::to_string(roots.size()) + " object(s) from " + label);
+        ConsoleLog("Merged " + std::to_string(roots.size()) + " object(s) from " + label, 0);
     } else {
         ConsoleLog("Merge failed: " + err, 2);
     }
@@ -1632,7 +1633,7 @@ struct ConsoleEntry {
 std::vector<ConsoleEntry> g_console;
 int g_consoleCounts[3] = {0, 0, 0};   // running totals per level (for the toggles)
 
-void ConsoleLog(const std::string& msg, int level = 0) {
+void ConsoleLog(const std::string& msg, int level) {   // default declared at the top forward-decl
     if (level < 0) level = 0;
     if (level > 2) level = 2;
     // Collapse an immediate repeat of the same message into a count.
@@ -1897,6 +1898,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::MenuItem("Project", nullptr, &g_showProject);
         ImGui::MenuItem("Services", nullptr, &g_showServices);
         ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
+        ImGui::MenuItem("UI Editor", nullptr, &g_showUIEditor);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A dedicated tab for UI editing (the Scene view locked to UI-only). Dock it beside the Scene.");
         ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
         ImGui::MenuItem("Flow Graph", nullptr, &g_showFlowGraph);
         ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
@@ -16585,6 +16588,29 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         // widget jumps back — the stutter you feel near guide lines.
                         if (adjX != 0.0f) { g_uiDragRaw.x += adjX / s; r.position->x = snap(g_uiDragRaw.x); g_uiGuideX = gx; }
                         if (adjY != 0.0f) { g_uiDragRaw.y += adjY / s; r.position->y = snap(g_uiDragRaw.y); g_uiGuideY = gy; }
+                        // Unity-style: a child clings to its OWNING PARENT. Snap our
+                        // edges/center to the parent's edges, center and thirds with a
+                        // wider (stickier) threshold so it wins over sibling/canvas guides.
+                        if (GameObject* par = OwningUIParent(g_uiDragTarget)) {
+                            Vec2 po, ps;
+                            if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) {
+                                const float pthr = g_uiSnapDist * 1.7f;
+                                std::vector<float> px{po.x, po.x + ps.x / 3.0f, po.x + ps.x * 0.5f, po.x + ps.x * 2.0f / 3.0f, po.x + ps.x};
+                                std::vector<float> py{po.y, po.y + ps.y / 3.0f, po.y + ps.y * 0.5f, po.y + ps.y * 2.0f / 3.0f, po.y + ps.y};
+                                auto stick = [&](float lo, float mid, float hi, const std::vector<float>& cands, float& guide) {
+                                    float best = pthr, adj = 0.0f; bool found = false;
+                                    for (float m : {lo, mid, hi})
+                                        for (float c : cands) { float d = std::fabs(m - c); if (d < best) { best = d; adj = c - m; guide = c; found = true; } }
+                                    return found ? adj : 0.0f;
+                                };
+                                Vec2 o2, sz2; GetUIScreenRect(g_uiDragTarget, canvasSize.x, canvasSize.y, o2, sz2);
+                                float pgx = -1.0f, pgy = -1.0f;
+                                float pax = stick(o2.x, o2.x + sz2.x * 0.5f, o2.x + sz2.x, px, pgx);
+                                float pay = stick(o2.y, o2.y + sz2.y * 0.5f, o2.y + sz2.y, py, pgy);
+                                if (pax != 0.0f) { g_uiDragRaw.x += pax / s; r.position->x = snap(g_uiDragRaw.x); g_uiGuideX = pgx; }
+                                if (pay != 0.0f) { g_uiDragRaw.y += pay / s; r.position->y = snap(g_uiDragRaw.y); g_uiGuideY = pgy; }
+                            }
+                        }
                     }
                     // Carry child widgets (e.g. a button's label) by the same amount
                     // so a parent and its children move together.
@@ -18108,8 +18134,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
 }
 
-void DrawViewport(EditorState& ed) {
-    ImGui::Begin("Scene");
+void DrawViewport(EditorState& ed, bool uiPanel = false) {
+    // A dedicated "UI" tab is just the Scene view locked to UI-only mode, so UI
+    // editing gets its own dockable window without losing the 3D Scene view.
+    ImGui::Begin(uiPanel ? "UI" : "Scene", uiPanel ? &g_showUIEditor : nullptr);
+    const bool uiOnly = uiPanel || g_uiOnlyMode;   // the UI panel is always UI-only
 
     // 2D / 3D toggle + frame the selection.
     if (ImGui::Button(ed.view3D ? "3D" : "2D")) ed.view3D = !ed.view3D;
@@ -18151,9 +18180,13 @@ void DrawViewport(EditorState& ed) {
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
     if (AccentToggleButton("UI", g_showUIOverlay)) g_showUIOverlay = !g_showUIOverlay;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the screen-space UI (Canvas) overlay in the Scene view");
-    ImGui::SameLine();
-    if (AccentToggleButton("UI Only", g_uiOnlyMode)) { g_uiOnlyMode = !g_uiOnlyMode; if (g_uiOnlyMode) g_showUIOverlay = true; }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (like Unity's UI view)");
+    if (!uiPanel) {
+        ImGui::SameLine();
+        if (AccentToggleButton("UI Only", g_uiOnlyMode)) { g_uiOnlyMode = !g_uiOnlyMode; if (g_uiOnlyMode) g_showUIOverlay = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (like Unity's UI view).\nTip: View > UI Editor opens this as its own tab.");
+    } else {
+        ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "UI Editing");
+    }
     // Anchor presets: a 3x3 quick-picker to snap the selected UI element to a canvas
     // corner / edge / center (Unity's anchor presets). Only when a UI widget is selected.
     if (ed.selected()) {
@@ -18190,7 +18223,7 @@ void DrawViewport(EditorState& ed) {
         }
     }
     // ---- UI-Only tool row: zoom, layout guides, grid snap, safe area -----------
-    if (g_uiOnlyMode) {
+    if (uiOnly) {
         ImGui::TextDisabled("UI:"); ImGui::SameLine();
         if (ImGui::SmallButton("-")) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom - 0.1f, 0.25f, 4.0f);
         ImGui::SameLine(); ImGui::TextDisabled("%.0f%%", g_uiEditZoom * 100.0f); ImGui::SameLine();
@@ -18338,7 +18371,7 @@ void DrawViewport(EditorState& ed) {
 
     // UI-Only navigation: mouse-wheel zooms the UI canvas about the cursor, and a
     // middle-mouse drag (or Space+left-drag) pans it — so a zoomed layout is usable.
-    if (g_uiOnlyMode && hovered) {
+    if (uiOnly && hovered) {
         if (io.MouseWheel != 0.0f) {
             float old = g_uiEditZoom;
             g_uiEditZoom = Mathf::Clamp(g_uiEditZoom * (io.MouseWheel > 0 ? 1.1f : 1.0f / 1.1f), 0.25f, 4.0f);
@@ -18364,7 +18397,7 @@ void DrawViewport(EditorState& ed) {
     // click so the world pickers below leave the selection alone.
     EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
 
-    if (g_uiOnlyMode) {
+    if (uiOnly) {
         // Flat screen canvas: a neutral background + a dashed "screen" border, then
         // just the UI overlay (no 3D/2D world). Unity's dedicated UI editing view.
         dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(28, 28, 32, 255));
@@ -19320,6 +19353,7 @@ int main(int argc, char** argv) {
         DrawProjectSettings(ed);
         if (g_showHierarchy) DrawHierarchy(ed);
         DrawViewport(ed);   // the "Scene" panel (always shown)
+        if (g_showUIEditor) DrawViewport(ed, /*uiPanel=*/true);   // dedicated UI editing tab
         DrawDataAssetEditor();
         DrawMaterialEditor(ed);
         if (g_showGame)      DrawGameView(ed);

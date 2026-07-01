@@ -27,6 +27,27 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("answer").AsFloat(), 42.0f, 0.001f);
     }
 
+    // --- Validate: side-effect-free syntax check for live editor diagnostics ---
+    {
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        // Valid code passes with no error.
+        CHECK(vm->Validate("function f(n) { return n + 1; }\nvar x = f(2);", &err));
+        CHECK(err.empty());
+        // A syntax error fails and reports a line.
+        err.clear();
+        CHECK(!vm->Validate("function bad( { return 1; }", &err));
+        CHECK(!err.empty());
+        // Validate does NOT execute: a global assigned at top level is not created
+        // (Load would create it; Validate only parses).
+        auto vm2 = CreateScriptVM("okayscript");
+        vm2->Validate("var sideEffect = 123;", nullptr);
+        CHECK(vm2->GetGlobal("sideEffect").AsFloat() == 0.0f);   // never ran → unset
+        // ...whereas Load DOES run it.
+        vm2->Load("var sideEffect = 123;", nullptr);
+        CHECK_NEAR(vm2->GetGlobal("sideEffect").AsFloat(), 123.0f, 1e-4f);
+    }
+
     // --- Control flow: while loop sum 1..5 = 15 ---
     {
         const char* src = R"SCRIPT(

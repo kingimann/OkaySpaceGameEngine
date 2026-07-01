@@ -19,6 +19,7 @@ public:
 
     const char* Language() const override { return "okayscript"; }
     bool Load(const std::string& source, std::string* error = nullptr) override;
+    bool Validate(const std::string& source, std::string* error = nullptr) override;
     void Bind(ScriptHost* host) override;
     void CallStart() override;
     void CallUpdate(float deltaTime) override;

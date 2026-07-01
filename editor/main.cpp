@@ -4876,6 +4876,26 @@ void DrawScriptEditor(EditorState& ed) {
             }
         }
 
+        // --- Live diagnostics: syntax-check OkayScript a short time after edits
+        // settle, so errors appear as you type without pressing Run. Uses the
+        // side-effect-free Validate (parse only). Other languages are checked on
+        // Run to avoid executing during typing. Reuses one validator VM.
+        if (sc->Language() == "okayscript") {
+            static std::unique_ptr<IScriptVM> s_validator;
+            static std::size_t s_valDone = 0, s_valSeen = 0;
+            static double s_valSeenAt = 0.0;
+            std::size_t h = std::hash<std::string>{}(std::string(buf.data()));
+            double now = ImGui::GetTime();
+            if (h != s_valSeen) { s_valSeen = h; s_valSeenAt = now; }
+            if (h != s_valDone && (now - s_valSeenAt) > 0.35) {
+                s_valDone = h;
+                if (!s_validator) s_validator = CreateScriptVM("okayscript");
+                std::string ve;
+                if (s_validator && s_validator->Validate(buf.data(), &ve)) s_error.clear();
+                else if (s_validator) s_error = ve;
+            }
+        }
+
         // Inline diagnostic: a red wavy underline under the error line (the
         // compiler now prefixes "line N:" to parse/compile errors).
         int errLine = (!s_error.empty() && s_error.rfind("line ", 0) == 0)
@@ -5111,6 +5131,9 @@ void DrawScriptEditor(EditorState& ed) {
             int eln = (s_error.rfind("line ", 0) == 0) ? std::atoi(s_error.c_str() + 5) : 0;
             if (eln > 0 && ImGui::IsItemClicked()) { caret.gotoLine = eln; s_scrollToLine = eln; }
             if (eln > 0 && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to go to line %d", eln);
+        } else if (sc->Language() == "okayscript") {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f), "  \xe2\x9c\x93 no syntax errors");
         }
     }
     ImGui::End();

@@ -32,6 +32,13 @@ public:
     /// Compile/parse the given source. Returns false and fills `error` on failure.
     virtual bool Load(const std::string& source, std::string* error = nullptr) = 0;
 
+    /// Syntax-check the source WITHOUT executing it (no side effects) — for live
+    /// editor diagnostics. Returns false and fills `error` (e.g. "line 3: ...") on a
+    /// parse error. Default falls back to Load for backends that can't parse-only.
+    virtual bool Validate(const std::string& source, std::string* error = nullptr) {
+        return Load(source, error);
+    }
+
     /// Bind the host context the script operates on (called before Start/Update).
     virtual void Bind(ScriptHost* host) = 0;
 

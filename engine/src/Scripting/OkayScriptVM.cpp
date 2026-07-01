@@ -3951,6 +3951,26 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
     }
 }
 
+bool OkayScriptVM::Validate(const std::string& source, std::string* error) {
+    // Lex + parse ONLY — never Exec — so live editor diagnostics have no side
+    // effects (no logging, no globals mutated, no scene calls). Catches syntax and
+    // parse errors; runtime/semantic errors still surface on a real Load/Run.
+    try {
+        Lexer lex(source);
+        Parser parser(lex.Scan());
+        std::unordered_map<std::string, FunctionDecl> throwaway;
+        parser.ParseProgram(throwaway);
+        return true;
+    } catch (const ScriptError& e) {
+        if (error) *error = e.line > 0 ? "line " + std::to_string(e.line) + ": " + e.what()
+                                       : std::string(e.what());
+        return false;
+    } catch (const std::exception& e) {
+        if (error) *error = e.what();
+        return false;
+    }
+}
+
 void OkayScriptVM::Bind(ScriptHost* host) { m_impl->rt.host = host; }
 
 namespace {

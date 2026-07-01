@@ -141,6 +141,50 @@ int main() {
         if (lc) { CHECK_NEAR(lc->radius, 0.5f, 1e-4f); CHECK(lc->isTrigger); }
     }
 
+    // ---- Mesh collider (exact): a body lands on a modeled floor + is blocked by a wall ----
+    {
+        Scene s("meshtri");
+        // A flat floor mesh (XZ plane at y=0) with a MeshCollider3D — no rigidbody, so
+        // it's static world geometry that collides against its actual triangles.
+        GameObject* floor = s.CreateGameObject("Floor");
+        floor->AddComponent<MeshRenderer>()->mesh = Mesh::Plane(20.0f);
+        floor->AddComponent<MeshCollider3D>();
+
+        // A dynamic ball falling onto the floor.
+        GameObject* ball = s.CreateGameObject("Ball");
+        ball->transform->localPosition = {0, 4, 0};
+        auto* rb = ball->AddComponent<Rigidbody3D>();
+        ball->AddComponent<SphereCollider3D>()->radius = 0.5f;
+        s.Start();
+        for (int i = 0; i < 240; ++i) s.Update(1.0f / 60.0f);   // ~4s of falling
+        // It rests on the floor (centre ~radius above y=0), not tunneling through.
+        CHECK(ball->transform->Position().y > 0.2f);
+        CHECK(ball->transform->Position().y < 1.2f);
+        (void)rb;
+    }
+
+    // A tall thin wall mesh blocks a body driven into it (no walk-through).
+    {
+        Scene s("meshwall");
+        GameObject* wall = s.CreateGameObject("Wall");
+        Mesh m = Mesh::Cube();
+        for (Vec3& v : m.vertices) { v.x *= 0.2f; v.y *= 4.0f; v.z *= 6.0f; }  // thin in X, tall, wide
+        wall->transform->localPosition = {2, 0, 0};
+        wall->AddComponent<MeshRenderer>()->mesh = m;
+        wall->AddComponent<MeshCollider3D>();
+
+        GameObject* body = s.CreateGameObject("Body");
+        body->transform->localPosition = {0, 0, 0};
+        auto* rb = body->AddComponent<Rigidbody3D>();
+        rb->gravityScale = 0.0f;
+        body->AddComponent<SphereCollider3D>()->radius = 0.5f;
+        s.Start();
+        // Drive it toward the wall each frame; it must be stopped before passing through.
+        for (int i = 0; i < 120; ++i) { rb->velocity = {4, 0, 0}; s.Update(1.0f / 60.0f); }
+        // Blocked near the wall's near face (~1.4), never through it (wall centre x=2).
+        CHECK(body->transform->Position().x < 1.7f);
+    }
+
     // ---- 2D capsule collider: overlaps a circle, round-trips ----
     {
         Scene s("cap2d");

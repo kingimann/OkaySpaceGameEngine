@@ -7512,6 +7512,34 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::ColorEdit4("Color##model", col)) { mr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true; }
         ImGui::Checkbox("Wireframe##model", &mr->wireframe);
 
+        // Collision: a Box collider tracks the mesh bounds (fast, but a loose box for
+        // a modeled/extruded shape), while a Mesh collider collides against the actual
+        // triangles (walk on it, blocked by its walls — the right choice after extruding).
+        {
+            bool hasMesh = go->GetComponent<MeshCollider3D>() != nullptr;
+            bool hasBox  = !hasMesh && go->GetComponent<BoxCollider3D>() != nullptr;
+            bool hasNone = !hasMesh && !hasBox && go->GetComponent<Collider3D>() == nullptr;
+            ImGui::Text("Collision:"); ImGui::SameLine();
+            if (AccentToggleButton("Box (bounds)##colmode", hasBox)) {
+                for (auto* c : go->GetComponents<Collider3D>()) go->RemoveComponent(c);
+                FitColliders(go, false);   // no collider left → add a fitted box
+                if (!go->GetComponent<BoxCollider3D>()) { go->AddComponent<BoxCollider3D>(); FitColliders(go, false); }
+                ed.dirty = true;
+            }
+            ImGui::SameLine();
+            if (AccentToggleButton("Mesh (exact)##colmode", hasMesh)) {
+                for (auto* c : go->GetComponents<Collider3D>()) go->RemoveComponent(c);
+                go->AddComponent<MeshCollider3D>();   // collides against the live triangles
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exact per-triangle collision — use this for floors/walls/ramps you model or extrude.");
+            ImGui::SameLine();
+            if (AccentToggleButton("None##colmode", hasNone)) {
+                for (auto* c : go->GetComponents<Collider3D>()) go->RemoveComponent(c);
+                ed.dirty = true;
+            }
+        }
+
         ImGui::SeparatorText("Edit");
         ImGui::TextDisabled("%d verts, %d triangles",
                             (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());

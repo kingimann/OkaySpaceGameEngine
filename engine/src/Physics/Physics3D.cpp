@@ -4,6 +4,7 @@
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
+#include "okay/Components/MeshRenderer.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -146,9 +147,42 @@ inline bool IsBoxLike(Collider3D::Shape s) {
     return s == Collider3D::Shape::Box || s == Collider3D::Shape::Mesh;
 }
 
+// Closest point on triangle (a,b,c) to point p — Ericson, Real-Time Collision
+// Detection. Used for exact mesh-collider contact.
+inline Vec3 ClosestPointOnTri(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
+    Vec3 ab = b - a, ac = c - a, ap = p - a;
+    float d1 = Vec3::Dot(ab, ap), d2 = Vec3::Dot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f) return a;
+    Vec3 bp = p - b;
+    float d3 = Vec3::Dot(ab, bp), d4 = Vec3::Dot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3) return b;
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) return a + ab * (d1 / (d1 - d3));
+    Vec3 cp = p - c;
+    float d5 = Vec3::Dot(ab, cp), d6 = Vec3::Dot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6) return c;
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) return a + ac * (d2 / (d2 - d6));
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f)
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    float denom = 1.0f / (va + vb + vc);
+    return a + ab * (vb * denom) + ac * (vc * denom);
+}
+
 Contact TestColliders(Collider3D* a, Collider3D* b) {
     using S = Collider3D::Shape;
     S sa = a->shape(), sb = b->shape();
+
+    // A mesh collider that actually has geometry is resolved exactly (per triangle)
+    // in a dedicated pass — skip it here so it doesn't ALSO over-block as a big AABB
+    // box. A mesh collider with no MeshRenderer keeps the simple box behaviour.
+    auto meshHasTris = [](Collider3D* col) {
+        if (col->shape() != S::Mesh || !col->gameObject) return false;
+        auto* mr = col->gameObject->GetComponent<MeshRenderer>();
+        return mr && !mr->mesh.triangles.empty();
+    };
+    if (meshHasTris(a) || meshHasTris(b)) return {};
 
     // Capsule/cylinder vs capsule/cylinder: closest points between the two segments.
     if (IsCapsuleLike(sa) && IsCapsuleLike(sb)) {
@@ -551,6 +585,87 @@ void Physics3D::Step(Scene& scene, float dt) {
                             v.z -= vn * n.z * (1.0f + rest);
                         }
                         if (n.y > 0.4f) rb->groundedOnTerrain = true;   // standing on a floor
+                    }
+                }
+            }
+        }
+    }
+
+    // 6) Mesh collider collision: a MeshCollider3D collides EXACTLY against its
+    // object's triangles (walls, floors, ramps you modeled or extruded), not as a
+    // loose AABB box. Each mesh collider is treated as static world geometry; every
+    // dynamic body (approximated as a vertical stack of probe spheres, feet..head)
+    // is depenetrated out of any triangle it overlaps — so you stand on modeled
+    // floors and are blocked by modeled walls instead of walking through them.
+    {
+        struct MeshShape { std::vector<Vec3> tri; };   // world-space triangles (3 verts each)
+        std::vector<MeshShape> meshes;
+        for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+            if (!Alive(col) || col->shape() != Collider3D::Shape::Mesh) continue;
+            if (!col->gameObject || !col->gameObject->transform) continue;
+            auto* mr = col->gameObject->GetComponent<MeshRenderer>();
+            if (!mr || mr->mesh.triangles.empty()) continue;
+            Mat4 M = col->gameObject->transform->LocalToWorldMatrix();
+            MeshShape ms; ms.tri.reserve(mr->mesh.triangles.size());
+            for (int idx : mr->mesh.triangles)
+                if (idx >= 0 && idx < (int)mr->mesh.vertices.size())
+                    ms.tri.push_back(M.MultiplyPoint(mr->mesh.vertices[idx]));
+            if (!ms.tri.empty()) meshes.push_back(std::move(ms));
+        }
+        if (!meshes.empty()) {
+            for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+                if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+                if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
+                Collider3D* self = rb->gameObject->GetComponent<Collider3D>();
+                if (self && self->shape() == Collider3D::Shape::Mesh) continue;  // don't self-collide
+                Transform* t = rb->transform; if (!t) continue;
+                // Probe spheres spanning the body's collider AABB (feet to head).
+                float radius = 0.35f, footY = 0.0f, headY = 1.6f;
+                if (self) {
+                    Vec3 mn, mx; self->WorldAABB(mn, mx);
+                    Vec3 pos = t->Position();
+                    radius = std::min(mx.x - mn.x, mx.z - mn.z) * 0.5f;
+                    if (radius < 0.05f) radius = 0.05f;
+                    footY = (mn.y + radius) - pos.y;
+                    headY = (mx.y - radius) - pos.y;
+                }
+                if (headY < footY) headY = footY;
+                int spheres = (int)std::ceil((headY - footY) / std::max(radius, 0.01f)) + 1;
+                if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
+
+                for (const MeshShape& ms : meshes) {
+                    for (int si = 0; si < spheres; ++si) {
+                        float fy = footY + (headY - footY) * (float)si / (float)(spheres - 1);
+                        for (int iter = 0; iter < 4; ++iter) {
+                            Vec3 pos = t->Position();
+                            Vec3 c{pos.x, pos.y + fy, pos.z};
+                            float bestPen = 0.0f; Vec3 bestN{0, 0, 0}; bool any = false;
+                            for (std::size_t ti = 0; ti + 2 < ms.tri.size(); ti += 3) {
+                                Vec3 cp = ClosestPointOnTri(c, ms.tri[ti], ms.tri[ti + 1], ms.tri[ti + 2]);
+                                Vec3 d = c - cp; float d2 = d.SqrMagnitude();
+                                if (d2 >= radius * radius) continue;
+                                float dist = std::sqrt(std::max(d2, 1e-12f));
+                                float pen = radius - dist;
+                                if (pen > bestPen) {
+                                    bestPen = pen; any = true;
+                                    bestN = dist > 1e-6f ? d * (1.0f / dist)
+                                          : Vec3::Cross(ms.tri[ti + 1] - ms.tri[ti], ms.tri[ti + 2] - ms.tri[ti]).Normalized();
+                                }
+                            }
+                            if (!any) break;
+                            t->localPosition.x += bestN.x * bestPen;
+                            t->localPosition.y += bestN.y * bestPen;
+                            t->localPosition.z += bestN.z * bestPen;
+                            Vec3& v = rb->velocity;
+                            float vn = v.x * bestN.x + v.y * bestN.y + v.z * bestN.z;
+                            if (vn < 0.0f) {
+                                float rest = rb->bounciness;
+                                v.x -= vn * bestN.x * (1.0f + rest);
+                                v.y -= vn * bestN.y * (1.0f + rest);
+                                v.z -= vn * bestN.z * (1.0f + rest);
+                            }
+                            if (bestN.y > 0.4f) rb->groundedOnTerrain = true;   // standing on it
+                        }
                     }
                 }
             }

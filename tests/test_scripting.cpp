@@ -289,5 +289,37 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("fr").AsFloat(), 0.75f, 0.001f);
     }
 
+    // --- Higher-order array builtins with named-function callbacks ---
+    {
+        const char* src = R"SCRIPT(
+            function dbl(x) { return x * 2; }
+            function isBig(x) { return x >= 3; }
+            function add(acc, x) { return acc + x; }
+            var xs = array(1, 2, 3, 4);
+            var doubled = map_fn(xs, "dbl");      // [2,4,6,8]
+            var dsum = sum(doubled);              // 20
+            var big = filter_fn(xs, "isBig");     // [3,4]
+            var bc = count(big);                  // 2
+            var total = reduce_fn(xs, "add", 0);  // 10
+            var found = find_fn(xs, "isBig");     // 3
+            var anyBig = any_fn(xs, "isBig");     // true
+            var allBig = all_fn(xs, "isBig");     // false
+            var nBig = count_fn(xs, "isBig");     // 2
+            var called = call("dbl", 21);         // 42
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("dsum").AsFloat(), 20.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("bc").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("total").AsFloat(), 10.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("found").AsFloat(), 3.0f, 0.001f);
+        CHECK(vm->GetGlobal("anyBig").AsBool());
+        CHECK(!vm->GetGlobal("allBig").AsBool());
+        CHECK_NEAR(vm->GetGlobal("nBig").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("called").AsFloat(), 42.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

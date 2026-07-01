@@ -4237,6 +4237,10 @@ static const std::string* ScriptSignature(const std::string& name) {
         {"map_has","map_has(m, \"key\")"}, {"map_remove","map_remove(m, \"key\")"}, {"map_keys","map_keys(m)"},
         {"map_values","map_values(m)"}, {"map_count","map_count(m)"}, {"map_clear","map_clear(m)"},
         {"map_merge","map_merge(dst, src)"},
+        // higher-order array ops (named-function callbacks)
+        {"call","call(\"fn\"[, args...])"}, {"map_fn","map_fn(arr, \"fn\")"}, {"filter_fn","filter_fn(arr, \"fn\")"},
+        {"reduce_fn","reduce_fn(arr, \"fn\", init)"}, {"for_each","for_each(arr, \"fn\")"}, {"find_fn","find_fn(arr, \"fn\")"},
+        {"any_fn","any_fn(arr, \"fn\")"}, {"all_fn","all_fn(arr, \"fn\")"}, {"count_fn","count_fn(arr, \"fn\")"},
         // type introspection
         {"typeof","typeof(v) -> \"number|string|bool|array|map|vec3|null\""},
         {"is_array","is_array(v)"}, {"is_map","is_map(v)"}, {"is_str","is_str(v)"},

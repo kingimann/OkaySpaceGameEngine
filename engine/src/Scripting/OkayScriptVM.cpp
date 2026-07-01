@@ -2843,6 +2843,71 @@ struct OkayScriptVM::Impl {
             float x = a.empty() ? 0.0f : a[0].AsFloat();
             return Value{x - Mathf::Floor(x)};
         };
+        // Higher-order array ops: each takes an array and the NAME of a script
+        // function to apply per element, so games can write functional-style code
+        // (map/filter/reduce) with a named callback. (call() lives further down.)
+        b["map_fn"] = [this](std::vector<Value>& a) {
+            Value out = Value::MakeArray(); auto res = out.AsArray();
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                std::string fn = a[1].AsString();
+                for (auto& e : *arr) { std::vector<Value> ca{e}; res->push_back(rt.Call(fn, ca)); }
+            }
+            return out;
+        };
+        b["filter_fn"] = [this](std::vector<Value>& a) {
+            Value out = Value::MakeArray(); auto res = out.AsArray();
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                std::string fn = a[1].AsString();
+                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) res->push_back(e); }
+            }
+            return out;
+        };
+        b["reduce_fn"] = [this](std::vector<Value>& a) {
+            // reduce_fn(arr, "fn", init): acc = fn(acc, element) folded left.
+            if (a.size() < 2) return Value{};
+            Value acc = a.size() >= 3 ? a[2] : Value{};
+            if (auto arr = a[0].AsArray()) {
+                std::string fn = a[1].AsString();
+                for (auto& e : *arr) { std::vector<Value> ca{acc, e}; acc = rt.Call(fn, ca); }
+            }
+            return acc;
+        };
+        b["for_each"] = [this](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                std::string fn = a[1].AsString();
+                for (auto& e : *arr) { std::vector<Value> ca{e}; rt.Call(fn, ca); }
+            }
+            return a.empty() ? Value{} : a[0];
+        };
+        b["find_fn"] = [this](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                std::string fn = a[1].AsString();
+                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return e; }
+            }
+            return Value{};
+        };
+        b["any_fn"] = [this](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                std::string fn = a[1].AsString();
+                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return Value{true}; }
+            }
+            return Value{false};
+        };
+        b["all_fn"] = [this](std::vector<Value>& a) {
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                std::string fn = a[1].AsString();
+                for (auto& e : *arr) { std::vector<Value> ca{e}; if (!rt.Call(fn, ca).AsBool()) return Value{false}; }
+            }
+            return Value{true};
+        };
+        b["count_fn"] = [this](std::vector<Value>& a) {
+            float n = 0;
+            if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
+                std::string fn = a[1].AsString();
+                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) n += 1.0f; }
+            }
+            return Value{n};
+        };
         // String helpers.
         b["str_len"] = [](std::vector<Value>& a) { return Value{a.empty() ? 0.0f : (float)a[0].AsString().size()}; };
         b["upper"] = [](std::vector<Value>& a) {
@@ -3378,11 +3443,13 @@ struct OkayScriptVM::Impl {
         };
         // --- Call one of this script's own functions by name (dynamic dispatch:
         //     state machines, command tables, "call the handler for this state"). ---
+        // call("fn", args...) invokes a function (user or builtin) by name, passing
+        // through any extra arguments and returning its result.
         b["call"] = [this](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value{};
             std::string fn = a[0].AsString();
-            std::vector<Value> none;
-            if (rt.functions.count(fn)) return rt.Call(fn, none);
+            std::vector<Value> callArgs(a.begin() + 1, a.end());
+            if (rt.functions.count(fn) || rt.builtins.count(fn)) return rt.Call(fn, callArgs);
             return Value{};
         };
 

@@ -663,9 +663,12 @@ int main() {
         p->gradientDir = UIPanel::GradientDir::DiagonalDown;
         p->outlineWidth = 3.0f;
         p->topHighlight = true;
+        p->cornerMask = UICornerTL | UICornerTR;   // only round the top (tab/card)
         GameObject* pic = scene.CreateGameObject("Pic");
         auto* im = pic->AddComponent<UIImage>();
         im->flipX = true; im->preserveAspect = true; im->borderWidth = 2.0f;
+        im->shadow = true; im->shadowOffset = {4, 5}; im->shadowSoftness = 2.0f;
+        im->cornerMask = UICornerBL | UICornerBR;
 
         std::string text = SceneSerializer::Serialize(scene);
         Scene loaded("L"); std::string err;
@@ -675,9 +678,21 @@ int main() {
         CHECK(lp->gradientDir == UIPanel::GradientDir::DiagonalDown);
         CHECK_NEAR(lp->outlineWidth, 3.0f, 0.001f);
         CHECK(lp->topHighlight);
+        CHECK(lp->cornerMask == (UICornerTL | UICornerTR));
         auto* li = loaded.Find("Pic")->GetComponent<UIImage>();
         CHECK(li && li->flipX && li->preserveAspect);
         CHECK_NEAR(li->borderWidth, 2.0f, 0.001f);
+        CHECK(li->shadow);
+        CHECK_NEAR(li->shadowOffset.y, 5.0f, 0.001f);
+        CHECK(li->cornerMask == (UICornerBL | UICornerBR));
+
+        // A masked corner stays square: with only the top rounded, the first row's
+        // left inset is > 0 (rounded) but the LAST row's left inset is 0 (square BL).
+        float x0t, x1t, x0b, x1b;
+        CHECK(UIShapeRowSpan(UIShape::Rounded, 100, 100, 20, 0, x0t, x1t, UICornerTL | UICornerTR));
+        CHECK(UIShapeRowSpan(UIShape::Rounded, 100, 100, 20, 99, x0b, x1b, UICornerTL | UICornerTR));
+        CHECK(x0t > 0.5f);            // top-left corner is rounded (inset)
+        CHECK_NEAR(x0b, 0.0f, 0.001f); // bottom-left corner left square by the mask
 
         // A 200x100 source fit into a 100x100 box: full width, half height, centered.
         float ox, oy, fw, fh;

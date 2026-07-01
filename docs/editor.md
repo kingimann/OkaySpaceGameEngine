@@ -161,7 +161,9 @@ Recent additions (v2.12–2.14):
   neon accents, distinct from the inset border), and an inner **top highlight**
   sheen (the glossy "glass" look), on top of corner radius, border, shadow and
   17 shapes. *UI Image* adds **Flip X/Y**, **Preserve Aspect** (letterbox the
-  texture without stretching) and a **frame** border.
+  texture without stretching), a **frame** border and a **drop shadow**. Both
+  support **per-corner rounding** — toggle TL/TR/BL/BR to leave a corner square
+  (tab headers, speech bubbles, one-sided cards).
 - **UI widgets** — build menus and HUDs from screen-space components: *UI Panel*
   (background/overlay), *UI Image* (logos/icons/title art from a PNG/JPG, tinted;
   a colored rect when no texture; optional *Nine-slice* keeps a bordered frame

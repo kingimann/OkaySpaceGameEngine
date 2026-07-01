@@ -1230,6 +1230,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pn->outlineColor.r << " " << pn->outlineColor.g << " " << pn->outlineColor.b << " " << pn->outlineColor.a
             << " " << (pn->topHighlight ? 1 : 0) << " "
             << pn->highlightColor.r << " " << pn->highlightColor.g << " " << pn->highlightColor.b << " " << pn->highlightColor.a
+            << " " << pn->cornerMask   // newest: per-corner rounding bitmask
             << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
@@ -1477,6 +1478,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (im->preserveAspect ? 1 : 0)
             << " " << im->borderWidth << " "
             << im->borderColor.r << " " << im->borderColor.g << " " << im->borderColor.b << " " << im->borderColor.a
+            // newest: per-corner rounding mask + drop shadow
+            << " " << im->cornerMask
+            << " " << (im->shadow ? 1 : 0) << " "
+            << im->shadowColor.r << " " << im->shadowColor.g << " " << im->shadowColor.b << " " << im->shadowColor.a << " "
+            << im->shadowOffset.x << " " << im->shadowOffset.y << " " << im->shadowSoftness
             << "\n";
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
@@ -3146,6 +3152,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             pn->outlineColor = oc;
                             int th = 0; Color hc; in >> th >> hc.r >> hc.g >> hc.b >> hc.a;
                             pn->topHighlight = (th != 0); pn->highlightColor = hc;
+                            in >> std::ws;   // optional per-corner rounding mask (newest)
+                            if (std::isdigit(in.peek())) in >> pn->cornerMask;
                         }
                     }
                 } else if (field == "uidocument") {
@@ -3700,6 +3708,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                >> bc.r >> bc.g >> bc.b >> bc.a;
                             im->flipX = (fx != 0); im->flipY = (fy != 0);
                             im->preserveAspect = (pa != 0); im->borderColor = bc;
+                            in >> std::ws;   // optional corner mask + drop shadow (newest)
+                            if (std::isdigit(in.peek())) {
+                                in >> im->cornerMask;
+                                int sh = 0; Color sc;
+                                in >> sh >> sc.r >> sc.g >> sc.b >> sc.a
+                                   >> im->shadowOffset.x >> im->shadowOffset.y >> im->shadowSoftness;
+                                im->shadow = (sh != 0); im->shadowColor = sc;
+                            }
                         }
                     }
                 } else if (field == "uislider") {

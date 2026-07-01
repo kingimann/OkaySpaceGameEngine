@@ -7396,6 +7396,23 @@ static void UIRectFields(const char* idSuffix, okay::UIAnchor anchor,
     }
 }
 
+/// Four checkboxes (laid out like the corners) for a Rounded/Pill shape's per-corner
+/// rounding bitmask (okay::UICorner bits). Sets ed.dirty on any change.
+static void CornerMaskEditor(const char* idSuffix, int& mask, EditorState& ed) {
+    char lbl[64];
+    auto bit = [&](const char* nm, int b) {
+        bool on = (mask & b) != 0;
+        std::snprintf(lbl, sizeof(lbl), "%s##%s_c%d", nm, idSuffix, b);
+        if (ImGui::Checkbox(lbl, &on)) { if (on) mask |= b; else mask &= ~b; ed.dirty = true; }
+    };
+    ImGui::TextDisabled("Rounded corners");
+    bit("TL", okay::UICornerTL); ImGui::SameLine(); bit("TR", okay::UICornerTR);
+    bit("BL", okay::UICornerBL); ImGui::SameLine(); bit("BR", okay::UICornerBR);
+    ImGui::SameLine();
+    std::snprintf(lbl, sizeof(lbl), "All##%s_call", idSuffix);
+    if (ImGui::SmallButton(lbl)) { mask = okay::UICornerAll; ed.dirty = true; }
+}
+
 // Size a 3D collider to wrap the object's MeshRenderer bounds (Unity's "fit").
 // Collider size/offset are in local units (scaled by the Transform), matching
 // how the mesh is drawn, so the wireframe lands right on the mesh.
@@ -8450,8 +8467,19 @@ static bool IsPolyUIShape(UIShape s) {
 // Preview a UIShape in the editor canvas by sampling UIShapeRowSpan (the same
 // single source of truth the game renderer uses) into a convex polygon, so the
 // editor shows exactly the silhouette the built game will fill.
+// ImGui rounding flags for a UICorner bitmask (TL|TR|BR|BL). ImGui treats a zero
+// corner flag as "round all", so an all-square mask must map to RoundCornersNone.
+static ImDrawFlags CornerFlags(int mask) {
+    ImDrawFlags f = 0;
+    if (mask & okay::UICornerTL) f |= ImDrawFlags_RoundCornersTopLeft;
+    if (mask & okay::UICornerTR) f |= ImDrawFlags_RoundCornersTopRight;
+    if (mask & okay::UICornerBR) f |= ImDrawFlags_RoundCornersBottomRight;
+    if (mask & okay::UICornerBL) f |= ImDrawFlags_RoundCornersBottomLeft;
+    return f == 0 ? ImDrawFlags_RoundCornersNone : f;
+}
+
 static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, float radius,
-                            ImU32 fill, ImU32 border, float borderW) {
+                            ImU32 fill, ImU32 border, float borderW, int cornerMask = okay::UICornerAll) {
     if (sz.x < 1.0f || sz.y < 1.0f) return;
     const int STEPS = 40;
     static std::vector<ImVec2> rightPts, leftPts;
@@ -8459,7 +8487,7 @@ static void DrawPolyUIShape(ImDrawList* dl, ImVec2 a, ImVec2 sz, UIShape shape, 
     for (int i = 0; i <= STEPS; ++i) {
         float fy = (float)i / (float)STEPS * (sz.y - 0.5f);
         float x0, x1;
-        if (!UIShapeRowSpan(shape, sz.x, sz.y, radius, (int)fy, x0, x1)) continue;
+        if (!UIShapeRowSpan(shape, sz.x, sz.y, radius, (int)fy, x0, x1, cornerMask)) continue;
         rightPts.push_back(ImVec2(a.x + x1, a.y + fy));
         leftPts.push_back(ImVec2(a.x + x0, a.y + fy));
     }
@@ -13146,8 +13174,10 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Style");
             ShapeCombo("Shape##uip", pn->shape, ed);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The panel's silhouette — circle, pill, hexagon, etc. Octagon/Parallelogram/Trapezoid use Corner Radius for their cut/skew.");
-            if (UIShapeUsesRadius(pn->shape))
+            if (UIShapeUsesRadius(pn->shape)) {
                 if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                if (pn->cornerRadius > 0.0f) CornerMaskEditor("uip", pn->cornerMask, ed);
+            }
             if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("An inset border WITHIN the fill. For an outer ring use Outline below.");
             if (pn->borderWidth > 0.0f) {
@@ -13796,13 +13826,23 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Shape & Frame");
             ShapeCombo("Shape##uim", im->shape, ed, &im->cornerRadius);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The image silhouette: circle for avatars, pill/tab for cards, arrows for nav, etc. Applies to the colored fill when no texture is set.");
-            if (UIShapeUsesRadius(im->shape))
+            if (UIShapeUsesRadius(im->shape)) {
                 if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                if (im->cornerRadius > 0.0f) CornerMaskEditor("uim", im->cornerMask, ed);
+            }
             if (ImGui::DragFloat("Frame Width##uim", &im->borderWidth, 0.1f, 0.0f, 24.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A matte/keyline frame drawn around the image rect.");
             if (im->borderWidth > 0.0f) {
                 float bc[4] = {im->borderColor.r, im->borderColor.g, im->borderColor.b, im->borderColor.a};
                 if (ImGui::ColorEdit4("Frame Color##uim", bc)) { im->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Drop Shadow##uim", &im->shadow)) ed.dirty = true;
+            if (im->shadow) {
+                float sc[4] = {im->shadowColor.r, im->shadowColor.g, im->shadowColor.b, im->shadowColor.a};
+                if (ImGui::ColorEdit4("Shadow Color##uim", sc)) { im->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+                float so[2] = {im->shadowOffset.x, im->shadowOffset.y};
+                if (ImGui::DragFloat2("Shadow Offset##uim", so, 0.5f)) { im->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+                if (ImGui::DragFloat("Shadow Blur##uim", &im->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
             }
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
@@ -14702,15 +14742,20 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float fox, foy, fw, fh;
         im->FilledRect(sz.x, sz.y, fox, foy, fw, fh);
         ImVec2 fa(a.x + fox, a.y + foy), fb(fa.x + fw, fa.y + fh);
+        ImDrawFlags icf = CornerFlags(im->cornerMask);   // per-corner rounding
+        if (im->shadow)   // drop shadow behind the image (parity with panels)
+            dl->AddRectFilled(ImVec2(a.x + im->shadowOffset.x, a.y + im->shadowOffset.y),
+                              ImVec2(b.x + im->shadowOffset.x, b.y + im->shadowOffset.y),
+                              ToColor(im->shadowColor), im->cornerRadius, icf);
         if (IsPolyUIShape(im->shape)) {
             DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), im->shape, im->cornerRadius,
-                            ToColor(im->color), IM_COL32(255, 255, 255, 90), 1.0f);
+                            ToColor(im->color), IM_COL32(255, 255, 255, 90), 1.0f, im->cornerMask);
         } else {
-            dl->AddRectFilled(fa, fb, ToColor(im->color), im->cornerRadius);
-            dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), im->cornerRadius);
+            dl->AddRectFilled(fa, fb, ToColor(im->color), im->cornerRadius, icf);
+            dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), im->cornerRadius, icf);
         }
         if (im->borderWidth > 0.0f)   // frame/matte around the image
-            dl->AddRect(a, b, ToColor(im->borderColor), im->cornerRadius, 0, im->borderWidth);
+            dl->AddRect(a, b, ToColor(im->borderColor), im->cornerRadius, icf, im->borderWidth);
         if (!im->texture.empty()) {
             DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
             if (im->flipX || im->flipY)   // preview hint for mirror flags
@@ -14732,20 +14777,21 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (sz.x > canvasSize.x * 1.5f && sz.y > canvasSize.y * 1.5f) {
             a = canvasPos; pb2 = ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
         }
+        ImDrawFlags pcf = CornerFlags(pn->cornerMask);   // per-corner rounding
         if (pn->outlineWidth > 0.0f)   // outer keyline/glow ring (behind, outside the edge)
             dl->AddRect(ImVec2(a.x - pn->outlineWidth * 0.5f, a.y - pn->outlineWidth * 0.5f),
                         ImVec2(pb2.x + pn->outlineWidth * 0.5f, pb2.y + pn->outlineWidth * 0.5f),
                         ToColor(pn->outlineColor), pn->cornerRadius + pn->outlineWidth * 0.5f,
-                        0, pn->outlineWidth);
+                        pcf, pn->outlineWidth);
         if (pn->shadow)          // drop shadow behind the panel
             dl->AddRectFilled(ImVec2(a.x + pn->shadowOffset.x, a.y + pn->shadowOffset.y),
                               ImVec2(pb2.x + pn->shadowOffset.x, pb2.y + pn->shadowOffset.y),
-                              ToColor(pn->shadowColor), pn->cornerRadius);
+                              ToColor(pn->shadowColor), pn->cornerRadius, pcf);
         if (IsPolyUIShape(pn->shape)) {
             DrawPolyUIShape(dl, a, ImVec2(sz.x, sz.y), pn->shape, pn->cornerRadius,
                             ToColor(pn->color),
                             pn->borderWidth > 0.0f ? ToColor(pn->borderColor) : IM_COL32(0, 0, 0, 0),
-                            pn->borderWidth);
+                            pn->borderWidth, pn->cornerMask);
         } else {
             if (pn->useGradient) {   // directional fade (multicolor corners; no rounding)
                 ImU32 ct = ToColor(pn->color), cb = ToColor(pn->colorBottom);
@@ -14762,7 +14808,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 }
                 dl->AddRectFilledMultiColor(a, pb2, ul, ur, br, bl);
             } else {
-                dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+                dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius, pcf);
             }
             if (pn->topHighlight) {   // inner glass sheen: light band fading down from the top
                 float bandH = Mathf::Min(sz.y * 0.45f, sz.y);
@@ -14773,7 +14819,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddRectFilledMultiColor(a, ImVec2(pb2.x, a.y + bandH), hc, hc, h0, h0);
             }
             if (pn->borderWidth > 0.0f)
-                dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
+                dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, pcf, pn->borderWidth);
         }
     }
         else if (_it.kind == K_Progress) {   // progress bars
@@ -15436,13 +15482,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             // parent, else the canvas). The current anchor is the big filled diamond;
             // click any pip to re-anchor there (handled in the press logic). A thin
             // line links the active anchor to the widget so it's clear at a glance.
+            // Stretch anchors (index 9..11) have no single 3×3 pip — clamp the marker
+            // index into range so we never read past the 9-element pip array (OOB crash).
             int ai = (int)r.anchor;
+            bool stretchAnchor = okay::AnchorIsStretch(r.anchor);
+            int markAi = (ai >= 0 && ai < 9) ? ai : 4;   // Center as a stand-in for stretch
             ImVec2 ra, rb; UIAnchorRefRect(ed.selected(), canvasPos, canvasSize, ra, rb);
             ImVec2 pips[9]; UIAnchorPips(ra, rb, pips);
             ImVec2 wc((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-            dl->AddLine(pips[ai], wc, IM_COL32(90, 170, 240, 150), 1.0f);
+            if (!stretchAnchor) dl->AddLine(pips[markAi], wc, IM_COL32(90, 170, 240, 150), 1.0f);
             for (int pi = 0; pi < 9; ++pi) {
-                bool cur = (pi == ai);
+                bool cur = (pi == markAi && !stretchAnchor);
                 dl->AddNgonFilled(pips[pi], cur ? 5.0f : 3.0f,
                                   cur ? IM_COL32(90, 170, 240, 235) : IM_COL32(90, 170, 240, 110), 4);
             }
@@ -18933,6 +18983,23 @@ int main(int argc, char** argv) {
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // Clear editor globals still pointing at an object deleted last frame (hierarchy
+        // delete, Del key, script destroy). Dereferencing a freed GameObject in the
+        // viewport / modeling panels would crash — mirror the alive-checks already used
+        // for the rename / pin / prefab-save targets.
+        {
+            auto alive = [&](GameObject* g) {
+                if (!g) return false;
+                for (const auto& up : ed.scene().Objects()) if (up.get() == g) return true;
+                return false;
+            };
+            if (g_meshEditObj && !alive(g_meshEditObj)) {
+                g_meshEditObj = nullptr; g_meshEdit = false;
+                g_meshSelVerts.clear(); g_meshSelFaces.clear();
+            }
+            if (g_uiDragTarget && !alive(g_uiDragTarget)) g_uiDragTarget = nullptr;
+        }
 
         HandleShortcuts(ed);
         DrawDockSpace(ed);

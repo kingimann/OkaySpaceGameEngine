@@ -48,7 +48,7 @@ static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int 
 // corner and, like the horizontal case, step per pixel.
 static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
                         const Color& top, const Color& bottom, bool gradient, bool horizontal,
-                        float op, int diag = 0) {
+                        float op, int diag = 0, int cornerMask = UICornerAll) {
     if (r.w <= 0 || r.h <= 0) return;
     auto lerp = [](const Color& a, const Color& b, float t) {
         return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
@@ -56,7 +56,7 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
     };
     for (int row = 0; row < r.h; ++row) {
         float x0, x1;
-        if (!UIShapeRowSpan(shape, (float)r.w, (float)r.h, radius, row, x0, x1)) continue;
+        if (!UIShapeRowSpan(shape, (float)r.w, (float)r.h, radius, row, x0, x1, cornerMask)) continue;
         if (!gradient) {
             SDL_SetRenderDrawColor(ren, (Uint8)(top.r * 255), (Uint8)(top.g * 255),
                                    (Uint8)(top.b * 255), (Uint8)(top.a * 255 * op));
@@ -98,9 +98,9 @@ static void GradientParams(UIPanel::GradientDir d, bool& horizontal, int& diag) 
 // Draw a drop shadow for a UI shape. softness == 0 is a crisp shadow; softness > 0
 // fakes a blur by stacking a few expanding, fading copies into a soft penumbra.
 static void FillUIShadow(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
-                         const Color& color, float softness, float op) {
+                         const Color& color, float softness, float op, int cornerMask = UICornerAll) {
     if (softness <= 0.0f) {
-        FillUIShape(ren, r, shape, radius, color, color, false, false, op);
+        FillUIShape(ren, r, shape, radius, color, color, false, false, op, 0, cornerMask);
         return;
     }
     const int layers = 5;
@@ -108,9 +108,9 @@ static void FillUIShadow(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, fl
         float grow = softness * (float)k / layers;
         SDL_Rect r2{r.x - (int)grow, r.y - (int)grow, r.w + (int)(2 * grow), r.h + (int)(2 * grow)};
         Color c = color; c.a = color.a * (0.6f / layers);     // accumulate toward the edge
-        FillUIShape(ren, r2, shape, radius + grow, c, c, false, false, op);
+        FillUIShape(ren, r2, shape, radius + grow, c, c, false, false, op, 0, cornerMask);
     }
-    FillUIShape(ren, r, shape, radius, color, color, false, false, op);   // solid core
+    FillUIShape(ren, r, shape, radius, color, color, false, false, op, 0, cornerMask);   // solid core
 }
 
 // A stable, distinct color for each non-zero tile id (no palette is stored).
@@ -1880,6 +1880,11 @@ int main(int argc, char** argv) {
             bool filled = im->fillMode != UIImage::FillMode::None;
             SDL_RendererFlip flip = (SDL_RendererFlip)((im->flipX ? SDL_FLIP_HORIZONTAL : 0) |
                                                        (im->flipY ? SDL_FLIP_VERTICAL   : 0));
+            if (im->shadow) {   // drop shadow behind the image (parity with panels)
+                SDL_Rect sh{r.x + (int)im->shadowOffset.x, r.y + (int)im->shadowOffset.y, r.w, r.h};
+                FillUIShadow(renderer, sh, im->shape, im->cornerRadius,
+                             im->shadowColor, im->shadowSoftness, op, im->cornerMask);
+            }
             SDL_Texture* tex = GetTexture(renderer, im->texture, baseDir, textureCache);
             if (tex) {
                 SDL_SetTextureColorMod(tex, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
@@ -1924,7 +1929,7 @@ int main(int argc, char** argv) {
             } else {                                        // no image -> colored shape fill
                 const SDL_Rect& rr = filled ? fr : r;
                 FillUIShape(renderer, rr, im->shape, im->cornerRadius,
-                            im->color, im->color, false, false, op);
+                            im->color, im->color, false, false, op, 0, im->cornerMask);
             }
             if (im->borderWidth > 0.0f) {                   // optional frame/matte around the image
                 int b = (int)im->borderWidth;
@@ -1949,37 +1954,38 @@ int main(int argc, char** argv) {
             // whole window — clamp it so it tiles exactly the screen, not huge coords.
             if (psz.x > w * 1.5f && psz.y > h * 1.5f) r = SDL_Rect{0, 0, w, h};
             bool gh; int gdiag; GradientParams(pn->gradientDir, gh, gdiag);
+            int cm = pn->cornerMask;                        // per-corner rounding
             if (pn->shadow) {                               // drop shadow behind (same shape)
                 SDL_Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
                 FillUIShadow(renderer, sh, pn->shape, pn->cornerRadius,
-                             pn->shadowColor, pn->shadowSoftness, op);
+                             pn->shadowColor, pn->shadowSoftness, op, cm);
             }
             if (pn->outlineWidth > 0.0f) {                  // outer keyline/glow ring
                 int ow = (int)pn->outlineWidth;
                 SDL_Rect outer{r.x - ow, r.y - ow, r.w + 2 * ow, r.h + 2 * ow};
                 FillUIShape(renderer, outer, pn->shape, pn->cornerRadius + ow,
-                            pn->outlineColor, pn->outlineColor, false, false, op);
+                            pn->outlineColor, pn->outlineColor, false, false, op, 0, cm);
             }
             if (pn->borderWidth > 0.0f) {                   // border = outer shape, then inner fill
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
-                            pn->borderColor, pn->borderColor, false, false, op);
+                            pn->borderColor, pn->borderColor, false, false, op, 0, cm);
                 int b = (int)pn->borderWidth;
                 SDL_Rect inner{r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b};
                 float innerR = pn->cornerRadius - b; if (innerR < 0.0f) innerR = 0.0f;
                 FillUIShape(renderer, inner, pn->shape, innerR,
-                            pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag);
+                            pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag, cm);
                 if (pn->topHighlight) {                     // inner glass sheen (top-down fade)
                     Color hb = pn->highlightColor; hb.a = 0.0f;
                     FillUIShape(renderer, inner, pn->shape, innerR,
-                                pn->highlightColor, hb, true, false, op);
+                                pn->highlightColor, hb, true, false, op, 0, cm);
                 }
             } else {
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
-                            pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag);
+                            pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag, cm);
                 if (pn->topHighlight) {                     // inner glass sheen (top-down fade)
                     Color hb = pn->highlightColor; hb.a = 0.0f;
                     FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
-                                pn->highlightColor, hb, true, false, op);
+                                pn->highlightColor, hb, true, false, op, 0, cm);
                 }
             }
         }

@@ -21,6 +21,10 @@ public:
     UIShape shape = UIShape::Rounded;
     // Customization: rounded corners and an optional border.
     float cornerRadius = 4.0f;
+    // Which corners the Rounded/Pill shape actually rounds (bitmask of UICorner:
+    // TL|TR|BR|BL). Default all — clear a bit to leave that corner square (tabs,
+    // cards, speech bubbles, one-sided panels).
+    int   cornerMask = UICornerAll;
     float borderWidth = 0.0f;                      // 0 = no border
     Color borderColor = Color::FromBytes(255, 255, 255, 60);
     // Optional gradient: `color` fades to `colorBottom`. `gradientDir` chooses the

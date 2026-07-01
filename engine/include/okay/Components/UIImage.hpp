@@ -46,6 +46,15 @@ public:
     /// Optional frame drawn around the image rect (a matte/keyline). 0 = no frame.
     float borderWidth = 0.0f;
     Color borderColor = Color::FromBytes(255, 255, 255, 90);
+    /// Which corners the Rounded/Pill fallback shape rounds (bitmask of UICorner).
+    /// Default all; clear a bit to leave that corner square.
+    int   cornerMask = UICornerAll;
+    /// Optional drop shadow behind the image (lifts logos/cards off the scene),
+    /// mirroring UIPanel. `shadowSoftness` fakes a blur; 0 = crisp.
+    bool  shadow = false;
+    Color shadowColor = Color::FromBytes(0, 0, 0, 120);
+    Vec2  shadowOffset{6.0f, 6.0f};
+    float shadowSoftness = 0.0f;
 
     /// Fit `srcW`x`srcH` inside the `w`x`h` box preserving aspect, centered. Writes
     /// the letterboxed sub-rect (offset + size in local pixels). Falls back to the

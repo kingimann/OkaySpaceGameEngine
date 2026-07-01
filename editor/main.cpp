@@ -17654,12 +17654,40 @@ void DrawGameView(EditorState& ed) {
     Camera* mc = SceneCamera(ed.scene());
     bool persp = mc && mc->projection == Camera::Projection::Perspective;
 
-    // Aspect-ratio selector (Unity's Game-view "Free / 16:9 / ..." dropdown).
+    // Resolution / aspect selector (Unity's Game-view dropdown): "Free", aspect
+    // ratios, and fixed pixel resolutions (desktop + mobile). Fixed entries carry a
+    // nominal width/height; letterboxing uses the entry's aspect either way.
+    struct GamePreset { const char* name; float aspect; int w, h; };
+    static const GamePreset kPresets[] = {
+        {"Free Aspect",        0.0f,       0,    0},
+        {"16:9",               16.0f/9,    0,    0},
+        {"16:10",              16.0f/10,   0,    0},
+        {"21:9 (ultrawide)",   21.0f/9,    0,    0},
+        {"4:3",                4.0f/3,     0,    0},
+        {"3:2",                3.0f/2,     0,    0},
+        {"1:1 (square)",       1.0f,       0,    0},
+        {"9:16 (portrait)",    9.0f/16,    0,    0},
+        {"1920 x 1080  (1080p)", 1920.0f/1080, 1920, 1080},
+        {"2560 x 1440  (1440p)", 2560.0f/1440, 2560, 1440},
+        {"3840 x 2160  (4K)",    3840.0f/2160, 3840, 2160},
+        {"1280 x 720   (720p)",  1280.0f/720,  1280, 720},
+        {"1600 x 900",           1600.0f/900,  1600, 900},
+        {"1080 x 1920  (portrait)", 1080.0f/1920, 1080, 1920},
+        {"720 x 1280   (portrait)", 720.0f/1280,  720,  1280},
+        {"1170 x 2532  (iPhone)",   1170.0f/2532, 1170, 2532},
+        {"1668 x 2388  (iPad)",     1668.0f/2388, 1668, 2388},
+    };
     static int s_aspect = 0;
-    static const char* kAspectNames[] = {"Free", "16:9", "9:16", "4:3", "1:1"};
-    static const float kAspectVals[]  = {0.0f, 16.0f / 9, 9.0f / 16, 4.0f / 3, 1.0f};
-    ImGui::SetNextItemWidth(110);
-    ImGui::Combo("Aspect", &s_aspect, kAspectNames, IM_ARRAYSIZE(kAspectNames));
+    if (s_aspect < 0 || s_aspect >= (int)IM_ARRAYSIZE(kPresets)) s_aspect = 0;
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::BeginCombo("Resolution", kPresets[s_aspect].name)) {
+        for (int i = 0; i < (int)IM_ARRAYSIZE(kPresets); ++i) {
+            if (i == 1 || i == 8) ImGui::Separator();   // group: aspects / fixed resolutions
+            if (ImGui::Selectable(kPresets[i].name, s_aspect == i)) s_aspect = i;
+        }
+        ImGui::EndCombo();
+    }
+    const float kAspectVal = kPresets[s_aspect].aspect;
     ImGui::SameLine();
     ImGui::TextDisabled(ed.isPlaying() ? "live" : "press Play to run");
     // FPS testing: grab the mouse so look controls work in the Game tab.
@@ -17675,8 +17703,8 @@ void DrawGameView(EditorState& ed) {
 
     // Letterbox a fixed-aspect rect centered in the available region.
     ImVec2 canvasSize = avail, canvasPos = origin;
-    if (kAspectVals[s_aspect] > 0.0f) {
-        float target = kAspectVals[s_aspect];
+    if (kAspectVal > 0.0f) {
+        float target = kAspectVal;
         float boxW = avail.x, boxH = avail.x / target;
         if (boxH > avail.y) { boxH = avail.y; boxW = avail.y * target; }
         canvasSize = {boxW, boxH};
@@ -17709,6 +17737,24 @@ void DrawGameView(EditorState& ed) {
         DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
     } else {
         DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
+    }
+
+    // Resolution readout (top-left of the canvas, over the scene): the target pixel
+    // size for a fixed preset with the on-screen scale, or the live canvas pixels.
+    {
+        char resLbl[64];
+        if (kPresets[s_aspect].w > 0) {
+            float scale = canvasSize.x / (float)kPresets[s_aspect].w;
+            std::snprintf(resLbl, sizeof(resLbl), "%d x %d  (%.0f%%)",
+                          kPresets[s_aspect].w, kPresets[s_aspect].h, scale * 100.0f);
+        } else {
+            std::snprintf(resLbl, sizeof(resLbl), "%d x %d px", (int)canvasSize.x, (int)canvasSize.y);
+        }
+        ImVec2 tp(canvasPos.x + 6, canvasPos.y + 4);
+        dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 2),
+                          ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2),
+                          IM_COL32(0, 0, 0, 120), 3.0f);
+        dl->AddText(tp, IM_COL32(220, 220, 230, 220), resLbl);
     }
 
     // Play-mode cue (Unity-style): a soft accent border around the running view so

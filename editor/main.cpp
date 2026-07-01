@@ -4090,12 +4090,36 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             }
         }
     }
-    // Ctrl+D: duplicate the caret's line below it.
+    // Ctrl+D: duplicate the selection (if any), else the caret's line below it.
     if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_D, false)) {
-        int ls, le; lineBounds(d->CursorPos, ls, le);
-        std::string dup = "\n" + std::string(d->Buf + ls, d->Buf + le);
-        d->InsertChars(le, dup.c_str());
-        d->CursorPos = d->SelectionStart = d->SelectionEnd = d->CursorPos + (int)dup.size();
+        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
+        if (b > a) {                                    // duplicate the selected text
+            std::string sel(d->Buf + a, d->Buf + b);
+            d->InsertChars(b, sel.c_str());
+            d->SelectionStart = b; d->SelectionEnd = b + (int)sel.size(); d->CursorPos = d->SelectionEnd;
+        } else {
+            int ls, le; lineBounds(d->CursorPos, ls, le);
+            std::string dup = "\n" + std::string(d->Buf + ls, d->Buf + le);
+            d->InsertChars(le, dup.c_str());
+            d->CursorPos = d->SelectionStart = d->SelectionEnd = d->CursorPos + (int)dup.size();
+        }
+    }
+    // Ctrl+W: expand the selection — first to the word under the caret, then to the
+    // whole line, then to the whole file (Rider/IntelliJ "extend selection").
+    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_W, false)) {
+        auto isWc = [](char x){ return std::isalnum((unsigned char)x) || x == '_'; };
+        int a = d->SelectionStart, b = d->SelectionEnd; if (a > b) { int t=a; a=b; b=t; }
+        if (a == b) {                                   // no selection -> select the word
+            int ws = a; while (ws > 0 && isWc(d->Buf[ws - 1])) --ws;
+            int we = a; while (we < d->BufTextLen && isWc(d->Buf[we])) ++we;
+            if (we > ws) { a = ws; b = we; }
+        } else {
+            int ls, le; lineBounds(a, ls, le);
+            int ls2, le2; lineBounds(b, ls2, le2);
+            if (a > ls || b < le2) { a = ls; b = le2; } // not yet full line(s) -> expand to lines
+            else { a = 0; b = d->BufTextLen; }           // already lines -> whole file
+        }
+        d->SelectionStart = a; d->SelectionEnd = b; d->CursorPos = b;
     }
     // Ctrl+Shift+K: delete the caret's whole line (Rider/VS Code "delete line").
     if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_K, false)) {

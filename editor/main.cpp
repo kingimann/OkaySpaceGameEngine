@@ -4793,6 +4793,7 @@ void DrawScriptEditor(EditorState& ed) {
             ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackCompletion,
             ScriptCaretCallback, &caret);
         bool editorActive = ImGui::IsItemActive();   // for the custom caret (text is hidden when highlighting)
+        bool codeHovered = ImGui::IsItemHovered();    // for the hover-doc tooltip below
         // A snippet chosen from the toolbar menu steals focus from the editor, so
         // the callback won't run — splice it into the buffer at the caret here.
         if (!caret.insert.empty() && !ImGui::IsItemActive()) {
@@ -5082,13 +5083,23 @@ void DrawScriptEditor(EditorState& ed) {
                             ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                             ImGuiWindowFlags_NoSavedSettings)) {
                         for (std::size_t i = 0; i < hits.size(); ++i) {
-                            if (ImGui::Selectable(hits[i]->c_str(), (int)i == g_acIndex)) {
+                            // Name (clickable) + its signature params dimmed alongside,
+                            // so you see what a builtin takes without opening the docs.
+                            float nameW = ImGui::CalcTextSize(hits[i]->c_str()).x;
+                            char sid[24]; std::snprintf(sid, sizeof(sid), "##ac%zu", i);
+                            if (ImGui::Selectable((std::string(*hits[i]) + sid).c_str(),
+                                                  (int)i == g_acIndex, ImGuiSelectableFlags_None, ImVec2(nameW, 0))) {
                                 g_acIndex = (int)i;
                                 caret.insert = hits[i]->substr(prefix.size());  // spliced when editor inactive
                             }
+                            if (const std::string* sg = ScriptSignature(*hits[i])) {
+                                const char* paren = std::strchr(sg->c_str(), '(');   // show just "(args)"
+                                ImGui::SameLine(0, 12);
+                                ImGui::TextDisabled("%s", paren ? paren : sg->c_str());
+                            }
                         }
                         ImGui::Separator();
-                        ImGui::TextDisabled("\xe2\x86\x91\xe2\x86\x93 select   Tab accept");
+                        ImGui::TextDisabled("\xe2\x86\x91\xe2\x86\x93 select   Tab accept   F12 def");
                     }
                     ImGui::End();
                     ImGui::PopStyleColor();
@@ -5126,6 +5137,34 @@ void DrawScriptEditor(EditorState& ed) {
                         }
                         ImGui::End();
                         ImGui::PopStyleColor();
+                    }
+                }
+            }
+        }
+
+        // --- Hover docs: hovering a known builtin shows its signature ----------
+        if (codeHovered) {
+            const char* t = buf.data(); int len = (int)std::strlen(t);
+            ImVec2 mp = ImGui::GetMousePos();
+            int hcol = (int)((mp.x - origin.x) / charW);
+            int hline = (int)((mp.y - origin.y) / lineH);   // 0-based
+            if (hcol >= 0 && hline >= 0) {
+                int ls = 0, ln = 0;
+                while (ls < len && ln < hline) { if (t[ls] == '\n') ++ln; ++ls; }
+                if (ln == hline) {
+                    int le = ls; while (le < len && t[le] != '\n') ++le;
+                    int idx = ls + hcol; if (idx > le) idx = le;
+                    auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+                    int ws = idx; while (ws > ls && isW(t[ws - 1])) --ws;
+                    int we = idx; while (we < le && isW(t[we])) ++we;
+                    if (we > ws) {
+                        std::string word(t + ws, t + we);
+                        if (const std::string* sg = ScriptSignature(word)) {
+                            ImGui::BeginTooltip();
+                            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sg->c_str());
+                            ImGui::TextDisabled("built-in function");
+                            ImGui::EndTooltip();
+                        }
                     }
                 }
             }

@@ -30,6 +30,7 @@ struct Input {
     // only when OkayUI should receive them (e.g. ImGui isn't capturing the keyboard).
     const char* text      = nullptr;   // UTF-8 characters typed this frame, or null
     bool        backspace = false;     // Backspace pressed this frame (delete last char)
+    float       wheel     = 0.0f;      // mouse-wheel delta this frame (+up / -down), for scrolling
 };
 
 /// Visual style (colors are RGBA, 0..255). Mutable via Style().
@@ -126,6 +127,19 @@ void EndFrameData();
 /// Pass `p_open` to add a close [x] button that sets *p_open = false when clicked.
 bool Begin(const char* title, float x, float y, float w, float h, bool* p_open = nullptr);
 void End();
+
+/// A scrolling sub-region of `w`*`h` at the cursor. Widgets called until EndChild()
+/// stack inside it and are CLIPPED to the box; if they overflow vertically the region
+/// scrolls (mouse wheel when hovered, or drag the scrollbar). `id` keys the scroll
+/// position. `w`/`h` <= 0 fill the remaining width / use a default height. Always pair
+/// with EndChild(). Returns true (visible) — call EndChild regardless.
+bool BeginChild(const char* id, float w = 0.0f, float h = 0.0f, bool border = true);
+void EndChild();
+
+/// Manually clip subsequent geometry to a rectangle (screen coords). Nestable and
+/// intersected with any enclosing clip. Pair with PopClipRect. (BeginChild uses this.)
+void PushClipRect(float x, float y, float w, float h);
+void PopClipRect();
 
 /// Keep the next widget on the current line instead of starting a new one
 /// (`spacing` < 0 uses the theme default gap).

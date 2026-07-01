@@ -480,6 +480,42 @@ int main(int argc, char** argv) {
         CHECK(narrow < full - 30);   // the 50px-wide bar ends well left of the full one
     }
 
+    // --- BeginChild: clips overflow and scrolls the content into view. ---
+    {
+        // A short child region with several lines; only the last is red. It sits far
+        // below the fold, so it's clipped away until we scroll the region down.
+        auto drawChild = [&](float wheel) {
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 255); SDL_RenderClear(r);
+            OkayUI::Input a; a.mouseX = 120; a.mouseY = 60; a.wheel = wheel;  // cursor over region
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("ScW", 4, 4, 240, 84);
+            OkayUI::BeginChild("sc", 0, 40);
+            OkayUI::Text("one"); OkayUI::Text("two"); OkayUI::Text("three");
+            OkayUI::Text("four"); OkayUI::Text("five");
+            OkayUI::TextColored(255, 0, 0, "END");   // the marker line, far down
+            OkayUI::EndChild();
+            OkayUI::End(); OkayUI::EndFrame(r);
+        };
+        auto redIn = [&](int y0, int y1) {
+            SDL_LockSurface(surf);
+            int n = 0;
+            for (int y = y0; y < y1; ++y) for (int x = 0; x < W; ++x) {
+                Uint32 px = pixelAt(surf, x, y);
+                Uint8 rr = (px >> 16) & 0xFF, gg = (px >> 8) & 0xFF, bb = px & 0xFF;
+                if (rr > 180 && gg < 80 && bb < 80) ++n;
+            }
+            SDL_UnlockSurface(surf);
+            return n;
+        };
+        // Pin to the top (positive wheel scrolls up / clamps at 0).
+        for (int i = 0; i < 3; ++i) drawChild(50.0f);
+        CHECK(redIn(0, H) < 5);            // END marker is scrolled off + clipped: not visible
+        // Scroll down to the bottom; the END marker enters the region.
+        for (int i = 0; i < 8; ++i) drawChild(-50.0f);
+        CHECK(redIn(42, 82) > 15);         // END marker now visible inside the region
+        CHECK(redIn(83, H) < 5);           // and clipping keeps it from spilling below the region
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

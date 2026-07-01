@@ -29,6 +29,24 @@ int        g_ovIdx[kMaxIdx];
 int        g_oni = 0;
 bool       g_toOverlay = false;   // route quad()/drawText() to the overlay batch
 
+// Clip spans: the main batch is split into contiguous index ranges, each with an
+// optional scissor rect, so scrolling child regions can clip their contents. A span
+// records the index where a clip state begins; EndFrame draws each range with the
+// matching SDL clip rect. The overlay batch is never clipped.
+struct ClipSpan { int startIdx; bool on; SDL_Rect rect; };
+ClipSpan g_spans[128];
+int      g_nspans = 0;
+SDL_Rect g_clipStack[16];
+int      g_clipTop = 0;
+// Record a span at the current index position (coalescing if no geometry was added
+// since the previous span).
+void pushClipSpan(bool on, SDL_Rect rect) {
+    if (g_nspans > 0 && g_spans[g_nspans - 1].startIdx == g_ni) {   // overwrite empty span
+        g_spans[g_nspans - 1].on = on; g_spans[g_nspans - 1].rect = rect; return;
+    }
+    if (g_nspans < 128) g_spans[g_nspans++] = ClipSpan{ g_ni, on, rect };
+}
+
 Input g_in;                      // this frame's input
 bool  g_prevDown = false;        // last frame's mouse-down (for edge detection)
 bool  g_pressed  = false;        // mouse went down this frame
@@ -86,6 +104,20 @@ struct LayoutState {
 };
 LayoutState g_lay;
 
+// Saved parent layout + child metadata while inside a BeginChild/EndChild pair.
+struct ChildSave {
+    LayoutState lay;      // parent layout to restore
+    float rx, ry, rw, rh; // child region rect
+    float top;            // unscrolled content top (ry + pad)
+    float* scroll;        // persisted scroll offset
+    float* maxSlot;       // persisted max scroll from last frame (clamps this frame)
+    float pad;
+    bool  hovered;        // mouse over the region this frame
+};
+ChildSave g_childStack[8];
+int       g_childTop = 0;
+constexpr float kScrollbarW = 10.0f;
+
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; };
 WinSlot g_wins[16];
@@ -97,6 +129,14 @@ bool* openState(int id, bool dflt) {
     for (OpenSlot& s : g_opens) if (s.used && s.id == id) return &s.open;
     for (OpenSlot& s : g_opens) if (!s.used) { s.used = true; s.id = id; s.open = dflt; return &s.open; }
     static bool sink = false; return &sink;   // table full: harmless fallback
+}
+// Per-id float state (child-region scroll offsets), persisted across frames.
+struct FloatSlot { int id = 0; float v = 0.0f; bool used = false; };
+FloatSlot g_floats[64];
+float* floatState(int id, float dflt) {
+    for (FloatSlot& s : g_floats) if (s.used && s.id == id) return &s.v;
+    for (FloatSlot& s : g_floats) if (!s.used) { s.used = true; s.id = id; s.v = dflt; return &s.v; }
+    static float sink = 0.0f; return &sink;
 }
 float g_prevMouseX = 0.0f, g_prevMouseY = 0.0f;   // last frame's cursor
 float g_mouseDX = 0.0f, g_mouseDY = 0.0f;         // cursor delta this frame
@@ -279,6 +319,8 @@ void BeginFrame(const Input& in) {
     PopStyleColor(g_colTop);
     g_colTop = 0;
     g_nextItemW = -1.0f; g_itemWTop = 0;   // reset item-width overrides
+    g_nspans = 0; g_clipTop = 0;           // reset clip spans/stack
+    g_childTop = 0;                        // reset child-region stack
 }
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
@@ -514,6 +556,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
 namespace {
 // Append the overlay batch after the main batch so popups/tooltips draw on top.
 void mergeOverlay() {
+    if (g_oni > 0) pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 });   // overlay is never clipped
     const int base = g_nv;
     for (int i = 0; i < g_onv && g_nv < kMaxVerts; ++i) g_verts[g_nv++] = g_ovVerts[i];
     for (int j = 0; j < g_oni && g_ni < kMaxIdx; ++j)   g_idx[g_ni++] = base + g_ovIdx[j];
@@ -545,7 +588,29 @@ void EndFrame(SDL_Renderer* r) {
     SDL_BlendMode prev = SDL_BLENDMODE_NONE;
     SDL_GetRenderDrawBlendMode(r, &prev);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    SDL_RenderGeometry(r, nullptr, g_verts, g_nv, g_idx, g_ni);
+    if (g_nspans == 0) {
+        SDL_RenderGeometry(r, nullptr, g_verts, g_nv, g_idx, g_ni);   // fast path: no clipping
+    } else {
+        // Draw each contiguous index range under its clip rect. Ranges run from one
+        // span's startIdx to the next span's (last extends to g_ni).
+        SDL_bool hadClip = SDL_RenderIsClipEnabled(r);
+        SDL_Rect savedClip; SDL_RenderGetClipRect(r, &savedClip);
+        // Geometry before the first span (window frames drawn pre-clip) is unclipped.
+        if (g_spans[0].startIdx > 0) {
+            SDL_RenderSetClipRect(r, nullptr);
+            SDL_RenderGeometry(r, nullptr, g_verts, g_nv, &g_idx[0], g_spans[0].startIdx);
+        }
+        for (int s = 0; s < g_nspans; ++s) {
+            int from = g_spans[s].startIdx;
+            int to   = (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni;
+            if (to <= from) continue;
+            if (g_spans[s].on) SDL_RenderSetClipRect(r, &g_spans[s].rect);
+            else               SDL_RenderSetClipRect(r, nullptr);
+            SDL_RenderGeometry(r, nullptr, g_verts, g_nv, &g_idx[from], to - from);
+        }
+        // Restore the renderer's prior clip state.
+        SDL_RenderSetClipRect(r, hadClip ? &savedClip : nullptr);
+    }
     SDL_SetRenderDrawBlendMode(r, prev);
 }
 
@@ -649,6 +714,83 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
 void End() { g_lay.active = false; }
 
+bool BeginChild(const char* id, float w, float h, bool border) {
+    if (!g_lay.active) return false;
+    const int cid = hashLabel(id);
+    const float pad = 6.0f;
+    const float rw = w > 0.0f ? w : availW();
+    const float rh = h > 0.0f ? h : rowH() * 4.0f;
+    float rx, ry; place(rw, rh, rx, ry);
+
+    float* scroll  = floatState(cid, 0.0f);
+    float* maxSlot = floatState(cid ^ 0x4d61, 0.0f);   // last frame's max scroll
+    const bool hovered = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, rx, ry, rw, rh);
+    if (hovered && g_in.wheel != 0.0f) *scroll -= g_in.wheel * rowH();   // wheel scrolls
+    // Clamp with the previous frame's content extent so layout uses a sane offset.
+    if (*scroll < 0.0f) *scroll = 0.0f;
+    if (*scroll > *maxSlot) *scroll = *maxSlot;
+
+    // Frame + clip to the region.
+    if (border) { quad(rx, ry, rw, rh, g_theme.panel); }
+    PushClipRect(rx, ry, rw, rh);
+
+    // Save the parent layout, then set up the child's inner layout (scrolled).
+    if (g_childTop < 8) {
+        ChildSave& c = g_childStack[g_childTop++];
+        c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
+        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered;
+    }
+    g_lay.ox = rx + pad;
+    g_lay.contentW = rw - 2.0f * pad - kScrollbarW;
+    g_lay.oy = ry + pad - *scroll;
+    g_lay.cx = g_lay.ox;
+    g_lay.cy = g_lay.oy;
+    g_lay.indent = 0.0f;
+    g_lay.seed = cid;                   // child-local widget id namespace
+    g_lay.pendingSameLine = false;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    return true;
+}
+
+void EndChild() {
+    if (g_childTop <= 0) return;
+    ChildSave& c = g_childStack[--g_childTop];
+    // Content height = how far the cursor advanced from the (scrolled) top, in
+    // unscrolled space. cy currently sits at top - scroll + contentHeight.
+    const float contentH = g_lay.cy - (c.top - *c.scroll);
+    const float viewH = c.rh - 2.0f * c.pad;
+    float maxScroll = contentH - viewH; if (maxScroll < 0.0f) maxScroll = 0.0f;
+    *c.maxSlot = maxScroll;                     // remember for next frame's clamp
+    if (*c.scroll < 0.0f) *c.scroll = 0.0f;
+    if (*c.scroll > maxScroll) *c.scroll = maxScroll;
+
+    PopClipRect();   // stop clipping before drawing the scrollbar
+
+    // Scrollbar (only when content overflows).
+    if (maxScroll > 0.0f) {
+        const float sbx = c.rx + c.rw - kScrollbarW;
+        quad(sbx, c.ry, kScrollbarW, c.rh, g_theme.track);
+        float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
+        float thumbH = frac * c.rh; if (thumbH < 16.0f) thumbH = 16.0f;
+        float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
+        float thumbY = c.ry + t * (c.rh - thumbH);
+        // Drag the thumb.
+        const int sbId = (int)((unsigned)c.lay.seed ^ 0x5cb0u ^ (unsigned)(sbx * 7.0f)) & 0x7fffffff;
+        const bool overThumb = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, sbx, thumbY, kScrollbarW, thumbH);
+        if (overThumb) g_hot = sbId;
+        if (g_active == sbId) {
+            if (!g_in.mouseDown) g_active = 0;
+            else if (c.rh - thumbH > 0.0f) *c.scroll += g_mouseDY * (maxScroll / (c.rh - thumbH));
+        } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
+        if (*c.scroll < 0.0f) *c.scroll = 0.0f;
+        if (*c.scroll > maxScroll) *c.scroll = maxScroll;
+        const unsigned char* tc = (g_active == sbId || overThumb) ? g_theme.text : g_theme.accent;
+        quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, tc);
+    }
+
+    g_lay = c.lay;   // restore the parent layout (cursor already past the region)
+}
+
 void SameLine(float spacing) {
     if (!g_lay.active) return;
     g_lay.pendingSameLine = true;
@@ -658,6 +800,26 @@ void SameLine(float spacing) {
 void SetNextItemWidth(float w) { g_nextItemW = w; }
 void PushItemWidth(float w)    { if (g_itemWTop < 16) g_itemWStack[g_itemWTop++] = w; }
 void PopItemWidth()            { if (g_itemWTop > 0) --g_itemWTop; }
+
+void PushClipRect(float x, float y, float w, float h) {
+    SDL_Rect r; r.x = (int)x; r.y = (int)y; r.w = (int)(w < 0 ? 0 : w); r.h = (int)(h < 0 ? 0 : h);
+    // Intersect with the enclosing clip so nested regions never draw outside a parent.
+    if (g_clipTop > 0) {
+        SDL_Rect& p = g_clipStack[g_clipTop - 1];
+        int x0 = r.x > p.x ? r.x : p.x, y0 = r.y > p.y ? r.y : p.y;
+        int x1 = (r.x + r.w) < (p.x + p.w) ? (r.x + r.w) : (p.x + p.w);
+        int y1 = (r.y + r.h) < (p.y + p.h) ? (r.y + r.h) : (p.y + p.h);
+        r.x = x0; r.y = y0; r.w = x1 > x0 ? x1 - x0 : 0; r.h = y1 > y0 ? y1 - y0 : 0;
+    }
+    if (g_clipTop < 16) g_clipStack[g_clipTop++] = r;
+    pushClipSpan(true, r);
+}
+
+void PopClipRect() {
+    if (g_clipTop > 0) --g_clipTop;
+    if (g_clipTop > 0) pushClipSpan(true, g_clipStack[g_clipTop - 1]);
+    else               pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 });
+}
 
 void Spacing(float h) {
     if (!g_lay.active) return;

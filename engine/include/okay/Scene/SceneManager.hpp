@@ -29,6 +29,9 @@ public:
     static std::string SceneName(int index);
     /// The build index of the scene most recently asked to load (-1 if none).
     static int  ActiveIndex();
+    /// Resolve a build-list name (file stem) OR a raw path to a scene file path,
+    /// or "" if unknown. Used by additive scene merges.
+    static std::string PathForName(const std::string& nameOrPath);
 
     // ---- Loading -------------------------------------------------------
     /// Request loading the scene at the given build index. False if out of range.

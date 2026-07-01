@@ -1045,6 +1045,16 @@ int   g_colliderDragAxis = -1;        // 0=X 1=Y 2=Z, -1 = none held
 int   g_colliderDragSign = 1;         // which face (+1 or -1 along the axis)
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
+
+// Tag a merged subtree (root + all descendants) with the source scene name, so the
+// Hierarchy can show where each combined scene begins and ends.
+static void TagSubtreeScene(GameObject* go, const std::string& scene) {
+    if (!go) return;
+    go->sourceScene = scene;
+    if (go->transform)
+        for (Transform* c : go->transform->Children())
+            if (c && c->gameObject) TagSubtreeScene(c->gameObject, scene);
+}
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
 int   g_spriteHandle = -1;   // 0..7 sprite resize handle being dragged in the 2D view
 
@@ -1826,6 +1836,26 @@ void DrawMenuAndToolbar(EditorState& ed) {
                          sizeof(g_pathBuf) - 1);
             g_showSaveAs = true;
         }
+        if (ImGui::MenuItem("Merge Scene into Current...")) {
+            // Combine scenes: append another scene's objects into this one (kept),
+            // tagged with its name so the Hierarchy shows where it starts/ends.
+            const char* filt[1] = {"*.okayscene"};
+            const char* p = tinyfd_openFileDialog("Merge scene into current", "", 1, filt, "OkaySpace scene", 0);
+            if (p) {
+                ed.PushUndo();
+                std::string label = std::filesystem::path(p).stem().string();
+                std::vector<GameObject*> roots; std::string err;
+                if (SceneSerializer::MergeFromFile(ed.scene(), p, okay::Vec3{0, 0, 0}, &roots, &err)) {
+                    for (GameObject* r : roots) TagSubtreeScene(r, label);   // mark the merged subtree
+                    if (!roots.empty()) ed.Select(roots.front());
+                    ed.dirty = true;
+                    ConsoleLog("Merged " + std::to_string(roots.size()) + " object(s) from " + label);
+                } else ConsoleLog("Merge failed: " + err, 2);
+            }
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Combine another scene into this one to build a seamless world.\n"
+                              "The Hierarchy marks where each merged scene begins.");
         ImGui::Separator();
         if (ImGui::BeginMenu("Autosave")) {
             ImGui::MenuItem("Enabled", nullptr, &g_autosave);
@@ -4005,6 +4035,7 @@ void DrawScriptDocs() {
         fapi("load_scene_index(i)", "load scene i from the build list");
         fapi("load_scene_name(\"n\")", "load by scene name (file stem) or path");
         fapi("load_next_scene()", "load the next scene (wraps to the first)");
+        fapi("load_scene_additive(\"n\"[, x, y, z])", "MERGE a scene into the running one at an offset (seamless worlds)");
         fapi("reload_scene()", "reload the active scene");
         fapi("scene_count() / scene_index() / scene_name()", "query the build list");
     }
@@ -7007,7 +7038,31 @@ void DrawHierarchy(EditorState& ed) {
         std::sort(roots.begin(), roots.end(), [](GameObject* a, GameObject* b) {
             return a->name < b->name;
         });
+    // Combined scenes: when the scene contains objects merged from others, group the
+    // roots by source scene (the host/main scene first) and draw a labeled divider at
+    // each boundary, so you can see where every combined scene starts and ends.
+    bool anyMerged = false;
+    for (GameObject* r : roots) if (!r->sourceScene.empty()) { anyMerged = true; break; }
+    if (anyMerged)
+        std::stable_sort(roots.begin(), roots.end(), [](GameObject* a, GameObject* b) {
+            return a->sourceScene < b->sourceScene;   // "" (main) sorts first; groups stay contiguous
+        });
+    std::string curSceneSection = "\x01";   // sentinel distinct from any real value (incl. "")
     for (GameObject* go : roots) {
+        if (anyMerged && go->sourceScene != curSceneSection) {
+            curSceneSection = go->sourceScene;
+            std::string lbl = go->sourceScene.empty()
+                ? (ed.scene().Name().empty() ? std::string("Main Scene")
+                                             : ed.scene().Name() + " (main)")
+                : go->sourceScene;
+            ImU32 col = go->sourceScene.empty() ? IM_COL32(150, 152, 160, 255)
+                                                : IM_COL32(120, 190, 255, 255);
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImGui::TextUnformatted(("\xE2\x96\xBE " + lbl).c_str());   // ▾ scene section header
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+        }
         std::function<void(GameObject*)> drawNode = [&](GameObject* node) {
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
                                        ImGuiTreeNodeFlags_DefaultOpen |

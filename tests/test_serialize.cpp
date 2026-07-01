@@ -117,5 +117,35 @@ int main() {
         if (auto* x = p2.Find("X")) { auto* xb = x->GetComponent<UIButton>(); CHECK(xb && xb->fontPath.empty()); }
     }
 
+    // --- Combine scenes: additive merge keeps the host, offsets new roots, tags source ---
+    {
+        // A "chunk" scene with its own gravity + one object at (5,0,0).
+        Scene chunk("Town");
+        chunk.physics().gravity = {0.0f, -20.0f};
+        chunk.CreateGameObject("House")->transform->localPosition = {5, 0, 0};
+        std::string chunkText = SceneSerializer::Serialize(chunk);
+
+        // Host scene with its own object + gravity.
+        Scene host("World");
+        host.physics().gravity = {0.0f, -9.8f};
+        host.CreateGameObject("Player");
+        std::size_t before = host.Objects().size();
+
+        std::vector<GameObject*> roots; std::string err;
+        CHECK(SceneSerializer::MergeFromText(host, chunkText, Vec3{100, 0, 0}, &roots, &err));
+        CHECK(host.Objects().size() == before + 1);           // House added, Player kept
+        CHECK(host.Name() == "World");                        // host name preserved
+        CHECK_NEAR(host.physics().gravity.y, -9.8f, 0.001f);  // host gravity preserved (not Town's)
+        CHECK(roots.size() == 1);
+        CHECK_NEAR(roots[0]->transform->localPosition.x, 105.0f, 0.001f);  // 5 + offset 100
+
+        // Tag the merged root and confirm sourceScene round-trips through serialization.
+        roots[0]->sourceScene = "Town";
+        Scene reloaded("r");
+        CHECK(SceneSerializer::Deserialize(reloaded, SceneSerializer::Serialize(host), &err));
+        CHECK(reloaded.Find("House")->sourceScene == "Town");
+        CHECK(reloaded.Find("Player")->sourceScene.empty());
+    }
+
     TEST_MAIN_RESULT();
 }

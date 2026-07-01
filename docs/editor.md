@@ -90,6 +90,14 @@ Recent additions (v2.12–2.14):
   save files (typed key/value table); the editor side of `save()` / `load()`.
 - **Drag & drop from Project** — drop prefabs/scenes/images/`.obj` into the Scene
   to place them; drop scripts/materials onto the Inspector or Hierarchy.
+- **Combine scenes (seamless worlds)** — **File ▸ Merge Scene into Current…**
+  folds another scene's objects into the open one (the host keeps its own name,
+  gravity and lighting). Merged objects are tagged with their source scene, and
+  the **Hierarchy** groups them under a labelled **section header** so you can see
+  where each combined scene starts and ends. At runtime, `load_scene_additive(
+  "Town", x, y[, z])` merges a scene chunk at an offset without unloading the
+  current one — build open worlds from tiles. (Engine: `SceneSerializer::Merge
+  FromFile`, `Scene::RequestMerge`.)
 - **Edit Collider** — on a Box Collider 3D, click **Edit Collider** to show six
   draggable face handles in the Scene view; pull each side to hand-fit the box to
   your model (Unity-style). Adjusts the collider's size + offset; undoable.

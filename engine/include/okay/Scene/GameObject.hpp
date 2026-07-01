@@ -24,6 +24,11 @@ public:
     /// static are not expected to move at runtime.
     bool isStatic = false;
 
+    /// The name of the scene this object was MERGED in from (empty = it belongs to
+    /// the main/host scene). Set when combining scenes so the editor's Hierarchy can
+    /// show where each merged scene starts and ends. Persisted with the scene.
+    std::string sourceScene;
+
     /// Per-object UI layering override. 0 = use the widget's default type layer
     /// (the historic per-type pass order); any non-zero value places this widget in
     /// the single UI draw pass by this key instead (higher = drawn later / on top),

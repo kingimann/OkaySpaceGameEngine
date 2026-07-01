@@ -228,6 +228,7 @@ editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
 | `load_scene_index(i)` | Load scene `i` from the build list |
 | `load_scene_name("n")` | Load by scene name (file stem) or path |
 | `load_next_scene()` | Load the next scene (wraps to the first) |
+| `load_scene_additive("n"[, x, y, z])` | **Merge** another scene into the running one at an offset (seamless worlds — the current scene stays loaded) |
 | `reload_scene()` | Reload the active scene |
 | `scene_count()` / `scene_index()` / `scene_name()` | Query the build list |
 

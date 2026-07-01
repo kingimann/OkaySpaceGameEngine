@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include "okay/Math/Vec3.hpp"
 
 namespace okay {
 
@@ -23,6 +24,17 @@ public:
     static bool Deserialize(Scene& scene, const std::string& text, std::string* error = nullptr);
     /// Load a scene from a file.
     static bool LoadFromFile(Scene& scene, const std::string& path, std::string* error = nullptr);
+
+    /// Additively MERGE a serialized scene into `scene` — the host scene is NOT
+    /// cleared and keeps its own name / gravity / lighting / fog. Every new root
+    /// object is translated by `offset`, so scene "chunks" can be dropped side by
+    /// side into one seamless world. `addedRoots` (optional) receives the new
+    /// top-level objects. Returns false on a parse error.
+    static bool MergeFromText(Scene& scene, const std::string& text, const Vec3& offset = Vec3{0, 0, 0},
+                              std::vector<GameObject*>* addedRoots = nullptr, std::string* error = nullptr);
+    /// Merge a scene FILE into `scene` (see MergeFromText).
+    static bool MergeFromFile(Scene& scene, const std::string& path, const Vec3& offset = Vec3{0, 0, 0},
+                              std::vector<GameObject*>* addedRoots = nullptr, std::string* error = nullptr);
 
     /// Serialize a single GameObject and its descendants (a prefab).
     static std::string SerializeObject(const GameObject& root);

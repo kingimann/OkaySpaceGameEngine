@@ -1592,6 +1592,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         if (go->isStatic) out << "  static 1\n";
         if (go->layer != 0) out << "  layer " << go->layer << "\n";
         if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
+        if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";
         int parent = t->Parent() ? IndexOf(scene, t->Parent()->gameObject) : -1;
         out << "  parent " << parent << "\n";
         WriteComponents(out, go);
@@ -1626,26 +1627,31 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     std::vector<std::pair<int, int>> parentLinks; // child index -> parent index
 
     while (in >> token) {
+        // The file-level globals (name, gravity, lighting, fog) describe the WHOLE
+        // scene, so a merge/additive load (clear == false) reads past them but keeps
+        // the host scene's own settings — only a full load (clear) applies them.
         if (token == "name") {
-            scene.SetName(ReadQuoted(in));
+            std::string nm = ReadQuoted(in); if (clear) scene.SetName(nm);
         } else if (token == "uifont") {
-            scene.uiFont = ReadQuoted(in);
+            std::string uf = ReadQuoted(in); if (clear) scene.uiFont = uf;
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
-            scene.physics().gravity = g;
+            if (clear) scene.physics().gravity = g;
         } else if (token == "rendersettings") {
-            auto& rs = scene.renderSettings;
-            int sky = 1;
-            in >> sky >> rs.skyTop.r >> rs.skyTop.g >> rs.skyTop.b
-               >> rs.skyHorizon.r >> rs.skyHorizon.g >> rs.skyHorizon.b
-               >> rs.skyBottom.r >> rs.skyBottom.g >> rs.skyBottom.b >> rs.ambient;
-            rs.skybox = (sky != 0);
+            int sky = 1; Color top, hor, bot; float amb = 0.0f;
+            in >> sky >> top.r >> top.g >> top.b
+               >> hor.r >> hor.g >> hor.b
+               >> bot.r >> bot.g >> bot.b >> amb;
+            if (clear) {
+                auto& rs = scene.renderSettings;
+                rs.skybox = (sky != 0); rs.skyTop = top; rs.skyHorizon = hor;
+                rs.skyBottom = bot; rs.ambient = amb;
+            }
         } else if (token == "fog") {
             auto& rs = scene.renderSettings;
-            int on = 0;
-            in >> on >> rs.fogColor.r >> rs.fogColor.g >> rs.fogColor.b
-               >> rs.fogStart >> rs.fogEnd;
-            rs.fog = (on != 0);
+            int on = 0; Color fc; float fs = rs.fogStart, fe = rs.fogEnd;
+            in >> on >> fc.r >> fc.g >> fc.b >> fs >> fe;
+            if (clear) { rs.fog = (on != 0); rs.fogColor = fc; rs.fogStart = fs; rs.fogEnd = fe; }
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;
@@ -1661,6 +1667,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
                 else if (field == "layer") { in >> go->layer; }
                 else if (field == "uiorder") { in >> go->uiDrawOrder; }
+                else if (field == "srcscene") { go->sourceScene = ReadQuoted(in); }
                 else if (field == "parent") { int p = -1; in >> p; if (p >= 0) parentLinks.push_back({idx, p}); }
                 else if (field == "transform") {
                     Vec3 p, s; Quat q;
@@ -3900,6 +3907,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
         if (go->isStatic) out << "  static 1\n";
         if (go->layer != 0) out << "  layer " << go->layer << "\n";
         if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
+        if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";
         Transform* parent = go->transform->Parent();
         int pIdx = -1;
         if (parent) {
@@ -3976,6 +3984,36 @@ bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::s
     std::string text = DataPack::Unpack(raw);   // decode if obfuscated (plaintext passes through)
     if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
     return Deserialize(scene, text, error);
+}
+
+bool SceneSerializer::MergeFromText(Scene& scene, const std::string& text, const Vec3& offset,
+                                    std::vector<GameObject*>* addedRoots, std::string* error) {
+    std::size_t base = scene.Objects().size();          // everything from here is new
+    GameObject* first = nullptr;
+    if (!ParseInto(scene, text, /*clear=*/false, &first, error)) return false;
+    const bool shift = (offset.x != 0.0f || offset.y != 0.0f || offset.z != 0.0f);
+    const auto& objs = scene.Objects();
+    for (std::size_t i = base; i < objs.size(); ++i) {
+        GameObject* go = objs[i].get();
+        // Roots of the merged set (parents were linked within the merge during parse).
+        if (go->transform && go->transform->Parent() == nullptr) {
+            if (shift) go->transform->localPosition = go->transform->localPosition + offset;
+            if (addedRoots) addedRoots->push_back(go);
+        }
+    }
+    return true;
+}
+
+bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const Vec3& offset,
+                                    std::vector<GameObject*>* addedRoots, std::string* error) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { if (error) *error = "cannot open " + path; return false; }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    std::string raw = ss.str();
+    std::string text = DataPack::Unpack(raw);
+    if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
+    return MergeFromText(scene, text, offset, addedRoots, error);
 }
 
 } // namespace okay

@@ -2209,6 +2209,23 @@ struct OkayScriptVM::Impl {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             return Value{(s && SceneManager::LoadNextScene(*s)) ? 1.0f : 0.0f};
         };
+        // Additively MERGE another scene into the running one (seamless worlds): the
+        // current scene is kept and the named scene's objects are added, offset by
+        // (x,y[,z]). load_scene_additive("Town", 50, 0) drops the Town chunk 50 units
+        // to the right of what's already loaded. Returns 1 if the merge was queued.
+        b["load_scene_additive"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            if (s && !a.empty()) {
+                std::string path = SceneManager::PathForName(a[0].AsString());
+                if (path.empty()) return Value{0.0f};
+                Vec3 off{0, 0, 0};
+                if (a.size() >= 4)      off = {a[1].AsFloat(), a[2].AsFloat(), a[3].AsFloat()};
+                else if (a.size() >= 3) off = {a[1].AsFloat(), a[2].AsFloat(), 0.0f};
+                s->RequestMerge(path, off);
+                return Value{1.0f};
+            }
+            return Value{0.0f};
+        };
         b["reload_scene"] = [this](std::vector<Value>&) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             return Value{(s && SceneManager::ReloadScene(*s)) ? 1.0f : 0.0f};

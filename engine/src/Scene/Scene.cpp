@@ -128,9 +128,21 @@ void Scene::Update(float deltaTime) {
         std::string path = m_pendingLoad;
         m_hasPendingLoad = false;
         m_pendingLoad.clear();
+        m_pendingMerges.clear();   // a full load supersedes queued merges
         if (SceneSerializer::LoadFromFile(*this, path)) {
             Start(); // run Awake/Start for the freshly loaded objects
         }
+    }
+
+    // Deferred additive merges (RequestMerge): fold another scene's objects into this
+    // one, then Start() — which only Awakes/Starts the newly added components.
+    if (!m_pendingMerges.empty()) {
+        auto merges = std::move(m_pendingMerges);
+        m_pendingMerges.clear();
+        bool any = false;
+        for (auto& m : merges)
+            if (SceneSerializer::MergeFromFile(*this, m.first, m.second)) any = true;
+        if (any) Start();
     }
 }
 

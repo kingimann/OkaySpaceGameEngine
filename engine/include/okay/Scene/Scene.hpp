@@ -49,6 +49,14 @@ public:
     void RequestLoad(const std::string& path) { m_pendingLoad = path; m_hasPendingLoad = true; }
     bool HasPendingLoad() const { return m_hasPendingLoad; }
 
+    /// Additively MERGE another .okayscene into this one at the end of the frame,
+    /// translated by `offset` — combine scenes into one seamless world without
+    /// replacing what's already here. Safe to call from a script/Update; the new
+    /// objects get Awake/Start on the next flush.
+    void RequestMerge(const std::string& path, const Vec3& offset = Vec3{0, 0, 0}) {
+        m_pendingMerges.push_back({path, offset});
+    }
+
     // ---- Queries -------------------------------------------------------
     GameObject* Find(const std::string& name) const;
     GameObject* FindWithTag(const std::string& tag) const;
@@ -155,6 +163,7 @@ private:
     std::vector<GameObject*> m_destroyQueue;
     std::string m_pendingLoad;
     bool        m_hasPendingLoad = false;
+    std::vector<std::pair<std::string, Vec3>> m_pendingMerges;   // deferred additive scene merges
 };
 
 } // namespace okay

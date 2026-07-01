@@ -26,6 +26,9 @@ public:
     void SetLanguage(const std::string& lang) { m_language = lang; }
     /// The last source compiled (retained for editing and serialization).
     const std::string& Source() const { return m_source; }
+    /// Replace the retained source WITHOUT compiling/executing it — used by the editor
+    /// when saving edits so the scene serializes the new text even before the next Run.
+    void SetSource(const std::string& source) { m_source = source; }
     /// Optional path to an external script file (edit in your IDE; Reload picks
     /// up changes). Empty for inline scripts.
     const std::string& Path() const { return m_path; }

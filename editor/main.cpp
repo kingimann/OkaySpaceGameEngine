@@ -2953,6 +2953,11 @@ void DrawProject(EditorState& ed) {
         if (ImGui::BeginPopupContextItem("itemctx")) {
             selected = full;
             if (ImGui::MenuItem("Open")) dbl = true;
+            // A direct, reliable "edit in Script Editor" for code files (in case a
+            // double-click was missed).
+            if (!isDir && (ext == ".okay" || ext == ".lua" || ext == ".cs")) {
+                if (ImGui::MenuItem("Edit Script")) { OpenScriptFileInEditor(full); g_showScriptEditor = true; }
+            }
             if (ImGui::MenuItem("Rename")) {
                 renameTarget = full;
                 std::strncpy(renameBuf, name.c_str(), sizeof(renameBuf) - 1);
@@ -3916,6 +3921,8 @@ struct ScriptCaret {
     int  gotoSelLen = 0;               // in: select this many chars from gotoPos
     bool toggleComment = false;        // in: toggle "// " on the caret's line
     std::string insert;                // in: insert this text at the caret (snippets)
+    std::string replaceAll;            // in: replace the WHOLE buffer (format/rename) —
+                                       // routed through the callback so ImGui undo stays intact
     bool autoPairs = true;             // auto-close brackets + auto-indent on Enter
     int  prevLen = -1;                 // buffer length last frame (to detect typing)
 };
@@ -3927,6 +3934,8 @@ static std::string g_acComplete;
 // the editor's caret doesn't move lines while the popup is open).
 static int g_acCount = 0;
 static int g_acIndex = 0;
+// Set by Esc in the editor to hide the popup until the typed word changes again.
+static bool g_acDismiss = false;
 
 static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
     auto* c = (ScriptCaret*)d->UserData;
@@ -3967,6 +3976,16 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             g_acIndex = up ? (g_acIndex - 1 + g_acCount) % g_acCount
                            : (g_acIndex + 1) % g_acCount;
         }
+        // Enter also accepts the highlighted completion (Rider-style). ImGui's
+        // multiline input already inserted a newline at the caret, so remove it first.
+        if ((ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))
+            && !g_acComplete.empty()) {
+            if (d->CursorPos > 0 && d->Buf[d->CursorPos - 1] == '\n') d->DeleteChars(d->CursorPos - 1, 1);
+            d->InsertChars(d->CursorPos, g_acComplete.c_str());
+            g_acComplete.clear(); g_acCount = 0;
+        }
+        // Esc dismisses the popup until the typed word changes.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_acDismiss = true;
     }
     // Go to line: move the caret to the start of the requested line.
     if (c->gotoLine > 0) {
@@ -3983,6 +4002,13 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         if (e > d->BufTextLen) e = d->BufTextLen;
         d->CursorPos = e; d->SelectionStart = p; d->SelectionEnd = e;
         c->gotoPos = -1; c->gotoSelLen = 0;
+    }
+    // Replace the whole buffer (format / rename) through ImGui's own edit ops so the
+    // native undo/redo stack stays consistent (unlike an external buffer swap).
+    if (!c->replaceAll.empty()) {
+        d->DeleteChars(0, d->BufTextLen);
+        d->InsertChars(0, c->replaceAll.c_str());
+        c->replaceAll.clear();
     }
     // Insert a snippet/template at the caret.
     if (!c->insert.empty()) {
@@ -4718,6 +4744,10 @@ void DrawScriptEditor(EditorState& ed) {
         auto filePath = [&]() {
             return sc->Path().empty() ? go->name + "." + extide::ExtFor(sc->Language()) : sc->Path();
         };
+        // Caret state + pending editor commands (applied in the InputText callback so
+        // they act on the live buffer). Declared before the toolbar so its buttons
+        // (Format/Rename/comment/...) can drive it; the callback reports line/col back.
+        static ScriptCaret caret;
 
         // --- Toolbar (VS Code-style title row): file + Run / Save / Reload ----
         std::string fname = sc->Path().empty() ? (go->name + "." + extide::ExtFor(sc->Language()))
@@ -4742,10 +4772,19 @@ void DrawScriptEditor(EditorState& ed) {
         // Save the current script to disk (button + Ctrl+S). One place so both agree.
         auto doSave = [&]() {
             std::string p = filePath();
+            // A script with no path yet: put it in the project's Assets folder so it
+            // lands somewhere findable (not the editor's working directory).
+            if (sc->Path().empty() && !ed.projectDir().empty()) {
+                std::error_code sc_ec;
+                std::filesystem::path assets = std::filesystem::path(ed.projectDir()) / "Assets";
+                if (std::filesystem::is_directory(assets, sc_ec)) p = (assets / p).string();
+            }
             if (extide::WriteFile(p, buf.data())) {
-                sc->SetPath(p); ConsoleLog("Saved " + p);
+                sc->SetPath(p);
+                sc->SetSource(buf.data());        // persist edits so a scene save keeps them
+                ConsoleLog("Saved " + p);
                 g_scriptSaved[sc] = buf.data();    // clears the modified marker
-            } else ConsoleLog("Save failed");
+            } else ConsoleLog("Save failed: " + p, 2);
             ed.dirty = true;
         };
         if (ImGui::SmallButton("Save")) doSave();
@@ -4767,8 +4806,8 @@ void DrawScriptEditor(EditorState& ed) {
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("Format")) {          // re-indent by brace depth
-            std::string f = FormatOkayScript(buf.data());
-            SetCodeBuffer(sc, f); ed.dirty = true; ConsoleLog("Formatted script");
+            caret.replaceAll = FormatOkayScript(buf.data());   // applied via callback / leftover path
+            ed.dirty = true; ConsoleLog("Formatted script");
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Re-indent the whole document (4 spaces / level)");
         ImGui::SameLine();
@@ -4795,10 +4834,6 @@ void DrawScriptEditor(EditorState& ed) {
         if (ImGui::SmallButton("A+")) s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom code (Ctrl+scroll in the editor)");
 
-        // Caret state + pending editor commands (applied in the InputText callback
-        // so they act on the live buffer). Declared here so the toolbar can drive
-        // them; reported back (line/col) by the callback below.
-        static ScriptCaret caret;
         ImGui::SameLine();
         if (ImGui::SmallButton("//")) caret.toggleComment = true;   // comment/uncomment line
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle // comment on the current line (Ctrl+/)");
@@ -4895,8 +4930,7 @@ void DrawScriptEditor(EditorState& ed) {
                                        ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
             if ((ImGui::Button("Rename##do") || go) && s_renameTo[0] && s_renameFrom != s_renameTo) {
-                std::string renamed = RenameIdentifier(buf.data(), s_renameFrom, s_renameTo);
-                SetCodeBuffer(sc, renamed); ed.dirty = true;
+                caret.replaceAll = RenameIdentifier(buf.data(), s_renameFrom, s_renameTo); ed.dirty = true;
                 ConsoleLog("Renamed " + s_renameFrom + " -> " + std::string(s_renameTo));
                 ImGui::CloseCurrentPopup();
             }
@@ -5027,7 +5061,7 @@ void DrawScriptEditor(EditorState& ed) {
             std::vector<Cmd> cmds = {
                 {"Run (compile & execute)", [&]{ bool ok = sc->LoadSource(buf.data(), &s_error); if (ok) s_error.clear(); ed.dirty = true; }},
                 {"Save", [&]{ std::string p = filePath(); if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
-                {"Format Document", [&]{ SetCodeBuffer(sc, FormatOkayScript(buf.data())); ed.dirty = true; }},
+                {"Format Document", [&]{ caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }},
                 {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); SetCodeBuffer(sc, s); std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
@@ -5124,9 +5158,13 @@ void DrawScriptEditor(EditorState& ed) {
             ScriptCaretCallback, &caret);
         bool editorActive = ImGui::IsItemActive();   // for the custom caret (text is hidden when highlighting)
         bool codeHovered = ImGui::IsItemHovered();    // for the hover-doc tooltip below
-        // A snippet chosen from the toolbar menu steals focus from the editor, so
-        // the callback won't run — splice it into the buffer at the caret here.
-        if (!caret.insert.empty() && !ImGui::IsItemActive()) {
+        // Toolbar buttons (Format/Snippet/Rename) steal focus from the editor, so its
+        // CallbackAlways won't run this frame — apply any pending edit to the buffer
+        // directly here (ImGui re-reads buf while the item is inactive).
+        if (!editorActive && !caret.replaceAll.empty()) {
+            SetCodeBuffer(sc, caret.replaceAll); caret.replaceAll.clear(); ed.dirty = true;
+        }
+        if (!caret.insert.empty() && !editorActive) {
             std::string s(buf.data());
             int p = caret.pos < 0 ? 0 : (caret.pos > (int)s.size() ? (int)s.size() : caret.pos);
             s.insert((std::size_t)p, caret.insert);
@@ -5382,10 +5420,10 @@ void DrawScriptEditor(EditorState& ed) {
             // Reset the highlight to the best match whenever the typed word changes.
             static std::string s_acKey;
             std::string acKey = receiver + "|" + prefix;
-            if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; }
+            if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; g_acDismiss = false; }  // typing re-arms the popup
             // Members list from the first keystroke (or right after the dot); plain
             // words still need 2+ chars so the popup doesn't fire constantly.
-            if (memberMode || prefix.size() >= 2) {
+            if (!g_acDismiss && (memberMode || prefix.size() >= 2)) {
                 std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
                 // Rank prefix matches (case-sensitive first, then case-insensitive)
                 // ahead of looser ones so the top item is the best Tab target.

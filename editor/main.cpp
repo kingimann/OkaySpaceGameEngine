@@ -2293,6 +2293,39 @@ void DrawMenuAndToolbar(EditorState& ed) {
 }
 
 // Full-window host that hosts the dockspace + menu/toolbar.
+// A slim bottom status bar (Unity/Godot-style): the current selection on the left,
+// object count · active tool · edit/play mode · FPS on the right.
+void DrawStatusBar(EditorState& ed) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.135f, 0.135f, 0.145f, 1.0f));
+    ImGui::BeginChild("##statusbar", ImVec2(0, ImGui::GetFrameHeight()), false,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::AlignTextToFramePadding();
+    ImGui::Indent(8.0f);
+    if (GameObject* sel = ed.selected()) {
+        ImGui::TextColored(AccentCol(1.0f), "\xE2\x97\x8F"); ImGui::SameLine(0, 6);
+        const char* ty = sel->GetComponent<Camera>() ? "Camera"
+                       : sel->GetComponent<MeshRenderer>() ? "Mesh"
+                       : sel->GetComponent<SpriteRenderer>() ? "Sprite"
+                       : sel->GetComponent<TextRenderer>() ? "Text"
+                       : sel->GetComponent<Light>() ? "Light" : "Object";
+        ImGui::Text("%s", sel->name.c_str());
+        ImGui::SameLine(0, 6); ImGui::TextDisabled("(%s)", ty);
+    } else {
+        ImGui::TextDisabled("No selection");
+    }
+    const char* toolName = g_tool == Tool::Move ? "Move" : g_tool == Tool::Rotate ? "Rotate" : "Scale";
+    char right[144];
+    std::snprintf(right, sizeof(right), "%d objects    %s    %s    %.0f FPS",
+                  (int)ed.scene().Objects().size(), toolName,
+                  ed.isPlaying() ? "PLAY" : "EDIT", ImGui::GetIO().Framerate);
+    float rw = ImGui::CalcTextSize(right).x;
+    ImGui::SameLine(ImGui::GetWindowWidth() - rw - 14.0f);
+    ImGui::TextDisabled("%s", right);
+    ImGui::Unindent(8.0f);
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
 void DrawDockSpace(EditorState& ed) {
     static bool first = true;
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -2320,7 +2353,9 @@ void DrawDockSpace(EditorState& ed) {
             g_resetLayout = false;
         }
     }
-    ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
+    // Reserve one row at the bottom for the status bar, then draw it there.
+    ImGui::DockSpace(dockId, ImVec2(0, -ImGui::GetFrameHeight()), ImGuiDockNodeFlags_None);
+    DrawStatusBar(ed);
 
     DrawMenuAndToolbar(ed);
     ImGui::End();

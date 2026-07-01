@@ -579,6 +579,9 @@ int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
 bool g_showUIOverlay = true;     // Scene view: draw the screen-space UI (Canvas) overlay
 bool g_uiOnlyMode = false;       // Scene view: show ONLY the UI on a flat screen canvas
+bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
+bool g_uiShowGuides = true;      // UI-Only: draw the thirds/center alignment guides
+bool g_uiShowSafeArea = false;   // UI-Only: draw a ~5% safe-area inset (TV/notch margin)
 int  g_accent = 0;               // accent colour preset (see kAccents)
 
 // Selectable editor accent colours (the highlight used on selections, buttons,
@@ -17393,6 +17396,30 @@ void DrawViewport(EditorState& ed) {
             }
         }
     }
+    // ---- UI-Only tool row: zoom, layout guides, grid snap, safe area -----------
+    if (g_uiOnlyMode) {
+        ImGui::TextDisabled("UI:"); ImGui::SameLine();
+        if (ImGui::SmallButton("-")) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom - 0.1f, 0.25f, 4.0f);
+        ImGui::SameLine(); ImGui::TextDisabled("%.0f%%", g_uiEditZoom * 100.0f); ImGui::SameLine();
+        if (ImGui::SmallButton("+")) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom + 0.1f, 0.25f, 4.0f);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Fit")) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0, 0); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset zoom & pan to the true 1:1 layout");
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        if (AccentToggleButton("Guides", g_uiShowGuides)) g_uiShowGuides = !g_uiShowGuides;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Thirds + center alignment guides");
+        ImGui::SameLine();
+        if (AccentToggleButton("All Bounds", g_uiShowAllBounds)) g_uiShowAllBounds = !g_uiShowAllBounds;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Outline every UI element's rect so you can see the whole layout");
+        ImGui::SameLine();
+        if (AccentToggleButton("Safe Area", g_uiShowSafeArea)) g_uiShowSafeArea = !g_uiShowSafeArea;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show a 5% safe-area inset (TV overscan / phone notch margin)");
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        if (AccentToggleButton("Snap", g_snap)) g_snap = !g_snap;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap UI drags/resizes to the grid");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+        ImGui::DragInt("grid##ui", &g_uiGrid, 1.0f, 1, 128, "%dpx");
+    }
     // Keyboard shortcuts W/E/R when the Scene window is focused (and not typing).
     if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_W, false)) g_tool = Tool::Move;
@@ -17531,16 +17558,40 @@ void DrawViewport(EditorState& ed) {
         dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(28, 28, 32, 255));
         dl->AddRect(canvasPos, canvasEnd, IM_COL32(90, 95, 110, 200), 0.0f, 0, 1.5f);
         // Rule-of-thirds guides + a brighter center cross, to help align UI.
-        for (int i = 1; i <= 2; ++i) {
-            float gx = canvasPos.x + canvasSize.x * (i / 3.0f);
-            float gy = canvasPos.y + canvasSize.y * (i / 3.0f);
-            dl->AddLine(ImVec2(gx, canvasPos.y), ImVec2(gx, canvasEnd.y), IM_COL32(255, 255, 255, 12));
-            dl->AddLine(ImVec2(canvasPos.x, gy), ImVec2(canvasEnd.x, gy), IM_COL32(255, 255, 255, 12));
+        if (g_uiShowGuides) {
+            for (int i = 1; i <= 2; ++i) {
+                float gx = canvasPos.x + canvasSize.x * (i / 3.0f);
+                float gy = canvasPos.y + canvasSize.y * (i / 3.0f);
+                dl->AddLine(ImVec2(gx, canvasPos.y), ImVec2(gx, canvasEnd.y), IM_COL32(255, 255, 255, 12));
+                dl->AddLine(ImVec2(canvasPos.x, gy), ImVec2(canvasEnd.x, gy), IM_COL32(255, 255, 255, 12));
+            }
+            ImVec2 ctr(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
+            dl->AddLine(ImVec2(ctr.x, canvasPos.y), ImVec2(ctr.x, canvasEnd.y), IM_COL32(255, 255, 255, 24));
+            dl->AddLine(ImVec2(canvasPos.x, ctr.y), ImVec2(canvasEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
         }
-        ImVec2 ctr(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
-        dl->AddLine(ImVec2(ctr.x, canvasPos.y), ImVec2(ctr.x, canvasEnd.y), IM_COL32(255, 255, 255, 24));
-        dl->AddLine(ImVec2(canvasPos.x, ctr.y), ImVec2(canvasEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
+        // Safe-area inset (5%): where important UI should stay on TVs / notched phones.
+        if (g_uiShowSafeArea) {
+            float mx = canvasSize.x * 0.05f, my = canvasSize.y * 0.05f;
+            dl->AddRect(ImVec2(canvasPos.x + mx, canvasPos.y + my),
+                        ImVec2(canvasEnd.x - mx, canvasEnd.y - my),
+                        IM_COL32(90, 220, 130, 130), 0.0f, 0, 1.5f);
+        }
         DrawUIOverlay(ed, dl, canvasPos, canvasSize, /*gameView=*/false);
+        // Outline every UI element's rect so the whole layout is visible at a glance.
+        if (g_uiShowAllBounds) {
+            for (const auto& up : ed.scene().Objects()) {
+                GameObject* g = up.get();
+                if (!g || !g->active || g == ed.selected()) continue;
+                UIRect r = GetUIRect(g);
+                if (!r.sizePtr && !r.position) continue;   // not a UI widget
+                Vec2 o, sz;
+                if (GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) {
+                    dl->AddRect(ImVec2(canvasPos.x + o.x, canvasPos.y + o.y),
+                                ImVec2(canvasPos.x + o.x + sz.x, canvasPos.y + o.y + sz.y),
+                                IM_COL32(120, 160, 220, 90), 0.0f, 0, 1.0f);
+                }
+            }
+        }
     } else if (ed.view3D) {
         DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
     } else {

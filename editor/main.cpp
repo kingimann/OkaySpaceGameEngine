@@ -598,6 +598,24 @@ static ImVec4 AccentCol(float alpha = 1.0f) {
     const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
     return ImVec4(ap.r, ap.g, ap.b, alpha);
 }
+// A tasteful category tint for a component header, derived from its label — so the
+// Inspector groups visually by system (physics/render/audio/UI/animation/script)
+// while staying cohesive. Falls back to the theme accent.
+static ImVec4 CategoryColor(const char* label) {
+    auto has = [&](const char* k) { return std::strstr(label, k) != nullptr; };
+    if (has("Collider") || has("Rigidbody") || has("Joint"))          return ImVec4(0.42f, 0.80f, 0.50f, 1.0f); // physics — green
+    if (has("Audio"))                                                 return ImVec4(0.95f, 0.62f, 0.30f, 1.0f); // audio — orange
+    if (has("Animat") || has("IK") || has("Root Motion"))            return ImVec4(0.30f, 0.78f, 0.80f, 1.0f); // animation — teal
+    if (has("Script") || has("Visual Script"))                       return ImVec4(0.90f, 0.80f, 0.35f, 1.0f); // scripting — yellow
+    if (has("UI ") || has("Canvas") || has("Button") || has("Panel") || has("Slider") ||
+        has("Toggle") || has("Tabs") || has("Dropdown") || has("Scroll") || has("Layout") ||
+        has("Progress") || has("Rating") || has("Stepper") || has("Input Field") || has("Tooltip"))
+                                                                       return ImVec4(0.66f, 0.52f, 0.96f, 1.0f); // UI — violet
+    if (has("Renderer") || has("Sprite") || has("Mesh") || has("Text") || has("Particle") ||
+        has("Light") || has("Camera") || has("Tilemap") || has("Terrain") || has("Water"))
+                                                                       return ImVec4(0.42f, 0.66f, 0.98f, 1.0f); // rendering — blue
+    return AccentCol(1.0f);
+}
 // A button that shows an accent "pressed" look while `active` — for toolbar
 // toggles (transform tools, Local/Global, Snap, edit modes) so the active state
 // reads consistently in the theme colour instead of ad-hoc blues.
@@ -7175,9 +7193,10 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     // titled card, and keeps the panel legible when many are stacked.
     {
         ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImVec4 barCol = CategoryColor(label); barCol.w = 0.95f;
         ImGui::GetWindowDrawList()->AddRectFilled(
             mn, ImVec2(mn.x + 3.0f, mx.y),
-            ImGui::GetColorU32(en ? AccentCol(0.95f) : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)),
+            ImGui::GetColorU32(en ? barCol : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)),
             1.5f);
     }
     sCompOpen[label] = open;

@@ -4237,6 +4237,11 @@ static const std::string* ScriptSignature(const std::string& name) {
         {"map_has","map_has(m, \"key\")"}, {"map_remove","map_remove(m, \"key\")"}, {"map_keys","map_keys(m)"},
         {"map_values","map_values(m)"}, {"map_count","map_count(m)"}, {"map_clear","map_clear(m)"},
         {"map_merge","map_merge(dst, src)"},
+        // easing curves (t in 0..1)
+        {"ease_in","ease_in(t)"}, {"ease_out","ease_out(t)"}, {"ease_in_out","ease_in_out(t)"},
+        {"ease_in_cubic","ease_in_cubic(t)"}, {"ease_out_cubic","ease_out_cubic(t)"},
+        {"ease_in_out_cubic","ease_in_out_cubic(t)"}, {"ease_back","ease_back(t)"},
+        {"ease_elastic","ease_elastic(t)"}, {"ease_bounce","ease_bounce(t)"},
         // higher-order array ops (named-function callbacks)
         {"call","call(\"fn\"[, args...])"}, {"map_fn","map_fn(arr, \"fn\")"}, {"filter_fn","filter_fn(arr, \"fn\")"},
         {"reduce_fn","reduce_fn(arr, \"fn\", init)"}, {"for_each","for_each(arr, \"fn\")"}, {"find_fn","find_fn(arr, \"fn\")"},

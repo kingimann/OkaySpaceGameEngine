@@ -563,16 +563,28 @@ struct ForEachStmt : Stmt {
     std::string var; ExprPtr iterable; std::vector<StmtPtr> body;
     void Exec(Runtime& r) override {
         Value coll = iterable->Eval(r);
-        auto arr = coll.AsArray();
-        if (!arr) return;
         r.Define(var, Value{}); // loop variable lives in the current scope
-        // Iterate a snapshot of the size so push during iteration is bounded.
-        std::size_t n = arr->size();
-        for (std::size_t i = 0; i < n && i < arr->size(); ++i) {
-            r.Assign(var, (*arr)[i]);
-            try { for (auto& s : body) s->Exec(r); }
-            catch (ContinueSignal&) {}
-            catch (BreakSignal&) { break; }
+        if (auto arr = coll.AsArray()) {
+            // Iterate a snapshot of the size so push during iteration is bounded.
+            std::size_t n = arr->size();
+            for (std::size_t i = 0; i < n && i < arr->size(); ++i) {
+                r.Assign(var, (*arr)[i]);
+                try { for (auto& s : body) s->Exec(r); }
+                catch (ContinueSignal&) {}
+                catch (BreakSignal&) { break; }
+            }
+        } else if (auto m = coll.AsMap()) {
+            // foreach over a map yields its keys (like other scripting languages);
+            // use map_get(m, key) in the body to read each value. Snapshot the keys
+            // so mutation during iteration is safe.
+            std::vector<std::string> keys; keys.reserve(m->size());
+            for (auto& kv : *m) keys.push_back(kv.first);
+            for (auto& k : keys) {
+                r.Assign(var, Value{k});
+                try { for (auto& s : body) s->Exec(r); }
+                catch (ContinueSignal&) {}
+                catch (BreakSignal&) { break; }
+            }
         }
     }
 };
@@ -2613,6 +2625,41 @@ struct OkayScriptVM::Impl {
                   v  = a.size() > 2 ? a[2].AsFloat() : 0;
             if (hi - lo == 0.0f) return Value{0.0f};
             return Value{Mathf::Clamp01((v - lo) / (hi - lo))};
+        };
+        // ---- Easing curves: map a normalized time t (0..1) to an eased 0..1 ----
+        // For tweening/animation. Pass the raw progress; multiply the result into a
+        // range yourself, or use with lerp(a, b, ease_out(t)).
+        auto E = [](std::vector<Value>& a) { return Mathf::Clamp01(a.empty() ? 0.0f : a[0].AsFloat()); };
+        b["ease_in"]  = [E](std::vector<Value>& a) { float t = E(a); return Value{t * t}; };
+        b["ease_out"] = [E](std::vector<Value>& a) { float t = E(a); return Value{1.0f - (1.0f - t) * (1.0f - t)}; };
+        b["ease_in_out"] = [E](std::vector<Value>& a) {
+            float t = E(a);
+            return Value{t < 0.5f ? 2.0f * t * t : 1.0f - 0.5f * (2.0f - 2.0f * t) * (2.0f - 2.0f * t)};
+        };
+        b["ease_in_cubic"]  = [E](std::vector<Value>& a) { float t = E(a); return Value{t * t * t}; };
+        b["ease_out_cubic"] = [E](std::vector<Value>& a) { float t = 1.0f - E(a); return Value{1.0f - t * t * t}; };
+        b["ease_in_out_cubic"] = [E](std::vector<Value>& a) {
+            float t = E(a);
+            if (t < 0.5f) return Value{4.0f * t * t * t};
+            float f = -2.0f * t + 2.0f;
+            return Value{1.0f - 0.5f * f * f * f};
+        };
+        b["ease_back"] = [E](std::vector<Value>& a) {   // slight overshoot backward then in
+            float t = E(a); const float c1 = 1.70158f, c3 = c1 + 1.0f;
+            return Value{c3 * t * t * t - c1 * t * t};
+        };
+        b["ease_elastic"] = [E](std::vector<Value>& a) {  // springy ease-out
+            float t = E(a);
+            if (t == 0.0f || t == 1.0f) return Value{t};
+            const float c4 = 2.0944f;  // (2*pi)/3
+            return Value{Mathf::Pow(2.0f, -10.0f * t) * std::sin((t * 10.0f - 0.75f) * c4) + 1.0f};
+        };
+        b["ease_bounce"] = [E](std::vector<Value>& a) {   // bounce ease-out
+            float t = E(a); const float n1 = 7.5625f, d1 = 2.75f;
+            if (t < 1.0f / d1)      return Value{n1 * t * t};
+            else if (t < 2.0f / d1) { t -= 1.5f / d1;  return Value{n1 * t * t + 0.75f}; }
+            else if (t < 2.5f / d1) { t -= 2.25f / d1; return Value{n1 * t * t + 0.9375f}; }
+            else                    { t -= 2.625f / d1; return Value{n1 * t * t + 0.984375f}; }
         };
         // Loop t into [0,length) (Mathf.Repeat).
         b["math_repeat"] = [](std::vector<Value>& a) {

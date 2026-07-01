@@ -321,5 +321,43 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("called").AsFloat(), 42.0f, 0.001f);
     }
 
+    // --- foreach over arrays AND maps; easing curves ---
+    {
+        const char* src = R"SCRIPT(
+            var xs = array(10, 20, 30);
+            var total = 0;
+            foreach (var x in xs) { total += x; }   // 60
+
+            var m = map();
+            map_set(m, "a", 1);
+            map_set(m, "b", 2);
+            map_set(m, "c", 4);
+            var ksum = 0;              // sum of values reached via keys
+            var klen = 0;              // number of keys seen
+            foreach (var k in m) { ksum += map_get(m, k); klen += 1; }  // 7, 3
+
+            // Easing endpoints: every curve maps 0 -> 0 and 1 -> 1.
+            var i0 = ease_in(0);   var i1 = ease_in(1);
+            var o0 = ease_out(0);  var o1 = ease_out(1);
+            var mid = ease_in(0.5);          // 0.25
+            var b1 = ease_bounce(1);         // 1
+            var c1 = ease_in_out_cubic(1);   // 1
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("total").AsFloat(), 60.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("ksum").AsFloat(), 7.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("klen").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("i0").AsFloat(), 0.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("i1").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("o0").AsFloat(), 0.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("o1").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("mid").AsFloat(), 0.25f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("b1").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("c1").AsFloat(), 1.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

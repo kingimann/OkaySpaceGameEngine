@@ -467,5 +467,32 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("score").AsFloat(), 40.0f, 0.001f);
     }
 
+    // --- Vector constructors and helpers ---
+    {
+        const char* src = R"SCRIPT(
+            var a = vec3(1, 2, 3);
+            var b = vec3(4, 5, 6);
+            var d = vec_dot(a, b);            // 1*4 + 2*5 + 3*6 = 32
+            var sum = vec_add(a, b);          // (5,7,9)
+            var sx = vec_x(sum);              // 5
+            var sz = vec_z(sum);              // 9
+            var len = vec_length(vec3(3, 4, 0));   // 5
+            var cr = vec_cross(vec3(1,0,0), vec3(0,1,0));  // (0,0,1)
+            var crz = vec_z(cr);              // 1
+            var clamped = vec_clamp_len(vec3(3, 4, 0), 2.5);  // magnitude 2.5
+            var clen = vec_length(clamped);   // 2.5
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("d").AsFloat(), 32.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("sx").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("sz").AsFloat(), 9.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("len").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("crz").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("clen").AsFloat(), 2.5f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

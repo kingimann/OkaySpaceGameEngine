@@ -4238,6 +4238,12 @@ static const std::string* ScriptSignature(const std::string& name) {
         {"map_has","map_has(m, \"key\")"}, {"map_remove","map_remove(m, \"key\")"}, {"map_keys","map_keys(m)"},
         {"map_values","map_values(m)"}, {"map_count","map_count(m)"}, {"map_clear","map_clear(m)"},
         {"map_merge","map_merge(dst, src)"},
+        // vectors
+        {"vec3","vec3(x, y, z)"}, {"vec2","vec2(x, y)"}, {"vec_add","vec_add(a, b)"}, {"vec_sub","vec_sub(a, b)"},
+        {"vec_scale","vec_scale(v, s)"}, {"vec_length","vec_length(v)"}, {"vec_dot","vec_dot(a, b)"},
+        {"vec_cross","vec_cross(a, b)"}, {"vec_normalize","vec_normalize(v)"}, {"vec_distance","vec_distance(a, b)"},
+        {"vec_lerp","vec_lerp(a, b, t)"}, {"vec_reflect","vec_reflect(dir, normal)"},
+        {"vec_clamp_len","vec_clamp_len(v, maxLen)"}, {"vec_x","vec_x(v)"}, {"vec_y","vec_y(v)"}, {"vec_z","vec_z(v)"},
         // easing curves (t in 0..1)
         {"ease_in","ease_in(t)"}, {"ease_out","ease_out(t)"}, {"ease_in_out","ease_in_out(t)"},
         {"ease_in_cubic","ease_in_cubic(t)"}, {"ease_out_cubic","ease_out_cubic(t)"},

@@ -4120,6 +4120,35 @@ struct OkayScriptVM::Impl {
         };
         // Vector math on Vec3 values (from Vector3(...)/new Vector3(...)). Read
         // components with v.x/v.y/v.z (see property access) or vec_x/y/z(v).
+        // Construct a vector value from components: vec3(x, y, z) / vec2(x, y).
+        b["vec3"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
+                              a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                              a.size() > 2 ? a[2].AsFloat() : 0.0f}};
+        };
+        b["vec2"] = [](std::vector<Value>& a) -> Value {
+            return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f}};
+        };
+        b["vec_cross"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{Vec3::Zero};
+            Vec3 u = a[0].AsVec3(), v = a[1].AsVec3();
+            return Value{Vec3{u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x}};
+        };
+        b["vec_reflect"] = [](std::vector<Value>& a) -> Value {
+            // Reflect direction d about a normal n:  d - 2*(d·n)*n.
+            if (a.size() < 2) return Value{Vec3::Zero};
+            Vec3 d = a[0].AsVec3(), n = a[1].AsVec3();
+            float dn = d.x * n.x + d.y * n.y + d.z * n.z;
+            return Value{Vec3{d.x - 2.0f * dn * n.x, d.y - 2.0f * dn * n.y, d.z - 2.0f * dn * n.z}};
+        };
+        b["vec_clamp_len"] = [](std::vector<Value>& a) -> Value {
+            // Clamp a vector's magnitude to at most maxLen (Vector3.ClampMagnitude).
+            if (a.empty()) return Value{Vec3::Zero};
+            Vec3 v = a[0].AsVec3(); float maxLen = a.size() > 1 ? a[1].AsFloat() : 1.0f;
+            float m = v.Magnitude();
+            if (m > maxLen && m > 0.0001f) { float s = maxLen / m; v = Vec3{v.x * s, v.y * s, v.z * s}; }
+            return Value{v};
+        };
         b["vec_add"]   = [](std::vector<Value>& a) -> Value { return Value{(a.size() > 0 ? a[0].AsVec3() : Vec3::Zero) + (a.size() > 1 ? a[1].AsVec3() : Vec3::Zero)}; };
         b["vec_sub"]   = [](std::vector<Value>& a) -> Value { return Value{(a.size() > 0 ? a[0].AsVec3() : Vec3::Zero) - (a.size() > 1 ? a[1].AsVec3() : Vec3::Zero)}; };
         b["vec_scale"] = [](std::vector<Value>& a) -> Value { return Value{(a.size() > 0 ? a[0].AsVec3() : Vec3::Zero) * (a.size() > 1 ? a[1].AsFloat() : 1.0f)}; };

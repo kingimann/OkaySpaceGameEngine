@@ -1055,6 +1055,23 @@ static void TagSubtreeScene(GameObject* go, const std::string& scene) {
         for (Transform* c : go->transform->Children())
             if (c && c->gameObject) TagSubtreeScene(c->gameObject, scene);
 }
+
+// Merge a .okayscene file into the current scene (additive) at the origin, tag the
+// new subtree with the scene's name, select its first root and log. Shared by
+// File > Merge Scene into Current and the Hierarchy drag-and-drop.
+static void MergeSceneIntoCurrent(EditorState& ed, const std::string& path) {
+    ed.PushUndo();
+    std::string label = std::filesystem::path(path).stem().string();
+    std::vector<GameObject*> roots; std::string err;
+    if (SceneSerializer::MergeFromFile(ed.scene(), path, okay::Vec3{0, 0, 0}, &roots, &err)) {
+        for (GameObject* r : roots) TagSubtreeScene(r, label);
+        if (!roots.empty()) ed.Select(roots.front());
+        ed.dirty = true;
+        ConsoleLog("Merged " + std::to_string(roots.size()) + " object(s) from " + label);
+    } else {
+        ConsoleLog("Merge failed: " + err, 2);
+    }
+}
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
 int   g_spriteHandle = -1;   // 0..7 sprite resize handle being dragged in the 2D view
 
@@ -1841,21 +1858,12 @@ void DrawMenuAndToolbar(EditorState& ed) {
             // tagged with its name so the Hierarchy shows where it starts/ends.
             const char* filt[1] = {"*.okayscene"};
             const char* p = tinyfd_openFileDialog("Merge scene into current", "", 1, filt, "OkaySpace scene", 0);
-            if (p) {
-                ed.PushUndo();
-                std::string label = std::filesystem::path(p).stem().string();
-                std::vector<GameObject*> roots; std::string err;
-                if (SceneSerializer::MergeFromFile(ed.scene(), p, okay::Vec3{0, 0, 0}, &roots, &err)) {
-                    for (GameObject* r : roots) TagSubtreeScene(r, label);   // mark the merged subtree
-                    if (!roots.empty()) ed.Select(roots.front());
-                    ed.dirty = true;
-                    ConsoleLog("Merged " + std::to_string(roots.size()) + " object(s) from " + label);
-                } else ConsoleLog("Merge failed: " + err, 2);
-            }
+            if (p) MergeSceneIntoCurrent(ed, p);
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Combine another scene into this one to build a seamless world.\n"
-                              "The Hierarchy marks where each merged scene begins.");
+                              "The Hierarchy marks where each merged scene begins.\n"
+                              "Tip: you can also drag a .okayscene from Project onto the Hierarchy.");
         ImGui::Separator();
         if (ImGui::BeginMenu("Autosave")) {
             ImGui::MenuItem("Enabled", nullptr, &g_autosave);
@@ -7169,6 +7177,8 @@ void DrawHierarchy(EditorState& ed) {
                         if (auto* tr = node->GetComponent<TextRenderer>())   tr->fontPath = path;
                         else if (auto* bt = node->GetComponent<UIButton>())  bt->fontPath = path;
                         ed.dirty = true; ConsoleLog("Set font on " + node->name);
+                    } else if (ext == ".okayscene") {      // MERGE the scene into this one
+                        MergeSceneIntoCurrent(ed, path);
                     }
                 }
                 ImGui::EndDragDropTarget();
@@ -7297,6 +7307,22 @@ void DrawHierarchy(EditorState& ed) {
             }
         };
         drawNode(go);
+    }
+    // Drop a .okayscene from the Project window onto the empty hierarchy area to MERGE
+    // it into the current scene (combine scenes). The Dummy fills the leftover space so
+    // there's always a drop target below the last row.
+    {
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImGui::Dummy(ImVec2(-1.0f, avail.y > 24.0f ? avail.y : 24.0f));
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                std::string path((const char*)ap->Data);
+                std::string ext;
+                if (auto d = path.find_last_of('.'); d != std::string::npos) ext = Lower(path.substr(d));
+                if (ext == ".okayscene") MergeSceneIntoCurrent(ed, path);
+            }
+            ImGui::EndDragDropTarget();
+        }
     }
     g_hierExpand = 0;   // expand/collapse-all is a one-frame request
     // Right-click empty space to create objects.
@@ -8046,6 +8072,16 @@ static void DrawAnimationEditor(EditorState& ed) {
     ImGui::End();
 }
 
+// Defined below (the Inspector's per-Action editor: op dropdown + friendly args).
+// Forward-declared so the Flow Graph can reuse it to edit a node in place.
+static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nops,
+                          int id, bool& dirty, Scene* scene);
+
+// Flow-graph node selection (which Action a clicked node edits), keyed per list.
+static void* g_flowSelAl = nullptr;
+static int   g_flowSelKind = 0;   // 0 none, 1 condition, 2 instruction
+static int   g_flowSelIdx  = -1;
+
 static void DrawFlowGraph(EditorState& ed) {
     if (!g_showFlowGraph) return;
     if (!ImGui::Begin("Flow Graph", &g_showFlowGraph, ImGuiWindowFlags_HorizontalScrollbar)) { ImGui::End(); return; }
@@ -8064,11 +8100,25 @@ static void DrawFlowGraph(EditorState& ed) {
     int delIns = -1, delCond = -1;            // node-delete requests, applied after layout
     static std::unordered_map<void*, ImVec2> panMap;
     ImVec2& pan = panMap[(void*)al];
-    if (ImGui::SmallButton("+ Instruction")) { al->instructions.push_back({kInstrOps[0].op, {}}); ed.dirty = true; }
+    if (ImGui::SmallButton("+ Instruction")) {
+        al->instructions.push_back({kInstrOps[0].op, {}});
+        g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)al->instructions.size() - 1;
+        ImGui::OpenPopup("##flownodeedit");   // open the editor on the fresh node
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run. Click any node to choose what it does.");
     ImGui::SameLine();
-    if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({kCondOps[0].op, {}}); ed.dirty = true; }
+    if (ImGui::SmallButton("+ Condition")) {
+        al->conditions.push_back({kCondOps[0].op, {}});
+        g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)al->conditions.size() - 1;
+        ImGui::OpenPopup("##flownodeedit");
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a gate — the actions run only if every condition passes. Click a node to pick it.");
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset View")) pan = ImVec2(0, 0);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(click a node to edit)");
     ImGui::SameLine();
     if (al->IsRunning()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.6f, 1.0f), "● running");
     else                 ImGui::TextDisabled("○ idle");
@@ -8103,19 +8153,21 @@ static void DrawFlowGraph(EditorState& ed) {
     };
     const float NW = 190.0f, NH = 46.0f, GAPY = 72.0f;
     // Draw a node; *del set true if its little ✕ was clicked (cond/instruction only).
-    auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col, bool* del) -> ImVec2 {
+    auto node = [&](const std::string& k, ImVec2 def, const char* title, const std::string& sub, ImU32 col, bool* del, bool* clicked = nullptr) -> ImVec2 {
         if (pos.find(k) == pos.end()) pos[k] = def;
         ImVec2 r = pos[k];
         ImVec2 p{cp.x + r.x + pan.x, cp.y + r.y + pan.y};
         ImGui::SetCursorScreenPos(p);
         ImGui::PushID(k.c_str());
         ImGui::InvisibleButton("nd", ImVec2(NW, NH));
+        bool ndClick = ImGui::IsItemClicked();        // a plain click (opens the node editor)
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) { pos[k].x += ImGui::GetIO().MouseDelta.x; pos[k].y += ImGui::GetIO().MouseDelta.y; }
         bool hov = ImGui::IsItemHovered();
         if (del) {                                    // delete handle in the top-right corner
             ImGui::SetCursorScreenPos(ImVec2(p.x + NW - 18, p.y + 3));
-            if (ImGui::InvisibleButton("x", ImVec2(15, 15))) *del = true;
+            if (ImGui::InvisibleButton("x", ImVec2(15, 15))) { *del = true; ndClick = false; }
         }
+        if (clicked) *clicked = ndClick;
         ImGui::PopID();
         dl->AddRectFilled(p, ImVec2(p.x + NW, p.y + NH), col, 6.0f);
         dl->AddRect(p, ImVec2(p.x + NW, p.y + NH), hov ? IM_COL32(255,255,255,150) : IM_COL32(255,255,255,40), 6.0f);
@@ -8135,11 +8187,16 @@ static void DrawFlowGraph(EditorState& ed) {
     ImVec2 trigC = node(key("trig", 0), ImVec2(30, 18), trigLabel, tsub, trigCol, nullptr);
 
     for (std::size_t i = 0; i < al->conditions.size(); ++i) {
-        bool d = false;
+        bool d = false, clk = false;
+        bool selHere = (g_flowSelAl == al && g_flowSelKind == 1 && g_flowSelIdx == (int)i);
         ImVec2 c = node(key("cond", (int)i), ImVec2(30 + NW + 60, 18 + i * GAPY),
                         ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), al->conditions[i].op), "if",
-                        IM_COL32(58, 112, 92, 255), &d);
+                        IM_COL32(58, 112, 92, 255), &d, &clk);
+        if (selHere)   // selected node gets a bright accent frame
+            dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
+                        ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
         if (d) delCond = (int)i;
+        if (clk) { g_flowSelAl = al; g_flowSelKind = 1; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodeedit"); }
         wire(ImVec2(trigC.x + NW * 0.5f, trigC.y), ImVec2(c.x - NW * 0.5f, c.y), IM_COL32(120, 185, 150, 200));
     }
 
@@ -8149,11 +8206,16 @@ static void DrawFlowGraph(EditorState& ed) {
         std::string sub;
         for (const auto& a : al->instructions[i].args) { if (!sub.empty()) sub += " "; sub += a; }
         if (sub.size() > 26) sub = sub.substr(0, 24) + "..";
-        bool d = false;
+        bool d = false, clk = false;
+        bool selHere = (g_flowSelAl == al && g_flowSelKind == 2 && g_flowSelIdx == (int)i);
         ImVec2 c = node(key("ins", (int)i), ImVec2(30, startY + i * GAPY),
                         ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), al->instructions[i].op), sub,
-                        IM_COL32(50, 82, 142, 255), &d);
+                        IM_COL32(50, 82, 142, 255), &d, &clk);
+        if (selHere)
+            dl->AddRect(ImVec2(c.x - NW * 0.5f - 2, c.y - NH * 0.5f - 2),
+                        ImVec2(c.x + NW * 0.5f + 2, c.y + NH * 0.5f + 2), IM_COL32(255, 210, 90, 230), 7.0f, 0, 2.0f);
         if (d) delIns = (int)i;
+        if (clk) { g_flowSelAl = al; g_flowSelKind = 2; g_flowSelIdx = (int)i; ImGui::OpenPopup("##flownodeedit"); }
         wire(ImVec2(prev.x, prev.y + NH * 0.5f), ImVec2(c.x, c.y - NH * 0.5f), IM_COL32(120, 150, 210, 210));
         prev = c;
     }
@@ -8161,6 +8223,37 @@ static void DrawFlowGraph(EditorState& ed) {
         dl->AddText(ImVec2(cp.x + 30 + pan.x, cp.y + startY + 12 + pan.y), IM_COL32(150, 150, 160, 255), "(no instructions yet — use + Instruction)");
 
     dl->PopClipRect();
+
+    // In-place node editor: pick the op + fill the args right here (the SAME editor
+    // the Inspector uses, on the SAME live Action), so edits show in both places.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(300, 0), ImVec2(560, 600));
+    if (ImGui::BeginPopup("##flownodeedit")) {
+        bool nodeDirty = false;
+        if (g_flowSelAl == al && g_flowSelKind == 1 &&
+            g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->conditions.size()) {
+            ImGui::TextColored(ImVec4(0.42f, 0.78f, 0.62f, 1.0f), "Condition");
+            ImGui::TextDisabled("The actions run only if this passes.");
+            ImGui::Separator();
+            DrawActionItem(al->conditions[g_flowSelIdx], kCondOps, IM_ARRAYSIZE(kCondOps),
+                           71000 + g_flowSelIdx, nodeDirty, &ed.scene());
+            ImGui::Separator();
+            if (ImGui::SmallButton("Delete node##flowdel")) { delCond = g_flowSelIdx; ImGui::CloseCurrentPopup(); }
+        } else if (g_flowSelAl == al && g_flowSelKind == 2 &&
+                   g_flowSelIdx >= 0 && g_flowSelIdx < (int)al->instructions.size()) {
+            ImGui::TextColored(ImVec4(0.5f, 0.64f, 0.86f, 1.0f), "Instruction");
+            ImGui::TextDisabled("An action to run when the conditions pass.");
+            ImGui::Separator();
+            DrawActionItem(al->instructions[g_flowSelIdx], kInstrOps, IM_ARRAYSIZE(kInstrOps),
+                           72000 + g_flowSelIdx, nodeDirty, &ed.scene());
+            ImGui::Separator();
+            if (ImGui::SmallButton("Delete node##flowdel")) { delIns = g_flowSelIdx; ImGui::CloseCurrentPopup(); }
+        } else {
+            ImGui::TextDisabled("Select a node to edit.");
+        }
+        if (nodeDirty) ed.dirty = true;
+        ImGui::EndPopup();
+    }
+
     if (delIns >= 0 && delIns < (int)al->instructions.size()) { al->instructions.erase(al->instructions.begin() + delIns); ed.dirty = true; }
     if (delCond >= 0 && delCond < (int)al->conditions.size()) { al->conditions.erase(al->conditions.begin() + delCond); ed.dirty = true; }
     ImGui::End();

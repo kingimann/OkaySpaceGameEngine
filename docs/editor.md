@@ -83,6 +83,11 @@ Recent additions (v2.12–2.14):
   OkaySpace. If you also have unsaved edits in-app when the file changes, a banner
   lets you pick which version to keep. The editor can also **Float** into its own
   window or **Dock** back as a tab.
+- **Flow Graph** (Window ▸ Flow Graph) — a node view of the selected object's
+  **Actions** (visual scripting): the trigger wires to its conditions and a chain
+  of instructions. **Add** a condition/instruction and **click any node to edit it
+  in place** — pick the op and fill its arguments with the same editor the
+  Inspector uses, so both stay in sync. Drag nodes to arrange; the ✕ deletes one.
 - **Material inspector** — double-click a `.okaymat` to edit albedo / emissive /
   specular / texture / tiling, then Save or **Apply to Selection**; or drag a
   `.okaymat`/image onto an object to apply it.
@@ -91,7 +96,8 @@ Recent additions (v2.12–2.14):
 - **Drag & drop from Project** — drop prefabs/scenes/images/`.obj` into the Scene
   to place them; drop scripts/materials onto the Inspector or Hierarchy.
 - **Combine scenes (seamless worlds)** — **File ▸ Merge Scene into Current…**
-  folds another scene's objects into the open one (the host keeps its own name,
+  (or **drag a `.okayscene` from Project onto the Hierarchy**) folds another
+  scene's objects into the open one (the host keeps its own name,
   gravity and lighting). Merged objects are tagged with their source scene, and
   the **Hierarchy** groups them under a labelled **section header** so you can see
   where each combined scene starts and ends. At runtime, `load_scene_additive(

@@ -17358,6 +17358,41 @@ void DrawViewport(EditorState& ed) {
     ImGui::SameLine();
     if (AccentToggleButton("UI Only", g_uiOnlyMode)) { g_uiOnlyMode = !g_uiOnlyMode; if (g_uiOnlyMode) g_showUIOverlay = true; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (like Unity's UI view)");
+    // Anchor presets: a 3x3 quick-picker to snap the selected UI element to a canvas
+    // corner / edge / center (Unity's anchor presets). Only when a UI widget is selected.
+    if (ed.selected()) {
+        UIRect ar = GetUIRect(ed.selected());
+        if (ar.anchorPtr && ar.position) {
+            ImGui::SameLine();
+            if (ImGui::Button("Anchor")) ImGui::OpenPopup("##anchorpreset");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap this UI element to a canvas anchor (corner / edge / center)");
+            if (ImGui::BeginPopup("##anchorpreset")) {
+                ImGui::TextDisabled("Anchor presets");
+                for (int row = 0; row < 3; ++row) {
+                    for (int col = 0; col < 3; ++col) {
+                        int idx = row * 3 + col;
+                        if (col > 0) ImGui::SameLine();
+                        ImGui::PushID(idx);
+                        bool cur = (int)*ar.anchorPtr == idx;
+                        if (ImGui::Selectable("##cell", cur, 0, ImVec2(26, 26))) {
+                            ed.PushUndo();
+                            *ar.anchorPtr = (UIAnchor)idx;
+                            ar.position->x = 0.0f; ar.position->y = 0.0f;   // snap flush to the anchor
+                            ed.dirty = true;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                        float fx = col * 0.5f, fy = row * 0.5f;
+                        ImVec2 dot(mn.x + 5 + (mx.x - mn.x - 10) * fx, mn.y + 5 + (mx.y - mn.y - 10) * fy);
+                        ImGui::GetWindowDrawList()->AddCircleFilled(dot, 3.0f,
+                            cur ? IM_COL32(90, 170, 240, 255) : IM_COL32(180, 180, 190, 200));
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndPopup();
+            }
+        }
+    }
     // Keyboard shortcuts W/E/R when the Scene window is focused (and not typing).
     if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_W, false)) g_tool = Tool::Move;

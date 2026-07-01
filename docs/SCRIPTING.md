@@ -331,6 +331,20 @@ Arrays and maps (dictionaries) are shared by reference and can be nested.
 | `map_remove(m,"k")` / `map_keys(m)` / `map_values(m)` / `map_count(m)` | Delete / list keys/values / size |
 | `map_clear(m)` / `map_merge(dst, src)` | Empty / merge (src wins) |
 
+Read and write elements with `[]` — arrays by number, maps by key — and use
+compound assignment directly on an element:
+
+```
+var a = array(10, 20, 30);
+a[1] += 5;          // 25
+a[0]++;             // 11
+
+var m = map();
+m["hp"] = 100;      // same as map_set(m, "hp", 100)
+m["hp"] -= 30;      // 70
+m["score"] += 40;   // a missing key starts at 0 -> 40
+```
+
 Iterate either with `foreach`:
 
 ```

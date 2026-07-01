@@ -434,5 +434,38 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("after").AsFloat(), 7.0f, 0.001f);
     }
 
+    // --- Subscript on maps + compound/increment assignment to elements ---
+    {
+        const char* src = R"SCRIPT(
+            var a = array(10, 20, 30);
+            a[1] += 5;        // 25
+            a[2] -= 10;       // 20
+            a[0] *= 3;        // 30
+            a[1]++;           // 26
+            var s = a[0] + a[1] + a[2];   // 30 + 26 + 20 = 76
+
+            var m = map();
+            m["hp"] = 100;             // subscript assign on a map
+            m["hp"] -= 30;             // 70
+            m["kills"] = 0;
+            m["kills"]++;              // 1
+            m["kills"]++;              // 2
+            var hp = m["hp"];          // subscript read
+            var kills = m["kills"];    // 2
+
+            // Missing key reads as null/0 and += starts from there.
+            m["score"] += 40;          // 40
+            var score = m["score"];
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("s").AsFloat(), 76.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("hp").AsFloat(), 70.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("kills").AsFloat(), 2.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("score").AsFloat(), 40.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

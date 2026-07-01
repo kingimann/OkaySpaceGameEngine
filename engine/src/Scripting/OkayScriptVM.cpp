@@ -538,21 +538,26 @@ struct ArrayExpr : Expr {
     }
 };
 
-// Read an element: arr[index].
+// Read an element: arr[index] for arrays, or map["key"] for dictionaries.
 struct IndexExpr : Expr {
     ExprPtr arr, index;
     IndexExpr(ExprPtr a, ExprPtr i) : arr(std::move(a)), index(std::move(i)) {}
     Value Eval(Runtime& rt) override {
         Value a = arr->Eval(rt);
-        auto v = a.AsArray();
-        if (!v) return Value{};
-        int i = (int)index->Eval(rt).AsFloat();
-        if (i < 0 || i >= (int)v->size()) return Value{};
-        return (*v)[i];
+        if (auto v = a.AsArray()) {
+            int i = (int)index->Eval(rt).AsFloat();
+            if (i < 0 || i >= (int)v->size()) return Value{};
+            return (*v)[i];
+        }
+        if (auto m = a.AsMap()) {
+            auto it = m->find(index->Eval(rt).AsString());
+            return it == m->end() ? Value{} : it->second;
+        }
+        return Value{};
     }
 };
 
-// Assign an element: arr[index] = value.
+// Assign an element: arr[index] = value, or map["key"] = value.
 struct IndexAssignExpr : Expr {
     ExprPtr arr, index, value;
     IndexAssignExpr(ExprPtr a, ExprPtr i, ExprPtr v)
@@ -560,13 +565,45 @@ struct IndexAssignExpr : Expr {
     Value Eval(Runtime& rt) override {
         Value a = arr->Eval(rt);
         Value val = value->Eval(rt);
-        auto v = a.AsArray();
-        if (v) {
+        if (auto v = a.AsArray()) {
             int i = (int)index->Eval(rt).AsFloat();
             if (i >= 0 && i < (int)v->size()) (*v)[i] = val;
             else if (i == (int)v->size()) v->push_back(val); // append at end
+        } else if (auto m = a.AsMap()) {
+            (*m)[index->Eval(rt).AsString()] = val;
         }
         return val;
+    }
+};
+
+// Compound assign to an element: arr[index] op= value (and ++/--). Evaluates the
+// container and index once, reads the current value, applies op, writes it back.
+struct IndexCompoundAssignExpr : Expr {
+    ExprPtr arr, index, value; Tok op;
+    IndexCompoundAssignExpr(ExprPtr a, ExprPtr i, Tok o, ExprPtr v)
+        : arr(std::move(a)), index(std::move(i)), value(std::move(v)), op(o) {}
+    Value Eval(Runtime& rt) override {
+        Value a = arr->Eval(rt);
+        Value rhs = value->Eval(rt);
+        auto apply = [&](const Value& cur) -> Value {
+            switch (op) {
+                case Tok::Plus:  if (cur.IsString() || rhs.IsString()) return cur.AsString() + rhs.AsString();
+                                 return cur.AsFloat() + rhs.AsFloat();
+                case Tok::Minus: return cur.AsFloat() - rhs.AsFloat();
+                case Tok::Star:  return cur.AsFloat() * rhs.AsFloat();
+                case Tok::Slash: { float d = rhs.AsFloat(); return d != 0 ? cur.AsFloat() / d : 0.0f; }
+                default:         return rhs;
+            }
+        };
+        if (auto v = a.AsArray()) {
+            int i = (int)index->Eval(rt).AsFloat();
+            if (i >= 0 && i < (int)v->size()) { (*v)[i] = apply((*v)[i]); return (*v)[i]; }
+        } else if (auto m = a.AsMap()) {
+            std::string k = index->Eval(rt).AsString();
+            Value cur = (*m).count(k) ? (*m)[k] : Value{};
+            (*m)[k] = apply(cur); return (*m)[k];
+        }
+        return Value{};
     }
 };
 
@@ -1250,29 +1287,47 @@ private:
             }
             throw ScriptError("invalid assignment target");
         }
-        // Compound assignment: x += e  desugars to  x = x + e.
+        // Compound assignment: x += e  desugars to  x = x + e. Also works on an
+        // element target: arr[i] += e / map["k"] += e.
         if (Check(Tok::PlusEq) || Check(Tok::MinusEq) ||
             Check(Tok::StarEq) || Check(Tok::SlashEq)) {
-            auto* var = dynamic_cast<VarExpr*>(left.get());
-            if (!var) throw ScriptError("invalid assignment target");
-            std::string name = var->n;
             Tok t = Peek().type; ++m_pos;
             Tok bin = t == Tok::PlusEq ? Tok::Plus : t == Tok::MinusEq ? Tok::Minus
                     : t == Tok::StarEq ? Tok::Star : Tok::Slash;
             ExprPtr value = ParseAssignment();
-            auto combined = std::make_unique<BinaryExpr>(
-                bin, std::make_unique<VarExpr>(name), std::move(value));
-            return std::make_unique<AssignExpr>(name, std::move(combined));
+            if (auto* var = dynamic_cast<VarExpr*>(left.get())) {
+                std::string name = var->n;
+                auto combined = std::make_unique<BinaryExpr>(
+                    bin, std::make_unique<VarExpr>(name), std::move(value));
+                return std::make_unique<AssignExpr>(name, std::move(combined));
+            }
+            if (dynamic_cast<IndexExpr*>(left.get())) {
+                auto* ix = static_cast<IndexExpr*>(left.release());
+                auto out = std::make_unique<IndexCompoundAssignExpr>(
+                    std::move(ix->arr), std::move(ix->index), bin, std::move(value));
+                delete ix;
+                return out;
+            }
+            throw ScriptError("invalid assignment target");
         }
-        // Postfix increment/decrement: x++  ->  x = x + 1  (also x--).
+        // Postfix increment/decrement: x++  ->  x = x + 1  (also x--). Works on an
+        // element target too: arr[i]++ / map["k"]--.
         if (Check(Tok::Inc) || Check(Tok::Dec)) {
-            auto* var = dynamic_cast<VarExpr*>(left.get());
-            if (!var) throw ScriptError("invalid increment target");
-            std::string name = var->n;
             Tok bin = Peek().type == Tok::Inc ? Tok::Plus : Tok::Minus; ++m_pos;
-            auto combined = std::make_unique<BinaryExpr>(
-                bin, std::make_unique<VarExpr>(name), std::make_unique<NumberExpr>(1.0));
-            return std::make_unique<AssignExpr>(name, std::move(combined));
+            if (auto* var = dynamic_cast<VarExpr*>(left.get())) {
+                std::string name = var->n;
+                auto combined = std::make_unique<BinaryExpr>(
+                    bin, std::make_unique<VarExpr>(name), std::make_unique<NumberExpr>(1.0));
+                return std::make_unique<AssignExpr>(name, std::move(combined));
+            }
+            if (dynamic_cast<IndexExpr*>(left.get())) {
+                auto* ix = static_cast<IndexExpr*>(left.release());
+                auto out = std::make_unique<IndexCompoundAssignExpr>(
+                    std::move(ix->arr), std::move(ix->index), bin, std::make_unique<NumberExpr>(1.0));
+                delete ix;
+                return out;
+            }
+            throw ScriptError("invalid increment target");
         }
         return left;
     }

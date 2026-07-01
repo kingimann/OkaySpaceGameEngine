@@ -721,6 +721,30 @@ int main(int argc, char** argv) {
         CHECK(got == 7);
     }
 
+    // --- Context menu: right-click opens a popup; clicking an item fires + closes. ---
+    {
+        release();
+        bool chosen = false;
+        auto frame = [&](float mx, float my, bool ldown, bool rdown) {
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = ldown; a.rightDown = rdown;
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("CMW", 10, 10, 220, 180);
+            OkayUI::Selectable("Row", false);
+            if (OkayUI::BeginPopupContextItem("ctx")) {
+                if (OkayUI::Selectable("Delete", false)) { chosen = true; OkayUI::CloseCurrentPopup(); }
+                OkayUI::EndPopup();
+            }
+            OkayUI::End(); OkayUI::EndFrame(r);
+        };
+        // Right-click the row (~y60) to open the popup at the cursor.
+        frame(40, 60, false, true);
+        frame(40, 60, false, false);
+        // The "Delete" item sits at ~ (46,66)-(194,94). Press+release on it.
+        frame(100, 80, true, false);
+        frame(100, 80, false, false);
+        CHECK(chosen);
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

@@ -60,6 +60,20 @@ Input g_in;                      // this frame's input
 bool  g_prevDown = false;        // last frame's mouse-down (for edge detection)
 bool  g_pressed  = false;        // mouse went down this frame
 bool  g_released = false;        // mouse went up this frame
+bool  g_rPrevDown = false;       // last frame's right-mouse (edge detection)
+bool  g_rPressed  = false;       // right button went down this frame
+
+// Popup/context-menu registry. Each open popup remembers where it opened and its
+// measured height (so the background can be drawn before the content next frame).
+struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; };
+PopupSlot g_popups[8];
+PopupSlot* popupSlot(int id, bool create) {
+    for (PopupSlot& p : g_popups) if (p.used && p.id == id) return &p;
+    if (!create) return nullptr;
+    for (PopupSlot& p : g_popups) if (!p.used) { p.used = true; p.id = id; p.open = false; return &p; }
+    return nullptr;
+}
+int      g_openPopupThisFrame = 0;   // popup id requested to open this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
 bool  g_focusClaimed = false;    // a widget took the click this frame (keep focus)
@@ -146,6 +160,11 @@ struct TableState {
     float headerBottom = 0;     // y below the header row (for the resize handles)
 };
 TableState g_tbl;
+
+// Popup body layout context (uses LayoutState, so defined after it).
+struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; };
+PopupCtx g_popupStack[4];
+int      g_popupTop = 0;
 
 // Drag & drop: a single int payload. `armed` records a press on a source before it
 // has moved far enough to count as a drag; `active` means a drag is in flight.
@@ -477,6 +496,10 @@ void BeginFrame(const Input& in) {
     g_pressed  =  in.mouseDown && !g_prevDown;
     g_released = !in.mouseDown &&  g_prevDown;
     g_prevDown = in.mouseDown;
+    g_rPressed  = in.rightDown && !g_rPrevDown;
+    g_rPrevDown = in.rightDown;
+    g_openPopupThisFrame = 0;
+    g_popupTop = 0;
     g_mouseDX = in.mouseX - g_prevMouseX;
     g_mouseDY = in.mouseY - g_prevMouseY;
     g_prevMouseX = in.mouseX;
@@ -1725,6 +1748,68 @@ bool Selectable(const char* label, bool selected) {
     else if (inside)   quad(x, y, w, h, g_theme.bgHover);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return clicked;
+}
+
+void OpenPopup(const char* id) {
+    PopupSlot* p = popupSlot(hashLabel(id), true);
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; g_openPopupThisFrame = p->id; }
+}
+
+void CloseCurrentPopup() {
+    if (g_popupTop > 0) { PopupSlot* p = popupSlot(g_popupStack[g_popupTop - 1].id, false); if (p) p->open = false; }
+}
+
+// Shared popup body setup: redirect layout into a floating overlay box at (px,py),
+// drawing the background using last frame's measured height. Returns true if open.
+static bool beginPopupBody(int id) {
+    PopupSlot* p = popupSlot(id, false);
+    if (!p || !p->open) return false;
+    const float w = 160.0f, pad = 6.0f;
+    float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
+    float px = p->x, py = p->y;
+    // Frame (overlay so it sits above everything). Height is last frame's content.
+    g_toOverlay = true;
+    Panel(px, py, w, *hSlot + pad * 2.0f);
+    // Save parent layout; set up the popup's inner layout.
+    if (g_popupTop < 4) {
+        PopupCtx& c = g_popupStack[g_popupTop++];
+        c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot;
+    }
+    g_lay.active = true;
+    g_lay.ox = px + pad; g_lay.oy = py + pad;
+    g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
+    g_lay.contentW = w - 2.0f * pad;
+    g_lay.indent = 0.0f; g_lay.seed = id;
+    g_lay.pendingSameLine = false;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    return true;
+}
+
+void EndPopup() {
+    if (g_popupTop <= 0) return;
+    PopupCtx& c = g_popupStack[--g_popupTop];
+    *c.hSlot = g_lay.cy - (c.y + 6.0f);   // measured content height for next frame
+    g_toOverlay = false;
+    // Dismiss on a left-click outside the popup box (but not the click that opened it).
+    PopupSlot* p = popupSlot(c.id, false);
+    if (p && p->open && g_pressed && g_openPopupThisFrame != c.id) {
+        const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + 12.0f);
+        if (!inside) p->open = false;
+    }
+    g_lay = c.lay;   // restore parent layout
+}
+
+bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
+
+bool BeginPopupContextItem(const char* id) {
+    const int pid = hashLabel(id);
+    // Right-click on the last-issued widget opens the popup at the cursor.
+    if (g_lay.active && g_rPressed && !g_in.blocked &&
+        pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
+        PopupSlot* p = popupSlot(pid, true);
+        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; g_openPopupThisFrame = pid; }
+    }
+    return beginPopupBody(pid);
 }
 
 bool IsDragging() { return g_dd.active; }

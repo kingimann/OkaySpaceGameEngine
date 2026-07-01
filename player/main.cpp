@@ -1418,6 +1418,7 @@ int main(int argc, char** argv) {
             OkayUI::Input ui;
             ui.mouseX = (float)mx; ui.mouseY = (float)my;
             ui.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            ui.rightDown = (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0;
             ui.text = g_uiText[0] ? g_uiText : nullptr;
             ui.backspace = g_uiBack;
             ui.wheel = g_uiWheel;

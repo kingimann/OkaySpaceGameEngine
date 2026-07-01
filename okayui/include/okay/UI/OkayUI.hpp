@@ -26,6 +26,7 @@ struct Input {
     float       mouseX    = 0.0f;
     float       mouseY    = 0.0f;
     bool        mouseDown = false;     // left mouse button held this frame
+    bool        rightDown = false;     // right mouse button held this frame (context menus)
     bool        blocked   = false;     // another layer (e.g. ImGui) owns the mouse -> ignore clicks
     // Keyboard (for TextField). The host forwards SDL_TEXTINPUT text and key edges
     // only when OkayUI should receive them (e.g. ImGui isn't capturing the keyboard).
@@ -273,6 +274,21 @@ bool MenuItem(const char* label);
 /// A full-width selectable row (list entries). Drawn highlighted when `selected`;
 /// returns true the frame it is clicked.
 bool Selectable(const char* label, bool selected);
+
+// ---- Popups / context menus ----------------------------------------------------
+// A floating menu that opens on demand. Fill it with Selectable/Button/Text/Separator.
+/// Request the named popup to open at the cursor (call once on the triggering event).
+void OpenPopup(const char* id);
+/// Open a popup when the LAST widget is right-clicked; returns true while it's open
+/// (then add items; clicking one should call CloseCurrentPopup()).
+bool BeginPopupContextItem(const char* id);
+/// Returns true while the named popup (opened via OpenPopup) is showing.
+bool BeginPopup(const char* id);
+/// Close the popup body opened by the matching Begin*Popup. Pair each with End only
+/// when Begin returned true.
+void EndPopup();
+/// Close the currently-open popup (call after an item is chosen).
+void CloseCurrentPopup();
 
 /// A scrolling list box: `visibleRows` tall, one selectable row per item. Clicking a
 /// row sets *current to its index. Returns true the frame the selection changed.

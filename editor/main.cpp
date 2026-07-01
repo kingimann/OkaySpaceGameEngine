@@ -4337,6 +4337,39 @@ static std::string FormatOkayScript(const std::string& src) {
 }
 
 // Functions/classes in a script, for the Outline jump menu: {1-based line, label}.
+// Rename every whole-word occurrence of identifier `from` to `to`, skipping string
+// literals and // line comments so only real code symbols change. Basic file-scoped
+// rename (OkayScript has no cross-file symbols).
+static std::string RenameIdentifier(const std::string& src, const std::string& from,
+                                    const std::string& to) {
+    if (from.empty()) return src;
+    auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+    std::string out; out.reserve(src.size() + 16);
+    for (std::size_t i = 0; i < src.size();) {
+        char c = src[i];
+        if (c == '"' || c == '\'') {                     // string literal — copy verbatim
+            char q = c; out += c; ++i;
+            while (i < src.size()) {
+                if (src[i] == '\\' && i + 1 < src.size()) { out += src[i]; out += src[i + 1]; i += 2; continue; }
+                out += src[i]; if (src[i] == q) { ++i; break; } ++i;
+            }
+            continue;
+        }
+        if (c == '/' && i + 1 < src.size() && src[i + 1] == '/') {   // line comment — copy verbatim
+            while (i < src.size() && src[i] != '\n') out += src[i++];
+            continue;
+        }
+        if (isW(c) && (i == 0 || !isW(src[i - 1]))) {     // an identifier token
+            std::size_t j = i; while (j < src.size() && isW(src[j])) ++j;
+            std::string word = src.substr(i, j - i);
+            out += (word == from) ? to : word;
+            i = j; continue;
+        }
+        out += c; ++i;
+    }
+    return out;
+}
+
 static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string& src) {
     std::vector<std::pair<int, std::string>> out;
     auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
@@ -4608,6 +4641,37 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::SameLine();
         ImGui::Checkbox("Auto", &caret.autoPairs);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-close brackets/quotes and auto-indent on Enter");
+
+        // Rename: change the identifier under the caret everywhere in the file.
+        ImGui::SameLine();
+        static char s_renameTo[64] = ""; static std::string s_renameFrom;
+        if (ImGui::SmallButton("Rename")) {
+            const char* t = buf.data(); int len = (int)std::strlen(t);
+            int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
+            auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+            int ws = cp; while (ws > 0 && isW(t[ws - 1])) --ws;
+            int we = cp; while (we < len && isW(t[we])) ++we;
+            s_renameFrom.assign(t + ws, t + we);
+            if (!s_renameFrom.empty() && !std::isdigit((unsigned char)s_renameFrom[0])) {
+                std::snprintf(s_renameTo, sizeof(s_renameTo), "%s", s_renameFrom.c_str());
+                ImGui::OpenPopup("##rename");
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rename the symbol under the caret everywhere in this file");
+        if (ImGui::BeginPopup("##rename")) {
+            ImGui::Text("Rename '%s' to:", s_renameFrom.c_str());
+            ImGui::SetNextItemWidth(180);
+            bool go = ImGui::InputText("##rn", s_renameTo, sizeof(s_renameTo),
+                                       ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if ((ImGui::Button("Rename##do") || go) && s_renameTo[0] && s_renameFrom != s_renameTo) {
+                std::string renamed = RenameIdentifier(buf.data(), s_renameFrom, s_renameTo);
+                SetCodeBuffer(sc, renamed); ed.dirty = true;
+                ConsoleLog("Renamed " + s_renameFrom + " -> " + std::string(s_renameTo));
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
 
         // Language picker (only backends this build supports).
         static std::vector<std::string> avail = AvailableScriptLanguages();

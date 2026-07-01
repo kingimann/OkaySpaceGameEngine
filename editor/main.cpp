@@ -4200,6 +4200,41 @@ static const std::string* ScriptSignature(const std::string& name) {
         // networking / raycast
         {"net_send","net_send(\"msg\")"}, {"raycast","raycast(x, y, dx, dy)"}, {"raycast3","raycast3(x, y, z, dx, dy, dz)"},
         {"overlap_circle","overlap_circle(x, y, r)"},
+        // timers
+        {"after","after(seconds, \"func\")"}, {"every","every(seconds, \"func\")"}, {"cancel_timers","cancel_timers()"},
+        // velocity axes
+        {"set_vx","set_vx(v)"}, {"set_vy","set_vy(v)"}, {"set_vz","set_vz(v)"}, {"set_z","set_z(v)"},
+        {"set_rot3","set_rot3(x, y, z)"},
+        // object / scene
+        {"obj_x","obj_x(\"name\")"}, {"obj_y","obj_y(\"name\")"}, {"obj_z","obj_z(\"name\")"},
+        {"tag","tag()"}, {"set_tag","set_tag(\"tag\")"}, {"has_tag","has_tag(\"tag\")"},
+        {"is_active","is_active()"}, {"set_active","set_active(on)"}, {"set_name","set_name(\"name\")"},
+        {"has_parent","has_parent()"}, {"set_parent","set_parent(\"name\")"},
+        {"cam_x","cam_x()"}, {"cam_y","cam_y()"}, {"cam_zoom","cam_zoom()"},
+        // render / look
+        {"set_color","set_color(r, g, b)"}, {"set_texture","set_texture(\"path\")"}, {"set_mesh","set_mesh(\"name\")"},
+        {"set_unlit","set_unlit(on)"}, {"set_emissive","set_emissive(r, g, b)"}, {"set_text","set_text(\"s\")"},
+        // animation (Character clips + layers)
+        {"play_anim","play_anim(\"clip\")"}, {"stop_anim","stop_anim()"}, {"set_anim","set_anim(\"clip\")"},
+        {"play_clip","play_clip(\"clip\")"}, {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
+        {"play_layer","play_layer(\"clip\", \"part\")"}, {"stop_layer","stop_layer()"}, {"anim_event","anim_event(\"name\")"},
+        {"play_sound","play_sound(\"name\")"}, {"set_volume","set_volume(v)"},
+        // particles
+        {"emit","emit(n)"}, {"particles_on","particles_on(on)"}, {"particles_alive","particles_alive()"},
+        // tilemap
+        {"set_tile","set_tile(x, y, id)"}, {"get_tile","get_tile(x, y)"}, {"tile_w","tile_w()"}, {"tile_h","tile_h()"},
+        // arrays / lists
+        {"array","array(v1, v2, ...)"}, {"count","count(arr)"}, {"push","push(arr, value)"}, {"pop","pop(arr)"},
+        {"contains","contains(arr, value)"}, {"len","len(x, y)"},
+        // strings
+        {"str_len","str_len(s)"}, {"str_find","str_find(s, sub)"}, {"str_contains","str_contains(s, sub)"},
+        {"str_repeat","str_repeat(s, n)"}, {"starts_with","starts_with(s, prefix)"},
+        // ui widgets
+        {"set_slider","set_slider(v)"}, {"set_toggle","set_toggle(on)"}, {"set_progress","set_progress(t)"},
+        // math checks
+        {"is_nan","is_nan(x)"}, {"is_finite","is_finite(x)"}, {"acos","acos(x)"}, {"asin","asin(x)"},
+        {"atan","atan(x)"}, {"atan2","atan2(y, x)"}, {"sign","sign(x)"},
+        {"approach","approach(current, target, step)"}, {"approximately","approximately(a, b)"}, {"angle_to","angle_to(\"name\")"},
     };
     auto it = sig.find(name);
     return it == sig.end() ? nullptr : &it->second;

@@ -302,6 +302,62 @@ void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
     I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
 }
 
+// An axis-aligned quad whose four corners each have their own color; the GPU
+// interpolates between them (for gradients: hue bars, SV squares, fades).
+void gradQuad(float x, float y, float w, float h,
+              const unsigned char tl[4], const unsigned char tr[4],
+              const unsigned char br[4], const unsigned char bl[4]) {
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
+    const int base = nv;
+    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_Vertex v; v.tex_coord = uv;
+    v.position.x = x;     v.position.y = y;     v.color = toColor(tl); V[nv++] = v;
+    v.position.x = x + w; v.position.y = y;     v.color = toColor(tr); V[nv++] = v;
+    v.position.x = x + w; v.position.y = y + h; v.color = toColor(br); V[nv++] = v;
+    v.position.x = x;     v.position.y = y + h; v.color = toColor(bl); V[nv++] = v;
+    I[ni++] = base + 0; I[ni++] = base + 1; I[ni++] = base + 2;
+    I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
+}
+
+// HSV (h in [0,1), s,v in [0,1]) -> RGB bytes.
+void hsvToRgb(float h, float s, float v, unsigned char out[3]) {
+    h -= SDL_floorf(h); if (h < 0) h += 1.0f;
+    float r = v, g = v, b = v;
+    float hh = h * 6.0f;
+    int   i = (int)hh;
+    float f = hh - i;
+    float p = v * (1.0f - s), q = v * (1.0f - s * f), t = v * (1.0f - s * (1.0f - f));
+    switch (i % 6) {
+        case 0: r = v; g = t; b = p; break;
+        case 1: r = q; g = v; b = p; break;
+        case 2: r = p; g = v; b = t; break;
+        case 3: r = p; g = q; b = v; break;
+        case 4: r = t; g = p; b = v; break;
+        default:r = v; g = p; b = q; break;
+    }
+    out[0] = (unsigned char)(r * 255.0f + 0.5f);
+    out[1] = (unsigned char)(g * 255.0f + 0.5f);
+    out[2] = (unsigned char)(b * 255.0f + 0.5f);
+}
+
+// RGB bytes -> HSV (h,s,v in [0,1]).
+void rgbToHsv(unsigned char R, unsigned char G, unsigned char B, float& h, float& s, float& v) {
+    float r = R / 255.0f, g = G / 255.0f, b = B / 255.0f;
+    float mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    float mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    v = mx; float d = mx - mn;
+    s = mx <= 0.0f ? 0.0f : d / mx;
+    if (d <= 0.0f) { h = 0.0f; return; }
+    if (mx == r)      h = (g - b) / d + (g < b ? 6.0f : 0.0f);
+    else if (mx == g) h = (b - r) / d + 2.0f;
+    else              h = (r - g) / d + 4.0f;
+    h /= 6.0f;
+}
+
 // A straight line of thickness `th` between two points, as a thin rotated quad.
 void line(float x0, float y0, float x1, float y1, float th, const unsigned char c[4]) {
     float dx = x1 - x0, dy = y1 - y0;
@@ -1458,6 +1514,81 @@ bool ColorEdit3(const char* label, float rgb[3]) {
         if (Slider(cid, cxp, y, each, h, &rgb[ch], 0.0f, 1.0f)) changed = true;
     }
     if (lw > 0.0f) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    return changed;
+}
+
+bool ColorPicker3(const char* label, float rgb[3]) {
+    if (!g_lay.active || !rgb) return false;
+    const int id = hashLabel(label);
+    const float w = availW();
+    const float barW = 18.0f, gap = 8.0f;
+    float sq = w - barW - gap;                 // SV square is square-ish
+    const float maxSq = rowH() * 6.0f;
+    if (sq > maxSq) sq = maxSq;
+    if (sq < 40.0f) sq = 40.0f;
+    const float total = sq;
+    float x, y; place(w, total, x, y);
+
+    // Persist HSV across frames so hue survives S=0/V=0. Re-sync from rgb if it was
+    // changed externally (differs from what we last wrote).
+    float* H = floatState(id ^ 0x101, -1.0f);
+    float* S = floatState(id ^ 0x102, 0.0f);
+    float* V = floatState(id ^ 0x103, 0.0f);
+    float* lr = floatState(id ^ 0x104, -1.0f);
+    float* lg = floatState(id ^ 0x105, -1.0f);
+    float* lb = floatState(id ^ 0x106, -1.0f);
+    auto approxEq = [](float a, float b) { float d = a - b; return (d < 0 ? -d : d) < 0.004f; };
+    if (*H < 0.0f || !approxEq(*lr, rgb[0]) || !approxEq(*lg, rgb[1]) || !approxEq(*lb, rgb[2])) {
+        rgbToHsv((unsigned char)(clamp01(rgb[0]) * 255.0f), (unsigned char)(clamp01(rgb[1]) * 255.0f),
+                 (unsigned char)(clamp01(rgb[2]) * 255.0f), *H, *S, *V);
+    }
+
+    bool changed = false;
+    // --- Saturation/Value square (x = saturation, y = value inverted) ---
+    unsigned char hueCol[3]; hsvToRgb(*H, 1.0f, 1.0f, hueCol);
+    const unsigned char white[4] = {255,255,255,255}, black[4] = {0,0,0,255};
+    const unsigned char hue4[4] = {hueCol[0], hueCol[1], hueCol[2], 255};
+    gradQuad(x, y, sq, sq, white, hue4, black, black);   // white->hue across, ->black down
+    const bool inSq = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, sq, sq);
+    if (inSq && g_pressed) g_active = id;
+    if (g_active == id) {
+        if (!g_in.mouseDown) g_active = 0;
+        else {
+            *S = clamp01((g_in.mouseX - x) / sq);
+            *V = 1.0f - clamp01((g_in.mouseY - y) / sq);
+            changed = true;
+        }
+    }
+    // SV cursor ring.
+    float cxp = x + (*S) * sq, cyp = y + (1.0f - *V) * sq;
+    fillCircle(cxp, cyp, 4.0f, (*V > 0.5f && *S < 0.5f) ? black : white);
+
+    // --- Hue bar (vertical rainbow) ---
+    const float hx = x + sq + gap;
+    const int   segs = 6;
+    for (int i = 0; i < segs; ++i) {
+        unsigned char c0[3], c1[3];
+        hsvToRgb((float)i / segs, 1.0f, 1.0f, c0);
+        hsvToRgb((float)(i + 1) / segs, 1.0f, 1.0f, c1);
+        const unsigned char t0[4] = {c0[0],c0[1],c0[2],255}, t1[4] = {c1[0],c1[1],c1[2],255};
+        gradQuad(hx, y + sq * i / segs, barW, sq / segs, t0, t0, t1, t1);
+    }
+    const int hueId = id ^ 0x2a2a;
+    const bool inBar = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, hx, y, barW, sq);
+    if (inBar && g_pressed) g_active = hueId;
+    if (g_active == hueId) {
+        if (!g_in.mouseDown) g_active = 0;
+        else { *H = clamp01((g_in.mouseY - y) / sq); changed = true; }
+    }
+    // Hue marker.
+    float hy = y + (*H) * sq;
+    quad(hx - 2.0f, hy - 1.5f, barW + 4.0f, 3.0f, g_theme.text);
+
+    // Write the resolved color back and remember it for external-change detection.
+    unsigned char outc[3]; hsvToRgb(*H, *S, *V, outc);
+    rgb[0] = outc[0] / 255.0f; rgb[1] = outc[1] / 255.0f; rgb[2] = outc[2] / 255.0f;
+    *lr = rgb[0]; *lg = rgb[1]; *lb = rgb[2];
+    (void)label;
     return changed;
 }
 

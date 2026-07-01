@@ -637,6 +637,31 @@ int main(int argc, char** argv) {
         OkayUI::Style().rounding = savedRound;
     }
 
+    // --- ColorPicker3: hue bar and SV square edit the color. ---
+    {
+        float rgb[3] = {1.0f, 0.0f, 0.0f};   // start red
+        auto click = [&](float mx, float my) {
+            release();
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = true;
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("CPW", 10, 10, 260, 230);
+            OkayUI::ColorPicker3("##c", rgb);
+            OkayUI::End(); OkayUI::EndFrame(r);
+            a.mouseDown = false;
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("CPW", 10, 10, 260, 230);
+            OkayUI::ColorPicker3("##c", rgb);
+            OkayUI::End(); OkayUI::EndFrame(r);
+        };
+        // Hue bar (right strip, x~205) about a third down -> green range.
+        click(205.0f, 103.0f);
+        CHECK(rgb[1] > rgb[0]);
+        CHECK(rgb[1] > rgb[2]);
+        // SV square top-left (low saturation, high value) -> desaturated/bright: blue rises.
+        click(24.0f, 50.0f);
+        CHECK(rgb[2] > 0.4f);
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

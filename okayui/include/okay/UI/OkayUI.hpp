@@ -244,6 +244,10 @@ bool DragInt(const char* label, int* v, float speed = 0.25f, int minV = 0, int m
 /// Edits rgb[0..2] in place; returns true on any frame a channel changed.
 bool ColorEdit3(const char* label, float rgb[3]);
 
+/// A full HSV color picker: a saturation/value square plus a hue bar. Drag either to
+/// edit rgb[0..2] (each 0..1) in place. Returns true on any frame a channel changed.
+bool ColorPicker3(const char* label, float rgb[3]);
+
 /// A collapsing tree node. Returns true while expanded; when it does, the widgets
 /// that follow are INDENTED until you call TreePop(). Nestable. State kept per label.
 bool TreeNode(const char* label);

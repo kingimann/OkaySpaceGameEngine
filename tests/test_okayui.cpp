@@ -295,6 +295,49 @@ int main(int argc, char** argv) {
         CHECK(c);
     }
 
+    // --- InputInt: clicking [+] / [-] steps the value. ---
+    {
+        int iv = 5;
+        // The row is at the top of the window content; [-] and [+] are the two square
+        // buttons on the right. Window at (10,10), width 200. Click the '+' stepper.
+        auto clickAt = [&](float mx, float my) {
+            release();
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = true;
+            OkayUI::BeginFrame(a); OkayUI::Begin("IIW", 10, 10, 200, 120); OkayUI::InputInt("N", &iv); OkayUI::End(); OkayUI::EndFrame(r);
+            a.mouseDown = false;
+            OkayUI::BeginFrame(a); OkayUI::Begin("IIW", 10, 10, 200, 120); OkayUI::InputInt("N", &iv); OkayUI::End(); OkayUI::EndFrame(r);
+        };
+        // Content starts at y ~48 (title bar + pad); the value box is ~92px wide, then
+        // the two 28px steppers. The '+' stepper center lands near (162, 62).
+        clickAt(162, 62);
+        CHECK(iv == 6);   // stepped up by 1
+    }
+
+    // --- PushID: same label in a loop yields distinct, independently-clickable widgets. ---
+    {
+        int clicks[3] = {0, 0, 0};
+        auto frame = [&](float mx, float my, bool down) {
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = down;
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("PIDW", 10, 10, 200, 200);
+            for (int i = 0; i < 3; ++i) {
+                OkayUI::PushID(i);
+                if (OkayUI::Button("Go")) clicks[i]++;
+                OkayUI::PopID();
+            }
+            OkayUI::End();
+            OkayUI::EndFrame(r);
+        };
+        release();
+        // The three "Go" buttons stack vertically. Press+release on the SECOND one.
+        // Row height ~ textH*2 + 12 ≈ 28; second button roughly y ≈ 10 + 28 + 14.
+        frame(40, 52, true);
+        frame(40, 52, false);
+        // Exactly one button should have registered the click (not all three colliding).
+        int total = clicks[0] + clicks[1] + clicks[2];
+        CHECK(total == 1);
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

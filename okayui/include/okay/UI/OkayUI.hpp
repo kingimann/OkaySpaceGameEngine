@@ -133,6 +133,15 @@ void SameLine(float spacing = -1.0f);
 void Separator();
 /// Vertical empty space of height `h`.
 void Spacing(float h = 8.0f);
+/// Reserve an invisible `w`*`h` block at the cursor (for manual spacing/alignment).
+void Dummy(float w, float h);
+/// Shift the content's left edge right (Indent) or back left (Unindent). `w` <= 0
+/// uses the default step. Pair each Indent with an Unindent.
+void Indent(float w = 0.0f);
+void Unindent(float w = 0.0f);
+/// A small filled dot at the cursor (list marker). BulletText draws a dot + text.
+void Bullet();
+void BulletText(const char* s);
 /// A line of text at the layout cursor.
 void Text(const char* s);
 
@@ -143,8 +152,13 @@ bool Button(const char* label);
 bool Checkbox(const char* label, bool* value);
 bool RadioButton(const char* label, int* value, int option);
 bool SliderFloat(const char* label, float* value, float minV, float maxV);
+/// An integer slider over [minV, maxV]. Edits *value in place; true on change.
+bool SliderInt(const char* label, int* value, int minV, int maxV);
 void ProgressBar(float fraction, const char* overlay = nullptr);
 bool InputText(const char* label, char* buf, int cap);
+/// An integer field with [-]/[+] stepper buttons that change *value by `step`.
+/// Returns true on any frame the value changed.
+bool InputInt(const char* label, int* value, int step = 1);
 
 /// A collapsing section header. Returns true while expanded — put the section's
 /// widgets in the if-body. The open/closed state is remembered per label.
@@ -194,6 +208,14 @@ bool MenuItem(const char* label);
 /// A full-width selectable row (list entries). Drawn highlighted when `selected`;
 /// returns true the frame it is clicked.
 bool Selectable(const char* label, bool selected);
+
+// ---- ID stack ------------------------------------------------------------------
+// Widget ids are hashed from their label, so two widgets with the same label in a
+// loop would collide. Push a per-iteration id (an int index or a string) to keep
+// them distinct, then Pop it. Nestable.
+void PushID(int id);
+void PushID(const char* id);
+void PopID();
 
 // ---- Fonts ---------------------------------------------------------------------
 // A bitmap font is a glyph cell size plus a pixel test. OkayUI defaults to the

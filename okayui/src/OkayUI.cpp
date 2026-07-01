@@ -85,9 +85,21 @@ bool* openState(int id, bool dflt) {
 float g_prevMouseX = 0.0f, g_prevMouseY = 0.0f;   // last frame's cursor
 float g_mouseDX = 0.0f, g_mouseDY = 0.0f;         // cursor delta this frame
 
+// ID stack: an extra seed mixed into label hashing so same-labelled widgets in a
+// loop stay distinct. PushID/PopID adjust g_idSeed; a small stack remembers prior
+// seeds to restore on pop.
+unsigned g_idSeed = 0;
+unsigned g_idStack[32];
+int      g_idTop = 0;
+inline void pushIdSeed(unsigned mix) {
+    if (g_idTop < 32) g_idStack[g_idTop++] = g_idSeed;
+    g_idSeed = (g_idSeed ^ mix) * 16777619u;
+}
+inline void popIdSeed() { if (g_idTop > 0) g_idSeed = g_idStack[--g_idTop]; }
+
 // FNV-1a hash of a label -> stable nonzero widget id (so callers needn't pass ids).
 inline int hashLabel(const char* s) {
-    unsigned h = 2166136261u ^ (unsigned)g_lay.seed;
+    unsigned h = (2166136261u ^ (unsigned)g_lay.seed ^ g_idSeed);
     if (s) for (; *s; ++s) h = (h ^ (unsigned char)*s) * 16777619u;
     int id = (int)(h & 0x7fffffffu);
     return id ? id : 1;
@@ -203,6 +215,7 @@ void BeginFrame(const Input& in) {
     g_nv = 0; g_ni = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false;
     g_inMenuBar = false; g_curMenu.active = false;
+    g_idSeed = 0; g_idTop = 0;        // reset the ID stack each frame
 }
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
@@ -550,6 +563,46 @@ void Text(const char* s) {
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, g_theme.text);
 }
 
+void Dummy(float w, float h) {
+    if (!g_lay.active) return;
+    float x, y; place(w, h, x, y);
+}
+
+void Indent(float w) {
+    if (!g_lay.active) return;
+    g_lay.indent += (w > 0.0f ? w : textH());   // default step = one text line height
+}
+
+void Unindent(float w) {
+    if (!g_lay.active) return;
+    g_lay.indent -= (w > 0.0f ? w : textH());
+    if (g_lay.indent < 0.0f) g_lay.indent = 0.0f;
+}
+
+void Bullet() {
+    if (!g_lay.active) return;
+    const float d = textH() * 0.35f, h = rowH();
+    float x, y; place(d, h, x, y);
+    quad(x, y + (h - d) * 0.5f, d, d, g_theme.text);
+}
+
+void BulletText(const char* s) {
+    if (!g_lay.active) return;
+    const float d = textH() * 0.35f, h = rowH();
+    const float w = d + 8.0f + (s && *s ? labelW(s) : 0.0f);
+    float x, y; place(w, h, x, y);
+    quad(x, y + (h - d) * 0.5f, d, d, g_theme.text);
+    if (s && *s) drawText(x + d + 8.0f, y + (h - textH()) * 0.5f, s, g_theme.textScale, g_theme.text);
+}
+
+void PushID(int id)         { pushIdSeed((unsigned)id * 2654435761u + 1u); }
+void PushID(const char* id) {
+    unsigned h = 2166136261u;
+    if (id) for (const char* p = id; *p; ++p) h = (h ^ (unsigned char)*p) * 16777619u;
+    pushIdSeed(h);
+}
+void PopID() { popIdSeed(); }
+
 bool Button(const char* label) {
     if (!g_lay.active) return false;
     const float w = labelW(label) + 24.0f, h = rowH();
@@ -585,6 +638,17 @@ bool SliderFloat(const char* label, float* value, float minV, float maxV) {
     return ch;
 }
 
+bool SliderInt(const char* label, int* value, int minV, int maxV) {
+    if (!g_lay.active || !value) return false;
+    float f = (float)*value;
+    // Reuse the float slider, then snap to the nearest integer.
+    bool ch = SliderFloat(label, &f, (float)minV, (float)maxV);
+    int iv = (int)(f + (f >= 0.0f ? 0.5f : -0.5f));
+    if (iv < minV) iv = minV; if (iv > maxV) iv = maxV;
+    if (iv != *value) { *value = iv; return true; }
+    return ch && false;   // value unchanged after snapping
+}
+
 void ProgressBar(float fraction, const char* overlay) {
     if (!g_lay.active) return;
     const float h = rowH(), w = availW();
@@ -605,6 +669,30 @@ bool InputText(const char* label, char* buf, int cap) {
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
     const bool ch = TextField(hashLabel(label), x, y, ctrlW, h, buf, cap);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    return ch;
+}
+
+bool InputInt(const char* label, int* value, int step) {
+    if (!g_lay.active || !value) return false;
+    const int id = hashLabel(label);
+    const float h = rowH();
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    const float btnW = h;                 // square [-]/[+] steppers
+    float fieldW = w - lw - btnW * 2.0f - 8.0f;
+    if (fieldW < 24.0f) fieldW = 24.0f;
+    // Value box.
+    quad(x, y, fieldW, h, g_theme.track);
+    char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *value);
+    drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text);
+    // Steppers (unique ids via the field id so they don't collide).
+    const float bx = x + fieldW + 4.0f;
+    bool ch = false;
+    if (Button(id ^ 0x2d, bx, y, btnW, h, "-"))              { *value -= step; ch = true; }
+    if (Button(id ^ 0x2b, bx + btnW + 4.0f, y, btnW, h, "+")) { *value += step; ch = true; }
+    if (lw > 0.0f) drawText(x + fieldW + btnW * 2.0f + 12.0f, y + (h - textH()) * 0.5f,
+                            label, g_theme.textScale, g_theme.text);
     return ch;
 }
 

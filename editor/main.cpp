@@ -574,6 +574,9 @@ bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
+int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
+int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
+int  g_gameCustomH = 720;        // custom Game-view height (persisted)
 int  g_accent = 0;               // accent colour preset (see kAccents)
 
 // Selectable editor accent colours (the highlight used on selections, buttons,
@@ -744,6 +747,9 @@ void LoadSettings() {
         else if (k == "theme") g_theme = (v < 0 ? 0 : (v > 2 ? 2 : v));
         else if (k == "accent") g_accent = (v < 0 ? 0 : (v >= kAccentCount ? 0 : v));
         else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
+        else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
+        else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
+        else if (k == "gamecustomh") g_gameCustomH = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
@@ -771,7 +777,10 @@ void SaveSettings() {
       << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n"
       << "theme " << g_theme << "\n"
       << "accent " << g_accent << "\n"
-      << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n";
+      << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
+      << "gameres " << g_gameResPreset << "\n"
+      << "gamecustomw " << g_gameCustomW << "\n"
+      << "gamecustomh " << g_gameCustomH << "\n";
 }
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
@@ -17676,18 +17685,33 @@ void DrawGameView(EditorState& ed) {
         {"720 x 1280   (portrait)", 720.0f/1280,  720,  1280},
         {"1170 x 2532  (iPhone)",   1170.0f/2532, 1170, 2532},
         {"1668 x 2388  (iPad)",     1668.0f/2388, 1668, 2388},
+        {"Custom...",               0.0f,        -1,   -1},   // -1 => use g_gameCustomW/H
     };
-    static int s_aspect = 0;
+    const int kCustomIdx = (int)IM_ARRAYSIZE(kPresets) - 1;
+    int& s_aspect = g_gameResPreset;   // persisted across sessions
     if (s_aspect < 0 || s_aspect >= (int)IM_ARRAYSIZE(kPresets)) s_aspect = 0;
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo("Resolution", kPresets[s_aspect].name)) {
         for (int i = 0; i < (int)IM_ARRAYSIZE(kPresets); ++i) {
-            if (i == 1 || i == 8) ImGui::Separator();   // group: aspects / fixed resolutions
-            if (ImGui::Selectable(kPresets[i].name, s_aspect == i)) s_aspect = i;
+            if (i == 1 || i == 8 || i == kCustomIdx) ImGui::Separator();  // group: aspects / fixed / custom
+            if (ImGui::Selectable(kPresets[i].name, s_aspect == i)) { s_aspect = i; SaveSettings(); }
         }
         ImGui::EndCombo();
     }
-    const float kAspectVal = kPresets[s_aspect].aspect;
+    // Custom width/height inputs (only for the Custom preset).
+    int curW = kPresets[s_aspect].w, curH = kPresets[s_aspect].h;
+    if (s_aspect == kCustomIdx) {
+        curW = g_gameCustomW; curH = g_gameCustomH;
+        ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+        if (ImGui::DragInt("##cw", &g_gameCustomW, 1.0f, 16, 8192, "W %d")) SaveSettings();
+        ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+        if (ImGui::DragInt("##ch", &g_gameCustomH, 1.0f, 16, 8192, "H %d")) SaveSettings();
+        g_gameCustomW = g_gameCustomW < 16 ? 16 : g_gameCustomW;
+        g_gameCustomH = g_gameCustomH < 16 ? 16 : g_gameCustomH;
+        curW = g_gameCustomW; curH = g_gameCustomH;
+    }
+    const float kAspectVal = (s_aspect == kCustomIdx) ? (float)curW / (float)curH : kPresets[s_aspect].aspect;
+    const bool  kFixedRes  = (curW > 0 && curH > 0);
     ImGui::SameLine();
     ImGui::TextDisabled(ed.isPlaying() ? "live" : "press Play to run");
     // FPS testing: grab the mouse so look controls work in the Game tab.
@@ -17743,10 +17767,9 @@ void DrawGameView(EditorState& ed) {
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.
     {
         char resLbl[64];
-        if (kPresets[s_aspect].w > 0) {
-            float scale = canvasSize.x / (float)kPresets[s_aspect].w;
-            std::snprintf(resLbl, sizeof(resLbl), "%d x %d  (%.0f%%)",
-                          kPresets[s_aspect].w, kPresets[s_aspect].h, scale * 100.0f);
+        if (kFixedRes) {
+            float scale = canvasSize.x / (float)curW;
+            std::snprintf(resLbl, sizeof(resLbl), "%d x %d  (%.0f%%)", curW, curH, scale * 100.0f);
         } else {
             std::snprintf(resLbl, sizeof(resLbl), "%d x %d px", (int)canvasSize.x, (int)canvasSize.y);
         }

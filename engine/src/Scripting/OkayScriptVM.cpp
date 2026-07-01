@@ -580,6 +580,28 @@ struct VarDeclStmt : Stmt {
 struct ReturnStmt : Stmt { ExprPtr e; explicit ReturnStmt(ExprPtr x) : e(std::move(x)) {} void Exec(Runtime& r) override { throw ReturnSignal{e ? e->Eval(r) : Value{}}; } };
 struct BreakStmt : Stmt { void Exec(Runtime&) override { throw BreakSignal{}; } };
 struct ContinueStmt : Stmt { void Exec(Runtime&) override { throw ContinueSignal{}; } };
+// throw <expr>; — raise a script error carrying the value's text.
+struct ThrowStmt : Stmt {
+    ExprPtr e; explicit ThrowStmt(ExprPtr x) : e(std::move(x)) {}
+    void Exec(Runtime& r) override { throw ScriptError(e ? e->Eval(r).AsString() : std::string("error")); }
+};
+// try { ... } catch (e) { ... } — run the body; on a script/runtime error, bind the
+// message to the catch variable and run the handler. Control-flow signals (return/
+// break/continue) are plain structs, not std::exception, so they pass through cleanly.
+struct TryStmt : Stmt {
+    std::vector<StmtPtr> body, catchB;
+    std::string catchVar;
+    bool hasCatch = false;
+    void Exec(Runtime& r) override {
+        try {
+            for (auto& s : body) s->Exec(r);
+        } catch (const std::exception& ex) {
+            if (!hasCatch) return;   // no handler: swallow the error
+            if (!catchVar.empty()) r.Define(catchVar, Value{std::string(ex.what())});
+            for (auto& s : catchB) s->Exec(r);
+        }
+    }
+};
 struct BlockStmt : Stmt {
     std::vector<StmtPtr> body;
     void Exec(Runtime& r) override { for (auto& s : body) s->Exec(r); }
@@ -1032,6 +1054,33 @@ private:
     }
 
     StmtPtr ParseStatement() {
+        // throw <expr>;  — raise an error caught by an enclosing try/catch.
+        if (Check(Tok::Ident) && Peek().text == "throw") {
+            ++m_pos;
+            ExprPtr e = Check(Tok::Semicolon) ? nullptr : ParseExpression();
+            Match(Tok::Semicolon);
+            return std::make_unique<ThrowStmt>(std::move(e));
+        }
+        // try { ... } catch (e) { ... }  (catch clause optional)
+        if (Check(Tok::Ident) && Peek().text == "try") {
+            ++m_pos;
+            auto st = std::make_unique<TryStmt>();
+            st->body = ParseBlock();
+            if (Check(Tok::Ident) && Peek().text == "catch") {
+                ++m_pos;
+                st->hasCatch = true;
+                if (Match(Tok::LParen)) {            // optional `(e)` binding
+                    Match(Tok::Var);
+                    if (Check(Tok::Ident)) {
+                        st->catchVar = m_toks[m_pos++].text;
+                        if (Check(Tok::Ident)) st->catchVar = m_toks[m_pos++].text;  // typed
+                    }
+                    Expect(Tok::RParen, "')'");
+                }
+                st->catchB = ParseBlock();
+            }
+            return st;
+        }
         // C#-style: foreach (var item in collection) { ... }
         if (Check(Tok::Ident) && Peek().text == "foreach") {
             ++m_pos;

@@ -4086,6 +4086,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         // keywords
         "if","else","for","while","do","return","break","continue","switch","case",
         "var","function","class","new","public","private","true","false","foreach","in",
+        "try","catch","throw",
         // Unity-style API
         "Vector3","Vector2","Color","Mathf","Input","Time","Debug","Random","Physics2D",
         "SceneManager","Quaternion","transform","gameObject","OkaySource",
@@ -4411,7 +4412,8 @@ static void DrawCodeHighlight(ImDrawList* dl, const char* text, ImVec2 origin,
         "if","else","for","while","do","return","break","continue","switch","case",
         "var","let","const","function","func","def","class","struct","new","public",
         "private","protected","static","void","int","float","bool","string","true",
-        "false","null","this","import","using","namespace","foreach","in","and","or","not"};
+        "false","null","this","import","using","namespace","foreach","in","and","or","not",
+        "try","catch","throw"};
     static const char* types[] = {
         "Vector2","Vector3","Vec2","Vec3","Color","Quaternion","Transform","GameObject",
         "Mathf","Input","Time","Okay","OkaySource","Debug","Random","Physics"};
@@ -4846,6 +4848,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"if/else",   "if () {\n    \n} else {\n    \n}\n"},
                 {"for",       "for (int i = 0; i < 10; i++) {\n    \n}\n"},
                 {"foreach",   "foreach (var item in list) {\n    \n}\n"},
+                {"try/catch", "try {\n    \n} catch (e) {\n    print(e);\n}\n"},
                 {"while",     "while () {\n    \n}\n"},
                 {"on_collision", "function on_collision(other) {\n    \n}\n"},
                 {"save/load", "save(\"key\", value);\nvar v = load(\"key\", 0);\n"},

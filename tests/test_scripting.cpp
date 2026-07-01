@@ -394,5 +394,45 @@ int main() {
         CHECK(vm->GetGlobal("flag").AsBool());
     }
 
+    // --- try/catch/throw error handling ---
+    {
+        const char* src = R"SCRIPT(
+            var caught = "";
+            var ran = 0;
+            try {
+                throw "boom";
+                ran = 999;              // unreachable
+            } catch (e) {
+                caught = e;             // "boom"
+            }
+
+            // A runtime error (undefined function) is catchable too.
+            var caught2 = 0;
+            try {
+                totally_undefined_function();
+            } catch (err) {
+                caught2 = 1;
+            }
+
+            // No error -> catch body is skipped, body runs fully.
+            var ok = 0;
+            try { ok = 5; } catch (e) { ok = -1; }
+
+            // try without catch swallows the error and continues.
+            var after = 0;
+            try { throw "ignored"; }
+            after = 7;
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK(vm->GetGlobal("caught").AsString() == "boom");
+        CHECK_NEAR(vm->GetGlobal("ran").AsFloat(), 0.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("caught2").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("ok").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("after").AsFloat(), 7.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -371,6 +371,24 @@ save_prefs("slot1", to_json(save));            // persist
 var loaded = from_json(load_prefs("slot1", "{}"));
 ```
 
+### Error handling
+
+Wrap risky code in `try` / `catch`, and raise your own errors with `throw`:
+
+```
+try {
+    var data = from_json(load_prefs("save", "{}"));
+    if (map_count(data) == 0) { throw "no save data"; }
+    load_level(map_get(data, "level"));
+} catch (e) {
+    print("Load failed: " + e);   // e is the error message
+}
+```
+
+The `catch` clause is optional — `try { ... }` on its own just swallows any
+error and continues. Control flow (`return` / `break` / `continue`) passes
+through a `try` unaffected.
+
 ### Easing curves
 
 Each maps a normalized `t` (0..1) to an eased 0..1 — feed the result to `lerp`:

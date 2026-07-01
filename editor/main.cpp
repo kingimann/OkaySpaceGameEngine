@@ -612,6 +612,33 @@ static bool AccentToggleButton(const char* label, bool active, const ImVec2& siz
     if (active) ImGui::PopStyleColor(4);
     return clicked;
 }
+// A vector3 drag field with per-axis colour cues (X=red, Y=green, Z=blue) — a
+// 3px coloured bar down each component, like Unity/Godot/Blender. `activated` is
+// set when a drag begins on any field (so the caller can push one undo step).
+static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
+                         const char* fmt = "%.3f", bool* activated = nullptr) {
+    static const ImU32 axCol[3] = { IM_COL32(206, 84, 84, 255), IM_COL32(120, 194, 110, 255),
+                                    IM_COL32(88, 150, 235, 255) };
+    bool changed = false;
+    if (activated) *activated = false;
+    ImGuiStyle& st = ImGui::GetStyle();
+    ImGui::PushID(label);
+    ImGui::PushMultiItemsWidths(3, ImGui::CalcItemWidth());
+    for (int i = 0; i < 3; ++i) {
+        ImGui::PushID(i);
+        if (i > 0) ImGui::SameLine(0, st.ItemInnerSpacing.x);
+        if (ImGui::DragFloat("##c", &v[i], speed, 0.0f, 0.0f, fmt)) changed = true;
+        if (activated && ImGui::IsItemActivated()) *activated = true;
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRectFilled(mn, ImVec2(mn.x + 3.0f, mx.y), axCol[i], 2.0f);
+        ImGui::PopID();
+        ImGui::PopItemWidth();
+    }
+    ImGui::SameLine(0, st.ItemInnerSpacing.x);
+    ImGui::TextUnformatted(label);
+    ImGui::PopID();
+    return changed;
+}
 // A tidy, centered empty-state for a panel with nothing to show — a big muted
 // glyph, a title, and an optional hint, vertically centered in the panel. Replaces
 // the plain top-left grey text that used to sit awkwardly in the corner.
@@ -8034,26 +8061,27 @@ void DrawInspector(EditorState& ed) {
 
     if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
         Transform* t = go->transform;
+        bool act = false;
         float pos[3] = {t->localPosition.x, t->localPosition.y, t->localPosition.z};
-        if (ImGui::DragFloat3("Position", pos, 0.05f)) {
+        if (DragVec3Axis("Position", pos, 0.05f, "%.3f", &act)) {
             t->localPosition = {pos[0], pos[1], pos[2]}; ed.dirty = true;
         }
-        if (ImGui::IsItemActivated()) ed.PushUndo();
+        if (act) ed.PushUndo();
         Vec3& e = g_euler[go];
         float rot[3] = {e.x, e.y, e.z};
-        if (ImGui::DragFloat3("Rotation", rot, 1.0f)) {
+        if (DragVec3Axis("Rotation", rot, 1.0f, "%.2f", &act)) {
             e = {rot[0], rot[1], rot[2]};
             t->localRotation = Quat::Euler(e); ed.dirty = true;
         }
-        if (ImGui::IsItemActivated()) ed.PushUndo();
+        if (act) ed.PushUndo();
         // Cameras aren't scalable (scaling warps the view); show it read-only.
         bool isCam = go->GetComponent<Camera>() != nullptr;
         float scl[3] = {t->localScale.x, t->localScale.y, t->localScale.z};
         if (isCam) ImGui::BeginDisabled();
-        if (ImGui::DragFloat3("Scale", scl, 0.05f)) {
+        if (DragVec3Axis("Scale", scl, 0.05f, "%.3f", &act)) {
             t->localScale = {scl[0], scl[1], scl[2]}; ed.dirty = true;
         }
-        if (ImGui::IsItemActivated()) ed.PushUndo();
+        if (act) ed.PushUndo();
         if (isCam) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
         // Quick resets (Unity's right-click-component conveniences).
         if (ImGui::SmallButton("Reset Pos")) { ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true; }

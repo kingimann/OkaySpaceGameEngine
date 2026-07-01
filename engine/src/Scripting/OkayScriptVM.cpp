@@ -3093,6 +3093,32 @@ struct OkayScriptVM::Impl {
             float x = a.empty() ? 0.0f : a[0].AsFloat();
             return Value{x - Mathf::Floor(x)};
         };
+        // ---- Bitwise / integer helpers (flags, masks, tile ids, packing) ------
+        // Values are treated as 32-bit integers. Handy for bit flags and tilemaps.
+        auto I = [](std::vector<Value>& a, std::size_t i) -> std::int32_t {
+            return i < a.size() ? (std::int32_t)a[i].AsFloat() : 0;
+        };
+        b["bit_and"] = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) & I(a,1))}; };
+        b["bit_or"]  = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) | I(a,1))}; };
+        b["bit_xor"] = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) ^ I(a,1))}; };
+        b["bit_not"] = [I](std::vector<Value>& a) { return Value{(float)(~I(a,0))}; };
+        b["shl"]     = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) << (I(a,1) & 31))}; };
+        b["shr"]     = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) >> (I(a,1) & 31))}; };
+        // Set / clear / toggle / test a single bit (bit index 0..31).
+        b["bit_set"]    = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) |  (1 << (I(a,1) & 31)))}; };
+        b["bit_clear"]  = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) & ~(1 << (I(a,1) & 31)))}; };
+        b["bit_toggle"] = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) ^  (1 << (I(a,1) & 31)))}; };
+        b["bit_test"]   = [I](std::vector<Value>& a) { return Value{(I(a,0) & (1 << (I(a,1) & 31))) != 0}; };
+        // hex(n) -> "0x1f" ; parse_int("ff", 16) -> 255 (base defaults to 10).
+        b["hex"] = [I](std::vector<Value>& a) {
+            char buf[24]; std::snprintf(buf, sizeof(buf), "0x%x", (unsigned)I(a, 0));
+            return Value{std::string(buf)};
+        };
+        b["parse_int"] = [](std::vector<Value>& a) {
+            std::string s = a.empty() ? "" : a[0].AsString();
+            int base = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+            return Value{(float)std::strtol(s.c_str(), nullptr, base)};
+        };
         // JSON: serialize any value (arrays/maps included) to a string, and parse a
         // JSON string back into arrays/maps/numbers/strings/bools — for save data,
         // config, and network payloads. Aliased as json_stringify / json_parse.

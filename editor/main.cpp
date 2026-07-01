@@ -4253,6 +4253,11 @@ static const std::string* ScriptSignature(const std::string& name) {
         {"call","call(\"fn\"[, args...])"}, {"map_fn","map_fn(arr, \"fn\")"}, {"filter_fn","filter_fn(arr, \"fn\")"},
         {"reduce_fn","reduce_fn(arr, \"fn\", init)"}, {"for_each","for_each(arr, \"fn\")"}, {"find_fn","find_fn(arr, \"fn\")"},
         {"any_fn","any_fn(arr, \"fn\")"}, {"all_fn","all_fn(arr, \"fn\")"}, {"count_fn","count_fn(arr, \"fn\")"},
+        // bitwise / integer
+        {"bit_and","bit_and(a, b)"}, {"bit_or","bit_or(a, b)"}, {"bit_xor","bit_xor(a, b)"}, {"bit_not","bit_not(a)"},
+        {"shl","shl(a, n)"}, {"shr","shr(a, n)"}, {"bit_set","bit_set(v, bit)"}, {"bit_clear","bit_clear(v, bit)"},
+        {"bit_toggle","bit_toggle(v, bit)"}, {"bit_test","bit_test(v, bit)"}, {"hex","hex(n) -> \"0x..\""},
+        {"parse_int","parse_int(s[, base])"},
         // JSON
         {"to_json","to_json(value) -> string"}, {"from_json","from_json(\"...\") -> value"},
         {"json_stringify","json_stringify(value)"}, {"json_parse","json_parse(\"...\")"},

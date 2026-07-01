@@ -494,5 +494,34 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("clen").AsFloat(), 2.5f, 0.001f);
     }
 
+    // --- Bitwise / integer helpers ---
+    {
+        const char* src = R"SCRIPT(
+            var a = bit_or(bit_and(12, 10), 1);   // (12&10)=8, 8|1 = 9
+            var x = bit_xor(6, 3);                // 5
+            var s = shl(1, 4);                    // 16
+            var r = shr(256, 2);                  // 64
+            var flags = 0;
+            flags = bit_set(flags, 0);            // 1
+            flags = bit_set(flags, 3);            // 9
+            var has3 = bit_test(flags, 3);        // true
+            var has1 = bit_test(flags, 1);        // false
+            flags = bit_clear(flags, 0);          // 8
+            var pi = parse_int("ff", 16);         // 255
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("a").AsFloat(), 9.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("x").AsFloat(), 5.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("s").AsFloat(), 16.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("r").AsFloat(), 64.0f, 0.001f);
+        CHECK(vm->GetGlobal("has3").AsBool());
+        CHECK(!vm->GetGlobal("has1").AsBool());
+        CHECK_NEAR(vm->GetGlobal("flags").AsFloat(), 8.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("pi").AsFloat(), 255.0f, 0.001f);
+    }
+
     TEST_MAIN_RESULT();
 }

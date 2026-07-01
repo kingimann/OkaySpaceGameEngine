@@ -620,6 +620,23 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --- Rounded corners: a rounded panel leaves its very corner as background. ---
+    {
+        float savedRound = OkayUI::Style().rounding;
+        OkayUI::Style().rounding = 12.0f;
+        SDL_SetRenderDrawColor(r, 0, 0, 0, 255); SDL_RenderClear(r);
+        OkayUI::BeginFrame(OkayUI::Input{});
+        OkayUI::Begin("RR", 20, 20, 120, 60);   // body spans (20,20)-(140,80)
+        OkayUI::End(); OkayUI::EndFrame(r);
+        SDL_LockSurface(surf);
+        Uint32 corner = pixelAt(surf, 22, 77);  // bottom-left: inside the box, outside the arc
+        Uint32 center = pixelAt(surf, 80, 50);  // well inside -> filled
+        SDL_UnlockSurface(surf);
+        CHECK((corner & 0x00FFFFFFu) == 0);     // corner cut away: still background
+        CHECK((center & 0x00FFFFFFu) != 0);     // center filled by the panel
+        OkayUI::Style().rounding = savedRound;
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

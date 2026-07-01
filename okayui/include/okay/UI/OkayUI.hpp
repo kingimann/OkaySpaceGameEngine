@@ -46,6 +46,7 @@ struct Theme {
     unsigned char accent[4]  = { 84, 150, 240, 255};   // fill / handle / checkmark
     float borderPx  = 1.0f;
     float textScale = 2.0f;    // 8x8 font cell * scale (2 -> 16px-tall glyphs)
+    float rounding  = 4.0f;    // corner radius (px) for panels/buttons/inputs; 0 = square
 };
 
 /// Latch this frame's input and reset the geometry batch.

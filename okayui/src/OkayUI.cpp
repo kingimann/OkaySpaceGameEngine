@@ -343,6 +343,36 @@ void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int 
     }
 }
 
+// A filled circular arc/fan from angle a0 to a1 (radians), centered at (cx,cy).
+void arcFan(float cx, float cy, float r, float a0, float a1, const unsigned char c[4], int seg = 5) {
+    if (seg < 1) seg = 1;
+    const float step = (a1 - a0) / seg;
+    float px = cx + r * SDL_cosf(a0), py = cy + r * SDL_sinf(a0);
+    for (int i = 1; i <= seg; ++i) {
+        float a = a0 + step * i;
+        float nx = cx + r * SDL_cosf(a), ny = cy + r * SDL_sinf(a);
+        tri(cx, cy, px, py, nx, ny, c);
+        px = nx; py = ny;
+    }
+}
+
+// A filled rounded rectangle (falls back to a plain quad when rad <= 0). Decomposed
+// into three bars + four quarter-circle corners so translucent fills never overlap.
+void rrect(float x, float y, float w, float h, float rad, const unsigned char c[4]) {
+    if (rad <= 0.5f || w <= 0.0f || h <= 0.0f) { quad(x, y, w, h, c); return; }
+    if (rad > w * 0.5f) rad = w * 0.5f;
+    if (rad > h * 0.5f) rad = h * 0.5f;
+    const float PI = 3.14159265f;
+    quad(x, y + rad, w, h - 2 * rad, c);            // middle band (full width)
+    quad(x + rad, y, w - 2 * rad, rad, c);          // top strip
+    quad(x + rad, y + h - rad, w - 2 * rad, rad, c);// bottom strip
+    arcFan(x + rad,     y + rad,     rad, PI,          1.5f * PI, c);  // top-left
+    arcFan(x + w - rad, y + rad,     rad, 1.5f * PI,   2.0f * PI, c);  // top-right
+    arcFan(x + w - rad, y + h - rad, rad, 0.0f,        0.5f * PI, c);  // bottom-right
+    arcFan(x + rad,     y + h - rad, rad, 0.5f * PI,   PI,        c);  // bottom-left
+}
+inline float rnd() { return g_theme.rounding; }
+
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str) return;
@@ -409,10 +439,11 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
     if (g_active == id && inside) bg = g_theme.bgDown;
     else if (inside)             bg = g_theme.bgHover;
 
-    // Border frame, then the inset fill.
-    quad(x, y, w, h, g_theme.border);
+    // Rounded border frame, then the inset fill.
+    const float rd = rnd();
+    rrect(x, y, w, h, rd, g_theme.border);
     const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, bg);
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, bg);
 
     // Centered label.
     if (label && *label) {
@@ -429,9 +460,10 @@ void Label(float x, float y, const char* text) {
 }
 
 void Panel(float x, float y, float w, float h) {
-    quad(x, y, w, h, g_theme.border);
+    const float rd = rnd();
+    rrect(x, y, w, h, rd, g_theme.border);
     const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, g_theme.panel);
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, g_theme.panel);
 }
 
 bool Checkbox(int id, float x, float y, float size, const char* label, bool* value) {
@@ -450,14 +482,15 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
     if (g_active == id && inside) bg = g_theme.bgDown;
     else if (inside)             bg = g_theme.bgHover;
 
-    // Box frame + fill.
-    quad(x, y, size, size, g_theme.border);
+    // Rounded box frame + fill.
+    const float rd = rnd() * 0.6f;
+    rrect(x, y, size, size, rd, g_theme.border);
     const float b = g_theme.borderPx;
-    if (size > 2.0f * b) quad(x + b, y + b, size - 2.0f * b, size - 2.0f * b, bg);
+    if (size > 2.0f * b) rrect(x + b, y + b, size - 2.0f * b, size - 2.0f * b, rd > b ? rd - b : 0.0f, bg);
     // Check mark: a centered accent square when ticked.
     if (*value) {
         const float pad = size * 0.28f;
-        quad(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, g_theme.accent);
+        rrect(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, rd * 0.5f, g_theme.accent);
     }
     // Label to the right, vertically centered against the box.
     if (label && *label) {
@@ -487,28 +520,31 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
         setFromMouse();                      // jump to the click position
     }
 
-    // Groove, then the filled portion, then the handle.
+    // Rounded groove, then the filled portion, then a circular handle.
     const float t = clamp01((*value - minV) / (maxV - minV));
     const float gy = y + h * 0.5f - 3.0f;     // 6px groove, vertically centered
-    quad(x, gy, w, 6.0f, g_theme.track);
-    quad(x, gy, w * t, 6.0f, g_theme.accent);
-    const float hw = 10.0f;                    // handle width
-    float hx = x + w * t - hw * 0.5f;
-    if (hx < x) hx = x; if (hx > x + w - hw) hx = x + w - hw;
+    rrect(x, gy, w, 6.0f, 3.0f, g_theme.track);
+    if (w * t > 0.0f) rrect(x, gy, w * t, 6.0f, 3.0f, g_theme.accent);
+    const float hr = h * 0.42f;                // handle radius
+    float hcx = x + w * t;
+    if (hcx < x + hr) hcx = x + hr;
+    if (hcx > x + w - hr) hcx = x + w - hr;
     const unsigned char* hc = (g_active == id || inside) ? g_theme.text : g_theme.accent;
-    quad(hx, y, hw, h, g_theme.border);
-    quad(hx + 1.0f, y + 1.0f, hw - 2.0f, h - 2.0f, hc);
+    fillCircle(hcx, y + h * 0.5f, hr, g_theme.border);
+    fillCircle(hcx, y + h * 0.5f, hr - 1.5f, hc);
     return changed;
 }
 
 void ProgressBar(float x, float y, float w, float h, float t) {
     t = clamp01(t);
-    quad(x, y, w, h, g_theme.border);
+    const float rd = rnd();
+    rrect(x, y, w, h, rd, g_theme.border);
     const float b = g_theme.borderPx;
     if (w > 2.0f * b && h > 2.0f * b) {
-        quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, g_theme.track);
+        const float ir = rd > b ? rd - b : 0.0f;
+        rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, ir, g_theme.track);
         const float iw = (w - 2.0f * b) * t;
-        if (iw > 0.0f) quad(x + b, y + b, iw, h - 2.0f * b, g_theme.accent);
+        if (iw > 0.0f) rrect(x + b, y + b, iw, h - 2.0f * b, ir, g_theme.accent);
     }
 }
 
@@ -528,14 +564,12 @@ bool RadioButton(int id, float x, float y, float size, const char* label, int* v
     if (g_active == id && inside) bg = g_theme.bgDown;
     else if (inside)             bg = g_theme.bgHover;
 
-    quad(x, y, size, size, g_theme.border);
-    const float b = g_theme.borderPx;
-    if (size > 2.0f * b) quad(x + b, y + b, size - 2.0f * b, size - 2.0f * b, bg);
-    // Selected indicator: a smaller centered accent dot (distinct from the checkbox).
-    if (*value == option) {
-        const float pad = size * 0.32f;
-        quad(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, g_theme.accent);
-    }
+    // Circular radio (distinct from the square checkbox).
+    const float cx = x + size * 0.5f, cy = y + size * 0.5f, rr = size * 0.5f;
+    fillCircle(cx, cy, rr, g_theme.border);
+    fillCircle(cx, cy, rr - g_theme.borderPx, bg);
+    // Selected indicator: a smaller centered accent dot.
+    if (*value == option) fillCircle(cx, cy, size * 0.22f, g_theme.accent);
     if (label && *label) {
         const float s  = g_theme.textScale;
         const float th = fH() * s;
@@ -595,10 +629,11 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
         }
     }
 
-    // Box (focused gets a subtly lighter fill + accent border hint).
-    quad(x, y, w, h, focused ? g_theme.accent : g_theme.border);
+    // Rounded box (focused gets an accent border hint).
+    const float rd = rnd();
+    rrect(x, y, w, h, rd, focused ? g_theme.accent : g_theme.border);
     const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) quad(x + b, y + b, w - 2.0f * b, h - 2.0f * b, g_theme.track);
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, g_theme.track);
 
     // Show the trailing characters that fit (so the caret stays visible) — this
     // avoids needing a scissor rect across the batched geometry.
@@ -753,7 +788,11 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     // Frame: panel body (only the title bar when collapsed) + accent underline + title.
     const float bodyH = *collapsed ? titleH : h;
     Panel(wx, wy, w, bodyH);
-    quad(wx, wy, w, titleH, g_theme.bgDown);
+    // Title bar: round the TOP corners to match the panel, square at the bottom edge
+    // (drawn as a rounded rect, then a square strip fills its lower half flush to body).
+    const float rd = rnd();
+    rrect(wx, wy, w, titleH, rd, g_theme.bgDown);
+    if (titleH > rd) quad(wx, wy + rd, w, titleH - rd, g_theme.bgDown);
     quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
     const float s = g_theme.textScale;
     drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret

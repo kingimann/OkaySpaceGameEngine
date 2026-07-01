@@ -1216,7 +1216,9 @@ int main(int argc, char** argv) {
     bool running = true;
 #ifdef OKAY_HAVE_OKAYUI
     bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
+    bool g_statsUI = false;           // F3 toggles the OkayUI performance HUD
     char g_uiText[32] = {0}; bool g_uiBack = false;
+    float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame
     // Let game scripts draw OkayUI via the ui_* builtins.
     static okay::OkayUIScriptBridge g_uiBridge;
     okay::SetScriptUI(&g_uiBridge);
@@ -1227,13 +1229,15 @@ int main(int argc, char** argv) {
         Uint64 fStart = SDL_GetPerformanceCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
 #ifdef OKAY_HAVE_OKAYUI
-        g_uiText[0] = '\0'; g_uiBack = false;
+        g_uiText[0] = '\0'; g_uiBack = false; g_uiWheel = 0.0f;
 #endif
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
 #ifdef OKAY_HAVE_OKAYUI
             if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F1) g_testUI = !g_testUI;
+            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F3) g_statsUI = !g_statsUI;
+            if (e.type == SDL_MOUSEWHEEL) g_uiWheel += (float)e.wheel.y;   // for OkayUI scrolling
             if (g_testUI) {
                 if (e.type == SDL_TEXTINPUT) SDL_strlcat(g_uiText, e.text.text, sizeof(g_uiText));
                 if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) g_uiBack = true;
@@ -1416,6 +1420,7 @@ int main(int argc, char** argv) {
             ui.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
             ui.text = g_uiText[0] ? g_uiText : nullptr;
             ui.backspace = g_uiBack;
+            ui.wheel = g_uiWheel;
             OkayUI::BeginFrame(ui);
         }
 #endif
@@ -2772,6 +2777,37 @@ int main(int argc, char** argv) {
         // F1 "Test UI" panel on top, then flush the whole OkayUI frame here so it
         // composites above the game.
         if (g_testUI) okay_testui::Panel(24.0f, 24.0f);
+        // F3 performance HUD — a real in-engine use of OkayUI (FPS graph, frame time,
+        // and a scrollable list of scene objects). Showcases PlotLines/LabelText/child.
+        if (g_statsUI) {
+            static float s_fps = 0.0f;
+            float inst = dt > 0.0001f ? 1.0f / dt : 0.0f;
+            s_fps = s_fps <= 0.0f ? inst : s_fps * 0.9f + inst * 0.1f;   // smoothed FPS
+            static float s_fpsHist[90] = {0};
+            static int   s_fpsIdx = 0;
+            s_fpsHist[s_fpsIdx] = s_fps;
+            s_fpsIdx = (s_fpsIdx + 1) % 90;
+            float plot[90];
+            for (int i = 0; i < 90; ++i) plot[i] = s_fpsHist[(s_fpsIdx + i) % 90];  // chronological
+
+            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 320.0f, 320.0f);
+            char line[64];
+            std::snprintf(line, sizeof(line), "%d", (int)(s_fps + 0.5f));
+            OkayUI::LabelText("FPS", line);
+            std::snprintf(line, sizeof(line), "%.2f ms", dt * 1000.0f);
+            OkayUI::LabelText("Frame time", line);
+            std::snprintf(line, sizeof(line), "%d", (int)scene.Objects().size());
+            OkayUI::LabelText("Objects", line);
+            OkayUI::SeparatorText("FPS (last 90 frames)");
+            OkayUI::PlotLines("##fps", plot, 90, 0.0f, 0.0f, 56.0f);
+            OkayUI::SeparatorText("Scene objects");
+            if (OkayUI::BeginChild("##objs", 0.0f, 130.0f, true)) {
+                for (const auto& up : scene.Objects())
+                    if (up) OkayUI::BulletText(up->name.c_str());
+            }
+            OkayUI::EndChild();
+            OkayUI::End();
+        }
         OkayUI::EndFrame(renderer);
         SDL_StartTextInput();   // keep text flowing for OkayUI text fields
 #endif

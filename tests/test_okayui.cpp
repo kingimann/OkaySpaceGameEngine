@@ -454,6 +454,32 @@ int main(int argc, char** argv) {
         CHECK(accentPixels(true) > 15);    // histogram drew
     }
 
+    // --- SetNextItemWidth: narrows the next full-width widget. ---
+    {
+        auto rightmostAccentX = [&](float widthOverride) {
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 255); SDL_RenderClear(r);
+            OkayUI::BeginFrame(OkayUI::Input{});
+            OkayUI::Begin("IWW", 4, 4, 230, 60);
+            if (widthOverride > 0) OkayUI::SetNextItemWidth(widthOverride);
+            OkayUI::ProgressBar(1.0f);   // fills its width with accent
+            OkayUI::End(); OkayUI::EndFrame(r);
+            SDL_LockSurface(surf);
+            int maxx = -1;
+            // Scan only the content area (below the title bar's full-width accent line).
+            for (int y = 40; y < H; ++y) for (int x = 0; x < W; ++x) {
+                Uint32 px = pixelAt(surf, x, y);
+                Uint8 rr = (px >> 16) & 0xFF, gg = (px >> 8) & 0xFF, bb = px & 0xFF;
+                if (bb > 180 && bb > rr + 40 && gg > 80 && x > maxx) maxx = x;
+            }
+            SDL_UnlockSurface(surf);
+            return maxx;
+        };
+        int full = rightmostAccentX(0);
+        int narrow = rightmostAccentX(50);
+        CHECK(full > 0 && narrow > 0);
+        CHECK(narrow < full - 30);   // the 50px-wide bar ends well left of the full one
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

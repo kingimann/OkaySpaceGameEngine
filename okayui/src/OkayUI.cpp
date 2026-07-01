@@ -147,8 +147,19 @@ inline float cursorX() {
     }
     return leftEdge();
 }
+// Item-width override: SetNextItemWidth (one-shot) / PushItemWidth (scoped). availW()
+// returns this instead of the full remaining width when set, so callers can size a
+// widget explicitly. Always clamped to what actually remains on the line.
+float g_nextItemW = -1.0f;
+float g_itemWStack[16];
+int   g_itemWTop = 0;
 // Remaining width from the next item's left edge to the content's right edge.
-inline float availW() { return g_lay.ox + g_lay.contentW - cursorX(); }
+inline float availW() {
+    float real = g_lay.ox + g_lay.contentW - cursorX();
+    float over = g_nextItemW > 0.0f ? g_nextItemW : (g_itemWTop > 0 ? g_itemWStack[g_itemWTop - 1] : -1.0f);
+    if (over > 0.0f && over < real) return over;
+    return real;
+}
 
 // Reserve a w*h slot for the next item; returns its top-left and advances the cursor
 // to the next line (SameLine() keeps it on the current line instead).
@@ -166,6 +177,7 @@ void place(float w, float h, float& x, float& y) {
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
     g_lay.cx = leftEdge();
     g_lay.cy = y + h + g_lay.spacingY;
+    g_nextItemW = -1.0f;   // a one-shot SetNextItemWidth applies to just this item
 }
 
 inline SDL_Color toColor(const unsigned char c[4]) {
@@ -266,6 +278,7 @@ void BeginFrame(const Input& in) {
     // Restore any colors left pushed by an imbalanced previous frame, then clear.
     PopStyleColor(g_colTop);
     g_colTop = 0;
+    g_nextItemW = -1.0f; g_itemWTop = 0;   // reset item-width overrides
 }
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
@@ -641,6 +654,10 @@ void SameLine(float spacing) {
     g_lay.pendingSameLine = true;
     g_lay.sameLineSpacing = spacing;
 }
+
+void SetNextItemWidth(float w) { g_nextItemW = w; }
+void PushItemWidth(float w)    { if (g_itemWTop < 16) g_itemWStack[g_itemWTop++] = w; }
+void PopItemWidth()            { if (g_itemWTop > 0) --g_itemWTop; }
 
 void Spacing(float h) {
     if (!g_lay.active) return;

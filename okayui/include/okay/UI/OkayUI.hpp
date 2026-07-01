@@ -130,6 +130,12 @@ void End();
 /// Keep the next widget on the current line instead of starting a new one
 /// (`spacing` < 0 uses the theme default gap).
 void SameLine(float spacing = -1.0f);
+/// Set the width (in pixels) of the NEXT full-width widget (slider, input, combo,
+/// plot, ...). One-shot: applies to just the next item. Clamped to the space left.
+void SetNextItemWidth(float w);
+/// Set a width for ALL following full-width widgets until PopItemWidth. Nestable.
+void PushItemWidth(float w);
+void PopItemWidth();
 /// A full-width horizontal divider.
 void Separator();
 /// Vertical empty space of height `h`.

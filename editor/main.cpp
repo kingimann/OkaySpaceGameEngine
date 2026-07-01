@@ -3820,107 +3820,348 @@ void DrawScriptDocs() {
     ImGui::TextDisabled("update(dt)   runs every frame; dt is seconds elapsed");
     ImGui::Unindent();
 
-    header("Syntax");
-    ImGui::TextWrapped("%s",
-        "Blocks use braces { }, statements end with ;  (NOT Lua-style 'end').\n\n"
-        "function start() {\n"
-        "    set_pos(0, 0);\n"
-        "    set(\"score\", 0);\n"
-        "}\n\n"
-        "function update(dt) {\n"
-        "    var speed = 3;\n"
-        "    if (key(\"d\")) { move(speed * dt, 0); }\n"
-        "    if (key(\"a\")) { move(-speed * dt, 0); }\n"
-        "    move(axis_x() * speed * dt, axis_y() * speed * dt);\n"
-        "}\n\n"
-        "Has: var, if/else, while, for, return, break, continue, + - * / %, "
-        "== != < > <= >=, && || !, and arrays a[i].");
+    // Live filter so a long, complete reference stays searchable.
+    static char s_docFilter[64] = "";
+    ImGui::SetNextItemWidth(-70.0f);
+    ImGui::InputTextWithHint("##docfilter", "Filter functions (e.g. 'net', 'tween', 'ui_')...",
+                             s_docFilter, sizeof(s_docFilter));
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear##docfilter")) s_docFilter[0] = '\0';
+    const bool filtering = s_docFilter[0] != '\0';
 
-    header("Movement & Transform (2D)");
-    api("move(dx, dy)", "translate by (dx, dy)");
-    api("set_pos(x, y)", "set local position");
-    api("set_x(v) / set_y(v)", "set one position axis");
-    api("pos_x() / pos_y()", "current local position");
-    api("rotate(deg)", "rotate around Z by degrees");
-    api("move_toward(x, y, step)", "step toward a point");
-    api("look_at(\"name\")", "face another object (2D)");
+    // A section is a CollapsingHeader; when a filter is active every section is
+    // force-open so matches anywhere are visible. `api`/`code` entries below check
+    // the filter too, so only matching rows show. `secOpen` reports whether to draw
+    // a section's body at all (skip it entirely if its title doesn't match and it has
+    // no visible rows — but we always render bodies when filtering and let rows filter).
+    auto lc = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+    std::string needle = lc(s_docFilter);
+    auto match = [&](const char* a, const char* b) {
+        if (!filtering) return true;
+        return lc(a).find(needle) != std::string::npos ||
+               (b && lc(b).find(needle) != std::string::npos);
+    };
+    // Filtered api row.
+    auto fapi = [&](const char* sig, const char* desc) { if (match(sig, desc)) api(sig, desc); };
+    auto sec = [&](const char* title) {
+        int flags = filtering ? ImGuiTreeNodeFlags_DefaultOpen : 0;
+        return ImGui::CollapsingHeader(title, flags);
+    };
 
-    header("Transform & Physics (3D)");
-    api("move3(dx, dy, dz)", "translate in 3D");
-    api("set_pos3(x, y, z)", "set 3D position");
-    api("set_z(v) / pos_z()", "Z position");
-    api("rotate3(x, y, z)", "rotate by Euler degrees");
-    api("set_rot3 / set_scale3", "set rotation / scale (3D)");
-    api("scale_x/y/z()", "current scale");
-    api("move_forward(d) / move_right(d)", "move along facing");
-    api("forward_x/y/z()", "facing direction vector");
-    api("look_at3(\"name\")", "face an object in 3D");
+    if (sec("Language & syntax")) {
+        ImGui::TextWrapped("%s",
+            "Blocks use braces { }, statements end with ;  (NOT Lua-style 'end').\n"
+            "var x = 5;   if/else   while   for   return   break   continue\n"
+            "Operators: + - * / %   == != < > <= >=   && || !\n"
+            "Arrays: var a = [1,2,3]; a[0] = 10;   Maps: var m = map(); m[\"k\"] = 1;\n"
+            "foreach (var item in a) { print(item); }");
+        ImGui::TextWrapped("Unity/C# flavor also parses: PascalCase Start()/Update(), "
+            "transform.position, Input.GetKeyDown(...), Time.deltaTime, new Vector3(...), "
+            "typed vars (float speed = 5f;), i++, and a `class : OkaySource` wrapper. "
+            "See docs/scripting.md for the full Unity-style surface.");
+    }
 
-    header("Rigidbody (2D & 3D)");
-    api("set_velocity(x, y)", "set 2D velocity");
-    api("set_velocity3(x, y, z)", "set 3D velocity");
-    api("velocity_x/y/z()", "read velocity");
-    api("add_force / add_force3", "accumulate force");
-    api("add_impulse / add_impulse3", "instant velocity change");
-    api("jump(v)", "set upward velocity");
-    api("set_gravity / set_gravity3", "change world gravity");
+    if (sec("Movement & Transform (2D)")) {
+        fapi("move(dx, dy)", "translate by (dx, dy)");
+        fapi("set_pos(x, y)", "set local position");
+        fapi("set_x(v) / set_y(v)", "set one position axis");
+        fapi("pos_x() / pos_y()", "current local position");
+        fapi("rotate(deg)", "rotate around Z by degrees");
+        fapi("move_toward(x, y, step)", "step toward a point");
+        fapi("look_at(\"name\")", "rotate to face another object");
+    }
 
-    header("Input");
-    api("key / key_down / key_up", "keyboard, by \"x\"");
-    api("axis_x() / axis_y()", "WASD / arrows, -1..1");
-    api("mouse_x() / mouse_y()", "cursor position");
-    api("mouse / mouse_down / mouse_up", "buttons 0=L 1=R 2=M");
-    api("gamepad(btn) / gamepad_x()", "controller input");
+    if (sec("Transform & Movement (3D)")) {
+        fapi("move3(dx, dy, dz)", "translate in 3D");
+        fapi("set_pos3(x, y, z)", "set 3D position");
+        fapi("set_z(v) / pos_z()", "Z position");
+        fapi("rotate3(x, y, z)", "rotate by Euler degrees");
+        fapi("set_rot3(x, y, z)", "set Euler rotation");
+        fapi("set_scale(s) / set_scale3(x,y,z)", "uniform / per-axis scale");
+        fapi("scale_x() / scale_y() / scale_z()", "current scale");
+        fapi("move_forward(d) / move_right(d)", "move along this object's facing");
+        fapi("forward_x/y/z() / right_x/y/z()", "facing direction vectors");
+        fapi("look_at3(\"name\")", "face an object in 3D");
+    }
 
-    header("This object");
-    api("name() / set_name(s)", "object name");
-    api("tag() / set_tag(s) / has_tag(s)", "object tag");
-    api("set_active(b) / self_active()", "enable/disable self");
-    api("destroy() / destroy_obj(\"n\")", "remove an object");
-    api("set_parent(\"n\") / detach()", "re-parent");
-    api("set_text / set_color / set_texture", "sibling renderers");
-    api("set_mesh(\"Sphere\")", "swap a 3D mesh");
+    if (sec("Rigidbody (2D & 3D)")) {
+        fapi("set_velocity(x,y) / set_velocity3(x,y,z)", "set velocity");
+        fapi("set_vx/set_vy/set_vz(v)", "set one velocity axis");
+        fapi("velocity_x() / velocity_y() / velocity_z()", "read velocity");
+        fapi("add_force(x,y) / add_force3(x,y,z)", "accumulate a force");
+        fapi("add_impulse(...) / add_impulse3(...)", "instant velocity change");
+        fapi("jump(v)", "set upward velocity (2D or 3D body)");
+        fapi("set_gravity(x,y) / set_gravity3(x,y,z)", "change world gravity");
+    }
 
-    header("Other objects & scene");
-    api("exists(\"n\") / is_active(\"n\")", "query by name");
-    api("obj_x/y/z(\"n\")", "another object's position");
-    api("dist_to(\"n\") / vel_toward(\"n\", s)", "chase / home");
-    api("count_tag(\"t\") / nearest_tag(\"t\")", "tag queries");
-    api("set_cam / move_cam / set_cam_zoom", "camera control");
-    api("set_bg / set_light / set_ambient", "background & lighting");
-    api("load_scene(\"file\")", "switch scenes");
+    if (sec("Input")) {
+        fapi("key(\"w\") / key_down(\"w\") / key_up(\"w\")", "keyboard held / pressed / released");
+        fapi("axis_x() / axis_y()", "WASD / arrow-key axis, -1..1");
+        fapi("mouse_x() / mouse_y()", "cursor position in pixels");
+        fapi("mouse(btn) / mouse_down(btn) / mouse_up(btn)", "mouse buttons (0=L,1=R,2=M)");
+        fapi("gamepad(btn) / gamepad_x() / gamepad_y()", "controller input");
+    }
 
-    header("State, math & data");
-    api("set(\"k\", v) / get(\"k\")", "shared variables");
-    api("prefs_set / prefs_get / prefs_save", "PlayerPrefs-style key/value");
-    api("save(\"k\", v[, file]) / load(\"k\", def[, file])", "Easy-Save: typed values (num/str/Vector3), many files");
-    api("save_has / save_delete / save_clear", "manage keys in a save file");
-    api("save_exists([file]) / save_delete_file([file])", "check / remove a save file");
-    api("data_num / data_str / data_set", "Scriptable Object (.okaydata) fields");
-    api("rand(lo,hi) / randi / chance(p)", "randomness");
-    api("dist(...) / dist3(...) / angle_to", "geometry");
-    api("sin cos tan sqrt pow abs min max", "math");
-    api("clamp clamp01 lerp smoothstep wrap", "interpolation");
-    api("array push pop count sort_num", "lists");
-    api("upper lower split join substr", "strings");
-    api("time() / dt() / fps()", "timing");
+    if (sec("This object")) {
+        fapi("name() / set_name(s)", "object name");
+        fapi("tag() / set_tag(s) / has_tag(s)", "object tag");
+        fapi("set_active(b) / self_active()", "enable / query this object");
+        fapi("destroy()", "destroy this object");
+        fapi("set_parent(\"name\") / detach()", "re-parent / unparent");
+        fapi("set_text(s) / set_color(r,g,b,a) / set_texture(p)", "sibling renderers");
+        fapi("set_mesh(\"Sphere\")", "swap a sibling MeshRenderer's primitive");
+        fapi("emit(n) / play_anim() / play_sound()", "sibling FX, animation, audio");
+    }
 
-    header("Timers, spawning & FX");
-    api("after(s,\"fn\") / every(s,\"fn\")", "scheduled callbacks");
-    api("spawn(\"p\", x, y) / spawn3(...)", "instantiate prefabs");
-    api("emit(n) / particles_on(b)", "particle FX");
-    api("play_anim() / play_sound()", "animation & audio");
-    api("set_tile / get_tile / tile_resize", "tilemap editing");
+    if (sec("Other objects & scene")) {
+        fapi("exists(\"n\") / is_active(\"n\")", "query an object by name");
+        fapi("activate(\"n\") / deactivate(\"n\")", "show / hide an object");
+        fapi("obj_x(\"n\") / obj_y(\"n\") / obj_z(\"n\")", "another object's position");
+        fapi("dist_to(\"n\")", "distance to a named object");
+        fapi("vel_toward(\"n\", speed)", "aim this body's velocity at a target");
+        fapi("destroy_obj(\"n\")", "destroy a named object");
+        fapi("count_tag(\"t\") / nearest_tag(\"t\")", "tag queries");
+        fapi("set_cam(x,y) / move_cam(dx,dy) / set_cam_zoom(z)", "camera control");
+        fapi("set_bg(r,g,b) / set_light(x,y,z) / set_ambient(v)", "background & lighting");
+        fapi("load_scene(\"file\")", "switch to another scene");
+        fapi("screen_w() / screen_h()", "viewport size in pixels");
+    }
 
-    header("Physics queries & events");
-    api("raycast_hit(ox,oy,dx,dy)", "2D ray test");
-    api("raycast_hit3(o.., d..)", "3D ray test");
-    api("overlap(x, y)", "point inside a 2D collider?");
-    ImGui::TextWrapped("Define on_collision() / on_trigger() (2D) — they fire when "
-        "this object's collider hits or overlaps another.");
+    if (sec("UI — drive scene widgets by name")) {
+        fapi("ui_set_text(\"n\",\"s\") / ui_get_text(\"n\")", "text/button label/input text");
+        fapi("ui_clicked(\"n\")", "true the frame a named button was clicked");
+        fapi("ui_set_interactable(\"n\", on)", "enable / grey-out a button");
+        fapi("ui_slider_value(\"n\") / ui_set_slider(\"n\", v)", "read / set a slider (0..1)");
+        fapi("ui_toggle_value(\"n\") / ui_set_toggle(\"n\", on)", "read / set a toggle");
+        fapi("ui_dropdown_value(\"n\") / ui_dropdown_text(\"n\")", "selected index / option text");
+        fapi("ui_set_dropdown(\"n\", i)", "select a dropdown option (fires on_change)");
+        fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        fapi("ui_set_fill(\"n\", v)", "set a filled UI Image's amount (cooldowns/health)");
+    }
+
+    if (sec("OkayUI — immediate-mode HUD from script")) {
+        ImGui::TextWrapped("Call these every frame — the toolkit draws the HUD over the "
+            "game (player AND editor Play mode). No Canvas objects: the script IS the UI. "
+            "Each widget returns its live value, so you read+write state in one line.");
+        fapi("ui_begin(\"Title\", x, y, w, h) ... ui_end()", "open/close a draggable window (coords optional)");
+        fapi("ui_text(\"s\")", "a line of text");
+        fapi("ui_button(\"Label\")", "returns 1 the frame it's clicked, else 0");
+        fapi("ui_checkbox(\"Label\", on)", "returns the new on/off (pass current value back in)");
+        fapi("ui_slider(\"Label\", v, lo, hi)", "returns the new value (pass current value back in)");
+        fapi("ui_progress(t)", "a progress/health bar, t in 0..1");
+        fapi("ui_sameline() / ui_separator()", "lay next widget beside / draw a divider");
+        if (!filtering)
+            code("ui_begin(\"HUD\", 24, 24, 240, 150)\n"
+                 "ui_text(\"Health\")\n"
+                 "ui_progress(hp / 100)\n"
+                 "if (ui_button(\"Heal\")) { hp = 100 }\n"
+                 "ui_sameline()\n"
+                 "if (ui_button(\"Hurt\")) { hp = hp - 10 }\n"
+                 "ui_separator()\n"
+                 "paused = ui_checkbox(\"Paused\", paused)\n"
+                 "speed  = ui_slider(\"Speed\", speed, 0, 10)\n"
+                 "ui_end()");
+    }
+
+    if (sec("Tweening (DOTween-style) & saves")) {
+        ImGui::TextDisabled("Every tween accepts an optional easing and an optional on-complete \"fn\" as trailing args.");
+        fapi("tween_move(x,y,dur[,ease][,\"done\"]) / tween_move3(...)", "animate position");
+        fapi("tween_scale(s,dur[,ease][,\"done\"])", "animate uniform scale");
+        fapi("tween_rotate(deg,dur ...) / tween_rotate_to(deg,dur ...)", "spin relative / to absolute Z angle");
+        fapi("tween_scale_xy(sx,sy,dur ...)", "non-uniform scale");
+        fapi("tween_ui_move(x,y,dur ...) / tween_ui_size(w,h,dur ...)", "move / resize a UI widget");
+        fapi("tween_color(r,g,b,dur ...) / tween_fade(alpha,dur ...)", "animate color / opacity");
+        fapi("tween_move_by(dx,dy,dur ...)", "move by a relative offset");
+        fapi("tween_jump(x,y,height,dur[,\"done\"])", "arc-jump to a target (coins, hops)");
+        fapi("tween_path(dur, x1,y1, x2,y2, ...)", "move through waypoints");
+        fapi("tween_loop_move(x,y,dur[,ease]) / tween_loop_scale(s,dur ...)", "ping-pong forever");
+        fapi("tween_loop_rotate(dur[,dir])", "spin continuously (loaders, coins)");
+        fapi("tween_number(from,to,dur[,\"prefix\"])", "count a sibling text number (score ticks)");
+        fapi("tween_punch_scale(amt,dur[,vib]) / tween_punch_pos(dx,dy,dur[,vib])", "punch & settle (juice)");
+        fapi("tween_shake(intensity, dur)", "random shake that decays to a stop");
+        fapi("save_game([slot]) / load_game([slot])", "snapshot / restore the scene");
+        fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
+        ImGui::TextDisabled("Easings: linear, in/out/in_out_quad, ..._cubic, ..._sine, ..._expo, in_back, out_back, out_elastic, out_bounce.");
+    }
+
+    if (sec("Persistence, PlayerPrefs & Data Assets")) {
+        fapi("set(\"k\", v) / get(\"k\")", "shared variables across scripts");
+        fapi("prefs_set / prefs_get / prefs_save / prefs_load", "PlayerPrefs-style key/value");
+        fapi("save(\"k\", v[, file]) / load(\"k\", def[, file])", "Easy-Save: typed values, many files");
+        fapi("save_has / save_delete / save_clear", "manage keys in a save file");
+        fapi("save_exists([file]) / save_delete_file([file])", "check / remove a save file");
+        fapi("data_num / data_str / data_has(path, key)", "read Scriptable Object (.okaydata) fields");
+        fapi("data_set(path, key, v) / data_save(path)", "write a Data Asset");
+        fapi("ui_drop_source() / ui_drop_target()", "the dragged item / target (UI drag & drop)");
+        fapi("drop_source() / drop_target()", "world drag & drop pair");
+    }
+
+    if (sec("Scene Manager (build list)")) {
+        fapi("load_scene_index(i)", "load scene i from the build list");
+        fapi("load_scene_name(\"n\")", "load by scene name (file stem) or path");
+        fapi("load_next_scene()", "load the next scene (wraps to the first)");
+        fapi("reload_scene()", "reload the active scene");
+        fapi("scene_count() / scene_index() / scene_name()", "query the build list");
+    }
+
+    if (sec("Multiplayer (networking)")) {
+        fapi("net_host(port)", "start a server on this machine");
+        fapi("net_join(\"ip\", port)", "connect to a host");
+        fapi("net_host_relay(\"ip\", port, \"code\") / net_join_relay(...)", "host/join via a relay (NAT traversal)");
+        fapi("net_relay_ready()", "1 once the relay has paired this peer");
+        fapi("net_disconnect()", "leave / stop the session");
+        fapi("net_connected() / net_is_server() / net_is_client()", "status");
+        fapi("net_id() / net_peers() / net_ping()", "peer id / peer count / RTT (ms)");
+        fapi("net_name(\"name\") / net_room(\"name\")", "display name / isolated lobby room");
+        fapi("net_ready(1/0) / net_ready_count() / net_all_ready()", "lobby ready state");
+        fapi("net_start_match() / net_match_started()", "(host) begin / has the match begun?");
+        fapi("net_send(\"ch\",\"data\") / net_send_to(id,\"ch\",\"data\")", "broadcast / message one peer");
+        fapi("net_send_reliable(\"ch\",\"data\")", "resent until acked + de-duped");
+        fapi("net_kick(id[,\"reason\"]) / net_was_kicked()", "host kicks / client check");
+        fapi("net_poll() / net_msg_channel() / net_msg_data() / net_msg_from()", "pop & read a message (in a while)");
+        fapi("net_set(\"key\",\"value\") / net_get(\"key\")", "server-authoritative synced variable");
+        fapi("net_spawn(\"prefab\", x, y[, z])", "replicated spawn on every peer");
+    }
+
+    if (sec("Character animation (Character on this object)")) {
+        fapi("load_clips(\"text\")", "load keyframe clips from OkayVS-anim text; returns count");
+        fapi("play_clip(\"name\") / stop_clip()", "play a loaded clip / return to built-in");
+        fapi("playing_clip() / is_playing_clip()", "active clip name / is one playing");
+        fapi("set_anim(n) / get_anim()", "built-in animation index (1 idle, 2 walk, 3 run, ...)");
+    }
+
+    if (sec("Steam (achievements, stats, leaderboards, cloud)")) {
+        fapi("steam_name()", "the player's Steam name");
+        fapi("steam_unlock(\"ID\") / steam_is_unlocked(\"ID\") / steam_clear(\"ID\")", "achievements");
+        fapi("steam_set_stat(\"n\",v) / steam_get_stat(\"n\") / steam_inc_stat(\"n\",by)", "stats");
+        fapi("steam_store()", "flush stats/achievements to Steam");
+        fapi("steam_progress(\"ID\", cur, max)", "show achievement progress (auto-unlocks at max)");
+        fapi("steam_leaderboard(\"board\", score) / steam_leaderboard_top(\"board\", n)", "submit / top-N scores");
+        fapi("steam_cloud_write(\"file\",\"data\") / steam_cloud_read(\"file\")", "Steam Cloud");
+        fapi("steam_presence(\"key\",\"value\") / steam_friends() / steam_overlay(\"page\")", "rich presence / friends / overlay");
+        fapi("steam_owns(appId) / steam_owns_dlc(appId)", "ownership / DLC checks");
+        fapi("steam_achievement_count() / steam_language()", "achievement count / client language");
+    }
+
+    if (sec("Debugging")) {
+        ImGui::TextDisabled("All of these print into the editor's Console.");
+        fapi("print(...) / debug_log(...) / log_info(...)", "log a line (args joined by spaces)");
+        fapi("log_warn(...) / log_error(...) / trace(...)", "log at a level");
+        fapi("watch(\"name\", value)", "log name = value for quick inspection");
+        fapi("assert(cond[, \"msg\"])", "log an error when cond is false; returns the result");
+        fapi("format(\"hp={} of {}\", a, b)", "fill each {} with the next argument");
+        fapi("concat(...) / str_repeat(\"ab\", 3)", "join args / repeat a string");
+    }
+
+    if (sec("Math & numeric helpers")) {
+        fapi("approach(cur, target, step)", "step toward a target without overshooting");
+        fapi("remap(v, inLo, inHi, outLo, outHi)", "rescale a value between two ranges");
+        fapi("frac(x) / mod(a, b) / snap(v, step)", "fraction / positive modulo / round to a step");
+        fapi("is_nan(x) / is_finite(x) / avg(...) / min3 / max3", "numeric helpers");
+        fapi("lerp_angle(a, b, t)", "interpolate degrees the short way round");
+        fapi("rand(lo, hi) / randi(lo, hi) / chance(p)", "randomness");
+        fapi("dist(x1,y1,x2,y2) / dist3(...) / angle_to(...)", "geometry");
+        fapi("sin cos tan asin acos atan atan2", "trigonometry");
+        fapi("sqrt pow exp log abs sign floor ceil round", "math");
+        fapi("min max clamp clamp01 lerp smoothstep wrap ping_pong", "ranges & easing");
+        fapi("time() / dt() / fps()", "timing");
+    }
+
+    if (sec("Collections — arrays & maps")) {
+        ImGui::TextDisabled("Arrays and maps are shared by reference and can be nested.");
+        fapi("array(...) / count(a) / push(a,v) / pop(a)", "make a list, length, append, remove-last");
+        fapi("first(a) / last(a)", "first / last item (null if empty)");
+        fapi("insert_at(a,i,v) / remove_at(a,i)", "insert at / remove at an index");
+        fapi("slice(a, start, end)", "sub-array; negative indices count from the end");
+        fapi("range(n) / range(lo, hi[, step])", "build a numeric array");
+        fapi("contains(a,v) / index_of(a,v)", "membership / first index (or -1)");
+        fapi("sum(a) / min_of(a) / max_of(a)", "reduce a numeric array");
+        fapi("reverse(a) / sort_num(a) / sort_str(a) / shuffle(a) / choose(a)", "reorder / random pick");
+        fapi("clear(a_or_m)", "empty an array or map in place");
+        fapi("map() / map_set(m,\"k\",v) / map_get(m,\"k\") / map_has(m,\"k\")", "dictionary basics");
+        fapi("map_remove(m,\"k\") / map_keys(m) / map_values(m) / map_count(m)", "delete / list / size");
+        fapi("map_clear(m) / map_merge(dst, src)", "empty / merge (src wins)");
+        if (!filtering)
+            code("var a = array(10, 20, 30);\n"
+                 "a[1] += 5;   a[0]++;         // element compound assignment\n"
+                 "var m = map();  m[\"hp\"] = 100;  m[\"hp\"] -= 30;\n"
+                 "foreach (var key in m) { print(key + \" = \" + map_get(m, key)); }");
+    }
+
+    if (sec("Functional helpers (named callbacks)")) {
+        ImGui::TextDisabled("Pass the NAME of a function to apply it across an array.");
+        fapi("map_fn(a, \"fn\")", "new array of fn(item) for each item");
+        fapi("filter_fn(a, \"fn\")", "keep items where fn(item) is true");
+        fapi("reduce_fn(a, \"fn\", init)", "fold left: acc = fn(acc, item)");
+        fapi("for_each(a, \"fn\")", "call fn(item) for every item");
+        fapi("find_fn / any_fn / all_fn / count_fn (a, \"fn\")", "search / test / count");
+        fapi("call(\"fn\"[, args...])", "invoke a function (user or builtin) by name");
+    }
+
+    if (sec("JSON & type introspection")) {
+        fapi("to_json(value) / from_json(\"...\")", "serialize / parse (also json_stringify / json_parse)");
+        fapi("typeof(v)", "\"number\",\"string\",\"bool\",\"array\",\"map\",\"vec3\" or \"null\"");
+        fapi("is_num is_str is_bool is_array is_map", "type tests");
+    }
+
+    if (sec("Error handling")) {
+        ImGui::TextWrapped("Wrap risky code in try/catch and raise your own errors with throw. "
+            "The catch clause is optional. Control flow (return/break/continue) passes through a try.");
+        if (!filtering)
+            code("try {\n"
+                 "    var data = from_json(load_prefs(\"save\", \"{}\"));\n"
+                 "    if (map_count(data) == 0) { throw \"no save data\"; }\n"
+                 "} catch (e) {\n"
+                 "    print(\"Load failed: \" + e);\n"
+                 "}");
+    }
+
+    if (sec("Easing curves")) {
+        ImGui::TextWrapped("Each maps a normalized t (0..1) to an eased 0..1 — feed the result to lerp:");
+        fapi("ease_in / ease_out / ease_in_out", "quad ease");
+        fapi("ease_in_cubic / ease_out_cubic / ease_in_out_cubic", "cubic ease");
+        fapi("ease_back / ease_elastic / ease_bounce", "overshoot / spring / bounce");
+        fapi("fract(x)", "the fractional part of x");
+    }
+
+    if (sec("String helpers")) {
+        fapi("upper lower trim trim_start trim_end", "case & whitespace");
+        fapi("capitalize title_case str_reverse", "capitalization / reverse");
+        fapi("substr char_at replace split join", "extract / edit / split / join");
+        fapi("repeat pad_left pad_right format", "repeat / pad / format");
+        fapi("to_str / str / to_num / num", "convert between text and numbers");
+    }
+
+    if (sec("Timers & spawning")) {
+        fapi("after(seconds, \"fn\")", "call fn once after a delay");
+        fapi("every(seconds, \"fn\")", "call fn repeatedly on an interval");
+        fapi("cancel_timers()", "clear all scheduled callbacks");
+        fapi("spawn(\"prefab\", x, y) / spawn3(\"prefab\", x, y, z)", "instantiate prefabs");
+        fapi("emit(n) / particles_on(b)", "particle FX");
+        fapi("set_tile / get_tile / tile_resize", "tilemap editing");
+    }
+
+    if (sec("Physics queries & events")) {
+        fapi("raycast_hit(ox,oy,dx,dy[, maxDist])", "2D ray hits a collider? (boolean)");
+        fapi("raycast(ox,oy,dx,dy[, maxDist])", "2D ray; returns the name hit (\"\" = miss)");
+        fapi("ray_hit()/ray_object()/ray_x()/ray_y()/ray_nx()/ray_ny()/ray_dist()", "details of the last raycast()");
+        fapi("raycast_hit3(o.., d..[, maxDist]) / raycast3(...)", "3D ray test / named hit + ray3_* details");
+        fapi("overlap(x, y)", "a 2D collider contains this point?");
+        ImGui::TextWrapped("Define on_collision() / on_trigger() — they fire when this "
+            "object's collider hits or overlaps another.");
+    }
+
+    if (sec("Friendly aliases")) {
+        ImGui::TextWrapped("Intuitive alternate names for common builtins: delta_time (dt), "
+            "get_key/get_key_down/get_key_up (key...), random/random_int (rand/randi), "
+            "pick (choose), distance (dist), instantiate (spawn), destroy_self (destroy), "
+            "translate (move), set_position (set_pos), play_audio (play_sound), "
+            "to_string/str (to_str), to_number/num (to_num), get_x/get_y/get_z (pos_*), "
+            "screen_width/screen_height.");
+    }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("This is a summary — see docs/SCRIPTING.md for the full list.");
+    ImGui::TextDisabled("Complete reference — mirrors docs/SCRIPTING.md. Hover a name in the Script Editor for its doc.");
     if (ImGui::Button("Close")) g_showScriptDocs = false;
     ImGui::End();
 }
@@ -7097,9 +7338,62 @@ void DrawHierarchy(EditorState& ed) {
 static void AnchorCombo(const char* id, okay::UIAnchor& anchor, EditorState& ed) {
     static const char* kAnchors[] = {
         "Top-Left", "Top", "Top-Right", "Left", "Center", "Right",
-        "Bottom-Left", "Bottom", "Bottom-Right"};
+        "Bottom-Left", "Bottom", "Bottom-Right",
+        "Stretch Horizontal", "Stretch Vertical", "Stretch (Fill)"};
     int ai = (int)anchor;
-    if (ImGui::Combo(id, &ai, kAnchors, 9)) { anchor = (okay::UIAnchor)ai; ed.dirty = true; }
+    if (ImGui::Combo(id, &ai, kAnchors, 12)) { anchor = (okay::UIAnchor)ai; ed.dirty = true; }
+    if (ImGui::IsItemHovered() && okay::AnchorIsStretch(anchor))
+        ImGui::SetTooltip("Stretch: the widget fills the canvas on the stretched axis.\n"
+                          "Position/Size become MARGINS (like Unity's Left/Right/Top/Bottom):\n"
+                          " • Fill: Position = (left, top), Size = (right, bottom) margins\n"
+                          " • Horizontal: Position = (left, top), Size = (right margin, height)\n"
+                          " • Vertical: Position = (left, top), Size = (width, bottom margin)");
+}
+
+/// Labels for the Position/Size drag fields that adapt to a stretch anchor, so the
+/// inspector reads like Unity (margins instead of an offset+extent). Returns the two
+/// component labels for Position (px,py) and Size (sx,sy) respectively.
+static void AnchorFieldLabels(okay::UIAnchor a,
+                              const char*& posX, const char*& posY,
+                              const char*& sizeX, const char*& sizeY) {
+    switch (a) {
+        case okay::UIAnchor::StretchFull:
+            posX = "Left"; posY = "Top"; sizeX = "Right"; sizeY = "Bottom"; break;
+        case okay::UIAnchor::StretchHorizontal:
+            posX = "Left"; posY = "Top"; sizeX = "Right"; sizeY = "Height"; break;
+        case okay::UIAnchor::StretchVertical:
+            posX = "Left"; posY = "Top"; sizeX = "Width"; sizeY = "Bottom"; break;
+        default:
+            posX = "X"; posY = "Y"; sizeX = "W"; sizeY = "H"; break;
+    }
+}
+
+/// Draw a widget's Position + Size drag fields, adapting to its anchor. Fixed
+/// anchors get the classic "Pos (px)" / "Size (px)" DragFloat2s; stretch anchors get
+/// four separately-labelled margin fields (Left/Top/Right/Bottom-style) so the
+/// inspector reads like Unity's stretched RectTransform. Sets ed.dirty on any edit.
+static void UIRectFields(const char* idSuffix, okay::UIAnchor anchor,
+                         okay::Vec2& position, okay::Vec2& size, EditorState& ed) {
+    char lbl[80];
+    if (okay::AnchorIsStretch(anchor)) {
+        const char *px, *py, *sx, *sy; AnchorFieldLabels(anchor, px, py, sx, sy);
+        std::snprintf(lbl, sizeof(lbl), "%s##%s_px", px, idSuffix);
+        if (ImGui::DragFloat(lbl, &position.x, 1.0f)) ed.dirty = true;
+        std::snprintf(lbl, sizeof(lbl), "%s##%s_py", py, idSuffix);
+        if (ImGui::DragFloat(lbl, &position.y, 1.0f)) ed.dirty = true;
+        std::snprintf(lbl, sizeof(lbl), "%s##%s_sx", sx, idSuffix);
+        if (ImGui::DragFloat(lbl, &size.x, 1.0f)) ed.dirty = true;
+        std::snprintf(lbl, sizeof(lbl), "%s##%s_sy", sy, idSuffix);
+        if (ImGui::DragFloat(lbl, &size.y, 1.0f)) ed.dirty = true;
+        ImGui::TextDisabled("Margins from the canvas edges (px)");
+    } else {
+        float pos[2] = {position.x, position.y};
+        std::snprintf(lbl, sizeof(lbl), "Pos (px)##%s", idSuffix);
+        if (ImGui::DragFloat2(lbl, pos, 1.0f)) { position = {pos[0], pos[1]}; ed.dirty = true; }
+        float sz[2] = {size.x, size.y};
+        std::snprintf(lbl, sizeof(lbl), "Size (px)##%s", idSuffix);
+        if (ImGui::DragFloat2(lbl, sz, 1.0f, 0.0f, 8000.0f)) { size = {sz[0], sz[1]}; ed.dirty = true; }
+    }
 }
 
 // Size a 3D collider to wrap the object's MeshRenderer bounds (Unity's "fit").
@@ -8334,8 +8628,12 @@ void DrawModeling(EditorState& ed) {
             if (it != s_meshSig.end() && it->second != sig) FitColliders(go);   // mesh edited → resync colliders
             s_meshSig[go] = sig;
         }
-        SectionHeader("Mesh");
-        ImGui::Text("%s", go->name.c_str());
+        ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1.0f), "%s", go->name.c_str());
+        ImGui::Spacing();
+        // Grouped into tabs so the long modeling toolset is easy to navigate
+        // (Shape / Edit / Modifiers / Edit Mesh / Import) instead of one long scroll.
+        if (ImGui::BeginTabBar("ModelTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+        if (ImGui::BeginTabItem("Shape")) {
         // Swap the primitive shape.
         const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
                                 "Cylinder", "Cone", "Tube", "Torus", "Capsule", "Icosphere", "Grid"};
@@ -8377,10 +8675,21 @@ void DrawModeling(EditorState& ed) {
             }
         }
 
-        SectionHeader("Edit");
+        ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Edit")) {
         ImGui::TextDisabled("%d verts, %d triangles",
                             (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
-        if (ImGui::Button("Subdivide##model")) { mr->mesh.Subdivide(); ed.dirty = true; }
+        if (ImGui::Button("Subdivide##model")) {
+            ed.PushUndo();
+            if (!g_meshSelFaces.empty()) mr->mesh.SubdivideFaces(g_meshSelFaces);   // just the picked face(s)
+            else                         mr->mesh.Subdivide();                      // whole mesh
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(g_meshSelFaces.empty()
+                ? "Split every face into 4. Select faces first (Edit Mesh) to subdivide just those."
+                : "Subdivides only the %d selected face(s). Deselect to subdivide the whole mesh.",
+                (int)g_meshSelFaces.size());
         ImGui::SameLine();
         if (ImGui::Button("Subdiv + Smooth##model")) {
             mr->mesh.SubdivideSmooth(1, 0.5f); ed.dirty = true;
@@ -8428,7 +8737,8 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Curve the mesh into an arc along X (degrees over its length).");
 
         // ---- Modifiers (Blender-style: array / remesh / decimate / boolean) ----
-        SectionHeader("Modifiers");
+        ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Modifiers")) {
         static int   s_arrayN = 3; static float s_arrayDX = 1.5f;
         ImGui::SetNextItemWidth(70); ImGui::DragInt("##arrn", &s_arrayN, 0.1f, 1, 64);
         ImGui::SameLine(); ImGui::SetNextItemWidth(80); ImGui::DragFloat("##arrdx", &s_arrayDX, 0.05f, -50.0f, 50.0f, "dx %.2f");
@@ -8544,7 +8854,8 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale along one axis about the mesh centre (stretch/squash).");
 
         // ---- Interactive edit mode (vertex/face select + move + ops + sculpt) ----
-        SectionHeader("Edit Mode");
+        ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Edit Mesh")) {
         bool editing = g_meshEdit && g_meshEditObj == go;
         if (ImGui::Checkbox("Edit Mesh##model", &editing)) {
             if (editing) {
@@ -8614,7 +8925,8 @@ void DrawModeling(EditorState& ed) {
             }
         }
 
-        SectionHeader("Import");
+        ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Import")) {
         static char objPath[256] = "";
         std::strncpy(objPath, mr->meshPath.c_str(), sizeof(objPath) - 1);
         objPath[sizeof(objPath) - 1] = '\0';
@@ -8637,6 +8949,9 @@ void DrawModeling(EditorState& ed) {
                 FitBox(go, bc);
                 ed.dirty = true; ConsoleLog("Added Rigidbody3D + fitted BoxCollider3D");
             }
+        }
+        ImGui::EndTabItem(); }
+        ImGui::EndTabBar();
         }
     } else if (go->GetComponent<Terrain>()) {
         SectionHeader("Terrain");
@@ -9238,7 +9553,17 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
-            if (ImGui::SmallButton("Subdivide##mesh")) { mr->mesh.Subdivide(); ed.dirty = true; }
+            if (ImGui::SmallButton("Subdivide##mesh")) {
+                ed.PushUndo();
+                if (!g_meshSelFaces.empty()) mr->mesh.SubdivideFaces(g_meshSelFaces);   // just the picked face(s)
+                else                         mr->mesh.Subdivide();                      // whole mesh
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(g_meshSelFaces.empty()
+                    ? "Split every face into 4. Select faces first (Edit Mesh) to subdivide just those."
+                    : "Subdivides only the %d selected face(s). Deselect to subdivide the whole mesh.",
+                    (int)g_meshSelFaces.size());
             ImGui::SameLine();
             if (ImGui::SmallButton("Subdiv+Smooth##mesh")) {  // low-poly -> high-poly (rounds it)
                 mr->mesh.SubdivideSmooth(1, 0.5f); ed.dirty = true;
@@ -12814,29 +13139,47 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* pn = dynamic_cast<UIPanel*>(curComp)) {
         if (CompHeader("UI Panel", pn, &toRemove)) {
-            float pos[2] = {pn->position.x, pn->position.y};
-            if (ImGui::DragFloat2("Pos (px)##uip", pos, 1.0f)) { pn->position = {pos[0], pos[1]}; ed.dirty = true; }
-            float sz[2] = {pn->size.x, pn->size.y};
-            if (ImGui::DragFloat2("Size (px)##uip", sz, 1.0f, 0.0f, 8000.0f)) { pn->size = {sz[0], sz[1]}; ed.dirty = true; }
+            AnchorCombo("Anchor##uip", pn->anchor, ed);
+            UIRectFields("uip", pn->anchor, pn->position, pn->size, ed);
             float c[4] = {pn->color.r, pn->color.g, pn->color.b, pn->color.a};
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
-            AnchorCombo("Anchor##uip", pn->anchor, ed);
             SectionHeader("Style");
             ShapeCombo("Shape##uip", pn->shape, ed);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The panel's silhouette — circle, pill, hexagon, etc. Octagon/Parallelogram/Trapezoid use Corner Radius for their cut/skew.");
             if (UIShapeUsesRadius(pn->shape))
                 if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("An inset border WITHIN the fill. For an outer ring use Outline below.");
             if (pn->borderWidth > 0.0f) {
                 float bc[4] = {pn->borderColor.r, pn->borderColor.g, pn->borderColor.b, pn->borderColor.a};
                 if (ImGui::ColorEdit4("Border Color##uip", bc)) { pn->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::DragFloat("Outline##uip", &pn->outlineWidth, 0.1f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("An outer keyline/glow ring drawn OUTSIDE the panel edge (focus rings, neon accents).");
+            if (pn->outlineWidth > 0.0f) {
+                float oc[4] = {pn->outlineColor.r, pn->outlineColor.g, pn->outlineColor.b, pn->outlineColor.a};
+                if (ImGui::ColorEdit4("Outline Color##uip", oc)) { pn->outlineColor = {oc[0], oc[1], oc[2], oc[3]}; ed.dirty = true; }
             }
             if (ImGui::Checkbox("Gradient##uip", &pn->useGradient)) ed.dirty = true;
             if (pn->useGradient) {
                 float gb[4] = {pn->colorBottom.r, pn->colorBottom.g, pn->colorBottom.b, pn->colorBottom.a};
                 if (ImGui::ColorEdit4("Bottom Color##uip", gb)) { pn->colorBottom = {gb[0], gb[1], gb[2], gb[3]}; ed.dirty = true; }
-                if (ImGui::Checkbox("Horizontal Gradient##uip", &pn->gradientHorizontal)) ed.dirty = true;
-                ImGui::TextDisabled("Color is the start; %s fade.", pn->gradientHorizontal ? "left->right" : "top->bottom");
+                const char* gdirs[] = {"Vertical", "Horizontal", "Diagonal \\", "Diagonal /"};
+                int gd = (int)pn->gradientDir;
+                if (ImGui::Combo("Direction##uipgd", &gd, gdirs, 4)) {
+                    pn->gradientDir = (UIPanel::GradientDir)gd;
+                    pn->gradientHorizontal = (pn->gradientDir == UIPanel::GradientDir::Horizontal);   // legacy mirror
+                    ed.dirty = true;
+                }
+                ImGui::TextDisabled("Color is the start; %s fade.",
+                                    gd == 1 ? "left->right" : gd == 2 ? "top-left->bottom-right"
+                                    : gd == 3 ? "bottom-left->top-right" : "top->bottom");
+            }
+            if (ImGui::Checkbox("Top Highlight##uip", &pn->topHighlight)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A soft light sheen along the inside top edge — the glossy 'glass' look.");
+            if (pn->topHighlight) {
+                float hc[4] = {pn->highlightColor.r, pn->highlightColor.g, pn->highlightColor.b, pn->highlightColor.a};
+                if (ImGui::ColorEdit4("Highlight Color##uip", hc)) { pn->highlightColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
             }
             if (ImGui::Checkbox("Drop Shadow##uip", &pn->shadow)) ed.dirty = true;
             if (pn->shadow) {
@@ -13429,10 +13772,8 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* im = dynamic_cast<UIImage*>(curComp)) {
         if (CompHeader("UI Image", im, &toRemove)) {
-            float pos[2] = {im->position.x, im->position.y};
-            if (ImGui::DragFloat2("Pos (px)##uim", pos, 1.0f)) { im->position = {pos[0], pos[1]}; ed.dirty = true; }
-            float sz[2] = {im->size.x, im->size.y};
-            if (ImGui::DragFloat2("Size (px)##uim", sz, 1.0f, 1.0f, 8000.0f)) { im->size = {sz[0], sz[1]}; ed.dirty = true; }
+            AnchorCombo("Anchor##uim", im->anchor, ed);
+            UIRectFields("uim", im->anchor, im->position, im->size, ed);
             char tx[256];
             std::strncpy(tx, im->texture.c_str(), sizeof(tx) - 1);
             tx[sizeof(tx) - 1] = '\0';
@@ -13441,17 +13782,28 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
             if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             ImGui::TextDisabled("image path (PNG/JPG); empty = colored rect");
+            SectionHeader("Texture");
+            if (ImGui::Checkbox("Flip X##uim", &im->flipX)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Flip Y##uim", &im->flipY)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror the texture without a second asset.");
+            if (ImGui::Checkbox("Preserve Aspect##uim", &im->preserveAspect)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the texture inside the box without stretching (letterboxed, centered). Ignored for nine-slice / fills.");
             if (ImGui::Checkbox("Nine-slice##uim", &im->nineSlice)) ed.dirty = true;
             if (im->nineSlice) {
                 if (ImGui::DragFloat("Border (px)##uim", &im->border, 0.5f, 0.0f, 512.0f)) ed.dirty = true;
                 ImGui::TextDisabled("corners stay fixed; edges/center stretch to size");
             }
-            AnchorCombo("Anchor##uim", im->anchor, ed);
-            SectionHeader("Shape");
+            SectionHeader("Shape & Frame");
             ShapeCombo("Shape##uim", im->shape, ed, &im->cornerRadius);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The image silhouette: circle for avatars, pill/tab for cards, arrows for nav, etc. Applies to the colored fill when no texture is set.");
             if (UIShapeUsesRadius(im->shape))
                 if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Frame Width##uim", &im->borderWidth, 0.1f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A matte/keyline frame drawn around the image rect.");
+            if (im->borderWidth > 0.0f) {
+                float bc[4] = {im->borderColor.r, im->borderColor.g, im->borderColor.b, im->borderColor.a};
+                if (ImGui::ColorEdit4("Frame Color##uim", bc)) { im->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            }
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
     }
@@ -14357,8 +14709,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(fa, fb, ToColor(im->color), im->cornerRadius);
             dl->AddRect(a, b, IM_COL32(255, 255, 255, 90), im->cornerRadius);
         }
-        if (!im->texture.empty())
+        if (im->borderWidth > 0.0f)   // frame/matte around the image
+            dl->AddRect(a, b, ToColor(im->borderColor), im->cornerRadius, 0, im->borderWidth);
+        if (!im->texture.empty()) {
             DrawBitmapText(dl, im->texture, a.x + 4, a.y + 4, 1.0f, IM_COL32(255, 255, 255, 160));
+            if (im->flipX || im->flipY)   // preview hint for mirror flags
+                DrawBitmapText(dl, im->flipX && im->flipY ? "flip XY" : im->flipX ? "flip X" : "flip Y",
+                               a.x + 4, a.y + 14, 1.0f, IM_COL32(150, 200, 255, 200));
+        }
     }
 
     // UI panels (backgrounds) and progress bars: screen-space, canvas-relative.
@@ -14374,6 +14732,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (sz.x > canvasSize.x * 1.5f && sz.y > canvasSize.y * 1.5f) {
             a = canvasPos; pb2 = ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
         }
+        if (pn->outlineWidth > 0.0f)   // outer keyline/glow ring (behind, outside the edge)
+            dl->AddRect(ImVec2(a.x - pn->outlineWidth * 0.5f, a.y - pn->outlineWidth * 0.5f),
+                        ImVec2(pb2.x + pn->outlineWidth * 0.5f, pb2.y + pn->outlineWidth * 0.5f),
+                        ToColor(pn->outlineColor), pn->cornerRadius + pn->outlineWidth * 0.5f,
+                        0, pn->outlineWidth);
         if (pn->shadow)          // drop shadow behind the panel
             dl->AddRectFilled(ImVec2(a.x + pn->shadowOffset.x, a.y + pn->shadowOffset.y),
                               ImVec2(pb2.x + pn->shadowOffset.x, pb2.y + pn->shadowOffset.y),
@@ -14384,11 +14747,30 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                             pn->borderWidth > 0.0f ? ToColor(pn->borderColor) : IM_COL32(0, 0, 0, 0),
                             pn->borderWidth);
         } else {
-            if (pn->useGradient) {   // vertical top->bottom fade (no rounding)
-                dl->AddRectFilledMultiColor(a, pb2, ToColor(pn->color), ToColor(pn->color),
-                                            ToColor(pn->colorBottom), ToColor(pn->colorBottom));
+            if (pn->useGradient) {   // directional fade (multicolor corners; no rounding)
+                ImU32 ct = ToColor(pn->color), cb = ToColor(pn->colorBottom);
+                ImU32 cm = ToColor(Color{(pn->color.r + pn->colorBottom.r) * 0.5f,
+                                         (pn->color.g + pn->colorBottom.g) * 0.5f,
+                                         (pn->color.b + pn->colorBottom.b) * 0.5f,
+                                         (pn->color.a + pn->colorBottom.a) * 0.5f});
+                ImU32 ul, ur, br, bl;   // AddRectFilledMultiColor order: UL, UR, BR, BL
+                switch (pn->gradientDir) {
+                    case UIPanel::GradientDir::Horizontal:   ul = ct; ur = cb; br = cb; bl = ct; break;
+                    case UIPanel::GradientDir::DiagonalDown: ul = ct; ur = cm; br = cb; bl = cm; break;
+                    case UIPanel::GradientDir::DiagonalUp:   ul = cm; ur = cb; br = cm; bl = ct; break;
+                    default:                                 ul = ct; ur = ct; br = cb; bl = cb; break; // Vertical
+                }
+                dl->AddRectFilledMultiColor(a, pb2, ul, ur, br, bl);
             } else {
                 dl->AddRectFilled(a, pb2, ToColor(pn->color), pn->cornerRadius);
+            }
+            if (pn->topHighlight) {   // inner glass sheen: light band fading down from the top
+                float bandH = Mathf::Min(sz.y * 0.45f, sz.y);
+                ImU32 hc = ToColor(pn->highlightColor);
+                ImU32 h0 = pn->highlightColor.a > 0.0f
+                         ? ToColor(Color{pn->highlightColor.r, pn->highlightColor.g, pn->highlightColor.b, 0.0f})
+                         : hc;
+                dl->AddRectFilledMultiColor(a, ImVec2(pb2.x, a.y + bandH), hc, hc, h0, h0);
             }
             if (pn->borderWidth > 0.0f)
                 dl->AddRect(a, pb2, ToColor(pn->borderColor), pn->cornerRadius, 0, pn->borderWidth);
@@ -16484,6 +16866,55 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         };
         const ImU32 kColliderCol = IM_COL32(90, 230, 120, 255); // Unity-ish green
 
+        // Project a world point to the screen if it's in front of the near plane.
+        auto project = [&](const Vec3& wp, ImVec2& out) -> bool {
+            Vec4 cs = vp * Vec4{wp, 1};
+            if (cs.z + cs.w <= 0.0001f) return false;   // behind camera / near plane
+            out = projClip(cs);
+            return true;
+        };
+        // A fixed-size camera glyph (body + lens) centered at screen point `s`.
+        auto cameraIcon = [&](ImVec2 s, ImU32 col, bool sel) {
+            float bw = 11.0f, bh = 8.0f;                 // body half-size
+            ImVec2 a(s.x - bw, s.y - bh), b(s.x + bw * 0.4f, s.y + bh);
+            if (sel) dl->AddRectFilled(ImVec2(a.x-2,a.y-2), ImVec2(b.x+2,b.y+2), IM_COL32(255,220,90,60), 2.0f);
+            dl->AddRectFilled(a, b, IM_COL32(30, 34, 42, 220), 2.0f);
+            dl->AddRect(a, b, col, 2.0f, 0, 1.6f);
+            ImVec2 lp[3] = { ImVec2(b.x, s.y - 5), ImVec2(b.x + 7, s.y - 8), ImVec2(b.x + 7, s.y + 8) };
+            dl->AddTriangleFilled(lp[0], lp[1], lp[2], IM_COL32(30, 34, 42, 220));
+            dl->AddTriangle(lp[0], lp[1], lp[2], col, 1.4f);
+        };
+        // A fixed-size light glyph whose shape hints at the light type.
+        auto lightIcon = [&](ImVec2 s, ImU32 col, int type, bool sel) {
+            float r = 6.0f;
+            if (sel) dl->AddCircleFilled(s, r + 4.0f, IM_COL32(255, 220, 90, 60));
+            if (type == (int)Light::Type::Directional) {   // sun: filled disc + 8 rays
+                dl->AddCircleFilled(s, r, col, 16);
+                for (int k = 0; k < 8; ++k) {
+                    float a = k / 8.0f * 6.2831853f;
+                    ImVec2 d(Mathf::Cos(a), Mathf::Sin(a));
+                    dl->AddLine(ImVec2(s.x + d.x * (r + 2), s.y + d.y * (r + 2)),
+                                ImVec2(s.x + d.x * (r + 6), s.y + d.y * (r + 6)), col, 1.6f);
+                }
+            } else if (type == (int)Light::Type::Spot) {   // spotlight: bulb + downward cone
+                dl->AddCircleFilled(s, r, col, 16);
+                dl->AddTriangleFilled(ImVec2(s.x - r, s.y + r), ImVec2(s.x + r, s.y + r),
+                                      ImVec2(s.x, s.y + r + 8), IM_COL32(((col>>0)&0xFF),((col>>8)&0xFF),((col>>16)&0xFF),90));
+            } else {                                        // point: hollow bulb + base
+                dl->AddCircleFilled(s, r, IM_COL32(30, 34, 42, 220), 16);
+                dl->AddCircle(s, r, col, 16, 1.8f);
+                dl->AddLine(ImVec2(s.x - 3, s.y + r + 1), ImVec2(s.x + 3, s.y + r + 1), col, 1.6f);
+            }
+        };
+        // A small name label under an icon (Unity shows the object name by its gizmo).
+        auto iconLabel = [&](ImVec2 s, const char* nm, ImU32 col) {
+            ImVec2 ts = ImGui::CalcTextSize(nm);
+            ImVec2 tp(s.x - ts.x * 0.5f, s.y + 12.0f);
+            dl->AddRectFilled(ImVec2(tp.x - 2, tp.y - 1), ImVec2(tp.x + ts.x + 2, tp.y + ts.y + 1),
+                              IM_COL32(0, 0, 0, 120), 2.0f);
+            dl->AddText(tp, col, nm);
+        };
+
         for (const auto& up : objs) {
             if (!up->active) continue;
             Transform* t = up->transform;
@@ -16502,6 +16933,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(p, c[i], col);
                     line(c[i], c[(i + 1) % 4], col);
                 }
+                ImVec2 sp;   // Unity-style billboard icon + name at the camera's position
+                if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); iconLabel(sp, up->name.c_str(), col); }
             }
 
             if (auto* lt = up->GetComponent<Light>()) {
@@ -16538,6 +16971,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(tip, tip - f * 0.3f + u * 0.15f, col);
                     line(tip, tip - f * 0.3f - u * 0.15f, col);
                 }
+                ImVec2 sp;   // Unity-style billboard icon + name at the light's position
+                if (project(p, sp)) { lightIcon(sp, col, (int)lt->type, up.get() == ed.selected()); iconLabel(sp, up->name.c_str(), col); }
             }
 
             // 3D collider wireframes (Unity-style green outlines).
@@ -17543,6 +17978,25 @@ void DrawViewport(EditorState& ed) {
             hovered = true;
     }
 
+    // UI-Only navigation: mouse-wheel zooms the UI canvas about the cursor, and a
+    // middle-mouse drag (or Space+left-drag) pans it — so a zoomed layout is usable.
+    if (g_uiOnlyMode && hovered) {
+        if (io.MouseWheel != 0.0f) {
+            float old = g_uiEditZoom;
+            g_uiEditZoom = Mathf::Clamp(g_uiEditZoom * (io.MouseWheel > 0 ? 1.1f : 1.0f / 1.1f), 0.25f, 4.0f);
+            // Keep the point under the cursor stationary while zooming.
+            ImVec2 c(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
+            float k = g_uiEditZoom / old - 1.0f;
+            g_uiEditPan.x -= (io.MousePos.x - c.x) * k;
+            g_uiEditPan.y -= (io.MousePos.y - c.y) * k;
+        }
+        bool spacePan = ImGui::IsKeyDown(ImGuiKey_Space) && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || spacePan) {
+            g_uiEditPan.x += io.MouseDelta.x;
+            g_uiEditPan.y += io.MouseDelta.y;
+        }
+    }
+
     // Project world-space-canvas widgets through the active view BEFORE editing, so
     // they can be picked, dragged and resized in the viewport (the pick/drag helpers
     // go through GetUIScreenRect, which needs this context). Screen-space UI ignores it.
@@ -17876,6 +18330,12 @@ void DrawGameView(EditorState& ed) {
     // Publish the canvas size so anchored UI resolves to this view.
     UICanvas::Set(canvasSize.x, canvasSize.y);
 
+    // Preview a fixed-resolution HUD at the picked resolution: a Constant-Pixel-Size
+    // canvas authored for `curH` px should shrink/grow with the target, just like
+    // Unity's Game view. For a live (free) resolution the on-screen canvas *is* the
+    // target, so the scale is 1. ScaleWithScreenSize canvases ignore this entirely.
+    okay::UIResolutionScale() = (kFixedRes && curH > 0) ? canvasSize.y / (float)curH : 1.0f;
+
     if (!mc) {
         dl->AddText(ImVec2(canvasPos.x + 10, canvasPos.y + 10),
                     IM_COL32(200, 120, 120, 255), "No main Camera in the scene.");
@@ -17884,6 +18344,7 @@ void DrawGameView(EditorState& ed) {
     } else {
         DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
     }
+    okay::UIResolutionScale() = 1.0f;   // never leak the preview scale outside the Game view
 
     // Resolution readout (top-left of the canvas, over the scene): the target pixel
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.

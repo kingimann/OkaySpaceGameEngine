@@ -1223,7 +1223,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << pn->shadowOffset.x << " " << pn->shadowOffset.y
             // extended (back-compatible trailing fields): shape + gradient direction + soft shadow
             << " " << (int)pn->shape << " " << (pn->gradientHorizontal ? 1 : 0)
-            << " " << pn->shadowSoftness << "\n";
+            << " " << pn->shadowSoftness
+            // newest trailing block: gradient direction enum + outer outline + top sheen
+            << " " << (int)pn->gradientDir
+            << " " << pn->outlineWidth << " "
+            << pn->outlineColor.r << " " << pn->outlineColor.g << " " << pn->outlineColor.b << " " << pn->outlineColor.a
+            << " " << (pn->topHighlight ? 1 : 0) << " "
+            << pn->highlightColor.r << " " << pn->highlightColor.g << " " << pn->highlightColor.b << " " << pn->highlightColor.a
+            << "\n";
     }
     if (auto* doc = go->GetComponent<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
@@ -1464,7 +1471,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << Quote(im->texture) << " " << (int)im->anchor << " "
             << (im->nineSlice ? 1 : 0) << " " << im->border << " "
             << (int)im->fillMode << " " << im->fillAmount << " " << im->cornerRadius
-            << " " << (int)im->shape << "\n";   // extended (back-compatible trailing field)
+            << " " << (int)im->shape   // extended (back-compatible trailing field)
+            // newest trailing block: flip + preserve-aspect + frame border
+            << " " << (im->flipX ? 1 : 0) << " " << (im->flipY ? 1 : 0)
+            << " " << (im->preserveAspect ? 1 : 0)
+            << " " << im->borderWidth << " "
+            << im->borderColor.r << " " << im->borderColor.g << " " << im->borderColor.b << " " << im->borderColor.a
+            << "\n";
     }
     if (auto* sl = go->GetComponent<UISlider>()) {
         out << "  uislider " << sl->position.x << " " << sl->position.y << " "
@@ -3122,8 +3135,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int sp = 0, gh = 0; in >> sp >> gh;
                         pn->shape = (UIShape)sp; pn->gradientHorizontal = (gh != 0);
+                        pn->gradientDir = gh ? UIPanel::GradientDir::Horizontal   // seed from legacy flag
+                                             : UIPanel::GradientDir::Vertical;
                         in >> std::ws; // optional shadow softness (added later)
                         if (std::isdigit(in.peek()) || in.peek() == '.') in >> pn->shadowSoftness;
+                        in >> std::ws; // optional gradient dir enum + outline + top sheen (newest)
+                        if (std::isdigit(in.peek())) {
+                            int gd = 0; in >> gd; pn->gradientDir = (UIPanel::GradientDir)gd;
+                            Color oc; in >> pn->outlineWidth >> oc.r >> oc.g >> oc.b >> oc.a;
+                            pn->outlineColor = oc;
+                            int th = 0; Color hc; in >> th >> hc.r >> hc.g >> hc.b >> hc.a;
+                            pn->topHighlight = (th != 0); pn->highlightColor = hc;
+                        }
                     }
                 } else if (field == "uidocument") {
                     auto* doc = go->AddComponent<UIDocument>();
@@ -3668,7 +3691,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         im->fillMode = (UIImage::FillMode)fm;
                     }
                     in >> std::ws; // optional shape (added later)
-                    if (std::isdigit(in.peek())) { int sp = 0; in >> sp; im->shape = (UIShape)sp; }
+                    if (std::isdigit(in.peek())) {
+                        int sp = 0; in >> sp; im->shape = (UIShape)sp;
+                        in >> std::ws; // optional flip + preserve-aspect + frame border (newest)
+                        if (std::isdigit(in.peek())) {
+                            int fx = 0, fy = 0, pa = 0; Color bc;
+                            in >> fx >> fy >> pa >> im->borderWidth
+                               >> bc.r >> bc.g >> bc.b >> bc.a;
+                            im->flipX = (fx != 0); im->flipY = (fy != 0);
+                            im->preserveAspect = (pa != 0); im->borderColor = bc;
+                        }
+                    }
                 } else if (field == "uislider") {
                     auto* sl = go->AddComponent<UISlider>();
                     Color bg, fl, kn;

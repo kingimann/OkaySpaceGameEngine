@@ -87,6 +87,9 @@ Recent additions (v2.12–2.14):
 - **Scene gizmos** — **snapping** for Move/Rotate/Scale (grid + 15° detents) and
   a **Local/Global** toggle (X); a live **Camera Preview** inset for a selected
   perspective camera; colored **light gizmos** (range sphere / spot cone).
+  **Unity-style billboard icons** with name labels mark every camera and light in
+  the Scene (a camera glyph; a sun/bulb/spot glyph by light type), so lights and
+  cameras are easy to see and pick even with no mesh.
 - **Project Settings** (Edit ▸ Project Settings) and a larger **Build** dialog
   (Quit-on-Escape, Master Volume, Show-FPS).
 - **Crash-safe autosave** (File ▸ Autosave) writes a `<scene>.autosave` recovery
@@ -126,8 +129,11 @@ Recent additions (v2.12–2.14):
   from the *Primitive* dropdown. (More procedural shapes are available in C++:
   `Mesh::Extrude` a 2D outline into a prism, `Mesh::Lathe` a profile into a
   vase/column, `Mesh::Rotated` to orient a part before `Combine`, and
-  `Mesh::FlipWinding` to fix inside-out imports.) *Subdivide* splits every triangle into four (more
-  detail), *Smooth* subdivides then re-projects onto a sphere, *Weld* merges
+  `Mesh::FlipWinding` to fix inside-out imports.) The **Modeling** panel is
+  organized into tabs — **Shape / Edit / Modifiers / Edit Mesh / Import** — so
+  the toolset is easy to navigate. *Subdivide* splits every triangle into four
+  (more detail) — or, when you've picked faces in **Edit Mesh**, only the selected
+  face(s); *Smooth* subdivides then re-projects onto a sphere, *Weld* merges
   coincident vertices, and *Recenter* / *Fit 1u* normalize an imported model's
   position and scale; or type an *OBJ File*
   path and click *Load* to import a Wavefront `.obj` model (positions + faces,
@@ -144,7 +150,18 @@ Recent additions (v2.12–2.14):
 - **UI anchors** — every UI widget has an *Anchor* (Top-Left … Center …
   Bottom-Right). The position becomes an offset from that screen point, so a
   Bottom-Right pause button or a Centered menu stays put at any window size or
-  resolution. Hit-testing and the built game honor the anchor.
+  resolution. Hit-testing and the built game honor the anchor. Three **stretch
+  anchors** (Stretch Horizontal / Vertical / Fill) make a widget fill the canvas
+  on that axis — its Position/Size fields then read as **margins** (Unity's
+  offsetMin/offsetMax: Left/Top/Right/Bottom), so a full-bleed backdrop or a
+  top bar reflows with the window. The **Game view resolution** menu now scales a
+  Constant-Pixel-Size HUD to the picked resolution, like Unity's CanvasScaler.
+- **Panel & image styling** — *UI Panel* adds a **gradient direction** (vertical,
+  horizontal, or either diagonal), an outer **outline** ring (focus keylines /
+  neon accents, distinct from the inset border), and an inner **top highlight**
+  sheen (the glossy "glass" look), on top of corner radius, border, shadow and
+  17 shapes. *UI Image* adds **Flip X/Y**, **Preserve Aspect** (letterbox the
+  texture without stretching) and a **frame** border.
 - **UI widgets** — build menus and HUDs from screen-space components: *UI Panel*
   (background/overlay), *UI Image* (logos/icons/title art from a PNG/JPG, tinted;
   a colored rect when no texture; optional *Nine-slice* keeps a bordered frame

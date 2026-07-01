@@ -23,11 +23,24 @@ public:
     float cornerRadius = 4.0f;
     float borderWidth = 0.0f;                      // 0 = no border
     Color borderColor = Color::FromBytes(255, 255, 255, 60);
-    // Optional gradient: `color` fades to `colorBottom`. Vertical by default
-    // (top->bottom); set `gradientHorizontal` for a left->right fade.
+    // Optional gradient: `color` fades to `colorBottom`. `gradientDir` chooses the
+    // direction — Vertical (top->bottom), Horizontal (left->right) or one of the two
+    // diagonals. `gradientHorizontal` is kept for back-compat (old scenes) and is
+    // mirrored from `gradientDir` on save; renderers read `gradientDir`.
+    enum class GradientDir { Vertical, Horizontal, DiagonalDown, DiagonalUp };
     bool  useGradient = false;
-    bool  gradientHorizontal = false;
+    bool  gradientHorizontal = false;              // legacy mirror of gradientDir==Horizontal
+    GradientDir gradientDir = GradientDir::Vertical;
     Color colorBottom = Color::FromBytes(10, 12, 18, 200);
+    // Outer outline: a keyline/glow ring drawn OUTSIDE the panel edge (distinct from
+    // `borderWidth`, which insets a border within the fill). Great for focus rings,
+    // neon accents and separating a card from a busy background. 0 = off.
+    float outlineWidth = 0.0f;
+    Color outlineColor = Color::FromBytes(120, 180, 255, 180);
+    // Inner top sheen: a subtle light band along the inside top edge — the classic
+    // "glass"/glossy panel highlight. Alpha controls its strength.
+    bool  topHighlight = false;
+    Color highlightColor = Color::FromBytes(255, 255, 255, 40);
     // Optional drop shadow: a translucent copy drawn behind, offset by
     // `shadowOffset` pixels — lifts dialogs/cards off the scene.
     bool  shadow = false;

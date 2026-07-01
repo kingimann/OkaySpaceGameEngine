@@ -43,9 +43,12 @@ static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int 
 // scanline by scanline so any silhouette uses one code path. Supports a linear
 // gradient (top->bottom, or left->right when `horizontal`); pass equal colors for
 // a flat fill. `op` is the canvas master opacity.
+// `diag`: 0 = axis-aligned (obey `horizontal`); 1 = diagonal top-left->bottom-right;
+// 2 = diagonal bottom-left->top-right. Diagonals blend `top`->`bottom` across the
+// corner and, like the horizontal case, step per pixel.
 static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
                         const Color& top, const Color& bottom, bool gradient, bool horizontal,
-                        float op) {
+                        float op, int diag = 0) {
     if (r.w <= 0 || r.h <= 0) return;
     auto lerp = [](const Color& a, const Color& b, float t) {
         return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
@@ -59,7 +62,7 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
                                    (Uint8)(top.b * 255), (Uint8)(top.a * 255 * op));
             SDL_Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
             SDL_RenderFillRect(ren, &span);
-        } else if (!horizontal) {
+        } else if (!horizontal && diag == 0) {
             float t = r.h > 1 ? (float)row / (r.h - 1) : 0.0f;
             Color c = lerp(top, bottom, t);
             SDL_SetRenderDrawColor(ren, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
@@ -67,10 +70,14 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
             SDL_Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
             SDL_RenderFillRect(ren, &span);
         } else {
-            // Horizontal gradient: step across the span pixel-cluster by cluster.
+            // Horizontal or diagonal gradient: step across the span pixel by pixel.
             int ix0 = (int)x0, ix1 = (int)x1;
+            float fy = r.h > 1 ? (float)row / (r.h - 1) : 0.0f;
             for (int x = ix0; x <= ix1; ++x) {
-                float t = r.w > 1 ? (float)x / (r.w - 1) : 0.0f;
+                float fx = r.w > 1 ? (float)x / (r.w - 1) : 0.0f;
+                float t = diag == 1 ? (fx + fy) * 0.5f
+                        : diag == 2 ? (fx + (1.0f - fy)) * 0.5f
+                        : fx;                                   // plain horizontal
                 Color c = lerp(top, bottom, t);
                 SDL_SetRenderDrawColor(ren, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
                                        (Uint8)(c.b * 255), (Uint8)(c.a * 255 * op));
@@ -79,6 +86,13 @@ static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, flo
             }
         }
     }
+}
+
+// Map a panel's gradient direction to FillUIShape's (horizontal, diag) params.
+static void GradientParams(UIPanel::GradientDir d, bool& horizontal, int& diag) {
+    horizontal = (d == UIPanel::GradientDir::Horizontal);
+    diag = (d == UIPanel::GradientDir::DiagonalDown) ? 1
+         : (d == UIPanel::GradientDir::DiagonalUp)   ? 2 : 0;
 }
 
 // Draw a drop shadow for a UI shape. softness == 0 is a crisp shadow; softness > 0
@@ -1856,13 +1870,16 @@ int main(int argc, char** argv) {
             if (!im || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
             Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+            Vec2 isz = UIResolveSize(up.get(), (float)w, (float)h);   // honors stretch anchors
             enterScroll(up.get(), o);
-            SDL_Rect r{(int)o.x, (int)o.y, (int)im->size.x, (int)im->size.y};
+            SDL_Rect r{(int)o.x, (int)o.y, (int)isz.x, (int)isz.y};
             // Radial/linear fill: shrink the drawn rect to fillAmount along an axis.
             float fox, foy, fw, fh;
-            im->FilledRect(im->size.x, im->size.y, fox, foy, fw, fh);
+            im->FilledRect(isz.x, isz.y, fox, foy, fw, fh);
             SDL_Rect fr{(int)(o.x + fox), (int)(o.y + foy), (int)fw, (int)fh};
             bool filled = im->fillMode != UIImage::FillMode::None;
+            SDL_RendererFlip flip = (SDL_RendererFlip)((im->flipX ? SDL_FLIP_HORIZONTAL : 0) |
+                                                       (im->flipY ? SDL_FLIP_VERTICAL   : 0));
             SDL_Texture* tex = GetTexture(renderer, im->texture, baseDir, textureCache);
             if (tex) {
                 SDL_SetTextureColorMod(tex, (Uint8)(im->color.r * 255), (Uint8)(im->color.g * 255),
@@ -1884,23 +1901,40 @@ int main(int argc, char** argv) {
                             SDL_Rect s{sx[cx], sy[cy], sx[cx + 1] - sx[cx], sy[cy + 1] - sy[cy]};
                             SDL_Rect d{dx[cx], dy[cy], dx[cx + 1] - dx[cx], dy[cy + 1] - dy[cy]};
                             if (s.w > 0 && s.h > 0 && d.w > 0 && d.h > 0)
-                                SDL_RenderCopy(renderer, tex, &s, &d);
+                                SDL_RenderCopyEx(renderer, tex, &s, &d, 0.0, nullptr, flip);
                         }
                 } else if (filled) {                        // reveal a proportional slice
                     int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
                     SDL_Rect src{
-                        (int)(im->size.x > 0 ? fox / im->size.x * tw : 0),
-                        (int)(im->size.y > 0 ? foy / im->size.y * th : 0),
-                        (int)(im->size.x > 0 ? fw  / im->size.x * tw : tw),
-                        (int)(im->size.y > 0 ? fh  / im->size.y * th : th)};
-                    SDL_RenderCopy(renderer, tex, &src, &fr);
+                        (int)(isz.x > 0 ? fox / isz.x * tw : 0),
+                        (int)(isz.y > 0 ? foy / isz.y * th : 0),
+                        (int)(isz.x > 0 ? fw  / isz.x * tw : tw),
+                        (int)(isz.y > 0 ? fh  / isz.y * th : th)};
+                    SDL_RenderCopyEx(renderer, tex, &src, &fr, 0.0, nullptr, flip);
                 } else {
-                    SDL_RenderCopy(renderer, tex, nullptr, &r);
+                    SDL_Rect dst = r;
+                    if (im->preserveAspect) {               // letterbox to keep source aspect
+                        int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+                        float aox, aoy, afw, afh;
+                        im->AspectRect((float)r.w, (float)r.h, (float)tw, (float)th, aox, aoy, afw, afh);
+                        dst = SDL_Rect{r.x + (int)aox, r.y + (int)aoy, (int)afw, (int)afh};
+                    }
+                    SDL_RenderCopyEx(renderer, tex, nullptr, &dst, 0.0, nullptr, flip);
                 }
             } else {                                        // no image -> colored shape fill
                 const SDL_Rect& rr = filled ? fr : r;
                 FillUIShape(renderer, rr, im->shape, im->cornerRadius,
                             im->color, im->color, false, false, op);
+            }
+            if (im->borderWidth > 0.0f) {                   // optional frame/matte around the image
+                int b = (int)im->borderWidth;
+                SDL_SetRenderDrawColor(renderer, (Uint8)(im->borderColor.r * 255),
+                                       (Uint8)(im->borderColor.g * 255), (Uint8)(im->borderColor.b * 255),
+                                       (Uint8)(im->borderColor.a * 255 * op));
+                for (int e = 0; e < b; ++e) {               // nested rects = a b-px stroke
+                    SDL_Rect frm{r.x + e, r.y + e, r.w - 2 * e, r.h - 2 * e};
+                    if (frm.w > 0 && frm.h > 0) SDL_RenderDrawRect(renderer, &frm);
+                }
             }
         }
             else if (_it.kind == K_Panel) {   // panels (backgrounds) first
@@ -1908,15 +1942,23 @@ int main(int argc, char** argv) {
             if (!pn || !up->active || UIHidden(up.get())) continue;
             float op = UIOpacity(up.get());   // canvas master fade
             Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+            Vec2 psz = UIResolveSize(up.get(), (float)w, (float)h);   // honors stretch anchors
             enterScroll(up.get(), o);
-            SDL_Rect r{(int)o.x, (int)o.y, (int)pn->size.x, (int)pn->size.y};
+            SDL_Rect r{(int)o.x, (int)o.y, (int)psz.x, (int)psz.y};
             // A backdrop far larger than the screen (e.g. a pause-menu dim) covers the
             // whole window — clamp it so it tiles exactly the screen, not huge coords.
-            if (pn->size.x > w * 1.5f && pn->size.y > h * 1.5f) r = SDL_Rect{0, 0, w, h};
+            if (psz.x > w * 1.5f && psz.y > h * 1.5f) r = SDL_Rect{0, 0, w, h};
+            bool gh; int gdiag; GradientParams(pn->gradientDir, gh, gdiag);
             if (pn->shadow) {                               // drop shadow behind (same shape)
                 SDL_Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
                 FillUIShadow(renderer, sh, pn->shape, pn->cornerRadius,
                              pn->shadowColor, pn->shadowSoftness, op);
+            }
+            if (pn->outlineWidth > 0.0f) {                  // outer keyline/glow ring
+                int ow = (int)pn->outlineWidth;
+                SDL_Rect outer{r.x - ow, r.y - ow, r.w + 2 * ow, r.h + 2 * ow};
+                FillUIShape(renderer, outer, pn->shape, pn->cornerRadius + ow,
+                            pn->outlineColor, pn->outlineColor, false, false, op);
             }
             if (pn->borderWidth > 0.0f) {                   // border = outer shape, then inner fill
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
@@ -1925,10 +1967,20 @@ int main(int argc, char** argv) {
                 SDL_Rect inner{r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b};
                 float innerR = pn->cornerRadius - b; if (innerR < 0.0f) innerR = 0.0f;
                 FillUIShape(renderer, inner, pn->shape, innerR,
-                            pn->color, pn->colorBottom, pn->useGradient, pn->gradientHorizontal, op);
+                            pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag);
+                if (pn->topHighlight) {                     // inner glass sheen (top-down fade)
+                    Color hb = pn->highlightColor; hb.a = 0.0f;
+                    FillUIShape(renderer, inner, pn->shape, innerR,
+                                pn->highlightColor, hb, true, false, op);
+                }
             } else {
                 FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
-                            pn->color, pn->colorBottom, pn->useGradient, pn->gradientHorizontal, op);
+                            pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag);
+                if (pn->topHighlight) {                     // inner glass sheen (top-down fade)
+                    Color hb = pn->highlightColor; hb.a = 0.0f;
+                    FillUIShape(renderer, r, pn->shape, pn->cornerRadius,
+                                pn->highlightColor, hb, true, false, op);
+                }
             }
         }
             else if (_it.kind == K_DropHi) {   // drop-target highlight (drag feedback)

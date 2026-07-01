@@ -54,15 +54,23 @@ struct UIRect {
     Vec2*     sizePtr  = nullptr;   // the widget's editable size, or null (text)
     Vec2      size{0.0f, 0.0f};
 
-    /// Absolute top-left pixel of the widget on a canvas of the given size.
+    /// Absolute top-left pixel of the widget on a canvas of the given size (honors
+    /// stretch anchors, which derive their origin from canvas-relative margins).
     Vec2 Origin(float canvasW, float canvasH) const {
-        return ResolveAnchor(anchor, *position, size, canvasW, canvasH);
+        Vec2 o, sz; ResolveAnchorRect(anchor, *position, size, canvasW, canvasH, o, sz);
+        return o;
+    }
+    /// The widget's effective size on a canvas of the given size — equal to `size`
+    /// for fixed anchors, derived from the canvas for stretch anchors.
+    Vec2 EffectiveSize(float canvasW, float canvasH) const {
+        Vec2 o, sz; ResolveAnchorRect(anchor, *position, size, canvasW, canvasH, o, sz);
+        return sz;
     }
     /// Whether a point (canvas pixels) falls inside the widget's rect.
     bool Contains(const Vec2& p, float canvasW, float canvasH) const {
-        Vec2 o = Origin(canvasW, canvasH);
+        Vec2 o, sz; ResolveAnchorRect(anchor, *position, size, canvasW, canvasH, o, sz);
         return p.x >= o.x && p.y >= o.y &&
-               p.x <= o.x + size.x && p.y <= o.y + size.y;
+               p.x <= o.x + sz.x && p.y <= o.y + sz.y;
     }
 };
 
@@ -178,7 +186,8 @@ inline bool UISelfDesignRect(GameObject* go, GameObject* root, Vec2& o, Vec2& sz
         if (GameObject* parent = OwningUIParent(go)) {
             Vec2 po, ps;
             if (UISelfDesignRect(parent, root, po, ps)) {
-                o = po + ResolveAnchor(r.anchor, *r.position, sz, ps.x, ps.y);
+                Vec2 local; ResolveAnchorRect(r.anchor, *r.position, r.size, ps.x, ps.y, local, sz);
+                o = po + local;
                 return true;
             }
         }
@@ -431,12 +440,13 @@ inline bool UIDesignRect(GameObject* go, float dW, float dH, Vec2& origin, Vec2&
     if (GameObject* parent = OwningUIParent(go)) {
         Vec2 po, ps;
         if (UIDesignRect(parent, dW, dH, po, ps)) {
-            origin = po + ResolveAnchor(r.anchor, *r.position, size, ps.x, ps.y);
+            Vec2 local; ResolveAnchorRect(r.anchor, *r.position, r.size, ps.x, ps.y, local, size);
+            origin = po + local;
             if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll;
             return true;
         }
     }
-    origin = ResolveAnchor(r.anchor, *r.position, size, dW, dH);
+    ResolveAnchorRect(r.anchor, *r.position, r.size, dW, dH, origin, size);
     if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll;
     return true;
 }
@@ -478,18 +488,20 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
         return true;
     }
     float s = UIScaleFor(go, screenW, screenH);
-    size = r.size * s;
+    Vec2 scaledPos  = *r.position * s;                // offset/margins are design px
+    Vec2 scaledSize = r.size * s;
     if (GameObject* parent = OwningUIParent(go)) {
         Vec2 po, ps;                                  // resolve inside the parent's rect
         if (GetUIScreenRect(parent, screenW, screenH, po, ps)) {
-            Vec2 local = ResolveAnchor(r.anchor, *r.position * s, size, ps.x, ps.y);
+            Vec2 local;                               // stretch anchors derive size from ps
+            ResolveAnchorRect(r.anchor, scaledPos, scaledSize, ps.x, ps.y, local, size);
             origin = po + local;
             if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll * s;
             if (outScale) *outScale = s;
             return true;
         }
     }
-    origin = ResolveAnchor(r.anchor, *r.position * s, size, screenW, screenH);
+    ResolveAnchorRect(r.anchor, scaledPos, scaledSize, screenW, screenH, origin, size);
     // Widgets inside a Scroll View move up as it scrolls.
     if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll * s;
     if (outScale) *outScale = s;
@@ -541,11 +553,34 @@ inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
     }
     if (GameObject* parent = OwningUIParent(go)) {
         UIRect pr = GetUIRect(parent);
-        if (pr.valid)
-            return UIResolveOrigin(parent, screenW, screenH) +
-                   ResolveAnchor(r.anchor, *r.position, r.size, pr.size.x, pr.size.y);
+        if (pr.valid) {
+            Vec2 local, sz;
+            ResolveAnchorRect(r.anchor, *r.position, r.size, pr.size.x, pr.size.y, local, sz);
+            return UIResolveOrigin(parent, screenW, screenH) + local;
+        }
     }
-    return ResolveAnchor(r.anchor, *r.position, r.size, screenW, screenH);
+    Vec2 o, sz; ResolveAnchorRect(r.anchor, *r.position, r.size, screenW, screenH, o, sz);
+    return o;
+}
+
+/// The widget's EFFECTIVE size at Canvas scale 1, resolved within its UI parent when
+/// it has one (so a stretch anchor fills the parent's rect, else the screen). Equal to
+/// the widget's authored size for fixed anchors; derived from the container for stretch
+/// anchors. Pairs with UIResolveOrigin for the unscaled (player) render path.
+inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH) {
+    UIRect r = GetUIRect(go);
+    if (!r.valid || !r.position) return r.size;
+    if (!AnchorIsStretch(r.anchor)) return r.size;   // fast path: fixed anchors keep size
+    float cw = screenW, ch = screenH;
+    if (GameObject* parent = OwningUIParent(go)) {
+        UIRect pr = GetUIRect(parent);
+        if (pr.valid) {
+            Vec2 ps = UIResolveSize(parent, screenW, screenH);
+            cw = ps.x; ch = ps.y;
+        }
+    }
+    Vec2 o, sz; ResolveAnchorRect(r.anchor, *r.position, r.size, cw, ch, o, sz);
+    return sz;
 }
 
 /// The draw origin for a screen-space TextRenderer that RESPECTS its UI parent:

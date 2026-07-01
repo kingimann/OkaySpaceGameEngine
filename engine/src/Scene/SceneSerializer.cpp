@@ -17,6 +17,7 @@
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/StructureBuilder.hpp"
+#include "okay/Components/BuilderMode.hpp"
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
@@ -650,6 +651,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << sb->costWood << " " << sb->costStone << " " << sb->costMetal
             << " " << Quote(sb->structureTag) << " " << Quote(sb->structureTexture)
             << " " << Quote(sb->woodItem) << " " << Quote(sb->stoneItem) << " " << Quote(sb->metalItem) << "\n";
+    }
+    if (auto* bm = go->GetComponent<BuilderMode>()) {
+        out << "  buildermode " << (int)bm->brush << " " << bm->gridSize << " " << (bm->snapToGrid ? 1 : 0)
+            << " " << bm->reach << " " << bm->rotateStepDeg << " " << bm->scaleStep
+            << " " << bm->minScale << " " << bm->maxScale
+            << " " << bm->partColor.r << " " << bm->partColor.g << " " << bm->partColor.b << " " << bm->partColor.a
+            << " " << bm->placeButton << " " << bm->removeButton
+            << " " << (bm->parentToModel ? 1 : 0) << " " << (bm->brushHotkeys ? 1 : 0)
+            << " " << (bm->showPreview ? 1 : 0) << " " << (bm->showCrosshair ? 1 : 0)
+            << " " << Quote(bm->buildTag) << " " << Quote(bm->partTexture)
+            << " " << Quote(bm->prefabPath) << " " << Quote(bm->modelName) << "\n";
     }
     if (auto* bp = go->GetComponent<BuildPiece>()) {
         out << "  buildpiece " << bp->tier << " " << bp->health << " " << bp->maxHealth
@@ -2225,6 +2237,21 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sb->woodItem = ReadQuoted(in);
                     sb->stoneItem = ReadQuoted(in);
                     sb->metalItem = ReadQuoted(in);
+                } else if (field == "buildermode") {
+                    auto* bm = go->AddComponent<BuilderMode>();
+                    int br = 0; in >> br; bm->brush = (BuilderMode::Brush)br;
+                    int sg = 1; in >> bm->gridSize >> sg; bm->snapToGrid = (sg != 0);
+                    in >> bm->reach >> bm->rotateStepDeg >> bm->scaleStep
+                       >> bm->minScale >> bm->maxScale
+                       >> bm->partColor.r >> bm->partColor.g >> bm->partColor.b >> bm->partColor.a
+                       >> bm->placeButton >> bm->removeButton;
+                    int pm = 1, bh = 1, sp = 1, sc = 1; in >> pm >> bh >> sp >> sc;
+                    bm->parentToModel = (pm != 0); bm->brushHotkeys = (bh != 0);
+                    bm->showPreview = (sp != 0); bm->showCrosshair = (sc != 0);
+                    bm->buildTag = ReadQuoted(in);
+                    bm->partTexture = ReadQuoted(in);
+                    bm->prefabPath = ReadQuoted(in);
+                    bm->modelName = ReadQuoted(in);
                 } else if (field == "buildpiece") {
                     auto* bp = go->AddComponent<BuildPiece>();
                     in >> bp->tier >> bp->health >> bp->maxHealth >> bp->cost;

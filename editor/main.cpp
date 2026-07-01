@@ -7437,6 +7437,68 @@ void DrawModeling(EditorState& ed) {
         ImGui::SameLine(); if (ImGui::Button("Bend X##model")) { ed.PushUndo(); mr->mesh.Bend(s_bend, 0); ed.dirty = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Curve the mesh into an arc along X (degrees over its length).");
 
+        // ---- Modifiers (Blender-style: array / remesh / decimate / boolean) ----
+        ImGui::SeparatorText("Modifiers");
+        static int   s_arrayN = 3; static float s_arrayDX = 1.5f;
+        ImGui::SetNextItemWidth(70); ImGui::DragInt("##arrn", &s_arrayN, 0.1f, 1, 64);
+        ImGui::SameLine(); ImGui::SetNextItemWidth(80); ImGui::DragFloat("##arrdx", &s_arrayDX, 0.05f, -50.0f, 50.0f, "dx %.2f");
+        ImGui::SameLine(); if (ImGui::Button("Array X##model")) { ed.PushUndo(); mr->mesh.Array(s_arrayN, {s_arrayDX, 0, 0}); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Repeat the mesh N times, each shifted further along X (fences, columns, stairs).");
+
+        static float s_voxel = 0.25f;
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##vox", &s_voxel, 0.02f, 2.0f, "voxel %.2f");
+        ImGui::SameLine(); if (ImGui::Button("Remesh##model")) {
+            ed.PushUndo(); mr->mesh.Remesh(s_voxel);
+            ConsoleLog("Remeshed: " + std::to_string(mr->mesh.TriangleCount()) + " tris @ voxel " + std::to_string(s_voxel));
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rebuild as a watertight blocky voxelization (Blender's Blocks remesh). Smooth/Subdivide after to round it.");
+
+        static float s_decim = 0.3f;
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##dec", &s_decim, 0.02f, 2.0f, "cell %.2f");
+        ImGui::SameLine(); if (ImGui::Button("Decimate##model")) {
+            ed.PushUndo(); int t = mr->mesh.Decimate(s_decim);
+            ConsoleLog("Decimated to " + std::to_string(t) + " triangles");
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut triangle count by clustering vertices onto a grid (cell size).");
+
+        // Boolean needs a second mesh: pick another scene object as the operand.
+        {
+            std::vector<GameObject*> meshes;
+            for (const auto& up : ed.scene().Objects())
+                if (up.get() != go && up->GetComponent<MeshRenderer>()) meshes.push_back(up.get());
+            static int s_boolTarget = 0;
+            if (s_boolTarget >= (int)meshes.size()) s_boolTarget = 0;
+            const char* curName = meshes.empty() ? "(none)" : meshes[s_boolTarget]->name.c_str();
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::BeginCombo("Operand##bool", curName)) {
+                for (int i = 0; i < (int)meshes.size(); ++i)
+                    if (ImGui::Selectable(meshes[i]->name.c_str(), i == s_boolTarget)) s_boolTarget = i;
+                ImGui::EndCombo();
+            }
+            static float s_boolVox = 0.15f;
+            ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##bvox", &s_boolVox, 0.02f, 1.0f, "voxel %.2f");
+            auto doBool = [&](Mesh::BoolOp op, const char* what) {
+                if (meshes.empty()) return;
+                auto* om = meshes[s_boolTarget]->GetComponent<MeshRenderer>();
+                if (!om) return;
+                // Bring the operand into this object's local space (both meshes are in
+                // their own object's local frame; subtract our world offset).
+                Mesh other = om->mesh;
+                Vec3 delta = meshes[s_boolTarget]->transform->Position() - go->transform->Position();
+                for (Vec3& v : other.vertices) v += delta;
+                ed.PushUndo();
+                mr->mesh = Mesh::Boolean(mr->mesh, other, op, s_boolVox);
+                ConsoleLog(std::string("Boolean ") + what + ": " + std::to_string(mr->mesh.TriangleCount()) + " tris");
+                ed.dirty = true;
+            };
+            if (ImGui::Button("Union##bool")) doBool(Mesh::BoolOp::Union, "union");
+            ImGui::SameLine(); if (ImGui::Button("Subtract##bool")) doBool(Mesh::BoolOp::Difference, "difference");
+            ImGui::SameLine(); if (ImGui::Button("Intersect##bool")) doBool(Mesh::BoolOp::Intersect, "intersect");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("CSG with the chosen operand mesh (voxel-based; pick a small voxel for crisp seams).");
+        }
+
         // ---- Interactive edit mode (vertex/face select + move + ops + sculpt) ----
         ImGui::SeparatorText("Edit Mode");
         bool editing = g_meshEdit && g_meshEditObj == go;
@@ -9626,6 +9688,46 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Crosshair##sb", &sb->showCrosshair)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##sb")) toRemove = sb;
+        }
+    }
+    if (auto* bm = dynamic_cast<BuilderMode*>(curComp)) {
+        if (CompHeader("Builder Mode (in-game)", bm, &toRemove)) {
+            ImGui::TextDisabled("Walk + aim: click places the brush, right-click removes it.");
+            ImGui::TextDisabled("R rotate, +/- scale, G grab a piece, P save the model as a prefab.");
+            ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
+            const char* brushes[] = {"Cube", "Sphere", "Cylinder", "Cone", "Wedge",
+                                     "Pyramid", "Plane", "Capsule", "Torus", "Prefab"};
+            int br = (int)bm->brush;
+            if (ImGui::Combo("Brush##bm", &br, brushes, BuilderMode::kBrushCount)) { bm->brush = (BuilderMode::Brush)br; ed.dirty = true; }
+            if (ImGui::Checkbox("Snap to grid##bm", &bm->snapToGrid)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::DragFloat("Grid##bm", &bm->gridSize, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Reach##bm", &bm->reach, 0.25f, 0.5f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Rotate Step (deg)##bm", &bm->rotateStepDeg, 1.0f, 1.0f, 180.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Scale Step##bm", &bm->scaleStep, 0.01f, 0.01f, 5.0f)) ed.dirty = true;
+            float sr[2] = {bm->minScale, bm->maxScale};
+            if (ImGui::DragFloat2("Scale Min/Max##bm", sr, 0.05f, 0.01f, 100.0f)) { bm->minScale = sr[0]; bm->maxScale = sr[1]; ed.dirty = true; }
+            float pc[4] = {bm->partColor.r, bm->partColor.g, bm->partColor.b, bm->partColor.a};
+            if (ImGui::ColorEdit4("Part Color##bm", pc)) { bm->partColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
+            ImGui::Text("Texture"); ImGui::SameLine(120);
+            if (AssetSlot("bmtex", bm->partTexture, "Texture", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
+            char tagbuf[64]; std::snprintf(tagbuf, sizeof(tagbuf), "%s", bm->buildTag.c_str());
+            if (ImGui::InputText("Build Tag##bm", tagbuf, sizeof(tagbuf))) { bm->buildTag = tagbuf; ed.dirty = true; }
+            if (ImGui::TreeNodeEx("Model / Prefab##bm", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Checkbox("Parent parts under one model root##bm", &bm->parentToModel)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: pieces hang under one root so Save (P) writes them as a single prefab.\nOff: pieces drop straight into the world (map building).");
+                char mn[96]; std::snprintf(mn, sizeof(mn), "%s", bm->modelName.c_str());
+                if (ImGui::InputText("Model Name##bm", mn, sizeof(mn))) { bm->modelName = mn; ed.dirty = true; }
+                ImGui::Text("Prefab"); ImGui::SameLine(120);
+                if (AssetSlot("bmprefab", bm->prefabPath, "Prefab", {".okayprefab"})) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Prefab brush stamps this file; Save (P) writes the model here if set.");
+                ImGui::TreePop();
+            }
+            if (ImGui::Checkbox("Brush hotkeys (1-9)##bm", &bm->brushHotkeys)) ed.dirty = true;
+            if (ImGui::Checkbox("Placement preview##bm", &bm->showPreview)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Crosshair##bm", &bm->showCrosshair)) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##bm")) toRemove = bm;
         }
     }
     if (auto* bp = dynamic_cast<BuildPiece*>(curComp)) {
@@ -12758,6 +12860,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BlockBuilder>(), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }
             if (item(!go->GetComponent<StructureBuilder>(), "Structure Builder (Rust-style)")) { go->AddComponent<StructureBuilder>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BuilderMode>(), "Builder Mode (in-game editor)")) { go->AddComponent<BuilderMode>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }

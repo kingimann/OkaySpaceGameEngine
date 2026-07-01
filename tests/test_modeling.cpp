@@ -83,5 +83,79 @@ int main() {
         CHECK(hi1.x < hi0.x);                            // and drew its ends inward
     }
 
+    // ---- Array modifier: N copies marching along an offset ----
+    {
+        Mesh m = Mesh::Cube(1.0f);                        // spans [-0.5, 0.5]
+        int t0 = m.TriangleCount();
+        m.Array(4, {2.0f, 0.0f, 0.0f});
+        CHECK(m.TriangleCount() == t0 * 4);              // four copies of the geometry
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        CHECK(std::fabs(lo.x + 0.5f) < 1e-3f);           // first copy still at the origin
+        CHECK(std::fabs(hi.x - 6.5f) < 1e-3f);           // last copy 3*2 further along
+        CHECK(m.name.empty());                           // now custom geometry
+    }
+
+    // ---- PointInside: parity test classifies in/out of a closed mesh ----
+    {
+        Mesh cube = Mesh::Cube(2.0f);                    // spans [-1, 1]
+        CHECK(cube.PointInside({0.0f, 0.0f, 0.0f}));     // centre is inside
+        CHECK(cube.PointInside({0.5f, -0.5f, 0.5f}));    // off-centre but inside
+        CHECK(!cube.PointInside({3.0f, 0.0f, 0.0f}));    // well outside
+        CHECK(!cube.PointInside({0.0f, 5.0f, 0.0f}));    // above
+    }
+
+    // ---- Voxel remesh: a sphere stays a closed, roughly-spherical solid ----
+    {
+        Mesh sphere = Mesh::Sphere(1.0f, 12, 16);
+        Mesh blocks = Mesh::VoxelRemesh(sphere, 0.25f);
+        CHECK(blocks.TriangleCount() > 0);
+        Vec3 lo, hi; blocks.Bounds(lo, hi);
+        CHECK(std::fabs((hi.x - lo.x) - 2.0f) < 0.5f);   // ~diameter 2 (within a voxel)
+        CHECK(std::fabs((hi.y - lo.y) - 2.0f) < 0.5f);
+        // The remesh is solid: its centre is inside, a far corner is outside.
+        CHECK(blocks.PointInside({0.0f, 0.0f, 0.0f}));
+        CHECK(!blocks.PointInside({5.0f, 5.0f, 5.0f}));
+    }
+
+    // ---- Boolean difference: punch a bar through a cube → the centre hollows ----
+    {
+        Mesh box = Mesh::Cube(2.0f);                     // [-1,1]^3
+        Mesh bar = Mesh::Cube(1.0f);
+        for (Vec3& v : bar.vertices) { v.x *= 0.5f; v.z *= 0.5f; v.y *= 4.0f; }  // tall thin rod through Y
+        Mesh diff = Mesh::Boolean(box, bar, Mesh::BoolOp::Difference, 0.2f);
+        CHECK(diff.TriangleCount() > 0);
+        CHECK(!diff.PointInside({0.0f, 0.0f, 0.0f}));    // the rod carved out the core
+        CHECK(diff.PointInside({0.9f, 0.0f, 0.9f}));     // a corner of the box remains solid
+    }
+
+    // ---- Boolean union vs intersect of two overlapping cubes ----
+    {
+        Mesh a = Mesh::Cube(2.0f);                       // [-1,1]^3
+        Mesh b = Mesh::Cube(2.0f);
+        for (Vec3& v : b.vertices) v.x += 1.0f;          // shifted → overlaps in [0,1] on X
+        Mesh uni = Mesh::Boolean(a, b, Mesh::BoolOp::Union, 0.2f);
+        Mesh inter = Mesh::Boolean(a, b, Mesh::BoolOp::Intersect, 0.2f);
+        // Union spans both; intersect only the shared slab.
+        Vec3 ulo, uhi, ilo, ihi; uni.Bounds(ulo, uhi); inter.Bounds(ilo, ihi);
+        CHECK(uhi.x - ulo.x > 2.5f);                     // union is wider than one cube
+        CHECK(ihi.x - ilo.x < 1.5f);                     // intersection is the thin overlap
+        CHECK(uni.PointInside({1.5f, 0.0f, 0.0f}));      // only-B region is in the union
+        CHECK(!inter.PointInside({1.5f, 0.0f, 0.0f}));   // but NOT in the intersection
+        CHECK(inter.PointInside({0.5f, 0.0f, 0.0f}));    // the shared region is
+    }
+
+    // ---- Decimate: vertex clustering cuts triangle count, keeps the silhouette ----
+    {
+        Mesh m = Mesh::Sphere(1.0f, 16, 24);
+        int t0 = m.TriangleCount();
+        Vec3 lo0, hi0; m.Bounds(lo0, hi0);
+        int t1 = m.Decimate(0.5f);
+        Vec3 lo1, hi1; m.Bounds(lo1, hi1);
+        CHECK(t1 < t0);                                  // fewer triangles
+        CHECK(t1 > 0);
+        CHECK(std::fabs((hi1.x - lo1.x) - (hi0.x - lo0.x)) < 0.4f);   // roughly same size
+        CHECK(m.name.empty());
+    }
+
     TEST_MAIN_RESULT();
 }

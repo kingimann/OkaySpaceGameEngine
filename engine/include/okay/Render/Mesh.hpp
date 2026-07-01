@@ -1195,6 +1195,201 @@ struct Mesh {
         name = "";
         ComputeSmoothNormals();
     }
+
+    // ---- Modifiers (Blender-style) ------------------------------------------
+
+    /// Array modifier: keep the original and append `count-1` more copies, each
+    /// shifted a further `offset` along. Great for fences, columns, stairs, gears.
+    void Array(int count, const Vec3& offset) {
+        if (count <= 1 || vertices.empty()) return;
+        Mesh base = *this;
+        for (int i = 1; i < count; ++i)
+            Add(base, {offset.x * (float)i, offset.y * (float)i, offset.z * (float)i});
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Decimate modifier (vertex clustering): snap vertices to a grid of `cellSize`
+    /// and collapse each cell to one averaged vertex, dropping faces that degenerate.
+    /// A fast, robust way to cut triangle count on dense/imported meshes. Returns the
+    /// new triangle count.
+    int Decimate(float cellSize) {
+        if (cellSize <= 1e-6f || vertices.empty()) return TriangleCount();
+        std::map<std::tuple<int, int, int>, int> cell;
+        std::vector<Vec3> sum; std::vector<int> cnt; std::vector<int> remap(vertices.size());
+        auto key = [&](const Vec3& v) {
+            return std::make_tuple((int)std::floor(v.x / cellSize),
+                                   (int)std::floor(v.y / cellSize),
+                                   (int)std::floor(v.z / cellSize));
+        };
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            auto k = key(vertices[i]);
+            auto it = cell.find(k);
+            int id;
+            if (it == cell.end()) { id = (int)sum.size(); cell[k] = id; sum.push_back(vertices[i]); cnt.push_back(1); }
+            else { id = it->second; sum[id] += vertices[i]; ++cnt[id]; }
+            remap[i] = id;
+        }
+        std::vector<Vec3> nv(sum.size());
+        for (std::size_t i = 0; i < sum.size(); ++i) nv[i] = sum[i] * (1.0f / (float)cnt[i]);
+        std::vector<int> nt; nt.reserve(triangles.size());
+        std::vector<Color> nc; const bool hadColors = HasFaceColors();
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int a = remap[triangles[t]], b = remap[triangles[t + 1]], c = remap[triangles[t + 2]];
+            if (a == b || b == c || a == c) continue;            // collapsed → drop
+            nt.push_back(a); nt.push_back(b); nt.push_back(c);
+            if (hadColors) nc.push_back(triColors[t / 3]);
+        }
+        vertices = std::move(nv); triangles = std::move(nt);
+        triColors = std::move(nc); uvs.clear();
+        name = "";
+        ComputeSmoothNormals();
+        return TriangleCount();
+    }
+
+    /// True if `p` is inside this CLOSED mesh — parity of how many faces a ray from
+    /// `p` crosses (odd = inside). The basis for the boolean/remesh ops. The ray is
+    /// slightly skewed off the axes so it never threads an exact shared edge/vertex
+    /// (which would double-count and flip the answer).
+    bool PointInside(const Vec3& p) const {
+        const Vec3 d{1.0f, 0.0009124f, 0.0007215f};              // near +X, off every edge
+        auto dot = [](const Vec3& u, const Vec3& w) { return u.x * w.x + u.y * w.y + u.z * w.z; };
+        int crossings = 0;
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
+            const Vec3& a = vertices[triangles[i]];
+            const Vec3& b = vertices[triangles[i + 1]];
+            const Vec3& c = vertices[triangles[i + 2]];
+            Vec3 e1 = b - a, e2 = c - a;
+            Vec3 h = Vec3::Cross(d, e2);
+            float det = dot(e1, h);
+            if (det > -1e-9f && det < 1e-9f) continue;           // ray parallel to face
+            float invDet = 1.0f / det;
+            Vec3 s = p - a;
+            float u = dot(s, h) * invDet;
+            if (u < 0.0f || u > 1.0f) continue;
+            Vec3 q = Vec3::Cross(s, e1);
+            float v = dot(d, q) * invDet;
+            if (v < 0.0f || u + v > 1.0f) continue;
+            float t = dot(e2, q) * invDet;
+            if (t > 1e-7f) ++crossings;                          // crossing ahead along the ray
+        }
+        return (crossings & 1) != 0;
+    }
+
+    enum class BoolOp { Union, Difference, Intersect };
+
+    /// Remesh modifier ("Blocks" mode): sample the solid on a voxel grid and emit a
+    /// watertight blocky surface between solid and empty cells. Follow with Smooth()
+    /// or SubdivideSmooth() to round it. `voxel` is the cell size; the grid is capped
+    /// at `maxDim` cells per axis so a tiny voxel on a big mesh can't explode.
+    static Mesh VoxelRemesh(const Mesh& src, float voxel, int maxDim = 64) {
+        if (src.vertices.empty() || voxel <= 1e-5f) return Mesh{};
+        Vec3 lo, hi; src.Bounds(lo, hi);
+        lo = lo - Vec3{voxel, voxel, voxel};
+        hi = hi + Vec3{voxel, voxel, voxel};
+        int nx, ny, nz; float v;
+        GridDims(lo, hi, voxel, maxDim, nx, ny, nz, v);
+        std::vector<unsigned char> occ((std::size_t)nx * ny * nz, 0);
+        SampleInto(src, occ, nx, ny, nz, lo, v);
+        return EmitOccupancy(occ, nx, ny, nz, lo, v);
+    }
+    /// Replace this mesh with its voxel remesh in place.
+    void Remesh(float voxel, int maxDim = 64) { *this = VoxelRemesh(*this, voxel, maxDim); }
+
+    /// Boolean modifier: combine two closed meshes with union (A∪B), difference
+    /// (A−B), or intersect (A∩B), via a shared voxel grid. Robust on any closed
+    /// input (no fragile coplanar-triangle clipping); the result is blocky at the
+    /// voxel scale, so pick `voxel` small for crisp seams and Smooth() to taste.
+    static Mesh Boolean(const Mesh& a, const Mesh& b, BoolOp op, float voxel, int maxDim = 96) {
+        if (a.vertices.empty() || b.vertices.empty() || voxel <= 1e-5f) return Mesh{};
+        Vec3 alo, ahi, blo, bhi; a.Bounds(alo, ahi); b.Bounds(blo, bhi);
+        // Union of both AABBs (covers every cell either solid could occupy), padded.
+        Vec3 lo{std::min(alo.x, blo.x), std::min(alo.y, blo.y), std::min(alo.z, blo.z)};
+        Vec3 hi{std::max(ahi.x, bhi.x), std::max(ahi.y, bhi.y), std::max(ahi.z, bhi.z)};
+        lo = lo - Vec3{voxel, voxel, voxel};
+        hi = hi + Vec3{voxel, voxel, voxel};
+        int nx, ny, nz; float v;
+        GridDims(lo, hi, voxel, maxDim, nx, ny, nz, v);
+        const std::size_t n = (std::size_t)nx * ny * nz;
+        std::vector<unsigned char> oa(n, 0), ob(n, 0);
+        SampleInto(a, oa, nx, ny, nz, lo, v);
+        SampleInto(b, ob, nx, ny, nz, lo, v);
+        std::vector<unsigned char> occ(n, 0);
+        for (std::size_t i = 0; i < n; ++i) {
+            bool ia = oa[i] != 0, ib = ob[i] != 0;
+            occ[i] = (op == BoolOp::Union ? (ia || ib)
+                    : op == BoolOp::Intersect ? (ia && ib)
+                    : (ia && !ib)) ? 1 : 0;                      // Difference
+        }
+        return EmitOccupancy(occ, nx, ny, nz, lo, v);
+    }
+
+private:
+    /// Choose a grid that covers [lo,hi] at ~`voxel`, capped to `maxDim` per axis
+    /// (enlarging the effective cell size `outV` if needed so it always fits).
+    static void GridDims(const Vec3& lo, const Vec3& hi, float voxel, int maxDim,
+                         int& nx, int& ny, int& nz, float& outV) {
+        outV = voxel;
+        auto dim = [&](float span) {
+            int d = (int)std::ceil(span / outV);
+            return d < 1 ? 1 : d;
+        };
+        nx = dim(hi.x - lo.x); ny = dim(hi.y - lo.y); nz = dim(hi.z - lo.z);
+        int m = std::max(nx, std::max(ny, nz));
+        if (maxDim > 0 && m > maxDim) {
+            outV *= (float)m / (float)maxDim;                   // grow cells to fit the cap
+            nx = dim(hi.x - lo.x); ny = dim(hi.y - lo.y); nz = dim(hi.z - lo.z);
+        }
+    }
+    /// Mark every grid cell whose centre is inside `src` as solid.
+    static void SampleInto(const Mesh& src, std::vector<unsigned char>& occ,
+                           int nx, int ny, int nz, const Vec3& origin, float v) {
+        for (int z = 0; z < nz; ++z)
+            for (int y = 0; y < ny; ++y)
+                for (int x = 0; x < nx; ++x) {
+                    Vec3 c{origin.x + (x + 0.5f) * v, origin.y + (y + 0.5f) * v, origin.z + (z + 0.5f) * v};
+                    if (src.PointInside(c)) occ[(std::size_t)(z * ny + y) * nx + x] = 1;
+                }
+    }
+    /// Build a surface from a solid/empty grid: a quad on every face between a solid
+    /// cell and an empty neighbour (or the grid edge), wound to face outward.
+    static Mesh EmitOccupancy(const std::vector<unsigned char>& occ,
+                              int nx, int ny, int nz, const Vec3& origin, float v) {
+        Mesh out;
+        auto solid = [&](int x, int y, int z) {
+            if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) return false;
+            return occ[(std::size_t)(z * ny + y) * nx + x] != 0;
+        };
+        auto face = [&](Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 outward) {
+            Vec3 nrm = Vec3::Cross(b - a, c - a);
+            float dot = nrm.x * outward.x + nrm.y * outward.y + nrm.z * outward.z;
+            int base = (int)out.vertices.size();
+            if (dot >= 0.0f) { out.vertices.push_back(a); out.vertices.push_back(b);
+                               out.vertices.push_back(c); out.vertices.push_back(d); }
+            else             { out.vertices.push_back(a); out.vertices.push_back(d);
+                               out.vertices.push_back(c); out.vertices.push_back(b); }
+            out.triangles.insert(out.triangles.end(),
+                                 {base, base + 1, base + 2, base, base + 2, base + 3});
+        };
+        for (int z = 0; z < nz; ++z)
+            for (int y = 0; y < ny; ++y)
+                for (int x = 0; x < nx; ++x) {
+                    if (!solid(x, y, z)) continue;
+                    float x0 = origin.x + x * v, y0 = origin.y + y * v, z0 = origin.z + z * v;
+                    float x1 = x0 + v, y1 = y0 + v, z1 = z0 + v;
+                    if (!solid(x + 1, y, z)) face({x1, y0, z0}, {x1, y1, z0}, {x1, y1, z1}, {x1, y0, z1}, {1, 0, 0});
+                    if (!solid(x - 1, y, z)) face({x0, y0, z0}, {x0, y1, z0}, {x0, y1, z1}, {x0, y0, z1}, {-1, 0, 0});
+                    if (!solid(x, y + 1, z)) face({x0, y1, z0}, {x1, y1, z0}, {x1, y1, z1}, {x0, y1, z1}, {0, 1, 0});
+                    if (!solid(x, y - 1, z)) face({x0, y0, z0}, {x1, y0, z0}, {x1, y0, z1}, {x0, y0, z1}, {0, -1, 0});
+                    if (!solid(x, y, z + 1)) face({x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}, {0, 0, 1});
+                    if (!solid(x, y, z - 1)) face({x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0}, {0, 0, -1});
+                }
+        out.WeldVertices();
+        out.ComputeSmoothNormals();
+        return out;
+    }
+
+public:
 };
 
 } // namespace okay

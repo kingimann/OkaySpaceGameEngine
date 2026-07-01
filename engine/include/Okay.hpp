@@ -160,6 +160,7 @@
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/BuildPiece.hpp"
 #include "okay/Components/StructureBuilder.hpp"
+#include "okay/Components/BuilderMode.hpp"
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"

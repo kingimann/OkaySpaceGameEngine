@@ -382,17 +382,18 @@ std::vector<fs::path> FindScenes() {
 // Shared accent so UI code can match the theme.
 // Mutable so the Appearance setting can recolor the UI live (DarkTheme() reads
 // these, so changing them and re-applying restyles everything).
-ImVec4 kAccent(0.30f, 0.62f, 1.00f, 1.0f);     // friendly blue
-ImVec4 kAccentDim(0.22f, 0.44f, 0.74f, 1.0f);
+ImVec4 kAccent(0.26f, 0.59f, 0.98f, 1.0f);     // matches the editor's default accent
+ImVec4 kAccentDim(0.19f, 0.43f, 0.72f, 1.0f);
 
-// Selectable accent colors (name, main, dim).
+// Selectable accent colors (name, main, dim) — mirror the editor's accent presets.
 struct AccentPreset { const char* name; ImVec4 col; ImVec4 dim; };
 const AccentPreset kAccentPresets[] = {
-    {"Blue",   ImVec4(0.30f, 0.62f, 1.00f, 1), ImVec4(0.22f, 0.44f, 0.74f, 1)},
-    {"Green",  ImVec4(0.28f, 0.80f, 0.47f, 1), ImVec4(0.20f, 0.56f, 0.33f, 1)},
-    {"Purple", ImVec4(0.62f, 0.46f, 1.00f, 1), ImVec4(0.44f, 0.32f, 0.74f, 1)},
-    {"Orange", ImVec4(1.00f, 0.56f, 0.26f, 1), ImVec4(0.74f, 0.40f, 0.18f, 1)},
-    {"Pink",   ImVec4(1.00f, 0.40f, 0.66f, 1), ImVec4(0.74f, 0.28f, 0.48f, 1)},
+    {"Blue",   ImVec4(0.26f, 0.59f, 0.98f, 1), ImVec4(0.19f, 0.43f, 0.72f, 1)},
+    {"Teal",   ImVec4(0.18f, 0.78f, 0.74f, 1), ImVec4(0.13f, 0.56f, 0.53f, 1)},
+    {"Violet", ImVec4(0.56f, 0.46f, 0.96f, 1), ImVec4(0.40f, 0.33f, 0.70f, 1)},
+    {"Green",  ImVec4(0.36f, 0.80f, 0.46f, 1), ImVec4(0.26f, 0.58f, 0.33f, 1)},
+    {"Amber",  ImVec4(0.95f, 0.66f, 0.26f, 1), ImVec4(0.70f, 0.48f, 0.19f, 1)},
+    {"Rose",   ImVec4(0.96f, 0.42f, 0.56f, 1), ImVec4(0.70f, 0.30f, 0.41f, 1)},
 };
 int g_accentIndex = 0;            // current accent preset (persisted)
 bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
@@ -434,16 +435,18 @@ void DarkTheme() {
     const bool light = (g_themeIndex == 2);
     if (light) ImGui::StyleColorsLight(); else ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Soft, modern rounding + generous spacing for a clean, flat look.
-    s.WindowRounding = 0.0f;
-    s.ChildRounding = 12.0f;
-    s.FrameRounding = 8.0f; s.GrabRounding = 8.0f; s.PopupRounding = 10.0f;
-    s.ScrollbarRounding = 10.0f; s.TabRounding = 8.0f;
-    s.FramePadding = ImVec2(12, 10); s.ItemSpacing = ImVec2(10, 10);
-    s.ItemInnerSpacing = ImVec2(8, 6);
-    s.WindowPadding = ImVec2(18, 18); s.WindowBorderSize = 0.0f;
-    s.ChildBorderSize = 1.0f; s.FrameBorderSize = 0.0f;
-    s.ScrollbarSize = 12.0f; s.SeparatorTextBorderSize = 2.0f;
+    // Metrics match the game engine editor's theme (ApplyTheme) so the launcher and
+    // editor read as one product: soft unified rounding, thin frame borders.
+    s.WindowRounding    = 6.0f;  s.ChildRounding    = 6.0f;
+    s.FrameRounding     = 5.0f;  s.GrabRounding     = 4.0f;
+    s.PopupRounding     = 6.0f;  s.TabRounding      = 6.0f;
+    s.ScrollbarRounding = 6.0f;
+    s.WindowPadding   = ImVec2(14, 12); s.FramePadding = ImVec2(10, 7);
+    s.ItemSpacing     = ImVec2(9, 8);   s.ItemInnerSpacing = ImVec2(7, 5);
+    s.WindowBorderSize = 0.0f;          s.ChildBorderSize = 1.0f;
+    s.FrameBorderSize  = 1.0f;          s.PopupBorderSize = 1.0f;
+    s.ScrollbarSize   = 11.0f;          s.GrabMinSize = 11.0f;
+    s.SeparatorTextBorderSize = 1.0f;
     ImVec4* c = s.Colors;
     const ImVec4 accent = kAccent;
     const ImVec4 accentDim = kAccentDim;
@@ -472,20 +475,55 @@ void DarkTheme() {
         c[ImGuiCol_FrameBgHovered] = ImVec4(0.85f, 0.88f, 0.93f, 1.0f);
         c[ImGuiCol_FrameBgActive]  = ImVec4(0.82f, 0.86f, 0.92f, 1.0f);
         c[ImGuiCol_Separator] = ImVec4(0, 0, 0, 0.10f);
-    } else {                                              // Dark (default)
-        c[ImGuiCol_WindowBg]  = ImVec4(0.055f, 0.065f, 0.085f, 1.0f);
-        c[ImGuiCol_ChildBg]   = ImVec4(0.100f, 0.112f, 0.142f, 1.0f);
-        c[ImGuiCol_PopupBg]   = ImVec4(0.100f, 0.112f, 0.142f, 0.98f);
-        c[ImGuiCol_Border]    = ImVec4(1, 1, 1, 0.055f);
-        c[ImGuiCol_Text]      = ImVec4(0.93f, 0.95f, 0.98f, 1.0f);
-        c[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.54f, 0.63f, 1.0f);
-        c[ImGuiCol_Button]    = ImVec4(0.16f, 0.18f, 0.24f, 1.0f);
-        c[ImGuiCol_FrameBg]   = ImVec4(0.14f, 0.16f, 0.21f, 1.0f);
-        c[ImGuiCol_FrameBgHovered] = ImVec4(0.18f, 0.21f, 0.27f, 1.0f);
-        c[ImGuiCol_FrameBgActive]  = ImVec4(0.20f, 0.24f, 0.31f, 1.0f);
-        c[ImGuiCol_Separator] = ImVec4(1, 1, 1, 0.07f);
+    } else {                                              // Dark (default) = engine editor theme
+        // Neutral medium-gray base (Unity Pro dark), identical to the editor's
+        // ApplyTheme, so the launcher and editor look like one product.
+        auto lighten = [](float v) { return v + (1.0f - v) * 0.30f; };
+        const ImVec4 accentHover = ImVec4(lighten(accent.x), lighten(accent.y), lighten(accent.z), 1.00f);
+        auto tint = [&](float gray, float amt, float a) {
+            return ImVec4(gray + (accent.x - gray) * amt, gray + (accent.y - gray) * amt,
+                          gray + (accent.z - gray) * amt, a);
+        };
+        c[ImGuiCol_WindowBg]         = ImVec4(0.180f, 0.180f, 0.192f, 1.00f);
+        c[ImGuiCol_ChildBg]          = ImVec4(0.160f, 0.160f, 0.170f, 0.00f);
+        c[ImGuiCol_PopupBg]          = ImVec4(0.145f, 0.145f, 0.155f, 0.99f);
+        c[ImGuiCol_Border]           = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
+        c[ImGuiCol_FrameBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);
+        c[ImGuiCol_FrameBgHovered]   = tint(0.185f, 0.18f, 1.00f);
+        c[ImGuiCol_FrameBgActive]    = tint(0.225f, 0.25f, 1.00f);
+        c[ImGuiCol_TitleBg]          = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);
+        c[ImGuiCol_TitleBgActive]    = tint(0.165f, 0.16f, 1.00f);
+        c[ImGuiCol_MenuBarBg]        = ImVec4(0.155f, 0.155f, 0.165f, 1.00f);
+        c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.42f);
+        c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.55f);
+        c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.70f);
+        c[ImGuiCol_Button]           = ImVec4(0.255f, 0.255f, 0.275f, 1.00f);
+        c[ImGuiCol_ButtonHovered]    = tint(0.320f, 0.22f, 1.00f);
+        c[ImGuiCol_ButtonActive]     = ImVec4(accent.x, accent.y, accent.z, 0.85f);
+        c[ImGuiCol_CheckMark]        = accentHover;
+        c[ImGuiCol_SliderGrab]       = accent;
+        c[ImGuiCol_SliderGrabActive] = accentHover;
+        c[ImGuiCol_Separator]        = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+        c[ImGuiCol_SeparatorHovered] = accentDim;
+        c[ImGuiCol_SeparatorActive]  = accent;
+        c[ImGuiCol_Tab]              = ImVec4(0.150f, 0.150f, 0.160f, 1.00f);
+        c[ImGuiCol_TabHovered]       = ImVec4(accent.x, accent.y, accent.z, 0.55f);
+        c[ImGuiCol_TabActive]        = tint(0.245f, 0.14f, 1.00f);
+        c[ImGuiCol_TabUnfocused]     = ImVec4(0.135f, 0.135f, 0.145f, 1.00f);
+        c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.190f, 0.190f, 0.205f, 1.00f);
+        c[ImGuiCol_Text]             = ImVec4(0.860f, 0.865f, 0.880f, 1.00f);
+        c[ImGuiCol_TextDisabled]     = ImVec4(0.480f, 0.485f, 0.510f, 1.00f);
+        c[ImGuiCol_TextSelectedBg]   = ImVec4(accent.x, accent.y, accent.z, 0.45f);
+        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
+        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.330f, 0.330f, 0.355f, 1.00f);
+        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.400f, 0.400f, 0.430f, 1.00f);
+        c[ImGuiCol_ScrollbarGrabActive]  = accent;
+        c[ImGuiCol_TableHeaderBg]    = ImVec4(0.205f, 0.205f, 0.220f, 1.00f);
+        c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.022f);
+        ImGui::GetIO().FontGlobalScale = g_uiScale;
+        return;   // Dark theme is fully specified above (no shared overrides needed)
     }
-    // Accent-tinted slots (shared by all themes).
+    // Accent-tinted slots (shared by the Midnight / Light themes).
     c[ImGuiCol_ButtonHovered]    = accent;
     c[ImGuiCol_ButtonActive]     = accentDim;
     c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.28f);

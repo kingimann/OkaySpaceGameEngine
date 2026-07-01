@@ -598,6 +598,20 @@ static ImVec4 AccentCol(float alpha = 1.0f) {
     const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
     return ImVec4(ap.r, ap.g, ap.b, alpha);
 }
+// A button that shows an accent "pressed" look while `active` — for toolbar
+// toggles (transform tools, Local/Global, Snap, edit modes) so the active state
+// reads consistently in the theme colour instead of ad-hoc blues.
+static bool AccentToggleButton(const char* label, bool active, const ImVec2& size = ImVec2(0, 0)) {
+    if (active) {
+        ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.90f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.80f));
+        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+    }
+    bool clicked = ImGui::Button(label, size);
+    if (active) ImGui::PopStyleColor(4);
+    return clicked;
+}
 // A tidy, centered empty-state for a panel with nothing to show — a big muted
 // glyph, a title, and an optional hint, vertically centered in the panel. Replaces
 // the plain top-left grey text that used to sit awkwardly in the corner.
@@ -16425,17 +16439,14 @@ void DrawViewport(EditorState& ed) {
     // Transform tools (W/E/R), highlighting the active one.
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
     auto toolBtn = [&](const char* lbl, Tool t) {
-        bool active = g_tool == t;
-        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.75f, 1.0f));
-        if (ImGui::Button(lbl)) g_tool = t;
-        if (active) ImGui::PopStyleColor();
+        if (AccentToggleButton(lbl, g_tool == t)) g_tool = t;
         ImGui::SameLine();
     };
     toolBtn("Move", Tool::Move);
     toolBtn("Rotate", Tool::Rotate);
     toolBtn("Scale", Tool::Scale);
-    // Local/Global handle orientation (Unity's toggle); X toggles it.
-    if (ImGui::Button(g_gizmoLocal ? "Local" : "Global")) g_gizmoLocal = !g_gizmoLocal;
+    // Local/Global handle orientation (Unity's toggle); X toggles it. Tinted when Local.
+    if (AccentToggleButton(g_gizmoLocal ? "Local" : "Global", g_gizmoLocal)) g_gizmoLocal = !g_gizmoLocal;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gizmo orientation: Local (object) vs Global (world). Shortcut: X");
     // Keyboard shortcuts W/E/R when the Scene window is focused (and not typing).
     if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput) {

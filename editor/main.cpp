@@ -4246,6 +4246,9 @@ static const std::string* ScriptSignature(const std::string& name) {
         {"call","call(\"fn\"[, args...])"}, {"map_fn","map_fn(arr, \"fn\")"}, {"filter_fn","filter_fn(arr, \"fn\")"},
         {"reduce_fn","reduce_fn(arr, \"fn\", init)"}, {"for_each","for_each(arr, \"fn\")"}, {"find_fn","find_fn(arr, \"fn\")"},
         {"any_fn","any_fn(arr, \"fn\")"}, {"all_fn","all_fn(arr, \"fn\")"}, {"count_fn","count_fn(arr, \"fn\")"},
+        // JSON
+        {"to_json","to_json(value) -> string"}, {"from_json","from_json(\"...\") -> value"},
+        {"json_stringify","json_stringify(value)"}, {"json_parse","json_parse(\"...\")"},
         // type introspection
         {"typeof","typeof(v) -> \"number|string|bool|array|map|vec3|null\""},
         {"is_array","is_array(v)"}, {"is_map","is_map(v)"}, {"is_str","is_str(v)"},

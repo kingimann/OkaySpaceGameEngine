@@ -359,5 +359,40 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("c1").AsFloat(), 1.0f, 0.001f);
     }
 
+    // --- JSON round-trip: to_json / from_json for save data ---
+    {
+        const char* src = R"SCRIPT(
+            var save = map();
+            map_set(save, "level", 7);
+            map_set(save, "name", "Ada");
+            var inv = array("sword", "shield");
+            map_set(save, "items", inv);
+
+            var text = to_json(save);          // serialize
+            var back = from_json(text);        // parse it back
+
+            var lvl = map_get(back, "level");  // 7
+            var nm = map_get(back, "name");    // "Ada"
+            var items = map_get(back, "items");
+            var nItems = count(items);         // 2
+            var firstItem = first(items);      // "sword"
+
+            // Parse a raw JSON literal too.
+            var arr = from_json("[1, 2, 3, 4]");
+            var arrSum = sum(arr);             // 10
+            var flag = from_json("true");      // bool true
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        if (!err.empty()) std::cerr << "  load error: " << err << "\n";
+        CHECK_NEAR(vm->GetGlobal("lvl").AsFloat(), 7.0f, 0.001f);
+        CHECK(vm->GetGlobal("nm").AsString() == "Ada");
+        CHECK_NEAR(vm->GetGlobal("nItems").AsFloat(), 2.0f, 0.001f);
+        CHECK(vm->GetGlobal("firstItem").AsString() == "sword");
+        CHECK_NEAR(vm->GetGlobal("arrSum").AsFloat(), 10.0f, 0.001f);
+        CHECK(vm->GetGlobal("flag").AsBool());
+    }
+
     TEST_MAIN_RESULT();
 }

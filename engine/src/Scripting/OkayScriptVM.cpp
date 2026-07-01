@@ -63,6 +63,105 @@ namespace {
 
 using Value = vs::VsValue;
 
+// ===================== JSON (for to_json / from_json builtins) =====================
+// A compact, dependency-free JSON writer/reader over VsValue. Numbers, bools,
+// strings, arrays and maps round-trip; vec3 is written as a [x,y,z] array.
+inline void JsonEscape(const std::string& s, std::string& out) {
+    out += '"';
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\t': out += "\\t";  break;
+            case '\r': out += "\\r";  break;
+            default:   out += c;      break;
+        }
+    }
+    out += '"';
+}
+
+inline void ToJson(const Value& v, std::string& out) {
+    if (auto arr = v.AsArray()) {
+        out += '[';
+        for (std::size_t i = 0; i < arr->size(); ++i) { if (i) out += ','; ToJson((*arr)[i], out); }
+        out += ']';
+    } else if (auto m = v.AsMap()) {
+        out += '{';
+        bool first = true;
+        for (auto& kv : *m) { if (!first) out += ','; first = false; JsonEscape(kv.first, out); out += ':'; ToJson(kv.second, out); }
+        out += '}';
+    } else if (v.IsString()) {
+        JsonEscape(v.AsString(), out);
+    } else if (v.IsBool()) {
+        out += v.AsBool() ? "true" : "false";
+    } else if (v.IsVec3()) {
+        Vec3 p = v.AsVec3();
+        out += '['; out += vs::VsValue(p.x).AsString(); out += ',';
+        out += vs::VsValue(p.y).AsString(); out += ','; out += vs::VsValue(p.z).AsString(); out += ']';
+    } else {
+        out += v.AsString();   // number -> its formatted form
+    }
+}
+
+// A tiny recursive-descent JSON parser. On malformed input it returns whatever it
+// managed to parse (best-effort) — scripts should validate important data anyway.
+struct JsonReader {
+    const std::string& s; std::size_t i = 0;
+    explicit JsonReader(const std::string& src) : s(src) {}
+    void Ws() { while (i < s.size() && (s[i]==' '||s[i]=='\t'||s[i]=='\n'||s[i]=='\r')) ++i; }
+    Value Parse() { Ws(); if (i >= s.size()) return Value{}; char c = s[i];
+        if (c == '{') return Obj();
+        if (c == '[') return Arr();
+        if (c == '"') return Value{Str()};
+        if (c == 't') { i += 4; return Value{true}; }
+        if (c == 'f') { i += 5; return Value{false}; }
+        if (c == 'n') { i += 4; return Value{}; }
+        return Num();
+    }
+    std::string Str() {
+        std::string out; ++i;  // opening quote
+        while (i < s.size() && s[i] != '"') {
+            if (s[i] == '\\' && i + 1 < s.size()) {
+                char e = s[++i];
+                out += (e=='n')?'\n':(e=='t')?'\t':(e=='r')?'\r':e;
+            } else out += s[i];
+            ++i;
+        }
+        if (i < s.size()) ++i;  // closing quote
+        return out;
+    }
+    Value Num() {
+        std::size_t start = i;
+        while (i < s.size() && (std::isdigit((unsigned char)s[i])||s[i]=='-'||s[i]=='+'||s[i]=='.'||s[i]=='e'||s[i]=='E')) ++i;
+        return Value{(float)std::atof(s.substr(start, i - start).c_str())};
+    }
+    Value Arr() {
+        Value v = Value::MakeArray(); auto a = v.AsArray(); ++i;  // '['
+        Ws(); if (i < s.size() && s[i] == ']') { ++i; return v; }
+        while (i < s.size()) { a->push_back(Parse()); Ws();
+            if (i < s.size() && s[i] == ',') { ++i; Ws(); continue; }
+            if (i < s.size() && s[i] == ']') { ++i; break; }
+            break;
+        }
+        return v;
+    }
+    Value Obj() {
+        Value v = Value::MakeMap(); auto m = v.AsMap(); ++i;  // '{'
+        Ws(); if (i < s.size() && s[i] == '}') { ++i; return v; }
+        while (i < s.size()) { Ws();
+            if (s[i] != '"') break;
+            std::string key = Str(); Ws();
+            if (i < s.size() && s[i] == ':') ++i;
+            (*m)[key] = Parse(); Ws();
+            if (i < s.size() && s[i] == ',') { ++i; continue; }
+            if (i < s.size() && s[i] == '}') { ++i; break; }
+            break;
+        }
+        return v;
+    }
+};
+
 // ===================== Lexer =====================
 enum class Tok {
     End, Number, String, InterpString, Ident,
@@ -2890,6 +2989,19 @@ struct OkayScriptVM::Impl {
             float x = a.empty() ? 0.0f : a[0].AsFloat();
             return Value{x - Mathf::Floor(x)};
         };
+        // JSON: serialize any value (arrays/maps included) to a string, and parse a
+        // JSON string back into arrays/maps/numbers/strings/bools — for save data,
+        // config, and network payloads. Aliased as json_stringify / json_parse.
+        b["to_json"] = [](std::vector<Value>& a) {
+            std::string out; if (!a.empty()) ToJson(a[0], out); else out = "null";
+            return Value{out};
+        };
+        b["from_json"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{};
+            std::string js = a[0].AsString();   // keep alive: JsonReader holds a reference
+            JsonReader r(js);
+            return r.Parse();
+        };
         // Higher-order array ops: each takes an array and the NAME of a script
         // function to apply per element, so games can write functional-style code
         // (map/filter/reduce) with a named callback. (call() lives further down.)
@@ -4187,6 +4299,8 @@ struct OkayScriptVM::Impl {
         // Logging
         alias("log", "print");
         alias("log_message", "print");
+        alias("json_stringify", "to_json");
+        alias("json_parse", "from_json");
     }
 };
 

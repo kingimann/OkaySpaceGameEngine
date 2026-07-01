@@ -3951,6 +3951,14 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
     }
 }
 
+std::vector<std::string> OkayScriptVM::BuiltinNames() const {
+    std::vector<std::string> out;
+    out.reserve(m_impl->rt.builtins.size());
+    for (const auto& kv : m_impl->rt.builtins) out.push_back(kv.first);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 bool OkayScriptVM::Validate(const std::string& source, std::string* error) {
     // Lex + parse ONLY — never Exec — so live editor diagnostics have no side
     // effects (no logging, no globals mutated, no scene calls). Catches syntax and

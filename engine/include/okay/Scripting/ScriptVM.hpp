@@ -29,6 +29,10 @@ public:
     /// The language this backend implements ("okayscript", "lua", "csharp").
     virtual const char* Language() const = 0;
 
+    /// The names of every built-in function this backend provides — for editor
+    /// autocomplete. Default empty; OkayScript returns its full builtin set.
+    virtual std::vector<std::string> BuiltinNames() const { return {}; }
+
     /// Compile/parse the given source. Returns false and fills `error` on failure.
     virtual bool Load(const std::string& source, std::string* error = nullptr) = 0;
 

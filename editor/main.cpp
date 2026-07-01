@@ -4121,7 +4121,18 @@ static const std::vector<std::string>& ScriptCompletions() {
         // raycast
         "raycast","raycast3","overlap_circle",
     };
-    return w;
+    // Merge in EVERY builtin the OkayScript VM actually registers (hundreds), so
+    // autocomplete covers the whole language, not just this hand-picked subset.
+    // Built once, lazily, from a throwaway VM.
+    static std::vector<std::string> merged = [] {
+        std::vector<std::string> m = w;
+        std::unordered_set<std::string> seen(m.begin(), m.end());
+        if (auto vm = CreateScriptVM("okayscript"))
+            for (auto& n : vm->BuiltinNames())
+                if (seen.insert(n).second) m.push_back(n);
+        return m;
+    }();
+    return merged;
 }
 
 // Append identifiers found in the current document to a completion pool (deduped),

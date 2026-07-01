@@ -48,6 +48,19 @@ int main() {
         CHECK_NEAR(vm2->GetGlobal("sideEffect").AsFloat(), 123.0f, 1e-4f);
     }
 
+    // --- BuiltinNames: the editor pulls the full builtin set for autocomplete ---
+    {
+        auto vm = CreateScriptVM("okayscript");
+        auto names = vm->BuiltinNames();
+        CHECK(names.size() > 100);                       // hundreds of builtins
+        auto has = [&](const char* n){ for (auto& s : names) if (s == n) return true; return false; };
+        CHECK(has("print") && has("move") && has("spawn") && has("key"));
+        // Sorted (the impl sorts), so it's stable for the UI.
+        bool sorted = true;
+        for (std::size_t i = 1; i < names.size(); ++i) if (names[i] < names[i-1]) sorted = false;
+        CHECK(sorted);
+    }
+
     // --- Control flow: while loop sum 1..5 = 15 ---
     {
         const char* src = R"SCRIPT(

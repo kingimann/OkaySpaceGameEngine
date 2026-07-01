@@ -7499,6 +7499,41 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("CSG with the chosen operand mesh (voxel-based; pick a small voxel for crisp seams).");
         }
 
+        // Convex hull + planar bisect (both operate on this mesh alone).
+        if (ImGui::Button("Convex Hull##model")) {
+            ed.PushUndo(); mr->mesh.MakeConvexHull();
+            ConsoleLog("Convex hull: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wrap the mesh's points in their tight convex shell (great for colliders / crystals).");
+        ImGui::TextDisabled("Bisect (keep half, capped):");
+        auto biAxis = [&](const char* lbl, Vec3 n) {
+            if (ImGui::Button(lbl)) {
+                ed.PushUndo();
+                Vec3 c = mr->mesh.vertices.empty() ? Vec3{0,0,0} : Vec3{0,0,0};
+                Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+                c = {(lo.x+hi.x)*0.5f, (lo.y+hi.y)*0.5f, (lo.z+hi.z)*0.5f};  // cut through the centre
+                mr->mesh.Bisect(c, n, true, true);
+                ed.dirty = true;
+            }
+        };
+        biAxis("+X##bi", {1,0,0});  ImGui::SameLine(); biAxis("-X##bi", {-1,0,0}); ImGui::SameLine();
+        biAxis("+Y##bi", {0,1,0});  ImGui::SameLine(); biAxis("-Y##bi", {0,-1,0}); ImGui::SameLine();
+        biAxis("+Z##bi", {0,0,1});  ImGui::SameLine(); biAxis("-Z##bi", {0,0,-1});
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slice through the centre along an axis and keep the half on that side (the cut face is capped).");
+
+        static float s_fatten = 0.1f, s_wire = 0.08f;
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##fat", &s_fatten, -1.0f, 1.0f, "%.2f");
+        ImGui::SameLine(); if (ImGui::Button("Shrink/Fatten##model")) { ed.PushUndo(); mr->mesh.ShrinkFatten(s_fatten); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Push every vertex out (+) or in (-) along its normal — inflate or shrink the surface.");
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##wire", &s_wire, 0.01f, 0.5f, "%.2f");
+        ImGui::SameLine(); if (ImGui::Button("Wireframe##model")) {
+            ed.PushUndo(); mr->mesh.Wireframe(s_wire);
+            ConsoleLog("Wireframe: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn every edge into a solid beam — a wire lattice / cage version of the mesh.");
+
         // ---- Interactive edit mode (vertex/face select + move + ops + sculpt) ----
         ImGui::SeparatorText("Edit Mode");
         bool editing = g_meshEdit && g_meshEditObj == go;

@@ -157,5 +157,99 @@ int main() {
         CHECK(m.name.empty());
     }
 
+    // ---- Convex hull: shell around a point cloud contains every point ----
+    {
+        std::vector<Vec3> pts = {
+            {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
+            {-1, -1, 1},  {1, -1, 1},  {1, 1, 1},  {-1, 1, 1},
+            {0, 0, 0}, {0.3f, 0.2f, -0.1f}          // interior points → ignored by the hull
+        };
+        Mesh hull = Mesh::ConvexHull(pts);
+        CHECK(hull.TriangleCount() >= 4);           // at least a tetra; a cube hull = 12
+        Vec3 lo, hi; hull.Bounds(lo, hi);
+        CHECK(std::fabs(lo.x + 1.0f) < 1e-3f && std::fabs(hi.x - 1.0f) < 1e-3f);
+        // Every original point lies inside (or on) the closed hull.
+        CHECK(hull.PointInside({0.0f, 0.0f, 0.0f}));         // interior point is inside
+        CHECK(!hull.PointInside({2.0f, 2.0f, 2.0f}));        // a far point is outside
+        // The interior points must NOT have become hull vertices (cube → 8 corners).
+        CHECK((int)hull.vertices.size() == 8);
+    }
+
+    // ---- Convex hull of a sphere's vertices ≈ the sphere's bounding shell ----
+    {
+        Mesh s = Mesh::Sphere(1.0f, 10, 14);
+        Mesh hull = Mesh::ConvexHull(s.vertices);
+        CHECK(hull.TriangleCount() > 0);
+        CHECK(hull.PointInside({0.0f, 0.0f, 0.0f}));
+        Vec3 lo, hi; hull.Bounds(lo, hi);
+        CHECK(std::fabs((hi.y - lo.y) - 2.0f) < 0.2f);       // ~diameter 2
+    }
+
+    // ---- Degenerate hulls (coplanar / too few points) return empty ----
+    {
+        std::vector<Vec3> flat = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};  // all z=0
+        CHECK(Mesh::ConvexHull(flat).TriangleCount() == 0);
+        std::vector<Vec3> three = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+        CHECK(Mesh::ConvexHull(three).TriangleCount() == 0);
+    }
+
+    // ---- Bisect: lop off the top half of a cube, capped → still closed ----
+    {
+        Mesh m = Mesh::Cube(2.0f);                          // [-1,1]^3
+        m.Bisect({0, 0, 0}, {0, -1, 0}, /*cap=*/true, /*keepPositive=*/true);  // keep y<0 half
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        CHECK(hi.y < 0.01f);                                // top removed
+        CHECK(std::fabs(lo.y + 1.0f) < 1e-3f);              // bottom intact
+        // Capped, so it's a closed solid: a point in the remaining half is inside.
+        CHECK(m.PointInside({0.0f, -0.5f, 0.0f}));
+        CHECK(!m.PointInside({0.0f, 0.5f, 0.0f}));          // the removed half is gone
+    }
+
+    // ---- Bisect without a cap leaves the cut face open (not a closed solid) ----
+    {
+        Mesh open = Mesh::Cube(2.0f);
+        open.Bisect({0, 0, 0}, {0, -1, 0}, /*cap=*/false, true);
+        Mesh capped = Mesh::Cube(2.0f);
+        capped.Bisect({0, 0, 0}, {0, -1, 0}, /*cap=*/true, true);
+        CHECK(capped.TriangleCount() > open.TriangleCount());  // the cap added faces
+    }
+
+    // ---- Shrink/Fatten: inflate grows the shell, deflate shrinks it ----
+    {
+        Mesh m = Mesh::Sphere(1.0f, 10, 14);
+        Vec3 lo0, hi0; m.Bounds(lo0, hi0);
+        m.ShrinkFatten(0.5f);                            // inflate outward
+        Vec3 lo1, hi1; m.Bounds(lo1, hi1);
+        CHECK((hi1.x - lo1.x) > (hi0.x - lo0.x) + 0.5f); // grew ~2*0.5 across
+        m.ShrinkFatten(-0.5f);                           // back roughly to start
+        Vec3 lo2, hi2; m.Bounds(lo2, hi2);
+        CHECK(std::fabs((hi2.x - lo2.x) - (hi0.x - lo0.x)) < 0.15f);
+    }
+
+    // ---- Wireframe modifier: edges become beams; shape stays a hollow lattice ----
+    {
+        Mesh m = Mesh::Cube(2.0f);                        // [-1,1], 12 tris
+        m.Wireframe(0.1f);
+        CHECK(m.TriangleCount() > 100);                  // one 12-tri beam per edge
+        CHECK(m.TriangleCount() % 12 == 0);
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        CHECK(hi.x > 1.0f && hi.x < 1.2f);               // beams sit just outside the corners
+        CHECK(lo.x < -1.0f && lo.x > -1.2f);
+    }
+
+    // ---- Screw: closed revolve makes a ring; a helix climbs by pitch*turns ----
+    {
+        std::vector<Vec2> prof = {{1.0f, -0.2f}, {1.2f, -0.2f}, {1.2f, 0.2f}, {1.0f, 0.2f}};
+        Mesh ring = Mesh::Screw(prof, 1.0f, 0.0f, 24);   // closed square torus
+        CHECK(ring.TriangleCount() > 0);
+        Vec3 lo, hi; ring.Bounds(lo, hi);
+        CHECK(std::fabs(hi.x - 1.2f) < 0.05f);           // outer radius 1.2
+        CHECK(std::fabs((hi.y - lo.y) - 0.4f) < 0.05f);  // profile height only (flat ring)
+
+        Mesh helix = Mesh::Screw(prof, 3.0f, 1.0f, 24);  // 3 turns, rise 1 per turn
+        Vec3 hlo, hhi; helix.Bounds(hlo, hhi);
+        CHECK((hhi.y - hlo.y) > 3.0f);                   // climbed ~3 units over 3 turns
+    }
+
     TEST_MAIN_RESULT();
 }

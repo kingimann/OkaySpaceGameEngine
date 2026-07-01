@@ -2196,13 +2196,18 @@ void DrawMenuAndToolbar(EditorState& ed) {
     ImGui::PopStyleColor(2);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Build Game (Ctrl+B) — export a standalone exe");
 
-    // Right-aligned status.
+    // Right-aligned status: a coloured state dot + a v<version> · MODE · FPS readout.
     char status[96];
     const char* mode = !ed.isPlaying() ? "EDIT" : (g_paused ? "PAUSED" : "PLAYING");
     std::snprintf(status, sizeof(status), "v%s   %s   %.0f FPS", OKAY_ENGINE_VERSION,
                   mode, ImGui::GetIO().Framerate);
-    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - 16);
-    ImGui::TextColored(ed.isPlaying() ? ImVec4(0.4f, 0.9f, 0.4f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1),
+    ImVec4 dotCol = !ed.isPlaying() ? ImVec4(0.55f, 0.57f, 0.60f, 1.0f)
+                  : (g_paused ? ImVec4(0.95f, 0.70f, 0.20f, 1.0f) : ImVec4(0.35f, 0.85f, 0.42f, 1.0f));
+    float dotW = ImGui::CalcTextSize("\xE2\x97\x8F").x + 6.0f;
+    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(status).x - dotW - 16);
+    ImGui::TextColored(dotCol, "\xE2\x97\x8F");         // ● live state indicator
+    ImGui::SameLine(0, 6);
+    ImGui::TextColored(ed.isPlaying() ? ImVec4(0.75f, 0.9f, 0.78f, 1) : ImVec4(0.70f, 0.70f, 0.70f, 1),
                        "%s", status);
     ImGui::EndMenuBar();
 }
@@ -5793,6 +5798,11 @@ void DrawHierarchy(EditorState& ed) {
                                           node->name.c_str(), cnt, node->active ? "" : "  (off)");
             if (dim) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
+            // Accent bar on the selected row — matches the Inspector's component cards
+            // so the selection reads consistently across the editor.
+            if (ed.IsSelected(node))
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
             HierComponentBadges(node, rowMin, rowMax);
             if (ImGui::IsItemClicked()) {
                 if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set

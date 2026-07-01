@@ -4416,6 +4416,47 @@ static std::string RenameIdentifier(const std::string& src, const std::string& f
     return out;
 }
 
+// Every whole-word occurrence of `sym` in `src` (skipping strings and // comments),
+// as {1-based line, trimmed line text} — for Find All References.
+static std::vector<std::pair<int, std::string>> FindReferences(const std::string& src,
+                                                               const std::string& sym) {
+    std::vector<std::pair<int, std::string>> out;
+    if (sym.empty()) return out;
+    auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+    int line = 1;
+    for (std::size_t i = 0; i < src.size();) {
+        char c = src[i];
+        if (c == '\n') { ++line; ++i; continue; }
+        if (c == '"' || c == '\'') {                     // skip string literal
+            char q = c; ++i;
+            while (i < src.size()) {
+                if (src[i] == '\\' && i + 1 < src.size()) { i += 2; continue; }
+                if (src[i] == '\n') ++line;
+                if (src[i] == q) { ++i; break; }
+                ++i;
+            }
+            continue;
+        }
+        if (c == '/' && i + 1 < src.size() && src[i + 1] == '/') {   // skip line comment
+            while (i < src.size() && src[i] != '\n') ++i;
+            continue;
+        }
+        if (isW(c) && (i == 0 || !isW(src[i - 1]))) {
+            std::size_t j = i; while (j < src.size() && isW(src[j])) ++j;
+            if (src.compare(i, j - i, sym) == 0 && (j - i) == sym.size()) {
+                std::size_t ls = i; while (ls > 0 && src[ls - 1] != '\n') --ls;
+                std::size_t le = i; while (le < src.size() && src[le] != '\n') ++le;
+                std::string t = src.substr(ls, le - ls);
+                auto a = t.find_first_not_of(" \t"); if (a != std::string::npos) t = t.substr(a);
+                out.push_back({line, t});
+            }
+            i = j; continue;
+        }
+        ++i;
+    }
+    return out;
+}
+
 static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string& src) {
     std::vector<std::pair<int, std::string>> out;
     auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
@@ -4715,6 +4756,42 @@ void DrawScriptEditor(EditorState& ed) {
                 SetCodeBuffer(sc, renamed); ed.dirty = true;
                 ConsoleLog("Renamed " + s_renameFrom + " -> " + std::string(s_renameTo));
                 ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        // Find All References: list every whole-word use of the symbol under the caret.
+        ImGui::SameLine();
+        static std::string s_refsSym;
+        static std::vector<std::pair<int, std::string>> s_refs;
+        if (ImGui::SmallButton("Refs")) {
+            const char* t = buf.data(); int len = (int)std::strlen(t);
+            int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
+            auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+            int ws = cp; while (ws > 0 && isW(t[ws - 1])) --ws;
+            int we = cp; while (we < len && isW(t[we])) ++we;
+            s_refsSym.assign(t + ws, t + we);
+            if (!s_refsSym.empty() && !std::isdigit((unsigned char)s_refsSym[0])) {
+                s_refs = FindReferences(buf.data(), s_refsSym);
+                ImGui::OpenPopup("##refs");
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find all references to the symbol under the caret");
+        if (ImGui::BeginPopup("##refs")) {
+            ImGui::TextColored(AccentCol(), "%d reference%s to '%s'",
+                               (int)s_refs.size(), s_refs.size() == 1 ? "" : "s", s_refsSym.c_str());
+            ImGui::Separator();
+            if (s_refs.empty()) {
+                ImGui::TextDisabled("(none)");
+            } else {
+                for (const auto& r : s_refs) {
+                    char lbl[320];
+                    std::snprintf(lbl, sizeof(lbl), "%4d  %s", r.first, r.second.c_str());
+                    if (ImGui::MenuItem(lbl)) {
+                        caret.gotoLine = r.first; s_scrollToLine = r.first;
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
             }
             ImGui::EndPopup();
         }

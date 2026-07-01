@@ -4586,6 +4586,8 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::SameLine();
         static bool s_highlight = true;
         static std::string s_error;     // last compile error (shown red in status)
+        static std::vector<ScriptDiagnostic> s_diags;   // all live syntax problems (Problems panel)
+        static bool s_showProblems = false;             // Problems panel visibility
         static bool s_palReq = false;   // request to open the command palette
         static char s_find[128] = "";   // Find query (Ctrl+F highlights matches)
         if (ImGui::SmallButton("Run")) {           // compile + run
@@ -5095,17 +5097,22 @@ void DrawScriptEditor(EditorState& ed) {
             if (h != s_valDone && (now - s_valSeenAt) > 0.35) {
                 s_valDone = h;
                 if (!s_validator) s_validator = CreateScriptVM("okayscript");
-                std::string ve;
-                if (s_validator && s_validator->Validate(buf.data(), &ve)) s_error.clear();
-                else if (s_validator) s_error = ve;
+                if (s_validator) {
+                    s_diags = s_validator->ValidateAll(buf.data());
+                    // Keep s_error (and the inline underline) tracking the first problem.
+                    if (s_diags.empty()) s_error.clear();
+                    else s_error = (s_diags[0].line > 0
+                                    ? "line " + std::to_string(s_diags[0].line) + ": " : std::string())
+                                   + s_diags[0].message;
+                }
             }
         }
 
-        // Inline diagnostic: a red wavy underline under the error line (the
-        // compiler now prefixes "line N:" to parse/compile errors).
-        int errLine = (!s_error.empty() && s_error.rfind("line ", 0) == 0)
-                      ? std::atoi(s_error.c_str() + 5) : 0;
-        if (errLine > 0 && errLine <= lines) {
+        // Inline diagnostics: a red wavy underline under every reported error line
+        // (ValidateAll recovers past each error, so there can be several at once).
+        for (const auto& d : s_diags) {
+            int errLine = d.line;
+            if (errLine <= 0 || errLine > lines) continue;
             const char* t = buf.data();
             int cur = 1, len = 0;
             for (int i = 0; t[i]; ++i) {
@@ -5370,13 +5377,53 @@ void DrawScriptEditor(EditorState& ed) {
         }
         if (!s_error.empty()) {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  \xe2\x9c\x97 %s", s_error.c_str());
-            int eln = (s_error.rfind("line ", 0) == 0) ? std::atoi(s_error.c_str() + 5) : 0;
-            if (eln > 0 && ImGui::IsItemClicked()) { caret.gotoLine = eln; s_scrollToLine = eln; }
-            if (eln > 0 && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to go to line %d", eln);
+            int nprob = (int)s_diags.size();
+            if (nprob > 1) {
+                // Multiple problems: a clickable count that opens the Problems panel.
+                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f),
+                                   "  \xe2\x9c\x97 %d problems", nprob);
+                if (ImGui::IsItemClicked()) s_showProblems = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to open the Problems panel");
+            } else {
+                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "  \xe2\x9c\x97 %s", s_error.c_str());
+                int eln = (s_error.rfind("line ", 0) == 0) ? std::atoi(s_error.c_str() + 5) : 0;
+                if (eln > 0 && ImGui::IsItemClicked()) { caret.gotoLine = eln; s_scrollToLine = eln; }
+                if (eln > 0 && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to go to line %d", eln);
+            }
         } else if (sc->Language() == "okayscript") {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f), "  \xe2\x9c\x93 no syntax errors");
+        }
+
+        // Problems panel: a collapsible list of every syntax error, each row jumps
+        // to its line. Auto-hides when the source is clean.
+        if (!s_diags.empty()) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton(s_showProblems ? "Hide Problems" : "Problems"))
+                s_showProblems = !s_showProblems;
+        } else {
+            s_showProblems = false;
+        }
+        if (s_showProblems && !s_diags.empty()) {
+            ImGui::Spacing();
+            SectionHeader("Problems");
+            float ph = ImClamp((float)s_diags.size(), 1.0f, 6.0f) * ImGui::GetTextLineHeightWithSpacing() + 8.0f;
+            if (ImGui::BeginChild("##problems", ImVec2(0, ph), true)) {
+                for (std::size_t i = 0; i < s_diags.size(); ++i) {
+                    const auto& d = s_diags[i];
+                    char row[400];
+                    if (d.line > 0)
+                        std::snprintf(row, sizeof(row), "\xe2\x9c\x97 line %d:  %s##p%zu",
+                                      d.line, d.message.c_str(), i);
+                    else
+                        std::snprintf(row, sizeof(row), "\xe2\x9c\x97 %s##p%zu", d.message.c_str(), i);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.55f, 1.0f));
+                    bool clicked = ImGui::Selectable(row);
+                    ImGui::PopStyleColor();
+                    if (clicked && d.line > 0) { caret.gotoLine = d.line; s_scrollToLine = d.line; }
+                }
+            }
+            ImGui::EndChild();
         }
     }
     ImGui::End();

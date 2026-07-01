@@ -48,6 +48,23 @@ int main() {
         CHECK_NEAR(vm2->GetGlobal("sideEffect").AsFloat(), 123.0f, 1e-4f);
     }
 
+    // --- ValidateAll: report EVERY syntax error via statement-level recovery ---
+    {
+        auto vm = CreateScriptVM("okayscript");
+        // Clean source → no diagnostics.
+        CHECK(vm->ValidateAll("var a = 1;\nvar b = 2;\nfunction f() { return a + b; }").empty());
+        // Two independent broken statements → recovery finds BOTH, not just the first.
+        auto diags = vm->ValidateAll("var a = ;\nvar b = 2;\nvar c = ;\n");
+        CHECK(diags.size() >= 2);
+        // Diagnostics carry a source line so the editor can jump to each.
+        bool anyLine = false;
+        for (auto& d : diags) if (d.line > 0) anyLine = true;
+        CHECK(anyLine);
+        // A later broken function after a good statement is still reached (recovery works).
+        auto diags2 = vm->ValidateAll("function bad( { }\nvar ok = 5;\nfunction alsoBad( { }");
+        CHECK(diags2.size() >= 2);
+    }
+
     // --- BuiltinNames: the editor pulls the full builtin set for autocomplete ---
     {
         auto vm = CreateScriptVM("okayscript");

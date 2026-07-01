@@ -767,6 +767,28 @@ public:
         return top;
     }
 
+    // Parse for diagnostics only: keep going after a parse error by recording it
+    // and re-synchronizing to the next statement boundary, so the editor can list
+    // EVERY syntax error at once instead of just the first. The parsed output is
+    // discarded — this exists purely to collect ScriptDiagnostic entries.
+    std::vector<ScriptDiagnostic> ParseProgramRecovering() {
+        std::vector<ScriptDiagnostic> diags;
+        std::vector<StmtPtr> top;
+        std::unordered_map<std::string, FunctionDecl> funcs;
+        while (!Check(Tok::End)) {
+            std::size_t before = m_pos;
+            try {
+                ParseMember(top, funcs);
+            } catch (const ScriptError& e) {
+                diags.push_back({ e.line, e.what() });
+                if (diags.size() >= 100) break;          // stop runaway cascades
+                Synchronize(before);
+            }
+            if (m_pos == before) ++m_pos;                // guarantee forward progress
+        }
+        return diags;
+    }
+
     // Parse one top-level (or in-class) member: a function, a C#-style method,
     // a `[public] class Name : OkaySource { ... }` wrapper (its methods/fields
     // are hoisted out, so real Unity scripts paste in), or a statement.
@@ -821,6 +843,22 @@ private:
     const Token& Expect(Tok t, const char* msg) {
         if (!Check(t)) throw ScriptError(std::string("parse error: expected ") + msg, Peek().line);
         return m_toks[m_pos++];
+    }
+
+    // Error-recovery: after a parse error at `errStart`, skip past the offending
+    // token and advance to the next likely statement start (just after a ';', or
+    // before a top-level keyword) so parsing can resume and find further errors.
+    void Synchronize(std::size_t errStart) {
+        if (m_pos <= errStart) m_pos = errStart + 1;
+        while (!Check(Tok::End)) {
+            if (m_toks[m_pos - 1].type == Tok::Semicolon) return;
+            switch (Peek().type) {
+                case Tok::Function: case Tok::Var: case Tok::If:
+                case Tok::While:    case Tok::For: case Tok::Return:
+                    return;
+                default: ++m_pos;
+            }
+        }
     }
 
     FunctionDecl ParseFunction(std::string& nameOut) {
@@ -3977,6 +4015,23 @@ bool OkayScriptVM::Validate(const std::string& source, std::string* error) {
         if (error) *error = e.what();
         return false;
     }
+}
+
+std::vector<ScriptDiagnostic> OkayScriptVM::ValidateAll(const std::string& source) {
+    // Like Validate, but recovers after each parse error to report ALL of them for
+    // the editor's Problems panel. Lexer errors (unterminated string, bad char) can't
+    // be recovered from, so those surface as a single diagnostic.
+    std::vector<ScriptDiagnostic> diags;
+    try {
+        Lexer lex(source);
+        Parser parser(lex.Scan());
+        diags = parser.ParseProgramRecovering();
+    } catch (const ScriptError& e) {
+        diags.push_back({ e.line, e.what() });
+    } catch (const std::exception& e) {
+        diags.push_back({ 0, e.what() });
+    }
+    return diags;
 }
 
 void OkayScriptVM::Bind(ScriptHost* host) { m_impl->rt.host = host; }

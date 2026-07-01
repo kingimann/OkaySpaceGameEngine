@@ -577,6 +577,8 @@ float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 int  g_gameCustomW = 1280;       // custom Game-view width  (persisted)
 int  g_gameCustomH = 720;        // custom Game-view height (persisted)
+bool g_showUIOverlay = true;     // Scene view: draw the screen-space UI (Canvas) overlay
+bool g_uiOnlyMode = false;       // Scene view: show ONLY the UI on a flat screen canvas
 int  g_accent = 0;               // accent colour preset (see kAccents)
 
 // Selectable editor accent colours (the highlight used on selections, buttons,
@@ -16166,7 +16168,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     SetEditorWorldUIProjector(ed, canvasSize, /*view3D=*/false, gameView);
 
     // Screen-space UI (text, images, panels, bars, sliders, toggles, buttons).
-    DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+    if (gameView || g_showUIOverlay) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Transform gizmo at the selection, reflecting the active tool (Move/Rotate/Scale).
     if (!gameView && ed.selected() && !IsUIElement(ed.selected())) {
@@ -16657,7 +16659,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Screen-space UI draws on top of the 3D view too, so UI added to a 3D
     // project (HUD, menus, buttons) is visible here and in the Game view.
-    DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
+    if (gameView || g_showUIOverlay) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
     // Camera Preview (Unity): when a perspective Camera is selected, show what
     // it sees in a small inset in the corner of the Scene view (slot 2 so it
@@ -17341,6 +17343,14 @@ void DrawViewport(EditorState& ed) {
     // Local/Global handle orientation (Unity's toggle); X toggles it. Tinted when Local.
     if (AccentToggleButton(g_gizmoLocal ? "Local" : "Global", g_gizmoLocal)) g_gizmoLocal = !g_gizmoLocal;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gizmo orientation: Local (object) vs Global (world). Shortcut: X");
+    // UI section (Unity-style): toggle the screen-space UI overlay, and a "UI Only"
+    // mode that hides the 3D/2D scene and shows just the Canvas on a flat screen.
+    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+    if (AccentToggleButton("UI", g_showUIOverlay)) g_showUIOverlay = !g_showUIOverlay;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the screen-space UI (Canvas) overlay in the Scene view");
+    ImGui::SameLine();
+    if (AccentToggleButton("UI Only", g_uiOnlyMode)) { g_uiOnlyMode = !g_uiOnlyMode; if (g_uiOnlyMode) g_showUIOverlay = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the 3D scene hidden (like Unity's UI view)");
     // Keyboard shortcuts W/E/R when the Scene window is focused (and not typing).
     if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_W, false)) g_tool = Tool::Move;
@@ -17473,8 +17483,21 @@ void DrawViewport(EditorState& ed) {
     // click so the world pickers below leave the selection alone.
     EditUIWidgets(ed, canvasPos, canvasSize, hovered, io);
 
-    if (ed.view3D) DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
-    else           DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
+    if (g_uiOnlyMode) {
+        // Flat screen canvas: a neutral background + a dashed "screen" border, then
+        // just the UI overlay (no 3D/2D world). Unity's dedicated UI editing view.
+        dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(28, 28, 32, 255));
+        dl->AddRect(canvasPos, canvasEnd, IM_COL32(90, 95, 110, 200), 0.0f, 0, 1.5f);
+        // Faint center crosshair to help align centered UI.
+        ImVec2 ctr(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
+        dl->AddLine(ImVec2(ctr.x, canvasPos.y), ImVec2(ctr.x, canvasEnd.y), IM_COL32(255, 255, 255, 16));
+        dl->AddLine(ImVec2(canvasPos.x, ctr.y), ImVec2(canvasEnd.x, ctr.y), IM_COL32(255, 255, 255, 16));
+        DrawUIOverlay(ed, dl, canvasPos, canvasSize, /*gameView=*/false);
+    } else if (ed.view3D) {
+        DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
+    } else {
+        DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);
+    }
 
     // Corner overlay (view mode, object count, live FPS, selection).
     char overlay[160];

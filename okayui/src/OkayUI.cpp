@@ -29,23 +29,32 @@ int        g_ovIdx[kMaxIdx];
 int        g_oni = 0;
 bool       g_toOverlay = false;   // route quad()/drawText() to the overlay batch
 
-// Clip spans: the main batch is split into contiguous index ranges, each with an
-// optional scissor rect, so scrolling child regions can clip their contents. A span
-// records the index where a clip state begins; EndFrame draws each range with the
-// matching SDL clip rect. The overlay batch is never clipped.
-struct ClipSpan { int startIdx; bool on; SDL_Rect rect; };
-ClipSpan g_spans[128];
+// Draw spans: the main batch is split into contiguous index ranges, each carrying a
+// clip state and a texture, so scrolling child regions can clip and Image() can bind a
+// texture. A span records the index where a state begins; EndFrame draws each range
+// with the matching clip rect + texture. The overlay batch is never clipped.
+struct DrawSpan { int startIdx; bool on; SDL_Rect rect; SDL_Texture* tex; };
+DrawSpan g_spans[128];
 int      g_nspans = 0;
 SDL_Rect g_clipStack[16];
 int      g_clipTop = 0;
+// Current draw state; a span is emitted whenever clip or texture changes.
+bool         g_curClipOn = false;
+SDL_Rect     g_curClipRect = { 0, 0, 0, 0 };
+SDL_Texture* g_curTex = nullptr;
 // Record a span at the current index position (coalescing if no geometry was added
 // since the previous span).
-void pushClipSpan(bool on, SDL_Rect rect) {
+void pushSpan() {
     if (g_nspans > 0 && g_spans[g_nspans - 1].startIdx == g_ni) {   // overwrite empty span
-        g_spans[g_nspans - 1].on = on; g_spans[g_nspans - 1].rect = rect; return;
+        g_spans[g_nspans - 1].on = g_curClipOn; g_spans[g_nspans - 1].rect = g_curClipRect;
+        g_spans[g_nspans - 1].tex = g_curTex; return;
     }
-    if (g_nspans < 128) g_spans[g_nspans++] = ClipSpan{ g_ni, on, rect };
+    if (g_nspans < 128) g_spans[g_nspans++] = DrawSpan{ g_ni, g_curClipOn, g_curClipRect, g_curTex };
 }
+// Backwards-compatible helper used by the clip API.
+void pushClipSpan(bool on, SDL_Rect rect) { g_curClipOn = on; g_curClipRect = rect; pushSpan(); }
+// Switch the bound texture for subsequent geometry (nullptr = untextured/flat color).
+void setTexture(SDL_Texture* t) { if (t != g_curTex) { g_curTex = t; pushSpan(); } }
 
 Input g_in;                      // this frame's input
 bool  g_prevDown = false;        // last frame's mouse-down (for edge detection)
@@ -254,6 +263,25 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
     I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
 }
 
+// A textured quad: binds `tex`, samples uv [u0,v0]..[u1,v1], modulated by `tint`
+// (use white for the raw image). Reverts to the untextured state afterward so the
+// next flat quad starts a new span. Textured geometry always goes to the main batch.
+void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
+             float u0, float v0, float u1, float v1, const unsigned char tint[4]) {
+    setTexture(tex);
+    if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { setTexture(nullptr); return; }
+    const SDL_Color sc = toColor(tint);
+    const int base = g_nv;
+    SDL_Vertex v; v.color = sc;
+    v.position.x = x;     v.position.y = y;     v.tex_coord.x = u0; v.tex_coord.y = v0; g_verts[g_nv++] = v;
+    v.position.x = x + w; v.position.y = y;     v.tex_coord.x = u1; v.tex_coord.y = v0; g_verts[g_nv++] = v;
+    v.position.x = x + w; v.position.y = y + h; v.tex_coord.x = u1; v.tex_coord.y = v1; g_verts[g_nv++] = v;
+    v.position.x = x;     v.position.y = y + h; v.tex_coord.x = u0; v.tex_coord.y = v1; g_verts[g_nv++] = v;
+    g_idx[g_ni++] = base + 0; g_idx[g_ni++] = base + 1; g_idx[g_ni++] = base + 2;
+    g_idx[g_ni++] = base + 0; g_idx[g_ni++] = base + 2; g_idx[g_ni++] = base + 3;
+    setTexture(nullptr);
+}
+
 // A quad from four arbitrary corners (for rotated/skewed shapes and thick lines).
 void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
              float dx, float dy, const unsigned char c[4]) {
@@ -358,7 +386,8 @@ void BeginFrame(const Input& in) {
     PopStyleColor(g_colTop);
     g_colTop = 0;
     g_nextItemW = -1.0f; g_itemWTop = 0;   // reset item-width overrides
-    g_nspans = 0; g_clipTop = 0;           // reset clip spans/stack
+    g_nspans = 0; g_clipTop = 0;           // reset draw spans/stack
+    g_curClipOn = false; g_curTex = nullptr;
     g_childTop = 0;                        // reset child-region stack
     g_col.active = false;                  // reset column layout
 }
@@ -596,7 +625,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap) {
 namespace {
 // Append the overlay batch after the main batch so popups/tooltips draw on top.
 void mergeOverlay() {
-    if (g_oni > 0) pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 });   // overlay is never clipped
+    if (g_oni > 0) { setTexture(nullptr); pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
     const int base = g_nv;
     for (int i = 0; i < g_onv && g_nv < kMaxVerts; ++i) g_verts[g_nv++] = g_ovVerts[i];
     for (int j = 0; j < g_oni && g_ni < kMaxIdx; ++j)   g_idx[g_ni++] = base + g_ovIdx[j];
@@ -646,7 +675,7 @@ void EndFrame(SDL_Renderer* r) {
             if (to <= from) continue;
             if (g_spans[s].on) SDL_RenderSetClipRect(r, &g_spans[s].rect);
             else               SDL_RenderSetClipRect(r, nullptr);
-            SDL_RenderGeometry(r, nullptr, g_verts, g_nv, &g_idx[from], to - from);
+            SDL_RenderGeometry(r, g_spans[s].tex, g_verts, g_nv, &g_idx[from], to - from);
         }
         // Restore the renderer's prior clip state.
         SDL_RenderSetClipRect(r, hadClip ? &savedClip : nullptr);
@@ -1148,6 +1177,40 @@ void LabelText(const char* label, const char* value) {
         const float lw = labelW(label);
         drawText(x + w - lw, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
     }
+}
+
+void DrawTexture(SDL_Texture* tex, float x, float y, float w, float h,
+                 unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    if (!tex) return;
+    const unsigned char tint[4] = { r, g, b, a };
+    texQuad(x, y, w, h, tex, 0.0f, 0.0f, 1.0f, 1.0f, tint);
+}
+
+void Image(SDL_Texture* tex, float w, float h,
+           unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    if (!g_lay.active) return;
+    if (w <= 0.0f) w = rowH() * 2.0f;
+    if (h <= 0.0f) h = w;
+    float x, y; place(w, h, x, y);
+    DrawTexture(tex, x, y, w, h, r, g, b, a);
+}
+
+bool ImageButton(const char* id, SDL_Texture* tex, float w, float h) {
+    if (!g_lay.active) return false;
+    const int hid = hashLabel(id);
+    if (w <= 0.0f) w = rowH() * 2.0f;
+    if (h <= 0.0f) h = w;
+    const float pad = 4.0f;
+    float x, y; place(w + pad * 2.0f, h + pad * 2.0f, x, y);
+    const bool inside = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w + pad * 2, h + pad * 2);
+    if (inside) g_hot = hid;
+    bool clicked = false;
+    if (g_active == hid) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
+    else if (inside && g_pressed) g_active = hid;
+    const unsigned char* bg = (g_active == hid && inside) ? g_theme.bgDown : (inside ? g_theme.bgHover : g_theme.bg);
+    quad(x, y, w + pad * 2, h + pad * 2, bg);
+    DrawTexture(tex, x + pad, y + pad, w, h);
+    return clicked;
 }
 
 bool InputText(const char* label, char* buf, int cap) {

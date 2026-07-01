@@ -17,6 +17,7 @@
 //                                                       // so OkayUI sits on top
 // ---------------------------------------------------------------------------
 struct SDL_Renderer;
+struct SDL_Texture;
 
 namespace OkayUI {
 
@@ -202,6 +203,18 @@ void PlotHistogram(const char* label, const float* values, int count,
                    float scaleMin = 0.0f, float scaleMax = 0.0f, float height = 0.0f);
 /// A read-only "label: value" row (ImGui's LabelText) — value on the left, label right.
 void LabelText(const char* label, const char* value);
+
+// ---- Images (textured quads) ---------------------------------------------------
+// GPU textures drawn through the same batch. Requires the SDL_Renderer backend
+// (EndFrame); custom GetDrawData backends receive untextured geometry only.
+/// Draw a texture at explicit coordinates, tinted by (r,g,b,a) — white = as-is.
+void DrawTexture(SDL_Texture* tex, float x, float y, float w, float h,
+                 unsigned char r = 255, unsigned char g = 255, unsigned char b = 255, unsigned char a = 255);
+/// Auto-layout image `w`*`h` at the cursor.
+void Image(SDL_Texture* tex, float w, float h,
+           unsigned char r = 255, unsigned char g = 255, unsigned char b = 255, unsigned char a = 255);
+/// A clickable image button (`id` for identity). Returns true the frame it's clicked.
+bool ImageButton(const char* id, SDL_Texture* tex, float w, float h);
 bool InputText(const char* label, char* buf, int cap);
 /// An integer field with [-]/[+] stepper buttons that change *value by `step`.
 /// Returns true on any frame the value changed.

@@ -593,6 +593,33 @@ int main(int argc, char** argv) {
         dragK(40, false);
     }
 
+    // --- Image: a textured quad samples the bound texture. ---
+    {
+        // Build a small solid-green texture and draw it; expect green pixels on screen.
+        SDL_Texture* tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, 4, 4);
+        CHECK(tex != nullptr);
+        if (tex) {
+            Uint32 green[16];
+            for (int i = 0; i < 16; ++i) green[i] = 0xFF00FF00u;   // ARGB opaque green
+            SDL_UpdateTexture(tex, nullptr, green, 4 * (int)sizeof(Uint32));
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 255); SDL_RenderClear(r);
+            OkayUI::BeginFrame(OkayUI::Input{});
+            OkayUI::Begin("IMG", 4, 4, 120, 80);
+            OkayUI::Image(tex, 40, 30);
+            OkayUI::End(); OkayUI::EndFrame(r);
+            SDL_LockSurface(surf);
+            int greenN = 0;
+            for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x) {
+                Uint32 px = pixelAt(surf, x, y);
+                Uint8 rr = (px >> 16) & 0xFF, gg = (px >> 8) & 0xFF, bb = px & 0xFF;
+                if (gg > 180 && rr < 80 && bb < 80) ++greenN;
+            }
+            SDL_UnlockSurface(surf);
+            CHECK(greenN > 300);   // the ~40x30 image rasterized green
+            SDL_DestroyTexture(tex);
+        }
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

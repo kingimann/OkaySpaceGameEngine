@@ -699,6 +699,28 @@ int main(int argc, char** argv) {
         CHECK(after > before + 15);                       // column 0 got wider
     }
 
+    // --- Drag and drop: drag item A onto item B delivers A's payload. ---
+    {
+        release();
+        int got = -1;
+        auto frame = [&](float mx, float my, bool down) {
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = down;
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("DDW", 10, 10, 200, 160);
+            OkayUI::Selectable("A", false); OkayUI::DragSource(7);
+            OkayUI::Selectable("B", false); bool d = OkayUI::DropTarget(&got);
+            OkayUI::End(); OkayUI::EndFrame(r);
+            return d;
+        };
+        // Row A ~ y[48,76], row B ~ y[82,110]. Press on A, drag down onto B, release.
+        frame(40, 60, true);              // arm on A
+        frame(45, 78, true);              // move -> active drag
+        frame(40, 95, true);              // hover B
+        bool dropped = frame(40, 95, false);   // release over B
+        CHECK(dropped);
+        CHECK(got == 7);
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

@@ -305,6 +305,19 @@ void TableNextRow();
 bool TableNextColumn();
 void EndTable();
 
+// ---- Drag and drop -------------------------------------------------------------
+// Lightweight int-payload drag & drop (e.g. reorder a list by dragging item indices).
+// Call DragSource right AFTER the widget that should be draggable, and DropTarget
+// right after a widget that can receive a drop.
+/// Mark the last-issued widget as a drag source carrying `payload`. Returns true
+/// while it is being dragged.
+bool DragSource(int payload);
+/// Mark the last-issued widget as a drop target. On the frame a drag is released over
+/// it, writes the payload to *outPayload and returns true.
+bool DropTarget(int* outPayload);
+/// True while any drag is in progress (e.g. to change hover styling).
+bool IsDragging();
+
 // ---- ID stack ------------------------------------------------------------------
 // Widget ids are hashed from their label, so two widgets with the same label in a
 // loop would collide. Push a per-iteration id (an int index or a string) to keep

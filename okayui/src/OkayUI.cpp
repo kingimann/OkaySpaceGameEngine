@@ -147,6 +147,17 @@ struct TableState {
 };
 TableState g_tbl;
 
+// Drag & drop: a single int payload. `armed` records a press on a source before it
+// has moved far enough to count as a drag; `active` means a drag is in flight.
+struct DragDrop {
+    bool  active = false;
+    int   payload = 0;
+    bool  armed = false;
+    int   armPayload = 0;
+    float armX = 0, armY = 0;
+};
+DragDrop g_dd;
+
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; };
 WinSlot g_wins[16];
@@ -738,6 +749,15 @@ void mergeOverlay() {
 void finalizeFrame() {
     if (g_released) g_active = 0;                    // clear if the active item wasn't drawn
     if (g_pressed && !g_focusClaimed) g_focus = 0;   // click on empty space drops keyboard focus
+    // A floating chip follows the cursor while dragging (drawn in the overlay so it's
+    // on top). Any release ends the drag (a DropTarget already consumed it if hit).
+    if (g_dd.active) {
+        g_toOverlay = true;
+        const unsigned char* ac = g_theme.accent;
+        fillCircle(g_in.mouseX + 10.0f, g_in.mouseY + 10.0f, 7.0f, ac);
+        g_toOverlay = false;
+    }
+    if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; }
     mergeOverlay();
 }
 } // namespace
@@ -1705,6 +1725,44 @@ bool Selectable(const char* label, bool selected) {
     else if (inside)   quad(x, y, w, h, g_theme.bgHover);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return clicked;
+}
+
+bool IsDragging() { return g_dd.active; }
+
+bool DragSource(int payload) {
+    if (!g_lay.active) return false;
+    const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
+    const bool overPrev = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, px, py, pw, ph);
+    // Arm on a press inside the source widget.
+    if (!g_dd.active && !g_dd.armed && g_pressed && overPrev) {
+        g_dd.armed = true; g_dd.armPayload = payload;
+        g_dd.armX = g_in.mouseX; g_dd.armY = g_in.mouseY;
+    }
+    // Promote to an active drag once the cursor has moved far enough.
+    if (g_dd.armed && g_dd.armPayload == payload && g_in.mouseDown) {
+        float dx = g_in.mouseX - g_dd.armX, dy = g_in.mouseY - g_dd.armY;
+        if ((dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) > 6.0f) {
+            g_dd.active = true; g_dd.payload = payload; g_dd.armed = false;
+        }
+    }
+    return g_dd.active && g_dd.payload == payload;
+}
+
+bool DropTarget(int* outPayload) {
+    if (!g_lay.active || !g_dd.active) return false;
+    const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
+    const bool over = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, px, py, pw, ph);
+    if (over) {
+        // Highlight the drop location with an accent outline.
+        quad(px, py, pw, 2.0f, g_theme.accent);
+        quad(px, py + ph - 2.0f, pw, 2.0f, g_theme.accent);
+        if (g_released) {
+            if (outPayload) *outPayload = g_dd.payload;
+            g_dd.active = false;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool ListBox(const char* label, int* current, const char* const* items, int count, int visibleRows) {

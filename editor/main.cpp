@@ -568,6 +568,8 @@ int  g_lastSceneW = 0, g_lastSceneH = 0;
 Vec2 g_lastUICanvas{0, 0};
 bool g_captureScene = false;
 bool g_resetLayout = false;      // request a dock-layout rebuild next frame
+ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into it)
+int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
 bool g_paused = false;           // pause the simulation while staying in Play
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
@@ -2387,6 +2389,7 @@ void DrawDockSpace(EditorState& ed) {
     ImGui::PopStyleVar(3);
 
     ImGuiID dockId = ImGui::GetID("OkayDockSpace");
+    g_dockspaceId = dockId;   // remembered so panels can dock/undock themselves
     if (first || g_resetLayout) {
         first = false;
         BuildDefaultLayout(dockId, vp->WorkSize);
@@ -4737,7 +4740,19 @@ static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string&
 }
 
 void DrawScriptEditor(EditorState& ed) {
+    // Float/Dock request from the toolbar (applied for one frame before Begin):
+    // 1 = undock into a floating window, 2 = dock back into the main area as a tab.
+    if (g_scriptDockReq == 1) {
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        g_scriptDockReq = 0;
+    } else if (g_scriptDockReq == 2 && g_dockspaceId) {
+        ImGui::SetNextWindowDockID(g_dockspaceId, ImGuiCond_Always);
+        g_scriptDockReq = 0;
+    }
     if (!ImGui::Begin("Script Editor", &g_showScriptEditor)) { ImGui::End(); return; }
+    bool s_isDocked = ImGui::IsWindowDocked();
 
     // Gather every live ScriptComponent (an object can have several), and prune
     // tabs whose component was deleted. `owner` maps a component to its object.
@@ -4895,6 +4910,15 @@ void DrawScriptEditor(EditorState& ed) {
             extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p);
             ConsoleLog("Opened " + p + " in external IDE");
         }
+        ImGui::SameLine();
+        // Float / Dock: pop the editor out into its own window, or dock it back as a
+        // tab in the main area. (True separate OS windows need the GL backend; this
+        // floats within the app, which the SDL_Renderer backend fully supports.)
+        if (ImGui::SmallButton(s_isDocked ? "\xe2\xa7\x89 Float" : "\xe2\x8a\x9e Dock"))
+            g_scriptDockReq = s_isDocked ? 1 : 2;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(s_isDocked ? "Pop the Script Editor out into its own window"
+                                         : "Dock the Script Editor back as a tab");
         ImGui::SameLine();
         if (ImGui::SmallButton("Docs")) g_showScriptDocs = true;
         ImGui::SameLine();

@@ -3127,7 +3127,7 @@ void DrawServices(EditorState& ed) {
                         s->IsAvailable() ? " (live)" : " (simulation)");
             ImGui::Text("User: %s    Friends: %d", s->UserName().c_str(), s->FriendCount());
 
-            ImGui::SeparatorText("Achievements");
+            SectionHeader("Achievements");
             static char ach[64] = "MY_ACHIEVEMENT";
             ImGui::SetNextItemWidth(180);
             ImGui::InputText("##ach", ach, sizeof(ach));
@@ -3140,7 +3140,7 @@ void DrawServices(EditorState& ed) {
                 ImGui::BulletText("%s: %s", a,
                     s->IsAchievementUnlocked(a) ? "unlocked" : "locked");
 
-            ImGui::SeparatorText("Stats");
+            SectionHeader("Stats");
             static char stat[64] = "kills";
             ImGui::SetNextItemWidth(140);
             ImGui::InputText("##stat", stat, sizeof(stat));
@@ -3149,7 +3149,7 @@ void DrawServices(EditorState& ed) {
             ImGui::SameLine();
             ImGui::Text("= %.0f", s->GetStat(stat));
 
-            ImGui::SeparatorText("Leaderboard");
+            SectionHeader("Leaderboard");
             static char board[64] = "high_score";
             static int  lbScore = 100;
             ImGui::SetNextItemWidth(140);
@@ -3162,7 +3162,7 @@ void DrawServices(EditorState& ed) {
             for (const auto& e : s->DownloadLeaderboardTop(board, 5))
                 ImGui::BulletText("#%d  %s  %d", e.rank, e.name.c_str(), e.score);
 
-            ImGui::SeparatorText("Steam Cloud");
+            SectionHeader("Steam Cloud");
             static char cloudFile[64] = "save.dat";
             static char cloudData[128] = "level=3";
             ImGui::SetNextItemWidth(120);
@@ -3208,7 +3208,7 @@ void DrawServices(EditorState& ed) {
         ImGui::SetNextItemWidth(120);
         ImGui::InputText("Name", pname, sizeof(pname));
 
-        ImGui::SeparatorText("Host a game");
+        SectionHeader("Host a game");
         ImGui::SetNextItemWidth(160); ImGui::InputText("Server##srv", srvName, sizeof(srvName));
         ImGui::SameLine(); ImGui::SetNextItemWidth(120);
         ImGui::InputText("Password##srv", srvPass, sizeof(srvPass), ImGuiInputTextFlags_Password);
@@ -3216,7 +3216,7 @@ void DrawServices(EditorState& ed) {
         ImGui::SameLine(); ImGui::SetNextItemWidth(140); ImGui::SliderFloat("Tick##srv", &tick, 5.0f, 60.0f, "%.0f/s");
         if (ImGui::Button("Host Game", ImVec2(-1, 0))) { ed.StartHost((std::uint16_t)port); applyHostSettings(); }
 
-        ImGui::SeparatorText("Join a game");
+        SectionHeader("Join a game");
         ImGui::SetNextItemWidth(180);
         ImGui::InputText("Address##host", host, sizeof(host));
         ImGui::SameLine();
@@ -3510,7 +3510,7 @@ void DrawStats(EditorState& ed) {
         if (ImGui::SliderFloat("Render scale", &g_renderScale, 0.25f, 1.0f, "%.2fx")) SaveSettings();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Renders the 3D view at this fraction of resolution and\nupscales. Lower = much faster (softer image). The biggest\nFPS lever for the software renderer.");
-        ImGui::SeparatorText("Effects");
+        SectionHeader("Effects");
         ImGui::TextDisabled("Toggle any effect on/off. On by default: Hemisphere\nambient, Tone mapping, Anti-aliasing. The rest are opt-in.");
         ImGui::Spacing();
         ImGui::Checkbox("Per-pixel lighting (Phong)", &PerPixelLighting());
@@ -3575,7 +3575,7 @@ void DrawStats(EditorState& ed) {
         // Debug View: Scene-view overlays and camera knobs to inspect 3D geometry
         // yourself. These are editor-only (Scene view) and never affect the Game
         // view or a build. All persist across sessions.
-        ImGui::SeparatorText("Debug view (Scene only)");
+        SectionHeader("Debug view (Scene only)");
         if (ImGui::Checkbox("Ground grid", &g_showGrid)) SaveSettings();
         if (ImGui::Checkbox("Sky gradient", &g_sceneSkybox)) SaveSettings();
         if (ImGui::IsItemHovered())
@@ -3754,30 +3754,30 @@ void DrawScriptDocs() {
             "(dt = seconds since the last frame). Everything below is just those two "
             "plus values, math, and the built-in commands.");
 
-        ImGui::SeparatorText("1. Variables");
+        SectionHeader("1. Variables");
         ImGui::TextWrapped("Make a value with 'var'. Values are numbers, text (in "
             "quotes), or true/false. End each statement with a semicolon ;");
         code("var speed = 5;\nvar name = \"Hero\";\nvar alive = true;");
 
-        ImGui::SeparatorText("2. Math & comparisons");
+        SectionHeader("2. Math & comparisons");
         ImGui::TextWrapped("%s", "Use + - * / % for math, and == != < > <= >= to compare. "
             "Combine conditions with && (and), || (or), ! (not).");
         code("var hp = 100 - 25;        // 75\nvar low = hp < 50;       // false");
 
-        ImGui::SeparatorText("3. Making decisions: if / else");
+        SectionHeader("3. Making decisions: if / else");
         code("if (key(\"space\")) {\n    move(0, 5 * dt);   // jump while held\n} else {\n    move(0, -1 * dt);  // gently fall\n}");
 
-        ImGui::SeparatorText("4. Repeating: while / for");
+        SectionHeader("4. Repeating: while / for");
         code("for (var i = 0; i < 3; i = i + 1) {\n    spawn(\"Coin\", i, 0);\n}");
 
-        ImGui::SeparatorText("5. The two lifecycle functions");
+        SectionHeader("5. The two lifecycle functions");
         ImGui::TextWrapped("start() sets things up once; update(dt) drives behaviour "
             "every frame. Multiply movement by dt so it's the same speed on any PC.");
         code("function start() {\n    set_pos(0, 0);\n    set(\"score\", 0);\n}\n\n"
              "function update(dt) {\n    // move with the WASD / arrow keys\n"
              "    move(axis_x() * 5 * dt, axis_y() * 5 * dt);\n}");
 
-        ImGui::SeparatorText("6. Your own functions");
+        SectionHeader("6. Your own functions");
         ImGui::TextWrapped("Group steps into a function and call it by name (or with "
             "call(\"name\") for state machines).");
         code("function hurt() {\n    set(\"score\", get(\"score\") - 1);\n}\n\n"
@@ -5318,7 +5318,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
                 ImGui::Checkbox("Save to user folder", &g_build.saveToUserDir);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write game saves/prefs to a per-user app folder (Unity's persistentDataPath),\nfrom Company + Product name. Saving then works even from a read-only install\n(e.g. Program Files), and two games never overwrite each other.\nOff = save beside the .exe (old behaviour).");
-                ImGui::Spacing(); ImGui::SeparatorText("Splash screen");
+                ImGui::Spacing(); SectionHeader("Splash screen");
                 ImGui::SetNextItemWidth(420); ImGui::InputText("Splash image (PNG)", g_build.splash, sizeof(g_build.splash));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A logo shown at startup (fades in/out, skippable). Leave blank for none. Bundled into the build.");
                 if (g_build.splash[0]) {
@@ -5350,11 +5350,11 @@ void DrawFileDialogs(EditorState& ed) {
                 int fpsSel = 0; for (int i = 0; i < 5; ++i) if (fpsVals[i] == g_build.fpsCap) fpsSel = i;
                 ImGui::SetNextItemWidth(180);
                 if (ImGui::Combo("Frame rate cap", &fpsSel, fpsOpts, 5)) g_build.fpsCap = fpsVals[fpsSel];
-                ImGui::Spacing(); ImGui::SeparatorText("Minimum window size (resizable)");
+                ImGui::Spacing(); SectionHeader("Minimum window size (resizable)");
                 ImGui::SetNextItemWidth(90); ImGui::InputInt("Min W", &g_build.minWidth, 0); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::InputInt("Min H", &g_build.minHeight, 0);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop the player shrinking the window below this (0 = no minimum).");
-                ImGui::Spacing(); ImGui::SeparatorText("Focus");
+                ImGui::Spacing(); SectionHeader("Focus");
                 ImGui::Checkbox("Run in background", &g_build.runInBackground);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the game updating when its window isn't focused (Unity's Run In Background). Off = pause when minimized/unfocused.");
                 ImGui::Checkbox("Mute audio when unfocused", &g_build.muteOnFocusLoss);
@@ -5423,7 +5423,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Spacing();
                 ImGui::Checkbox("Include all project scenes", &g_build.includeAllProjectScenes);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bundle every .okayscene so load_scene / load_scene_index work at runtime.\nOff = ship ONLY this scene (smaller, no unused scenes leaked).");
-                ImGui::Spacing(); ImGui::SeparatorText("Output");
+                ImGui::Spacing(); SectionHeader("Output");
                 ImGui::Checkbox("Clean output folder", &g_build.cleanOutput);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove leftover files from a previous build first, so the folder has no stale junk.");
                 ImGui::Checkbox("Tidy layout (Data/ folder)", &g_build.dataFolder);
@@ -5481,7 +5481,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PopTextWrapPos();
         const builder::BuildReport& R = g_buildReport;
         if (R.valid && !R.files.empty()) {
-            ImGui::Spacing(); ImGui::SeparatorText("Size breakdown");
+            ImGui::Spacing(); SectionHeader("Size breakdown");
             // Category summary bars (share of the total build size).
             auto catRow = [&](const char* label, int cat, ImVec4 col) {
                 float frac = R.total > 0 ? (float)((double)R.catBytes[cat] / R.total) : 0.0f;
@@ -5595,7 +5595,7 @@ void DrawNewProjectPopup(EditorState& ed) {
         const int COLS = 4;
         for (int cat = 0; cat <= C_UI; ++cat) {
             ImGui::PushStyleColor(ImGuiCol_Text, catColor(cat));
-            ImGui::SeparatorText(catName[cat]);
+            SectionHeader(catName[cat]);
             ImGui::PopStyleColor();
             int col = 0;
             for (int i = 0; i < N; ++i) {
@@ -7022,7 +7022,7 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         const char* lastGroup = nullptr;
         for (int i = 0; i < nops; ++i) {
             if (ops[i].group && (!lastGroup || std::strcmp(ops[i].group, lastGroup) != 0)) {
-                ImGui::SeparatorText(ops[i].group); lastGroup = ops[i].group;
+                SectionHeader(ops[i].group); lastGroup = ops[i].group;
             }
             if (ImGui::Selectable(ops[i].label, i == cur)) { it.op = ops[i].op; dirty = true; }
             if (ImGui::IsItemHovered() && ops[i].desc[0]) ImGui::SetTooltip("%s", ops[i].desc);
@@ -7859,7 +7859,7 @@ void DrawModeling(EditorState& ed) {
                 ConsoleLog("Merged " + std::to_string(n) + " verts"); ed.dirty = true;
             }
 
-            ImGui::SeparatorText("Sculpt");
+            SectionHeader("Sculpt");
             ImGui::Checkbox("Sculpt Brush (drag on mesh)##me", &g_meshSculpt);
             if (g_meshSculpt) {
                 const char* modes[] = {"Grab", "Inflate", "Smooth"};
@@ -7870,7 +7870,7 @@ void DrawModeling(EditorState& ed) {
             }
         }
 
-        ImGui::SeparatorText("Import");
+        SectionHeader("Import");
         static char objPath[256] = "";
         std::strncpy(objPath, mr->meshPath.c_str(), sizeof(objPath) - 1);
         objPath[sizeof(objPath) - 1] = '\0';
@@ -7895,7 +7895,7 @@ void DrawModeling(EditorState& ed) {
             }
         }
     } else if (go->GetComponent<Terrain>()) {
-        ImGui::SeparatorText("Terrain");
+        SectionHeader("Terrain");
         ImGui::Checkbox("Sculpt (drag in the 3D view)##model", &g_terrainSculpt);
         ImGui::DragFloat("Brush Radius##model", &g_terrainRadius, 0.1f, 0.5f, 50.0f);
         ImGui::DragFloat("Brush Strength##model", &g_terrainStrength, 0.1f, 0.1f, 50.0f);
@@ -8244,7 +8244,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* ps = dynamic_cast<ParticleSystem*>(curComp)) {
         if (CompHeader("Particle System", ps, &toRemove)) {
             // ---- Emission ----
-            ImGui::SeparatorText("Emission");
+            SectionHeader("Emission");
             if (ImGui::Checkbox("Playing##ps", &ps->playing)) ed.dirty = true;
             ImGui::SameLine();
             ImGui::TextDisabled("(%d live)", ps->AliveCount());
@@ -8252,7 +8252,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Max Particles##ps", &ps->maxParticles, 1.0f, 0, 100000)) ed.dirty = true;
 
             // ---- Shape ----
-            ImGui::SeparatorText("Shape");
+            SectionHeader("Shape");
             const char* shapes[] = {"Point", "Circle", "Sphere", "Box", "Cone", "Edge"};
             int shp = (int)ps->shape;
             if (ImGui::Combo("Shape##ps", &shp, shapes, 6)) { ps->shape = (ParticleSystem::Shape)shp; ed.dirty = true; }
@@ -8267,7 +8267,7 @@ void DrawInspector(EditorState& ed) {
             }
 
             // ---- Start values ----
-            ImGui::SeparatorText("Start");
+            SectionHeader("Start");
             if (ImGui::DragFloat("Lifetime##ps", &ps->startLifetime, 0.05f, 0.01f, 1000.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Lifetime +/-##ps", &ps->startLifetimeRandom, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Size##ps", &ps->startSize, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
@@ -8280,7 +8280,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Speed +/- %##ps", &ps->speedRandom, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
 
             // ---- Appearance (sprite + spin) ----
-            ImGui::SeparatorText("Appearance");
+            SectionHeader("Appearance");
             const char* rmodes[] = {"Billboard", "Stretch"};
             int rmi = (int)ps->renderMode;
             if (ImGui::Combo("Render##ps", &rmi, rmodes, 2)) { ps->renderMode = (ParticleSystem::RenderMode)rmi; ed.dirty = true; }
@@ -8303,7 +8303,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Spin +/-##ps", &ps->rotationSpeedRandom, 1.0f, 0.0f, 720.0f)) ed.dirty = true;
 
             // ---- Over lifetime ----
-            ImGui::SeparatorText("Over Lifetime");
+            SectionHeader("Over Lifetime");
             if (ImGui::Checkbox("Fade Out##ps", &ps->fadeOverLife)) ed.dirty = true;
             if (ImGui::Checkbox("Color Over Life##ps", &ps->colorOverLife)) ed.dirty = true;
             if (ps->colorOverLife) {
@@ -8315,14 +8315,14 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("End Size##ps", &ps->endSize, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
 
             // ---- Forces ----
-            ImGui::SeparatorText("Forces");
+            SectionHeader("Forces");
             float gv[3] = {ps->gravity.x, ps->gravity.y, ps->gravity.z};
             if (ImGui::DragFloat3("Gravity##ps", gv, 0.05f)) { ps->gravity = {gv[0], gv[1], gv[2]}; ed.dirty = true; }
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
 
             // ---- Collision (ground plane) ----
-            ImGui::SeparatorText("Collision");
+            SectionHeader("Collision");
             if (ImGui::Checkbox("Collide w/ Ground##ps", &ps->collision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bounce particles off a horizontal plane at the height below (sparks/debris/rain).");
             if (ps->collision) {
@@ -8333,7 +8333,7 @@ void DrawInspector(EditorState& ed) {
             }
 
             // ---- Bursts & duration ----
-            ImGui::SeparatorText("Bursts & Duration");
+            SectionHeader("Bursts & Duration");
             if (ImGui::DragInt("Burst Count##ps", &ps->burstCount, 1.0f, 0, 100000)) ed.dirty = true;
             if (ps->burstCount > 0)
                 if (ImGui::DragFloat("Burst Time##ps", &ps->burstTime, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
@@ -8524,7 +8524,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
             // Material presets: save the current look as a reusable .okaymat, or
             // load one (also accepts a .okaymat dropped from the Project).
-            ImGui::SeparatorText("Material preset");
+            SectionHeader("Material preset");
             static char matPath[256] = "Assets/Material.okaymat";
             ImGui::InputText("##matpath", matPath, sizeof(matPath));
             std::string dropped;
@@ -8571,7 +8571,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Size##terr", &tr->size, 1.0f, 2.0f, 1000000.0f)) { tr->Apply(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("World width/depth. Make it as large as you like (pair with Resolution for detail).");
 
-            ImGui::SeparatorText("Texturing");
+            SectionHeader("Texturing");
             char ttex[260]; std::strncpy(ttex, tr->texture.c_str(), sizeof(ttex) - 1); ttex[sizeof(ttex) - 1] = '\0';
             if (ImGui::InputText("Ground Texture##terr", ttex, sizeof(ttex))) { tr->texture = ttex; tr->Apply(); ed.dirty = true; }
             if (AcceptAssetPathField(tr->texture)) { tr->Apply(); ed.dirty = true; }   // drop from Project
@@ -8593,7 +8593,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto-color layers##terr", &tr->autoColor)) { tr->Apply(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tint by elevation/slope (water/sand/grass/rock/snow). Tints the texture when one is set.");
 
-            ImGui::SeparatorText("Sculpt brush (drag in the 3D view)");
+            SectionHeader("Sculpt brush (drag in the 3D view)");
             ImGui::Checkbox("Sculpt##terr", &g_terrainSculpt);
             ImGui::SameLine(); ImGui::TextDisabled("(Shift = lower/invert)");
             const char* brushes[] = {"Raise / Lower", "Smooth", "Flatten", "Set Height", "Noise", "Erode"};
@@ -8606,7 +8606,7 @@ void DrawInspector(EditorState& ed) {
             if (g_terrainBrush == 3)
                 ImGui::DragFloat("Target Height##terr", &g_terrainFlattenH, 0.1f, -100.0f, 100.0f);
 
-            ImGui::SeparatorText("Generate (procedural noise)");
+            SectionHeader("Generate (procedural noise)");
             const char* gens[] = {"Mountains", "Hills", "Plains", "Plateau", "Islands",
                                   "Ridged Mountains", "Canyons"};
             ImGui::SetNextItemWidth(160);
@@ -8624,7 +8624,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Smooth All##terr")) { tr->Smooth(); tr->Apply(); ed.dirty = true; }
 
-            ImGui::SeparatorText("Erosion (geological realism)");
+            SectionHeader("Erosion (geological realism)");
             ImGui::TextDisabled("Carve valleys & ridgelines into generated terrain.");
             ImGui::SliderInt("Rain drops##tero", &g_terrainErodeDroplets, 1000, 200000);
             ImGui::SliderFloat("Erode strength##tero", &g_terrainErodeStrength, 0.05f, 1.0f);
@@ -8666,7 +8666,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip the terrain about its mid elevation: peaks become valleys and vice-versa.");
 
-            ImGui::SeparatorText("Heightmap (World Machine / Gaea / Photoshop)");
+            SectionHeader("Heightmap (World Machine / Gaea / Photoshop)");
             if (ImGui::Button("Import PNG...##terhm")) {
                 const char* filt[] = {"*.png", "*.jpg", "*.bmp"};
                 const char* p = tinyfd_openFileDialog("Import heightmap", "", 3, filt, "Image", 0);
@@ -8690,7 +8690,7 @@ void DrawInspector(EditorState& ed) {
                                    0.2f, -100.0f, 200.0f, "%.1f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Black in the PNG maps to Low, white maps to High.");
 
-            ImGui::SeparatorText("Layers (auto-color by height & slope)");
+            SectionHeader("Layers (auto-color by height & slope)");
             if (ImGui::Checkbox("Auto Color##terr", &tr->autoColor)) { tr->Apply(); ed.dirty = true; }
             if (tr->autoColor) {
                 auto layerCol = [&](const char* lbl, Color& col) {
@@ -8709,7 +8709,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SliderFloat("Rock Slope##terr",  &tr->rockSlope,  0.1f, 1.0f))    { tr->Apply(); ed.dirty = true; }
             }
 
-            ImGui::SeparatorText("Scatter props (trees, rocks, bushes)");
+            SectionHeader("Scatter props (trees, rocks, bushes)");
             const char* props[] = {"Tree", "Pine", "Rock", "Bush"};
             ImGui::SetNextItemWidth(160);
             ImGui::Combo("Prop##scat", &g_scatterProp, props, 4);
@@ -8809,7 +8809,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Clear##voxtex")) { v->texture.clear(); v->Apply(); ed.dirty = true; }
                 if (ImGui::DragFloat("Tex Scale##vox", &v->textureTiling, 0.005f, 0.005f, 2.0f, "%.3f")) { v->Apply(); ed.dirty = true; }
             }
-            ImGui::SeparatorText("Generate");
+            SectionHeader("Generate");
             if (ImGui::DragFloat("Surface##vox", &g_voxSurface, 0.01f, 0.1f, 0.95f)) {}
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of the height the ground surface sits at.");
             ImGui::DragFloat("Relief##vox", &g_voxAmp, 0.2f, 0.0f, 40.0f);
@@ -8852,11 +8852,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Color##wat", c)) { w->color = {c[0],c[1],c[2],c[3]}; w->opacity = c[3]; w->Apply(); ed.dirty = true; }
             if (ImGui::DragFloat("Size##wat", &w->size, 1.0f, 1.0f, 1000000.0f)) { w->Apply(); ed.dirty = true; }
             if (ImGui::SliderInt("Detail##wat", &w->resolution, 4, 128)) { w->Apply(); ed.dirty = true; }
-            ImGui::SeparatorText("Waves");
+            SectionHeader("Waves");
             if (ImGui::DragFloat("Height##wat", &w->waveHeight, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Length##wat", &w->waveLength, 0.1f, 0.5f, 60.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Speed##wat", &w->waveSpeed, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
-            ImGui::SeparatorText("Surface");
+            SectionHeader("Surface");
             if (ImGui::SliderFloat("Reflectivity##wat", &w->reflectivity, 0.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
             if (ImGui::SliderFloat("Glint##wat", &w->specular, 0.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
             if (ImGui::DragFloat2("Flow##wat", &w->flow.x, 0.005f, -1.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
@@ -8899,7 +8899,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Loop##ma", &ma->loop)) ed.dirty = true;
             if (ImGui::DragFloat("Speed##ma", &ma->speed, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
 
-            ImGui::SeparatorText("Locomotion (auto idle/walk/run)");
+            SectionHeader("Locomotion (auto idle/walk/run)");
             if (ImGui::Checkbox("Drive by movement##ma", &ma->driveByMovement)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-switch clips based on how fast this object moves.");
             if (ma->driveByMovement) {
@@ -8940,7 +8940,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let the walk/run cycle bob the arm. Off = rock-steady.\n(Steadying zeroes the shared hips/torso, so use it in first person where the body is hidden.)");
             if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fully decouple the arm from the body so it stays put in view no matter what the body does (lean, crouch, prone).");
-            ImGui::SeparatorText("Manual adjust");
+            SectionHeader("Manual adjust");
             if (ImGui::DragFloat("Raise##fh", &fh->armRaise, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Upper-arm angle: how high the hand sits in view.");
             if (ImGui::DragFloat("Elbow##fh", &fh->armElbow, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
@@ -9043,7 +9043,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Block Tag##de", tbuf, sizeof(tbuf))) { de->blockTag = tbuf; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only objects with this tag fracture (matches BlockBuilder's Block Tag).");
             if (ImGui::DragFloat("Voxel Size##de", &de->voxelSize, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
-            ImGui::SeparatorText("Fracture");
+            SectionHeader("Fracture");
             if (ImGui::SliderInt("Shards / axis##de", &de->fractureChunks, 1, 4)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Debris cubes per axis: 2 = 8 shards, 3 = 27, 4 = 64.");
             if (ImGui::DragFloat("Explosion Force##de", &de->explosionForce, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
@@ -9052,12 +9052,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Debris Gravity##de", &de->debrisGravityScale, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Debris Drag##de", &de->debrisDrag, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
             if (ImGui::DragInt("Max Debris##de", &de->maxDebris, 1.0f, 8, 4096)) ed.dirty = true;
-            ImGui::SeparatorText("Structural Collapse");
+            SectionHeader("Structural Collapse");
             if (ImGui::Checkbox("Collapse unsupported##de", &de->collapseEnabled)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("After a break, blocks with no path to the ground fall.");
             if (ImGui::DragFloat("Ground Anchor Y##de", &de->anchorY, 0.05f, -100.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blocks at/below this world Y are anchored (the ground).");
-            ImGui::SeparatorText("Destruction Gun (optional)");
+            SectionHeader("Destruction Gun (optional)");
             const char* btns[] = {"None", "Left Mouse", "Right Mouse", "Middle Mouse"};
             int bi = (de->breakButton < 0 || de->breakButton > 2) ? 0 : de->breakButton + 1;
             if (ImGui::Combo("Fire Button##de", &bi, btns, 4)) { de->breakButton = (bi == 0) ? -1 : bi - 1; ed.dirty = true; }
@@ -9075,7 +9075,7 @@ void DrawInspector(EditorState& ed) {
 
             c |= ImGui::SliderFloat("Height##char", &ch->height, 0.6f, 1.8f);
 
-            ImGui::SeparatorText("Rig");
+            SectionHeader("Rig");
             if (ImGui::Checkbox("Separate Into Parts (editable rig)##char", &ch->separateParts)) {
                 // Build/tear down the rig NOW (in the editor) so the parts are real,
                 // selectable objects in the scene — not spawned when you press Play.
@@ -9088,7 +9088,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = the parts hold still so you can pose / keyframe them yourself.");
             }
 
-            ImGui::SeparatorText("Movement animations");
+            SectionHeader("Movement animations");
             ImGui::TextDisabled("Play YOUR authored clips as the character moves (no scripting).");
             {
                 // Build a "(built-in)" + clip-name list for the three locomotion states.
@@ -9116,7 +9116,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crossfade time when switching animations (idle/walk/run or any clip).\n0 = snap instantly.");
             }
 
-            ImGui::SeparatorText("Clothing");
+            SectionHeader("Clothing");
             const char* shirts[] = {"Tank (bare arms)","Short sleeve","Long sleeve"};
             ImGui::SetNextItemWidth(150); c |= ImGui::Combo("Shirt##char", &ch->shirtStyle, shirts, 3);
             const char* legs[] = {"Trousers","Shorts"};
@@ -9125,7 +9125,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine(); c |= ImGui::Checkbox("Jacket##char", &ch->hasJacket);
             ImGui::SameLine(); c |= ImGui::Checkbox("Gloves##char", &ch->hasGloves);
 
-            ImGui::SeparatorText("Hair");
+            SectionHeader("Hair");
             c |= ImGui::Checkbox("Hair##char", &ch->hasHair);
             if (ch->hasHair) {
                 const char* hs[]={"Short","Long","Mohawk","Bun","Spiky","Afro","Ponytail","Buzz"};
@@ -9134,7 +9134,7 @@ void DrawInspector(EditorState& ed) {
             const char* beards[] = {"None","Full","Goatee","Mustache"};
             ImGui::SetNextItemWidth(150); c |= ImGui::Combo("Beard##char", &ch->beardStyle, beards, 4);
 
-            ImGui::SeparatorText("Accessories");
+            SectionHeader("Accessories");
             c |= ImGui::Checkbox("Hat##char", &ch->hasHat);
             if (ch->hasHat) {
                 const char* ht[]={"Cap","Helmet","Top Hat","Wizard","Beanie","Cowboy","Crown","Bandana"};
@@ -9148,7 +9148,7 @@ void DrawInspector(EditorState& ed) {
             c |= ImGui::Checkbox("Backpack##char", &ch->hasBackpack);
             ImGui::SameLine(); c |= ImGui::Checkbox("Cape##char", &ch->hasCape);
 
-            ImGui::SeparatorText("Colors");
+            SectionHeader("Colors");
             coledit("Skin##char", ch->skin);     coledit("Shirt##char", ch->shirt);
             coledit("Pants##char", ch->pants);   coledit("Shoes##char", ch->shoes);
             coledit("Hair##char", ch->hair);     coledit("Eyes##char", ch->eyes);
@@ -9156,7 +9156,7 @@ void DrawInspector(EditorState& ed) {
             coledit("Gloves##char", ch->gloves); coledit("Belt##char", ch->belt);
             coledit("Backpack##char", ch->pack);
 
-            ImGui::SeparatorText("Animation (plays in Play mode)");
+            SectionHeader("Animation (plays in Play mode)");
             const char* anims[] = {"None","Idle","Walk","Run","Wave","Jump","Crouch","Prone",
                                    "Point","Clap","Thumbs Up","Salute","Wave Both",
                                    "Cheer (happy)","Sad","Angry","Think"};
@@ -9165,7 +9165,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle/walk/run/jump are driven by the controllers; the gestures and emotions (Point...Think) are poses you can trigger from scripts (set a Character's anim) or preview here.");
             if (ch->anim != 0) ImGui::SliderFloat("Anim Speed##char", &ch->animSpeed, 0.1f, 3.0f);
 
-            ImGui::SeparatorText("Head look");
+            SectionHeader("Head look");
             if (ImGui::Checkbox("Look at Camera##char", &ch->lookAtCamera)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the head to face the main camera each frame (no controller/script needed). A First/Third-Person controller overrides this with its own aim.");
             { static char lookBuf[48]; static Character* lbound = nullptr;
@@ -9197,14 +9197,14 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
 
-            ImGui::SeparatorText("Ambient (scene floor)");
+            SectionHeader("Ambient (scene floor)");
             if (ImGui::SliderFloat("Ambient##light", &li->ambient, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unlit floor brightness (taken from the first light)");
             float ac[3] = {li->ambientColor.r, li->ambientColor.g, li->ambientColor.b};
             if (ImGui::ColorEdit3("Ambient Tint##light", ac)) { li->ambientColor = {ac[0], ac[1], ac[2], 1.0f}; ed.dirty = true; }
 
             if (li->type != Light::Type::Directional) {
-                ImGui::SeparatorText(li->type == Light::Type::Spot ? "Spot" : "Point");
+                SectionHeader(li->type == Light::Type::Spot ? "Spot" : "Point");
                 if (ImGui::DragFloat("Range##light", &li->range, 0.2f, 0.1f, 500.0f)) ed.dirty = true;
             }
             if (li->type == Light::Type::Spot) {
@@ -9241,7 +9241,7 @@ void DrawInspector(EditorState& ed) {
                 }
             }
 
-            ImGui::SeparatorText("Background");
+            SectionHeader("Background");
             int cf = (int)cam->clearFlags;
             const char* cfs[] = {"Skybox", "Solid Color"};
             if (ImGui::Combo("Clear Flags", &cf, cfs, 2)) { cam->clearFlags = (Camera::ClearFlags)cf; ed.dirty = true; }
@@ -9250,11 +9250,11 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Background", bg)) { cam->backgroundColor = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
             }
 
-            ImGui::SeparatorText("Clipping Planes");
+            SectionHeader("Clipping Planes");
             if (ImGui::DragFloat("Near", &cam->nearClip, 0.01f, 0.001f, 100.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Far",  &cam->farClip, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
 
-            ImGui::SeparatorText("Viewport Rect");
+            SectionHeader("Viewport Rect");
             float r[4] = {cam->rectX, cam->rectY, cam->rectW, cam->rectH};
             if (ImGui::DragFloat4("X / Y / W / H", r, 0.01f, 0.0f, 1.0f)) {
                 cam->rectX = r[0]; cam->rectY = r[1]; cam->rectW = r[2]; cam->rectH = r[3]; ed.dirty = true;
@@ -9262,7 +9262,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Where on screen this camera draws (0..1, origin bottom-left)\n— like Unity's Camera.rect. Use for split-screen / mini-maps.");
 
-            ImGui::SeparatorText("Culling Mask");
+            SectionHeader("Culling Mask");
             // Layer set this camera renders (Unity's Camera.cullingMask). Summarize the
             // selection on the combo preview, with per-layer toggles + Everything/Nothing.
             std::string maskPreview;
@@ -9719,7 +9719,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("No public variables. Declare top-level vars,");
                 ImGui::TextDisabled("e.g.  public float speed = 5;");
             } else {
-                ImGui::SeparatorText("Variables");
+                SectionHeader("Variables");
                 float nameCol = ImGui::GetContentRegionAvail().x * 0.42f;   // label column width
                 if (nameCol < 80) nameCol = 80;
                 for (const auto& f : fields) {
@@ -9727,7 +9727,7 @@ void DrawInspector(EditorState& ed) {
                     std::string cur = overridden ? sc->fields[f.name] : f.def;
                     ImGui::PushID(f.name.c_str());
                     bool changed = false;
-                    if (!f.header.empty()) { ImGui::Spacing(); ImGui::SeparatorText(f.header.c_str()); }
+                    if (!f.header.empty()) { ImGui::Spacing(); SectionHeader(f.header.c_str()); }
                     // Variable NAME on the left (Unity-style), value widget on the right.
                     ImGui::AlignTextToFramePadding();
                     if (overridden) ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.55f, 1.0f), "%s", f.name.c_str());
@@ -9820,7 +9820,7 @@ void DrawInspector(EditorState& ed) {
             const char* modes[] = {"Top-Down", "Platformer"};
             if (ImGui::Combo("Mode##cc2", &m, modes, 2)) { cc->mode = (CharacterController2D::Mode)m; ed.dirty = true; }
 
-            ImGui::SeparatorText("Movement");
+            SectionHeader("Movement");
             if (ImGui::DragFloat("Speed##cc2", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##cc2", &cc->runSpeed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             int sk = cc->sprintKey ? cc->sprintKey : 0; char skb[2] = { (char)(sk ? sk : ' '), 0 };
@@ -9837,7 +9837,7 @@ void DrawInspector(EditorState& ed) {
             }
 
             if (cc->mode == CharacterController2D::Mode::Platformer) {
-                ImGui::SeparatorText("Jump");
+                SectionHeader("Jump");
                 if (ImGui::DragFloat("Jump Force##cc2", &cc->jumpForce, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
                 if (ImGui::DragInt("Max Jumps##cc2", &cc->maxJumps, 0.05f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("2 = double jump (ground counts as one)");
@@ -10886,7 +10886,7 @@ void DrawInspector(EditorState& ed) {
             if (ed.isPlaying()) ImGui::TextDisabled("State: %s%s", c->StateName(), c->IsDead() ? " (dead)" : "");
             auto bh = (NPCController::Behavior)c->behavior;
 
-            ImGui::SeparatorText("Movement");
+            SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##npc", &c->moveSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##npc", &c->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used when chasing, fleeing or searching.");
@@ -10896,7 +10896,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Stop Distance##npc", &c->stopDistance, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Face Movement##npc", &c->faceMovement)) ed.dirty = true;
 
-            ImGui::SeparatorText("Perception");
+            SectionHeader("Perception");
             if (ImGui::DragFloat("Sight Range##npc", &c->sightRange, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Field of View##npc", &c->fieldOfView, 1.0f, 10.0f, 360.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vision cone width. 360 = sees in every direction.");
@@ -10910,7 +10910,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Search Time##npc", &c->searchTime, 0.1f, 0.0f, 30.0f, "%.1f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long it investigates the last-known spot before giving up.");
 
-            ImGui::SeparatorText("Aggression");
+            SectionHeader("Aggression");
             if (ImGui::Checkbox("Aggressive (hunt on sight)##npc", &c->aggressive)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle/Wander/Patrol/Guard NPCs chase a perceived target.");
             if (ImGui::Checkbox("Provokable (fights back)##npc", &c->provokable)) ed.dirty = true;
@@ -10919,12 +10919,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gives up the chase past this distance from spawn (0 = unlimited).");
 
             if (bh == NPCController::Behavior::Wander || bh == NPCController::Behavior::Idle) {
-                ImGui::SeparatorText("Wander");
+                SectionHeader("Wander");
                 if (ImGui::DragFloat("Wander Radius##npc", &c->wanderRadius, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Wander Pause##npc", &c->wanderPause, 0.1f, 0.0f, 20.0f, "%.1f s")) ed.dirty = true;
             }
             if (bh == NPCController::Behavior::Patrol) {
-                ImGui::SeparatorText("Patrol Route");
+                SectionHeader("Patrol Route");
                 if (ImGui::Checkbox("Loop##npc", &c->patrolLoop)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = A->B->C->A. Off = ping-pong A->B->C->B->A.");
                 if (ImGui::DragFloat("Wait at Waypoint##npc", &c->waypointWait, 0.1f, 0.0f, 20.0f, "%.1f s")) ed.dirty = true;
@@ -10945,7 +10945,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds a point at the NPC's current position — move the NPC, then add again.");
             }
 
-            ImGui::SeparatorText("Combat");
+            SectionHeader("Combat");
             if (ImGui::DragFloat("Attack/Stop Range##npc", &c->attackRange, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Attack Damage##npc", &c->attackDamage, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Attack Interval##npc", &c->attackInterval, 0.05f, 0.05f, 10.0f, "%.2f s")) ed.dirty = true;
@@ -10954,7 +10954,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SliderFloat("Flee at Health %##npc", &c->fleeHealthPct, 0.0f, 1.0f, "%.0f%%", ImGuiSliderFlags_None)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs away when health drops to this fraction of max (0 = never).");
 
-            ImGui::SeparatorText("Group & Presentation");
+            SectionHeader("Group & Presentation");
             if (ImGui::DragFloat("Separation Radius##npc", &c->separationRadius, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steer away from other NPCs within this radius so they don't pile up (0 = off).");
             if (ImGui::Checkbox("Drive Character Animation##npc", &c->driveAnimation)) ed.dirty = true;
@@ -10962,7 +10962,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets a sibling Character's idle/walk/run animation from movement.");
             if (ImGui::Checkbox("Look At Target##npc", &c->lookAtTarget)) ed.dirty = true;
 
-            ImGui::SeparatorText("Health");
+            SectionHeader("Health");
             if (ImGui::DragFloat("Max Health##npc", &c->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Damage() kills it at 0 (a MeleeAttacker can fight it).");
             if (ImGui::Checkbox("Invulnerable##npc", &c->invulnerable)) ed.dirty = true;
@@ -11082,7 +11082,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Lock + Hide Cursor##fp", &fp->lockCursor)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing (mouse-look). Off keeps a normal pointer for clicking UI.");
 
-            ImGui::SeparatorText("Run / Stance");
+            SectionHeader("Run / Stance");
             if (KeyBindCombo("Sprint Key##fp", fp->sprintKey)) ed.dirty = true;
             ImGui::SameLine(); if (ImGui::Checkbox("Toggle Run##fp", &fp->toggleRun)) ed.dirty = true;
             if (KeyBindCombo("Crouch Key##fp", fp->crouchKey)) ed.dirty = true;
@@ -11096,7 +11096,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Prone Eye Height##fp", &fp->proneEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Stance Ease##fp", &fp->stanceLerp, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
 
-            ImGui::SeparatorText("Lean (peek)");
+            SectionHeader("Lean (peek)");
             if (KeyBindCombo("Lean Left##fp", fp->leanLeftKey)) ed.dirty = true;
             ImGui::SameLine(); if (KeyBindCombo("Lean Right##fp", fp->leanRightKey)) ed.dirty = true;
             if (ImGui::DragFloat("Lean Angle##fp", &fp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
@@ -11109,7 +11109,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
         if (CompHeader("Third Person Controller", tp, &toRemove)) {
-            ImGui::SeparatorText("Movement");
+            SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tp", &tp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -11136,7 +11136,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SetNextItemWidth(160);
             if (ImGui::Combo("Body Facing##tp", &fm, faceModes, 2)) { tp->faceMode = (ThirdPersonController::FaceMode)fm; ed.dirty = true; }
 
-            ImGui::SeparatorText("Camera");
+            SectionHeader("Camera");
             if (ImGui::DragFloat("Mouse Sensitivity##tp", &tp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Invert X##tp", &tp->invertX)) ed.dirty = true;
             ImGui::SameLine();
@@ -11156,7 +11156,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Min Pitch##tp", &tp->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Max Pitch##tp", &tp->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
 
-            ImGui::SeparatorText("Run / Stance");
+            SectionHeader("Run / Stance");
             if (KeyBindCombo("Sprint Key##tp", tp->sprintKey)) ed.dirty = true;
             ImGui::SameLine(); if (ImGui::Checkbox("Toggle Run##tp", &tp->toggleRun)) ed.dirty = true;
             if (KeyBindCombo("Crouch Key##tp", tp->crouchKey)) ed.dirty = true;
@@ -11170,7 +11170,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Prone Drop##tp", &tp->proneHeightDrop, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Stance Ease##tp", &tp->stanceLerp, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
 
-            ImGui::SeparatorText("Lean (peek)");
+            SectionHeader("Lean (peek)");
             if (KeyBindCombo("Lean Left##tp", tp->leanLeftKey)) ed.dirty = true;
             ImGui::SameLine(); if (KeyBindCombo("Lean Right##tp", tp->leanRightKey)) ed.dirty = true;
             if (ImGui::DragFloat("Lean Angle##tp", &tp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
@@ -11183,7 +11183,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* td = dynamic_cast<TopDownController*>(curComp)) {
         if (CompHeader("Top Down Controller", td, &toRemove)) {
-            ImGui::SeparatorText("Movement");
+            SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##td", &td->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##td", &td->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Acceleration##td", &td->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
@@ -11195,7 +11195,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("WASD relative to the camera yaw instead of world axes");
             if (ImGui::Checkbox("Drive Animation##td", &td->driveAnimation)) ed.dirty = true;
             if (ImGui::Checkbox("Foot IK##td", &td->footIK)) ed.dirty = true;
-            ImGui::SeparatorText("Camera");
+            SectionHeader("Camera");
             if (ImGui::DragFloat("Distance##td", &td->cameraDistance, 0.1f, 1.0f, 60.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Pitch##td", &td->cameraPitch, 0.5f, 10.0f, 89.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::DragFloat("Yaw##td", &td->cameraYaw, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
@@ -11214,7 +11214,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Velocity ease-in (0 = instant)");
             if (KeyBindCombo("Up Key##fr", fr->upKey)) ed.dirty = true;
             ImGui::SameLine(); if (KeyBindCombo("Down Key##fr", fr->downKey)) ed.dirty = true;
-            ImGui::SeparatorText("Look");
+            SectionHeader("Look");
             if (ImGui::DragFloat("Sensitivity##fr", &fr->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Invert Y##fr", &fr->invertY)) ed.dirty = true;
             if (ImGui::Checkbox("Lock Cursor##fr", &fr->lockCursor)) ed.dirty = true;
@@ -11229,7 +11229,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ts = dynamic_cast<ThirdPersonShooterController*>(curComp)) {
         if (CompHeader("Third Person Shooter Controller", ts, &toRemove)) {
-            ImGui::SeparatorText("Movement");
+            SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tps", &ts->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -11238,14 +11238,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Acceleration##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Air Control##tps", &ts->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Foot IK##tps", &ts->footIK)) ed.dirty = true;
-            ImGui::SeparatorText("Look / Camera");
+            SectionHeader("Look / Camera");
             if (ImGui::DragFloat("Sensitivity##tps", &ts->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Invert Y##tps", &ts->invertY)) ed.dirty = true;
             if (ImGui::DragFloat("Distance##tps", &ts->distance, 0.1f, 1.0f, 15.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Camera Height##tps", &ts->cameraHeight, 0.05f, 0.0f, 4.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Shoulder Offset##tps", &ts->shoulderOffset, 0.02f, -2.0f, 2.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Camera Collision##tps", &ts->cameraCollision)) ed.dirty = true;
-            ImGui::SeparatorText("Aim & Fire");
+            SectionHeader("Aim & Fire");
             if (ImGui::DragInt("Aim Button##tps", &ts->aimButton, 0.1f, 0, 4)) ed.dirty = true;
             if (ImGui::DragFloat("Aim Distance##tps", &ts->aimDistance, 0.05f, 0.5f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Aim Shoulder##tps", &ts->aimShoulder, 0.02f, -2.0f, 2.0f)) ed.dirty = true;
@@ -11282,7 +11282,7 @@ void DrawInspector(EditorState& ed) {
             if (!cm->usePlayerHeight)
                 if (ImGui::DragFloat("Ground Y##ctm", &cm->groundY, 0.05f)) ed.dirty = true;
 
-            ImGui::SeparatorText("Follow Camera");
+            SectionHeader("Follow Camera");
             if (ImGui::Checkbox("Follow Camera##ctm", &cm->followCamera)) ed.dirty = true;
             if (cm->followCamera) {
                 if (ImGui::DragFloat("Cam Height##ctm", &cm->cameraHeight, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
@@ -11338,7 +11338,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Once", &al->once)) ed.dirty = true;
 
-            ImGui::SeparatorText("Conditions (all must pass)");
+            SectionHeader("Conditions (all must pass)");
             if (al->conditions.empty()) ImGui::TextDisabled("No conditions — always runs. Add one to gate it.");
             for (std::size_t i = 0; i < al->conditions.size();) {
                 int act = DrawActionItem(al->conditions[i], kCondOps, IM_ARRAYSIZE(kCondOps), (int)i, ed.dirty, &ed.scene());
@@ -11346,7 +11346,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::SmallButton("+ Condition")) { al->conditions.push_back({"always", {}}); ed.dirty = true; }
 
-            ImGui::SeparatorText("Instructions (run top to bottom)");
+            SectionHeader("Instructions (run top to bottom)");
             if (al->instructions.empty()) ImGui::TextDisabled("Nothing happens yet — add an instruction below.");
             for (std::size_t i = 0; i < al->instructions.size();) {
                 int act = DrawActionItem(al->instructions[i], kInstrOps, IM_ARRAYSIZE(kInstrOps), 1000 + (int)i, ed.dirty, &ed.scene());
@@ -11410,7 +11410,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* st = dynamic_cast<Stats*>(curComp)) {
         if (CompHeader("Stats", st, &toRemove)) {
-            ImGui::SeparatorText("Vitals");
+            SectionHeader("Vitals");
             if (ImGui::DragFloat("Health##st", &st->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Max##sthp", &st->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
@@ -11418,12 +11418,12 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Max##stmp", &st->maxMana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             ImGui::ProgressBar(st->HealthFraction(), ImVec2(-1, 0), "HP");
-            ImGui::SeparatorText("Progression");
+            SectionHeader("Progression");
             if (ImGui::DragInt("Level##st", &st->level, 0.1f, 1, 999)) ed.dirty = true;
             if (ImGui::DragInt("XP##st", &st->xp, 1.0f, 0, 1000000)) ed.dirty = true;
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragInt("To Next##st", &st->xpToNext, 1.0f, 1, 1000000)) ed.dirty = true;
-            ImGui::SeparatorText("Attributes");
+            SectionHeader("Attributes");
             if (ImGui::DragInt("Strength##st", &st->strength, 0.1f, 0, 999)) ed.dirty = true;
             if (ImGui::DragInt("Defense##st", &st->defense, 0.1f, 0, 999)) ed.dirty = true;
             if (ImGui::DragInt("Intelligence##st", &st->intelligence, 0.1f, 0, 999)) ed.dirty = true;
@@ -11460,7 +11460,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto Start##tm", &tm->autoStart)) ed.dirty = true;
             ImGui::Text("Round %d  |  Turn: %s", tm->round,
                         tm->Current().empty() ? "-" : tm->Current().c_str());
-            ImGui::SeparatorText("Participants (turn order)");
+            SectionHeader("Participants (turn order)");
             int eraseP = -1;
             for (int i = 0; i < (int)tm->participants.size(); ++i) {
                 ImGui::PushID(i);
@@ -11499,7 +11499,7 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Virtual Camera", vc, &toRemove)) {
             if (ImGui::DragInt("Priority##vc", &vc->priority, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Highest enabled vcam becomes live (the brain blends to it).");
-            ImGui::SeparatorText("Body");
+            SectionHeader("Body");
             char fb[128];
             std::strncpy(fb, vc->follow.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
             if (ImGui::InputText("Follow##vc", fb, sizeof(fb))) { vc->follow = fb; ed.dirty = true; }
@@ -11510,7 +11510,7 @@ void DrawInspector(EditorState& ed) {
             const char* bms[] = {"World Space", "Lock To Target (orbital)"};
             if (ImGui::Combo("Binding Mode##vc", &bm, bms, 2)) { vc->bindingMode = (VirtualCamera::BindingMode)bm; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock To Target orbits the offset with the target's facing\n(3rd-person chase cam).");
-            ImGui::SeparatorText("FreeLook (orbit rig)");
+            SectionHeader("FreeLook (orbit rig)");
             if (ImGui::Checkbox("FreeLook##vc", &vc->freeLook)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Orbit the Follow target on a sphere (overrides offset + aim).\nGreat for 3rd-person player cameras.");
             if (vc->freeLook) {
@@ -11527,7 +11527,7 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::DragFloat("Sensitivity##vcfl", &vc->mouseSensitivity, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
                 }
             }
-            ImGui::SeparatorText("Tracked Dolly");
+            SectionHeader("Tracked Dolly");
             if (ImGui::Checkbox("Dolly##vc", &vc->dolly)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Constrain the body to a Dolly Path rail (aim still tracks LookAt/Follow).");
             if (vc->dolly) {
@@ -11540,7 +11540,7 @@ void DrawInspector(EditorState& ed) {
                 if (!vc->autoDolly)
                     if (ImGui::SliderFloat("Position##vcd", &vc->dollyPosition, 0.0f, 1.0f)) ed.dirty = true;
             }
-            ImGui::SeparatorText("Aim");
+            SectionHeader("Aim");
             char lb[128];
             std::strncpy(lb, vc->lookAt.c_str(), sizeof(lb) - 1); lb[sizeof(lb) - 1] = '\0';
             if (ImGui::InputText("Look At##vc", lb, sizeof(lb))) { vc->lookAt = lb; ed.dirty = true; }
@@ -11550,14 +11550,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Added to the LookAt target before aiming (e.g. aim at the head).");
             if (ImGui::DragFloat("Dead Zone##vc", &vc->aimDeadZone, 0.1f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Don't re-aim until the target drifts beyond this angle (reduces jitter).");
-            ImGui::SeparatorText("Damping");
+            SectionHeader("Damping");
             if (ImGui::DragFloat("Position##vcd", &vc->positionDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Rotation##vcd", &vc->rotationDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            ImGui::SeparatorText("Lens");
+            SectionHeader("Lens");
             if (ImGui::SliderFloat("Field of View##vc", &vc->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::SliderFloat("Dutch (roll)##vc", &vc->dutch, -45.0f, 45.0f, "%.1f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roll the shot around the view axis (tilted horizon).");
-            ImGui::SeparatorText("Confiner");
+            SectionHeader("Confiner");
             if (ImGui::Checkbox("Confine to box##vc", &vc->confine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clamp the camera position inside an axis-aligned box so the shot can't leave the level.");
             if (vc->confine) {
@@ -11566,7 +11566,7 @@ void DrawInspector(EditorState& ed) {
                 if (DragVec3Axis("Min##vccf", mn, 0.1f)) { vc->confineMin = {mn[0], mn[1], mn[2]}; ed.dirty = true; }
                 if (DragVec3Axis("Max##vccf", mx, 0.1f)) { vc->confineMax = {mx[0], mx[1], mx[2]}; ed.dirty = true; }
             }
-            ImGui::SeparatorText("Noise / Impulse");
+            SectionHeader("Noise / Impulse");
             if (ImGui::DragFloat("Amplitude##vcn", &vc->shakeAmplitude, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Frequency##vcn", &vc->shakeFrequency, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Impulse Decay##vcn", &vc->impulseDecay, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
@@ -11771,7 +11771,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Sort Order##cv", &cv->sortOrder)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher canvases draw on top of lower ones.");
 
-            ImGui::SeparatorText("World Space (3D)");
+            SectionHeader("World Space (3D)");
             if (ImGui::Checkbox("World Space##cv", &cv->worldSpace)) ed.dirty = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Render this canvas (and ALL its widgets) on a plane in the 3D world at this\n"
@@ -11825,7 +11825,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Room (lobby)##nm", roomBuf, sizeof(roomBuf))) { nm->startRoom = roomBuf; ed.dirty = true; }
             ImGui::SliderFloat("Smoothing##nm", &nm->interpolationRate, 0.0f, 30.0f, "%.0f /s");
 
-            ImGui::SeparatorText("Host settings");
+            SectionHeader("Host settings");
             static char srvBuf[64]; static NetworkManager* sbound = nullptr;
             if (sbound != nm) { std::strncpy(srvBuf, nm->serverName.c_str(), sizeof(srvBuf)-1); srvBuf[sizeof(srvBuf)-1]='\0'; sbound = nm; }
             if (ImGui::InputText("Server Name##nm", srvBuf, sizeof(srvBuf))) { nm->serverName = srvBuf; ed.dirty = true; }
@@ -11965,7 +11965,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Focusable##uib", &btn->focusable)) ed.dirty = true;
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
 
-            ImGui::SeparatorText("On Click (assign a function)");
+            SectionHeader("On Click (assign a function)");
             { static char tgt[64]; static UIButton* tbound = nullptr;
               if (tbound != btn) { std::strncpy(tgt, btn->clickTarget.c_str(), sizeof(tgt)-1); tgt[sizeof(tgt)-1]='\0'; tbound = btn; }
               if (ImGui::InputText("Target Object##uibclk", tgt, sizeof(tgt))) { btn->clickTarget = tgt; ed.dirty = true; }
@@ -11992,12 +11992,12 @@ void DrawInspector(EditorState& ed) {
               if (ImGui::BeginCombo("Function##uibclk", cur.c_str())) {
                   if (ImGui::Selectable("(none)", btn->clickFunction.empty())) { btn->clickFunction.clear(); ed.dirty = true; }
                   if (!nativeFns.empty()) {
-                      ImGui::SeparatorText("Native (gameplay)");
+                      SectionHeader("Native (gameplay)");
                       for (const auto& fn : nativeFns)
                           if (ImGui::Selectable((fn + "##nat").c_str(), fn == btn->clickFunction)) { btn->clickFunction = fn; ed.dirty = true; }
                   }
                   if (!fns.empty()) {
-                      ImGui::SeparatorText("Script");
+                      SectionHeader("Script");
                       for (const auto& fn : fns)
                           if (ImGui::Selectable(fn.c_str(), fn == btn->clickFunction)) { btn->clickFunction = fn; ed.dirty = true; }
                   }
@@ -12013,7 +12013,7 @@ void DrawInspector(EditorState& ed) {
             }
 
             AnchorCombo("Anchor##uib", btn->anchor, ed);
-            ImGui::SeparatorText("Style");
+            SectionHeader("Style");
             ShapeCombo("Shape##uib", btn->shape, ed);
             if (UIShapeUsesRadius(btn->shape))
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
@@ -12055,7 +12055,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Icon Size##uib", &btn->iconSize, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("PNG/JPG drawn beside the label; 0 = none");
             if (ImGui::Checkbox("Icon on Right##uib", &btn->iconRight)) ed.dirty = true;
-            ImGui::SeparatorText("Behavior");
+            SectionHeader("Behavior");
             if (ImGui::Checkbox("Toggle Button##uib", &btn->toggleMode)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stays pressed; each click flips its on/off state");
             if (btn->toggleMode) { ImGui::SameLine(); if (ImGui::Checkbox("On##uib", &btn->isOn)) ed.dirty = true; }
@@ -12077,7 +12077,7 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {pn->color.r, pn->color.g, pn->color.b, pn->color.a};
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##uip", pn->anchor, ed);
-            ImGui::SeparatorText("Style");
+            SectionHeader("Style");
             ShapeCombo("Shape##uip", pn->shape, ed);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The panel's silhouette — circle, pill, hexagon, etc. Octagon/Parallelogram/Trapezoid use Corner Radius for their cut/skew.");
             if (UIShapeUsesRadius(pn->shape))
@@ -12149,7 +12149,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Placeholder##udd", ph, sizeof(ph))) { dd->placeholder = ph; ed.dirty = true; }
             if (ImGui::Button("Clear selection##udd")) { dd->value = -1; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("value = -1 shows the placeholder");
-            ImGui::SeparatorText("Options");
+            SectionHeader("Options");
             int toErase = -1;
             for (int i = 0; i < (int)dd->options.size(); ++i) {
                 ImGui::PushID(i);
@@ -12170,7 +12170,7 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             if (ImGui::SmallButton("Add Option##udd")) { dd->options.push_back("Option"); ed.dirty = true; }
-            ImGui::SeparatorText("Style");
+            SectionHeader("Style");
             float c[4]  = {dd->color.r, dd->color.g, dd->color.b, dd->color.a};
             if (ImGui::ColorEdit4("Header##udd", c)) { dd->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
             float h[4]  = {dd->hoverColor.r, dd->hoverColor.g, dd->hoverColor.b, dd->hoverColor.a};
@@ -12222,7 +12222,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Accept Tag##udt", tb, sizeof(tb))) { dt->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
 
-            ImGui::SeparatorText("Slot background");
+            SectionHeader("Slot background");
             if (ImGui::Checkbox("Draw background##udt", &dt->drawBackground)) ed.dirty = true;
             if (dt->drawBackground) {
                 float bgc[4] = {dt->background.r, dt->background.g, dt->background.b, dt->background.a};
@@ -12235,7 +12235,7 @@ void DrawInspector(EditorState& ed) {
                 }
             }
 
-            ImGui::SeparatorText("Hover feedback");
+            SectionHeader("Hover feedback");
             if (ImGui::Checkbox("Highlight on hover##udt", &dt->showHighlight)) ed.dirty = true;
             if (dt->showHighlight) {
                 float hl[4] = {dt->highlight.r, dt->highlight.g, dt->highlight.b, dt->highlight.a};
@@ -12245,7 +12245,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shown when a wrong-tag item hovers over the slot.");
             }
 
-            ImGui::SeparatorText("Drop");
+            SectionHeader("Drop");
             if (ImGui::Checkbox("Snap dropped item to center##udt", &dt->snapToCenter)) ed.dirty = true;
             ImGui::TextDisabled("Script events (on a ScriptComponent here):");
             ImGui::BulletText("on_receive  — an item is dropped on this slot");
@@ -12424,7 +12424,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Blip Range##umm", &mm->blipRange, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Radar range: hide blips farther than this many world units from the centre (0 = show all).");
             AnchorCombo("Anchor##umm", mm->anchor, ed);
-            ImGui::SeparatorText("Style");
+            SectionHeader("Style");
             if (ImGui::Checkbox("Circular##umm", &mm->circular)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Heading Up##umm", &mm->rotateWithTarget)) ed.dirty = true;
@@ -12440,7 +12440,7 @@ void DrawInspector(EditorState& ed) {
                 float gc[4] = {mm->gridColor.r, mm->gridColor.g, mm->gridColor.b, mm->gridColor.a};
                 if (ImGui::ColorEdit4("Grid Color##umm", gc)) { mm->gridColor = {gc[0], gc[1], gc[2], gc[3]}; ed.dirty = true; }
             }
-            ImGui::SeparatorText("Radar");
+            SectionHeader("Radar");
             if (ImGui::Checkbox("Show Self##umm", &mm->showSelf)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw the centre (player) marker.");
             ImGui::SameLine();
@@ -12463,7 +12463,7 @@ void DrawInspector(EditorState& ed) {
                 float rc[4] = {mm->ringColor.r, mm->ringColor.g, mm->ringColor.b, mm->ringColor.a};
                 if (ImGui::ColorEdit4("Ring Color##umm", rc)) { mm->ringColor = {rc[0],rc[1],rc[2],rc[3]}; ed.dirty = true; }
             }
-            ImGui::SeparatorText("Custom Map (GTA-style)");
+            SectionHeader("Custom Map (GTA-style)");
             char mt[256];
             std::strncpy(mt, mm->mapTexture.c_str(), sizeof(mt) - 1);
             mt[sizeof(mt) - 1] = '\0';
@@ -12482,7 +12482,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to toggle the big pause-map (blank = off).");
             if (ImGui::DragFloat("Fullscreen Zoom##umm", &mm->fullscreenZoom, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Fullscreen Fill##umm", &mm->fullscreenFrac, 0.01f, 0.2f, 1.0f)) ed.dirty = true;
-            ImGui::SeparatorText("Zoom Keys");
+            SectionHeader("Zoom Keys");
             char zi[2] = {mm->zoomInKey, 0};
             if (ImGui::InputText("Zoom In##umm", zi, sizeof(zi))) { mm->zoomInKey = zi[0]; ed.dirty = true; }
             ImGui::SameLine();
@@ -12491,7 +12491,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Min Zoom##umm", &mm->minZoom, 0.01f, 0.01f, 1000.0f)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::DragFloat("Max Zoom##umm", &mm->maxZoom, 0.05f, 0.01f, 100000.0f)) ed.dirty = true;
-            ImGui::SeparatorText("Waypoints");
+            SectionHeader("Waypoints");
             if (ImGui::TreeNode("Markers##umm")) {
                 int del = -1;
                 for (std::size_t i = 0; i < mm->markers.size(); ++i) {
@@ -12513,7 +12513,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("+ Add Marker##umm")) { mm->markers.push_back({}); ed.dirty = true; }
                 ImGui::TreePop();
             }
-            ImGui::SeparatorText("Map Shapes (roads / houses / zones)");
+            SectionHeader("Map Shapes (roads / houses / zones)");
             if (ImGui::TreeNode("Shapes##umm")) {
                 ImGui::TextDisabled("Build your own map in world coords: Line=road/wall, Rect=house, Poly=zone.");
                 const char* kinds[] = {"Line", "Rect", "Poly"};
@@ -12584,7 +12584,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Clear Shapes##umm")) { mm->mapShapes.clear(); ed.dirty = true; }
                 ImGui::TreePop();
             }
-            ImGui::SeparatorText("Labels & Route");
+            SectionHeader("Labels & Route");
             if (ImGui::Checkbox("Show Labels##umm", &mm->showLabels)) ed.dirty = true;
             if (mm->showLabels) {
                 if (ImGui::DragFloat("Label Size##umm", &mm->labelSize, 0.2f, 4.0f, 48.0f)) ed.dirty = true;
@@ -12599,7 +12599,7 @@ void DrawInspector(EditorState& ed) {
                 float rc[4] = {mm->routeColor.r, mm->routeColor.g, mm->routeColor.b, mm->routeColor.a};
                 if (ImGui::ColorEdit4("Route Color##umm", rc)) { mm->routeColor = {rc[0],rc[1],rc[2],rc[3]}; ed.dirty = true; }
             }
-            ImGui::SeparatorText("Waypoint (click map)");
+            SectionHeader("Waypoint (click map)");
             if (ImGui::Checkbox("Click To Set##umm", &mm->mapClickWaypoint)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Left-click the open (fullscreen) map to drop a waypoint; right-click clears it.");
             ImGui::SameLine();
@@ -12703,7 +12703,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("corners stay fixed; edges/center stretch to size");
             }
             AnchorCombo("Anchor##uim", im->anchor, ed);
-            ImGui::SeparatorText("Shape");
+            SectionHeader("Shape");
             ShapeCombo("Shape##uim", im->shape, ed, &im->cornerRadius);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The image silhouette: circle for avatars, pill/tab for cards, arrows for nav, etc. Applies to the colored fill when no texture is set.");
             if (UIShapeUsesRadius(im->shape))
@@ -12842,7 +12842,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Selected Color##utb", se)) { tb->selected = {se[0], se[1], se[2], se[3]}; ed.dirty = true; }
             float bgc[4] = {tb->background.r, tb->background.g, tb->background.b, tb->background.a};
             if (ImGui::ColorEdit4("Track Color##utb", bgc)) { tb->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
-            ImGui::SeparatorText("Tabs & content");
+            SectionHeader("Tabs & content");
             // Each tab can name a GameObject to show as its content page (others are
             // hidden) — assign one per tab and switching works with no scripting.
             if (tb->pages.size() < tb->tabs.size()) tb->pages.resize(tb->tabs.size());
@@ -12960,7 +12960,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::SmallButton("|<")) anm->Restart();
 
-            ImGui::SeparatorText("Keyframes");
+            SectionHeader("Keyframes");
             ImGui::TextDisabled("Scrub to a time, pose the object, then Record.");
             // Record the object's current transform into keys at the current time.
             if (ImGui::Button("Record Key (transform @ time)")) {

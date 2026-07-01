@@ -3949,6 +3949,34 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
     // moving focus): accept the pending autocomplete suggestion, else indent 4
     // spaces. Shift+Tab dedents the line by up to 4 spaces.
     if (d->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
+        // A multi-line selection: Tab indents every selected line, Shift+Tab outdents
+        // them (block indent, like Rider/VS Code), keeping the selection.
+        int selA = d->SelectionStart, selB = d->SelectionEnd;
+        if (selA > selB) { int t = selA; selA = selB; selB = t; }
+        bool multiLine = selB > selA && [&]{ for (int i = selA; i < selB; ++i) if (d->Buf[i] == '\n') return true; return false; }();
+        if (multiLine) {
+            int firstLs, tmp; lineBounds(selA, firstLs, tmp);
+            std::vector<int> starts;
+            for (int p = firstLs; p < selB; ) {
+                starts.push_back(p);
+                int e = p; while (e < d->BufTextLen && d->Buf[e] != '\n') ++e;
+                p = e + 1; if (e >= d->BufTextLen) break;
+            }
+            int delta = 0;
+            for (int i = (int)starts.size() - 1; i >= 0; --i) {   // bottom-up: offsets stay valid
+                int ls = starts[i];
+                if (io.KeyShift) {
+                    int rem = 0; while (rem < 4 && ls + rem < d->BufTextLen && d->Buf[ls + rem] == ' ') ++rem;
+                    if (rem > 0) { d->DeleteChars(ls, rem); delta -= rem; }
+                } else {
+                    if (d->Buf[ls] != '\n') { d->InsertChars(ls, "    "); delta += 4; }
+                }
+            }
+            (void)delta;
+            d->SelectionStart = firstLs; d->SelectionEnd = selB + delta;
+            d->CursorPos = d->SelectionEnd;
+            return 0;
+        }
         if (io.KeyShift) {
             int ls, le; lineBounds(d->CursorPos, ls, le);
             int rem = 0; while (rem < 4 && ls + rem < d->BufTextLen && d->Buf[ls + rem] == ' ') ++rem;
@@ -4002,6 +4030,14 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         if (e > d->BufTextLen) e = d->BufTextLen;
         d->CursorPos = e; d->SelectionStart = p; d->SelectionEnd = e;
         c->gotoPos = -1; c->gotoSelLen = 0;
+    }
+    // Smart Home: ImGui's Home jumps to column 0; if the line is indented and we
+    // weren't already at the first non-blank, land there instead (toggle) — Rider/VS Code.
+    if (!io.KeyShift && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Home, true)) {
+        int ls, le; lineBounds(d->CursorPos, ls, le);
+        int fnw = ls; while (fnw < le && (d->Buf[fnw] == ' ' || d->Buf[fnw] == '\t')) ++fnw;
+        if (fnw > ls && d->CursorPos == ls && c->pos != fnw)
+            d->CursorPos = d->SelectionStart = d->SelectionEnd = fnw;
     }
     // Replace the whole buffer (format / rename) through ImGui's own edit ops so the
     // native undo/redo stack stays consistent (unlike an external buffer swap).
@@ -5318,6 +5354,42 @@ void DrawScriptEditor(EditorState& ed) {
                         ++i; ++col;
                     }
                 }
+            }
+        }
+        // TODO / FIXME / NOTE / HACK markers inside // comments get a colored tag box
+        // so they stand out (Rider highlights these). Amber for TODO/NOTE, red for
+        // FIXME/HACK/BUG.
+        {
+            const char* t = buf.data();
+            int ln = 0, col = 0;
+            for (int i = 0; t[i]; ) {
+                if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
+                if (t[i] == '/' && t[i + 1] == '/') {
+                    // Scan the comment body for a marker word.
+                    int j = i + 2, jcol = col + 2;
+                    while (t[j] && t[j] != '\n') {
+                        struct M { const char* w; ImU32 c; };
+                        static const M marks[] = {
+                            {"TODO", IM_COL32(210, 160, 60, 90)}, {"NOTE", IM_COL32(90, 150, 90, 90)},
+                            {"FIXME", IM_COL32(210, 80, 80, 100)}, {"HACK", IM_COL32(210, 80, 80, 100)},
+                            {"BUG", IM_COL32(210, 80, 80, 100)},
+                        };
+                        bool hit = false;
+                        for (const auto& m : marks) {
+                            int wl = (int)std::strlen(m.w);
+                            if (std::strncmp(t + j, m.w, wl) == 0) {
+                                ImVec2 a(origin.x + jcol * charW, origin.y + ln * lineH);
+                                edl->AddRectFilled(a, ImVec2(a.x + wl * charW, a.y + lineH), m.c, 3.0f);
+                                j += wl; jcol += wl; hit = true; break;
+                            }
+                        }
+                        if (!hit) { ++j; ++jcol; }
+                    }
+                    // Advance the outer scan to end of line.
+                    while (t[i] && t[i] != '\n') { ++i; ++col; }
+                    continue;
+                }
+                ++i; ++col;
             }
         }
         if (s_highlight) {

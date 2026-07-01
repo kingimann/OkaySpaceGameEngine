@@ -7372,6 +7372,19 @@ void DrawModeling(EditorState& ed) {
 
     auto* mr = go->GetComponent<MeshRenderer>();
     if (mr) {
+        // Auto-refit this object's colliders when its mesh changed since last frame
+        // (subdivide / extrude / any deform), so physics tracks the new shape instead
+        // of the original primitive's bounds. Signature = tri/vert counts + bounds.
+        {
+            static std::unordered_map<GameObject*, std::size_t> s_meshSig;
+            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            std::size_t sig = (std::size_t)mr->mesh.TriangleCount() * 1315423911u + mr->mesh.vertices.size();
+            auto mix = [&](float f) { std::size_t h = std::hash<float>()(f); sig ^= h + 0x9e3779b9 + (sig << 6) + (sig >> 2); };
+            mix(lo.x); mix(lo.y); mix(lo.z); mix(hi.x); mix(hi.y); mix(hi.z);
+            auto it = s_meshSig.find(go);
+            if (it != s_meshSig.end() && it->second != sig) FitColliders(go);   // mesh edited → resync colliders
+            s_meshSig[go] = sig;
+        }
         ImGui::SeparatorText("Mesh");
         ImGui::Text("%s", go->name.c_str());
         // Swap the primitive shape.
@@ -15618,12 +15631,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         Mat4 m = vp * go->transform->LocalToWorldMatrix();
         ImU32 col = (go == ed.selected()) ? IM_COL32(255, 200, 0, 255) : ToColor(mr->color);
         const auto& v = mr->mesh.vertices;
-        const auto& t = mr->mesh.triangles;
-        for (size_t i = 0; i + 2 < t.size(); i += 3) {
-            Vec4 c0 = m * Vec4{v[t[i]], 1}, c1 = m * Vec4{v[t[i + 1]], 1}, c2 = m * Vec4{v[t[i + 2]], 1};
-            clipLine(c0, c1, col, 1.0f);
-            clipLine(c1, c2, col, 1.0f);
-            clipLine(c2, c0, col, 1.0f);
+        // Draw quad/feature edges only — hide flat triangulation diagonals so a
+        // subdivided box reads as a clean grid, not a field of triangles (Blender-style).
+        for (const auto& e : mr->mesh.VisibleEdges()) {
+            Vec4 a = m * Vec4{v[e.first], 1}, b = m * Vec4{v[e.second], 1};
+            clipLine(a, b, col, 1.0f);
         }
     }
 

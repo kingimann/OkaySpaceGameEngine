@@ -288,6 +288,34 @@ int main() {
         CHECK(std::fabs(hi.y - 1.0f) < 1e-3f);            // height (Y) untouched
     }
 
+    // ---- VisibleEdges: flat triangulation diagonals are hidden (tri-to-quad) ----
+    {
+        // A cube shows exactly its 12 box edges — the 6 face diagonals are hidden.
+        Mesh cube = Mesh::Cube(1.0f);
+        CHECK((int)cube.VisibleEdges().size() == 12);
+
+        // A flat quad is one face: its single diagonal is hidden → 4 border edges.
+        Mesh quad = Mesh::Quad(1.0f);
+        CHECK((int)quad.VisibleEdges().size() == 4);
+
+        // Subdivided once → a clean 2x2 quad grid (12 edges), no diagonals shown.
+        Mesh grid = Mesh::Quad(1.0f); grid.Subdivide();
+        CHECK((int)grid.VisibleEdges().size() == 12);
+
+        // A subdivided cube reads as a grid of quads, far fewer edges than raw
+        // triangle edges (which would include every diagonal).
+        Mesh sc = Mesh::Cube(1.0f); sc.Subdivide();
+        int rawEdges = sc.TriangleCount() * 3;              // with duplicates/diagonals
+        CHECK((int)sc.VisibleEdges().size() < rawEdges);
+        // 24 shared border segments (12 cube edges × 2) + 24 internal grid edges
+        // (4 per face × 6); every cell diagonal hidden.
+        CHECK((int)sc.VisibleEdges().size() == 48);
+
+        // A sphere is curved: every edge is a crease, so none are hidden.
+        Mesh sph = Mesh::Sphere(0.5f, 6, 8);
+        CHECK((int)sph.VisibleEdges().size() > 20);         // full wire, nothing collapsed
+    }
+
     // ---- Stretch: scaling along Y about the centre keeps X/Z, grows Y ----
     {
         Mesh m = Mesh::Cube(2.0f);                        // [-1,1]^3

@@ -68,6 +68,16 @@ struct Mesh {
         }
     }
 
+    /// Keep normals valid after an edit WITHOUT changing the mesh's shading mode:
+    /// if it was smooth-shaded (had per-vertex normals) recompute them at the new
+    /// resolution; if it had none, leave it flat (the renderer face-shades). This
+    /// fixes lighting after edits that add/move vertices (Subdivide, deformers) —
+    /// otherwise a stale, wrong-sized normals array corrupts the shading.
+    void RefreshNormals() {
+        if (normals.empty()) return;                 // flat-shaded: stay flat (face normals)
+        ComputeSmoothNormals();                       // was smooth: rebuild at the new resolution
+    }
+
     // ---- Primitive generators -----------------------------------------
     static Mesh Quad(float size = 1.0f) {
         float h = size * 0.5f;
@@ -404,6 +414,72 @@ struct Mesh {
             outMax = {std::fmax(outMax.x, v.x), std::fmax(outMax.y, v.y), std::fmax(outMax.z, v.z)};
         }
     }
+    /// Edges worth drawing in a wireframe: every real edge EXCEPT the internal
+    /// triangulation diagonals of flat quads. Two coplanar triangles that form a
+    /// convex quad are treated as one face and their shared (diagonal) edge is
+    /// hidden — so a cube reads as 6 quads and a subdivided face as a clean grid,
+    /// instead of a mess of triangles. Boundary edges and creases (angled faces,
+    /// e.g. a sphere) are always kept. Returned as pairs of vertex indices.
+    /// `angleDeg` is the crease threshold; larger keeps fewer diagonals.
+    std::vector<std::pair<int, int>> VisibleEdges(float angleDeg = 12.0f) const {
+        std::vector<std::pair<int, int>> out;
+        const int nTris = TriangleCount();
+        if (nTris == 0) return out;
+        // Weld positions to canonical ids so shared edges match across duplicates.
+        std::map<std::tuple<int, int, int>, int> rep;
+        std::vector<int> cid(vertices.size());
+        std::vector<int> repVert;                            // canonical id -> a vertex index
+        auto key = [](const Vec3& v) {
+            return std::make_tuple((int)std::lround(v.x * 1024.0f),
+                                   (int)std::lround(v.y * 1024.0f),
+                                   (int)std::lround(v.z * 1024.0f));
+        };
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            auto it = rep.find(key(vertices[i]));
+            if (it == rep.end()) { int id = (int)repVert.size(); rep[key(vertices[i])] = id; repVert.push_back((int)i); cid[i] = id; }
+            else cid[i] = it->second;
+        }
+        // Per-triangle normal + the canonical ids of its corners.
+        struct Tri { int c[3]; Vec3 n; };
+        std::vector<Tri> tri(nTris);
+        for (int f = 0; f < nTris; ++f) {
+            int a = triangles[f * 3], b = triangles[f * 3 + 1], c = triangles[f * 3 + 2];
+            tri[f].c[0] = cid[a]; tri[f].c[1] = cid[b]; tri[f].c[2] = cid[c];
+            Vec3 fn = Vec3::Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]);
+            float m = fn.Magnitude(); tri[f].n = m > 1e-8f ? fn * (1.0f / m) : Vec3{0, 0, 0};
+        }
+        // Edge -> the (up to two) triangles sharing it.
+        std::map<std::pair<int, int>, std::vector<int>> edgeTris;
+        auto ek = [](int a, int b) { return std::make_pair(std::min(a, b), std::max(a, b)); };
+        for (int f = 0; f < nTris; ++f)
+            for (int e = 0; e < 3; ++e)
+                edgeTris[ek(tri[f].c[e], tri[f].c[(e + 1) % 3])].push_back(f);
+        // Candidate diagonals: internal, coplanar, convex-quad edges — sorted by
+        // descending length so a quad's true diagonal (longer) is hidden before its
+        // grid-edge legs (shorter), and each triangle is consumed at most once.
+        const float cosT = std::cos(angleDeg * 3.14159265358979323846f / 180.0f);
+        auto pos = [&](int c) { return vertices[repVert[c]]; };
+        struct Cand { std::pair<int, int> e; int t0, t1; float len; };
+        std::vector<Cand> cands;
+        for (auto& kv : edgeTris) {
+            if (kv.second.size() != 2) continue;
+            int t0 = kv.second[0], t1 = kv.second[1];
+            float d = tri[t0].n.x * tri[t1].n.x + tri[t0].n.y * tri[t1].n.y + tri[t0].n.z * tri[t1].n.z;
+            if (d < cosT) continue;                          // a crease — keep this edge
+            float len = (pos(kv.first.first) - pos(kv.first.second)).Magnitude();
+            cands.push_back({kv.first, t0, t1, len});
+        }
+        std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.len > b.len; });
+        std::vector<char> used(nTris, 0);
+        std::set<std::pair<int, int>> hidden;
+        for (const Cand& c : cands)
+            if (!used[c.t0] && !used[c.t1]) { used[c.t0] = used[c.t1] = 1; hidden.insert(c.e); }
+        for (auto& kv : edgeTris)
+            if (hidden.find(kv.first) == hidden.end())
+                out.push_back({repVert[kv.first.first], repVert[kv.first.second]});
+        return out;
+    }
+
     /// Center of the bounding box.
     Vec3 Center() const {
         Vec3 lo, hi; Bounds(lo, hi);
@@ -551,6 +627,7 @@ struct Mesh {
         Quat q = Quat::Euler(eulerDegrees);
         for (Vec3& v : vertices) v = q * v;
         name = "";
+        RefreshNormals();
     }
     Mesh Rotated(const Vec3& eulerDegrees) const { Mesh m = *this; m.RotateVerts(eulerDegrees); return m; }
 
@@ -568,6 +645,7 @@ struct Mesh {
         name = "";
         vertices.insert(vertices.end(), other.vertices.begin(), other.vertices.end());
         for (int t : other.triangles) triangles.push_back(t + base);
+        RefreshNormals();
     }
     static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
 
@@ -578,6 +656,7 @@ struct Mesh {
     void Mirror(int axis = 0, bool weld = true) {
         if (axis < 0 || axis > 2 || vertices.empty()) return;
         const bool faceCols = HasFaceColors();
+        const bool hadNormals = HasNormals();
         Mesh copy = *this;
         for (Vec3& v : copy.vertices) (&v.x)[axis] = -(&v.x)[axis];   // reflect
         copy.FlipWinding();                                          // keep faces outward
@@ -589,6 +668,7 @@ struct Mesh {
         normals.clear();
         name = "";
         if (weld) WeldVertices();
+        if (hadNormals) ComputeSmoothNormals();      // preserve smooth shading through the mirror
     }
     Mesh Mirrored(int axis = 0, bool weld = true) const { Mesh m = *this; m.Mirror(axis, weld); return m; }
 
@@ -614,8 +694,8 @@ struct Mesh {
             v.y += (onSphere.y - v.y) * amount;
             v.z += (onSphere.z - v.z) * amount;
         }
-        normals.clear();
         name = "";
+        RefreshNormals();                            // rounding a shape re-smooths its lighting
     }
 
     /// Twist the mesh around an axis: each vertex rotates about that axis by
@@ -635,8 +715,8 @@ struct Mesh {
             (&v.x)[a] = pa * ca - pb * sa;
             (&v.x)[b] = pa * sa + pb * ca;
         }
-        normals.clear();
         name = "";
+        RefreshNormals();
     }
 
     /// Taper along an axis: scale the two perpendicular axes from full size at the
@@ -655,8 +735,8 @@ struct Mesh {
             (&v.x)[b] = (&c.x)[b] + ((&v.x)[b] - (&c.x)[b]) * s;
             (&v.x)[d] = (&c.x)[d] + ((&v.x)[d] - (&c.x)[d]) * s;
         }
-        normals.clear();
         name = "";
+        RefreshNormals();
     }
 
     /// Bend the mesh into an arc: sweep it around a circle so a straight bar curves by
@@ -808,6 +888,7 @@ struct Mesh {
         triangles = std::move(out);
         if (faceCols) triColors = std::move(outCols);
         name = "";
+        RefreshNormals();                            // keep lighting valid at the new resolution
     }
 
     /// Push every vertex onto a sphere of the given radius about the origin —
@@ -818,6 +899,7 @@ struct Mesh {
             if (m > 1e-6f) v = v * (radius / m);
         }
         name = "";
+        RefreshNormals();
     }
 
     /// Per-vertex normals, area-weighted from the adjacent faces (for lighting /
@@ -943,6 +1025,7 @@ struct Mesh {
                 : vertices[i];
         }
         vertices = std::move(moved);
+        RefreshNormals();
     }
 
     /// Take low-poly geometry up to smooth high-poly: `iterations` rounds of
@@ -986,6 +1069,7 @@ struct Mesh {
         for (int v : verts)
             if (v >= 0 && v < (int)vertices.size()) vertices[v] += delta;
         name = "";
+        RefreshNormals();
     }
 
     /// Region-extrude the selected set of triangles along their averaged normal:
@@ -1049,7 +1133,7 @@ struct Mesh {
             triangles[i] = newIndex[v0]; triangles[i + 1] = newIndex[v1]; triangles[i + 2] = newIndex[v2];
         }
         name = "";
-        ComputeSmoothNormals();
+        RefreshNormals();     // keep the mesh's shading mode (flat stays flat → hard extrude edges)
     }
 
     /// Inset the selected region: duplicate its vertices, pulled toward the region
@@ -1106,7 +1190,7 @@ struct Mesh {
             triangles[i] = newIndex[v0]; triangles[i + 1] = newIndex[v1]; triangles[i + 2] = newIndex[v2];
         }
         name = "";
-        ComputeSmoothNormals();
+        RefreshNormals();     // keep the mesh's shading mode (flat stays flat → hard extrude edges)
     }
 
     /// 1->4 midpoint subdivision of ONLY the listed triangles. Midpoints are
@@ -1139,7 +1223,7 @@ struct Mesh {
         }
         triangles = std::move(out);
         name = "";
-        ComputeSmoothNormals();
+        RefreshNormals();
     }
 
     /// Delete the listed triangles (erasing their 3 indices each). Sorted

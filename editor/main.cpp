@@ -2319,6 +2319,16 @@ void DrawStatusBar(EditorState& ed) {
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::AlignTextToFramePadding();
     ImGui::Indent(8.0f);
+    // A flat, text-like button (transparent bg, accent hover) for clickable segments.
+    auto flatBtn = [&](const char* label) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(0.35f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentCol(0.55f));
+        bool c = ImGui::SmallButton(label);
+        ImGui::PopStyleColor(3);
+        return c;
+    };
+    // Left: the selection (click to frame it, like the Scene's Frame button).
     if (GameObject* sel = ed.selected()) {
         ImGui::TextColored(AccentCol(1.0f), "\xE2\x97\x8F"); ImGui::SameLine(0, 6);
         const char* ty = sel->GetComponent<Camera>() ? "Camera"
@@ -2326,19 +2336,35 @@ void DrawStatusBar(EditorState& ed) {
                        : sel->GetComponent<SpriteRenderer>() ? "Sprite"
                        : sel->GetComponent<TextRenderer>() ? "Text"
                        : sel->GetComponent<Light>() ? "Light" : "Object";
-        ImGui::Text("%s", sel->name.c_str());
+        if (flatBtn(sel->name.c_str())) {
+            Vec3 p = sel->transform->Position();
+            ed.camTarget = p; ed.cameraPos = {p.x, p.y};
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to frame this object (F)");
         ImGui::SameLine(0, 6); ImGui::TextDisabled("(%s)", ty);
     } else {
         ImGui::TextDisabled("No selection");
     }
+    // Right cluster: object count · tool (click to cycle) · mode · FPS, right-aligned.
+    ImGuiStyle& st = ImGui::GetStyle();
+    char c1[32], c3[24];
+    std::snprintf(c1, sizeof(c1), "%d objects", (int)ed.scene().Objects().size());
+    std::snprintf(c3, sizeof(c3), "%.0f FPS", ImGui::GetIO().Framerate);
     const char* toolName = g_tool == Tool::Move ? "Move" : g_tool == Tool::Rotate ? "Rotate" : "Scale";
-    char right[144];
-    std::snprintf(right, sizeof(right), "%d objects    %s    %s    %.0f FPS",
-                  (int)ed.scene().Objects().size(), toolName,
-                  ed.isPlaying() ? "PLAY" : "EDIT", ImGui::GetIO().Framerate);
-    float rw = ImGui::CalcTextSize(right).x;
-    ImGui::SameLine(ImGui::GetWindowWidth() - rw - 14.0f);
-    ImGui::TextDisabled("%s", right);
+    const char* mode = ed.isPlaying() ? "PLAY" : "EDIT";
+    const float gap = 16.0f;
+    float wTool = ImGui::CalcTextSize(toolName).x + st.FramePadding.x * 2.0f;
+    float total = ImGui::CalcTextSize(c1).x + gap + wTool + gap +
+                  ImGui::CalcTextSize(mode).x + gap + ImGui::CalcTextSize(c3).x;
+    ImGui::SameLine(ImGui::GetWindowWidth() - total - 14.0f);
+    ImGui::TextDisabled("%s", c1);
+    ImGui::SameLine(0, gap);
+    if (flatBtn(toolName)) g_tool = (Tool)(((int)g_tool + 1) % 3);   // cycle Move→Rotate→Scale
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Transform tool — click to cycle (W/E/R)");
+    ImGui::SameLine(0, gap);
+    ImGui::TextColored(ed.isPlaying() ? ImVec4(0.45f, 0.85f, 0.5f, 1) : ImVec4(0.62f, 0.64f, 0.68f, 1), "%s", mode);
+    ImGui::SameLine(0, gap);
+    ImGui::TextDisabled("%s", c3);
     ImGui::Unindent(8.0f);
     ImGui::EndChild();
     ImGui::PopStyleColor();

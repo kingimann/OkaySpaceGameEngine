@@ -4015,16 +4015,40 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
         d->InsertChars(d->CursorPos, c->insert.c_str());
         c->insert.clear();
     }
-    // Toggle a line comment ("// ") at the first non-space of the caret's line.
+    // Toggle "// " on the caret's line, or on EVERY line spanned by the selection
+    // (Rider/VS Code). If any selected line is uncommented, all get commented; else
+    // all get uncommented.
     if (c->toggleComment) {
         c->toggleComment = false;
-        int ls, le; lineBounds(d->CursorPos, ls, le);
-        int fnw = ls; while (fnw < le && (d->Buf[fnw] == ' ' || d->Buf[fnw] == '\t')) ++fnw;
-        if (fnw + 1 < d->BufTextLen && d->Buf[fnw] == '/' && d->Buf[fnw + 1] == '/') {
-            int rem = (fnw + 2 < d->BufTextLen && d->Buf[fnw + 2] == ' ') ? 3 : 2;
-            d->DeleteChars(fnw, rem);
-        } else {
-            d->InsertChars(fnw, "// ");
+        int selA = d->SelectionStart, selB = d->SelectionEnd;
+        if (selA > selB) { int t = selA; selA = selB; selB = t; }
+        int firstLs, tmp; lineBounds(selA, firstLs, tmp);
+        int lastLs, lastLe; lineBounds(selB > selA ? selB - 1 : selB, lastLs, lastLe);
+        // Collect the start of each line in the range.
+        std::vector<int> lineStarts;
+        for (int p = firstLs; p <= lastLs; ) {
+            lineStarts.push_back(p);
+            int e = p; while (e < d->BufTextLen && d->Buf[e] != '\n') ++e;
+            p = e + 1;
+            if (e >= d->BufTextLen) break;
+        }
+        auto isCommented = [&](int ls){
+            int f = ls; while (f < d->BufTextLen && (d->Buf[f]==' '||d->Buf[f]=='\t')) ++f;
+            return f + 1 < d->BufTextLen && d->Buf[f]=='/' && d->Buf[f+1]=='/';
+        };
+        bool allCommented = true;
+        for (int ls : lineStarts) { int f=ls; while (f<d->BufTextLen && (d->Buf[f]==' '||d->Buf[f]=='\t')) ++f;
+            if (f < d->BufTextLen && d->Buf[f] != '\n' && !isCommented(ls)) { allCommented = false; break; } }
+        // Apply bottom-up so earlier edits don't shift later line offsets.
+        for (int i = (int)lineStarts.size() - 1; i >= 0; --i) {
+            int ls = lineStarts[i];
+            int f = ls; while (f < d->BufTextLen && (d->Buf[f]==' '||d->Buf[f]=='\t')) ++f;
+            if (f < d->BufTextLen && d->Buf[f] == '\n') continue;   // skip blank lines
+            if (allCommented) {
+                if (isCommented(ls)) { int rem = (f+2 < d->BufTextLen && d->Buf[f+2]==' ') ? 3 : 2; d->DeleteChars(f, rem); }
+            } else {
+                d->InsertChars(f, "// ");
+            }
         }
     }
     // Ctrl+D: duplicate the caret's line below it.
@@ -4080,13 +4104,23 @@ static int ScriptCaretCallback(ImGuiInputTextCallbackData* d) {
             // Copy the broken line's leading whitespace; add a level after '{'.
             int nl = d->CursorPos - 1;
             int pls = nl; while (pls > 0 && d->Buf[pls - 1] != '\n') --pls;
-            std::string indent;
-            for (int i = pls; i < nl && (d->Buf[i] == ' ' || d->Buf[i] == '\t'); ++i) indent += d->Buf[i];
+            std::string baseIndent;
+            for (int i = pls; i < nl && (d->Buf[i] == ' ' || d->Buf[i] == '\t'); ++i) baseIndent += d->Buf[i];
             int last = nl - 1; while (last >= pls && (d->Buf[last] == ' ' || d->Buf[last] == '\t')) --last;
-            if (last >= pls && d->Buf[last] == '{') indent += "    ";
-            if (!indent.empty()) {
-                int c0 = d->CursorPos; d->InsertChars(c0, indent.c_str());
-                d->CursorPos = d->SelectionStart = d->SelectionEnd = c0 + (int)indent.size();
+            bool afterOpen = (last >= pls && d->Buf[last] == '{');
+            std::string indent = baseIndent + (afterOpen ? "    " : "");
+            // Block expansion: pressing Enter with the caret between "{|}" pushes the
+            // closer onto its own line and leaves the caret on an indented middle line.
+            bool beforeClose = afterOpen && d->CursorPos < d->BufTextLen && d->Buf[d->CursorPos] == '}';
+            if (!indent.empty() || beforeClose) {
+                int c0 = d->CursorPos;
+                if (!indent.empty()) d->InsertChars(c0, indent.c_str());
+                int mid = c0 + (int)indent.size();
+                if (beforeClose) {
+                    std::string tail = "\n" + baseIndent;
+                    d->InsertChars(mid, tail.c_str());   // '}' drops to its own line
+                }
+                d->CursorPos = d->SelectionStart = d->SelectionEnd = mid;
             }
         } else if ((ch == '(' || ch == '[' || ch == '{' || ch == '"') &&
                    (next == '\0' || next == ' ' || next == ')' || next == ']' ||

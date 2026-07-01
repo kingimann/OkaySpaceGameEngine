@@ -1602,6 +1602,13 @@ void ApplyTheme() {
     c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.400f, 0.400f, 0.430f, 1.00f);
     c[ImGuiCol_ScrollbarGrabActive]  = accent;
     c[ImGuiCol_DockingEmptyBg]   = ImVec4(0.110f, 0.110f, 0.118f, 1.00f);
+    // Tables: a defined header, faint zebra rows, and low-contrast grid lines so
+    // multi-column views (bindings, stats, asset lists) read cleanly.
+    c[ImGuiCol_TableHeaderBg]    = ImVec4(0.205f, 0.205f, 0.220f, 1.00f);
+    c[ImGuiCol_TableBorderStrong]= ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
+    c[ImGuiCol_TableBorderLight] = ImVec4(0.00f, 0.00f, 0.00f, 0.25f);
+    c[ImGuiCol_TableRowBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_TableRowBgAlt]    = ImVec4(1.00f, 1.00f, 1.00f, 0.022f);   // subtle zebra
 }
 
 // Build the default Unity-style dock layout once.
@@ -2326,6 +2333,16 @@ void DrawConsole() {
             if (mergedCount[row] > 1) label += "  (" + std::to_string(mergedCount[row]) + ")";
             label += "##c" + std::to_string(i);
             if (ImGui::Selectable(label.c_str(), selected == i)) selected = i;
+            // A severity color-bar down the left edge, plus a faint row wash for
+            // warnings/errors so they stand out when scanning a busy log.
+            ImVec2 rmn = ImGui::GetItemRectMin(), rmx = ImGui::GetItemRectMax();
+            ImDrawList* cdl = ImGui::GetWindowDrawList();
+            if (e.level > 0) {
+                const ImVec4& lc = levelCol[e.level];
+                cdl->AddRectFilled(rmn, ImVec2(rmx.x, rmx.y),
+                                   ImGui::GetColorU32(ImVec4(lc.x, lc.y, lc.z, e.level == 2 ? 0.09f : 0.05f)));
+            }
+            cdl->AddRectFilled(rmn, ImVec2(rmn.x + 3.0f, rmx.y), ImGui::GetColorU32(levelCol[e.level]));
             ImGui::PopStyleColor();
         }
         if (autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);

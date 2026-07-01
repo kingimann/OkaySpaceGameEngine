@@ -167,6 +167,15 @@ bool SliderFloat(const char* label, float* value, float minV, float maxV);
 /// An integer slider over [minV, maxV]. Edits *value in place; true on change.
 bool SliderInt(const char* label, int* value, int minV, int maxV);
 void ProgressBar(float fraction, const char* overlay = nullptr);
+/// A line graph of `values[0..count)`. If scaleMin >= scaleMax the range is taken
+/// from the data. `height` <= 0 uses a default. Great for FPS/telemetry HUDs.
+void PlotLines(const char* label, const float* values, int count,
+               float scaleMin = 0.0f, float scaleMax = 0.0f, float height = 0.0f);
+/// A bar chart of `values[0..count)` (same scaling rules as PlotLines).
+void PlotHistogram(const char* label, const float* values, int count,
+                   float scaleMin = 0.0f, float scaleMax = 0.0f, float height = 0.0f);
+/// A read-only "label: value" row (ImGui's LabelText) — value on the left, label right.
+void LabelText(const char* label, const char* value);
 bool InputText(const char* label, char* buf, int cap);
 /// An integer field with [-]/[+] stepper buttons that change *value by `step`.
 /// Returns true on any frame the value changed.

@@ -193,6 +193,37 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
     I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
 }
 
+// A quad from four arbitrary corners (for rotated/skewed shapes and thick lines).
+void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
+             float dx, float dy, const unsigned char c[4]) {
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
+    const SDL_Color sc = toColor(c);
+    const int base = nv;
+    SDL_FPoint uv; uv.x = 0.0f; uv.y = 0.0f;
+    SDL_Vertex v; v.color = sc; v.tex_coord = uv;
+    v.position.x = ax; v.position.y = ay; V[nv++] = v;
+    v.position.x = bx; v.position.y = by; V[nv++] = v;
+    v.position.x = cx; v.position.y = cy; V[nv++] = v;
+    v.position.x = dx; v.position.y = dy; V[nv++] = v;
+    I[ni++] = base + 0; I[ni++] = base + 1; I[ni++] = base + 2;
+    I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
+}
+
+// A straight line of thickness `th` between two points, as a thin rotated quad.
+void line(float x0, float y0, float x1, float y1, float th, const unsigned char c[4]) {
+    float dx = x1 - x0, dy = y1 - y0;
+    float len = dx * dx + dy * dy;
+    if (len <= 0.0001f) { quad(x0 - th * 0.5f, y0 - th * 0.5f, th, th, c); return; }
+    len = 1.0f / SDL_sqrtf(len);
+    // Perpendicular unit vector * half thickness.
+    float px = -dy * len * th * 0.5f, py = dx * len * th * 0.5f;
+    quadPts(x0 + px, y0 + py, x1 + px, y1 + py, x1 - px, y1 - py, x0 - px, y0 - py, c);
+}
+
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str) return;
@@ -777,6 +808,67 @@ void ProgressBar(float fraction, const char* overlay) {
     if (overlay && *overlay) {
         const float tw = labelW(overlay);
         drawText(x + (w - tw) * 0.5f, y + (h - textH()) * 0.5f, overlay, g_theme.textScale, g_theme.text);
+    }
+}
+
+// Shared framing + scaling for the two plot widgets. Returns the plot rect and the
+// resolved min/max; reserves layout space (leaving room for a label to the right).
+static bool plotFrame(const char* label, const float* values, int count,
+                      float& scaleMin, float& scaleMax, float height,
+                      float& px, float& py, float& pw, float& ph) {
+    if (!g_lay.active || !values || count <= 0) return false;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float h = height > 0.0f ? height : rowH() * 2.4f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    pw = w - lw; if (pw < 24.0f) pw = 24.0f;
+    px = x; py = y; ph = h;
+    if (lw > 0.0f) drawText(x + pw + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    if (scaleMin >= scaleMax) {              // auto-range from the data
+        scaleMin = values[0]; scaleMax = values[0];
+        for (int i = 1; i < count; ++i) { if (values[i] < scaleMin) scaleMin = values[i];
+                                          if (values[i] > scaleMax) scaleMax = values[i]; }
+        if (scaleMax - scaleMin < 0.0001f) scaleMax = scaleMin + 1.0f;
+    }
+    quad(px, py, pw, ph, g_theme.track);      // framed background
+    return true;
+}
+
+void PlotLines(const char* label, const float* values, int count,
+               float scaleMin, float scaleMax, float height) {
+    float px, py, pw, ph;
+    if (!plotFrame(label, values, count, scaleMin, scaleMax, height, px, py, pw, ph)) return;
+    const float span = scaleMax - scaleMin;
+    auto sy = [&](float v) { return py + ph - 2.0f - ((v - scaleMin) / span) * (ph - 4.0f); };
+    const float step = count > 1 ? (pw - 4.0f) / (count - 1) : 0.0f;
+    for (int i = 0; i + 1 < count; ++i) {
+        float x0 = px + 2.0f + step * i,     y0 = sy(values[i]);
+        float x1 = px + 2.0f + step * (i + 1), y1 = sy(values[i + 1]);
+        line(x0, y0, x1, y1, 1.5f, g_theme.accent);
+    }
+}
+
+void PlotHistogram(const char* label, const float* values, int count,
+                   float scaleMin, float scaleMax, float height) {
+    float px, py, pw, ph;
+    if (!plotFrame(label, values, count, scaleMin, scaleMax, height, px, py, pw, ph)) return;
+    const float span = scaleMax - scaleMin;
+    const float bw = (pw - 4.0f) / count;
+    for (int i = 0; i < count; ++i) {
+        float t = (values[i] - scaleMin) / span; if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+        float bh = t * (ph - 4.0f);
+        quad(px + 2.0f + bw * i + 1.0f, py + ph - 2.0f - bh, bw - 2.0f, bh, g_theme.accent);
+    }
+}
+
+void LabelText(const char* label, const char* value) {
+    if (!g_lay.active) return;
+    const float h = rowH(), w = availW();
+    float x, y; place(w, h, x, y);
+    if (value && *value) drawText(x, y + (h - textH()) * 0.5f, value, g_theme.textScale, g_theme.text);
+    if (label && *label) {
+        const float lw = labelW(label);
+        drawText(x + w - lw, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
     }
 }
 

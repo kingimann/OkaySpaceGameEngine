@@ -430,6 +430,30 @@ int main(int argc, char** argv) {
         CHECK(redCount(false) < 5);
     }
 
+    // --- PlotLines / PlotHistogram: draw accent-colored data inside a frame. ---
+    {
+        const float data[] = {0.0f, 1.0f, 2.0f, 1.5f, 3.0f, 0.5f, 2.5f};
+        auto accentPixels = [&](bool histogram) {
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 255); SDL_RenderClear(r);
+            OkayUI::BeginFrame(OkayUI::Input{});
+            OkayUI::Begin("PLW", 4, 4, 230, 84);
+            if (histogram) OkayUI::PlotHistogram("", data, 7);
+            else           OkayUI::PlotLines("", data, 7);
+            OkayUI::End(); OkayUI::EndFrame(r);
+            SDL_LockSurface(surf);
+            int accent = 0;   // theme accent is a blue (84,150,240): blue-dominant pixels
+            for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x) {
+                Uint32 px = pixelAt(surf, x, y);
+                Uint8 rr = (px >> 16) & 0xFF, gg = (px >> 8) & 0xFF, bb = px & 0xFF;
+                if (bb > 180 && bb > rr + 40 && gg > 80) ++accent;
+            }
+            SDL_UnlockSurface(surf);
+            return accent;
+        };
+        CHECK(accentPixels(false) > 15);   // line plot drew
+        CHECK(accentPixels(true) > 15);    // histogram drew
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

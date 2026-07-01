@@ -121,9 +121,10 @@ void EndFrameData();
 
 /// Begin an auto-layout window at (x, y) sized w*h. The position is the INITIAL
 /// placement; the window is draggable by its title bar thereafter (state keyed by
-/// the title). Widgets called until End() stack inside it. Returns true (reserved
-/// for a future collapsed state) — pair every Begin() with End().
-bool Begin(const char* title, float x, float y, float w, float h);
+/// the title). A caret on the left of the title bar collapses/expands the window.
+/// Returns false when collapsed — skip the widget calls but ALWAYS pair with End().
+/// Pass `p_open` to add a close [x] button that sets *p_open = false when clicked.
+bool Begin(const char* title, float x, float y, float w, float h, bool* p_open = nullptr);
 void End();
 
 /// Keep the next widget on the current line instead of starting a new one

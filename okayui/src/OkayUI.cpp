@@ -495,7 +495,7 @@ const Font* FontBold()      { return &kFontBold; }
 
 // ---- Auto-layout window + ImGui-style overloads --------------------------------
 
-bool Begin(const char* title, float x, float y, float w, float h) {
+bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) {
     g_lay.seed = 0;                    // hash the window id from a FIXED seed so it (and
     const int id = hashLabel(title);   // every widget id under it) is stable across frames
     WinSlot* slot = nullptr;
@@ -503,22 +503,54 @@ bool Begin(const char* title, float x, float y, float w, float h) {
     if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { ws.used = true; ws.id = id; ws.x = x; ws.y = y; slot = &ws; break; }
     float wx = slot ? slot->x : x, wy = slot ? slot->y : y;
     const float titleH = rowH();
+    bool* collapsed = openState(id ^ 0x5c01, false);   // per-window collapsed flag
 
-    // Drag the window by its title bar (reuses the active-item mechanism).
-    const bool overTitle = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, titleH);
-    if (overTitle) g_hot = id;
+    // Title-bar sub-rects: a collapse caret on the left, an optional close [x] on the
+    // right, and the draggable strip in between.
+    const float btn = titleH;
+    const float caretX = wx, caretW = btn;
+    const float closeX = wx + w - btn, closeW = p_open ? btn : 0.0f;
+
+    // Collapse toggle: click the caret to fold/unfold the window.
+    const bool overCaret = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, caretX, wy, caretW, titleH);
+    if (overCaret) g_hot = id ^ 0x5c01;
+    if (g_active == (id ^ 0x5c01)) { if (g_released) { if (overCaret) *collapsed = !*collapsed; g_active = 0; } }
+    else if (overCaret && g_pressed) { g_active = id ^ 0x5c01; g_focusClaimed = true; }
+
+    // Close button: click the [x] to clear *p_open.
+    bool overClose = false;
+    if (p_open) {
+        overClose = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, closeX, wy, closeW, titleH);
+        if (overClose) g_hot = id ^ 0xc105;
+        if (g_active == (id ^ 0xc105)) { if (g_released) { if (overClose) *p_open = false; g_active = 0; } }
+        else if (overClose && g_pressed) { g_active = id ^ 0xc105; g_focusClaimed = true; }
+    }
+
+    // Drag the window by the title bar (the strip between caret and close button).
+    const float dragX = wx + caretW, dragW = w - caretW - closeW;
+    const bool overDrag = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, dragX, wy, dragW, titleH);
+    if (overDrag) g_hot = id;
     if (g_active == id) {
         if (!g_in.mouseDown) g_active = 0;
         else if (slot) { slot->x += g_mouseDX; slot->y += g_mouseDY; wx = slot->x; wy = slot->y; }
-    } else if (overTitle && g_pressed) {
+    } else if (overDrag && g_pressed) {
         g_active = id; g_focusClaimed = true;
     }
 
-    // Frame: panel body + title bar + accent underline + title text.
-    Panel(wx, wy, w, h);
+    // Frame: panel body (only the title bar when collapsed) + accent underline + title.
+    const float bodyH = *collapsed ? titleH : h;
+    Panel(wx, wy, w, bodyH);
     quad(wx, wy, w, titleH, g_theme.bgDown);
     quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
-    if (title && *title) drawText(wx + 10.0f, wy + (titleH - textH()) * 0.5f, title, g_theme.textScale, g_theme.text);
+    const float s = g_theme.textScale;
+    drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret
+    if (title && *title) drawText(wx + 8.0f + fW() * s * 2.0f, wy + (titleH - textH()) * 0.5f, title, s, g_theme.text);
+    if (p_open) {
+        const unsigned char* xcol = overClose ? g_theme.accent : g_theme.text;
+        drawText(closeX + (btn - fW() * s) * 0.5f, wy + (titleH - textH()) * 0.5f, "x", s, xcol);
+    }
+
+    if (*collapsed) { g_lay.active = false; return false; }   // folded: skip content
 
     // Establish the content layout region.
     const float pad = 10.0f;

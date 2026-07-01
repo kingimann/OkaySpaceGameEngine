@@ -338,6 +338,41 @@ int main(int argc, char** argv) {
         CHECK(total == 1);
     }
 
+    // --- Window collapse: clicking the title-bar caret folds the window. ---
+    {
+        release();
+        bool contentRan = false;
+        auto frame = [&](bool down) {
+            OkayUI::Input a; a.mouseX = 18; a.mouseY = 20; a.mouseDown = down;   // over the caret
+            OkayUI::BeginFrame(a);
+            contentRan = false;
+            if (OkayUI::Begin("ColW", 10, 10, 200, 160)) { OkayUI::Text("body"); contentRan = true; }
+            OkayUI::End();
+            OkayUI::EndFrame(r);
+        };
+        frame(false); CHECK(contentRan);      // starts expanded
+        frame(true); frame(false);            // click the caret -> toggle collapsed
+        frame(false); CHECK(!contentRan);     // now folded: Begin returned false
+        frame(true); frame(false);            // click again -> expand
+        frame(false); CHECK(contentRan);
+    }
+
+    // --- Window close button: clicking [x] clears the caller's open flag. ---
+    {
+        release();
+        bool open = true;
+        auto frame = [&](bool down) {
+            OkayUI::Input a; a.mouseX = 196; a.mouseY = 20; a.mouseDown = down;  // over the [x]
+            OkayUI::BeginFrame(a);
+            if (OkayUI::Begin("CloseW", 10, 10, 200, 160, &open)) OkayUI::Text("body");
+            OkayUI::End();
+            OkayUI::EndFrame(r);
+        };
+        frame(false); CHECK(open);
+        frame(true); frame(false);
+        CHECK(!open);   // close button cleared it
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

@@ -4567,6 +4567,23 @@ void DrawScriptEditor(EditorState& ed) {
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
             if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;
         }
+        // Go to Definition (F12): jump to the function/class under the caret.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
+            const char* t = buf.data(); int len = (int)std::strlen(t);
+            int cp = caret.pos < 0 ? 0 : (caret.pos > len ? len : caret.pos);
+            auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
+            int ws = cp; while (ws > 0 && isW(t[ws - 1])) --ws;
+            int we = cp; while (we < len && isW(t[we])) ++we;
+            std::string word(t + ws, t + we);
+            if (!word.empty()) {
+                for (const auto& s : ScriptOutline(buf.data())) {
+                    std::string nm = s.second.size() > 3 ? s.second.substr(3) : s.second;  // strip "f  "/"C  "
+                    if (nm == word) { caret.gotoLine = s.first; s_scrollToLine = s.first;
+                                      ConsoleLog("Go to " + nm + " (line " + std::to_string(s.first) + ")"); break; }
+                }
+            }
+        }
         // Snippets: insert a common template at the caret.
         ImGui::SameLine();
         if (ImGui::SmallButton("Snippet")) ImGui::OpenPopup("##snippets");

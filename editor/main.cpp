@@ -15070,10 +15070,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                     dl->AddRectFilled(ImVec2(h[i].x - 4, h[i].y - 4),
                                       ImVec2(h[i].x + 4, h[i].y + 4), IM_COL32(255, 200, 0, 255));
             }
-            // Live size readout above the box (the unscaled pixel size you author).
-            char dims[48];
-            std::snprintf(dims, sizeof(dims), "%g x %g", r.size.x, r.size.y);
-            dl->AddText(ImVec2(a.x, a.y - 16), IM_COL32(255, 220, 120, 255), dims);
+            // Live position + size readout above the box (the unscaled pixel values
+            // you author), on a dark chip so it stays legible over any content.
+            char dims[80];
+            std::snprintf(dims, sizeof(dims), "%g, %g   %g x %g",
+                          r.position ? r.position->x : 0.0f, r.position ? r.position->y : 0.0f,
+                          r.size.x, r.size.y);
+            ImVec2 tp(a.x, a.y - 17);
+            ImVec2 ts = ImGui::CalcTextSize(dims);
+            dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 1), ImVec2(tp.x + ts.x + 3, tp.y + ts.y + 1),
+                              IM_COL32(0, 0, 0, 140), 3.0f);
+            dl->AddText(tp, IM_COL32(255, 220, 120, 255), dims);
         }
         // Smart-snap alignment guides (magenta), full canvas extent.
         if (g_uiGuideX >= 0.0f)
@@ -17488,10 +17495,16 @@ void DrawViewport(EditorState& ed) {
         // just the UI overlay (no 3D/2D world). Unity's dedicated UI editing view.
         dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(28, 28, 32, 255));
         dl->AddRect(canvasPos, canvasEnd, IM_COL32(90, 95, 110, 200), 0.0f, 0, 1.5f);
-        // Faint center crosshair to help align centered UI.
+        // Rule-of-thirds guides + a brighter center cross, to help align UI.
+        for (int i = 1; i <= 2; ++i) {
+            float gx = canvasPos.x + canvasSize.x * (i / 3.0f);
+            float gy = canvasPos.y + canvasSize.y * (i / 3.0f);
+            dl->AddLine(ImVec2(gx, canvasPos.y), ImVec2(gx, canvasEnd.y), IM_COL32(255, 255, 255, 12));
+            dl->AddLine(ImVec2(canvasPos.x, gy), ImVec2(canvasEnd.x, gy), IM_COL32(255, 255, 255, 12));
+        }
         ImVec2 ctr(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
-        dl->AddLine(ImVec2(ctr.x, canvasPos.y), ImVec2(ctr.x, canvasEnd.y), IM_COL32(255, 255, 255, 16));
-        dl->AddLine(ImVec2(canvasPos.x, ctr.y), ImVec2(canvasEnd.x, ctr.y), IM_COL32(255, 255, 255, 16));
+        dl->AddLine(ImVec2(ctr.x, canvasPos.y), ImVec2(ctr.x, canvasEnd.y), IM_COL32(255, 255, 255, 24));
+        dl->AddLine(ImVec2(canvasPos.x, ctr.y), ImVec2(canvasEnd.x, ctr.y), IM_COL32(255, 255, 255, 24));
         DrawUIOverlay(ed, dl, canvasPos, canvasSize, /*gameView=*/false);
     } else if (ed.view3D) {
         DrawScene3D(ed, dl, canvasPos, canvasSize, canvasEnd, hovered, io);

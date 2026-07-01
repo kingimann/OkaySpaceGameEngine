@@ -4273,6 +4273,100 @@ static const std::string* ScriptSignature(const std::string& name) {
     return it == sig.end() ? nullptr : &it->second;
 }
 
+// A one-line human description for a builtin, shown under its signature in the
+// hover tooltip and autocomplete. Only the less-obvious / newer builtins are
+// documented; anything missing simply shows no description.
+static const std::string* ScriptDoc(const std::string& name) {
+    static const std::unordered_map<std::string, std::string> doc = {
+        // arrays
+        {"array","Make an array from the given values."},
+        {"count","Number of items in an array."},
+        {"push","Append a value to the end of an array."},
+        {"pop","Remove and return the last item of an array."},
+        {"first","First item of an array (or null if empty)."},
+        {"last","Last item of an array (or null if empty)."},
+        {"clear","Empty an array or map in place."},
+        {"insert_at","Insert a value at an index, shifting the rest right."},
+        {"remove_at","Remove the item at an index."},
+        {"slice","A sub-array from start up to (not including) end. Negative indices count from the end."},
+        {"range","Build a numeric array: range(n), range(lo,hi) or range(lo,hi,step)."},
+        {"contains","True if the array holds the given value."},
+        {"index_of","Index of the first matching value, or -1."},
+        {"sum","Add up all numbers in an array."},
+        {"min_of","Smallest number in an array."},
+        {"max_of","Largest number in an array."},
+        {"reverse","Reverse an array in place."},
+        {"sort_num","Sort an array ascending by number."},
+        {"sort_str","Sort an array ascending by text."},
+        {"shuffle","Randomly reorder an array in place."},
+        {"choose","Return a random item from an array."},
+        // maps
+        {"map","Make an empty dictionary (string keys -> values)."},
+        {"map_set","Set a key to a value in a map."},
+        {"map_get","Read the value at a key (or null)."},
+        {"map_has","True if the map contains the key."},
+        {"map_remove","Delete a key from a map."},
+        {"map_keys","An array of the map's keys."},
+        {"map_values","An array of the map's values."},
+        {"map_count","Number of entries in a map."},
+        {"map_clear","Remove all entries from a map."},
+        {"map_merge","Copy src's entries into dst (src wins on conflict)."},
+        // higher-order
+        {"call","Call a function by name, passing any extra arguments."},
+        {"map_fn","New array of fn(element) for each element."},
+        {"filter_fn","Keep only elements where fn(element) is true."},
+        {"reduce_fn","Fold an array left: acc = fn(acc, element)."},
+        {"for_each","Call fn(element) for every element."},
+        {"find_fn","First element where fn(element) is true (or null)."},
+        {"any_fn","True if fn(element) is true for any element."},
+        {"all_fn","True if fn(element) is true for every element."},
+        {"count_fn","How many elements satisfy fn(element)."},
+        // json
+        {"to_json","Serialize any value (arrays/maps too) to a JSON string."},
+        {"from_json","Parse a JSON string into values/arrays/maps."},
+        {"json_stringify","Alias of to_json."},
+        {"json_parse","Alias of from_json."},
+        // type introspection
+        {"typeof","Name the value's type: number, string, bool, array, map, vec3 or null."},
+        {"is_array","True if the value is an array."},
+        {"is_map","True if the value is a map."},
+        {"is_str","True if the value is a string."},
+        {"is_num","True if the value is a number."},
+        {"is_bool","True if the value is a boolean."},
+        // strings
+        {"upper","Uppercase a string."},
+        {"lower","Lowercase a string."},
+        {"trim","Strip leading and trailing whitespace."},
+        {"trim_start","Strip leading whitespace."},
+        {"trim_end","Strip trailing whitespace."},
+        {"capitalize","Uppercase the first letter."},
+        {"title_case","Uppercase the first letter of each word."},
+        {"str_reverse","Reverse the characters of a string."},
+        {"substr","A substring from start for n characters."},
+        {"replace","Replace every occurrence of a substring."},
+        {"split","Split a string into an array on a separator."},
+        {"join","Join an array into a string with a separator."},
+        {"repeat","Repeat a string n times."},
+        {"format","Fill each {} in the template with the next argument."},
+        // math / easing
+        {"fract","Fractional part of x (x - floor(x))."},
+        {"clamp","Constrain v to the range [lo, hi]."},
+        {"lerp","Linearly interpolate from a to b by t (0..1)."},
+        {"smoothstep","Ease-in-out interpolate from a to b by t."},
+        {"ease_in","Quadratic ease-in for t in 0..1."},
+        {"ease_out","Quadratic ease-out for t in 0..1."},
+        {"ease_in_out","Quadratic ease-in-out for t in 0..1."},
+        {"ease_in_cubic","Cubic ease-in for t in 0..1."},
+        {"ease_out_cubic","Cubic ease-out for t in 0..1."},
+        {"ease_in_out_cubic","Cubic ease-in-out for t in 0..1."},
+        {"ease_back","Ease with a slight backward overshoot."},
+        {"ease_elastic","Springy elastic ease-out."},
+        {"ease_bounce","Bouncing ease-out."},
+    };
+    auto it = doc.find(name);
+    return it == doc.end() ? nullptr : &it->second;
+}
+
 // Members offered after "<receiver>." in the editor (Unity-style API surface, so
 // e.g. typing `transform.` lists position/rotation/Translate/…). Returns an empty
 // list for unknown receivers.
@@ -5361,6 +5455,11 @@ void DrawScriptEditor(EditorState& ed) {
                                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs)) {
                             ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sgn->c_str());
+                            if (const std::string* dc = ScriptDoc(name)) {
+                                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                                ImGui::TextColored(ImVec4(0.72f, 0.76f, 0.72f, 1.0f), "%s", dc->c_str());
+                                ImGui::PopTextWrapPos();
+                            }
                         }
                         ImGui::End();
                         ImGui::PopStyleColor();
@@ -5389,6 +5488,11 @@ void DrawScriptEditor(EditorState& ed) {
                         if (const std::string* sg = ScriptSignature(word)) {
                             ImGui::BeginTooltip();
                             ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sg->c_str());
+                            if (const std::string* dc = ScriptDoc(word)) {
+                                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                                ImGui::TextColored(ImVec4(0.78f, 0.82f, 0.78f, 1.0f), "%s", dc->c_str());
+                                ImGui::PopTextWrapPos();
+                            }
                             ImGui::TextDisabled("built-in function");
                             ImGui::EndTooltip();
                         }

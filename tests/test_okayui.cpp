@@ -662,6 +662,43 @@ int main(int argc, char** argv) {
         CHECK(rgb[2] > 0.4f);
     }
 
+    // --- Table: resizable columns; dragging a border widens column 0. ---
+    {
+        release();
+        const char* hdr[] = {"A", "B"};
+        auto frameAndMeasure = [&](float mx, float my, bool down) {
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 255); SDL_RenderClear(r);
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = down;
+            OkayUI::BeginFrame(a);
+            OkayUI::Begin("TBLW", 10, 10, 300, 160);
+            if (OkayUI::BeginTable("T", 2, hdr)) {
+                OkayUI::TableNextRow();
+                OkayUI::TableNextColumn(); OkayUI::ProgressBar(1.0f);   // col 0 fills its width
+                OkayUI::TableNextColumn(); OkayUI::Text("x");
+                OkayUI::EndTable();
+            }
+            OkayUI::End(); OkayUI::EndFrame(r);
+            // Rightmost accent (blue) pixel in the data-row band (below the header).
+            SDL_LockSurface(surf);
+            int maxx = -1;
+            for (int y = 78; y < 108 && y < H; ++y) for (int x = 0; x < W; ++x) {
+                Uint32 px = pixelAt(surf, x, y);
+                Uint8 rr = (px >> 16) & 0xFF, gg = (px >> 8) & 0xFF, bb = px & 0xFF;
+                if (bb > 180 && bb > rr + 40 && gg > 80 && x > maxx) maxx = x;
+            }
+            SDL_UnlockSurface(surf);
+            return maxx;
+        };
+        int before = frameAndMeasure(0, 0, false);       // baseline: col0 ~half width
+        // Border between the two columns sits near x=160. Press then drag it right.
+        frameAndMeasure(160, 90, true);
+        frameAndMeasure(200, 90, true);                   // drag +40 -> col0 grows
+        frameAndMeasure(200, 90, false);                  // release
+        int after = frameAndMeasure(0, 0, false);
+        CHECK(before > 0 && after > 0);
+        CHECK(after > before + 15);                       // column 0 got wider
+    }
+
     // --- Fonts: the bold font lights more pixels than the default for the same text. ---
     {
         auto countLit = [&](const OkayUI::Font* f) {

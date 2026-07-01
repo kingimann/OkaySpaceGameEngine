@@ -136,6 +136,17 @@ struct ColumnState {
 };
 ColumnState g_col;
 
+// Table layout state (BeginTable/TableNextRow/TableNextColumn/EndTable).
+struct TableState {
+    bool  active = false;
+    int   id = 0, count = 0, index = -1;
+    float x0 = 0, fullW = 0;
+    float rowTop = 0, rowBottom = 0, rowStart = 0;
+    float* w[16] = {nullptr};   // persisted per-column widths (pixels)
+    float headerBottom = 0;     // y below the header row (for the resize handles)
+};
+TableState g_tbl;
+
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; };
 WinSlot g_wins[16];
@@ -476,6 +487,7 @@ void BeginFrame(const Input& in) {
     g_curClipOn = false; g_curTex = nullptr;
     g_childTop = 0;                        // reset child-region stack
     g_col.active = false;                  // reset column layout
+    g_tbl.active = false;                  // reset table layout
 }
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
@@ -1750,6 +1762,114 @@ void EndColumns() {
     g_lay.contentW = g_col.fullW;
     g_lay.cy = g_col.rowBottom;
     g_col.active = false;
+}
+
+// ---- Tables --------------------------------------------------------------------
+namespace {
+// Left edge of column `i` (sum of prior column widths from the table origin).
+float tblColX(int i) {
+    float cx = g_tbl.x0;
+    for (int k = 0; k < i && k < g_tbl.count; ++k) cx += *g_tbl.w[k];
+    return cx;
+}
+// Point the layout at the current cell (column g_tbl.index at row g_tbl.rowTop).
+void tblEnterCell() {
+    const float pad = 4.0f;
+    const float cx = tblColX(g_tbl.index);
+    g_lay.ox = cx + pad;
+    g_lay.contentW = *g_tbl.w[g_tbl.index] - 2.0f * pad;
+    if (g_lay.contentW < 8.0f) g_lay.contentW = 8.0f;
+    g_lay.cy = g_tbl.rowTop;
+    g_lay.indent = 0.0f;
+    g_lay.pendingSameLine = false;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.cy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+}
+} // namespace
+
+bool BeginTable(const char* id, int columns, const char* const* headers) {
+    if (!g_lay.active || columns < 1) return false;
+    if (columns > 16) columns = 16;
+    const int tid = hashLabel(id);
+    g_tbl.active = true; g_tbl.id = tid; g_tbl.count = columns; g_tbl.index = -1;
+    g_tbl.x0 = g_lay.ox; g_tbl.fullW = g_lay.contentW;
+    g_tbl.rowTop = g_lay.cy; g_tbl.rowBottom = g_lay.cy; g_tbl.rowStart = g_lay.cy;
+
+    // Fetch/seed persisted column widths, then rescale so they exactly fill fullW
+    // (keeps the table snug when the window is resized).
+    float sum = 0.0f;
+    for (int i = 0; i < columns; ++i) {
+        g_tbl.w[i] = floatState(tid ^ (0x7100 + i), g_tbl.fullW / columns);
+        if (*g_tbl.w[i] < 12.0f) *g_tbl.w[i] = 12.0f;
+        sum += *g_tbl.w[i];
+    }
+    if (sum > 0.0f) { float f = g_tbl.fullW / sum; for (int i = 0; i < columns; ++i) *g_tbl.w[i] *= f; }
+
+    // Optional header row: a bar with bold column labels.
+    if (headers) {
+        const float hh = rowH();
+        quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, g_theme.bgDown);
+        const Font* prevF = g_font; g_font = &kFontBold;
+        for (int i = 0; i < columns; ++i) {
+            float cx = tblColX(i);
+            if (headers[i] && headers[i][0])
+                drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, headers[i], g_theme.textScale, g_theme.text);
+        }
+        g_font = prevF;
+        g_tbl.rowTop += hh;
+        g_tbl.rowBottom = g_tbl.rowTop;
+        g_tbl.rowStart = g_tbl.rowTop;
+    }
+    g_tbl.headerBottom = g_tbl.rowTop;
+    return true;
+}
+
+void TableNextRow() {
+    if (!g_lay.active || !g_tbl.active) return;
+    if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
+    g_tbl.rowTop = g_tbl.rowBottom;   // next row starts below the tallest cell so far
+    g_tbl.index = -1;
+}
+
+bool TableNextColumn() {
+    if (!g_lay.active || !g_tbl.active) return false;
+    if (g_tbl.index >= 0) {           // remember how tall the cell we're leaving got
+        if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
+    }
+    ++g_tbl.index;
+    if (g_tbl.index >= g_tbl.count) return false;
+    tblEnterCell();
+    return true;
+}
+
+void EndTable() {
+    if (!g_lay.active || !g_tbl.active) return;
+    if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
+    const float top = g_tbl.rowStart, bottom = g_tbl.rowBottom;
+
+    // Column borders + draggable resize handles (applied next frame).
+    for (int i = 1; i < g_tbl.count; ++i) {
+        float bx = tblColX(i);
+        quad(bx - 0.5f, g_tbl.headerBottom - rowH(), 1.0f, bottom - (g_tbl.headerBottom - rowH()), g_theme.border);
+        const int hid = g_tbl.id ^ (0x7b00 + i);
+        const float grab = 4.0f;
+        const bool over = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, bx - grab, top - rowH(), grab * 2.0f, bottom - top + rowH());
+        if (over) g_hot = hid;
+        if (g_active == hid) {
+            if (!g_in.mouseDown) g_active = 0;
+            else {
+                float dx = g_mouseDX;
+                float a = *g_tbl.w[i - 1] + dx, b = *g_tbl.w[i] - dx;
+                if (a >= 20.0f && b >= 20.0f) { *g_tbl.w[i - 1] = a; *g_tbl.w[i] = b; }
+            }
+        } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
+    }
+
+    g_lay.ox = g_tbl.x0;
+    g_lay.contentW = g_tbl.fullW;
+    g_lay.cy = bottom + g_lay.spacingY;
+    g_lay.indent = 0.0f;
+    g_lay.pendingSameLine = false;
+    g_tbl.active = false;
 }
 
 } // namespace OkayUI

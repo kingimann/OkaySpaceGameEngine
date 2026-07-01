@@ -288,6 +288,23 @@ void Columns(int count);
 void NextColumn();
 void EndColumns();
 
+// ---- Tables --------------------------------------------------------------------
+// A grid with resizable columns (drag the borders between headers/cells). Column
+// widths persist per table id. Usage:
+//     const char* hdr[] = {"Name", "Value"};
+//     if (BeginTable("stats", 2, hdr)) {
+//         TableNextRow(); TableNextColumn(); Text("HP"); TableNextColumn(); Text("100");
+//         EndTable();
+//     }
+/// Begin a table of `columns` columns. If `headers` is given, a header row is drawn.
+/// Returns true (open) — pair with EndTable(). Rows/cells via TableNextRow/Column.
+bool BeginTable(const char* id, int columns, const char* const* headers = nullptr);
+/// Start a new row (call before the row's TableNextColumn cells).
+void TableNextRow();
+/// Advance to the next cell; returns true (visible). Widgets after it land in-cell.
+bool TableNextColumn();
+void EndTable();
+
 // ---- ID stack ------------------------------------------------------------------
 // Widget ids are hashed from their label, so two widgets with the same label in a
 // loop would collide. Push a per-iteration id (an int index or a string) to keep

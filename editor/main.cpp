@@ -639,6 +639,19 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
     ImGui::PopID();
     return changed;
 }
+// A titled section rule with an accent tick to its left — a cleaner, more scannable
+// section break than a bare SeparatorText, keyed to the theme accent.
+static void SectionHeader(const char* label) {
+    ImGui::Spacing();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float h = ImGui::GetTextLineHeight();
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 1.0f), ImVec2(p.x + 3.0f, p.y + h),
+                                              ImGui::GetColorU32(AccentCol(1.0f)), 1.5f);
+    ImGui::Indent(9.0f);
+    ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1.0f), "%s", label);
+    ImGui::Unindent(9.0f);
+    ImGui::Separator();
+}
 // A tidy, centered empty-state for a panel with nothing to show — a big muted
 // glyph, a title, and an optional hint, vertically centered in the panel. Replaces
 // the plain top-left grey text that used to sit awkwardly in the corner.
@@ -7459,7 +7472,7 @@ void DrawModeling(EditorState& ed) {
     if (!ImGui::Begin("Modeling", &g_showModeling)) { ImGui::End(); return; }
 
     // --- Create a new primitive object (drops it into the scene, selects it) ---
-    ImGui::SeparatorText("Create");
+    SectionHeader("Create");
     const char* prims[] = {"Cube", "Sphere", "Cylinder", "Cone", "Pyramid",
                            "Wedge", "Quad", "Plane", "Tube", "Torus", "Capsule",
                            "Icosphere", "Grid"};
@@ -7497,7 +7510,7 @@ void DrawModeling(EditorState& ed) {
             if (it != s_meshSig.end() && it->second != sig) FitColliders(go);   // mesh edited → resync colliders
             s_meshSig[go] = sig;
         }
-        ImGui::SeparatorText("Mesh");
+        SectionHeader("Mesh");
         ImGui::Text("%s", go->name.c_str());
         // Swap the primitive shape.
         const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
@@ -7540,7 +7553,7 @@ void DrawModeling(EditorState& ed) {
             }
         }
 
-        ImGui::SeparatorText("Edit");
+        SectionHeader("Edit");
         ImGui::TextDisabled("%d verts, %d triangles",
                             (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
         if (ImGui::Button("Subdivide##model")) { mr->mesh.Subdivide(); ed.dirty = true; }
@@ -7591,7 +7604,7 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Curve the mesh into an arc along X (degrees over its length).");
 
         // ---- Modifiers (Blender-style: array / remesh / decimate / boolean) ----
-        ImGui::SeparatorText("Modifiers");
+        SectionHeader("Modifiers");
         static int   s_arrayN = 3; static float s_arrayDX = 1.5f;
         ImGui::SetNextItemWidth(70); ImGui::DragInt("##arrn", &s_arrayN, 0.1f, 1, 64);
         ImGui::SameLine(); ImGui::SetNextItemWidth(80); ImGui::DragFloat("##arrdx", &s_arrayDX, 0.05f, -50.0f, 50.0f, "dx %.2f");
@@ -7707,7 +7720,7 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale along one axis about the mesh centre (stretch/squash).");
 
         // ---- Interactive edit mode (vertex/face select + move + ops + sculpt) ----
-        ImGui::SeparatorText("Edit Mode");
+        SectionHeader("Edit Mode");
         bool editing = g_meshEdit && g_meshEditObj == go;
         if (ImGui::Checkbox("Edit Mesh##model", &editing)) {
             if (editing) {

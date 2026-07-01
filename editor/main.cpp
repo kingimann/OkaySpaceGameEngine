@@ -7534,6 +7534,25 @@ void DrawModeling(EditorState& ed) {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn every edge into a solid beam — a wire lattice / cage version of the mesh.");
 
+        static float s_dispAmt = 0.15f, s_dispFreq = 2.0f; static int s_dispSeed = 0;
+        ImGui::SetNextItemWidth(70); ImGui::DragFloat("##dispA", &s_dispAmt, 0.01f, 0.0f, 5.0f, "amt %.2f");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::DragFloat("##dispF", &s_dispFreq, 0.05f, 0.05f, 20.0f, "frq %.2f");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(60); ImGui::DragInt("##dispS", &s_dispSeed, 0.1f, 0, 9999, "s%d");
+        ImGui::SameLine(); if (ImGui::Button("Displace##model")) { ed.PushUndo(); mr->mesh.Displace(s_dispAmt, s_dispFreq, s_dispSeed); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roughen the surface with value noise along normals (Subdivide first for fine detail).");
+
+        static float s_castR = 1.0f;
+        ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##castr", &s_castR, 0.1f, 5.0f, "r %.2f");
+        ImGui::SameLine(); if (ImGui::Button("Cast Cyl Y##model")) { ed.PushUndo(); mr->mesh.CastToCylinder(s_castR, 1, 1.0f); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Round the cross-section toward a cylinder of this radius around Y.");
+
+        static float s_stretch = 1.5f;
+        ImGui::SetNextItemWidth(80); ImGui::SliderFloat("##str", &s_stretch, 0.1f, 4.0f, "%.2f");
+        ImGui::SameLine(); if (ImGui::Button("Stretch X##model")) { ed.PushUndo(); mr->mesh.Stretch(0, s_stretch); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Y##str")) { ed.PushUndo(); mr->mesh.Stretch(1, s_stretch); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Z##str")) { ed.PushUndo(); mr->mesh.Stretch(2, s_stretch); ed.dirty = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale along one axis about the mesh centre (stretch/squash).");
+
         // ---- Interactive edit mode (vertex/face select + move + ops + sculpt) ----
         ImGui::SeparatorText("Edit Mode");
         bool editing = g_meshEdit && g_meshEditObj == go;

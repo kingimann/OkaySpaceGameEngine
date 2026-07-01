@@ -1516,6 +1516,60 @@ struct Mesh {
         ComputeSmoothNormals();
     }
 
+    /// Displace modifier: perturb every vertex along its outward normal by value
+    /// noise sampled at its position — instant organic bumpiness (rocks, terrain,
+    /// bark). `frequency` sets the noise scale, `seed` picks the pattern; both are
+    /// deterministic. Subdivide first for finer detail.
+    void Displace(float amount, float frequency = 1.0f, int seed = 0) {
+        if (vertices.empty()) return;
+        ComputeSmoothNormals();
+        Vec3 ctr{0, 0, 0};
+        for (const Vec3& v : vertices) ctr += v;
+        ctr = ctr * (1.0f / (float)vertices.size());
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            Vec3 n = normals[i], out = vertices[i] - ctr;
+            if (n.x * out.x + n.y * out.y + n.z * out.z < 0.0f) n = n * -1.0f;
+            float d = ValueNoise(vertices[i] * frequency, seed);
+            vertices[i] += n * (d * amount);
+        }
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Cast modifier (to a cylinder): pull each vertex's radius (perpendicular to
+    /// `axis`: 0=X,1=Y,2=Z) toward `radius`, by `amount` (0 = none, 1 = full). Rounds
+    /// a boxy shape into a barrel/tube. Cast-to-sphere already exists as Spherify().
+    void CastToCylinder(float radius, int axis = 1, float amount = 1.0f) {
+        if (vertices.empty()) return;
+        for (Vec3& v : vertices) {
+            float a, b;
+            if (axis == 0)      { a = v.y; b = v.z; }
+            else if (axis == 2) { a = v.x; b = v.y; }
+            else                { a = v.x; b = v.z; }
+            float r = std::sqrt(a * a + b * b);
+            if (r < 1e-6f) continue;
+            float f = 1.0f + (radius / r - 1.0f) * amount;   // lerp(1, radius/r, amount)
+            a *= f; b *= f;
+            if (axis == 0)      { v.y = a; v.z = b; }
+            else if (axis == 2) { v.x = a; v.y = b; }
+            else                { v.x = a; v.z = b; }
+        }
+        name = "";
+        ComputeSmoothNormals();
+    }
+
+    /// Stretch/squash along one axis (0=X,1=Y,2=Z) about the mesh centre. factor > 1
+    /// stretches, < 1 squashes, < 0 mirrors. A cheap Simple-Deform stretch.
+    void Stretch(int axis, float factor) {
+        if (vertices.empty() || axis < 0 || axis > 2) return;
+        float c = 0.0f;
+        for (const Vec3& v : vertices) c += (&v.x)[axis];
+        c /= (float)vertices.size();
+        for (Vec3& v : vertices) (&v.x)[axis] = c + ((&v.x)[axis] - c) * factor;
+        name = "";
+        ComputeSmoothNormals();
+    }
+
     /// Screw modifier: revolve a profile (x = radius, y = height) around Y, sweeping
     /// `turns` full turns over `segments` steps and rising `pitch` per turn — a helix
     /// (springs, screw threads, spiral ramps). With turns = 1 and pitch = 0 it's a
@@ -1550,6 +1604,25 @@ struct Mesh {
     }
 
 private:
+    /// Deterministic hash of an integer lattice point → [-1,1] (for value noise).
+    static float Hash3(int x, int y, int z, int seed) {
+        unsigned h = (unsigned)(x * 374761393 + y * 668265263 + z * 2147483647 + seed * 971);
+        h = (h ^ (h >> 13)) * 1274126177u;
+        return ((float)((h ^ (h >> 16)) & 0xffffu) / 65535.0f) * 2.0f - 1.0f;
+    }
+    /// Trilinear-interpolated value noise at `p` (smoothstep fade), range ~[-1,1].
+    static float ValueNoise(const Vec3& p, int seed) {
+        int xi = (int)std::floor(p.x), yi = (int)std::floor(p.y), zi = (int)std::floor(p.z);
+        float fx = p.x - xi, fy = p.y - yi, fz = p.z - zi;
+        auto sm = [](float t) { return t * t * (3.0f - 2.0f * t); };
+        fx = sm(fx); fy = sm(fy); fz = sm(fz);
+        auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
+        float c00 = lerp(Hash3(xi, yi, zi, seed),       Hash3(xi + 1, yi, zi, seed), fx);
+        float c10 = lerp(Hash3(xi, yi + 1, zi, seed),   Hash3(xi + 1, yi + 1, zi, seed), fx);
+        float c01 = lerp(Hash3(xi, yi, zi + 1, seed),   Hash3(xi + 1, yi, zi + 1, seed), fx);
+        float c11 = lerp(Hash3(xi, yi + 1, zi + 1, seed), Hash3(xi + 1, yi + 1, zi + 1, seed), fx);
+        return lerp(lerp(c00, c10, fy), lerp(c01, c11, fy), fz);
+    }
     /// Append a square-section beam between two points (used by Wireframe()).
     void AddBeam(const Vec3& p0, const Vec3& p1, float r) {
         Vec3 d = p1 - p0; float len = d.Magnitude();

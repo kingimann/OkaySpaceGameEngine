@@ -251,5 +251,51 @@ int main() {
         CHECK((hhi.y - hlo.y) > 3.0f);                   // climbed ~3 units over 3 turns
     }
 
+    // ---- Displace: deterministic noise roughens the surface (repeatable by seed) ----
+    {
+        Mesh a = Mesh::Sphere(1.0f, 12, 16); a.Subdivide();
+        Mesh b = a;                                       // identical copy
+        a.Displace(0.3f, 2.0f, /*seed=*/7);
+        b.Displace(0.3f, 2.0f, /*seed=*/7);
+        // Same seed → identical result; and the surface actually moved.
+        bool identical = a.vertices.size() == b.vertices.size();
+        float maxMove = 0.0f;
+        Mesh ref = Mesh::Sphere(1.0f, 12, 16); ref.Subdivide();
+        for (std::size_t i = 0; i < a.vertices.size() && identical; ++i) {
+            if ((a.vertices[i] - b.vertices[i]).Magnitude() > 1e-6f) identical = false;
+            maxMove = std::max(maxMove, (a.vertices[i] - ref.vertices[i]).Magnitude());
+        }
+        CHECK(identical);                                 // reproducible
+        CHECK(maxMove > 0.05f);                           // it displaced the shell
+        // A different seed gives a different pattern.
+        Mesh c = ref; c.Displace(0.3f, 2.0f, /*seed=*/99);
+        bool differs = false;
+        for (std::size_t i = 0; i < a.vertices.size(); ++i)
+            if ((a.vertices[i] - c.vertices[i]).Magnitude() > 1e-4f) { differs = true; break; }
+        CHECK(differs);
+    }
+
+    // ---- Cast to cylinder: a cube's cross-section rounds toward a fixed radius ----
+    {
+        Mesh m = Mesh::Cube(2.0f);                        // corners at radius sqrt(2) in XZ
+        m.Subdivide();                                    // midpoints too
+        m.CastToCylinder(1.0f, /*axis=*/1, 1.0f);         // full cast around Y
+        for (const Vec3& v : m.vertices) {
+            float r = std::sqrt(v.x * v.x + v.z * v.z);
+            if (r > 1e-4f) CHECK(std::fabs(r - 1.0f) < 1e-3f);  // every point sits on radius 1
+        }
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        CHECK(std::fabs(hi.y - 1.0f) < 1e-3f);            // height (Y) untouched
+    }
+
+    // ---- Stretch: scaling along Y about the centre keeps X/Z, grows Y ----
+    {
+        Mesh m = Mesh::Cube(2.0f);                        // [-1,1]^3
+        m.Stretch(1, 2.0f);
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        CHECK(std::fabs((hi.y - lo.y) - 4.0f) < 1e-3f);  // Y doubled
+        CHECK(std::fabs((hi.x - lo.x) - 2.0f) < 1e-3f);  // X unchanged
+    }
+
     TEST_MAIN_RESULT();
 }

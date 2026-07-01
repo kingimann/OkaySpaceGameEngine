@@ -1038,6 +1038,11 @@ Vec3  g_meEditRaw{0, 0, 0};           // accumulated drag in LOCAL space (pre-ap
 bool  g_meshSculpt  = false;          // sculpt brush active (instead of select/move)
 int   g_sculptMode  = 0;              // 0 Grab, 1 Inflate, 2 Smooth
 float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
+// Interactive collider editing: drag the 6 face handles of the selected Box
+// collider in the 3D view to hand-fit it to the model (Unity's "Edit Collider").
+bool  g_colliderEdit = false;         // collider edit mode active
+int   g_colliderDragAxis = -1;        // 0=X 1=Y 2=Z, -1 = none held
+int   g_colliderDragSign = 1;         // which face (+1 or -1 along the axis)
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
 int   g_uiResizeHandle = -1; // 0..7 resize handle being dragged, -1 = moving
@@ -5117,6 +5122,36 @@ void DrawScriptEditor(EditorState& ed) {
         auto filePath = [&]() {
             return sc->Path().empty() ? go->name + "." + extide::ExtFor(sc->Language()) : sc->Path();
         };
+
+        // External live-sync: edit the script in any outside editor (VS Code, Sublime,
+        // Vim...) via "Open in IDE" and OkaySpace picks up each save automatically, so
+        // you're not confined to the in-app editor. We poll the file's mtime; when it
+        // changes on disk we reload — unless you have unsaved edits here, in which case
+        // we flag a conflict and let you choose rather than clobbering your work.
+        static bool s_liveSync = true;
+        static std::unordered_map<ScriptComponent*, std::filesystem::file_time_type> s_extMtime;
+        static std::unordered_map<ScriptComponent*, bool> s_extConflict;
+        if (s_liveSync && !sc->Path().empty()) {
+            std::error_code ec;
+            auto mt = std::filesystem::last_write_time(sc->Path(), ec);
+            if (!ec) {
+                auto it = s_extMtime.find(sc);
+                if (it == s_extMtime.end()) s_extMtime[sc] = mt;          // first sighting
+                else if (it->second != mt) {                              // changed on disk
+                    it->second = mt;
+                    if (!ScriptTabDirty(sc)) {                            // safe to adopt
+                        std::string src = extide::ReadFile(sc->Path());
+                        SetCodeBuffer(sc, src);
+                        std::string e; sc->LoadSource(src, &e);
+                        g_scriptSaved[sc] = src;
+                        ConsoleLog("Synced external edit: " + sc->Path());
+                    } else {
+                        s_extConflict[sc] = true;                        // don't lose local edits
+                    }
+                }
+            }
+        }
+
         // Caret state + pending editor commands (applied in the InputText callback so
         // they act on the live buffer). Declared before the toolbar so its buttons
         // (Format/Rename/comment/...) can drive it; the callback reports line/col back.
@@ -5157,6 +5192,9 @@ void DrawScriptEditor(EditorState& ed) {
                 sc->SetSource(buf.data());        // persist edits so a scene save keeps them
                 ConsoleLog("Saved " + p);
                 g_scriptSaved[sc] = buf.data();    // clears the modified marker
+                std::error_code mec;               // remember our own write so live-sync
+                s_extMtime[sc] = std::filesystem::last_write_time(p, mec);  // won't self-trigger
+                s_extConflict[sc] = false;
             } else ConsoleLog("Save failed: " + p, 2);
             ed.dirty = true;
         };
@@ -5174,6 +5212,8 @@ void DrawScriptEditor(EditorState& ed) {
                 SetCodeBuffer(sc, src);
                 std::string e; sc->LoadSource(src, &e);
                 g_scriptSaved[sc] = src;
+                std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(sc->Path(), mec);
+                s_extConflict[sc] = false;
                 ConsoleLog("Reloaded " + sc->Path());
             } else ConsoleLog("No file to reload (Save first)");
         }
@@ -5186,9 +5226,20 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::SmallButton("Open in IDE")) {
             std::string p = filePath();
-            extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p);
-            ConsoleLog("Opened " + p + " in external IDE");
+            extide::WriteFile(p, buf.data()); sc->SetPath(p);
+            std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(p, mec);
+            s_liveSync = true;                 // seamless: adopt saves from the outside editor
+            extide::OpenExternal(p);
+            ConsoleLog("Opened " + p + " in external IDE (live-sync on)");
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Edit this script in your own editor (VS Code / OS default).\n"
+                              "With Live Sync on, every save out there reloads here automatically.");
+        ImGui::SameLine();
+        ImGui::Checkbox("Live Sync", &s_liveSync);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Auto-reload this script whenever its file changes on disk\n"
+                              "(edits from an external editor). Off = reload manually.");
         ImGui::SameLine();
         // Float / Dock: pop the editor out into its own window, or dock it back as a
         // tab in the main area. (True separate OS windows need the GL backend; this
@@ -5474,6 +5525,29 @@ void DrawScriptEditor(EditorState& ed) {
             }
             ImGui::EndChild();
             ImGui::EndPopup();
+        }
+
+        // External-edit conflict: the file changed on disk while you have unsaved edits
+        // here. Offer a clear choice instead of silently overwriting either side.
+        if (s_extConflict.count(sc) && s_extConflict[sc]) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.78f, 0.35f, 1.0f));
+            ImGui::TextUnformatted("\xe2\x9a\xa0 This file changed in an external editor, but you have unsaved edits here.");
+            ImGui::PopStyleColor();
+            if (ImGui::SmallButton("Load External##conflict")) {
+                std::string src = extide::ReadFile(sc->Path());
+                SetCodeBuffer(sc, src);
+                std::string e; sc->LoadSource(src, &e);
+                g_scriptSaved[sc] = src;
+                std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(sc->Path(), mec);
+                s_extConflict[sc] = false;
+                ConsoleLog("Loaded external version of " + sc->Path());
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Keep Mine##conflict")) {
+                doSave();                               // overwrite the disk copy with the buffer
+                s_extConflict[sc] = false;
+            }
+            ImGui::Separator();
         }
 
         // --- Editor surface: dark theme, line-number gutter, syntax overlay ---
@@ -10749,6 +10823,16 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##bc3", &bc->autoFit)) { if (bc->autoFit) FitColliders(go); ed.dirty = true; }
             if (bc->autoFit) FitColliders(go, true);
+            // Interactive edit: drag the 6 face handles in the Scene view to hand-fit
+            // the box to the model (Unity's Edit Collider).
+            if (AccentToggleButton("Edit Collider##bc3", g_colliderEdit)) {
+                g_colliderEdit = !g_colliderEdit;
+                if (!g_colliderEdit) g_colliderDragAxis = -1;   // leaving edit mode ends any drag
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Show draggable face handles in the Scene view so you can\n"
+                                  "pull each side of the box to match the model. Turn off when done.");
+            if (g_colliderEdit) ImGui::TextDisabled("Drag the colored dots on each face in the Scene view.");
             if (ImGui::SmallButton("Remove##bc3")) toRemove = bc;
         }
     }
@@ -17524,10 +17608,86 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    // ---- Collider edit: drag the 6 face handles of the selected Box collider to
+    //      hand-fit it to the model (Unity's "Edit Collider"). Suppresses the
+    //      transform gizmo while active, like mesh-edit mode. ----
+    bool colliderEditActive = !gameView && g_colliderEdit && ed.selected()
+                              && ed.selected()->GetComponent<BoxCollider3D>();
+    if (colliderEditActive) {
+        auto* bc = ed.selected()->GetComponent<BoxCollider3D>();
+        Vec3 c = bc->WorldCenter();
+        Vec3 h = bc->HalfExtents();
+        Vec3 lossy = ed.selected()->transform ? ed.selected()->transform->LossyScale() : Vec3::One;
+        const Vec3 ax[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        ImU32 axc[3] = {IM_COL32(230, 90, 90, 255), IM_COL32(100, 220, 110, 255), IM_COL32(100, 160, 240, 255)};
+        // Box wireframe (visible even without Show Colliders).
+        {
+            Vec3 cr[8];
+            for (int i = 0; i < 8; ++i)
+                cr[i] = {c.x + ((i & 1) ? h.x : -h.x), c.y + ((i & 2) ? h.y : -h.y), c.z + ((i & 4) ? h.z : -h.z)};
+            static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
+            for (auto& ed2 : e) {
+                ImVec2 pa, pb;
+                if (toScreen(vp * Vec4{cr[ed2[0]], 1}, pa) && toScreen(vp * Vec4{cr[ed2[1]], 1}, pb))
+                    dl->AddLine(pa, pb, IM_COL32(90, 230, 120, 220), 1.5f);
+            }
+        }
+        // 6 face-center handles (world pos + screen projection).
+        struct FH { int axis, sign; ImVec2 sp; bool ok; };
+        FH fh[6]; int n = 0;
+        for (int a = 0; a < 3; ++a) for (int s = -1; s <= 1; s += 2) {
+            float he = (a == 0 ? h.x : a == 1 ? h.y : h.z);
+            Vec3 wp = c + ax[a] * (float)(s * he);
+            ImVec2 sp; bool ok = toScreen(vp * Vec4{wp, 1}, sp);
+            fh[n].axis = a; fh[n].sign = s; fh[n].sp = sp; fh[n].ok = ok; ++n;
+        }
+        if (g_colliderDragAxis < 0) {   // idle: click a handle to grab it
+            if (hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                float best = 11.0f * 11.0f; int bi = -1;
+                for (int i = 0; i < 6; ++i) {
+                    if (!fh[i].ok) continue;
+                    float dx = io.MousePos.x - fh[i].sp.x, dy = io.MousePos.y - fh[i].sp.y;
+                    if (dx*dx + dy*dy < best) { best = dx*dx + dy*dy; bi = i; }
+                }
+                if (bi >= 0) { ed.PushUndo(); g_colliderDragAxis = fh[bi].axis; g_colliderDragSign = fh[bi].sign; g_uiHandled = true; }
+            }
+        } else {                         // dragging: map mouse to world movement along the axis
+            int a = g_colliderDragAxis, s = g_colliderDragSign;
+            ImVec2 cs1, cs2; bool ok1 = toScreen(vp * Vec4{c, 1}, cs1), ok2 = toScreen(vp * Vec4{c + ax[a], 1}, cs2);
+            if (ok1 && ok2) {
+                float sdx = cs2.x - cs1.x, sdy = cs2.y - cs1.y, sl = std::sqrt(sdx*sdx + sdy*sdy);
+                if (sl > 1e-3f) {
+                    float dpx = (io.MouseDelta.x * sdx + io.MouseDelta.y * sdy) / sl;   // px along axis
+                    float dw = dpx / sl;                                                // world units (1 unit = sl px)
+                    float scv = (a == 0 ? lossy.x : a == 1 ? lossy.y : lossy.z);
+                    if (Mathf::Abs(scv) < 1e-4f) scv = 1.0f;
+                    // Move the grabbed face by dw; the opposite face stays put:
+                    //   center += dw/2 on the axis;  size += sign*dw/|scale| on the axis.
+                    float* off = (a == 0 ? &bc->offset.x : a == 1 ? &bc->offset.y : &bc->offset.z);
+                    float* siz = (a == 0 ? &bc->size.x   : a == 1 ? &bc->size.y   : &bc->size.z);
+                    *off += dw * 0.5f;
+                    *siz += s * dw / Mathf::Abs(scv);
+                    if (*siz < 0.001f) *siz = 0.001f;
+                    ed.dirty = true;
+                }
+            }
+            g_uiHandled = true;
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_colliderDragAxis = -1;
+        }
+        for (int i = 0; i < 6; ++i) {
+            if (!fh[i].ok) continue;
+            bool cur = (g_colliderDragAxis == fh[i].axis && g_colliderDragSign == fh[i].sign);
+            dl->AddCircleFilled(fh[i].sp, cur ? 7.0f : 5.0f, axc[fh[i].axis]);
+            dl->AddCircle(fh[i].sp, cur ? 7.0f : 5.0f, IM_COL32(255, 255, 255, 210), 12, 1.5f);
+        }
+    } else if (g_colliderDragAxis >= 0) {
+        g_colliderDragAxis = -1;   // selection changed mid-drag
+    }
+
     // ---- Transform gizmo: 3 colored axis handles at the selected object
     //      (Unity W/E/R). Grab a handle and drag to move/rotate/scale on that
     //      axis. X=red, Y=green, Z=blue. ----
-    GameObject* sel = (meshEditActive) ? nullptr : ed.selected();
+    GameObject* sel = (meshEditActive || colliderEditActive) ? nullptr : ed.selected();
     bool grabbedThisClick = false;
     // The transform gizmo works in Play too, so you can move/rotate/scale a
     // selection live (edits revert on Stop, just like Unity).

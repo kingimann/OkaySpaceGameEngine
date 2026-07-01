@@ -77,6 +77,12 @@ Recent additions (v2.12–2.14):
   highlighting, **Find** (Ctrl+F), inline compile errors, current-line
   highlight, **zoom** (Ctrl+scroll), **comment toggle** (Ctrl+/), **go-to-line**,
   **duplicate line** (Ctrl+D), **move line** (Alt+↑/↓), and a **Snippets** menu.
+  Prefer your own editor? **Open in IDE** launches the script in VS Code / your
+  OS default, and with **Live Sync** on (enabled automatically when you open it)
+  every save out there reloads in-engine — so you can code entirely outside
+  OkaySpace. If you also have unsaved edits in-app when the file changes, a banner
+  lets you pick which version to keep. The editor can also **Float** into its own
+  window or **Dock** back as a tab.
 - **Material inspector** — double-click a `.okaymat` to edit albedo / emissive /
   specular / texture / tiling, then Save or **Apply to Selection**; or drag a
   `.okaymat`/image onto an object to apply it.
@@ -84,6 +90,9 @@ Recent additions (v2.12–2.14):
   save files (typed key/value table); the editor side of `save()` / `load()`.
 - **Drag & drop from Project** — drop prefabs/scenes/images/`.obj` into the Scene
   to place them; drop scripts/materials onto the Inspector or Hierarchy.
+- **Edit Collider** — on a Box Collider 3D, click **Edit Collider** to show six
+  draggable face handles in the Scene view; pull each side to hand-fit the box to
+  your model (Unity-style). Adjusts the collider's size + offset; undoable.
 - **Scene gizmos** — **snapping** for Move/Rotate/Scale (grid + 15° detents) and
   a **Local/Global** toggle (X); a live **Camera Preview** inset for a selected
   perspective camera; colored **light gizmos** (range sphere / spot cone).

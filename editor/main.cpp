@@ -592,6 +592,12 @@ static const AccentPreset kAccents[] = {
     {"Indigo",  0.42f, 0.40f, 0.92f},
 };
 static const int kAccentCount = (int)(sizeof(kAccents) / sizeof(kAccents[0]));
+// The current accent colour, for panels that want to tint their own widgets to
+// match the theme (component headers, the Add Component button, ...).
+static ImVec4 AccentCol(float alpha = 1.0f) {
+    const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
+    return ImVec4(ap.r, ap.g, ap.b, alpha);
+}
 bool g_autosave = true;          // periodically write a crash-recovery sidecar
 double g_lastAutosave = 0.0;     // seconds since last autosave
 float  g_autosaveInterval = 120.0f;  // seconds between autosaves
@@ -2727,22 +2733,27 @@ void DrawProject(EditorState& ed) {
         ImGui::BeginGroup();
         ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
         SDL_Texture* thumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
+        const bool isSel = (selected == full);
         if (thumb) {
-            // Real image preview; tint the frame when selected.
-            if (selected == full) ImGui::PushStyleColor(ImGuiCol_Button, cv);
             if (ImGui::ImageButton("##thumb", (ImTextureID)thumb, ImVec2(cell, cell)))
                 selected = full;
-            if (selected == full) ImGui::PopStyleColor();
         } else {
             // Neutral cell background; the drawn icon carries the category color.
-            ImVec4 bg(0.16f, 0.17f, 0.19f, 1.0f);
-            ImGui::PushStyleColor(ImGuiCol_Button, selected == full ? cv : bg);
+            ImVec4 bg = isSel ? ImVec4(cv.x * 0.28f, cv.y * 0.28f, cv.z * 0.28f, 1.0f)
+                              : ImVec4(0.16f, 0.17f, 0.19f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, bg);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                                   ImVec4(cv.x * 0.45f, cv.y * 0.45f, cv.z * 0.45f, 1.0f));
             ImGui::Button("##cell", ImVec2(cell, cell));
             DrawAssetIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(),
                           ImGui::GetItemRectMax(), k);
             ImGui::PopStyleColor(2);
+        }
+        // A clean accent outline marks the selected tile (nicer than a full-colour fill).
+        if (isSel) {
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddRect(mn, mx, ImGui::GetColorU32(AccentCol(1.0f)),
+                                                4.0f, 0, 2.5f);
         }
         bool hov = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked()) selected = full;
@@ -2757,7 +2768,9 @@ void DrawProject(EditorState& ed) {
         if (isDir) AssetDropTarget(e.path());
 
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cell);
+        if (isSel) ImGui::PushStyleColor(ImGuiCol_Text, AccentCol(1.0f));
         ImGui::TextWrapped("%s", name.c_str());
+        if (isSel) ImGui::PopStyleColor();
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", name.c_str());
@@ -7019,7 +7032,19 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     // so a click still toggles — we just capture and remember the result.
     auto it = sCompOpen.find(label);
     ImGui::SetNextItemOpen(it == sCompOpen.end() ? true : it->second, ImGuiCond_Always);
+    // A disabled component reads dimmed so it's obvious at a glance.
+    if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
     bool open = ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_AllowOverlap);
+    if (!en) ImGui::PopStyleColor();
+    // Accent bar down the left edge of the header — makes each component read as a
+    // titled card, and keeps the panel legible when many are stacked.
+    {
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            mn, ImVec2(mn.x + 3.0f, mx.y),
+            ImGui::GetColorU32(en ? AccentCol(0.95f) : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)),
+            1.5f);
+    }
     sCompOpen[label] = open;
     if (ImGui::BeginPopupContextItem("##compctx")) {
         if (ImGui::MenuItem("Move Up"))   { sMoveComp = comp; sMoveDelta = -1; }
@@ -12772,8 +12797,20 @@ void DrawInspector(EditorState& ed) {
 
     ImGui::Spacing();
     ImGui::Separator();
+    ImGui::Spacing();
     static char acFilter[64] = "";
-    if (ImGui::Button("Add Component", ImVec2(-1, 0))) { acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent"); }
+    // Prominent, accent-tinted primary action — the way Unity centres a wide
+    // "Add Component" button under the component list.
+    ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+    float acW = ImGui::GetContentRegionAvail().x;
+    float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;   // centre it on wide panels
+    if (acPad > 0.0f) ImGui::Indent(acPad);
+    if (ImGui::Button("＋  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30))) { acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent"); }
+    if (acPad > 0.0f) ImGui::Unindent(acPad);
+    ImGui::PopStyleColor(4);
     if (ImGui::BeginPopup("AddComponent")) {
         // Centered "Component" title + search box, like Unity's Add Component.
         const char* title = "Component";

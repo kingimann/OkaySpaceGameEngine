@@ -598,6 +598,25 @@ static ImVec4 AccentCol(float alpha = 1.0f) {
     const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
     return ImVec4(ap.r, ap.g, ap.b, alpha);
 }
+// A tidy, centered empty-state for a panel with nothing to show — a big muted
+// glyph, a title, and an optional hint, vertically centered in the panel. Replaces
+// the plain top-left grey text that used to sit awkwardly in the corner.
+static void EmptyState(const char* glyph, const char* title, const char* hint = nullptr) {
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    if (avail.y < 40.0f) { ImGui::TextDisabled("%s", title); return; }
+    float startY = ImGui::GetCursorPosY() + avail.y * 0.34f;
+    ImGui::SetCursorPosY(startY);
+    auto centered = [&](const char* txt, ImVec4 col, float scale) {
+        if (scale != 1.0f) ImGui::SetWindowFontScale(scale);
+        float w = ImGui::CalcTextSize(txt).x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - w) * 0.5f);
+        ImGui::TextColored(col, "%s", txt);
+        if (scale != 1.0f) ImGui::SetWindowFontScale(1.0f);
+    };
+    if (glyph && *glyph) { centered(glyph, ImVec4(0.40f, 0.42f, 0.47f, 1.0f), 2.0f); ImGui::Spacing(); }
+    centered(title, ImVec4(0.66f, 0.68f, 0.72f, 1.0f), 1.0f);
+    if (hint) { ImGui::Spacing(); centered(hint, ImVec4(0.46f, 0.47f, 0.51f, 1.0f), 1.0f); }
+}
 bool g_autosave = true;          // periodically write a crash-recovery sidecar
 double g_lastAutosave = 0.0;     // seconds since last autosave
 float  g_autosaveInterval = 120.0f;  // seconds between autosaves
@@ -7416,8 +7435,8 @@ void DrawModeling(EditorState& ed) {
 
     GameObject* go = ed.selected();
     if (!go) {
-        ImGui::Spacing();
-        ImGui::TextDisabled("Select a mesh object to edit it.");
+        EmptyState("\xE2\x9C\xB1", "No mesh selected",
+                   "Create a primitive above, or select a mesh object to model it.");
         ImGui::End();
         return;
     }
@@ -7751,9 +7770,8 @@ void DrawInspector(EditorState& ed) {
         if (alive) go = s_pinned; else { s_locked = false; s_pinned = nullptr; }
     }
     if (!go) {
-        ImGui::Dummy(ImVec2(0, 8));
-        ImGui::TextDisabled("  Select an object in the Hierarchy");
-        ImGui::TextDisabled("  or Scene to edit it here.");
+        EmptyState("\xE2\x97\x88", "Nothing selected",
+                   "Select an object in the Hierarchy or Scene to edit it.");
         ImGui::PopStyleVar(3);
         ImGui::End();
         return;
@@ -16761,9 +16779,22 @@ void DrawGameView(EditorState& ed) {
         DrawScene2D(ed, dl, canvasPos, canvasSize, canvasEnd, false, io, /*gameView*/ true);
     }
 
-    const char* tag = ed.isPlaying() ? "PLAYING" : "Game (press Play)";
-    dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6),
-                ed.isPlaying() ? IM_COL32(120, 230, 140, 255) : IM_COL32(180, 180, 190, 255), tag);
+    // Play-mode cue (Unity-style): a soft accent border around the running view so
+    // it's unmistakable you're live, plus a small "● PLAYING" pill.
+    if (ed.isPlaying()) {
+        ImU32 pc = g_paused ? IM_COL32(240, 180, 55, 255) : IM_COL32(90, 215, 110, 255);
+        dl->AddRect(ImVec2(canvasPos.x + 1, canvasPos.y + 1), ImVec2(canvasEnd.x - 1, canvasEnd.y - 1),
+                    pc, 3.0f, 0, 2.5f);
+        const char* pill = g_paused ? "\xE2\x97\x8F PAUSED" : "\xE2\x97\x8F PLAYING";
+        ImVec2 ts = ImGui::CalcTextSize(pill);
+        ImVec2 p0(canvasPos.x + 8, canvasPos.y + 6);
+        dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + ts.x + 6, p0.y + ts.y + 3),
+                          IM_COL32(0, 0, 0, 150), 4.0f);
+        dl->AddText(p0, pc, pill);
+    } else {
+        dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(180, 180, 190, 255),
+                    "Game (press Play)");
+    }
     ImGui::End();
 }
 
